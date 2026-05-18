@@ -145,6 +145,7 @@ import {
   type StrandedRecoveryNoticeSeed,
 } from "./stranded-notice.js";
 import {
+  RECOVERY_KEY_PREFIXES,
   RECOVERY_ORIGIN_KINDS,
   isStrandedIssueRecoveryOriginKind,
 } from "./origins.js";
@@ -5863,6 +5864,15 @@ export function recoveryService(
 
   async function isLivenessEscalationOnCooldown(companyId: string, incidentKey: string): Promise<boolean> {
     const cooldownCutoff = new Date(Date.now() - LIVENESS_ESCALATION_CLOSED_COOLDOWN_MS);
+    // Match any done escalation for the same source issue, regardless of which liveness state
+    // (state/blocker) the incidentKey encodes. The incidentKey format is
+    // "{prefix}:{companyId}:{issueId}:{state}:{blocker}" so two escalations for the same source
+    // issue but different blocker/state will have different keys. Without this broader match, an
+    // issue state change resets the cooldown and the escalation fires again within minutes.
+    const parsed = parseLivenessIncidentKey(incidentKey);
+    const issuePrefix = parsed
+      ? `${RECOVERY_KEY_PREFIXES.issueGraphLivenessIncident}:${companyId}:${parsed.issueId}:%`
+      : null;
     const recent = await db
       .select({ id: issues.id })
       .from(issues)
@@ -5870,7 +5880,9 @@ export function recoveryService(
         and(
           eq(issues.companyId, companyId),
           eq(issues.originKind, RECOVERY_ORIGIN_KINDS.issueGraphLivenessEscalation),
-          eq(issues.originId, incidentKey),
+          issuePrefix
+            ? sql`${issues.originId} like ${issuePrefix}`
+            : eq(issues.originId, incidentKey),
           isNull(issues.hiddenAt),
           eq(issues.status, "done"),
           gt(issues.updatedAt, cooldownCutoff),
