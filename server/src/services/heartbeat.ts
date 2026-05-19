@@ -1958,6 +1958,246 @@ export function heartbeatService(
       if (failureRun?.runtimeMode === "native"
         && parseObject(failureRun.runnerProfileJson?.nativeWorkspaceSync).state === "prepared") {
         if (!nativeRunHasNoWorkspaceAccess(failureRun)) providerResourceDispositionForRun = "stop_and_retain";
+    const paperclipWakePayload = await buildPaperclipWakePayload({
+      db,
+      companyId: agent.companyId,
+      contextSnapshot: context,
+      continuationSummary,
+      issueSummary: issueRef
+        ? {
+            id: issueRef.id,
+            identifier: issueRef.identifier,
+            title: issueRef.title,
+            status: issueRef.status,
+            priority: issueRef.priority,
+            workMode: issueRef.workMode,
+          }
+        : null,
+    });
+    if (paperclipWakePayload) {
+      context[PAPERCLIP_WAKE_PAYLOAD_KEY] = paperclipWakePayload;
+    } else {
+      delete context[PAPERCLIP_WAKE_PAYLOAD_KEY];
+    }
+    const taskMarkdown = buildPaperclipTaskMarkdown({
+      issue: issueRef
+        ? {
+            id: issueRef.id,
+            identifier: issueRef.identifier,
+            title: issueRef.title,
+            workMode: issueRef.workMode,
+            description: issueRef.description,
+          }
+        : null,
+      wakeComment: wakeCommentContext,
+      interaction: {
+        kind: readNonEmptyString(context.interactionKind),
+        status: readNonEmptyString(context.interactionStatus),
+      },
+    });
+    delete context.paperclipIssue;
+    if (wakeCommentContext) {
+      context.paperclipWakeComment = wakeCommentContext;
+    } else {
+      delete context.paperclipWakeComment;
+    }
+    if (taskMarkdown) {
+      context.paperclipTaskMarkdown = taskMarkdown;
+    } else {
+      delete context.paperclipTaskMarkdown;
+    }
+    const existingExecutionWorkspace =
+      issueRef?.executionWorkspaceId ? await executionWorkspacesSvc.getById(issueRef.executionWorkspaceId) : null;
+    const shouldReuseExisting =
+      issueRef?.executionWorkspacePreference === "reuse_existing" &&
+      existingExecutionWorkspace !== null &&
+      existingExecutionWorkspace.status !== "archived";
+    const reusableExecutionWorkspaceConfig = shouldReuseExisting
+      ? existingExecutionWorkspace?.config ?? null
+      : null;
+    const persistedExecutionWorkspaceMode = shouldReuseExisting && existingExecutionWorkspace
+      ? issueExecutionWorkspaceModeForPersistedWorkspace(existingExecutionWorkspace.mode)
+      : null;
+    const effectiveExecutionWorkspaceMode: ReturnType<typeof resolveExecutionWorkspaceMode> =
+      persistedExecutionWorkspaceMode === "isolated_workspace" ||
+      persistedExecutionWorkspaceMode === "operator_branch" ||
+      persistedExecutionWorkspaceMode === "agent_default"
+        ? persistedExecutionWorkspaceMode
+        : requestedExecutionWorkspaceMode;
+    const defaultEnvironment = await environmentsSvc.ensureLocalEnvironment(agent.companyId);
+    const selectedEnvironmentId = resolveExecutionWorkspaceEnvironmentId({
+      projectPolicy: projectExecutionWorkspacePolicy,
+      issueSettings: issueExecutionWorkspaceSettings,
+      workspaceConfig: reusableExecutionWorkspaceConfig,
+      agentDefaultEnvironmentId: agent.defaultEnvironmentId,
+      defaultEnvironmentId: defaultEnvironment.id,
+    });
+    const workspaceManagedConfig = shouldReuseExisting
+      ? { ...config }
+      : buildExecutionWorkspaceAdapterConfig({
+          agentConfig: config,
+          projectPolicy: projectExecutionWorkspacePolicy,
+          issueSettings: issueExecutionWorkspaceSettings,
+          mode: requestedExecutionWorkspaceMode,
+          legacyUseProjectWorkspace: issueAssigneeOverrides?.useProjectWorkspace ?? null,
+        });
+    const persistedWorkspaceManagedConfig = applyPersistedExecutionWorkspaceConfig({
+      config: workspaceManagedConfig,
+      workspaceConfig: reusableExecutionWorkspaceConfig,
+      mode: effectiveExecutionWorkspaceMode,
+    });
+    let adapterModelProfiles: AdapterModelProfileDefinition[] = [];
+    let profileResolutionFallbackReason: string | null = null;
+    try {
+      adapterModelProfiles = await listAdapterModelProfiles(agent.adapterType);
+    } catch (error) {
+      profileResolutionFallbackReason = "adapter_profile_resolution_failed";
+      logger.warn(
+        {
+          err: error,
+          companyId: agent.companyId,
+          agentId: agent.id,
+          adapterType: agent.adapterType,
+          runId: run.id,
+        },
+        "Failed to resolve adapter model profiles; falling back to primary adapter config",
+      );
+    }
+    const modelProfileApplication = resolveModelProfileApplication({
+      adapterModelProfiles,
+      agentRuntimeConfig: agent.runtimeConfig,
+      issueModelProfile: issueAssigneeOverrides?.modelProfile ?? null,
+      contextSnapshot: context,
+      profileResolutionFallbackReason,
+    });
+    const modelProfileMetadata = modelProfileRunMetadata(modelProfileApplication);
+    if (modelProfileMetadata) {
+      context.paperclipModelProfile = modelProfileMetadata;
+      if (modelProfileApplication.requested) context.modelProfile = modelProfileApplication.requested;
+    } else {
+      delete context.paperclipModelProfile;
+    }
+    const mergedConfig = mergeModelProfileAdapterConfig({
+      baseConfig: persistedWorkspaceManagedConfig,
+      modelProfile: modelProfileApplication,
+      issueAdapterConfig: issueAssigneeOverrides?.adapterConfig ?? null,
+    });
+    const configSnapshot = buildExecutionWorkspaceConfigSnapshot(mergedConfig, selectedEnvironmentId);
+    const executionRunConfig = stripWorkspaceRuntimeFromExecutionRunConfig(mergedConfig);
+    const { resolvedConfig, secretKeys, secretManifest } = await resolveExecutionRunAdapterConfig({
+      companyId: agent.companyId,
+      agentId: agent.id,
+      issueId,
+      heartbeatRunId: run.id,
+      projectId: projectContext?.id ?? null,
+      executionRunConfig,
+      projectEnv: projectContext?.env ?? null,
+      secretsSvc,
+    });
+    if (secretManifest.length > 0) {
+      context.paperclipSecrets = {
+        manifest: secretManifest,
+      };
+    } else {
+      delete context.paperclipSecrets;
+    }
+    const runScopedMentionedSkillKeys = await resolveRunScopedMentionedSkillKeys({
+      db,
+      companyId: agent.companyId,
+      issueId,
+    });
+    const effectiveResolvedConfig = applyRunScopedMentionedSkillKeys(
+      resolvedConfig,
+      runScopedMentionedSkillKeys,
+    );
+    const runtimeSkillEntries = await companySkills.listRuntimeSkillEntries(agent.companyId);
+    let runtimeConfig = {
+      ...effectiveResolvedConfig,
+      paperclipRuntimeSkills: runtimeSkillEntries,
+    };
+    const workspaceOperationRecorder = workspaceOperationsSvc.createRecorder({
+      companyId: agent.companyId,
+      heartbeatRunId: run.id,
+      executionWorkspaceId: existingExecutionWorkspace?.id ?? null,
+    });
+    const executionWorkspaceBase = {
+      baseCwd: resolvedWorkspace.cwd,
+      source: resolvedWorkspace.source,
+      projectId: resolvedWorkspace.projectId,
+      workspaceId: resolvedWorkspace.workspaceId,
+      repoUrl: resolvedWorkspace.repoUrl,
+      repoRef: resolvedWorkspace.repoRef,
+    } satisfies ExecutionWorkspaceInput;
+    const reusedExecutionWorkspace = shouldReuseExisting && existingExecutionWorkspace
+      ? buildRealizedExecutionWorkspaceFromPersisted({
+          base: executionWorkspaceBase,
+          workspace: existingExecutionWorkspace,
+        })
+      : null;
+    const executionWorkspace = reusedExecutionWorkspace ?? await realizeExecutionWorkspace({
+          base: executionWorkspaceBase,
+          config: runtimeConfig,
+          issue: issueRef,
+          agent: {
+            id: agent.id,
+            name: agent.name,
+            companyId: agent.companyId,
+          },
+          recorder: workspaceOperationRecorder,
+        });
+    const resolvedProjectId = executionWorkspace.projectId ?? issueRef?.projectId ?? executionProjectId ?? null;
+    const resolvedProjectWorkspaceId = issueRef?.projectWorkspaceId ?? resolvedWorkspace.workspaceId ?? null;
+    let persistedExecutionWorkspace = null;
+    const nextExecutionWorkspaceMetadata = mergeExecutionWorkspaceMetadataForPersistence({
+      existingMetadata: existingExecutionWorkspace?.metadata ?? null,
+      source: executionWorkspace.source,
+      createdByRuntime: executionWorkspace.created,
+      configSnapshot,
+      shouldReuseExisting,
+    });
+    try {
+      persistedExecutionWorkspace = shouldReuseExisting && existingExecutionWorkspace
+        ? await executionWorkspacesSvc.update(existingExecutionWorkspace.id, {
+            cwd: executionWorkspace.cwd,
+            repoUrl: executionWorkspace.repoUrl,
+            baseRef: executionWorkspace.repoRef,
+            branchName: executionWorkspace.branchName,
+            providerType: executionWorkspace.strategy === "git_worktree" ? "git_worktree" : "local_fs",
+            providerRef: executionWorkspace.worktreePath,
+            status: "active",
+            lastUsedAt: new Date(),
+            metadata: nextExecutionWorkspaceMetadata,
+          })
+        : resolvedProjectId
+          ? await executionWorkspacesSvc.create({
+              companyId: agent.companyId,
+              projectId: resolvedProjectId,
+              projectWorkspaceId: resolvedProjectWorkspaceId,
+              sourceIssueId: issueRef?.id ?? null,
+              mode:
+                requestedExecutionWorkspaceMode === "isolated_workspace"
+                  ? "isolated_workspace"
+                  : requestedExecutionWorkspaceMode === "operator_branch"
+                    ? "operator_branch"
+                    : requestedExecutionWorkspaceMode === "agent_default"
+                      ? "adapter_managed"
+                      : "shared_workspace",
+              strategyType: executionWorkspace.strategy === "git_worktree" ? "git_worktree" : "project_primary",
+              name: executionWorkspace.branchName ?? issueRef?.identifier ?? `workspace-${agent.id.slice(0, 8)}`,
+              status: "active",
+              cwd: executionWorkspace.cwd,
+              repoUrl: executionWorkspace.repoUrl,
+              baseRef: executionWorkspace.repoRef,
+              branchName: executionWorkspace.branchName,
+              providerType: executionWorkspace.strategy === "git_worktree" ? "git_worktree" : "local_fs",
+              providerRef: executionWorkspace.worktreePath,
+              lastUsedAt: new Date(),
+              openedAt: new Date(),
+              metadata: nextExecutionWorkspaceMetadata,
+            })
+          : null;
+    } catch (error) {
+      if (executionWorkspace.created) {
         try {
           await preserveNativeFailedWorkspace(db, failureRun, {
             allowPreterminal: true,
