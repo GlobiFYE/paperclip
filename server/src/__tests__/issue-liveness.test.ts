@@ -576,6 +576,26 @@ describe("issue graph liveness classifier", () => {
           id: reviewIssueId,
           identifier: "PAP-2279",
           title: "Screenshot acceptance review",
+  it("does not escalate when a transitive terminal blocker is in_review with a pending interaction (MBD-2279)", () => {
+    // A (blocked) → B (blocked, unassigned) → C (in_review + pending ask_user_questions)
+    // The terminal root C has a deliberate hold; escalation must be suppressed.
+    const phaseIssueId = "phase-issue-mbd2279";
+    const reviewLeafId = "review-leaf-mbd2279";
+
+    const findings = classifyIssueGraphLiveness({
+      issues: [
+        issue({ id: blockedId, identifier: "MBD-1494", title: "Root blocked work", status: "blocked" }),
+        issue({
+          id: phaseIssueId,
+          identifier: "MBD-1501",
+          title: "Intermediate blocked phase",
+          status: "blocked",
+          assigneeAgentId: null,
+        }),
+        issue({
+          id: reviewLeafId,
+          identifier: "MBD-1781",
+          title: "GA4 credentials – board hold",
           status: "in_review",
           assigneeAgentId: coderId,
           executionState: null,
@@ -591,6 +611,47 @@ describe("issue graph liveness classifier", () => {
       relations: [{ companyId, blockerIssueId: activeBlockerId, blockedIssueId: reviewIssueId }],
       agents: [agent(), manager],
       activeRuns: [{ companyId, issueId: activeBlockerId, agentId: coderId, status: "running" }],
+      ],
+      relations: [
+        { companyId, blockerIssueId: phaseIssueId, blockedIssueId: blockedId },
+        { companyId, blockerIssueId: reviewLeafId, blockedIssueId: phaseIssueId },
+      ],
+      agents: [agent(), manager],
+      pendingInteractions: [{ companyId, issueId: reviewLeafId, status: "pending" }],
+    });
+
+    expect(findings).toEqual([]);
+  });
+
+  it("still escalates when a transitive terminal blocker is in_review with no pending interaction", () => {
+    // A (blocked) → B (blocked, unassigned) → C (in_review, no waiting path) — must still fire
+    const phaseIssueId = "phase-issue-stalled";
+    const reviewLeafId = "review-leaf-stalled";
+
+    const findings = classifyIssueGraphLiveness({
+      issues: [
+        issue({ id: blockedId, identifier: "MBD-1494", title: "Root blocked work", status: "blocked" }),
+        issue({
+          id: phaseIssueId,
+          identifier: "MBD-1501",
+          title: "Intermediate blocked phase",
+          status: "blocked",
+          assigneeAgentId: null,
+        }),
+        issue({
+          id: reviewLeafId,
+          identifier: "MBD-1781",
+          title: "GA4 credentials – stalled",
+          status: "in_review",
+          assigneeAgentId: coderId,
+          executionState: null,
+        }),
+      ],
+      relations: [
+        { companyId, blockerIssueId: phaseIssueId, blockedIssueId: blockedId },
+        { companyId, blockerIssueId: reviewLeafId, blockedIssueId: phaseIssueId },
+      ],
+      agents: [agent(), manager],
     });
 
     expect(findings).toHaveLength(1);
@@ -598,6 +659,9 @@ describe("issue graph liveness classifier", () => {
       issueId: reviewIssueId,
       state: "in_review_without_action_path",
       recoveryIssueId: reviewIssueId,
+      issueId: blockedId,
+      state: "in_review_without_action_path",
+      recoveryIssueId: reviewLeafId,
     });
   });
 
