@@ -1285,6 +1285,7 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
             activityGatePolicy: declaration.activityGatePolicy ?? "always",
             activityGateScope: declaration.activityGateScope ?? "company",
             variables: declaration.variables ?? [],
+            executionLabelIds: [],
             latestRevisionId: null,
             latestRevisionNumber: 1,
             createdByAgentId: null,

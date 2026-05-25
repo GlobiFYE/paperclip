@@ -580,6 +580,7 @@ function routineRevisionSnapshotRoutine(routine: RoutineRow): RoutineRevisionSna
     variables: routine.variables ?? [],
     env: routine.env ?? null,
     responsibleUserId: routine.responsibleUserId ?? null,
+    executionLabelIds: routine.executionLabelIds ?? [],
   };
 }
 
@@ -1941,6 +1942,7 @@ export function routineService(
             originRunId: createdRun.id,
             originFingerprint: dispatchFingerprint,
             billingCode: issueBillingCode,
+            labelIds: input.routine.executionLabelIds ?? [],
             executionWorkspaceId: input.executionWorkspaceId ?? null,
             executionWorkspacePreference: input.executionWorkspacePreference ?? null,
             executionWorkspaceSettings: input.executionWorkspaceSettings ?? null,

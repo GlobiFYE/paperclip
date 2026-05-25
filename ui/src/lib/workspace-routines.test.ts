@@ -24,6 +24,7 @@ function createRoutine(overrides: Partial<RoutineListItem> = {}): RoutineListIte
     activityGatePolicy: "always",
     activityGateScope: "company",
     variables: [],
+    executionLabelIds: [],
     latestRevisionId: null,
     latestRevisionNumber: 1,
     createdByAgentId: null,
