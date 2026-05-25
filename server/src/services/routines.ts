@@ -2261,6 +2261,7 @@ export function routineService(
             variables,
             env,
             responsibleUserId,
+            executionLabelIds: input.labelIds ?? input.executionLabelIds ?? [],
             createdByAgentId: actor.agentId ?? null,
             createdByUserId: actor.userId ?? null,
             updatedByAgentId: actor.agentId ?? null,
@@ -2379,6 +2380,11 @@ export function routineService(
           env: nextEnv,
           responsibleUserId: locked.responsibleUserId ?? responsibleUserId,
           executionLabelIds: patch.executionLabelIds === undefined ? (locked.executionLabelIds ?? []) : patch.executionLabelIds,
+          executionLabelIds: patch.labelIds !== undefined
+            ? patch.labelIds
+            : patch.executionLabelIds !== undefined
+            ? patch.executionLabelIds
+            : (locked.executionLabelIds ?? []),
           updatedByAgentId: actor.agentId ?? null,
           updatedByUserId: actor.userId ?? null,
         };

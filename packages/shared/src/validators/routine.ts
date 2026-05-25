@@ -78,6 +78,7 @@ export const createRoutineSchema = z.object({
   activityGateScope: z.enum(ROUTINE_ACTIVITY_GATE_SCOPES).optional(),
   variables: z.array(routineVariableSchema).optional().default([]),
   env: envConfigSchema.optional().nullable(),
+  labelIds: z.array(z.string().uuid()).optional(),
   executionLabelIds: z.array(z.string().uuid()).optional().default([]),
 });
 
@@ -108,6 +109,7 @@ export const routineRevisionSnapshotRoutineV1Schema = z.object({
   env: envConfigSchema.nullable().default(null),
   responsibleUserId: z.string().nullable().default(null),
   executionLabelIds: z.array(z.string().uuid()),
+  executionLabelIds: z.array(z.string().uuid()).optional().default([]),
 }).strict();
 
 export const routineRevisionSnapshotTriggerV1Schema = z.object({
