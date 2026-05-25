@@ -2378,6 +2378,7 @@ export function routineService(
           variables: nextVariables,
           env: nextEnv,
           responsibleUserId: locked.responsibleUserId ?? responsibleUserId,
+          executionLabelIds: patch.executionLabelIds === undefined ? (locked.executionLabelIds ?? []) : patch.executionLabelIds,
           updatedByAgentId: actor.agentId ?? null,
           updatedByUserId: actor.userId ?? null,
         };
@@ -2443,6 +2444,7 @@ export function routineService(
             variables: candidate.variables,
             env: candidate.env,
             responsibleUserId: candidate.responsibleUserId,
+            executionLabelIds: candidate.executionLabelIds,
             updatedByAgentId: actor.agentId ?? null,
             updatedByUserId: actor.userId ?? null,
             updatedAt: new Date(),

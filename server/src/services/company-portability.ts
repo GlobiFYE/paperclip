@@ -5876,6 +5876,44 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
                 action: "skipped",
                 name: planProject.plannedName,
                 reason: "Existing target project not found.",
+          const createdRoutine = await routines.create(targetCompany.id, {
+            projectId,
+            goalId: null,
+            parentIssueId: null,
+            title: manifestIssue.title,
+            description,
+            assigneeAgentId,
+            priority: manifestIssue.priority && ISSUE_PRIORITIES.includes(manifestIssue.priority as any)
+              ? manifestIssue.priority as typeof ISSUE_PRIORITIES[number]
+              : "medium",
+            status: manifestIssue.status && ROUTINE_STATUSES.includes(manifestIssue.status as any)
+              ? manifestIssue.status as typeof ROUTINE_STATUSES[number]
+              : "active",
+            concurrencyPolicy:
+              routineDefinition.concurrencyPolicy && ROUTINE_CONCURRENCY_POLICIES.includes(routineDefinition.concurrencyPolicy as any)
+                ? routineDefinition.concurrencyPolicy as typeof ROUTINE_CONCURRENCY_POLICIES[number]
+                : "coalesce_if_active",
+            catchUpPolicy:
+              routineDefinition.catchUpPolicy && ROUTINE_CATCH_UP_POLICIES.includes(routineDefinition.catchUpPolicy as any)
+                ? routineDefinition.catchUpPolicy as typeof ROUTINE_CATCH_UP_POLICIES[number]
+                : "skip_missed",
+            variables: routineDefinition.variables ?? [],
+            executionLabelIds: [],
+          }, {
+            agentId: null,
+            userId: actorUserId ?? null,
+          });
+          for (const trigger of routineDefinition.triggers) {
+            if (trigger.kind === "schedule") {
+              await routines.createTrigger(createdRoutine.id, {
+                kind: "schedule",
+                label: trigger.label,
+                enabled: trigger.enabled,
+                cronExpression: trigger.cronExpression!,
+                timezone: trigger.timezone!,
+              }, {
+                agentId: null,
+                userId: actorUserId ?? null,
               });
               continue;
             }
