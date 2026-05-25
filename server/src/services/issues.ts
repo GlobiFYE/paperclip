@@ -1824,6 +1824,9 @@ export interface IssueFilters {
    *   also normalises it for direct callers.
    */
   assigneeAgentId?: string | null;
+  status?: string;
+  priority?: string;
+  assigneeAgentId?: string;
   participantAgentId?: string;
   assigneeUserId?: string;
   touchedByUserId?: string;
@@ -6299,6 +6302,19 @@ async function blockedInboxIssueConditions(
     conditions.push(unreadForUserCondition(companyId, unreadForUserId));
   if (filters?.projectId)
     conditions.push(eq(issues.projectId, filters.projectId));
+  if (filters?.priority) {
+    const priorities = filters.priority.split(",").map((p) => p.trim()).filter(Boolean);
+    if (priorities.length > 0) {
+      conditions.push(priorities.length === 1 ? eq(issues.priority, priorities[0]!) : inArray(issues.priority, priorities));
+    }
+  }
+  if (filters?.assigneeAgentId) conditions.push(eq(issues.assigneeAgentId, filters.assigneeAgentId));
+  if (filters?.participantAgentId) conditions.push(participatedByAgentCondition(companyId, filters.participantAgentId));
+  if (filters?.assigneeUserId) conditions.push(eq(issues.assigneeUserId, filters.assigneeUserId));
+  if (touchedByUserId) conditions.push(touchedByUserCondition(companyId, touchedByUserId));
+  if (inboxArchivedByUserId) conditions.push(inboxVisibleForUserCondition(companyId, inboxArchivedByUserId));
+  if (unreadForUserId) conditions.push(unreadForUserCondition(companyId, unreadForUserId));
+  if (filters?.projectId) conditions.push(eq(issues.projectId, filters.projectId));
   if (filters?.workspaceId) {
     conditions.push(
       or(
@@ -8060,6 +8076,14 @@ export function issueService(db: Db) {
         conditions.push(isNull(issues.assigneeAgentId));
       } else if (assigneeAgentFilter) {
         conditions.push(eq(issues.assigneeAgentId, assigneeAgentFilter));
+      if (filters?.priority) {
+        const priorities = filters.priority.split(",").map((p) => p.trim()).filter(Boolean);
+        if (priorities.length > 0) {
+          conditions.push(priorities.length === 1 ? eq(issues.priority, priorities[0]!) : inArray(issues.priority, priorities));
+        }
+      }
+      if (filters?.assigneeAgentId) {
+        conditions.push(eq(issues.assigneeAgentId, filters.assigneeAgentId));
       }
       if (filters?.participantAgentId) {
         conditions.push(
@@ -8352,6 +8376,14 @@ export function issueService(db: Db) {
         conditions.push(eq(issues.assigneeUserId, filters.assigneeUserId));
       if (filters?.projectId)
         conditions.push(eq(issues.projectId, filters.projectId));
+      if (filters?.priority) {
+        const priorities = filters.priority.split(",").map((p) => p.trim()).filter(Boolean);
+        if (priorities.length === 1) conditions.push(eq(issues.priority, priorities[0]!));
+        else if (priorities.length > 1) conditions.push(inArray(issues.priority, priorities));
+      }
+      if (filters?.assigneeAgentId) conditions.push(eq(issues.assigneeAgentId, filters.assigneeAgentId));
+      if (filters?.assigneeUserId) conditions.push(eq(issues.assigneeUserId, filters.assigneeUserId));
+      if (filters?.projectId) conditions.push(eq(issues.projectId, filters.projectId));
       if (filters?.workspaceId) {
         conditions.push(
           or(
