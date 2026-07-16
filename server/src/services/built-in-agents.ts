@@ -1437,6 +1437,7 @@ export function builtInAgentService(db: Db) {
         concurrencyPolicy: routine.concurrencyPolicy,
         catchUpPolicy: routine.catchUpPolicy,
         variables: routine.variables,
+        executionLabelIds: [],
       }, actor);
     if (!nextRoutine) throw notFound("Built-in routine not found");
     await db
