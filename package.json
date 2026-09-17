@@ -133,8 +133,5 @@
       "@codemirror/view": "^6.43.11",
       "@lezer/common": "^1.5.2"
     }
-  },
-  "dependencies": {
-    "tsx": "^4.23.12"
   }
 }
