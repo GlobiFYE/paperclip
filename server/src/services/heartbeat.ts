@@ -47,6 +47,10 @@ import {
   createHeartbeatQueue,
 } from "./heartbeat/queue.js";
 export {
+  FLEET_MAX_CONCURRENT_RUNS_DEFAULT,
+  FLEET_MAX_CONCURRENT_RUNS_ENV_VAR,
+  computeAvailableRunSlots,
+  normalizeFleetMaxConcurrentRuns,
   shouldDeferFollowupWakeForSameIssue,
   shouldQueueFollowupForRunningIssueWake,
 } from "./heartbeat/queue.js";
@@ -1375,6 +1379,7 @@ export function heartbeatService(
     executeRun,
     activeRunExecutionPromises,
     activeWakeupPromises,
+    runtimeEnv,
     instanceSettings,
     getRun,
     sweepPendingCleanupLeases,
