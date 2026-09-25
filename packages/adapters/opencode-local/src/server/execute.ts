@@ -324,7 +324,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (authToken) {
     env.PAPERCLIP_API_KEY = authToken;
   }
-  const preparedRuntimeConfig = await prepareOpenCodeRuntimeConfig({ env, config });
+  const preparedRuntimeConfig = await prepareOpenCodeRuntimeConfig({
+    env,
+    config,
+    // Run-scoped MCP servers assigned by the Paperclip runtime. This is the only
+    // transport that carries plugin-contributed and gateway-aggregated tools
+    // into OpenCode; `buildRuntimeToolsEnv` below only exposes the fixed
+    // connection-intent pair, so without this an opencode_local agent can never
+    // see `wiki_*` (or any other plugin) tool.
+    runtimeMcpServers: ctx.runtimeMcp?.getServers() ?? [],
+  });
   const localRuntimeConfigHome =
     preparedRuntimeConfig.notes.length > 0 ? preparedRuntimeConfig.env.XDG_CONFIG_HOME : "";
   try {

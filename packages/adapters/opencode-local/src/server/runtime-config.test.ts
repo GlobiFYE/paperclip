@@ -321,4 +321,150 @@ describe("prepareOpenCodeRuntimeConfig", () => {
     expect(prepared.notes).toEqual([]);
     await prepared.cleanup();
   });
+
+  describe("runtime MCP server injection", () => {
+    const assignedServer = {
+      name: "paperclip_assigned",
+      url: "http://127.0.0.1:3100/mcp/gateway/run-1",
+      token: "run-scoped-secret-token",
+      connectionId: "conn-1",
+    };
+
+    async function readStagedConfig(prepared: { env: Record<string, string> }) {
+      return JSON.parse(
+        await fs.readFile(
+          path.join(prepared.env.XDG_CONFIG_HOME, "opencode", "opencode.json"),
+          "utf8",
+        ),
+      ) as Record<string, unknown>;
+    }
+
+    it("injects an authenticated remote MCP block for assigned runtime servers", async () => {
+      const configHome = await makeConfigHome();
+      const prepared = await prepareOpenCodeRuntimeConfig({
+        env: { XDG_CONFIG_HOME: configHome },
+        config: {},
+        runtimeMcpServers: [assignedServer],
+      });
+      cleanupPaths.add(prepared.env.XDG_CONFIG_HOME);
+
+      const runtimeConfig = await readStagedConfig(prepared);
+      expect(runtimeConfig.mcp).toEqual({
+        paperclip_assigned: {
+          type: "remote",
+          url: "http://127.0.0.1:3100/mcp/gateway/run-1",
+          enabled: true,
+          oauth: false,
+          headers: { Authorization: "Bearer run-scoped-secret-token" },
+          timeout: 30_000,
+        },
+      });
+      await prepared.cleanup();
+    });
+
+    it("stages and injects MCP when dangerouslySkipPermissions is false, without loosening permissions", async () => {
+      const configHome = await makeConfigHome({ permission: { read: "allow" } });
+      const prepared = await prepareOpenCodeRuntimeConfig({
+        env: { XDG_CONFIG_HOME: configHome },
+        config: { dangerouslySkipPermissions: false },
+        runtimeMcpServers: [assignedServer],
+      });
+      cleanupPaths.add(prepared.env.XDG_CONFIG_HOME);
+
+      // execute.ts treats a non-empty notes array as "a staged config exists", so
+      // staging without a note would silently discard the staged XDG_CONFIG_HOME.
+      expect(prepared.notes.length).toBeGreaterThan(0);
+      const runtimeConfig = await readStagedConfig(prepared);
+      expect(runtimeConfig.mcp).toMatchObject({ paperclip_assigned: { type: "remote" } });
+      // The permission override is the permission-loosening half and stays gated.
+      expect(runtimeConfig.permission).toEqual({ read: "allow" });
+      await prepared.cleanup();
+    });
+
+    it("never clobbers a user-defined MCP entry and picks a collision-safe name", async () => {
+      const userServer = { type: "remote", url: "http://user.example/mcp", enabled: true };
+      const configHome = await makeConfigHome({ mcp: { paperclip_assigned: userServer } });
+      const prepared = await prepareOpenCodeRuntimeConfig({
+        env: { XDG_CONFIG_HOME: configHome },
+        config: {},
+        runtimeMcpServers: [assignedServer],
+      });
+      cleanupPaths.add(prepared.env.XDG_CONFIG_HOME);
+
+      const runtimeConfig = (await readStagedConfig(prepared)) as {
+        mcp?: Record<string, Record<string, unknown>>;
+      };
+      expect(runtimeConfig.mcp?.paperclip_assigned).toEqual(userServer);
+      expect(runtimeConfig.mcp?.paperclip_assigned_2).toMatchObject({
+        type: "remote",
+        url: "http://127.0.0.1:3100/mcp/gateway/run-1",
+      });
+      await prepared.cleanup();
+    });
+
+    it("keeps the bearer token out of notes and env", async () => {
+      const configHome = await makeConfigHome();
+      const prepared = await prepareOpenCodeRuntimeConfig({
+        env: { XDG_CONFIG_HOME: configHome },
+        config: {},
+        runtimeMcpServers: [assignedServer],
+      });
+      cleanupPaths.add(prepared.env.XDG_CONFIG_HOME);
+
+      expect(JSON.stringify(prepared.notes)).not.toContain("run-scoped-secret-token");
+      expect(JSON.stringify(prepared.env)).not.toContain("run-scoped-secret-token");
+      // The name is safe to log; it is what the note reports.
+      expect(prepared.notes.join("\n")).toContain("paperclip_assigned");
+      await prepared.cleanup();
+    });
+
+    it("drops malformed runtime MCP server records instead of emitting a broken block", async () => {
+      const configHome = await makeConfigHome();
+      const prepared = await prepareOpenCodeRuntimeConfig({
+        env: { XDG_CONFIG_HOME: configHome },
+        config: {},
+        runtimeMcpServers: [
+          { name: "", url: "http://x/mcp", token: "t", connectionId: "c" },
+          { name: "no-token", url: "http://x/mcp", token: "", connectionId: "c" },
+          { name: "no-url", url: "", token: "t", connectionId: "c" },
+        ] as never,
+      });
+      cleanupPaths.add(prepared.env.XDG_CONFIG_HOME);
+
+      const runtimeConfig = await readStagedConfig(prepared);
+      expect(runtimeConfig.mcp).toBeUndefined();
+      await prepared.cleanup();
+    });
+
+    it("leaves user MCP and provider configuration intact alongside injection", async () => {
+      const configHome = await makeConfigHome({
+        theme: "system",
+        mcp: { user_server: { type: "remote", url: "http://user.example/mcp" } },
+        provider: { openrouter: { models: { "example/other": {} } } },
+      });
+      const prepared = await prepareOpenCodeRuntimeConfig({
+        env: { XDG_CONFIG_HOME: configHome },
+        config: { model: "openrouter/openai/gpt-oss-120b:nitro" },
+        runtimeMcpServers: [assignedServer],
+      });
+      cleanupPaths.add(prepared.env.XDG_CONFIG_HOME);
+
+      const runtimeConfig = (await readStagedConfig(prepared)) as {
+        theme?: string;
+        mcp?: Record<string, unknown>;
+        provider?: Record<string, { models?: Record<string, unknown> }>;
+      };
+      expect(runtimeConfig.theme).toBe("system");
+      expect(runtimeConfig.mcp?.user_server).toEqual({
+        type: "remote",
+        url: "http://user.example/mcp",
+      });
+      expect(runtimeConfig.mcp?.paperclip_assigned).toMatchObject({ type: "remote" });
+      expect(runtimeConfig.provider?.openrouter?.models).toEqual({
+        "example/other": {},
+        "openai/gpt-oss-120b:nitro": {},
+      });
+      await prepared.cleanup();
+    });
+  });
 });

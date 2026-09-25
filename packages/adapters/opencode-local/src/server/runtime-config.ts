@@ -2,12 +2,73 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { asBoolean } from "@paperclipai/adapter-utils/server-utils";
+import type { AdapterRuntimeMcpServer } from "@paperclipai/adapter-utils";
 
 type PreparedOpenCodeRuntimeConfig = {
   env: Record<string, string>;
   notes: string[];
   cleanup: () => Promise<void>;
 };
+
+/**
+ * Build the `mcp` block OpenCode needs to reach a Paperclip-assigned runtime MCP
+ * gateway. These are remote HTTP servers authenticated with a run-scoped bearer
+ * token, so the token is written into the staged config file only -- never into
+ * env or notes, both of which reach the log stream.
+ */
+function buildRuntimeMcpBlock(servers: AdapterRuntimeMcpServer[]): Record<string, unknown> {
+  const block: Record<string, unknown> = {};
+  for (const server of servers) {
+    const name = server.name.trim();
+    block[name] = {
+      type: "remote",
+      url: server.url,
+      enabled: true,
+      oauth: false,
+      headers: { Authorization: `Bearer ${server.token}` },
+      timeout: 30_000,
+    };
+  }
+  return block;
+}
+
+/**
+ * Reserve a collision-free config key for a Paperclip-assigned server. A user
+ * config may already define a server under the assigned name; the issue's
+ * contract is that merging must never clobber a user-defined entry, so fall back
+ * through suffixed names instead of overwriting.
+ */
+function collisionSafeMcpName(preferred: string, existing: Record<string, unknown>): string {
+  const base = preferred.replace(/[^A-Za-z0-9_-]/g, "_") || "paperclip_assigned";
+  if (!Object.prototype.hasOwnProperty.call(existing, base)) return base;
+  for (let index = 2; index < 1000; index += 1) {
+    const candidate = `${base}_${index}`;
+    if (!Object.prototype.hasOwnProperty.call(existing, candidate)) return candidate;
+  }
+  return `${base}_${Date.now()}`;
+}
+
+/**
+ * Filter raw runtime MCP server records down to the ones that are actually
+ * deliverable. A malformed record must not produce a config with an empty URL or
+ * an `Authorization: Bearer undefined` header, which would surface to the model
+ * as a confusing auth failure instead of a missing tool.
+ */
+function usableRuntimeMcpServers(raw: unknown): AdapterRuntimeMcpServer[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((entry): entry is AdapterRuntimeMcpServer => {
+    if (!isPlainObject(entry)) return false;
+    const { name, url, token } = entry as Record<string, unknown>;
+    return (
+      typeof name === "string" &&
+      name.trim().length > 0 &&
+      typeof url === "string" &&
+      url.trim().length > 0 &&
+      typeof token === "string" &&
+      token.length > 0
+    );
+  });
+}
 
 function resolveXdgConfigHome(env: Record<string, string>): string {
   return (
@@ -106,22 +167,36 @@ export async function prepareOpenCodeRuntimeConfig(input: {
   env: Record<string, string>;
   config: Record<string, unknown>;
   targetIsRemote?: boolean;
+  /**
+   * Run-scoped runtime MCP servers assigned to this run by the Paperclip runtime
+   * (`ctx.runtimeMcp`). These are the only path by which plugin-contributed and
+   * gateway-aggregated tools reach OpenCode: `buildRuntimeToolsEnv` only exposes
+   * the fixed connection-intent tool pair, and OpenCode has no other Paperclip
+   * tool transport.
+   */
+  runtimeMcpServers?: AdapterRuntimeMcpServer[];
 }): Promise<PreparedOpenCodeRuntimeConfig> {
   const skipPermissions = asBoolean(input.config.dangerouslySkipPermissions, true);
-  if (!skipPermissions) {
+  const runtimeMcpServers = usableRuntimeMcpServers(input.runtimeMcpServers);
+  const targetIsRemote = input.targetIsRemote === true;
+
+  // Staging is required to deliver assigned MCP servers, so it can no longer be
+  // gated on `dangerouslySkipPermissions`. The permission override is the
+  // permission-loosening half of the staged config and stays gated on it.
+  //
+  // For remote targets the host XDG config dir must not be copied -- that leaks
+  // host paths into a remote runtime -- so a remote stage writes only the blocks
+  // that are safe to synthesize (the assigned MCP servers).
+  const shouldInjectPermissionOverride = skipPermissions && !targetIsRemote;
+  const shouldStage = skipPermissions || runtimeMcpServers.length > 0;
+  if (!shouldStage) {
     return {
       env: input.env,
       notes: [],
       cleanup: async () => {},
     };
   }
-
-  // For remote execution targets the host XDG_CONFIG_HOME path is meaningless
-  // (and actively harmful — it leaks a macOS-only path into the remote Linux
-  // env). Callers that need to ship a runtime opencode config to the remote
-  // box do that via prepareAdapterExecutionTargetRuntime in execute.ts; this
-  // host-fs helper is local-only.
-  if (input.targetIsRemote) {
+  if (targetIsRemote && !skipPermissions) {
     return {
       env: input.env,
       notes: [],
@@ -135,16 +210,18 @@ export async function prepareOpenCodeRuntimeConfig(input: {
   const runtimeConfigPath = path.join(runtimeConfigDir, "opencode.json");
 
   await fs.mkdir(runtimeConfigDir, { recursive: true });
-  try {
-    await fs.cp(sourceConfigDir, runtimeConfigDir, {
-      recursive: true,
-      force: true,
-      errorOnExist: false,
-      dereference: false,
-    });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException | null)?.code !== "ENOENT") {
-      throw err;
+  if (!targetIsRemote) {
+    try {
+      await fs.cp(sourceConfigDir, runtimeConfigDir, {
+        recursive: true,
+        force: true,
+        errorOnExist: false,
+        dereference: false,
+      });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException | null)?.code !== "ENOENT") {
+        throw err;
+      }
     }
   }
 
@@ -152,9 +229,11 @@ export async function prepareOpenCodeRuntimeConfig(input: {
   const existingPermission = isPlainObject(existingConfig.permission)
     ? existingConfig.permission
     : {};
-  const notes = [
-    "Injected runtime OpenCode config with permission.external_directory=allow to avoid headless approval prompts.",
-  ];
+  const notes = shouldInjectPermissionOverride
+    ? [
+        "Injected runtime OpenCode config with permission.external_directory=allow to avoid headless approval prompts.",
+      ]
+    : [];
 
   // Merge gateway/custom provider definitions supplied via PAPERCLIP_OPENCODE_PROVIDERS
   // (a JSON object in OpenCode's `provider` shape). OpenCode resolves a `--model
@@ -205,15 +284,36 @@ export async function prepareOpenCodeRuntimeConfig(input: {
     }
   }
 
-  const nextConfig: Record<string, unknown> = {
-    ...existingConfig,
-    permission: {
+  const nextConfig: Record<string, unknown> = { ...existingConfig };
+  if (shouldInjectPermissionOverride) {
+    nextConfig.permission = {
       ...existingPermission,
       external_directory: "allow",
-    },
-  };
+    };
+  }
   if (Object.keys(nextProvider).length > 0) {
     nextConfig.provider = nextProvider;
+  }
+
+  // Merge the run-scoped runtime MCP servers into any user-defined `mcp` entries.
+  // This is the delivery path for plugin-contributed and gateway-aggregated tools;
+  // without it an `opencode_local` agent sees only the fixed connection-intent pair
+  // that `buildRuntimeToolsEnv` exposes.
+  if (runtimeMcpServers.length > 0) {
+    const existingMcp = isPlainObject(existingConfig.mcp) ? existingConfig.mcp : {};
+    const mergedMcp: Record<string, unknown> = { ...existingMcp };
+    const assignedNames: string[] = [];
+    for (const [preferred, definition] of Object.entries(buildRuntimeMcpBlock(runtimeMcpServers))) {
+      const name = collisionSafeMcpName(preferred, mergedMcp);
+      mergedMcp[name] = definition;
+      assignedNames.push(name);
+    }
+    nextConfig.mcp = mergedMcp;
+    // Report the assigned server names only. The bearer token is deliberately
+    // excluded: notes are surfaced in the run log.
+    notes.push(
+      `Injected ${assignedNames.length} Paperclip runtime MCP server(s) into the runtime OpenCode config: ${assignedNames.join(", ")}.`,
+    );
   }
 
   // Pin OpenCode's auxiliary "small" model (used for session-title generation and
@@ -227,7 +327,13 @@ export async function prepareOpenCodeRuntimeConfig(input: {
     nextConfig.small_model = smallModel;
     notes.push(`Pinned OpenCode small_model to ${smallModel}.`);
   }
-  await fs.writeFile(runtimeConfigPath, `${JSON.stringify(nextConfig, null, 2)}\n`, "utf8");
+  // The staged config now carries run-scoped MCP bearer tokens, so write it
+  // owner-only. `mode` is advisory on Windows, which has no POSIX bits, but it is
+  // honoured on the platforms where the file is actually readable by other users.
+  await fs.writeFile(runtimeConfigPath, `${JSON.stringify(nextConfig, null, 2)}\n`, {
+    encoding: "utf8",
+    mode: 0o600,
+  });
 
   return {
     env: {
