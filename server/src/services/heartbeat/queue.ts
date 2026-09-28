@@ -142,7 +142,7 @@ import {
   WORKSPACE_WORKTREE_REQUIRES_PROJECT_REMEDIATION,
 } from "../execution-workspace-policy.js";
 import { readContinuationAttempt } from "../recovery/index.js";
-import { allowsIssueInteractionWake } from "../../modules/run-dispatch/index.js";
+import { allowsIssueInteractionWake, verifyAddresseeInteractionWake } from "../../modules/run-dispatch/index.js";
 import { withAgentStartLock } from "../agent-start-lock.js";
 import {
   evaluateAgentInvokability,
@@ -1547,6 +1547,31 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
           return tx.transaction(async (claimTx) => {
             const issueClaim = await lockIssueExecutionClaim(claimTx as unknown as Db);
             if (issueClaim.blocked) return null;
+            // Recheck stored interaction authority under the claim transaction.
+            // Keep the issue-before-interaction lock order used by resolution.
+            if (
+              issueId &&
+              readNonEmptyString(context.wakeReason) === "interaction_pending" &&
+              !issueClaim.ownsIssue
+            ) {
+              const stillAddressed = await verifyAddresseeInteractionWake(
+                claimTx as unknown as Db,
+                {
+                  companyId: run.companyId,
+                  issueId,
+                  agentId: run.agentId,
+                  contextSnapshot: context,
+                  lockInteraction: true,
+                },
+              );
+              if (!stillAddressed) {
+                logger.info(
+                  { runId: run.id, issueId, agentId: run.agentId },
+                  "claimQueuedRun: addressee interaction is no longer actionable; leaving run queued for the staleness gate",
+                );
+                return null;
+              }
+            }
             const claimedRun = await claimTx.update(heartbeatRuns).set(claimValues).where(and(
               eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.status, "queued"),
             )).returning().then((rows) => rows[0] ?? null);
