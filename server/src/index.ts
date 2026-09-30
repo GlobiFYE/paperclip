@@ -108,6 +108,7 @@ import {
 import { createProductionSetupTokenReaper } from "./services/setup-token-reaper.js";
 import { localAiLoginService } from "./services/local-ai-login.js";
 import { resolveWorktreeRunExecutionActivationState } from "./services/instance-settings.js";
+import { startQuotaPacing } from "./services/quota-pacing.js";
 import {
   parseAdapterRegistryEnv,
   reconcileAdapterAvailability,
@@ -1266,6 +1267,22 @@ async function startServerWithDatabaseTeardown(
   // sweep passes zero, so a restart retries a stranded orphan at once.
   const ENVIRONMENT_LEASE_CLEANUP_SWEEP_BACKOFF_MS = 5 * 60 * 1000;
   const environmentLeaseCleanupHeartbeat = accountingHeartbeat;
+  // Quota pacing lowers the concurrent-run limit of local subscription agents
+  // while their quota runs ahead of pace. It runs whether or not this process
+  // owns the heartbeat timer, because wakeups start queued runs through the
+  // same scheduler path. When a provider's mode relaxes, drive the queue at
+  // once instead of waiting for the next scheduler tick, under the same idle
+  // drain and shutdown gates as that tick.
+  const quotaPacingSettings = instanceSettingsService(db);
+  const quotaPacing = startQuotaPacing({
+    loadSettings: async () => (await quotaPacingSettings.getGeneral()).quotaPacing,
+    onModeRelaxed: () => {
+      if (isIdleTaskDrainActive() || heartbeatSchedulerStopped) return;
+      trackHeartbeatSchedulerWork(environmentLeaseCleanupHeartbeat.resumeQueuedRuns().catch((err) => {
+        logger.error({ err }, "queued-run resume after a quota pacing change failed");
+      }));
+    },
+  });
   const chatCompletionDeliveries = chatCompletionDeliveryService(db as any, environmentLeaseCleanupHeartbeat);
   const connectionDeliveries = connectionIntentDeliveryService(db as any, environmentLeaseCleanupHeartbeat);
   const questionResponseDeliveries = questionResponseDeliveryService(db as any, {
@@ -1556,6 +1573,10 @@ async function startServerWithDatabaseTeardown(
         }
 
         const promotion = await heartbeat.promoteDueScheduledRetries();
+        // With pacing on, wait for its first quota poll (bounded by the quota
+        // timeout), so a restart with a full queue does not start every queued
+        // run at the configured limit.
+        await quotaPacing.ready;
         await heartbeat.resumeQueuedRuns();
         const recoveredGoalActions = await heartbeat.recoverPendingSessionGoalActions();
         if (
@@ -1971,6 +1992,9 @@ async function startServerWithDatabaseTeardown(
   ) => {
     await systemdNotify(["--stopping", `--status=Stopping after ${signal}`]);
     heartbeatSchedulerStopped = true;
+    // Stop polling but keep the last limits, so runs promoted while the
+    // server drains still respect pacing.
+    quotaPacing.stop();
     clearInterval(skillSourceSyncInterval);
     await skillSourceSync.stop();
     unsubscribeChatCompletions();
