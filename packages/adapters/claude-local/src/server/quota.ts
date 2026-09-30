@@ -4,12 +4,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { ProviderQuotaResult, QuotaWindow } from "@paperclipai/adapter-utils";
+import type { ProviderQuotaResult, QuotaWindow, QuotaWindowKind } from "@paperclipai/adapter-utils";
 
 const execFileAsync = promisify(execFile);
 
 const CLAUDE_USAGE_SOURCE_OAUTH = "anthropic-oauth";
 const CLAUDE_USAGE_SOURCE_CLI = "claude-cli";
+const CLAUDE_SESSION_WINDOW_SECONDS = 5 * 60 * 60;
+const CLAUDE_WEEKLY_WINDOW_SECONDS = 7 * 24 * 60 * 60;
 
 export function claudeConfigDir(): string {
   const fromEnv = process.env.CLAUDE_CONFIG_DIR;
@@ -306,6 +308,8 @@ export async function fetchClaudeQuota(token: string, signal?: AbortSignal): Pro
       resetsAt: body.five_hour.resets_at ?? null,
       valueLabel: null,
       detail: null,
+      kind: "session",
+      windowSeconds: CLAUDE_SESSION_WINDOW_SECONDS,
     });
   }
   if (body.seven_day != null) {
@@ -315,6 +319,8 @@ export async function fetchClaudeQuota(token: string, signal?: AbortSignal): Pro
       resetsAt: body.seven_day.resets_at ?? null,
       valueLabel: null,
       detail: null,
+      kind: "weekly",
+      windowSeconds: CLAUDE_WEEKLY_WINDOW_SECONDS,
     });
   }
   if (body.seven_day_sonnet != null) {
@@ -324,6 +330,8 @@ export async function fetchClaudeQuota(token: string, signal?: AbortSignal): Pro
       resetsAt: body.seven_day_sonnet.resets_at ?? null,
       valueLabel: null,
       detail: null,
+      kind: "other",
+      windowSeconds: CLAUDE_WEEKLY_WINDOW_SECONDS,
     });
   }
   if (body.seven_day_opus != null) {
@@ -333,6 +341,8 @@ export async function fetchClaudeQuota(token: string, signal?: AbortSignal): Pro
       resetsAt: body.seven_day_opus.resets_at ?? null,
       valueLabel: null,
       detail: null,
+      kind: "other",
+      windowSeconds: CLAUDE_WEEKLY_WINDOW_SECONDS,
     });
   }
   if (body.extra_usage != null) {
@@ -348,6 +358,8 @@ export async function fetchClaudeQuota(token: string, signal?: AbortSignal): Pro
         body.extra_usage.is_enabled === false
           ? "Extra usage not enabled"
           : "Monthly extra usage pool",
+      kind: "other",
+      windowSeconds: null,
     });
   }
   return windows;
@@ -440,6 +452,21 @@ function canonicalQuotaLabel(line: string): string {
   }
 }
 
+/** Classify a canonical Claude usage label for run pacing. */
+function claudeWindowShape(label: string): { kind: QuotaWindowKind; windowSeconds: number | null } {
+  switch (normalizeForLabelSearch(label)) {
+    case "currentsession":
+      return { kind: "session", windowSeconds: CLAUDE_SESSION_WINDOW_SECONDS };
+    case "currentweekallmodels":
+      return { kind: "weekly", windowSeconds: CLAUDE_WEEKLY_WINDOW_SECONDS };
+    case "currentweeksonnetonly":
+    case "currentweekopusonly":
+      return { kind: "other", windowSeconds: CLAUDE_WEEKLY_WINDOW_SECONDS };
+    default:
+      return { kind: "other", windowSeconds: null };
+  }
+}
+
 function formatClaudeCliDetail(label: string, lines: string[]): string | null {
   const normalizedLabel = normalizeForLabelSearch(label);
   if (normalizedLabel === "extrausage") {
@@ -494,6 +521,7 @@ export function parseClaudeCliUsageText(text: string): QuotaWindow[] {
       resetsAt: null,
       valueLabel: null,
       detail: formatClaudeCliDetail(section.label, section.lines),
+      ...claudeWindowShape(section.label),
     };
   });
 
