@@ -31,6 +31,16 @@ export function dashboardRoutes(db: Db) {
     res.json(summary);
   });
 
+  // Night-crew ADHD edition (doc/plans/2026-10-02-night-crew.md §2b): the
+  // active-lane HQ payload. Board-gated company read like the classic
+  // summary; read-only, so no activity log entry applies.
+  router.get("/companies/:companyId/dashboard/focus", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const focus = await svc.focus(companyId);
+    res.json(focus);
+  });
+
   router.get("/companies/:companyId/recovery-observability", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
