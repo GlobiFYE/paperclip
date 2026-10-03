@@ -12,7 +12,7 @@ import {
   issues,
   issueThreadInteractions,
 } from "@paperclipai/db";
-import { executionIssueCondition, lotProjectIssueCondition } from "./issue-visibility.js";
+import { executionIssueCondition, lotProjectIssueFilter } from "./issue-visibility.js";
 
 // DTO types are shared with the UI via @paperclipai/shared so both sides consume
 // one contract. Re-exported here for back-compat with existing server imports.
@@ -212,7 +212,7 @@ export function workTimelineService(db: Db) {
     const filterConditions = [
       eq(issues.companyId, input.companyId),
       executionIssueCondition(),
-      deliberatelyScoped ? undefined : lotProjectIssueCondition(),
+      deliberatelyScoped ? undefined : await lotProjectIssueFilter(db),
       input.goalId ? eq(issues.goalId, input.goalId) : undefined,
       input.projectId ? eq(issues.projectId, input.projectId) : undefined,
       input.issueId ? eq(issues.id, input.issueId) : undefined,
@@ -341,7 +341,7 @@ export function workTimelineService(db: Db) {
         and(
           eq(issues.companyId, input.companyId),
           executionIssueCondition(),
-          deliberatelyScoped ? undefined : lotProjectIssueCondition(),
+          deliberatelyScoped ? undefined : await lotProjectIssueFilter(db),
           inArray(issues.id, issueIds),
           input.goalId ? eq(issues.goalId, input.goalId) : undefined,
           input.projectId ? eq(issues.projectId, input.projectId) : undefined,

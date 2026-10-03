@@ -184,7 +184,7 @@ import {
   type IssueGraphLivenessInput,
   type IssueLivenessFinding,
 } from "./recovery/issue-graph-liveness.js";
-import { lotProjectIssueCondition, visibleIssueCondition } from "./issue-visibility.js";
+import { lotProjectIssueFilter, visibleIssueCondition } from "./issue-visibility.js";
 import { finalizeStatusCardsForStalledGeneration } from "./status-card-finalization.js";
 import { finalizeSummarySlotsForTerminalIssue } from "./summary-slot-finalization.js";
 import {
@@ -6190,7 +6190,10 @@ function assertValidAssigneeAgentFilter(
  * agent assignee/participant crew — keep lot issues visible so "walk the
  * lot" and agent-crew views keep working. Execution paths never call this.
  */
-function lotIssueVisibilityCondition(filters?: IssueFilters): SQL | undefined {
+async function lotIssueVisibilityCondition(
+  db: any,
+  filters?: IssueFilters,
+): Promise<SQL | undefined> {
   const deliberatelyScoped = Boolean(
     filters?.projectId ||
       filters?.parentId ||
@@ -6203,7 +6206,7 @@ function lotIssueVisibilityCondition(filters?: IssueFilters): SQL | undefined {
       filters?.assigneeAgentId !== undefined ||
       filters?.participantAgentId,
   );
-  return deliberatelyScoped ? undefined : lotProjectIssueCondition();
+  return deliberatelyScoped ? undefined : await lotProjectIssueFilter(db);
 }
 
 async function blockedInboxIssueConditions(
@@ -6216,7 +6219,7 @@ async function blockedInboxIssueConditions(
     visibleIssueCondition(),
     notInArray(issues.status, [...BLOCKED_INBOX_TERMINAL_STATUSES]),
   ];
-  const lotVisibilityCondition = lotIssueVisibilityCondition(filters);
+  const lotVisibilityCondition = await lotIssueVisibilityCondition(dbOrTx, filters);
   if (lotVisibilityCondition) conditions.push(lotVisibilityCondition);
   const touchedByUserId = filters?.touchedByUserId?.trim() || undefined;
   const inboxArchivedByUserId =
@@ -7898,7 +7901,7 @@ export function issueService(db: Db) {
         eq(issues.companyId, companyId),
         visibleIssueCondition(),
       ];
-      const lotVisibilityCondition = lotIssueVisibilityCondition(filters);
+      const lotVisibilityCondition = await lotIssueVisibilityCondition(db, filters);
       if (lotVisibilityCondition) conditions.push(lotVisibilityCondition);
       if (!filters?.q?.trim()) {
         conditions.push(isNull(issues.conversationAgentId));

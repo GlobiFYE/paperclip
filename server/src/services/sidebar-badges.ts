@@ -1,7 +1,8 @@
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agents, approvals, heartbeatRuns, issues, projects } from "@paperclipai/db";
+import { agents, approvals, heartbeatRuns } from "@paperclipai/db";
 import { isHeartbeatRunVisibleInMine, type SidebarBadges } from "@paperclipai/shared";
+import { runIssueIdOutsideLotFilter } from "./issue-visibility.js";
 
 const ACTIONABLE_APPROVAL_STATUSES = ["pending", "revision_requested"];
 const FAILED_HEARTBEAT_STATUSES = ["failed", "timed_out"];
@@ -46,6 +47,11 @@ export function sidebarBadgeService(db: Db) {
           rows.filter((row) => !isDismissed(extra?.dismissals ?? new Map(), `approval:${row.id}`, row.updatedAt)).length
         );
 
+      // Lot contract, flag-aware: with enableLotView off, a failed run is
+      // badged like classic upstream no matter which project its issue lives
+      // in; armed, a run whose issue lives in a zone-"a" (lot) project is
+      // night-crew burn and never badges the sidebar.
+      const runLotFilter = await runIssueIdOutsideLotFilter(db, sql`(${heartbeatRuns.contextSnapshot} ->> 'issueId')`);
       const latestRunByAgent = await db
         .selectDistinctOn([heartbeatRuns.agentId], {
           id: heartbeatRuns.id,
@@ -60,15 +66,7 @@ export function sidebarBadgeService(db: Db) {
             eq(heartbeatRuns.companyId, companyId),
             eq(agents.companyId, companyId),
             not(eq(agents.status, "terminated")),
-            // Lot contract: a failed run whose issue lives in a zone-"a"
-            // project is night-crew burn — it never badges the sidebar.
-            sql`NOT EXISTS (
-              SELECT 1
-              FROM ${issues} lot_issue
-              JOIN ${projects} lot_project ON lot_project.id = lot_issue.project_id
-              WHERE lot_issue.id::text = (${heartbeatRuns.contextSnapshot} ->> 'issueId')
-                AND lot_project.zone = 'a'
-            )`,
+            runLotFilter,
           ),
         )
         .orderBy(heartbeatRuns.agentId, desc(heartbeatRuns.createdAt));

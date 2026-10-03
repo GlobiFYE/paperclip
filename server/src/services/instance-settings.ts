@@ -34,6 +34,7 @@ import {
 } from "@paperclipai/shared";
 import { eq } from "drizzle-orm";
 import { getManagedInstanceConfig, type ManagedInstanceConfig } from "./managed-config.js";
+import { invalidateInstanceFlagCache } from "./instance-flag-cache.js";
 import { getOperatorSettingDefaults } from "./setting-defaults.js";
 
 const DEFAULT_SINGLETON_KEY = "default";
@@ -558,6 +559,9 @@ export function instanceSettingsService(db: Db, options: InstanceSettingsService
 
     updateExperimental: async (patch: PatchInstanceExperimentalSettings): Promise<InstanceSettings> => {
       const current = await getOrCreateRow();
+      // Cached per-call-site flag reads (see instance-flag-cache.ts) must not
+      // serve the pre-patch value after this write commits.
+      invalidateInstanceFlagCache();
       // Guarded Cloud flags stay absent from the row unless chosen, so the
       // read-time catalog default keeps applying (see stripCloudCatalogDefaultEchoes).
       const nextExperimental = stripCloudCatalogDefaultEchoes(

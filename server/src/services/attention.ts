@@ -55,7 +55,7 @@ import {
   BLOCKER_ATTENTION_MAX_NODES,
   issueService,
 } from "./issues.js";
-import { executionIssueCondition, issueIdOutsideLotProjectCondition, lotProjectIssueCondition } from "./issue-visibility.js";
+import { executionIssueCondition, issueIdOutsideLotFilter, lotProjectIssueFilter } from "./issue-visibility.js";
 import { parseIssueExecutionState } from "./issue-execution-policy.js";
 import { isProspectiveBlockedTransition } from "./routable-blocked.js";
 import { evaluateAgentInvokability, type AgentOrgRow } from "./agent-invokability.js";
@@ -817,6 +817,9 @@ async function dismissalByKey(db: Db, companyId: string, userId: string | null |
 async function issueSummaryMap(db: Db, companyId: string, issueIds: Array<string | null | undefined>) {
   const ids = [...new Set(issueIds.filter((value): value is string => Boolean(value)))];
   if (ids.length === 0) return new Map<string, IssueSummaryRow>();
+  // Lot contract: summaries never hydrate for zone-"a" project issues.
+  // ADHD-edition flag gate: enableLotView off = no filter (classic summaries).
+  const summaryLotFilter = await lotProjectIssueFilter(db);
   const rows = await db
     .select({
       id: issues.id,
@@ -847,8 +850,7 @@ async function issueSummaryMap(db: Db, companyId: string, issueIds: Array<string
       eq(issues.companyId, companyId),
       inArray(issues.id, ids),
       executionIssueCondition(),
-      // Lot contract: summaries never hydrate for zone-"a" project issues.
-      lotProjectIssueCondition(),
+      summaryLotFilter,
     ));
   return new Map(rows.map((row) => [row.id, {
     id: row.id,
@@ -1167,6 +1169,13 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
         }));
       }
 
+      // Lot contract: pending interactions on lot issues never ask for
+      // attention; agents keep working the issue thread itself. ADHD-edition
+      // flag gate: enableLotView off = no filter (classic inbox).
+      const interactionsLotFilter = await issueIdOutsideLotFilter(
+        db,
+        issueThreadInteractions.issueId,
+      );
       const interactionRows = await db
         .select({
           id: issueThreadInteractions.id,
@@ -1190,9 +1199,7 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
         .where(and(
           eq(issueThreadInteractions.companyId, companyId),
           inArray(issueThreadInteractions.status, [...PENDING_INTERACTION_STATUSES]),
-          // Lot contract: pending interactions on lot issues never ask for
-          // attention; agents keep working the issue thread itself.
-          issueIdOutsideLotProjectCondition(issueThreadInteractions.issueId),
+          interactionsLotFilter,
         ))
         .orderBy(desc(issueThreadInteractions.updatedAt), desc(issueThreadInteractions.id));
       // Addressee invokability needs the org graph; the audience line also needs
@@ -1278,6 +1285,13 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
         }));
       }
 
+      // Lot contract: decisions proposed out of a lot issue stay in the lot.
+      // ADHD-edition flag gate: enableLotView off = no lot restriction at all
+      // (the whole or-clause drops, not just its lot arm).
+      const decisionLotFilter = await issueIdOutsideLotFilter(db, decisions.originIssueId);
+      const decisionLotClause = decisionLotFilter
+        ? or(isNull(decisions.originIssueId), decisionLotFilter)
+        : undefined;
       const openDecisionQuery = db.select({
         id: decisions.id,
         bundleId: decisions.bundleId,
@@ -1293,8 +1307,7 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
       }).from(decisions).where(and(
         eq(decisions.companyId, companyId),
         eq(decisions.status, "open"),
-        // Lot contract: decisions proposed out of a lot issue stay in the lot.
-        or(isNull(decisions.originIssueId), issueIdOutsideLotProjectCondition(decisions.originIssueId)),
+        decisionLotClause,
       ))
         .orderBy(desc(decisions.updatedAt), desc(decisions.id));
       const openDecisions = options.all
@@ -1400,6 +1413,12 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
         }));
       }
 
+      // Lot contract: recovery actions on lot issues stay in the lot.
+      // ADHD-edition flag gate: enableLotView off = no filter (classic).
+      const recoveryLotFilter = await issueIdOutsideLotFilter(
+        db,
+        issueRecoveryActions.sourceIssueId,
+      );
       const recoveryRows = await db
         .select()
         .from(issueRecoveryActions)
@@ -1407,8 +1426,7 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
           eq(issueRecoveryActions.companyId, companyId),
           inArray(issueRecoveryActions.status, [...OPEN_RECOVERY_STATUSES]),
           inArray(issueRecoveryActions.ownerType, [...HUMAN_RECOVERY_OWNER_TYPES]),
-          // Lot contract: recovery actions on lot issues stay in the lot.
-          issueIdOutsideLotProjectCondition(issueRecoveryActions.sourceIssueId),
+          recoveryLotFilter,
         ))
         .orderBy(desc(issueRecoveryActions.updatedAt), desc(issueRecoveryActions.id));
       const [recoveryIssueMap, recoveryImageMap] = await Promise.all([
@@ -1586,6 +1604,9 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
         }));
       }
 
+      // Lot contract: lot issues never reach the human review feed.
+      // ADHD-edition flag gate: enableLotView off = no filter (classic).
+      const reviewLotFilter = await lotProjectIssueFilter(db);
       const reviewRows = await db
         .select({
           id: issues.id,
@@ -1605,8 +1626,7 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
           eq(issues.companyId, companyId),
           eq(issues.status, "in_review"),
           executionIssueCondition(),
-          // Lot contract: lot issues never reach the human review feed.
-          lotProjectIssueCondition(),
+          reviewLotFilter,
         ))
         .orderBy(desc(issues.updatedAt), desc(issues.id));
       const reviewIssueIds = reviewRows.map((row) => row.id);

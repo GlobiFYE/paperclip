@@ -19,7 +19,7 @@ import {
 } from "@paperclipai/db";
 import { hasWorkspaceRestoreFailure, safeWorkspaceRestorePath, ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY } from "@paperclipai/shared";
 import { logger } from "../middleware/logger.js";
-import { visibleIssueCondition } from "./issue-visibility.js";
+import { lotViewEnabled, visibleIssueCondition } from "./issue-visibility.js";
 import { classifyRunLiveness } from "./run-liveness.js";
 
 export interface ActivityFilters {
@@ -338,7 +338,7 @@ export function activityService(db: Db) {
   }
 
   return {
-    list: (filters: ActivityFilters) => {
+    list: async (filters: ActivityFilters) => {
       const conditions = [eq(activityLog.companyId, filters.companyId)];
       const limit = normalizeActivityLimit(filters.limit);
 
@@ -351,6 +351,26 @@ export function activityService(db: Db) {
       if (filters.entityId) {
         conditions.push(eq(activityLog.entityId, filters.entityId));
       }
+
+      // Night-crew lot contract: activity about zone-"a" (lot) subjects
+      // never surfaces in the company activity feed. Issue rows whose
+      // issue lives in a lot project, and project rows about a lot
+      // project itself, are dropped server-side; everything else passes.
+      // ADHD-edition flag gate: with enableLotView off the lot is not a
+      // separate invisible zone — no filter applies (classic feed).
+      const lotFeedFilter = (await lotViewEnabled(db))
+        ? sql`NOT (
+              (${activityLog.entityType} = 'issue' AND EXISTS (
+                SELECT 1 FROM ${projects} lot_project
+                WHERE lot_project.id = ${issues.projectId} AND lot_project.zone = 'a'
+              ))
+              OR
+              (${activityLog.entityType} = 'project' AND EXISTS (
+                SELECT 1 FROM ${projects} lot_project
+                WHERE lot_project.id::text = ${activityLog.entityId} AND lot_project.zone = 'a'
+              ))
+            )`
+        : undefined;
 
       return db
         .select({ activityLog })
@@ -369,21 +389,7 @@ export function activityService(db: Db) {
               sql`${activityLog.entityType} != 'issue'`,
               visibleIssueCondition(),
             ),
-            // Night-crew lot contract: activity about zone-"a" (lot) subjects
-            // never surfaces in the company activity feed. Issue rows whose
-            // issue lives in a lot project, and project rows about a lot
-            // project itself, are dropped server-side; everything else passes.
-            sql`NOT (
-              (${activityLog.entityType} = 'issue' AND EXISTS (
-                SELECT 1 FROM ${projects} lot_project
-                WHERE lot_project.id = ${issues.projectId} AND lot_project.zone = 'a'
-              ))
-              OR
-              (${activityLog.entityType} = 'project' AND EXISTS (
-                SELECT 1 FROM ${projects} lot_project
-                WHERE lot_project.id::text = ${activityLog.entityId} AND lot_project.zone = 'a'
-              ))
-            )`,
+            lotFeedFilter,
           ),
         )
         .orderBy(desc(activityLog.createdAt))

@@ -15,6 +15,7 @@ import {
 import { activityService } from "../services/activity.js";
 import { attentionService } from "../services/attention.js";
 import { issueService } from "../services/issues.js";
+import { instanceSettingsService } from "../services/instance-settings.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -95,7 +96,17 @@ describeEmbeddedPostgres("zone visibility contract", () => {
     });
   }
 
+  /**
+   * ADHD-edition flag gate: arm or disarm the instance's enableLotView.
+   * updateExperimental invalidates the per-call-site flag cache, so the next
+   * service call sees the new value immediately.
+   */
+  async function armLotView(on: boolean) {
+    await instanceSettingsService(db).updateExperimental({ enableLotView: on });
+  }
+
   it("drops lot-project activity from the company feed while zone-b activity stays", async () => {
+    await armLotView(true);
     const companyId = await seedCompany("Activity zone co");
     const lotProjectId = await seedProject(companyId, "Lot project", "a");
     const laneProjectId = await seedProject(companyId, "Active lane", "b");
@@ -117,6 +128,7 @@ describeEmbeddedPostgres("zone visibility contract", () => {
   });
 
   it("hides lot issues from the company-wide issue list but keeps deliberate scopes working", async () => {
+    await armLotView(true);
     const companyId = await seedCompany("Issue zone co");
     const lotProjectId = await seedProject(companyId, "Lot project", "a");
     const laneProjectId = await seedProject(companyId, "Active lane", "b");
@@ -140,6 +152,7 @@ describeEmbeddedPostgres("zone visibility contract", () => {
   });
 
   it("keeps lot-issue interactions out of the attention feed", async () => {
+    await armLotView(true);
     const companyId = await seedCompany("Attention zone co");
     const lotProjectId = await seedProject(companyId, "Lot project", "a");
     const laneProjectId = await seedProject(companyId, "Active lane", "b");
@@ -172,5 +185,39 @@ describeEmbeddedPostgres("zone visibility contract", () => {
 
     expect(interactionIds).toContain(laneInteractionId);
     expect(interactionIds).not.toContain(lotInteractionId);
+  });
+
+  it("flag off: lot subjects surface everywhere again (classic upstream behavior)", async () => {
+    // The ADHD-edition gate is default-off for a fresh instance; arm
+    // explicitly so this test is order-independent of the armed ones above.
+    await armLotView(false);
+    const companyId = await seedCompany("Classic zone co");
+    const lotProjectId = await seedProject(companyId, "Parked project", "a");
+    const lotIssueId = await seedIssue(companyId, lotProjectId, "Parked task");
+
+    await seedActivity(companyId, "issue", lotIssueId, "issue.created");
+    await seedActivity(companyId, "project", lotProjectId, "project.updated");
+
+    // Classic feed: lot activity shows (no filter applies).
+    const feed = await activityService(db).list({ companyId });
+    const entityIds = feed.map((row) => `${row.entityType}:${row.entityId}`);
+    expect(entityIds).toContain(`issue:${lotIssueId}`);
+    expect(entityIds).toContain(`project:${lotProjectId}`);
+
+    // Classic issue list: lot issues show company-wide.
+    const companyWide = await issueService(db).list(companyId);
+    expect(companyWide.map((issue) => issue.id)).toContain(lotIssueId);
+  });
+
+  it("settings round-trip: enableLotView PATCHes are echoed and flip both ways", async () => {
+    const settings = instanceSettingsService(db);
+
+    await settings.updateExperimental({ enableLotView: true });
+    let experimental = await settings.getExperimental();
+    expect(experimental.enableLotView).toBe(true);
+
+    await settings.updateExperimental({ enableLotView: false });
+    experimental = await settings.getExperimental();
+    expect(experimental.enableLotView).toBe(false);
   });
 });

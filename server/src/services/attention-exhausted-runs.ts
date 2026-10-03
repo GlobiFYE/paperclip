@@ -1,17 +1,17 @@
 import { and, asc, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
-import { agents, heartbeatRunEvents, heartbeatRuns, issues, projects, type Db } from "@paperclipai/db";
+import { agents, heartbeatRunEvents, heartbeatRuns, type Db } from "@paperclipai/db";
+import { runIssueIdOutsideLotFilter } from "./issue-visibility.js";
 
-export function listAttentionExhaustedRuns(db: Db, companyId: string) {
-  // Lot contract (doc/plans/2026-10-02-night-crew.md): a run whose issue lives
-  // in a zone-"a" project is night-crew burn — it never becomes an attention
-  // item. Runs without an issue context keep surfacing as today.
-  const runOutsideLotCondition = sql`NOT EXISTS (
-    SELECT 1
-    FROM ${issues} lot_issue
-    JOIN ${projects} lot_project ON lot_project.id = lot_issue.project_id
-    WHERE lot_issue.id::text = (${heartbeatRuns.contextSnapshot} ->> 'issueId')
-      AND lot_project.zone = 'a'
-  )`;
+export async function listAttentionExhaustedRuns(db: Db, companyId: string) {
+  // Lot contract (doc/plans/2026-10-02-night-crew.md §1), flag-aware: armed,
+  // a run whose issue lives in a zone-"a" project is night-crew burn — it
+  // never becomes an attention item. With enableLotView off the filter is
+  // undefined and every exhausted run surfaces like classic upstream. Runs
+  // without an issue context keep surfacing either way.
+  const runOutsideLotFilter = await runIssueIdOutsideLotFilter(
+    db,
+    sql`(${heartbeatRuns.contextSnapshot} ->> 'issueId')`,
+  );
   // Recovery can revisit an exhausted run. Deduplicate its historical events
   // before joining run data so duplicate events never multiply the wire payload.
   const latestExhaustion = db
@@ -57,7 +57,7 @@ export function listAttentionExhaustedRuns(db: Db, companyId: string) {
       eq(agents.companyId, companyId),
       notInArray(agents.status, ["terminated"]),
       inArray(heartbeatRuns.status, ["failed", "timed_out"]),
-      runOutsideLotCondition,
+      runOutsideLotFilter,
     ))
     .orderBy(desc(heartbeatRuns.createdAt), desc(latestExhaustion.eventId));
 }
