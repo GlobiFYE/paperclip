@@ -13,6 +13,11 @@ const mockDashboardApi = vi.hoisted(() => ({
   focus: vi.fn(),
 }));
 
+const mockIssuesApi = vi.hoisted(() => ({
+  list: vi.fn(),
+  respondToInteraction: vi.fn(),
+}));
+
 vi.mock("../api/dashboard", () => ({
   dashboardApi: mockDashboardApi,
 }));
@@ -34,7 +39,7 @@ vi.mock("../api/access", () => ({
 }));
 
 vi.mock("../api/issues", () => ({
-  issuesApi: { list: vi.fn().mockResolvedValue([]) },
+  issuesApi: mockIssuesApi,
 }));
 
 vi.mock("../api/agents", () => ({
@@ -105,49 +110,85 @@ const classicSummary = {
 
 const now = new Date().toISOString();
 
+// Multi-lane focus payload (GET /dashboard/focus): two lanes, one task each,
+// the first task carrying a nested pending QuestionPreview. The project
+// color is a CSS-var reference — the token-gate-safe dynamic style value —
+// so the fixture itself stays free of raw hex literals.
 const focusSummary: FocusDashboardSummary = {
-  activeProject: {
-    id: "proj-1",
-    name: "Launch Website",
-    description: "Ship the marketing site",
-    status: "in_progress",
-    zone: "b",
-  },
-  nextSteps: [
+  lanes: [
     {
-      id: "i-1",
-      identifier: "LW-1",
-      title: "Wire up the contact form",
-      status: "in_progress",
-      priority: null,
-      assigneeAgentId: null,
-      assigneeUserId: null,
-      updatedAt: now,
+      project: {
+        id: "proj-1",
+        name: "Launch Website",
+        description: "Ship the marketing site",
+        status: "in_progress",
+        zone: "b",
+        color: "var(--status-agent-running)",
+        icon: "rocket",
+      },
+      nextSteps: [
+        {
+          id: "i-1",
+          identifier: "LW-1",
+          title: "Wire up the contact form",
+          status: "in_progress",
+          priority: null,
+          assigneeAgentId: null,
+          assigneeUserId: null,
+          updatedAt: now,
+          questions: [
+            {
+              interactionId: "ix-1",
+              questionId: "q-1",
+              prompt: "Which provider should the contact form use?",
+              options: [
+                { id: "opt-1", label: "Paperclip Forms" },
+                { id: "opt-2", label: "Plain mailto" },
+              ],
+            },
+          ],
+        },
+      ],
+      laneActivity: [
+        {
+          id: "act-1",
+          companyId: "co-1",
+          actorType: "system",
+          actorId: "test",
+          agentId: null,
+          runId: null,
+          action: "issue.created",
+          entityType: "issue",
+          entityId: "i-1",
+          createdAt: new Date(now),
+          details: { issueTitle: "Wire up the contact form" },
+        },
+      ],
     },
     {
-      id: "i-2",
-      identifier: "LW-2",
-      title: "Draft the launch copy",
-      status: "todo",
-      priority: null,
-      assigneeAgentId: null,
-      assigneeUserId: null,
-      updatedAt: now,
-    },
-  ],
-  laneActivity: [
-    {
-      id: "act-1",
-      companyId: "co-1",
-      actorType: "system",
-      actorId: "test",
-      agentId: null,
-      runId: null,
-      action: "issue.created",
-      entityType: "issue",
-      entityId: "i-1",
-      createdAt: new Date(now),
-      details: { issueTitle: "Wire up the contact form" },
+      project: {
+        id: "proj-2",
+        name: "Crew Blog",
+        description: null,
+        status: "planned",
+        zone: "b",
+        color: null,
+        icon: null,
+      },
+      nextSteps: [
+        {
+          id: "i-2",
+          identifier: "CB-1",
+          title: "Draft the launch copy",
+          status: "todo",
+          priority: null,
+          assigneeAgentId: null,
+          assigneeUserId: null,
+          updatedAt: now,
+          questions: [],
+        },
+      ],
+      laneActivity: [],
     },
   ],
 };
@@ -186,6 +227,8 @@ describe("Dashboard focus surface (enableFocusDashboard)", () => {
     });
     mockDashboardApi.summary.mockResolvedValue(classicSummary);
     mockDashboardApi.focus.mockResolvedValue(focusSummary);
+    mockIssuesApi.list.mockResolvedValue([]);
+    mockIssuesApi.respondToInteraction.mockResolvedValue({});
   });
 
   afterEach(() => {
@@ -197,7 +240,7 @@ describe("Dashboard focus surface (enableFocusDashboard)", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the focus surface when the flag is on", async () => {
+  it("renders one lane card per project when the flag is on", async () => {
     queryClient.setQueryData(queryKeys.instance.experimentalSettings, {
       enableFocusDashboard: true,
     });
@@ -207,28 +250,67 @@ describe("Dashboard focus surface (enableFocusDashboard)", () => {
     await renderDashboard();
 
     const text = container.textContent ?? "";
-    // Active-lane HQ: the project front and center with its next steps.
+    // Active-lane HQ: every lane's project front and center, one card each.
     expect(text).toContain("Launch Website");
     expect(text).toContain("Ship the marketing site");
+    expect(text).toContain("Crew Blog");
     expect(text).toContain("Next steps");
+    // Each lane's own next steps render, linked to their issues.
     expect(text).toContain("Wire up the contact form");
     expect(text).toContain("Draft the launch copy");
-    expect(text).toContain("Lane activity");
+    const laneCards = container.querySelectorAll('[data-testid="focus-lane"]');
+    expect(laneCards.length).toBe(2);
+    const laneIssueLinks = [...container.querySelectorAll('a[data-testid="router-link"]')]
+      .map((link) => link.getAttribute("href"));
+    expect(laneIssueLinks).toContain("/issues/LW-1");
+    expect(laneIssueLinks).toContain("/issues/CB-1");
     // Classic-only surfaces stay out of the focus mode.
     expect(text).not.toContain("Run Activity");
     expect(text).not.toContain("Recent Tasks");
     expect(text).not.toContain("Agents Enabled");
   });
 
-  it("renders the calm no-active-lane empty state when focus has no lane", async () => {
+  it("nests a pending question under its task and posts the one-tap answer", async () => {
     queryClient.setQueryData(queryKeys.instance.experimentalSettings, {
       enableFocusDashboard: true,
     });
-    const emptyFocus: FocusDashboardSummary = {
-      activeProject: null,
-      nextSteps: [],
-      laneActivity: [],
-    };
+    queryClient.setQueryData(queryKeys.dashboardFocus("co-1"), focusSummary);
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableFocusDashboard: true });
+
+    await renderDashboard();
+
+    // The question preview renders nested under its next step.
+    const text = container.textContent ?? "";
+    expect(text).toContain("Which provider should the contact form use?");
+    expect(text).toContain("Paperclip Forms");
+    expect(text).toContain("Plain mailto");
+
+    // One tap on an option posts the answer through the same mutation the
+    // issue-thread interaction card uses (respondToInteraction).
+    const optionButtons = [...container.querySelectorAll<HTMLButtonElement>(
+      'button[data-testid="focus-lane-question-option"]',
+    )];
+    expect(optionButtons.length).toBe(2);
+    const formsOption = optionButtons.find((button) => button.textContent === "Paperclip Forms");
+    expect(formsOption).toBeDefined();
+
+    flushSync(() => {
+      formsOption!.click();
+    });
+    await flushReact();
+    await flushReact();
+
+    expect(mockIssuesApi.respondToInteraction).toHaveBeenCalledTimes(1);
+    expect(mockIssuesApi.respondToInteraction).toHaveBeenCalledWith("i-1", "ix-1", {
+      answers: [{ questionId: "q-1", optionIds: ["opt-1"] }],
+    });
+  });
+
+  it("renders the calm no-active-lane empty state when focus has no lanes", async () => {
+    queryClient.setQueryData(queryKeys.instance.experimentalSettings, {
+      enableFocusDashboard: true,
+    });
+    const emptyFocus: FocusDashboardSummary = { lanes: [] };
     queryClient.setQueryData(queryKeys.dashboardFocus("co-1"), emptyFocus);
     mockDashboardApi.focus.mockResolvedValue(emptyFocus);
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableFocusDashboard: true });

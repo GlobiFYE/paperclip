@@ -24,9 +24,10 @@ import { EmptyState } from "../components/EmptyState";
 import { StatusIcon } from "../components/StatusIcon";
 import { usePublishSharedQueryData, useSharedPollingQuery } from "../hooks/useSharedPolling";
 import { useFocusDashboardEnabled } from "../hooks/useFocusDashboardEnabled";
-import { projectStatusBadge, statusBadgeDefault } from "../lib/status-colors";
+import { lotStateBadge, projectStatusBadge, statusBadgeDefault } from "../lib/status-colors";
 
 import { ActivityRow } from "../components/ActivityRow";
+import { ProjectTile } from "../components/ProjectTile";
 import { timeAgo } from "../lib/timeAgo";
 import { cn, formatCents } from "../lib/utils";
 import { SHOW_TASK_PRIORITY_UI } from "../lib/ui-flags";
@@ -37,13 +38,22 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { InlineBanner } from "../components/InlineBanner";
-import type { Agent, FocusDashboardSummary, Issue, ProjectStatus } from "@paperclipai/shared";
+import type {
+  Agent,
+  FocusDashboardLane,
+  FocusDashboardSummary,
+  Issue,
+  ProjectStatus,
+  QuestionPreview,
+} from "@paperclipai/shared";
 import type { CompanyUserProfile } from "../lib/company-members";
 import type { ReactNode } from "react";
 import { PluginSlotOutlet } from "@/plugins/slots";
 import { SmokeLabDashboardCard } from "../components/SmokeLabDashboardCard";
 
 const DASHBOARD_ACTIVITY_LIMIT = 10;
+/** Rendered lane-activity rows per focus lane (footer keeps the lane compact). */
+const FOCUS_LANE_ACTIVITY_LIMIT = 3;
 
 function getRecentIssues(issues: Issue[]): Issue[] {
   return [...issues]
@@ -75,48 +85,263 @@ export function derivePausedAgentBanner(agents: Agent[] | undefined): PausedAgen
 }
 
 /**
- * Night-crew focus surface (plan §2b): the dashboard as active-lane HQ — one
- * zone-"b" project front and center, its next steps, and only the lane's own
- * activity. Zero lot content, zero other projects, zero metric cards and
- * charts; the classic dashboard keeps all of that behind the flag-off path.
+ * One pending ask-user-question nested under its next step: quiet, indented,
+ * and answerable in one tap. The option buttons post through the exact
+ * mutation the issue-thread interaction card's answer path uses —
+ * `issuesApi.respondToInteraction(issueId, interactionId, { answers })`
+ * (POST /issues/:id/interactions/:interactionId/respond) — and refetch the
+ * focus payload so the answered row disappears from the dashboard.
+ */
+function FocusLaneQuestionRow({
+  companyId,
+  issueId,
+  question,
+}: {
+  companyId: string;
+  issueId: string;
+  question: QuestionPreview;
+}) {
+  const queryClient = useQueryClient();
+  const answerQuestion = useMutation({
+    mutationFn: (optionId: string) =>
+      issuesApi.respondToInteraction(issueId, question.interactionId, {
+        answers: [{ questionId: question.questionId, optionIds: [optionId] }],
+      }),
+    onSuccess: async () => {
+      // Same refetch contract as the interaction card's answer path
+      // (IssueDetail's `answerInteraction`): every surface that still shows
+      // the interaction as pending must see it resolved — the focus payload
+      // that carries this preview, the issue's own interactions, and the
+      // issue collections whose rows may show a blocked state.
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: queryKeys.dashboardFocus(companyId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.interactions(issueId) }),
+        queryClient.invalidateQueries({ queryKey: queryKeys.issues.list(companyId) }),
+      ]);
+    },
+  });
+
+  return (
+    <div
+      className="rounded-md border border-border bg-muted/30 px-3 py-2"
+      data-testid="focus-lane-question"
+    >
+      <div className="flex items-start gap-2">
+        <span
+          className={cn(
+            "inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium",
+            lotStateBadge.questions,
+          )}
+        >
+          Question
+        </span>
+        <p className="min-w-0 flex-1 text-sm text-foreground">{question.prompt}</p>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {question.options.map((option) => (
+          <Button
+            key={option.id}
+            type="button"
+            variant="outline"
+            size="xs"
+            data-testid="focus-lane-question-option"
+            disabled={answerQuestion.isPending}
+            onClick={() => answerQuestion.mutate(option.id)}
+          >
+            {option.label}
+          </Button>
+        ))}
+      </div>
+      {answerQuestion.isError ? (
+        <p className="mt-2 text-xs text-destructive" role="alert">
+          Answer failed to send — try again.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * One focus lane: a visually distinct card for one active project — the
+ * project's own color as the card's left-border accent, its next steps with
+ * any pending questions nested under the waiting task, and a compact
+ * activity footer. One card per lane so projects read as separate surfaces,
+ * never a wall of text.
+ */
+function FocusLaneCard({
+  lane,
+  companyId,
+  agentMap,
+  userProfileMap,
+}: {
+  lane: FocusDashboardLane;
+  companyId: string;
+  agentMap: Map<string, Agent>;
+  userProfileMap: Map<string, CompanyUserProfile>;
+}) {
+  const { project, nextSteps, laneActivity } = lane;
+
+  // Lane-scoped entity maps: only this lane's project and its own next steps —
+  // the same `entityType:entityId` convention the classic activity list uses.
+  const laneEntityNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    map.set(`project:${project.id}`, project.name);
+    for (const step of nextSteps) {
+      map.set(`issue:${step.id}`, step.identifier ?? step.id.slice(0, 8));
+    }
+    return map;
+  }, [project, nextSteps]);
+
+  const laneEntityTitleMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const step of nextSteps) map.set(`issue:${step.id}`, step.title);
+    return map;
+  }, [nextSteps]);
+
+  const recentLaneActivity = laneActivity.slice(0, FOCUS_LANE_ACTIVITY_LIMIT);
+
+  return (
+    <Card
+      className="block border-l-4 p-4"
+      data-testid="focus-lane"
+      // The lane accent is the project's own color. Deliberately a dynamic
+      // style value — token-gate-safe by construction (a runtime value is not
+      // a raw hex literal); lanes without a color keep the default border.
+      style={project.color ? { borderLeftColor: project.color } : undefined}
+    >
+      {/* Lane header */}
+      <div className="flex flex-wrap items-center gap-2">
+        <ProjectTile color={project.color} icon={project.icon} size="sm" />
+        <h2 className="text-lg font-semibold text-foreground">{project.name}</h2>
+        <span
+          className={cn(
+            "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium capitalize",
+            projectStatusBadge[project.status as ProjectStatus] ?? statusBadgeDefault,
+          )}
+        >
+          {project.status.replace(/_/g, " ")}
+        </span>
+      </div>
+      {project.description ? (
+        <p className="mt-1 text-sm text-muted-foreground">{project.description}</p>
+      ) : null}
+
+      {/* Next steps — work in progress first, server-ordered */}
+      <h3 className="mt-4 text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+        Next steps
+      </h3>
+      {nextSteps.length === 0 ? (
+        <p className="text-sm text-muted-foreground">Nothing queued in this lane.</p>
+      ) : (
+        <div className="mt-1 divide-y divide-border">
+          {nextSteps.map((step) => (
+            <div key={step.id} className="py-1.5">
+              <Link
+                to={`/issues/${step.identifier ?? step.id}`}
+                className="dashboard-list-row text-sm cursor-pointer hover:bg-accent/50 transition-colors no-underline text-inherit block"
+              >
+                <div className="flex items-start gap-2">
+                  <span className="flex size-6 shrink-0 items-center justify-end">
+                    <StatusIcon status={step.status} />
+                  </span>
+                  <span className="flex min-w-0 flex-1 flex-col gap-1">
+                    <span className="flex min-w-0 items-baseline gap-2">
+                      <span className="min-w-0 flex-1 truncate text-sm leading-6" title={step.title}>
+                        {step.title}
+                      </span>
+                      <span className="ml-auto shrink-0 truncate text-right font-mono text-(length:--text-micro) text-muted-foreground">
+                        {step.identifier ?? step.id.slice(0, 8)}
+                      </span>
+                    </span>
+                    <span className="flex min-h-6 min-w-0 items-center gap-2">
+                      <span className="flex min-w-0 flex-1 items-center">
+                        {step.assigneeAgentId ? (() => {
+                          const agent = agentMap.get(step.assigneeAgentId);
+                          return agent
+                            ? <AgentIdentity agent={agent} size="sm" className="max-w-32" />
+                            : null;
+                        })() : step.assigneeUserId && userProfileMap.get(step.assigneeUserId) ? (
+                          <span className="truncate text-xs text-muted-foreground">
+                            {userProfileMap.get(step.assigneeUserId)!.label}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="ml-auto w-(--dashboard-list-time-width) shrink-0 whitespace-nowrap text-right text-xs text-muted-foreground">
+                        {timeAgo(step.updatedAt)}
+                      </span>
+                    </span>
+                  </span>
+                </div>
+              </Link>
+              {step.questions.length > 0 ? (
+                <div className="mt-1 ml-8 space-y-2" data-testid="focus-lane-questions">
+                  {step.questions.map((question) => (
+                    <FocusLaneQuestionRow
+                      key={`${question.interactionId}:${question.questionId}`}
+                      companyId={companyId}
+                      issueId={step.id}
+                      question={question}
+                    />
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Compact lane-activity footer — only this lane's events, capped */}
+      {recentLaneActivity.length > 0 ? (
+        <div className="mt-4 border-t border-border pt-2">
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+            Lane activity
+          </h3>
+          <div className="divide-y divide-border">
+            {recentLaneActivity.map((event) => (
+              <ActivityRow
+                key={event.id}
+                event={event}
+                agentMap={agentMap}
+                userProfileMap={userProfileMap}
+                entityNameMap={laneEntityNameMap}
+                entityTitleMap={laneEntityTitleMap}
+              />
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+/**
+ * Night-crew focus surface (plan §2b): the dashboard as active-lane HQ —
+ * every lane the owner holds (sized by the focusLaneProjectLimit setting,
+ * default 1) as its own card, each with its next steps, nested one-tap
+ * questions, and only the lane's own activity. Zero lot content, zero
+ * other projects, zero metric cards and charts; the classic dashboard keeps
+ * all of that behind the flag-off path.
  */
 function FocusDashboard({
   focus,
   agents,
+  companyId,
   userProfileMap,
   budgetIncidentsBanner,
 }: {
   focus: FocusDashboardSummary;
   agents: Agent[] | undefined;
+  companyId: string;
   userProfileMap: Map<string, CompanyUserProfile>;
   budgetIncidentsBanner: ReactNode;
 }) {
-  const activeProject = focus.activeProject;
-
   const agentMap = useMemo(() => {
     const map = new Map<string, Agent>();
     for (const a of agents ?? []) map.set(a.id, a);
     return map;
   }, [agents]);
 
-  // Lane-scoped entity maps: only the active project and its own next steps —
-  // the same `entityType:entityId` convention the classic activity list uses.
-  const laneEntityNameMap = useMemo(() => {
-    const map = new Map<string, string>();
-    if (activeProject) map.set(`project:${activeProject.id}`, activeProject.name);
-    for (const step of focus.nextSteps) {
-      map.set(`issue:${step.id}`, step.identifier ?? step.id.slice(0, 8));
-    }
-    return map;
-  }, [activeProject, focus.nextSteps]);
-
-  const laneEntityTitleMap = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const step of focus.nextSteps) map.set(`issue:${step.id}`, step.title);
-    return map;
-  }, [focus.nextSteps]);
-
-  if (!activeProject) {
+  if (focus.lanes.length === 0) {
     // Calm empty state: a company with no lane is a choice, not an error.
     return (
       <>
@@ -141,104 +366,18 @@ function FocusDashboard({
     <>
       {budgetIncidentsBanner}
 
-      {/* Active lane header */}
-      <Card className="block p-4" data-testid="focus-project-header">
-        <div className="flex flex-wrap items-center gap-2">
-          <h2 className="text-lg font-semibold text-foreground">{activeProject.name}</h2>
-          <span
-            className={cn(
-              "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium capitalize",
-              projectStatusBadge[activeProject.status as ProjectStatus] ?? statusBadgeDefault,
-            )}
-          >
-            {activeProject.status.replace(/_/g, " ")}
-          </span>
-        </div>
-        {activeProject.description ? (
-          <p className="mt-1 text-sm text-muted-foreground">{activeProject.description}</p>
-        ) : null}
-      </Card>
-
-      <div className="grid md:grid-cols-2 gap-4">
-        {/* Next steps — work in progress first, server-ordered */}
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-            Next steps
-          </h3>
-          {focus.nextSteps.length === 0 ? (
-            <Card className="block p-4">
-              <p className="text-sm text-muted-foreground">Nothing queued in this lane.</p>
-            </Card>
-          ) : (
-            <Card className="@container block py-0 divide-y divide-border overflow-hidden">
-              {focus.nextSteps.map((step) => (
-                <Link
-                  key={step.id}
-                  to={`/issues/${step.identifier ?? step.id}`}
-                  className="dashboard-list-row text-sm cursor-pointer hover:bg-accent/50 transition-colors no-underline text-inherit block"
-                >
-                  <div className="flex items-start gap-2">
-                    <span className="flex size-6 shrink-0 items-center justify-end">
-                      <StatusIcon status={step.status} />
-                    </span>
-                    <span className="flex min-w-0 flex-1 flex-col gap-1">
-                      <span className="flex min-w-0 items-baseline gap-2">
-                        <span className="min-w-0 flex-1 truncate text-sm leading-6" title={step.title}>
-                          {step.title}
-                        </span>
-                        <span className="ml-auto shrink-0 truncate text-right font-mono text-(length:--text-micro) text-muted-foreground">
-                          {step.identifier ?? step.id.slice(0, 8)}
-                        </span>
-                      </span>
-                      <span className="flex min-h-6 min-w-0 items-center gap-2">
-                        <span className="flex min-w-0 flex-1 items-center">
-                          {step.assigneeAgentId ? (() => {
-                            const agent = agentMap.get(step.assigneeAgentId);
-                            return agent
-                              ? <AgentIdentity agent={agent} size="sm" className="max-w-32" />
-                              : null;
-                          })() : step.assigneeUserId && userProfileMap.get(step.assigneeUserId) ? (
-                            <span className="truncate text-xs text-muted-foreground">
-                              {userProfileMap.get(step.assigneeUserId)!.label}
-                            </span>
-                          ) : null}
-                        </span>
-                        <span className="ml-auto w-(--dashboard-list-time-width) shrink-0 whitespace-nowrap text-right text-xs text-muted-foreground">
-                          {timeAgo(step.updatedAt)}
-                        </span>
-                      </span>
-                    </span>
-                  </div>
-                </Link>
-              ))}
-            </Card>
-          )}
-        </div>
-
-        {/* Lane activity — only this lane's events, same row treatment */}
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
-            Lane activity
-          </h3>
-          {focus.laneActivity.length === 0 ? (
-            <Card className="block p-4">
-              <p className="text-sm text-muted-foreground">No activity in this lane yet.</p>
-            </Card>
-          ) : (
-            <Card className="@container block py-0 divide-y divide-border overflow-hidden">
-              {focus.laneActivity.map((event) => (
-                <ActivityRow
-                  key={event.id}
-                  event={event}
-                  agentMap={agentMap}
-                  userProfileMap={userProfileMap}
-                  entityNameMap={laneEntityNameMap}
-                  entityTitleMap={laneEntityTitleMap}
-                />
-              ))}
-            </Card>
-          )}
-        </div>
+      {/* One lane, one card: generous vertical separation so each project
+          reads as its own surface with its own color accent. */}
+      <div className="space-y-6" data-testid="focus-lanes">
+        {focus.lanes.map((lane) => (
+          <FocusLaneCard
+            key={lane.project.id}
+            lane={lane}
+            companyId={companyId}
+            agentMap={agentMap}
+            userProfileMap={userProfileMap}
+          />
+        ))}
       </div>
     </>
   );
@@ -590,6 +729,7 @@ export function Dashboard() {
           <FocusDashboard
             focus={focus}
             agents={agents}
+            companyId={selectedCompanyId!}
             userProfileMap={userProfileMap}
             budgetIncidentsBanner={budgetIncidentsBanner}
           />
