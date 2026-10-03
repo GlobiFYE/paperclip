@@ -5,7 +5,7 @@
  * agent status dots, etc.) should import from here so colors stay consistent.
  */
 
-import type { ProjectStatus, ProjectZone } from "@paperclipai/shared";
+import type { ProjectLotState, ProjectStatus, ProjectZone } from "@paperclipai/shared";
 
 // ---------------------------------------------------------------------------
 // Issue status colors
@@ -174,6 +174,26 @@ export const projectStatusBadge: Record<ProjectStatus, string> = {
 export const projectZoneBadge: Record<ProjectZone, string> = {
   a: `border ${brandChipBadge.gray}`,
   b: `border ${brandChipBadge.blue}`,
+};
+
+// ---------------------------------------------------------------------------
+// Project lot-state colors
+//
+// Night-crew lot states (doc/plans/2026-10-02-night-crew.md) — how far the
+// crew has worked a parked (zone-"a") idea — ride the same brand chip
+// families as the zone/status chips so they read as chip states, not a new
+// palette: `prepping` is inert gray (nothing to look at yet), `questions`
+// is amber (needs the operator — but only when he walks the lot on
+// purpose), `ready` is green (pick it up whenever), `built` is blue
+// (scaffold/first run waiting). Labels live in `LOT_STATE_LABELS`
+// (@paperclipai/shared), never inline.
+// ---------------------------------------------------------------------------
+
+export const lotStateBadge: Record<ProjectLotState, string> = {
+  prepping: `border ${brandChipBadge.gray}`,
+  questions: `border ${brandChipBadge.amber}`,
+  ready: `border ${brandChipBadge.green}`,
+  built: `border ${brandChipBadge.blue}`,
 };
 
 // ---------------------------------------------------------------------------
