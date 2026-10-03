@@ -25,8 +25,16 @@ export function finishLineItemService(db: Db) {
       .then((rows) => rows[0] ?? null);
   }
 
-  /** Ordered by position, then creation order for stable lane rendering. */
+  /** Ordered by position, then creation order for stable lane rendering.
+   * 404s when the project doesn't belong to the company — a project id from
+   * another company must never enumerate (even as an empty list). */
   async function list(companyId: string, projectId: string): Promise<FinishLineItem[]> {
+    const [project] = await db
+      .select({ id: projects.id })
+      .from(projects)
+      .where(and(eq(projects.companyId, companyId), eq(projects.id, projectId)))
+      .then((rows) => rows);
+    if (!project) throw notFound("Project not found");
     return db
       .select()
       .from(finishLineItems)
