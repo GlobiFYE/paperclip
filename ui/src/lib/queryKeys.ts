@@ -525,6 +525,13 @@ export const queryKeys = {
       ] as const,
     detail: (id: string) => ["projects", "detail", id] as const,
   },
+  finishLineItems: {
+    /** Prefix for every finish-line entry of one company (list lives under `list`). */
+    all: (companyId: string) => ["finish-line-items", companyId] as const,
+    /** One project's bullets, ordered position then createdAt by the server. */
+    list: (companyId: string, projectId: string) =>
+      ["finish-line-items", companyId, projectId] as const,
+  },
   cases: {
     list: (companyId: string) => ["cases", companyId] as const,
     detail: (id: string) => ["cases", "detail", id] as const,

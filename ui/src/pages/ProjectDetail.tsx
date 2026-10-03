@@ -23,6 +23,7 @@ import { Check, ChevronDown } from "lucide-react";
 import { ProjectTile } from "../components/ProjectTile";
 import { BudgetPolicyCard } from "../components/BudgetPolicyCard";
 import { IssuesList } from "../components/IssuesList";
+import { FinishLineSection } from "../components/FinishLineSection";
 import { PageSkeleton } from "../components/PageSkeleton";
 import { PageTabBar } from "../components/PageTabBar";
 import { ProjectWorkspacesContent } from "../components/ProjectWorkspacesContent";
@@ -948,6 +949,13 @@ export function ProjectDetail() {
         title="Project summary"
         description="Summarizer keeps the latest project status, next step, and operator-needed items here."
       />
+
+      {/* Finish Line — the bullet list of "what done looks like". Sits above
+          the tabs so it stays reachable from every project tab and the
+          task-detail chip can deep-link to its anchor. */}
+      {project.id && resolvedCompanyId ? (
+        <FinishLineSection companyId={resolvedCompanyId} projectId={project.id} />
+      ) : null}
 
       <PluginSlotOutlet
         slotTypes={["toolbarButton", "contextMenuItem"]}

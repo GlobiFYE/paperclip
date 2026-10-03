@@ -137,6 +137,12 @@ vi.mock("../components/SummarySlotCard", () => ({
     return <div data-testid="summary-slot-card">Project summary card</div>;
   },
 }));
+// The finish-line section owns its own query + mutations and ships with its
+// own suite (FinishLineSection.test.tsx); here it stays a stub like the other
+// mounted section cards so ProjectDetail tests stay focused on routing.
+vi.mock("../components/FinishLineSection", () => ({
+  FinishLineSection: () => <div data-testid="finish-line-section" />,
+}));
 vi.mock("../components/PageTabBar", () => ({
   PageTabBar: ({ items }: { items: Array<{ value: string; label: string }> }) => (
     <div>{items.map((item) => <button key={item.value}>{item.label}</button>)}</div>
