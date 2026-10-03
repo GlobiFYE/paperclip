@@ -19,8 +19,8 @@ export interface DashboardRunActivityDay {
   total: number;
   /**
    * Per-error-code breakdown of the (true) `failed` count for the day, so a
-   * spike can be attributed to an error class (e.g. `process_lost`,
-   * `provider_quota`, `workspace_validation_failed`). Recovered runs are not
+   * spike can be attributed to an error class (e.g. process_lost,
+   * provider_quota, workspace_validation_failed). Recovered runs are not
    * included here. Runs with no error code are bucketed under `unknown`.
    */
   failedByErrorCode: Record<string, number>;
@@ -56,9 +56,8 @@ export interface DashboardSummary {
 }
 
 /**
- * Night-crew focus dashboard (doc/plans/2026-10-02-night-crew.md §2b): the
- * company's single zone-"b" (active-lane) project, front and center on the
- * dashboard. Null when the company has no active lane.
+ * Night-crew focus dashboard (doc/plans/2026-10-02-night-crew.md §2b): one
+ * lane per zone-"b" project, front and center on the dashboard.
  */
 export interface FocusDashboardActiveProject {
   id: string;
@@ -68,9 +67,27 @@ export interface FocusDashboardActiveProject {
   zone: string;
 }
 
+/** One selectable option of a previewed question, mirroring the card payload field names. */
+export interface QuestionPreviewOption {
+  id: string;
+  label: string;
+}
+
 /**
- * One next step of the active lane — the issue-list select shape the UI rows
- * need, nothing more.
+ * A single question a lane is blocked on: one question of a pending
+ * `ask_user_questions` interaction on a next-step issue. Field names mirror
+ * the interaction card payload (`payload.questions[].{id, prompt, options}`).
+ */
+export interface QuestionPreview {
+  interactionId: string;
+  questionId: string;
+  prompt: string;
+  options: QuestionPreviewOption[];
+}
+
+/**
+ * One next step of a lane — the issue-list select shape the UI rows need,
+ * nothing more, plus the pending questions that block it.
  */
 export interface FocusDashboardNextStep {
   id: string;
@@ -81,14 +98,31 @@ export interface FocusDashboardNextStep {
   assigneeAgentId: string | null;
   assigneeUserId: string | null;
   updatedAt: Date | string;
+  /**
+   * Pending ask-user-questions prompts attached to this task (ADHD edition):
+   * the pending `ask_user_questions` interactions on the issue, flattened to
+   * one preview per question in the card payload. Empty when the task is not
+   * waiting on the user.
+   */
+  questions: QuestionPreview[];
 }
 
 /**
- * The active-lane HQ payload: one lane, its next steps, its recent activity.
- * Zero lot content, zero other projects, zero metrics.
+ * One focus lane: a zone-"b" project holding an active lane, its next steps
+ * (with any pending questions nested), and the lane's recent activity.
  */
-export interface FocusDashboardSummary {
-  activeProject: FocusDashboardActiveProject | null;
+export interface FocusDashboardLane {
+  project: FocusDashboardActiveProject;
   nextSteps: FocusDashboardNextStep[];
   laneActivity: ActivityEvent[];
+}
+
+/**
+ * The active-lane HQ payload: every lane the owner can hold (sized by the
+ * focusLaneProjectLimit setting, default 1 = the most-recently-updated
+ * zone-"b" project), each with its own next steps and recent activity. Zero
+ * lot content, zero other projects, zero metrics.
+ */
+export interface FocusDashboardSummary {
+  lanes: FocusDashboardLane[];
 }

@@ -909,8 +909,11 @@ export type {
   DashboardRunActivityDay,
   DashboardSummary,
   FocusDashboardActiveProject,
+  FocusDashboardLane,
   FocusDashboardNextStep,
   FocusDashboardSummary,
+  QuestionPreview,
+  QuestionPreviewOption,
 } from "./dashboard.js";
 export type {
   TimelineActorType,

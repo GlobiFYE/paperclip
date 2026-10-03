@@ -7,6 +7,7 @@ import {
   companies,
   costEvents,
   heartbeatRuns,
+  issueThreadInteractions,
   issues,
   projects,
 } from "@paperclipai/db";
@@ -18,17 +19,25 @@ import {
   runIssueIdOutsideLotFilter,
   visibleIssueCondition,
 } from "./issue-visibility.js";
+import { getCachedInstanceExperimentalInt } from "./instance-flag-cache.js";
+import { instanceSettingsService } from "./instance-settings.js";
 import { retryIdempotentDatabaseOperation } from "../database-retry.js";
 
 const DASHBOARD_RUN_ACTIVITY_DAYS = 14;
 
 /**
  * Night-crew focus dashboard (doc/plans/2026-10-02-night-crew.md §2b): the
- * active lane is a single zone-\"b\" project, so one bounded look at recent
+ * active lane is a single zone-"b" project, so one bounded look at recent
  * lane rows is all the feed needs.
  */
 const FOCUS_NEXT_STEPS_LIMIT = 5;
-const FOCUS_LANE_ACTIVITY_LIMIT = 10;
+/**
+ * ADHD-edition multi-lane (Oct 3 follow-up): pending one-tap questions
+ * nested under a lane's next-step tasks, capped so a wall of questions
+ * never recreates the inbox problem the surface exists to avoid.
+ */
+const FOCUS_TASK_QUESTIONS_LIMIT = 3;
+const FOCUS_LANE_ACTIVITY_LIMIT = 3;
 
 function formatUtcDateKey(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -256,11 +265,20 @@ export function dashboardService(db: Db) {
      * other summary read.
      */
     focus: async (companyId: string) => {
-      // The platform keeps at most one zone-"b" project per company; the
-      // ordered lookup is defensive so a second one (import quirk, manual
-      // write) still resolves deterministically to the most recently updated
-      // lane instead of a coin flip. Archived lanes never resolve.
-      const activeProject = await retryIdempotentDatabaseOperation(() => db
+      // ADHD-edition multi-lane (doc/plans/2026-10-02-night-crew.md §2b + the
+      // Oct 3 follow-up): the dashboard carries as many active-lane (zone-"b")
+      // projects as the owner's focusLaneProjectLimit setting allows — their
+      // "number of the day". Default 1 = the original single-lane surface;
+      // archived lanes never resolve; ordered lookup is deterministic.
+      const laneLimit = await getCachedInstanceExperimentalInt(
+        db,
+        "focusLaneProjectLimit",
+        async () =>
+          (await instanceSettingsService(db).getExperimental()) as unknown as Record<string, unknown>,
+        1,
+      );
+
+      const laneProjects = await retryIdempotentDatabaseOperation(() => db
         .select({
           id: projects.id,
           name: projects.name,
@@ -277,75 +295,151 @@ export function dashboardService(db: Db) {
           ),
         )
         .orderBy(desc(projects.updatedAt))
-        .limit(1)
-        .then((rows) => rows[0] ?? null));
+        .limit(laneLimit));
 
-      if (!activeProject) {
-        return { activeProject: null, nextSteps: [], laneActivity: [] };
+      if (laneProjects.length === 0) {
+        return { lanes: [] };
       }
 
-      // The lane's next 1-3 steps (bounded above): visible, executable,
-      // unhidden work — in_progress first (work in progress is the headline),
-      // then todo, most recently touched first inside each bucket.
-      const nextSteps = await retryIdempotentDatabaseOperation(() => db
-        .select({
-          id: issues.id,
-          identifier: issues.identifier,
-          title: issues.title,
-          status: issues.status,
-          priority: issues.priority,
-          assigneeAgentId: issues.assigneeAgentId,
-          assigneeUserId: issues.assigneeUserId,
-          updatedAt: issues.updatedAt,
-        })
-        .from(issues)
-        .where(
-          and(
-            eq(issues.companyId, companyId),
-            eq(issues.projectId, activeProject.id),
-            visibleIssueCondition(),
-            executionIssueCondition(),
-            inArray(issues.status, ["todo", "in_progress"]),
-          ),
-        )
-        .orderBy(
-          sql`case when ${issues.status} = 'in_progress' then 0 else 1 end`,
-          desc(issues.updatedAt),
-        )
-        .limit(FOCUS_NEXT_STEPS_LIMIT));
+      const lanes = [];
+      for (const activeProject of laneProjects) {
+        // The lane's next steps (bounded above): visible, executable,
+        // unhidden work — in_progress first (work in progress is the
+        // headline), then todo, most recently touched first inside each
+        // bucket.
+        const nextSteps = await retryIdempotentDatabaseOperation(() => db
+          .select({
+            id: issues.id,
+            identifier: issues.identifier,
+            title: issues.title,
+            status: issues.status,
+            priority: issues.priority,
+            assigneeAgentId: issues.assigneeAgentId,
+            assigneeUserId: issues.assigneeUserId,
+            updatedAt: issues.updatedAt,
+          })
+          .from(issues)
+          .where(
+            and(
+              eq(issues.companyId, companyId),
+              eq(issues.projectId, activeProject.id),
+              visibleIssueCondition(),
+              executionIssueCondition(),
+              inArray(issues.status, ["todo", "in_progress"]),
+            ),
+          )
+          .orderBy(
+            sql`case when ${issues.status} = 'in_progress' then 0 else 1 end`,
+            desc(issues.updatedAt),
+          )
+          .limit(FOCUS_NEXT_STEPS_LIMIT));
 
-      // Lane activity: recent activity-log rows whose subject belongs to the
-      // active project — project events about the lane itself plus issue
-      // events for the lane's issues. Other projects' (and lot) events never
-      // match; the scoping is structural, not a filter bolted on top.
-      const laneActivity = await retryIdempotentDatabaseOperation(() => db
-        .select()
-        .from(activityLog)
-        .where(
-          and(
-            eq(activityLog.companyId, companyId),
-            or(
-              and(
-                eq(activityLog.entityType, "project"),
-                eq(activityLog.entityId, activeProject.id),
-              ),
-              and(
-                eq(activityLog.entityType, "issue"),
-                sql`exists (
-                  select 1
-                  from ${issues} lane_issue
-                  where lane_issue.company_id = ${companyId}
-                    and lane_issue.project_id = ${activeProject.id}
-                    and lane_issue.id::text = ${activityLog.entityId}
-                )`,
+        // Pending one-tap questions (ask_user_questions) nested under the
+        // lane's next-step tasks — the ADHD surface that keeps the owner out
+        // of the inbox. Only pending cards on exactly those tasks; each task
+        // carries at most FOCUS_TASK_QUESTIONS_LIMIT flattened questions
+        // ({interactionId, questionId, prompt, options} — the shape
+        // IssueThreadInteractionCard renders one-tap).
+        const questionRows = nextSteps.length === 0
+          ? []
+          : await db
+              .select({
+                id: issueThreadInteractions.id,
+                issueId: issueThreadInteractions.issueId,
+                payload: issueThreadInteractions.payload,
+              })
+              .from(issueThreadInteractions)
+              .where(
+                and(
+                  eq(issueThreadInteractions.companyId, companyId),
+                  inArray(
+                    issueThreadInteractions.issueId,
+                    nextSteps.map((step) => step.id),
+                  ),
+                  eq(issueThreadInteractions.kind, "ask_user_questions"),
+                  eq(issueThreadInteractions.status, "pending"),
+                ),
+              )
+              .orderBy(
+                desc(issueThreadInteractions.updatedAt),
+                desc(issueThreadInteractions.id),
+              );
+
+        const questionsByIssue = new Map<string, {
+          interactionId: string;
+          questionId: string;
+          prompt: string;
+          options: { id: string; label: string }[];
+        }[]>();
+        for (const row of questionRows) {
+          const payload = row.payload as
+            | { questions?: Array<{ id?: string; prompt?: string; options?: Array<{ id?: string; label?: string }> }> }
+            | null
+            | undefined;
+          if (!payload || !Array.isArray(payload.questions)) continue;
+          const bucket = questionsByIssue.get(row.issueId) ?? [];
+          for (const question of payload.questions) {
+            if (bucket.length >= FOCUS_TASK_QUESTIONS_LIMIT) break;
+            const options = (question.options ?? [])
+              .filter(
+                (option): option is { id: string; label: string } =>
+                  typeof option?.id === "string" && typeof option?.label === "string",
+              )
+              .map((option) => ({ id: option.id, label: option.label }));
+            if (typeof question.prompt !== "string") continue;
+            bucket.push({
+              interactionId: row.id,
+              questionId: typeof question.id === "string" ? question.id : "",
+              prompt: question.prompt,
+              options,
+            });
+          }
+          if (bucket.length > 0) questionsByIssue.set(row.issueId, bucket);
+        }
+
+        // Lane activity: recent activity-log rows whose subject belongs to
+        // the lane project — project events about the lane itself plus
+        // issue events for the lane's issues. Other projects' (and lot)
+        // events never match; the scoping is structural, not a filter
+        // bolted on top.
+        const laneActivity = await retryIdempotentDatabaseOperation(() => db
+          .select()
+          .from(activityLog)
+          .where(
+            and(
+              eq(activityLog.companyId, companyId),
+              or(
+                and(
+                  eq(activityLog.entityType, "project"),
+                  eq(activityLog.entityId, activeProject.id),
+                ),
+                and(
+                  eq(activityLog.entityType, "issue"),
+                  sql`exists (
+                    select 1
+                    from ${issues} lane_issue
+                    where lane_issue.company_id = ${companyId}
+                      and lane_issue.project_id = ${activeProject.id}
+                      and lane_issue.id::text = ${activityLog.entityId}
+                  )`,
+                ),
               ),
             ),
-          ),
-        )
-        .orderBy(desc(activityLog.createdAt))
-        .limit(FOCUS_LANE_ACTIVITY_LIMIT));
+          )
+          .orderBy(desc(activityLog.createdAt))
+          .limit(FOCUS_LANE_ACTIVITY_LIMIT));
 
-      return { activeProject, nextSteps, laneActivity };
+        lanes.push({
+          project: activeProject,
+          nextSteps: nextSteps.map((step) => ({
+            ...step,
+            questions: questionsByIssue.get(step.id) ?? [],
+          })),
+          laneActivity,
+        });
+      }
+
+      return { lanes };
     },
   };
 }
