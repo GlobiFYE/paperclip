@@ -17,6 +17,7 @@ import {
 import { agents } from "./agents.js";
 import { projects } from "./projects.js";
 import { goals } from "./goals.js";
+import { finishLineItems } from "./finishLineItems.js";
 import { companies } from "./companies.js";
 import { heartbeatRuns } from "./heartbeat_runs.js";
 import { projectWorkspaces } from "./project_workspaces.js";
@@ -37,6 +38,8 @@ export const issues = pgTable(
     projectId: uuid("project_id").references(() => projects.id),
     projectWorkspaceId: uuid("project_workspace_id").references(() => projectWorkspaces.id, { onDelete: "set null" }),
     goalId: uuid("goal_id").references(() => goals.id),
+    /** Finish-line item this task serves (finish_line_items), if tagged. */
+    finishLineItemId: uuid("finish_line_item_id").references(() => finishLineItems.id),
     parentId: uuid("parent_id").references((): AnyPgColumn => issues.id),
     title: text("title").notNull(),
     titleNeedsGeneration: boolean("title_needs_generation").notNull().default(false),

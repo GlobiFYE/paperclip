@@ -799,6 +799,13 @@ export type {
   IssueTreePreviewWarning,
 } from "./issue-tree-control.js";
 export type { Goal } from "./goal.js";
+export type {
+  FinishLineItem,
+  FinishLineItemStatus,
+  FinishLineItemSummary,
+  CreateFinishLineItemRequest,
+  UpdateFinishLineItemRequest,
+} from "./finish-line-item.js";
 export type { Approval, ApprovalComment } from "./approval.js";
 export type {
   BudgetPolicy,

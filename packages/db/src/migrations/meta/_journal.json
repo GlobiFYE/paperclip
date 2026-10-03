@@ -2066,6 +2066,13 @@
       "when": 1790986621640,
       "tag": "0296_whole_pestilence",
       "breakpoints": true
+    },
+    {
+      "idx": 297,
+      "version": "7",
+      "when": 1791066607738,
+      "tag": "0297_cold_killmonger",
+      "breakpoints": true
     }
   ]
 }

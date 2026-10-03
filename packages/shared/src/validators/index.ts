@@ -627,6 +627,16 @@ export {
 } from "./goal.js";
 
 export {
+  finishLineItemStatusSchema,
+  finishLineItemSchema,
+  finishLineItemSummarySchema,
+  createFinishLineItemSchema,
+  updateFinishLineItemSchema,
+  type CreateFinishLineItem,
+  type UpdateFinishLineItem,
+} from "./finish-line-item.js";
+
+export {
   applyOnboardingSeedSchema,
   type ApplyOnboardingSeed,
 } from "./onboarding-seed.js";

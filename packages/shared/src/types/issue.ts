@@ -791,6 +791,8 @@ export interface Issue {
   projectId: string | null;
   projectWorkspaceId: string | null;
   goalId: string | null;
+  /** Finish-line item (finish_line_items) this task serves, if tagged. */
+  finishLineItemId?: string | null;
   parentId: string | null;
   ancestors?: IssueAncestor[];
   title: string;

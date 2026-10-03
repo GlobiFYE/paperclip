@@ -689,6 +689,8 @@ const createIssueBaseSchema = z.object({
   projectId: z.string().guid().optional().nullable(),
   projectWorkspaceId: z.string().guid().optional().nullable(),
   goalId: z.string().guid().optional().nullable(),
+  /** Finish-line item (finish_line_items) this task serves, if tagged. */
+  finishLineItemId: z.string().guid().optional().nullable(),
   parentId: z.string().guid().optional().nullable(),
   blockedByIssueIds: z.array(z.string().guid()).optional(),
   unblockDescriptor: z
