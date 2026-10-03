@@ -78,6 +78,10 @@ export const instanceExperimentalSettingsSchema = z.object({
   enableFocusDashboard: z.boolean().default(false),
   enableLotView: z.boolean().default(false),
   enableLotQuestions: z.boolean().default(false),
+  // How many zone-"b" projects may hold an active lane at once (the ADHD
+  // edition's multi-lane focus surface). 1 = classic single-active-lane
+  // behavior; the owner picks how many lanes their brain can handle.
+  focusLaneProjectLimit: z.number().int().min(1).max(8).default(1),
   autoRestartDevServerWhenIdle: z.boolean().default(false),
   enableWorkspaceBranchReconcileForward: z.boolean().default(true),
   enableWorkspaceDirtyQuarantineRepair: z.boolean().default(true),

@@ -66,6 +66,7 @@ describe("instance settings service", () => {
       enableFocusDashboard: false,
       enableLotView: false,
       enableLotQuestions: false,
+      focusLaneProjectLimit: 1,
       autoRestartDevServerWhenIdle: true,
       enableWorkspaceBranchReconcileForward: true,
       enableWorkspaceDirtyQuarantineRepair: false,
@@ -84,6 +85,55 @@ describe("instance settings service", () => {
       expect(normalizeExperimentalSettings({})[key]).toBe(false);
       expect(normalizeExperimentalSettings({ enableStreamlinedUi: true })[key]).toBe(false);
       expect(normalizeExperimentalSettings({ [key]: true })[key]).toBe(true);
+    }
+  });
+
+  it("defaults focusLaneProjectLimit to 1 for empty and legacy stored settings", () => {
+    expect(normalizeExperimentalSettings(undefined).focusLaneProjectLimit).toBe(1);
+    expect(normalizeExperimentalSettings({}).focusLaneProjectLimit).toBe(1);
+    // Rows persisted before the key existed (legacy) normalize to 1.
+    expect(normalizeExperimentalSettings({ enableStreamlinedUi: true }).focusLaneProjectLimit).toBe(1);
+    expect(
+      normalizeExperimentalSettings({ enableFocusDashboard: true, enableLotView: true })
+        .focusLaneProjectLimit,
+    ).toBe(1);
+    // In-range values pass the schema untouched.
+    expect(normalizeExperimentalSettings({ focusLaneProjectLimit: 3 }).focusLaneProjectLimit).toBe(3);
+    expect(normalizeExperimentalSettings({ focusLaneProjectLimit: 8 }).focusLaneProjectLimit).toBe(8);
+  });
+
+  it("round-trips a numeric focusLaneProjectLimit patch through the update merge", () => {
+    // updateExperimental merges `{ ...normalize(current), ...patch }` and
+    // re-normalizes; emulate that to prove the number survives the roundtrip
+    // without boolean coercion anywhere.
+    const current = normalizeExperimentalSettings({});
+    const armed = normalizeExperimentalSettings({ ...current, focusLaneProjectLimit: 3 });
+    expect(armed.focusLaneProjectLimit).toBe(3);
+    expect(armed.enableLotQuestions).toBe(false);
+
+    const viaPatch = applyExperimentalSettingsPatch({}, { focusLaneProjectLimit: 3 });
+    expect(viaPatch.focusLaneProjectLimit).toBe(3);
+    expect(typeof viaPatch.focusLaneProjectLimit).toBe("number");
+
+    // A subsequent unrelated patch preserves the armed value.
+    const next = applyExperimentalSettingsPatch(viaPatch, { enableFocusDashboard: true });
+    expect(next.focusLaneProjectLimit).toBe(3);
+    expect(next.enableFocusDashboard).toBe(true);
+
+    // Setting it back to 1 round-trips too.
+    const reset = normalizeExperimentalSettings({ ...next, focusLaneProjectLimit: 1 });
+    expect(reset.focusLaneProjectLimit).toBe(1);
+  });
+
+  it("rejects out-of-range and non-integer focusLaneProjectLimit values back to the default", () => {
+    // The schema is int().min(1).max(8): an out-of-range, fractional, or
+    // non-numeric value fails the strict storage parse, so normalization
+    // falls back to the defaults branch and the limit resolves to 1
+    // (classic single-active-lane behavior).
+    for (const bad of [0, -1, 9, 2.5, "3", true, null] as unknown[]) {
+      expect(
+        normalizeExperimentalSettings({ focusLaneProjectLimit: bad }).focusLaneProjectLimit,
+      ).toBe(1);
     }
   });
 

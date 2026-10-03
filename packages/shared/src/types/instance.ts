@@ -116,6 +116,12 @@ export interface InstanceExperimentalSettings {
   enableLotView: boolean;
   /** When on, the night-crew "questions for you" lot surface is exposed. */
   enableLotQuestions: boolean;
+  /**
+   * How many zone-"b" projects may hold an active lane at once (ADHD edition
+   * multi-lane focus). Optional in the interface because rows persisted before
+   * this key normalize to the schema default of 1.
+   */
+  focusLaneProjectLimit?: number;
   autoRestartDevServerWhenIdle: boolean;
   enableWorkspaceBranchReconcileForward: boolean;
   enableWorkspaceDirtyQuarantineRepair: boolean;
