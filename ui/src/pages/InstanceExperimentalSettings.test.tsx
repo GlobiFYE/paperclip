@@ -100,6 +100,9 @@ function defaultExperimentalSettings(): InstanceExperimentalSettingsPayload {
     enableSimplifiedEnglishInteractions: false,
     enableFirstTaskPlanProposal: false,
     enableSmokeLab: false,
+    enableFocusDashboard: false,
+    enableLotView: false,
+    enableLotQuestions: false,
     autoRestartDevServerWhenIdle: false,
     enableWorkspaceBranchReconcileForward: true,
     enableWorkspaceDirtyQuarantineRepair: true,
@@ -304,6 +307,35 @@ describe("InstanceExperimentalSettings — Conference Room Chat card (PAP-11233)
 
     expect(container.textContent).not.toContain("Task Watchdogs");
     expect(container.querySelector('button[aria-label="Toggle task watchdogs experimental setting"]')).toBeNull();
+  });
+
+  it("renders the ADHD edition section with three default-off toggles and patches each boolean", async () => {
+    await renderPage();
+
+    const headings = [...container.querySelectorAll("section h2")].map((h) => h.textContent);
+    expect(headings).toContain("ADHD edition");
+    expect(container.textContent).toContain("Open straight to the one active lane.");
+    expect(container.textContent).toContain("Parked ideas stay invisible until you walk the lot on purpose.");
+    expect(container.textContent).toContain("One-tap answers on lot items, never pushed.");
+
+    const cases = [
+      ["Toggle focus dashboard experimental setting", { enableFocusDashboard: true }],
+      ["Toggle the lot experimental setting", { enableLotView: true }],
+      ["Toggle questions for you experimental setting", { enableLotQuestions: true }],
+    ] as const;
+    for (const [ariaLabel, patch] of cases) {
+      const selector = `button[aria-label="${ariaLabel}"]`;
+      const toggle = container.querySelector<HTMLButtonElement>(selector);
+      expect(toggle?.getAttribute("aria-checked")).toBe("false");
+
+      await act(async () => {
+        toggle?.click();
+      });
+      await flushReact();
+
+      expect(mockInstanceSettingsApi.updateExperimental).toHaveBeenLastCalledWith(patch);
+      expect(container.querySelector<HTMLButtonElement>(selector)?.getAttribute("aria-checked")).toBe("true");
+    }
   });
 
   it("does not expose the retired Runner Preview Ingress setting separately", async () => {
@@ -958,6 +990,7 @@ describe("InstanceExperimentalSettings — card ordering and headings (PAP-393)"
     );
     expect(headings).toEqual([
       "Experimental features",
+      "ADHD edition",
       "Paperclip Developer Mode",
       "Legacy",
     ]);

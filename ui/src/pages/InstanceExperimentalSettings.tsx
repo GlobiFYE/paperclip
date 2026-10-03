@@ -8,7 +8,7 @@ import type {
   ManagedSettingMetadata,
   PatchInstanceExperimentalSettings,
 } from "@paperclipai/shared";
-import { experimentalSettingKey } from "@paperclipai/shared";
+import { PROJECT_ZONE_LABELS, experimentalSettingKey } from "@paperclipai/shared";
 import { instanceSettingsApi } from "@/api/instanceSettings";
 import { useHiddenSettings } from "@/hooks/useHiddenSettings";
 import { getWorktreeInstanceId, isWorktreeRuntime } from "../lib/worktree-branding";
@@ -237,6 +237,9 @@ export function InstanceExperimentalSettings() {
   const enableFirstTaskPlanProposal =
     experimentalQuery.data?.enableFirstTaskPlanProposal === true;
   const enableSmokeLab = experimentalQuery.data?.enableSmokeLab === true;
+  const enableFocusDashboard = experimentalQuery.data?.enableFocusDashboard === true;
+  const enableLotView = experimentalQuery.data?.enableLotView === true;
+  const enableLotQuestions = experimentalQuery.data?.enableLotQuestions === true;
   const autoRestartDevServerWhenIdle = experimentalQuery.data?.autoRestartDevServerWhenIdle === true;
   const isVisible = (key: InstanceFeatureKey) => !hiddenSettings.has(experimentalSettingKey(key));
   const showWorktreeRunExecution = inWorktree && isVisible("enableWorktreeRunExecution");
@@ -249,6 +252,11 @@ export function InstanceExperimentalSettings() {
     "enableIssuePlanDecompositions",
   ] satisfies InstanceFeatureKey[]).some(isVisible);
   const showLegacySection = isVisible("enableClassicTaskInterface") || isVisible("enableGoalsSidebarLink");
+  const showAdhdEditionSection = ([
+    "enableFocusDashboard",
+    "enableLotView",
+    "enableLotQuestions",
+  ] satisfies InstanceFeatureKey[]).some(isVisible);
   return (
     <div className="max-w-6xl space-y-6">
       <div className="space-y-2">
@@ -533,6 +541,52 @@ export function InstanceExperimentalSettings() {
           />
         )}
       </section>
+
+      {showAdhdEditionSection ? (
+        <section className="space-y-3" aria-labelledby="adhd-edition-heading">
+          <div className="space-y-1">
+            <h2 id="adhd-edition-heading" className="text-sm font-semibold">
+              ADHD edition
+            </h2>
+            <p className="text-sm text-muted-foreground">
+              Night-crew personal-productivity surfaces. Each is opt-in and off by default.
+            </p>
+          </div>
+
+          <ExperimentalToggleCard
+            title="Focus dashboard"
+            description="Open straight to the one active lane."
+            checked={enableFocusDashboard}
+            onCheckedChange={(checked) => toggleMutation.mutate({ enableFocusDashboard: checked })}
+            disabled={toggleMutation.isPending}
+            settingKey="enableFocusDashboard"
+            managed={managedKeys.enableFocusDashboard}
+            ariaLabel="Toggle focus dashboard experimental setting"
+          />
+
+          <ExperimentalToggleCard
+            title="Questions for you"
+            description="One-tap answers on lot items, never pushed."
+            checked={enableLotQuestions}
+            onCheckedChange={(checked) => toggleMutation.mutate({ enableLotQuestions: checked })}
+            disabled={toggleMutation.isPending}
+            settingKey="enableLotQuestions"
+            managed={managedKeys.enableLotQuestions}
+            ariaLabel="Toggle questions for you experimental setting"
+          />
+
+          <ExperimentalToggleCard
+            title={PROJECT_ZONE_LABELS.a}
+            description="Parked ideas stay invisible until you walk the lot on purpose."
+            checked={enableLotView}
+            onCheckedChange={(checked) => toggleMutation.mutate({ enableLotView: checked })}
+            disabled={toggleMutation.isPending}
+            settingKey="enableLotView"
+            managed={managedKeys.enableLotView}
+            ariaLabel="Toggle the lot experimental setting"
+          />
+        </section>
+      ) : null}
 
       {showDeveloperSection ? (
         <section className="space-y-3" aria-labelledby="developer-mode-heading">
