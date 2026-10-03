@@ -65,6 +65,8 @@ export interface FocusDashboardActiveProject {
   description: string | null;
   status: string;
   zone: string;
+  color?: string | null;
+  icon?: string | null;
 }
 
 /** One selectable option of a previewed question, mirroring the card payload field names. */

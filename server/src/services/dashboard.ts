@@ -285,6 +285,8 @@ export function dashboardService(db: Db) {
           description: projects.description,
           status: projects.status,
           zone: projects.zone,
+          color: projects.color,
+          icon: projects.icon,
         })
         .from(projects)
         .where(
