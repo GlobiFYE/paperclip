@@ -3,7 +3,7 @@ import { AgentAvatar } from "@/components/AgentAvatar";
 import { normalizeLegacyRunnerProvider } from "@paperclipai/adapter-utils";
 import { memo, useState, useEffect, useRef, useCallback, useMemo, type ChangeEvent, type CSSProperties, type DragEvent, type RefObject } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import type { AgentEnvConfig, EnvBinding, IssueWorkMode } from "@paperclipai/shared";
+import { PROJECT_ZONE_LABELS, type AgentEnvConfig, type EnvBinding, type IssueWorkMode, type ProjectZone } from "@paperclipai/shared";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
@@ -24,6 +24,7 @@ import {
   issueExecutionWorkspaceModeForExistingWorkspace,
 } from "../lib/project-workspace-defaults";
 import { useProjectOrder } from "../hooks/useProjectOrder";
+import { useLotViewEnabled } from "../hooks/useLotViewEnabled";
 import { useStreamlinedUiEnabled } from "../hooks/useStreamlinedUiEnabled";
 import { getRecentAssigneeIds, sortAgentsByRecency, trackRecentAssignee } from "../lib/recent-assignees";
 import { getRecentProjectIds, trackRecentProject } from "../lib/recent-projects";
@@ -87,6 +88,23 @@ import { codexReasoningEffortOptions } from "../lib/codex-reasoning-effort";
 
 const DRAFT_KEY = "paperclip:issue-draft";
 const DEBOUNCE_MS = 800;
+
+// Task destination (night-crew lot vs lane, enableLotView-gated): the order
+// the two segmented options render in — the Active Lane first (the default),
+// The Lot second — mirroring the Projects page section order. Labels always
+// come from PROJECT_ZONE_LABELS (@paperclipai/shared), never inline.
+const DESTINATION_ZONES: ReadonlyArray<ProjectZone> = ["b", "a"];
+
+/** Effective zone: legacy/undefined rows park in zone "a" (the DB default). */
+function destinationProjectZone(project: { zone?: ProjectZone | null }): ProjectZone {
+  return project.zone === "b" ? "b" : "a";
+}
+
+// Calm empty hints shown under the project picker when the chosen destination
+// zone holds no projects. These two dialog-specific strings live beside the
+// dialog; every zone label/hint elsewhere comes from @paperclipai/shared.
+const LOT_DESTINATION_EMPTY_HINT = "Nothing parked yet — it'll wait quietly";
+const LANE_DESTINATION_EMPTY_HINT = "No active lanes — promote a project first";
 
 type VisualViewportLayout = {
   height: number;
@@ -488,6 +506,10 @@ export function NewIssueDialog() {
   const queryClient = useQueryClient();
   const { pushToast } = useToastActions();
   const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
+  // Lot-vs-lane destination routing (fail-closed: while the flag query is in
+  // flight, and whenever the flag is off, the dialog renders the classic
+  // zone-blind picker).
+  const { enabled: lotViewEnabled } = useLotViewEnabled();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const titleRef = useRef("");
@@ -507,6 +529,10 @@ export function NewIssueDialog() {
   const [participantMenuOpen, setParticipantMenuOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
   const [projectWorkspaceId, setProjectWorkspaceId] = useState("");
+  // Destination zone for the project picker when the lot view is enabled.
+  // Defaults to the Active Lane; resets on every dialog open.
+  const [destinationZone, setDestinationZone] = useState<ProjectZone>("b");
+  const destinationTouchedRef = useRef(false);
   const [assigneeOptionsOpen, setAssigneeOptionsOpen] = useState(false);
   const [assigneeModelLane, setAssigneeModelLane] = useState<IssueModelLane>("primary");
   const [assigneeModelOverride, setAssigneeModelOverride] = useState("");
@@ -596,6 +622,16 @@ export function NewIssueDialog() {
     companyId: effectiveCompanyId,
     userId: currentUserId,
   });
+  // Lot-view routing: the project picker only offers the chosen destination
+  // zone's projects. Flag off (and while the flag query is in flight) keeps
+  // the classic unfiltered list.
+  const destinationProjects = useMemo(
+    () =>
+      lotViewEnabled
+        ? orderedProjects.filter((project) => destinationProjectZone(project) === destinationZone)
+        : orderedProjects,
+    [lotViewEnabled, orderedProjects, destinationZone],
+  );
 
   const selectedAssignee = useMemo(() => parseAssigneeValue(assigneeValue), [assigneeValue]);
   const selectedAssigneeAgentId = selectedAssignee.assigneeAgentId;
@@ -812,6 +848,10 @@ export function NewIssueDialog() {
     initializationKeyRef.current = initializationKey;
     setDialogCompanyId(selectedCompanyId);
     executionWorkspaceDefaultProjectId.current = null;
+    // Destination resets to the Active Lane on every open; the sync effect
+    // below then follows an inherited/default project into its zone.
+    destinationTouchedRef.current = false;
+    setDestinationZone("b");
 
     const draft = loadDraft();
     if (newIssueDefaults.parentId) {
@@ -989,6 +1029,8 @@ export function NewIssueDialog() {
     setShowWatchdogRow(false);
     setProjectId("");
     setProjectWorkspaceId("");
+    setDestinationZone("b");
+    destinationTouchedRef.current = false;
     setAssigneeOptionsOpen(false);
     setAssigneeModelLane("primary");
     setAssigneeModelOverride("");
@@ -1259,12 +1301,12 @@ export function NewIssueDialog() {
   );
   const projectOptions = useMemo<InlineEntityOption[]>(
     () =>
-      orderedProjects.map((project) => ({
+      destinationProjects.map((project) => ({
         id: project.id,
         label: project.name,
         searchText: project.description ?? "",
       })),
-    [orderedProjects],
+    [destinationProjects],
   );
   const savedDraft = useMemo(() => newIssueOpen ? loadDraft() : null, [newIssueOpen]);
   const hasSavedDraft = Boolean(savedDraft?.title.trim() || savedDraft?.description.trim());
@@ -1283,6 +1325,32 @@ export function NewIssueDialog() {
     setExecutionWorkspaceMode(defaultExecutionWorkspaceModeForProject(nextProject));
     setSelectedExecutionWorkspaceId("");
   }, [orderedProjects]);
+
+  // Destination switch (lot vs lane): re-scope the project picker to the new
+  // zone and drop a now-incompatible pick, so the picker never carries a
+  // project from the other zone. Pure UI routing of the existing projectId —
+  // no new payload fields.
+  const handleDestinationChange = useCallback((zone: ProjectZone) => {
+    destinationTouchedRef.current = true;
+    setDestinationZone(zone);
+    if (!projectId) return;
+    const current = orderedProjects.find((project) => project.id === projectId);
+    if (current && destinationProjectZone(current) !== zone) {
+      handleProjectChange("");
+    }
+  }, [orderedProjects, projectId, handleProjectChange]);
+
+  // Follow an inherited/default project into its zone until the operator has
+  // explicitly chosen a destination — so a sub-task (or preset default) of a
+  // lot project opens on "The Lot" instead of stranding the preset pick
+  // outside the lane filter. Never fires once the user has picked manually.
+  useEffect(() => {
+    if (!lotViewEnabled || destinationTouchedRef.current || !projectId) return;
+    const project = orderedProjects.find((entry) => entry.id === projectId);
+    if (!project) return;
+    const zone = destinationProjectZone(project);
+    setDestinationZone((current) => (current === zone ? current : zone));
+  }, [lotViewEnabled, orderedProjects, projectId]);
 
   useEffect(() => {
     if (
@@ -1501,6 +1569,42 @@ export function NewIssueDialog() {
           ) : null}
 
           <div className="px-4 pb-2">
+            {/* Destination (lot view only): the segmented lot-vs-lane choice
+                above the project picker. It scopes the picker to the chosen
+                zone — Active Lane (the default) or the quiet lot. The lot
+                option keeps the muted look of the Projects lot section. */}
+            {lotViewEnabled ? (
+              <div
+                data-testid="new-issue-destination"
+                role="radiogroup"
+                aria-label="Task destination"
+                className="mb-2 flex w-full gap-1 rounded-lg bg-muted p-1"
+              >
+                {DESTINATION_ZONES.map((zone) => {
+                  const selected = destinationZone === zone;
+                  return (
+                    <button
+                      key={zone}
+                      type="button"
+                      role="radio"
+                      aria-checked={selected}
+                      data-testid={`new-issue-destination-${zone}`}
+                      className={cn(
+                        "flex-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+                        selected
+                          ? zone === "a"
+                            ? "bg-background text-muted-foreground"
+                            : "bg-background text-foreground"
+                          : "text-muted-foreground hover:bg-accent/50",
+                      )}
+                      onClick={() => handleDestinationChange(zone)}
+                    >
+                      {PROJECT_ZONE_LABELS[zone]}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : null}
             <div className="overflow-x-auto overscroll-x-contain">
               <div className="inline-flex items-center gap-2 text-sm text-muted-foreground flex-wrap sm:flex-nowrap sm:min-w-max">
               <span className="w-6 shrink-0 text-center">For</span>
@@ -1676,6 +1780,18 @@ export function NewIssueDialog() {
               </Popover>
               </div>
             </div>
+
+            {/* Calm empty hint when the chosen destination zone holds no
+                projects — never a dead dropdown. Submitting without a
+                project keeps the existing unassigned-task path. */}
+            {lotViewEnabled && destinationProjects.length === 0 ? (
+              <p
+                data-testid="new-issue-destination-empty"
+                className="mt-1 text-xs text-muted-foreground"
+              >
+                {destinationZone === "a" ? LOT_DESTINATION_EMPTY_HINT : LANE_DESTINATION_EMPTY_HINT}
+              </p>
+            ) : null}
 
             {/* Reviewer row */}
             {showReviewerRow && (

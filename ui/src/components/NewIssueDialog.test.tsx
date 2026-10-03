@@ -4,6 +4,7 @@ import type { ComponentProps, ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { PROJECT_ZONE_LABELS } from "@paperclipai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { queryKeys } from "../lib/queryKeys";
 import { NewIssueDialog } from "./NewIssueDialog";
@@ -186,15 +187,22 @@ vi.mock("./InlineEntitySelector", async () => {
       HTMLButtonElement,
       {
         value: string;
+        options?: Array<{ id: string; label: string }>;
         placeholder?: string;
+        mobileTitle?: string;
         className?: string;
         triggerDataSlot?: string;
         renderTriggerValue?: (option: { id: string; label: string } | null) => ReactNode;
       }
-    >(function InlineEntitySelectorMock({ value, placeholder, className, triggerDataSlot, renderTriggerValue }, ref) {
+    >(function InlineEntitySelectorMock({ value, options, placeholder, mobileTitle, className, triggerDataSlot, renderTriggerValue }, ref) {
       return (
-        <button ref={ref} type="button" className={className} data-slot={triggerDataSlot}>
+        <button ref={ref} type="button" className={className} data-slot={triggerDataSlot} data-selector-title={mobileTitle ?? placeholder}>
           {(renderTriggerValue?.(value ? { id: value, label: value } : null) ?? value) || placeholder}
+          {/* Options ride as data attributes so tests can assert which ids are
+              selectable without adding text to the trigger's textContent. */}
+          {options?.map((option) => (
+            <span key={option.id} data-entity-option={option.id} data-entity-option-label={option.label} />
+          ))}
         </button>
       );
     }),
@@ -1681,6 +1689,163 @@ describe("NewIssueDialog", () => {
         // Should show OPS (issuePrefix), not ACM (name.slice(0,3))
         expect(text).toContain("OPS");
       });
+
+      act(() => root.unmount());
+    });
+  });
+
+  describe("lot vs lane destination routing", () => {
+    function seedTwoZoneProjects() {
+      mockProjectsApi.list.mockResolvedValue([
+        {
+          id: "project-lane",
+          name: "Lane Project",
+          description: null,
+          archivedAt: null,
+          color: "#445566",
+          zone: "b",
+        },
+        {
+          id: "project-lot",
+          name: "Lot Project",
+          description: null,
+          archivedAt: null,
+          color: "#778899",
+          zone: "a",
+        },
+      ]);
+    }
+
+    function enableLotView() {
+      mockInstanceSettingsApi.getExperimental.mockResolvedValue({
+        enableIsolatedWorkspaces: false,
+        enableLotView: true,
+      });
+    }
+
+    /** The project ids currently selectable in the project picker. */
+    function projectSelectorOptionIds() {
+      const projectTrigger = container.querySelector<HTMLElement>('[data-selector-title="Select project"]');
+      return Array.from(projectTrigger?.querySelectorAll<HTMLElement>("[data-entity-option]") ?? [])
+        .map((node) => node.getAttribute("data-entity-option"));
+    }
+
+    function destinationOption(zone: string) {
+      return container.querySelector<HTMLElement>(`[data-testid="new-issue-destination-${zone}"]`);
+    }
+
+    it("renders both destination options with the shared zone labels when lot view is enabled", async () => {
+      seedTwoZoneProjects();
+      enableLotView();
+
+      const { root } = renderDialog(container);
+      await waitForAssertion(() => {
+        expect(container.querySelector('[data-testid="new-issue-destination"]')).not.toBeNull();
+      });
+
+      const group = container.querySelector('[data-testid="new-issue-destination"]');
+      expect(group?.getAttribute("role")).toBe("radiogroup");
+      expect(group?.textContent).toContain(PROJECT_ZONE_LABELS.b);
+      expect(group?.textContent).toContain(PROJECT_ZONE_LABELS.a);
+
+      act(() => root.unmount());
+    });
+
+    it("defaults the destination to the active lane and scopes the picker to zone-b projects", async () => {
+      seedTwoZoneProjects();
+      enableLotView();
+
+      const { root } = renderDialog(container);
+      await waitForAssertion(() => {
+        expect(container.querySelector('[data-testid="new-issue-destination"]')).not.toBeNull();
+      });
+
+      expect(destinationOption("b")?.getAttribute("aria-checked")).toBe("true");
+      expect(destinationOption("a")?.getAttribute("aria-checked")).toBe("false");
+      expect(projectSelectorOptionIds()).toEqual(["project-lane"]);
+
+      act(() => root.unmount());
+    });
+
+    it("filters the project picker to zone-a projects when The Lot is chosen", async () => {
+      seedTwoZoneProjects();
+      enableLotView();
+
+      const { root } = renderDialog(container);
+      await waitForAssertion(() => {
+        expect(container.querySelector('[data-testid="new-issue-destination"]')).not.toBeNull();
+      });
+
+      const lotOption = destinationOption("a");
+      expect(lotOption).not.toBeNull();
+      await act(async () => {
+        lotOption!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await flush();
+
+      expect(destinationOption("a")?.getAttribute("aria-checked")).toBe("true");
+      expect(projectSelectorOptionIds()).toEqual(["project-lot"]);
+      // The zone-b project is no longer selectable.
+      expect(projectSelectorOptionIds()).not.toContain("project-lane");
+      // Zone a holds a project, so no empty hint shows.
+      expect(container.querySelector('[data-testid="new-issue-destination-empty"]')).toBeNull();
+
+      act(() => root.unmount());
+    });
+
+    it("shows no destination selector and offers every project when lot view is disabled", async () => {
+      seedTwoZoneProjects();
+      // beforeEach default: enableLotView absent → flag off (fail-closed).
+      mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
+
+      const { root } = renderDialog(container);
+      await waitForAssertion(() => {
+        expect(projectSelectorOptionIds()).toEqual(["project-lane", "project-lot"]);
+        expect(container.querySelector('[data-testid="new-issue-destination"]')).toBeNull();
+        expect(container.querySelector('[data-testid="new-issue-destination-empty"]')).toBeNull();
+      });
+
+      act(() => root.unmount());
+    });
+
+    it("clears an incompatible project and shows the calm empty hint for an empty zone", async () => {
+      mockProjectsApi.list.mockResolvedValue([
+        {
+          id: "project-lane",
+          name: "Lane Project",
+          description: null,
+          archivedAt: null,
+          color: "#445566",
+          zone: "b",
+        },
+      ]);
+      enableLotView();
+      dialogState.newIssueDefaults = { projectId: "project-lane" };
+
+      const { root } = renderDialog(container);
+      await waitForAssertion(() => {
+        expect(container.querySelector('[data-testid="new-issue-destination"]')).not.toBeNull();
+      });
+
+      // Preset zone-b project: picker shows it, no hint.
+      expect(projectSelectorOptionIds()).toEqual(["project-lane"]);
+      expect(container.querySelector('[data-testid="new-issue-destination-empty"]')).toBeNull();
+
+      const lotOption = destinationOption("a");
+      expect(lotOption).not.toBeNull();
+      await act(async () => {
+        lotOption!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      await flush();
+
+      // The incompatible zone-b pick is cleared and the picker is empty.
+      expect(projectSelectorOptionIds()).toEqual([]);
+      const compactControls = Array.from(
+        container.querySelectorAll<HTMLElement>('[data-slot="new-issue-compact-control"]'),
+      );
+      expect(compactControls.some((control) => control.textContent === "Project")).toBe(true);
+      const hint = container.querySelector<HTMLElement>('[data-testid="new-issue-destination-empty"]');
+      expect(hint?.textContent).toContain("Nothing parked yet — it'll wait quietly");
 
       act(() => root.unmount());
     });
