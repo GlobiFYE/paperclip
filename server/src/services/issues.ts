@@ -4851,6 +4851,7 @@ const issueListSelect = {
   projectId: issues.projectId,
   projectWorkspaceId: issues.projectWorkspaceId,
   goalId: issues.goalId,
+  finishLineItemId: issues.finishLineItemId,
   parentId: issues.parentId,
   title: issues.title,
   titleNeedsGeneration: issues.titleNeedsGeneration,

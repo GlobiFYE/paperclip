@@ -47,6 +47,7 @@ import {
   companyMemberships,
   documents,
   executionWorkspaces,
+  finishLineItems,
   heartbeatRuns,
   issueApprovals,
   issueComments,
@@ -4849,6 +4850,33 @@ export function issueRoutes(
     const parent = await svc.getById(input.parentIssueId);
     if (!parent || parent.companyId !== input.companyId) return null;
     return parent.projectId ?? null;
+  }
+
+  /**
+   * A task may only tag a finish-line item that belongs to the same company AND
+   * the same project as the task itself. Direct lookup + match check — no
+   * fallback resolution (unlike goalId, finish-line items are always explicit).
+   */
+  async function assertIssueFinishLineItemTag(
+    companyId: string,
+    projectId: string | null,
+    finishLineItemId: string,
+  ) {
+    const [item] = await db
+      .select({
+        id: finishLineItems.id,
+        companyId: finishLineItems.companyId,
+        projectId: finishLineItems.projectId,
+      })
+      .from(finishLineItems)
+      .where(and(eq(finishLineItems.id, finishLineItemId), eq(finishLineItems.companyId, companyId)))
+      .then((rows) => rows);
+    if (!item) {
+      throw badRequest("Finish-line item not found for this company");
+    }
+    if (item.projectId !== projectId) {
+      throw badRequest("Finish-line item must belong to the same project as the task");
+    }
   }
 
   async function resolveCreateAssignmentProjectId(input: {
@@ -11788,6 +11816,9 @@ export function issueRoutes(
         assigneeAgentId: createBody.assigneeAgentId ?? null,
         assigneeUserId: rawCreateBody.assigneeUserId ?? null,
       };
+      if (typeof createBody.finishLineItemId === "string" && createBody.finishLineItemId) {
+        await assertIssueFinishLineItemTag(companyId, createAssignmentScope.projectId, createBody.finishLineItemId);
+      }
       await assertTaskBridgeCreateAllowed(
         req,
         companyId,
@@ -12872,6 +12903,17 @@ export function issueRoutes(
         onBehalfOfUserId: _requestedOnBehalfOfUserId,
         ...updateFields
       } = req.body;
+      if (typeof updateFields.finishLineItemId === "string" && updateFields.finishLineItemId) {
+        const nextIssueProjectId =
+          updateFields.projectId !== undefined
+            ? (updateFields.projectId as string | null)
+            : existing.projectId;
+        await assertIssueFinishLineItemTag(
+          existing.companyId,
+          nextIssueProjectId,
+          updateFields.finishLineItemId,
+        );
+      }
       if (existing.conversationAgentId && req.actor.type === "board" && commentBody) {
         throw unprocessable("Send conversation messages through the comments endpoint with a clientRequestId");
       }
