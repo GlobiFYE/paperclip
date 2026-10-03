@@ -236,8 +236,8 @@ describe("Projects", () => {
     expect(content.indexOf(leftTitle)).toBeLessThan(content.indexOf("Bravo"));
     expect(content).toContain("in progress");
     // Zone chips render on the cards via the picker triggers.
-    expect(content).toContain("Zone B");
-    expect(content).toContain("Zone A");
+    expect(content).toContain(PROJECT_ZONE_LABELS.b);
+    expect(content).toContain(PROJECT_ZONE_LABELS.a);
   });
 
   it("sorts zone-grouped projects by the selected field", async () => {
@@ -260,7 +260,7 @@ describe("Projects", () => {
       link.textContent?.includes("Alpha"),
     );
     const trigger = alphaRow?.querySelector<HTMLButtonElement>('button[aria-label^="Change project zone"]');
-    expect(trigger?.getAttribute("aria-label")).toBe("Change project zone (current: Zone A)");
+    expect(trigger?.getAttribute("aria-label")).toBe(`Change project zone (current: ${PROJECT_ZONE_LABELS.a})`);
     const listCallsBefore = mockProjectsApi.list.mock.calls.length;
 
     await act(async () => {
@@ -270,7 +270,7 @@ describe("Projects", () => {
     await flushReact();
 
     const zoneBOption = Array.from(document.body.querySelectorAll('[data-testid="project-zone-option"]'))
-      .find((element) => element.textContent?.includes("Zone B"));
+      .find((element) => element.textContent?.includes(PROJECT_ZONE_LABELS.b));
     expect(zoneBOption).toBeTruthy();
 
     await act(async () => {

@@ -587,8 +587,8 @@ export const PROJECT_ZONES = ["a", "b"] as const;
 export type ProjectZone = (typeof PROJECT_ZONES)[number];
 
 export const PROJECT_ZONE_LABELS: Record<ProjectZone, string> = {
-  a: "Zone A",
-  b: "Zone B",
+  a: "The Lot",
+  b: "Active Lane",
 };
 
 /** One-line explanation shown next to the label in pickers and headers. */

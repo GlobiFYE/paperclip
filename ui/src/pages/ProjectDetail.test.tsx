@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { PROJECT_STATUSES, type Project } from "@paperclipai/shared";
+import { PROJECT_STATUSES, PROJECT_ZONE_LABELS, type Project } from "@paperclipai/shared";
 import type { ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
@@ -633,8 +633,8 @@ describe("ProjectDetail", () => {
       const trigger = zoneTrigger();
       expect(trigger).not.toBeNull();
       // Legacy rows without a zone park in zone "a" (the DB default).
-      expect(trigger?.textContent).toContain("Zone A");
-      expect(trigger?.getAttribute("aria-label")).toBe("Change project zone (current: Zone A)");
+      expect(trigger?.textContent).toContain(PROJECT_ZONE_LABELS.a);
+      expect(trigger?.getAttribute("aria-label")).toBe(`Change project zone (current: ${PROJECT_ZONE_LABELS.a})`);
       expect(zoneOptions()).toHaveLength(0);
       // The zone chip sits in the header row with the status chip.
       const statusPicker = container.querySelector('button[aria-label^="Change project status"]');
@@ -649,10 +649,10 @@ describe("ProjectDetail", () => {
 
       expect(zoneOptions()).toHaveLength(2);
       const current = zoneOptions().find((btn) => btn.getAttribute("aria-current") === "true");
-      expect(current?.textContent).toContain("Zone A");
+      expect(current?.textContent).toContain(PROJECT_ZONE_LABELS.a);
       expect(current?.textContent).toContain("Parked — zero burn");
       const other = zoneOptions().find((btn) => btn.getAttribute("aria-current") !== "true");
-      expect(other?.textContent).toContain("Zone B");
+      expect(other?.textContent).toContain(PROJECT_ZONE_LABELS.b);
       expect(other?.textContent).toContain("The active lane");
     });
 
@@ -663,7 +663,7 @@ describe("ProjectDetail", () => {
       mockProjectsApi.get.mockResolvedValue(project({ zone: "b" }));
       await openZonePicker();
 
-      const zoneB = findZoneOption("Zone B");
+      const zoneB = findZoneOption(PROJECT_ZONE_LABELS.b);
       expect(zoneB).not.toBeNull();
       await act(async () => {
         zoneB?.click();
@@ -679,14 +679,14 @@ describe("ProjectDetail", () => {
       );
       expect(mockProjectsApi.get.mock.calls.length).toBeGreaterThan(1);
       // The chip reads the refreshed zone, not the optimistic value.
-      expect(zoneTrigger()?.textContent).toContain("Zone B");
+      expect(zoneTrigger()?.textContent).toContain(PROJECT_ZONE_LABELS.b);
     });
 
     it("does not PATCH when the current zone is picked again", async () => {
       await renderDetail();
       await openZonePicker();
 
-      const current = findZoneOption("Zone A");
+      const current = findZoneOption(PROJECT_ZONE_LABELS.a);
       expect(current).not.toBeNull();
       await act(async () => {
         current?.click();
@@ -704,7 +704,7 @@ describe("ProjectDetail", () => {
       await renderDetail();
       await openZonePicker();
 
-      const zoneB = findZoneOption("Zone B");
+      const zoneB = findZoneOption(PROJECT_ZONE_LABELS.b);
       expect(zoneB).not.toBeNull();
       await act(async () => {
         zoneB?.click();
@@ -715,7 +715,7 @@ describe("ProjectDetail", () => {
       expect(container.querySelector('[data-testid="project-status-save-state"]')?.textContent)
         .toBe("saving");
       // Optimistic flip: the chip shows the picked zone while saving.
-      expect(trigger?.textContent).toContain("Zone B");
+      expect(trigger?.textContent).toContain(PROJECT_ZONE_LABELS.b);
 
       await act(async () => {
         rejectUpdate?.(new Error("network down"));
@@ -726,7 +726,7 @@ describe("ProjectDetail", () => {
       expect(container.querySelector('[data-testid="project-status-save-state"]')?.textContent)
         .toBe("error");
       // The failure surfaces and the chip reverts to the persisted zone.
-      expect(zoneTrigger()?.textContent).toContain("Zone A");
+      expect(zoneTrigger()?.textContent).toContain(PROJECT_ZONE_LABELS.a);
     });
   });
 });
