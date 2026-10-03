@@ -23,6 +23,8 @@ import { MetricCard } from "../components/MetricCard";
 import { EmptyState } from "../components/EmptyState";
 import { StatusIcon } from "../components/StatusIcon";
 import { usePublishSharedQueryData, useSharedPollingQuery } from "../hooks/useSharedPolling";
+import { useFocusDashboardEnabled } from "../hooks/useFocusDashboardEnabled";
+import { projectStatusBadge, statusBadgeDefault } from "../lib/status-colors";
 
 import { ActivityRow } from "../components/ActivityRow";
 import { timeAgo } from "../lib/timeAgo";
@@ -35,7 +37,9 @@ import { PageSkeleton } from "../components/PageSkeleton";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { InlineBanner } from "../components/InlineBanner";
-import type { Agent, Issue } from "@paperclipai/shared";
+import type { Agent, FocusDashboardSummary, Issue, ProjectStatus } from "@paperclipai/shared";
+import type { CompanyUserProfile } from "../lib/company-members";
+import type { ReactNode } from "react";
 import { PluginSlotOutlet } from "@/plugins/slots";
 import { SmokeLabDashboardCard } from "../components/SmokeLabDashboardCard";
 
@@ -68,6 +72,176 @@ export function derivePausedAgentBanner(agents: Agent[] | undefined): PausedAgen
   }
   if (agents.every((agent) => agent.status === "paused")) return { kind: "all-paused" };
   return null;
+}
+
+/**
+ * Night-crew focus surface (plan §2b): the dashboard as active-lane HQ — one
+ * zone-"b" project front and center, its next steps, and only the lane's own
+ * activity. Zero lot content, zero other projects, zero metric cards and
+ * charts; the classic dashboard keeps all of that behind the flag-off path.
+ */
+function FocusDashboard({
+  focus,
+  agents,
+  userProfileMap,
+  budgetIncidentsBanner,
+}: {
+  focus: FocusDashboardSummary;
+  agents: Agent[] | undefined;
+  userProfileMap: Map<string, CompanyUserProfile>;
+  budgetIncidentsBanner: ReactNode;
+}) {
+  const activeProject = focus.activeProject;
+
+  const agentMap = useMemo(() => {
+    const map = new Map<string, Agent>();
+    for (const a of agents ?? []) map.set(a.id, a);
+    return map;
+  }, [agents]);
+
+  // Lane-scoped entity maps: only the active project and its own next steps —
+  // the same `entityType:entityId` convention the classic activity list uses.
+  const laneEntityNameMap = useMemo(() => {
+    const map = new Map<string, string>();
+    if (activeProject) map.set(`project:${activeProject.id}`, activeProject.name);
+    for (const step of focus.nextSteps) {
+      map.set(`issue:${step.id}`, step.identifier ?? step.id.slice(0, 8));
+    }
+    return map;
+  }, [activeProject, focus.nextSteps]);
+
+  const laneEntityTitleMap = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const step of focus.nextSteps) map.set(`issue:${step.id}`, step.title);
+    return map;
+  }, [focus.nextSteps]);
+
+  if (!activeProject) {
+    // Calm empty state: a company with no lane is a choice, not an error.
+    return (
+      <>
+        {budgetIncidentsBanner}
+        <Card className="block p-8" data-testid="focus-empty-lane">
+          <p className="text-sm font-medium text-foreground">No active lane</p>
+          <p className="mt-1 text-sm text-muted-foreground">
+            This organization has no project in focus yet.
+          </p>
+          <Link
+            to="/projects"
+            className="mt-3 inline-block text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            Open projects
+          </Link>
+        </Card>
+      </>
+    );
+  }
+
+  return (
+    <>
+      {budgetIncidentsBanner}
+
+      {/* Active lane header */}
+      <Card className="block p-4" data-testid="focus-project-header">
+        <div className="flex flex-wrap items-center gap-2">
+          <h2 className="text-lg font-semibold text-foreground">{activeProject.name}</h2>
+          <span
+            className={cn(
+              "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium capitalize",
+              projectStatusBadge[activeProject.status as ProjectStatus] ?? statusBadgeDefault,
+            )}
+          >
+            {activeProject.status.replace(/_/g, " ")}
+          </span>
+        </div>
+        {activeProject.description ? (
+          <p className="mt-1 text-sm text-muted-foreground">{activeProject.description}</p>
+        ) : null}
+      </Card>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        {/* Next steps — work in progress first, server-ordered */}
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+            Next steps
+          </h3>
+          {focus.nextSteps.length === 0 ? (
+            <Card className="block p-4">
+              <p className="text-sm text-muted-foreground">Nothing queued in this lane.</p>
+            </Card>
+          ) : (
+            <Card className="@container block py-0 divide-y divide-border overflow-hidden">
+              {focus.nextSteps.map((step) => (
+                <Link
+                  key={step.id}
+                  to={`/issues/${step.identifier ?? step.id}`}
+                  className="dashboard-list-row text-sm cursor-pointer hover:bg-accent/50 transition-colors no-underline text-inherit block"
+                >
+                  <div className="flex items-start gap-2">
+                    <span className="flex size-6 shrink-0 items-center justify-end">
+                      <StatusIcon status={step.status} />
+                    </span>
+                    <span className="flex min-w-0 flex-1 flex-col gap-1">
+                      <span className="flex min-w-0 items-baseline gap-2">
+                        <span className="min-w-0 flex-1 truncate text-sm leading-6" title={step.title}>
+                          {step.title}
+                        </span>
+                        <span className="ml-auto shrink-0 truncate text-right font-mono text-(length:--text-micro) text-muted-foreground">
+                          {step.identifier ?? step.id.slice(0, 8)}
+                        </span>
+                      </span>
+                      <span className="flex min-h-6 min-w-0 items-center gap-2">
+                        <span className="flex min-w-0 flex-1 items-center">
+                          {step.assigneeAgentId ? (() => {
+                            const agent = agentMap.get(step.assigneeAgentId);
+                            return agent
+                              ? <AgentIdentity agent={agent} size="sm" className="max-w-32" />
+                              : null;
+                          })() : step.assigneeUserId && userProfileMap.get(step.assigneeUserId) ? (
+                            <span className="truncate text-xs text-muted-foreground">
+                              {userProfileMap.get(step.assigneeUserId)!.label}
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="ml-auto w-(--dashboard-list-time-width) shrink-0 whitespace-nowrap text-right text-xs text-muted-foreground">
+                          {timeAgo(step.updatedAt)}
+                        </span>
+                      </span>
+                    </span>
+                  </div>
+                </Link>
+              ))}
+            </Card>
+          )}
+        </div>
+
+        {/* Lane activity — only this lane's events, same row treatment */}
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+            Lane activity
+          </h3>
+          {focus.laneActivity.length === 0 ? (
+            <Card className="block p-4">
+              <p className="text-sm text-muted-foreground">No activity in this lane yet.</p>
+            </Card>
+          ) : (
+            <Card className="@container block py-0 divide-y divide-border overflow-hidden">
+              {focus.laneActivity.map((event) => (
+                <ActivityRow
+                  key={event.id}
+                  event={event}
+                  agentMap={agentMap}
+                  userProfileMap={userProfileMap}
+                  entityNameMap={laneEntityNameMap}
+                  entityTitleMap={laneEntityTitleMap}
+                />
+              ))}
+            </Card>
+          )}
+        </div>
+      </div>
+    </>
+  );
 }
 
 export function Dashboard() {
@@ -171,6 +345,19 @@ export function Dashboard() {
     enabled: !!selectedCompanyId,
   });
   usePublishSharedQueryData(sharedDashboard, data, dashboardUpdatedAt);
+
+  // Night-crew focus dashboard (doc/plans/2026-10-02-night-crew.md §2b): the
+  // flag-gated active-lane HQ. Fails closed — anything but an explicit
+  // `enableFocusDashboard: true` keeps the byte-compatible classic dashboard.
+  // The classic summary query above stays live in both modes: the shared
+  // banners (budget incidents, paused agents) read from it.
+  const { enabled: focusDashboardEnabled } = useFocusDashboardEnabled();
+  const focusQueryKey = queryKeys.dashboardFocus(selectedCompanyId!);
+  const { data: focus } = useQuery({
+    queryKey: focusQueryKey,
+    queryFn: () => dashboardApi.focus(selectedCompanyId!),
+    enabled: !!selectedCompanyId && focusDashboardEnabled,
+  });
 
   const activityQueryKey = [...queryKeys.activity(selectedCompanyId!), { limit: DASHBOARD_ACTIVITY_LIMIT }] as const;
   const sharedActivity = useSharedPollingQuery({
@@ -320,6 +507,28 @@ export function Dashboard() {
   const pausedImportedCount =
     pausedBanner?.kind === "imported" ? pausedBanner.pausedImportedAgentIds.length : 0;
 
+  // Budget-incidents banner (kept in both dashboard modes). Defined once so
+  // the classic tree and the focus surface render it identically.
+  const budgetIncidentsBanner =
+    data && data.budgets.activeIncidents > 0 ? (
+      <div className="flex items-start justify-between gap-3 rounded-xl border border-red-500/20 bg-(image:--gradient-extract-1) px-4 py-3">
+        <div className="flex items-start gap-2.5">
+          <PauseCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-700 dark:text-red-300" />
+          <div>
+            <p className="text-sm font-medium text-red-950 dark:text-red-50">
+              {data.budgets.activeIncidents} active budget incident{data.budgets.activeIncidents === 1 ? "" : "s"}
+            </p>
+            <p className="text-xs text-red-900/70 dark:text-red-100/70">
+              {data.budgets.pausedAgents} agents paused · {data.budgets.pausedProjects} projects paused · {data.budgets.pendingApprovals} pending budget approvals
+            </p>
+          </div>
+        </div>
+        <Link to="/costs" className="text-sm underline underline-offset-2 text-red-900 dark:text-red-100">
+          Open budgets
+        </Link>
+      </div>
+    ) : null;
+
   return (
     <div className="space-y-6">
       {error && <p className="text-sm text-destructive">{error.message}</p>}
@@ -374,28 +583,24 @@ export function Dashboard() {
         </div>
       )}
 
-      <ActiveAgentsPanel companyId={selectedCompanyId!} dedupeLinkedTasks />
-
-      {data && (
+      {focusDashboardEnabled ? (
+        focus === undefined ? (
+          <PageSkeleton variant="dashboard" />
+        ) : (
+          <FocusDashboard
+            focus={focus}
+            agents={agents}
+            userProfileMap={userProfileMap}
+            budgetIncidentsBanner={budgetIncidentsBanner}
+          />
+        )
+      ) : (
         <>
-          {data.budgets.activeIncidents > 0 ? (
-            <div className="flex items-start justify-between gap-3 rounded-xl border border-red-500/20 bg-(image:--gradient-extract-1) px-4 py-3">
-              <div className="flex items-start gap-2.5">
-                <PauseCircle className="mt-0.5 h-4 w-4 shrink-0 text-red-700 dark:text-red-300" />
-                <div>
-                  <p className="text-sm font-medium text-red-950 dark:text-red-50">
-                    {data.budgets.activeIncidents} active budget incident{data.budgets.activeIncidents === 1 ? "" : "s"}
-                  </p>
-                  <p className="text-xs text-red-900/70 dark:text-red-100/70">
-                    {data.budgets.pausedAgents} agents paused · {data.budgets.pausedProjects} projects paused · {data.budgets.pendingApprovals} pending budget approvals
-                  </p>
-                </div>
-              </div>
-              <Link to="/costs" className="text-sm underline underline-offset-2 text-red-900 dark:text-red-100">
-                Open budgets
-              </Link>
-            </div>
-          ) : null}
+          <ActiveAgentsPanel companyId={selectedCompanyId!} dedupeLinkedTasks />
+
+          {data && (
+            <>
+              {budgetIncidentsBanner}
 
           <div className="grid grid-cols-2 xl:grid-cols-4 gap-1 sm:gap-2">
             <MetricCard
@@ -554,6 +759,8 @@ export function Dashboard() {
             </div>
           </div>
 
+            </>
+          )}
         </>
       )}
     </div>
