@@ -174,6 +174,74 @@ describeEmbeddedPostgres("finish-line item routes", () => {
     expect(cleared.body.finishLineItemId).toBeNull();
   });
 
+  it("list nests exactly each bullet's tagged tasks, non-done first", async () => {
+    const companyId = await seedCompany();
+    const projectId = await seedProject(companyId, "Nested tasks project");
+    const app = createApp(companyId);
+    const base = `/api/companies/${companyId}/projects/${projectId}/finish-line-items`;
+
+    const tagged = await request(app).post(base).send({ title: "Close the books" });
+    expect(tagged.status).toBe(201);
+    const untagged = await request(app).post(base).send({ title: "Hire a bookkeeper" });
+    expect(untagged.status).toBe(201);
+
+    // Two tasks tag the bullet (one done, one in progress); one bystander
+    // stays untagged. Inserted directly so statuses are exact.
+    const taggedDoneId = randomUUID();
+    const taggedActiveId = randomUUID();
+    const bystanderId = randomUUID();
+    await db.insert(issues).values([
+      {
+        id: taggedDoneId,
+        companyId,
+        projectId,
+        title: "Reconcile October",
+        status: "done",
+        finishLineItemId: tagged.body.id,
+      },
+      {
+        id: taggedActiveId,
+        companyId,
+        projectId,
+        title: "Wire the QBO feed",
+        status: "in_progress",
+        finishLineItemId: tagged.body.id,
+      },
+      {
+        id: bystanderId,
+        companyId,
+        projectId,
+        title: "Refactor the login page",
+        status: "in_progress",
+      },
+    ]);
+
+    const list = await request(app).get(base);
+    expect(list.status).toBe(200);
+
+    // The bullet carries exactly its two tagged tasks.
+    const bullet = list.body.find((item: { id: string }) => item.id === tagged.body.id);
+    expect(bullet.tasks).toHaveLength(2);
+    expect(new Set(bullet.tasks.map((task: { id: string }) => task.id))).toEqual(
+      new Set([taggedDoneId, taggedActiveId]),
+    );
+    // The untagged task appears nowhere in the response.
+    expect(JSON.stringify(list.body)).not.toContain(bystanderId);
+    // Non-done first (the live work), done after (the record of what got it done).
+    expect(bullet.tasks.map((task: { status: string }) => task.status)).toEqual([
+      "in_progress",
+      "done",
+    ]);
+    // Compact projection: nothing beyond id/title/status rides along.
+    for (const task of bullet.tasks) {
+      expect(Object.keys(task).sort()).toEqual(["id", "status", "title"]);
+    }
+
+    // Untagged bullets carry an empty task list, consistently.
+    const quiet = list.body.find((item: { id: string }) => item.id === untagged.body.id);
+    expect(quiet.tasks).toEqual([]);
+  });
+
   it("rejects tagging an item from a different project", async () => {
     const companyId = await seedCompany();
     const projectA = await seedProject(companyId, "Project A");
