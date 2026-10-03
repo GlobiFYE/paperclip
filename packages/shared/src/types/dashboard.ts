@@ -1,3 +1,5 @@
+import type { ActivityEvent } from "./activity.js";
+
 export interface DashboardRunActivityDay {
   date: string;
   succeeded: number;
@@ -51,4 +53,42 @@ export interface DashboardSummary {
     pausedProjects: number;
   };
   runActivity: DashboardRunActivityDay[];
+}
+
+/**
+ * Night-crew focus dashboard (doc/plans/2026-10-02-night-crew.md §2b): the
+ * company's single zone-"b" (active-lane) project, front and center on the
+ * dashboard. Null when the company has no active lane.
+ */
+export interface FocusDashboardActiveProject {
+  id: string;
+  name: string;
+  description: string | null;
+  status: string;
+  zone: string;
+}
+
+/**
+ * One next step of the active lane — the issue-list select shape the UI rows
+ * need, nothing more.
+ */
+export interface FocusDashboardNextStep {
+  id: string;
+  identifier: string | null;
+  title: string;
+  status: string;
+  priority: string | null;
+  assigneeAgentId: string | null;
+  assigneeUserId: string | null;
+  updatedAt: Date | string;
+}
+
+/**
+ * The active-lane HQ payload: one lane, its next steps, its recent activity.
+ * Zero lot content, zero other projects, zero metrics.
+ */
+export interface FocusDashboardSummary {
+  activeProject: FocusDashboardActiveProject | null;
+  nextSteps: FocusDashboardNextStep[];
+  laneActivity: ActivityEvent[];
 }

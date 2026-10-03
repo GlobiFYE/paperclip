@@ -1,12 +1,34 @@
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agents, approvals, companies, costEvents, heartbeatRuns, issues } from "@paperclipai/db";
+import {
+  activityLog,
+  agents,
+  approvals,
+  companies,
+  costEvents,
+  heartbeatRuns,
+  issues,
+  projects,
+} from "@paperclipai/db";
 import { notFound } from "../errors.js";
 import { budgetService } from "./budgets.js";
-import { executionIssueCondition, lotProjectIssueFilter, runIssueIdOutsideLotFilter } from "./issue-visibility.js";
+import {
+  executionIssueCondition,
+  lotProjectIssueFilter,
+  runIssueIdOutsideLotFilter,
+  visibleIssueCondition,
+} from "./issue-visibility.js";
 import { retryIdempotentDatabaseOperation } from "../database-retry.js";
 
 const DASHBOARD_RUN_ACTIVITY_DAYS = 14;
+
+/**
+ * Night-crew focus dashboard (doc/plans/2026-10-02-night-crew.md §2b): the
+ * active lane is a single zone-\"b\" project, so one bounded look at recent
+ * lane rows is all the feed needs.
+ */
+const FOCUS_NEXT_STEPS_LIMIT = 5;
+const FOCUS_LANE_ACTIVITY_LIMIT = 10;
 
 function formatUtcDateKey(date: Date): string {
   return date.toISOString().slice(0, 10);
@@ -224,6 +246,106 @@ export function dashboardService(db: Db) {
         },
         runActivity: Array.from(runActivity.values()),
       };
+    },
+
+    /**
+     * Night-crew ADHD edition focus surface (doc/plans/2026-10-02-night-crew.md
+     * §2b): the dashboard as active-lane HQ. One zone-"b" project front and
+     * center, its next steps, and the lane's recent activity — zero lot
+     * content, zero other projects, zero metrics. Company-scoped like every
+     * other summary read.
+     */
+    focus: async (companyId: string) => {
+      // The platform keeps at most one zone-"b" project per company; the
+      // ordered lookup is defensive so a second one (import quirk, manual
+      // write) still resolves deterministically to the most recently updated
+      // lane instead of a coin flip. Archived lanes never resolve.
+      const activeProject = await retryIdempotentDatabaseOperation(() => db
+        .select({
+          id: projects.id,
+          name: projects.name,
+          description: projects.description,
+          status: projects.status,
+          zone: projects.zone,
+        })
+        .from(projects)
+        .where(
+          and(
+            eq(projects.companyId, companyId),
+            eq(projects.zone, "b"),
+            isNull(projects.archivedAt),
+          ),
+        )
+        .orderBy(desc(projects.updatedAt))
+        .limit(1)
+        .then((rows) => rows[0] ?? null));
+
+      if (!activeProject) {
+        return { activeProject: null, nextSteps: [], laneActivity: [] };
+      }
+
+      // The lane's next 1-3 steps (bounded above): visible, executable,
+      // unhidden work — in_progress first (work in progress is the headline),
+      // then todo, most recently touched first inside each bucket.
+      const nextSteps = await retryIdempotentDatabaseOperation(() => db
+        .select({
+          id: issues.id,
+          identifier: issues.identifier,
+          title: issues.title,
+          status: issues.status,
+          priority: issues.priority,
+          assigneeAgentId: issues.assigneeAgentId,
+          assigneeUserId: issues.assigneeUserId,
+          updatedAt: issues.updatedAt,
+        })
+        .from(issues)
+        .where(
+          and(
+            eq(issues.companyId, companyId),
+            eq(issues.projectId, activeProject.id),
+            visibleIssueCondition(),
+            executionIssueCondition(),
+            inArray(issues.status, ["todo", "in_progress"]),
+          ),
+        )
+        .orderBy(
+          sql`case when ${issues.status} = 'in_progress' then 0 else 1 end`,
+          desc(issues.updatedAt),
+        )
+        .limit(FOCUS_NEXT_STEPS_LIMIT));
+
+      // Lane activity: recent activity-log rows whose subject belongs to the
+      // active project — project events about the lane itself plus issue
+      // events for the lane's issues. Other projects' (and lot) events never
+      // match; the scoping is structural, not a filter bolted on top.
+      const laneActivity = await retryIdempotentDatabaseOperation(() => db
+        .select()
+        .from(activityLog)
+        .where(
+          and(
+            eq(activityLog.companyId, companyId),
+            or(
+              and(
+                eq(activityLog.entityType, "project"),
+                eq(activityLog.entityId, activeProject.id),
+              ),
+              and(
+                eq(activityLog.entityType, "issue"),
+                sql`exists (
+                  select 1
+                  from ${issues} lane_issue
+                  where lane_issue.company_id = ${companyId}
+                    and lane_issue.project_id = ${activeProject.id}
+                    and lane_issue.id::text = ${activityLog.entityId}
+                )`,
+              ),
+            ),
+          ),
+        )
+        .orderBy(desc(activityLog.createdAt))
+        .limit(FOCUS_LANE_ACTIVITY_LIMIT));
+
+      return { activeProject, nextSteps, laneActivity };
     },
   };
 }
