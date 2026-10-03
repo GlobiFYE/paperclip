@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, FlaskConical, Lock, Play } from "lucide-react";
+import { AlertTriangle, FlaskConical, Lock, Minus, Play, Plus } from "lucide-react";
 import type {
   InstanceExperimentalSettings,
   InstanceExperimentalSettingsWithManaged,
@@ -58,6 +58,22 @@ function formatActivationTimestamp(iso: string): string {
 
 // PAP-11233: keep Conference Room code intact, but hide the user-facing opt-in for now.
 const SHOW_CONFERENCE_ROOM_EXPERIMENTAL_SETTING = false;
+
+/**
+ * Bounds of the ADHD edition's focusLaneProjectLimit (mirrors the shared
+ * patch schema: int 1-8, default 1). The stepper can never send a value the
+ * server would reject.
+ */
+const FOCUS_LANE_PROJECT_LIMIT_MIN = 1;
+const FOCUS_LANE_PROJECT_LIMIT_MAX = 8;
+
+/** Clamp a lane-limit candidate into the shared 1-8 range. */
+function clampFocusLaneProjectLimit(value: number): number {
+  return Math.min(
+    FOCUS_LANE_PROJECT_LIMIT_MAX,
+    Math.max(FOCUS_LANE_PROJECT_LIMIT_MIN, value),
+  );
+}
 
 function ManagedByCloudBadge() {
   return (
@@ -238,6 +254,11 @@ export function InstanceExperimentalSettings() {
     experimentalQuery.data?.enableFirstTaskPlanProposal === true;
   const enableSmokeLab = experimentalQuery.data?.enableSmokeLab === true;
   const enableFocusDashboard = experimentalQuery.data?.enableFocusDashboard === true;
+  // Optional in the shared interface (rows persisted before the key normalize
+  // to the schema default of 1); the stepper never shows an out-of-range value.
+  const focusLaneProjectLimit = clampFocusLaneProjectLimit(
+    experimentalQuery.data?.focusLaneProjectLimit ?? FOCUS_LANE_PROJECT_LIMIT_MIN,
+  );
   const enableLotView = experimentalQuery.data?.enableLotView === true;
   const enableLotQuestions = experimentalQuery.data?.enableLotQuestions === true;
   const autoRestartDevServerWhenIdle = experimentalQuery.data?.autoRestartDevServerWhenIdle === true;
@@ -552,6 +573,61 @@ export function InstanceExperimentalSettings() {
               Night-crew personal-productivity surfaces. Each is opt-in and off by default.
             </p>
           </div>
+
+          {/* Numeric sibling of the toggles: sizes the multi-lane focus
+              surface. Rides the same PATCH as the boolean flags, clamped to
+              the shared 1-8 range so a click can never send an invalid value
+              (a clamped no-op sends nothing at all). */}
+          <Card className="block bg-transparent p-5" data-testid="focus-lane-limit-card">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1.5">
+                <h3 className="text-sm font-semibold">Active lanes</h3>
+                <p className="max-w-2xl text-sm text-muted-foreground">
+                  How many projects the dashboard carries at once
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-1" data-testid="focus-lane-limit-stepper">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-xs"
+                  aria-label="Decrease active lanes"
+                  data-testid="focus-lane-limit-decrease"
+                  disabled={toggleMutation.isPending}
+                  onClick={() => {
+                    const next = clampFocusLaneProjectLimit(focusLaneProjectLimit - 1);
+                    if (next !== focusLaneProjectLimit) {
+                      toggleMutation.mutate({ focusLaneProjectLimit: next });
+                    }
+                  }}
+                >
+                  <Minus aria-hidden="true" />
+                </Button>
+                <span
+                  className="min-w-4 text-center text-sm font-medium tabular-nums"
+                  data-testid="focus-lane-limit-value"
+                >
+                  {focusLaneProjectLimit}
+                </span>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-xs"
+                  aria-label="Increase active lanes"
+                  data-testid="focus-lane-limit-increase"
+                  disabled={toggleMutation.isPending}
+                  onClick={() => {
+                    const next = clampFocusLaneProjectLimit(focusLaneProjectLimit + 1);
+                    if (next !== focusLaneProjectLimit) {
+                      toggleMutation.mutate({ focusLaneProjectLimit: next });
+                    }
+                  }}
+                >
+                  <Plus aria-hidden="true" />
+                </Button>
+              </div>
+            </div>
+          </Card>
 
           <ExperimentalToggleCard
             title="Focus dashboard"

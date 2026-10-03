@@ -338,6 +338,81 @@ describe("InstanceExperimentalSettings — Conference Room Chat card (PAP-11233)
     }
   });
 
+  it("renders the active-lanes stepper with default 1, patches the limit, and clamps at both bounds", async () => {
+    await renderPage();
+
+    // Renders in the ADHD edition section next to the focus dashboard toggle.
+    expect(container.textContent).toContain("Active lanes");
+    expect(container.textContent).toContain("How many projects the dashboard carries at once");
+    const stepperValue = () =>
+      container.querySelector('[data-testid="focus-lane-limit-value"]')?.textContent;
+    const increase = () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="focus-lane-limit-increase"]');
+    const decrease = () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="focus-lane-limit-decrease"]');
+
+    // Default: absent key normalizes to the schema default of 1.
+    expect(stepperValue()).toBe("1");
+
+    // Clicking + PATCHes 2 through the same instance-settings mutation.
+    await act(async () => {
+      increase()?.click();
+    });
+    await flushReact();
+    expect(mockInstanceSettingsApi.updateExperimental).toHaveBeenLastCalledWith({
+      focusLaneProjectLimit: 2,
+    });
+    expect(stepperValue()).toBe("2");
+
+    // Stepping back down to 1 still PATCHes.
+    await act(async () => {
+      decrease()?.click();
+    });
+    await flushReact();
+    expect(mockInstanceSettingsApi.updateExperimental).toHaveBeenLastCalledWith({
+      focusLaneProjectLimit: 1,
+    });
+    expect(stepperValue()).toBe("1");
+
+    // Clamp at the floor: − at 1 sends nothing (never 0).
+    mockInstanceSettingsApi.updateExperimental.mockClear();
+    await act(async () => {
+      decrease()?.click();
+    });
+    await flushReact();
+    expect(mockInstanceSettingsApi.updateExperimental).not.toHaveBeenCalled();
+    expect(stepperValue()).toBe("1");
+
+    // Clamp at the ceiling: seeded at 8, + sends nothing (never 9).
+    currentExperimentalSettings = {
+      ...currentExperimentalSettings,
+      focusLaneProjectLimit: 8,
+    };
+    flushSync(() => {
+      root?.unmount();
+    });
+    root = null;
+    await renderPage();
+    expect(stepperValue()).toBe("8");
+    mockInstanceSettingsApi.updateExperimental.mockClear();
+    await act(async () => {
+      increase()?.click();
+    });
+    await flushReact();
+    expect(mockInstanceSettingsApi.updateExperimental).not.toHaveBeenCalled();
+    expect(stepperValue()).toBe("8");
+
+    // − at 8 still PATCHes down to 7.
+    await act(async () => {
+      decrease()?.click();
+    });
+    await flushReact();
+    expect(mockInstanceSettingsApi.updateExperimental).toHaveBeenLastCalledWith({
+      focusLaneProjectLimit: 7,
+    });
+    expect(stepperValue()).toBe("7");
+  });
+
   it("does not expose the retired Runner Preview Ingress setting separately", async () => {
     currentExperimentalSettings.enableRunnerPreviewIngress = true;
     await renderPage();
