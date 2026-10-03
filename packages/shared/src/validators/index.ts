@@ -628,6 +628,7 @@ export {
 
 export {
   finishLineItemStatusSchema,
+  finishLineItemTaskSchema,
   finishLineItemSchema,
   finishLineItemSummarySchema,
   createFinishLineItemSchema,

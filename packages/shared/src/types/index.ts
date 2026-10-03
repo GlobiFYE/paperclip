@@ -803,6 +803,7 @@ export type {
   FinishLineItem,
   FinishLineItemStatus,
   FinishLineItemSummary,
+  FinishLineItemTask,
   CreateFinishLineItemRequest,
   UpdateFinishLineItemRequest,
 } from "./finish-line-item.js";

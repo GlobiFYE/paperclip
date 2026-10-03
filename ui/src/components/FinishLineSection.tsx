@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { FinishLineItem, FinishLineItemStatus } from "@paperclipai/shared";
+import type { FinishLineItem, FinishLineItemStatus, FinishLineItemTask } from "@paperclipai/shared";
 import { Check, ListChecks, Plus, Trash2, X } from "lucide-react";
 import { finishLineItemsApi } from "../api/finishLineItems";
 import { queryKeys } from "../lib/queryKeys";
 import { issueStatusIcon, issueStatusIconDefault } from "../lib/status-colors";
 import { cn } from "../lib/utils";
+import { createIssueDetailPath } from "../lib/issueDetailBreadcrumb";
+import { Link } from "../lib/router";
 import { InlineEditor } from "./InlineEditor";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,6 +18,7 @@ export const FINISH_LINE_SECTION_ANCHOR = "finish-line";
 const SECTION_HEADER_TEXT = "Finish Line";
 const ADD_BULLET_TEXT = "Add bullet";
 const NO_ITEMS_HINT = "Describe what done looks like for this project — one bullet per outcome.";
+const NUDGE_TEXT = "All tasks done — check it off?";
 
 function toggleLabel(item: FinishLineItem): string {
   return item.status === "done"
@@ -26,8 +29,12 @@ function toggleLabel(item: FinishLineItem): string {
 /* ── One bullet row ──
    Checkbox-style toggle (StatusIcon-style: a bordered circle that fills with
    the done-green recipe when checked), title + description as inline-editable
-   text, and a thumb-friendly delete. The whole row stays quiet: no tables,
-   comfortable tap targets, muted secondary description. ── */
+   text, and a thumb-friendly delete. Under the row, the tasks tagged to this
+   bullet nest automatically (linked through finish_line_item_id — never wired
+   by hand); when every one of them is done and the bullet is still open, a
+   quiet amber nudge offers the same one-tap check-off. Never auto-marks. The
+   whole row stays quiet: no tables, comfortable tap targets, muted secondary
+   description. ── */
 
 function FinishLineItemRow({
   item,
@@ -43,6 +50,11 @@ function FinishLineItemRow({
   deleteError: string | null;
 }) {
   const done = item.status === "done";
+  const tasks = item.tasks ?? [];
+  // The server nests each bullet's tasks non-done first, so the live work
+  // sits directly under the bullet and the muted done rows follow as the
+  // record of what accomplished it.
+  const allTasksDone = tasks.length > 0 && tasks.every((task) => task.status === "done");
   return (
     <li
       data-testid="finish-line-item"
@@ -91,6 +103,53 @@ function FinishLineItemRow({
           <Trash2 className="h-3.5 w-3.5" aria-hidden />
         </button>
       </div>
+      {tasks.length > 0 ? (
+        <ul
+          data-testid="finish-line-item-tasks"
+          aria-label={`Tasks serving: ${item.title}`}
+          className="mt-1 space-y-1 pl-9"
+        >
+          {tasks.map((task) => {
+            const taskDone = task.status === "done";
+            return (
+              <li
+                key={task.id}
+                data-testid="finish-line-item-task"
+                data-task-id={task.id}
+                className="flex min-w-0 items-center gap-2"
+              >
+                <span
+                  aria-hidden
+                  className={cn(
+                    "h-2 w-2 shrink-0 rounded-full border",
+                    issueStatusIcon[task.status] ?? issueStatusIconDefault,
+                  )}
+                />
+                <Link
+                  to={createIssueDetailPath(task.id)}
+                  aria-label={`Open task: ${task.title}`}
+                  className={cn(
+                    "min-w-0 flex-1 truncate text-xs hover:underline",
+                    taskDone ? "text-muted-foreground line-through" : "text-foreground",
+                  )}
+                >
+                  {task.title}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      ) : null}
+      {!done && allTasksDone ? (
+        <button
+          type="button"
+          data-testid="finish-line-nudge"
+          onClick={() => onToggle(item)}
+          className="mt-1 inline-flex min-h-8 cursor-pointer items-center rounded-md pl-9 text-xs text-amber-600 transition-colors hover:underline dark:text-amber-400"
+        >
+          {NUDGE_TEXT}
+        </button>
+      ) : null}
       {deleteError ? (
         <p
           role="alert"

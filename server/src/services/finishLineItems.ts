@@ -1,10 +1,11 @@
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, isNotNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { finishLineItems, issues, projects } from "@paperclipai/db";
 import type {
   CreateFinishLineItem,
   FinishLineItem,
   FinishLineItemStatus,
+  FinishLineItemTask,
   UpdateFinishLineItem,
 } from "@paperclipai/shared";
 import { conflict, notFound } from "../errors.js";
@@ -27,7 +28,9 @@ export function finishLineItemService(db: Db) {
 
   /** Ordered by position, then creation order for stable lane rendering.
    * 404s when the project doesn't belong to the company — a project id from
-   * another company must never enumerate (even as an empty list). */
+   * another company must never enumerate (even as an empty list). Each item
+   * carries the tasks (issues) that tag it, nested so the bullet shows what
+   * accomplished it (or is still working on it): non-done first, done after. */
   async function list(companyId: string, projectId: string): Promise<FinishLineItem[]> {
     const [project] = await db
       .select({ id: projects.id })
@@ -35,12 +38,53 @@ export function finishLineItemService(db: Db) {
       .where(and(eq(projects.companyId, companyId), eq(projects.id, projectId)))
       .then((rows) => rows);
     if (!project) throw notFound("Project not found");
-    return db
+
+    const rows = await db
       .select()
       .from(finishLineItems)
       .where(and(eq(finishLineItems.companyId, companyId), eq(finishLineItems.projectId, projectId)))
-      .orderBy(asc(finishLineItems.position), asc(finishLineItems.createdAt))
-      .then((rows) => rows as unknown as FinishLineItem[]);
+      .orderBy(asc(finishLineItems.position), asc(finishLineItems.createdAt));
+
+    // One company+project-scoped pass over the tagged tasks; grouped by
+    // finish_line_item_id so each bullet nests exactly its own tasks.
+    const taggedTasks = await db
+      .select({
+        id: issues.id,
+        title: issues.title,
+        status: issues.status,
+        finishLineItemId: issues.finishLineItemId,
+      })
+      .from(issues)
+      .where(
+        and(
+          eq(issues.companyId, companyId),
+          eq(issues.projectId, projectId),
+          isNotNull(issues.finishLineItemId),
+        ),
+      );
+
+    const tasksByItem = new Map<string, FinishLineItemTask[]>();
+    for (const row of taggedTasks) {
+      const key = row.finishLineItemId;
+      if (!key) continue;
+      const group = tasksByItem.get(key) ?? [];
+      group.push({ id: row.id, title: row.title, status: row.status });
+      tasksByItem.set(key, group);
+    }
+    for (const group of tasksByItem.values()) {
+      group.sort((a, b) => {
+        const aDone = a.status === "done";
+        const bDone = b.status === "done";
+        if (aDone !== bDone) return aDone ? 1 : -1;
+        return a.title.localeCompare(b.title);
+      });
+    }
+
+    return rows.map((row) => ({
+      ...row,
+      // Untagged bullets carry an empty array — consistent for consumers.
+      tasks: tasksByItem.get(row.id) ?? [],
+    })) as unknown as FinishLineItem[];
   }
 
   async function create(

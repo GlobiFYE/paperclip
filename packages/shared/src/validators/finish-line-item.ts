@@ -2,6 +2,12 @@ import { z } from "zod";
 
 export const finishLineItemStatusSchema = z.enum(["open", "done"]);
 
+export const finishLineItemTaskSchema = z.object({
+  id: z.string().guid(),
+  title: z.string().min(1),
+  status: z.string().min(1),
+});
+
 export const finishLineItemSchema = z.object({
   id: z.string().guid(),
   companyId: z.string().guid(),
@@ -12,6 +18,7 @@ export const finishLineItemSchema = z.object({
   position: z.number().int(),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
+  tasks: z.array(finishLineItemTaskSchema).optional(),
 });
 
 export const finishLineItemSummarySchema = z.object({
@@ -20,6 +27,7 @@ export const finishLineItemSummarySchema = z.object({
   title: z.string().min(1),
   status: finishLineItemStatusSchema,
   position: z.number().int(),
+  tasks: z.array(finishLineItemTaskSchema).optional(),
 });
 
 export const createFinishLineItemSchema = z.object({
