@@ -30,6 +30,8 @@ import {
 } from "@paperclipai/shared";
 import { unprocessable } from "../errors.js";
 import { listCurrentRuntimeServicesForProjectWorkspaces } from "./workspace-runtime-read-model.js";
+import { instanceSettingsService } from "./instance-settings.js";
+import { getCachedInstanceExperimentalInt } from "./instance-flag-cache.js";
 import { parseProjectExecutionWorkspacePolicy } from "./execution-workspace-policy.js";
 import { mergeProjectWorkspaceRuntimeConfig, readProjectWorkspaceRuntimeConfig } from "./project-workspace-runtime-config.js";
 import { resolveManagedProjectWorkspaceDir } from "../home-paths.js";
@@ -567,22 +569,59 @@ async function ensureSinglePrimaryWorkspace(
 }
 
 /**
- * Single-active-lane invariant for project zones: at most one zone-"b"
- * project per company. Demotes every zone-"b" project in the company —
- * except `excludeProjectId` — back to zone "a". Callers MUST run this
+ * Active-lane invariant for project zones: at most `focusLaneProjectLimit`
+ * zone-"b" projects per company (default 1 = classic single-active-lane).
+ * Demotes the least-recently-updated zone-"b" projects beyond the limit —
+ * excluding `excludeProjectId` — back to zone "a". Callers MUST run this
  * inside the same transaction as the promote/insert so the two writes
- * commit or roll back together; the invariant then never observes two
- * zone-"b" rows.
+ * commit or roll back together; the invariant then never observes an
+ * over-limit set of zone-"b" rows.
  */
-async function demoteOtherZoneBProjects(dbOrTx: any, companyId: string, excludeProjectId?: string) {
-  await dbOrTx
-    .update(projects)
-    .set({ zone: "a", updatedAt: new Date() })
+async function demoteOtherZoneBProjects(
+  dbOrTx: any,
+  companyId: string,
+  excludeProjectId?: string,
+) {
+  // Multi-lane ADHD edition: the instance-wide focusLaneProjectLimit setting
+  // sizes the active-lane set (default 1 = classic single-active-lane). Read
+  // once per demote call through the cached experimental-settings getter
+  // (fail-closed to 1). The limit is stored instance-wide but read per
+  // company here; the cache is keyed on the transaction handle, so every
+  // demote resolves a fresh value inside its own transaction snapshot and an
+  // experimental-settings PATCH invalidates the cache globally.
+  const limit = await getCachedInstanceExperimentalInt(
+    dbOrTx as Db,
+    "focusLaneProjectLimit",
+    async () =>
+      (await instanceSettingsService(dbOrTx).getExperimental()) as unknown as Record<
+        string,
+        unknown
+      >,
+    1,
+  );
+
+  // Keep the (limit-1) most-recently-updated OTHER zone-b projects; demote
+  // only the excess, least-recently-updated first, so the post-op zone-b
+  // count equals the limit. At the default of 1 this keeps 0 others and
+  // demotes everything — byte-identical to the previous single-statement
+  // behavior. The select stays company-scoped (and excludes the promoted
+  // project), so the demote can never touch another company's lanes.
+  const others: Array<{ id: string }> = await dbOrTx
+    .select({ id: projects.id })
+    .from(projects)
     .where(and(
       eq(projects.companyId, companyId),
       eq(projects.zone, "b"),
       excludeProjectId ? ne(projects.id, excludeProjectId) : undefined,
-    ));
+    ))
+    .orderBy(desc(projects.updatedAt));
+  const excessIds = others.slice(Math.max(0, limit - 1)).map((row: { id: string }) => row.id);
+  if (excessIds.length === 0) return;
+
+  await dbOrTx
+    .update(projects)
+    .set({ zone: "a", updatedAt: new Date() })
+    .where(inArray(projects.id, excessIds));
 }
 
 export function projectService(db: Db) {

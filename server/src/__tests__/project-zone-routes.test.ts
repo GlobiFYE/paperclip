@@ -10,6 +10,7 @@ import {
 } from "./helpers/embedded-postgres.js";
 import { errorHandler } from "../middleware/index.js";
 import { projectRoutes } from "../routes/projects.js";
+import { instanceSettingsService } from "../services/instance-settings.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -101,6 +102,24 @@ describeEmbeddedPostgres("project zone routes", () => {
       .from(projects)
       .where(eq(projects.id, projectId));
     return row?.lot_state;
+  }
+
+  async function armLimit(limit: number) {
+    // updateExperimental invalidates the per-call-site setting cache, so the
+    // next demote call reads the new limit immediately.
+    await instanceSettingsService(db).updateExperimental({ focusLaneProjectLimit: limit });
+  }
+
+  async function seedUpdatedAt(projectId: string, updatedAt: Date) {
+    await db.update(projects).set({ updatedAt }).where(eq(projects.id, projectId));
+  }
+
+  async function listZoneB(companyId: string): Promise<string[]> {
+    const rows = await db
+      .select({ id: projects.id, zone: projects.zone })
+      .from(projects)
+      .where(eq(projects.companyId, companyId));
+    return rows.filter((row) => row.zone === "b").map((row) => row.id);
   }
 
   it("creates projects in zone a by default", async () => {
@@ -229,5 +248,74 @@ describeEmbeddedPostgres("project zone routes", () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("Validation error");
     expect(await readLotState(projectId)).toBeNull();
+  });
+
+  it("holds three zone-b projects together when focusLaneProjectLimit is 3", async () => {
+    await armLimit(3);
+    const companyId = await seedCompany("Multi-lane co");
+    const firstId = await seedProject(companyId, "Lane one");
+    const secondId = await seedProject(companyId, "Lane two");
+    const thirdId = await seedProject(companyId, "Lane three");
+    const app = createApp(db, boardActor([companyId]));
+
+    for (const id of [firstId, secondId, thirdId]) {
+      const res = await request(app).patch(`/api/projects/${id}`).send({ zone: "b" });
+      expect(res.status).toBe(200);
+      expect(res.body.zone).toBe("b");
+    }
+
+    expect((await listZoneB(companyId)).sort()).toEqual([firstId, secondId, thirdId].sort());
+  });
+
+  it("demotes the least-recently-updated zone-b project when a 4th takes a lane at limit 3", async () => {
+    await armLimit(3);
+    const companyId = await seedCompany("Lane eviction co");
+    const oldestId = await seedProject(companyId, "Stalest lane");
+    const middleId = await seedProject(companyId, "Middle lane");
+    const newestId = await seedProject(companyId, "Fresh lane");
+    const fourthId = await seedProject(companyId, "Incoming lane");
+    const app = createApp(db, boardActor([companyId]));
+
+    for (const id of [oldestId, middleId, newestId]) {
+      await request(app).patch(`/api/projects/${id}`).send({ zone: "b" });
+    }
+    // Seed explicit updatedAt ordering: oldest < middle < newest.
+    await seedUpdatedAt(oldestId, new Date("2026-09-01T00:00:00Z"));
+    await seedUpdatedAt(middleId, new Date("2026-09-02T00:00:00Z"));
+    await seedUpdatedAt(newestId, new Date("2026-09-03T00:00:00Z"));
+
+    const takeover = await request(app).patch(`/api/projects/${fourthId}`).send({ zone: "b" });
+
+    expect(takeover.status).toBe(200);
+    expect(takeover.body.zone).toBe("b");
+    // The post-op zone-b set is exactly the limit: the newcomer plus the two
+    // most-recently-updated incumbents; the stalest one is demoted.
+    expect((await listZoneB(companyId)).sort()).toEqual([fourthId, middleId, newestId].sort());
+    expect(await readZone(oldestId)).toBe("a");
+  });
+
+  it("applies the same limit rule when creating directly in zone b", async () => {
+    await armLimit(3);
+    const companyId = await seedCompany("Create-in-b co");
+    const oldestId = await seedProject(companyId, "Stalest lane");
+    const middleId = await seedProject(companyId, "Middle lane");
+    const newestId = await seedProject(companyId, "Fresh lane");
+    const app = createApp(db, boardActor([companyId]));
+
+    for (const id of [oldestId, middleId, newestId]) {
+      await request(app).patch(`/api/projects/${id}`).send({ zone: "b" });
+    }
+    await seedUpdatedAt(oldestId, new Date("2026-09-01T00:00:00Z"));
+    await seedUpdatedAt(middleId, new Date("2026-09-02T00:00:00Z"));
+    await seedUpdatedAt(newestId, new Date("2026-09-03T00:00:00Z"));
+
+    const res = await request(app)
+      .post(`/api/companies/${companyId}/projects`)
+      .send({ name: "Born in the lane", zone: "b" });
+
+    expect(res.status).toBe(201);
+    expect(res.body.zone).toBe("b");
+    expect((await listZoneB(companyId)).sort()).toEqual([res.body.id, middleId, newestId].sort());
+    expect(await readZone(oldestId)).toBe("a");
   });
 });
