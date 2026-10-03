@@ -66,3 +66,28 @@ The default Paperclip dashboard does nothing for Benn — it is repurposed as th
 6. Drafting Table project link + agent read access.
 
 Anti-patterns honored (research-backed): no fake urgency, no streaks/shame, no notification spam, warn-don't-block, narrative-not-analytics.
+
+## 7. Feature flags (ADHD edition, added Oct 3 '26)
+
+Every night-crew personalization is opt-in per instance, default OFF, so the
+fork carries the features while staying behavior-compatible with upstream
+when the toggles are off — the contribute-back path: a flag-off feature
+changes nothing about the classic experience.
+
+- `enableLotView` — the lot becomes a real invisible parking zone (feed,
+  inbox, attention, dashboard counts, badges, timeline exclusions apply).
+  Off: zone-"a" projects behave like classic zone-a, fully visible.
+- `enableFocusDashboard` — the dashboard becomes the active-lane HQ (§2b).
+  Off: the classic metrics dashboard renders.
+- `enableLotQuestions` — the questions-for-you one-tap surface inside the
+  lot view. Off: no lot question surface.
+
+Mechanics: instance experimental settings (the settings service + an
+"ADHD edition" section on the instance settings page). Server-side reads go
+through a per-Db per-key TTL cache (30s) invalidated on every experimental
+write, so a PATCH takes effect immediately and attention-surface queries add
+no settings round-trip. The lot visibility conditions (issue-visibility.ts)
+are flag-aware: `undefined` inside drizzle `and()` means "no filter", which
+is exactly the classic path; the ON-path SQL stays byte-identical to the
+banked v1 contract. Tests pin both directions
+(server/src/__tests__/zone-visibility-routes.test.ts).
