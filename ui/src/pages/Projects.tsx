@@ -11,11 +11,12 @@ import { EntityRow } from "../components/EntityRow";
 import { ProjectTile } from "../components/ProjectTile";
 import { ProjectStatusBadge } from "../components/StatusBadge";
 import { ProjectZonePicker } from "../components/ProjectZonePicker";
+import { ProjectLotStateBadge } from "../components/ProjectLotStateBadge";
 import { MembershipAction } from "../components/MembershipAction";
 import { StarToggle } from "../components/StarToggle";
 import { EmptyState } from "../components/EmptyState";
 import { PageSkeleton } from "../components/PageSkeleton";
-import { formatDate, formatNumber, formatProjectBudget, projectUrl } from "../lib/utils";
+import { cn, formatDate, formatNumber, formatProjectBudget, projectUrl } from "../lib/utils";
 import {
   isStarred,
   resourceMembershipState,
@@ -24,7 +25,7 @@ import {
 } from "../hooks/useResourceMemberships";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { ArrowUpDown, Check, Hexagon, Plus } from "lucide-react";
+import { ArrowUpDown, Check, ChevronRight, Hexagon, Plus } from "lucide-react";
 import { Card } from "@/components/ui/card";
 
 type ProjectSortField = "name" | "updated" | "created" | "targetDate";
@@ -39,10 +40,11 @@ const PROJECT_SORT_OPTIONS: Array<{ field: ProjectSortField; label: string }> = 
 
 // Zone-grouped section titles, composed from the shared zone constants so a
 // rename ("lanes", "focus", …) stays a one-file edit in @paperclipai/shared.
-// Zone B — the one active lane — renders FIRST; Zone A (parked) follows.
+// The Active Lane (zone b) renders FIRST and always expanded. The Lot
+// (zone a — the night-crew parking zone, doc/plans/2026-10-02-night-crew.md)
+// follows as the deliberate, collapsed-by-default "walk the lot" view.
 // Projects left by the current operator keep their own trailing section.
 const ZONE_B_SECTION_TITLE = `${PROJECT_ZONE_LABELS.b} (${PROJECT_ZONE_HINTS.b})`;
-const ZONE_A_SECTION_TITLE = `${PROJECT_ZONE_LABELS.a} (${PROJECT_ZONE_HINTS.a})`;
 const LEFT_SECTION_TITLE = "Other Projects";
 
 /** Effective zone: legacy/undefined rows park in zone "a" (the DB default). */
@@ -98,6 +100,9 @@ export function Projects() {
   const queryClient = useQueryClient();
   const [sortField, setSortField] = useState<ProjectSortField>("name");
   const [sortDir, setSortDir] = useState<ProjectSortDir>("asc");
+  // The Lot stays closed until the operator walks it on purpose (night-crew
+  // design §1: deliberate access only — never a badge, never a ping).
+  const [lotOpen, setLotOpen] = useState(false);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Projects" }]);
@@ -150,6 +155,122 @@ export function Projects() {
     return groups;
   }, [membershipsQuery.data, sortedProjects]);
   const sortLabel = PROJECT_SORT_OPTIONS.find((option) => option.field === sortField)?.label ?? "Name";
+
+  /** Standard section header: title left, plain muted count right. */
+  function sectionHeading(label: string, count: number) {
+    return (
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium">{label}</h2>
+        <span className="text-xs text-muted-foreground">
+          {count} project{count === 1 ? "" : "s"}
+        </span>
+      </div>
+    );
+  }
+
+  /** The grouped project-card list shared by every section. */
+  function sectionCards(sectionProjects: Project[]) {
+    if (sectionProjects.length === 0) return null;
+    return (
+      <Card className="block py-0 overflow-hidden divide-y divide-border">
+        {sectionProjects.map((project) => {
+          const state = resourceMembershipState(membershipsQuery.data, "project", project.id);
+          const pending = membershipMutation.isPending &&
+            membershipMutation.variables?.resourceType === "project" &&
+            membershipMutation.variables.resourceId === project.id;
+          const starPending = pending && membershipMutation.variables?.starred !== undefined;
+          const joinLeavePending = pending && membershipMutation.variables?.starred === undefined;
+          const starred = isStarred(membershipsQuery.data, "project", project.id);
+          return (
+            <EntityRow
+              key={project.id}
+              leading={<ProjectTile color={project.color ?? null} icon={project.icon ?? null} size="sm" />}
+              title={project.name}
+              subtitle={project.description ?? undefined}
+              reserveSubtitleSpace
+              to={projectUrl(project)}
+              className={state === "left" ? "group text-foreground/55" : "group"}
+              trailing={
+                <div className="flex items-center gap-3">
+                  <span
+                    className="hidden text-xs text-muted-foreground tabular-nums sm:inline"
+                    title={`${formatNumber(project.taskCount ?? 0)} task${(project.taskCount ?? 0) === 1 ? "" : "s"}`}
+                  >
+                    {formatNumber(project.taskCount ?? 0)} task{(project.taskCount ?? 0) === 1 ? "" : "s"}
+                  </span>
+                  {project.budget && (
+                    <span className="hidden text-xs text-muted-foreground tabular-nums sm:inline">
+                      {formatProjectBudget(project.budget)}
+                    </span>
+                  )}
+                  {project.targetDate && (
+                    <span className="hidden text-xs text-muted-foreground md:inline">
+                      {formatDate(project.targetDate)}
+                    </span>
+                  )}
+                  {/* Lot-state chip — how far the night crew has worked this
+                      idea; only ever shown inside the deliberate lot view. */}
+                  {project.lot_state && (
+                    <ProjectLotStateBadge state={project.lot_state} />
+                  )}
+                  {/* Zone picker — the trailing zone badge is its
+                      trigger; the wrapper stops the click so the
+                      row link does not navigate. */}
+                  <span
+                    className="inline-flex"
+                    onClick={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                    }}
+                  >
+                    <ProjectZonePicker
+                      zone={projectZone(project)}
+                      disabled={
+                        updateZoneMutation.isPending &&
+                        updateZoneMutation.variables?.project.id === project.id
+                      }
+                      onChange={(next) => updateZoneMutation.mutate({ project, zone: next })}
+                    />
+                  </span>
+                  <ProjectStatusBadge status={project.status} />
+                  <MembershipAction
+                    state={state}
+                    pending={joinLeavePending}
+                    pendingState={joinLeavePending ? membershipMutation.variables?.state : null}
+                    resourceName={project.name}
+                    onJoin={() => membershipMutation.mutate({
+                      resourceType: "project",
+                      resourceId: project.id,
+                      resourceName: project.name,
+                      state: "joined",
+                    })}
+                    onLeave={() => membershipMutation.mutate({
+                      resourceType: "project",
+                      resourceId: project.id,
+                      resourceName: project.name,
+                      state: "left",
+                    })}
+                  />
+                  <StarToggle
+                    size="row"
+                    starred={starred}
+                    pending={starPending}
+                    resourceName={project.name}
+                    onToggle={(next) => membershipMutation.mutate({
+                      resourceType: "project",
+                      resourceId: project.id,
+                      resourceName: project.name,
+                      starred: next,
+                    })}
+                  />
+                </div>
+              }
+            />
+          );
+        })}
+      </Card>
+    );
+  }
 
   if (!selectedCompanyId) {
     return <EmptyState icon={Hexagon} message="Select an organization to view projects." />;
@@ -220,116 +341,56 @@ export function Projects() {
 
       {projects.length > 0 && (
         <div className="space-y-6">
-          {([
-            [ZONE_B_SECTION_TITLE, groupedProjects.zoneB],
-            [ZONE_A_SECTION_TITLE, groupedProjects.zoneA],
-            [LEFT_SECTION_TITLE, groupedProjects.left],
-          ] as const).map(([label, sectionProjects]) => {
-            if (sectionProjects.length === 0) return null;
+          {/* The Active Lane — THE one zone-b group; first and always
+              expanded, never behind a toggle. */}
+          {groupedProjects.zoneB.length > 0 && (
+            <section className="space-y-2">
+              {sectionHeading(ZONE_B_SECTION_TITLE, groupedProjects.zoneB.length)}
+              {sectionCards(groupedProjects.zoneB)}
+            </section>
+          )}
 
-            return (
-              <section key={label} className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-sm font-medium">{label}</h2>
-                  <span className="text-xs text-muted-foreground">
-                    {sectionProjects.length} project{sectionProjects.length === 1 ? "" : "s"}
+          {/* The Lot — the deliberate "walk the lot" view (night-crew design
+              §1). Lot items are invisible on every attention surface by
+              contract; this is the one place they open on purpose. Collapsed
+              by default and quiet — a single muted row, plain count, no
+              urgency colors — so the lot never pulls, it only waits. */}
+          {groupedProjects.zoneA.length > 0 && (
+            <section className="space-y-2" data-testid="lot-section">
+              <h2 className="text-sm font-medium">
+                <button
+                  type="button"
+                  data-testid="lot-section-toggle"
+                  aria-expanded={lotOpen}
+                  aria-controls="lot-section-projects"
+                  onClick={() => setLotOpen((open) => !open)}
+                  className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm font-medium text-muted-foreground transition-colors hover:bg-accent/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <ChevronRight
+                    className={cn("h-3.5 w-3.5 shrink-0 transition-transform", lotOpen && "rotate-90")}
+                    aria-hidden="true"
+                  />
+                  <span aria-hidden="true">🗄</span>
+                  <span>{PROJECT_ZONE_LABELS.a}</span>
+                  <span className="text-xs font-normal">
+                    {groupedProjects.zoneA.length} project{groupedProjects.zoneA.length === 1 ? "" : "s"}
                   </span>
-                </div>
-                <Card className="block py-0 overflow-hidden divide-y divide-border">
-                  {sectionProjects.map((project) => {
-                    const state = resourceMembershipState(membershipsQuery.data, "project", project.id);
-                    const pending = membershipMutation.isPending &&
-                      membershipMutation.variables?.resourceType === "project" &&
-                      membershipMutation.variables.resourceId === project.id;
-                    const starPending = pending && membershipMutation.variables?.starred !== undefined;
-                    const joinLeavePending = pending && membershipMutation.variables?.starred === undefined;
-                    const starred = isStarred(membershipsQuery.data, "project", project.id);
-                    return (
-                      <EntityRow
-                        key={project.id}
-                        leading={<ProjectTile color={project.color ?? null} icon={project.icon ?? null} size="sm" />}
-                        title={project.name}
-                        subtitle={project.description ?? undefined}
-                        reserveSubtitleSpace
-                        to={projectUrl(project)}
-                        className={state === "left" ? "group text-foreground/55" : "group"}
-                        trailing={
-                          <div className="flex items-center gap-3">
-                            <span
-                              className="hidden text-xs text-muted-foreground tabular-nums sm:inline"
-                              title={`${formatNumber(project.taskCount ?? 0)} task${(project.taskCount ?? 0) === 1 ? "" : "s"}`}
-                            >
-                              {formatNumber(project.taskCount ?? 0)} task{(project.taskCount ?? 0) === 1 ? "" : "s"}
-                            </span>
-                            {project.budget && (
-                              <span className="hidden text-xs text-muted-foreground tabular-nums sm:inline">
-                                {formatProjectBudget(project.budget)}
-                              </span>
-                            )}
-                            {project.targetDate && (
-                              <span className="hidden text-xs text-muted-foreground md:inline">
-                                {formatDate(project.targetDate)}
-                              </span>
-                            )}
-                            {/* Zone picker — the trailing zone badge is its
-                                trigger; the wrapper stops the click so the
-                                row link does not navigate. */}
-                            <span
-                              className="inline-flex"
-                              onClick={(event) => {
-                                event.preventDefault();
-                                event.stopPropagation();
-                              }}
-                            >
-                              <ProjectZonePicker
-                                zone={projectZone(project)}
-                                disabled={
-                                  updateZoneMutation.isPending &&
-                                  updateZoneMutation.variables?.project.id === project.id
-                                }
-                                onChange={(next) => updateZoneMutation.mutate({ project, zone: next })}
-                              />
-                            </span>
-                            <ProjectStatusBadge status={project.status} />
-                            <MembershipAction
-                              state={state}
-                              pending={joinLeavePending}
-                              pendingState={joinLeavePending ? membershipMutation.variables?.state : null}
-                              resourceName={project.name}
-                              onJoin={() => membershipMutation.mutate({
-                                resourceType: "project",
-                                resourceId: project.id,
-                                resourceName: project.name,
-                                state: "joined",
-                              })}
-                              onLeave={() => membershipMutation.mutate({
-                                resourceType: "project",
-                                resourceId: project.id,
-                                resourceName: project.name,
-                                state: "left",
-                              })}
-                            />
-                            <StarToggle
-                              size="row"
-                              starred={starred}
-                              pending={starPending}
-                              resourceName={project.name}
-                              onToggle={(next) => membershipMutation.mutate({
-                                resourceType: "project",
-                                resourceId: project.id,
-                                resourceName: project.name,
-                                starred: next,
-                              })}
-                            />
-                          </div>
-                        }
-                      />
-                    );
-                  })}
-                </Card>
-              </section>
-            );
-          })}
+                </button>
+              </h2>
+              {lotOpen ? (
+                <div id="lot-section-projects">{sectionCards(groupedProjects.zoneA)}</div>
+              ) : null}
+            </section>
+          )}
+
+          {/* Projects the current operator left keep their own trailing
+              section, unchanged. */}
+          {groupedProjects.left.length > 0 && (
+            <section className="space-y-2">
+              {sectionHeading(LEFT_SECTION_TITLE, groupedProjects.left.length)}
+              {sectionCards(groupedProjects.left)}
+            </section>
+          )}
         </div>
       )}
     </div>

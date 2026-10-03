@@ -5,7 +5,7 @@ import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Project } from "@paperclipai/shared";
-import { PROJECT_ZONE_HINTS, PROJECT_ZONE_LABELS } from "@paperclipai/shared";
+import { LOT_STATE_LABELS, PROJECT_ZONE_HINTS, PROJECT_ZONE_LABELS } from "@paperclipai/shared";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ToastProvider } from "../context/ToastContext";
 import { Projects } from "./Projects";
@@ -151,6 +151,13 @@ describe("Projects", () => {
         description: "First project",
         updatedAt: new Date("2026-01-01T00:00:00Z"),
       }),
+      makeProject({
+        id: "project-e",
+        urlKey: "echo",
+        name: "Echo",
+        lot_state: "ready",
+        updatedAt: new Date("2026-01-08T00:00:00Z"),
+      }),
     ]);
     mockProjectsApi.update.mockResolvedValue({});
     mockResourceMembershipsApi.listMine.mockResolvedValue({
@@ -220,19 +227,33 @@ describe("Projects", () => {
 
   // Section titles mirror the constants-derived composition in Projects.tsx.
   const zoneBTitle = `${PROJECT_ZONE_LABELS.b} (${PROJECT_ZONE_HINTS.b})`;
-  const zoneATitle = `${PROJECT_ZONE_LABELS.a} (${PROJECT_ZONE_HINTS.a})`;
+  // The Lot header renders the bare zone label — quiet by contract.
+  const lotTitle = PROJECT_ZONE_LABELS.a;
   const leftTitle = "Other Projects";
 
-  it("groups the active lane (zone B) above parked (zone A) and left projects, sorting by name", async () => {
+  async function openLot() {
+    const toggle = container.querySelector<HTMLButtonElement>('button[data-testid="lot-section-toggle"]');
+    expect(toggle).not.toBeNull();
+    await act(async () => {
+      toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushReact();
+    return toggle;
+  }
+
+  it("groups the active lane above the lot and left projects, sorting by name", async () => {
     await renderProjects();
+    // The lot opens only on purpose; expand it to assert the full grouping.
+    await openLot();
 
     const content = container.textContent ?? "";
     expect(container.querySelector('button[title="Sort"]')?.textContent).toContain("Sort: Name");
     expect(content.indexOf(zoneBTitle)).toBeLessThan(content.indexOf("Charlie"));
     expect(content.indexOf("Charlie")).toBeLessThan(content.indexOf("Delta"));
-    expect(content.indexOf("Delta")).toBeLessThan(content.indexOf(zoneATitle));
-    expect(content.indexOf(zoneATitle)).toBeLessThan(content.indexOf("Alpha"));
-    expect(content.indexOf("Alpha")).toBeLessThan(content.indexOf(leftTitle));
+    expect(content.indexOf("Delta")).toBeLessThan(content.indexOf(lotTitle));
+    expect(content.indexOf(lotTitle)).toBeLessThan(content.indexOf("Alpha"));
+    expect(content.indexOf("Alpha")).toBeLessThan(content.indexOf("Echo"));
+    expect(content.indexOf("Echo")).toBeLessThan(content.indexOf(leftTitle));
     expect(content.indexOf(leftTitle)).toBeLessThan(content.indexOf("Bravo"));
     expect(content).toContain("in progress");
     // Zone chips render on the cards via the picker triggers.
@@ -242,18 +263,78 @@ describe("Projects", () => {
 
   it("sorts zone-grouped projects by the selected field", async () => {
     await renderProjects();
+    await openLot();
     await openSortMenu();
     await chooseSortField("Updated");
 
     const content = container.textContent ?? "";
     expect(content.indexOf(zoneBTitle)).toBeLessThan(content.indexOf("Delta"));
     expect(content.indexOf("Delta")).toBeLessThan(content.indexOf("Charlie"));
-    expect(content.indexOf("Charlie")).toBeLessThan(content.indexOf(zoneATitle));
-    expect(content.indexOf(zoneATitle)).toBeLessThan(content.indexOf("Alpha"));
+    expect(content.indexOf("Charlie")).toBeLessThan(content.indexOf(lotTitle));
+    expect(content.indexOf(lotTitle)).toBeLessThan(content.indexOf("Echo"));
+    expect(content.indexOf("Echo")).toBeLessThan(content.indexOf("Alpha"));
+  });
+
+  it("renders the active lane first and always expanded", async () => {
+    await renderProjects();
+
+    const content = container.textContent ?? "";
+    expect(content).toContain(zoneBTitle);
+    // The Active Lane sits above the lot header and its cards render
+    // without any interaction.
+    expect(content.indexOf(zoneBTitle)).toBeLessThan(content.indexOf(lotTitle));
+    expect(content).toContain("Charlie");
+    expect(content).toContain("Delta");
+  });
+
+  it("keeps the lot collapsed by default and opens it on tap", async () => {
+    await renderProjects();
+
+    const content = container.textContent ?? "";
+    const toggle = container.querySelector<HTMLButtonElement>('button[data-testid="lot-section-toggle"]');
+    expect(toggle).not.toBeNull();
+    // The quiet lot row: storage icon, bare title, plain muted count.
+    expect(toggle?.textContent).toContain("🗄");
+    expect(toggle?.textContent).toContain(lotTitle);
+    expect(toggle?.textContent).toContain("2 projects");
+    expect(toggle?.getAttribute("aria-expanded")).toBe("false");
+    // Lot cards stay hidden until the lot is opened on purpose.
+    expect(content).not.toContain("Alpha");
+    expect(content).not.toContain("Echo");
+
+    await act(async () => {
+      toggle?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+    await flushReact();
+
+    const expanded = container.textContent ?? "";
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    expect(expanded).toContain("Alpha");
+    expect(expanded).toContain("Echo");
+  });
+
+  it("shows the lot-state chip on lot cards with a lot_state", async () => {
+    await renderProjects();
+    await openLot();
+
+    const echoRow = Array.from(container.querySelectorAll("a")).find((link) =>
+      link.textContent?.includes("Echo"),
+    );
+    expect(echoRow?.textContent).toContain(LOT_STATE_LABELS.ready);
+
+    // Cards without a lot_state (null) render no lot chip.
+    const alphaRow = Array.from(container.querySelectorAll("a")).find((link) =>
+      link.textContent?.includes("Alpha"),
+    );
+    for (const label of Object.values(LOT_STATE_LABELS)) {
+      expect(alphaRow?.textContent).not.toContain(label);
+    }
   });
 
   it("promotes a card to zone B from the trailing zone picker", async () => {
     await renderProjects();
+    // Alpha parks in the lot; open the lot to reach its card.
+    await openLot();
 
     // Alpha is the zone A (parked) card; open its trailing zone picker.
     const alphaRow = Array.from(container.querySelectorAll("a")).find((link) =>
