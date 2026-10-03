@@ -23,6 +23,7 @@ import {
   useResourceMembershipMutation,
   useResourceMemberships,
 } from "../hooks/useResourceMemberships";
+import { useLotViewEnabled } from "../hooks/useLotViewEnabled";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ArrowUpDown, Check, ChevronRight, Hexagon, Plus } from "lucide-react";
@@ -45,6 +46,7 @@ const PROJECT_SORT_OPTIONS: Array<{ field: ProjectSortField; label: string }> = 
 // follows as the deliberate, collapsed-by-default "walk the lot" view.
 // Projects left by the current operator keep their own trailing section.
 const ZONE_B_SECTION_TITLE = `${PROJECT_ZONE_LABELS.b} (${PROJECT_ZONE_HINTS.b})`;
+const ZONE_A_SECTION_TITLE = `${PROJECT_ZONE_LABELS.a} (${PROJECT_ZONE_HINTS.a})`;
 const LEFT_SECTION_TITLE = "Other Projects";
 
 /** Effective zone: legacy/undefined rows park in zone "a" (the DB default). */
@@ -103,6 +105,10 @@ export function Projects() {
   // The Lot stays closed until the operator walks it on purpose (night-crew
   // design §1: deliberate access only — never a badge, never a ping).
   const [lotOpen, setLotOpen] = useState(false);
+  // The collapsed "walk the lot" section renders only when the instance has
+  // the enableLotView experimental flag on. Flag off (the default) keeps the
+  // classic always-expanded zone-a group — no collapse toggle, no lot chips.
+  const { enabled: lotViewEnabled } = useLotViewEnabled();
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Projects" }]);
@@ -209,8 +215,9 @@ export function Projects() {
                     </span>
                   )}
                   {/* Lot-state chip — how far the night crew has worked this
-                      idea; only ever shown inside the deliberate lot view. */}
-                  {project.lot_state && (
+                      idea; only ever shown inside the deliberate lot view
+                      (enableLotView), never in the classic zone-a group. */}
+                  {lotViewEnabled && project.lot_state && (
                     <ProjectLotStateBadge state={project.lot_state} />
                   )}
                   {/* Zone picker — the trailing zone badge is its
@@ -350,12 +357,23 @@ export function Projects() {
             </section>
           )}
 
-          {/* The Lot — the deliberate "walk the lot" view (night-crew design
-              §1). Lot items are invisible on every attention surface by
-              contract; this is the one place they open on purpose. Collapsed
-              by default and quiet — a single muted row, plain count, no
-              urgency colors — so the lot never pulls, it only waits. */}
-          {groupedProjects.zoneA.length > 0 && (
+          {/* enableLotView OFF (the default): the classic zone-a group —
+              always expanded, no collapse toggle, no lot-state chips, exactly
+              the pre-lot rendering. */}
+          {!lotViewEnabled && groupedProjects.zoneA.length > 0 && (
+            <section className="space-y-2">
+              {sectionHeading(ZONE_A_SECTION_TITLE, groupedProjects.zoneA.length)}
+              {sectionCards(groupedProjects.zoneA)}
+            </section>
+          )}
+
+          {/* enableLotView ON: The Lot — the deliberate "walk the lot" view
+              (night-crew design §1). Lot items are invisible on every
+              attention surface by contract; this is the one place they open
+              on purpose. Collapsed by default and quiet — a single muted row,
+              plain count, no urgency colors — so the lot never pulls, it only
+              waits. */}
+          {lotViewEnabled && groupedProjects.zoneA.length > 0 && (
             <section className="space-y-2" data-testid="lot-section">
               <h2 className="text-sm font-medium">
                 <button

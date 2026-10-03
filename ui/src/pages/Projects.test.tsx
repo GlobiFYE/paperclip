@@ -20,6 +20,10 @@ const mockResourceMembershipsApi = vi.hoisted(() => ({
   updateProject: vi.fn(),
 }));
 
+const mockInstanceSettingsApi = vi.hoisted(() => ({
+  getExperimental: vi.fn(),
+}));
+
 const mockOpenNewProject = vi.hoisted(() => vi.fn());
 const mockSetBreadcrumbs = vi.hoisted(() => vi.fn());
 
@@ -47,6 +51,12 @@ vi.mock("../api/projects", () => ({
 
 vi.mock("../api/resourceMemberships", () => ({
   resourceMembershipsApi: mockResourceMembershipsApi,
+}));
+
+// The lot section is gated on the enableLotView experimental flag; the lot
+// tests below need it on, and the flag-off test overrides it per-test.
+vi.mock("@/api/instanceSettings", () => ({
+  instanceSettingsApi: mockInstanceSettingsApi,
 }));
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -123,6 +133,7 @@ describe("Projects", () => {
     queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
     });
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableLotView: true });
     mockProjectsApi.list.mockResolvedValue([
       makeProject({
         id: "project-c",
@@ -311,6 +322,27 @@ describe("Projects", () => {
     expect(toggle?.getAttribute("aria-expanded")).toBe("true");
     expect(expanded).toContain("Alpha");
     expect(expanded).toContain("Echo");
+  });
+
+  it("renders the classic expanded zone-a group when the lot flag is off", async () => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableLotView: false });
+    await renderProjects();
+
+    const content = container.textContent ?? "";
+    // No collapse toggle — the classic zone-a group is always expanded.
+    expect(container.querySelector('button[data-testid="lot-section-toggle"]')).toBeNull();
+    // Zone-a project cards render immediately, without any interaction.
+    expect(content).toContain("Alpha");
+    expect(content).toContain("Echo");
+    expect(content).toContain(`${PROJECT_ZONE_LABELS.a} (${PROJECT_ZONE_HINTS.a})`);
+    // No lot-state chips in the classic view (Echo carries lot_state "ready").
+    for (const label of Object.values(LOT_STATE_LABELS)) {
+      expect(content).not.toContain(label);
+    }
+    // Zone-b ("Active Lane") still renders first and always expanded.
+    expect(content.indexOf(zoneBTitle)).toBeLessThan(content.indexOf("Alpha"));
+    expect(content).toContain("Charlie");
+    expect(content).toContain("Delta");
   });
 
   it("shows the lot-state chip on lot cards with a lot_state", async () => {
