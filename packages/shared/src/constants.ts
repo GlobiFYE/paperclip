@@ -594,7 +594,7 @@ export const PROJECT_ZONE_LABELS: Record<ProjectZone, string> = {
 /** One-line explanation shown next to the label in pickers and headers. */
 export const PROJECT_ZONE_HINTS: Record<ProjectZone, string> = {
   a: "Parked — zero burn",
-  b: "The active lane",
+  b: "one lane at a time",
 };
 
 /**

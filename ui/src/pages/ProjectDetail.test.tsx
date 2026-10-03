@@ -653,7 +653,7 @@ describe("ProjectDetail", () => {
       expect(current?.textContent).toContain("Parked — zero burn");
       const other = zoneOptions().find((btn) => btn.getAttribute("aria-current") !== "true");
       expect(other?.textContent).toContain(PROJECT_ZONE_LABELS.b);
-      expect(other?.textContent).toContain("The active lane");
+      expect(other?.textContent).toContain("one lane at a time");
     });
 
     it("promotes the project to zone b via PATCH, closes the picker, and refreshes the chip", async () => {
