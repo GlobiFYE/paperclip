@@ -113,14 +113,17 @@ const now = new Date().toISOString();
 // Multi-lane focus payload (GET /dashboard/focus): two lanes, one task each,
 // the first task carrying a nested pending QuestionPreview. The project
 // color is a CSS-var reference — the token-gate-safe dynamic style value —
-// so the fixture itself stays free of raw hex literals.
+// so the fixture itself stays free of raw hex literals. Lane 1's
+// description is deliberately a wall of text: the swim-lane header band
+// clamps it to ~2 lines, which the render test asserts via the clamp class.
 const focusSummary: FocusDashboardSummary = {
   lanes: [
     {
       project: {
         id: "proj-1",
         name: "Launch Website",
-        description: "Ship the marketing site",
+        description:
+          "Ship the marketing site: finalize launch copy and hero imagery, cut over DNS, set up redirects from the legacy domain, wire analytics, and schedule the post-launch email sequence — everything launch day needs, tracked end to end.",
         status: "in_progress",
         zone: "b",
         color: "var(--status-agent-running)",
@@ -240,7 +243,7 @@ describe("Dashboard focus surface (enableFocusDashboard)", () => {
     vi.clearAllMocks();
   });
 
-  it("renders one lane card per project when the flag is on", async () => {
+  it("renders one swim-lane column per project when the flag is on", async () => {
     queryClient.setQueryData(queryKeys.instance.experimentalSettings, {
       enableFocusDashboard: true,
     });
@@ -250,20 +253,49 @@ describe("Dashboard focus surface (enableFocusDashboard)", () => {
     await renderDashboard();
 
     const text = container.textContent ?? "";
-    // Active-lane HQ: every lane's project front and center, one card each.
+    // Active-lane HQ: every lane's project front and center, one column each.
     expect(text).toContain("Launch Website");
     expect(text).toContain("Ship the marketing site");
     expect(text).toContain("Crew Blog");
-    expect(text).toContain("Next steps");
     // Each lane's own next steps render, linked to their issues.
     expect(text).toContain("Wire up the contact form");
     expect(text).toContain("Draft the launch copy");
-    const laneCards = container.querySelectorAll('[data-testid="focus-lane"]');
-    expect(laneCards.length).toBe(2);
-    const laneIssueLinks = [...container.querySelectorAll('a[data-testid="router-link"]')]
-      .map((link) => link.getAttribute("href"));
-    expect(laneIssueLinks).toContain("/issues/LW-1");
-    expect(laneIssueLinks).toContain("/issues/CB-1");
+    const laneColumns = container.querySelectorAll('[data-testid="focus-lane"]');
+    expect(laneColumns.length).toBe(2);
+
+    // Swim-lane container: mobile-first stacking, side-by-side columns on md+,
+    // equal width and stretched to equal height.
+    const lanesEl = container.querySelector('[data-testid="focus-lanes"]');
+    expect(lanesEl?.className).toContain("flex-col");
+    expect(lanesEl?.className).toContain("md:flex-row");
+    expect(lanesEl?.className).toContain("md:items-stretch");
+
+    const [websiteLane, blogLane] = laneColumns;
+    // The header band opens each column: project title + status across the top.
+    expect(websiteLane.firstElementChild?.getAttribute("data-testid")).toBe("focus-lane-header");
+    expect(websiteLane.querySelector("h2")?.textContent).toBe("Launch Website");
+    expect(blogLane.firstElementChild?.getAttribute("data-testid")).toBe("focus-lane-header");
+    expect(blogLane.querySelector("h2")?.textContent).toBe("Crew Blog");
+    expect(websiteLane.textContent).toContain("in progress");
+    expect(blogLane.textContent).toContain("planned");
+
+    // Items flow down below their own lane's band, linked to their issues.
+    expect(websiteLane.querySelector('a[href="/issues/LW-1"]')).not.toBeNull();
+    expect(blogLane.querySelector('a[href="/issues/CB-1"]')).not.toBeNull();
+
+    // Descriptions clamp to ~2 lines inside the band; a lane without one
+    // renders no description element at all.
+    const websiteDescription = websiteLane.querySelector(
+      '[data-testid="focus-lane-description"]',
+    );
+    expect(websiteDescription?.textContent).toContain("Ship the marketing site");
+    expect(websiteDescription?.classList.contains("line-clamp-2")).toBe(true);
+    expect(blogLane.querySelector('[data-testid="focus-lane-description"]')).toBeNull();
+
+    // Compact activity footer renders only for the lane that has events.
+    expect(websiteLane.querySelector('[data-testid="focus-lane-activity"]')).not.toBeNull();
+    expect(blogLane.querySelector('[data-testid="focus-lane-activity"]')).toBeNull();
+
     // Classic-only surfaces stay out of the focus mode.
     expect(text).not.toContain("Run Activity");
     expect(text).not.toContain("Recent Tasks");
@@ -279,11 +311,16 @@ describe("Dashboard focus surface (enableFocusDashboard)", () => {
 
     await renderDashboard();
 
-    // The question preview renders nested under its next step.
+    // The question preview renders nested under its next step, inside its
+    // lane's column (and only there).
     const text = container.textContent ?? "";
     expect(text).toContain("Which provider should the contact form use?");
     expect(text).toContain("Paperclip Forms");
     expect(text).toContain("Plain mailto");
+    const laneColumns = container.querySelectorAll('[data-testid="focus-lane"]');
+    const [questionLane, quietLane] = laneColumns;
+    expect(questionLane.querySelector('[data-testid="focus-lane-question"]')).not.toBeNull();
+    expect(quietLane.querySelector('[data-testid="focus-lane-question"]')).toBeNull();
 
     // One tap on an option posts the answer through the same mutation the
     // issue-thread interaction card uses (respondToInteraction).

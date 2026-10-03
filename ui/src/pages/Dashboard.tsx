@@ -162,13 +162,14 @@ function FocusLaneQuestionRow({
 }
 
 /**
- * One focus lane: a visually distinct card for one active project — the
- * project's own color as the card's left-border accent, its next steps with
- * any pending questions nested under the waiting task, and a compact
- * activity footer. One card per lane so projects read as separate surfaces,
- * never a wall of text.
+ * One focus lane as a swim-lane COLUMN: the project's title + status chip
+ * in a header band across the top of its column (the project's own color as
+ * the column's top-border accent), its next steps flowing down beneath the
+ * band with any pending questions nested under the waiting task, and a
+ * compact activity footer pinned to the column bottom. One column per lane
+ * so projects read as parallel lanes, never a wall of text.
  */
-function FocusLaneCard({
+function FocusLaneColumn({
   lane,
   companyId,
   agentMap,
@@ -202,38 +203,49 @@ function FocusLaneCard({
 
   return (
     <Card
-      className="block border-l-4 p-4"
+      className="min-w-0 gap-0 overflow-hidden border-t-4 py-0 md:flex-1"
       data-testid="focus-lane"
-      // The lane accent is the project's own color. Deliberately a dynamic
-      // style value — token-gate-safe by construction (a runtime value is not
-      // a raw hex literal); lanes without a color keep the default border.
-      style={project.color ? { borderLeftColor: project.color } : undefined}
+      // The lane accent is the project's own color riding the column's top
+      // border. Deliberately a dynamic style value — token-gate-safe by
+      // construction (a runtime value is not a raw hex literal); lanes
+      // without a color keep the default border.
+      style={project.color ? { borderTopColor: project.color } : undefined}
     >
-      {/* Lane header */}
-      <div className="flex flex-wrap items-center gap-2">
-        <ProjectTile color={project.color} icon={project.icon} size="sm" />
-        <h2 className="text-lg font-semibold text-foreground">{project.name}</h2>
-        <span
-          className={cn(
-            "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium capitalize",
-            projectStatusBadge[project.status as ProjectStatus] ?? statusBadgeDefault,
-          )}
-        >
-          {project.status.replace(/_/g, " ")}
-        </span>
+      {/* Lane header band: the project's title + status across the top of
+          its column — the band every lane's items hang below. */}
+      <div
+        className="border-b border-border bg-muted/40 px-4 py-3"
+        data-testid="focus-lane-header"
+      >
+        <div className="flex flex-wrap items-center gap-2">
+          <ProjectTile color={project.color} icon={project.icon} size="sm" />
+          <h2 className="text-lg font-semibold text-foreground">{project.name}</h2>
+          <span
+            className={cn(
+              "inline-flex items-center rounded-full border px-2 py-0.5 text-xs font-medium capitalize",
+              projectStatusBadge[project.status as ProjectStatus] ?? statusBadgeDefault,
+            )}
+          >
+            {project.status.replace(/_/g, " ")}
+          </span>
+        </div>
+        {project.description ? (
+          <p
+            className="mt-1 line-clamp-2 text-sm text-muted-foreground"
+            data-testid="focus-lane-description"
+          >
+            {project.description}
+          </p>
+        ) : null}
       </div>
-      {project.description ? (
-        <p className="mt-1 text-sm text-muted-foreground">{project.description}</p>
-      ) : null}
 
-      {/* Next steps — work in progress first, server-ordered */}
-      <h3 className="mt-4 text-sm font-semibold text-muted-foreground uppercase tracking-wide">
-        Next steps
-      </h3>
+      {/* Next steps flow down below the band — work in progress first, server-ordered.
+          The full project description stays on the project page; the band above
+          clamps it to ~2 lines so it never becomes a wall of text. */}
       {nextSteps.length === 0 ? (
-        <p className="text-sm text-muted-foreground">Nothing queued in this lane.</p>
+        <p className="px-4 py-3 text-sm text-muted-foreground">Nothing queued in this lane.</p>
       ) : (
-        <div className="mt-1 divide-y divide-border">
+        <div className="divide-y divide-border px-4 py-2">
           {nextSteps.map((step) => (
             <div key={step.id} className="py-1.5">
               <Link
@@ -290,9 +302,10 @@ function FocusLaneCard({
         </div>
       )}
 
-      {/* Compact lane-activity footer — only this lane's events, capped */}
+      {/* Compact lane-activity footer — only this lane's events, capped.
+          `mt-auto` pins it to the bottom of the equal-height column. */}
       {recentLaneActivity.length > 0 ? (
-        <div className="mt-4 border-t border-border pt-2">
+        <div className="mt-auto border-t border-border px-4 py-2" data-testid="focus-lane-activity">
           <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
             Lane activity
           </h3>
@@ -317,10 +330,11 @@ function FocusLaneCard({
 /**
  * Night-crew focus surface (plan §2b): the dashboard as active-lane HQ —
  * every lane the owner holds (sized by the focusLaneProjectLimit setting,
- * default 1) as its own card, each with its next steps, nested one-tap
- * questions, and only the lane's own activity. Zero lot content, zero
- * other projects, zero metric cards and charts; the classic dashboard keeps
- * all of that behind the flag-off path.
+ * default 1) as its own swim-lane column, each with its next steps, nested
+ * one-tap questions, and only the lane's own activity. Columns stack
+ * vertically on small screens and sit side-by-side on md+. Zero lot
+ * content, zero other projects, zero metric cards and charts; the classic
+ * dashboard keeps all of that behind the flag-off path.
  */
 function FocusDashboard({
   focus,
@@ -366,11 +380,18 @@ function FocusDashboard({
     <>
       {budgetIncidentsBanner}
 
-      {/* One lane, one card: generous vertical separation so each project
-          reads as its own surface with its own color accent. */}
-      <div className="space-y-6" data-testid="focus-lanes">
+      {/* True swim lanes: one column per lane — project titles across the
+          top, that lane's items flowing down below. Mobile-first: lanes
+          stack vertically on small screens and sit side-by-side from md+,
+          equal width (md:flex-1) and stretched to equal height
+          (md:items-stretch) so every lane band starts at the top edge and
+          the activity footers pin to a shared bottom. */}
+      <div
+        className="flex flex-col gap-6 md:flex-row md:items-stretch"
+        data-testid="focus-lanes"
+      >
         {focus.lanes.map((lane) => (
-          <FocusLaneCard
+          <FocusLaneColumn
             key={lane.project.id}
             lane={lane}
             companyId={companyId}
