@@ -73,6 +73,11 @@ export const instanceExperimentalSettingsSchema = z.object({
   enablePaperclipDeveloperMode: z.boolean().default(false),
   enableSimplifiedEnglishInteractions: z.boolean().default(false),
   enableFirstTaskPlanProposal: z.boolean().default(false),
+  // Night-crew ADHD edition flags (doc/plans/2026-10-02-night-crew.md §7):
+  // default off — the fork behaves like classic upstream until opted in.
+  enableFocusDashboard: z.boolean().default(false),
+  enableLotView: z.boolean().default(false),
+  enableLotQuestions: z.boolean().default(false),
   autoRestartDevServerWhenIdle: z.boolean().default(false),
   enableWorkspaceBranchReconcileForward: z.boolean().default(true),
   enableWorkspaceDirtyQuarantineRepair: z.boolean().default(true),

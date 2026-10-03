@@ -333,6 +333,30 @@ export const INSTANCE_FEATURE_CATALOG: Record<InstanceFeatureKey, FeatureCatalog
     cloudDefault: false,
     selfHostedDefault: false,
   },
+  enableFocusDashboard: {
+    title: "Focus Dashboard",
+    description:
+      "Night-crew ADHD edition: show the focus dashboard surface. Default off (classic upstream behavior).",
+    tier: "preference",
+    cloudDefault: false,
+    selfHostedDefault: false,
+  },
+  enableLotView: {
+    title: "Lot View",
+    description:
+      "Night-crew ADHD edition: park zone-'a' (lot) projects and their issues outside every attention surface — feeds, inbox, badges, dashboard counts, timelines. Default off: the lot stays visible like classic upstream.",
+    tier: "preference",
+    cloudDefault: false,
+    selfHostedDefault: false,
+  },
+  enableLotQuestions: {
+    title: "Lot Questions",
+    description:
+      "Night-crew ADHD edition: expose the 'questions for you' lot surface. Default off (classic upstream behavior).",
+    tier: "preference",
+    cloudDefault: false,
+    selfHostedDefault: false,
+  },
 };
 
 export const INSTANCE_FEATURE_KEYS = Object.keys(INSTANCE_FEATURE_CATALOG).sort() as InstanceFeatureKey[];

@@ -63,6 +63,9 @@ describe("instance settings service", () => {
       enablePaperclipDeveloperMode: true,
       enableSimplifiedEnglishInteractions: false,
       enableFirstTaskPlanProposal: false,
+      enableFocusDashboard: false,
+      enableLotView: false,
+      enableLotQuestions: false,
       autoRestartDevServerWhenIdle: true,
       enableWorkspaceBranchReconcileForward: true,
       enableWorkspaceDirtyQuarantineRepair: false,
@@ -73,6 +76,15 @@ describe("instance settings service", () => {
       worktreeRunExecutionActivatedAt: null,
       worktreeRunExecutionActivationInstanceId: null,
     });
+  });
+
+  it("defaults the night-crew ADHD edition flags to false for empty and legacy stored settings", () => {
+    for (const key of ["enableFocusDashboard", "enableLotView", "enableLotQuestions"] as const) {
+      expect(normalizeExperimentalSettings(undefined)[key]).toBe(false);
+      expect(normalizeExperimentalSettings({})[key]).toBe(false);
+      expect(normalizeExperimentalSettings({ enableStreamlinedUi: true })[key]).toBe(false);
+      expect(normalizeExperimentalSettings({ [key]: true })[key]).toBe(true);
+    }
   });
 
   it("defaults streamlined UI on without inheriting the retired navigation preference", () => {

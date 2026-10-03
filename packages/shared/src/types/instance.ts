@@ -106,6 +106,16 @@ export interface InstanceExperimentalSettings {
    * flipping it later does not change an existing first task.
    */
   enableFirstTaskPlanProposal: boolean;
+  /**
+   * Night-crew "ADHD edition" feature flags (doc/plans/2026-10-02-night-crew.md
+   * §7). All three default OFF so the fork keeps classic upstream behavior
+   * when untouched; flipping them on opts this instance into the night crew.
+   */
+  enableFocusDashboard: boolean;
+  /** When on, zone-"a" (lot) projects and their issues become invisible on attention surfaces. */
+  enableLotView: boolean;
+  /** When on, the night-crew "questions for you" lot surface is exposed. */
+  enableLotQuestions: boolean;
   autoRestartDevServerWhenIdle: boolean;
   enableWorkspaceBranchReconcileForward: boolean;
   enableWorkspaceDirtyQuarantineRepair: boolean;
