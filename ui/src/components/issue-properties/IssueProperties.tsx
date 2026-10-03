@@ -8,6 +8,7 @@ import { PROPERTIES_PANE_HEADER_SLOT_ID } from "../PropertiesPanel";
 import { issueStatusText } from "@/lib/status-colors";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { Link } from "@/lib/router";
+import { FINISH_LINE_SECTION_ANCHOR } from "../FinishLineSection";
 import {
   deriveOriginatingActor,
   isArtifactReviewDocumentKey,
@@ -20,6 +21,7 @@ import { accessApi } from "../../api/access";
 import { agentsApi } from "../../api/agents";
 import { authApi } from "../../api/auth";
 import { executionWorkspacesApi } from "../../api/execution-workspaces";
+import { finishLineItemsApi } from "../../api/finishLineItems";
 import { instanceSettingsApi } from "../../api/instanceSettings";
 import { issuesApi } from "../../api/issues";
 import { useIssuePlanDocument } from "@/hooks/useIssuePlanDocument";
@@ -80,7 +82,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { IssuePropertiesPlansTab } from "./IssuePropertiesPlansTab";
 import { IssuePropertiesArtifactsTab } from "./IssuePropertiesArtifactsTab";
-import { User, ArrowUpRight, Plus, X, GitBranch, FolderOpen, HardDrive, Check, Clock, RotateCcw, Loader2, CheckCircle2, ArchiveRestore, ChevronLeft } from "lucide-react";
+import { User, ArrowUpRight, Plus, X, GitBranch, FolderOpen, HardDrive, Check, Clock, RotateCcw, Loader2, CheckCircle2, ArchiveRestore, ChevronLeft, ListChecks } from "lucide-react";
 import { InlineEntitySelector, type InlineEntityOption } from "../InlineEntitySelector";
 import {
   AssigneeRunningBanner,
@@ -362,6 +364,7 @@ export function IssueProperties({
   } | null>(null);
   const [projectOpen, setProjectOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
+  const [finishLineOpen, setFinishLineOpen] = useState(false);
   const [workspacePickerOpen, setWorkspacePickerOpen] = useState(false);
   const [workspacePickerStep, setWorkspacePickerStep] = useState<"mode" | "reuse">("mode");
   const [workspaceSearch, setWorkspaceSearch] = useState("");
@@ -442,6 +445,31 @@ export function IssueProperties({
     queryFn: () => issuesApi.listLabels(companyId!),
     enabled: !!companyId,
   });
+
+  // Finish-line bullets of the task's project — same query the project page
+  // section uses, so a visited project renders from cache. The row stays
+  // hidden unless there is something to pick or an existing tag to clear.
+  const { data: finishLineItems } = useQuery({
+    queryKey: queryKeys.finishLineItems.list(companyId!, issue.projectId ?? ""),
+    queryFn: () => finishLineItemsApi.list(companyId!, issue.projectId!),
+    enabled: Boolean(companyId) && Boolean(issue.projectId),
+  });
+  const taggedFinishLineItem = useMemo(
+    () =>
+      issue.finishLineItemId
+        ? (finishLineItems ?? []).find((item) => item.id === issue.finishLineItemId) ?? null
+        : null,
+    [issue.finishLineItemId, finishLineItems],
+  );
+  // Selectable: open bullets, plus the currently tagged one (even when done)
+  // so it can be seen, changed, or cleared.
+  const finishLineOptions = useMemo(() => {
+    const open = (finishLineItems ?? []).filter((item) => item.status === "open");
+    if (taggedFinishLineItem && !open.some((item) => item.id === taggedFinishLineItem.id)) {
+      return [taggedFinishLineItem, ...open];
+    }
+    return open;
+  }, [finishLineItems, taggedFinishLineItem]);
 
   const { data: allIssues, isFetching: isFetchingIssuePickerIssues } = useQuery({
     queryKey: queryKeys.issues.list(companyId!),
@@ -1942,6 +1970,62 @@ export function IssueProperties({
     </>
   );
 
+  const finishLineTrigger =
+    issue.finishLineItemId && taggedFinishLineItem ? (
+      <>
+        <ListChecks className="h-3.5 w-3.5 shrink-0" />
+        <span
+          className="text-sm truncate min-w-0"
+          title={taggedFinishLineItem.title}
+        >
+          {taggedFinishLineItem.title}
+        </span>
+      </>
+    ) : (
+      <span className="text-sm text-muted-foreground">None</span>
+    );
+
+  const finishLineContent = (
+    <div className="max-h-48 overflow-y-auto overscroll-contain">
+      <button
+        type="button"
+        className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-sm rounded hover:bg-accent/50 disabled:opacity-50"
+        onClick={() => {
+          onUpdate({ finishLineItemId: null });
+          setFinishLineOpen(false);
+        }}
+      >
+        <span className="text-sm text-muted-foreground">No finish line</span>
+      </button>
+      {finishLineOptions.map((item) => (
+        <button
+          type="button"
+          key={item.id}
+          className="w-full flex items-center gap-2 px-2 py-1.5 text-left text-sm rounded hover:bg-accent/50 disabled:opacity-50"
+          onClick={() => {
+            onUpdate({ finishLineItemId: item.id });
+            setFinishLineOpen(false);
+          }}
+        >
+          {issue.finishLineItemId === item.id ? (
+            <Check className="h-3.5 w-3.5 shrink-0" />
+          ) : (
+            <ListChecks className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+          )}
+          <span
+            className={
+              "truncate min-w-0 " +
+              (item.status === "done" ? "line-through text-muted-foreground" : "")
+            }
+            title={item.title}
+          >
+            {item.title}
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+
   const projectTrigger = issue.projectId ? (
     <>
       <ProjectTile
@@ -2004,6 +2088,11 @@ export function IssueProperties({
                     executionWorkspaceSettings: workspaceIsolationControlsVisible && option.project.executionWorkspacePolicy?.enabled
                       ? { mode: defaultMode }
                       : null,
+                    // The finish-line tag is project-scoped; a different
+                    // project invalidates it in the same PATCH.
+                    ...(issue.finishLineItemId && option.project.id !== issue.projectId
+                      ? { finishLineItemId: null }
+                      : {}),
                   });
                 } else {
                   onUpdate({
@@ -2012,6 +2101,7 @@ export function IssueProperties({
                     executionWorkspaceId: null,
                     executionWorkspacePreference: null,
                     executionWorkspaceSettings: null,
+                    ...(issue.finishLineItemId ? { finishLineItemId: null } : {}),
                   });
                 }
                 setProjectOpen(false);
@@ -2408,6 +2498,30 @@ export function IssueProperties({
         >
           {projectContent}
         </PropertyPicker>
+
+        {issue.projectId &&
+        (finishLineOptions.length > 0 || issue.finishLineItemId) ? (
+          <PropertyPicker
+            inline={inline}
+            label="Serves finish line"
+            open={finishLineOpen}
+            onOpenChange={setFinishLineOpen}
+            triggerContent={finishLineTrigger}
+            triggerClassName="min-w-0 max-w-full"
+            popoverClassName="w-fit min-w-(--sz-11rem)"
+            extra={issue.projectId ? (
+              <Link
+                to={`/projects/${issue.projectId}#${FINISH_LINE_SECTION_ANCHOR}`}
+                className="inline-flex items-center justify-center h-5 w-5 rounded hover:bg-accent/50 transition-colors text-muted-foreground hover:text-foreground"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <ArrowUpRight className="h-3 w-3" />
+              </Link>
+            ) : undefined}
+          >
+            {finishLineContent}
+          </PropertyPicker>
+        ) : null}
 
         <PropertyPicker
           inline={inline}

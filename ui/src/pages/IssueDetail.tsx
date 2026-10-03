@@ -51,6 +51,7 @@ import {
 } from "@/hooks/useSharedPolling";
 import { ApiError } from "../api/client";
 import { issuesApi } from "../api/issues";
+import { finishLineItemsApi } from "../api/finishLineItems";
 import { CommentSubmissionUnknownError } from "../lib/comment-submit-result";
 import { approvalsApi } from "../api/approvals";
 import { activityApi, type RunForIssue } from "../api/activity";
@@ -334,6 +335,7 @@ import {
   Plus,
   Repeat,
   SlidersHorizontal,
+ListChecks,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -3529,6 +3531,24 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
           null)
         : null,
     [issue?.project, issue?.projectId, orderedProjects],
+  );
+  const { data: issueFinishLineItems } = useQuery({
+    queryKey: queryKeys.finishLineItems.list(
+      resolvedCompanyId ?? "",
+      issue?.projectId ?? "",
+    ),
+    queryFn: () =>
+      finishLineItemsApi.list(resolvedCompanyId!, issue!.projectId!),
+    enabled: Boolean(resolvedCompanyId) && Boolean(issue?.projectId),
+  });
+  const taggedFinishLineItem = useMemo(
+    () =>
+      issue?.finishLineItemId
+        ? (issueFinishLineItems ?? []).find(
+            (item) => item.id === issue.finishLineItemId,
+          ) ?? null
+        : null,
+    [issue?.finishLineItemId, issueFinishLineItems],
   );
   const childIssues = useMemo(() => {
     const descendants = issue?.id
@@ -7096,14 +7116,25 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
               {resolvedProject?.name ??
                 issue.project?.name ??
                 issue.projectId.slice(0, 8)}
-            </span>
-          </Link>
-        ) : (
+              </span>
+              </Link>
+              ) : (
           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground opacity-50 px-1 -mx-1 py-0.5">
             <ProjectTile size="xs" />
             No project
           </span>
         )}
+
+        {taggedFinishLineItem && issue?.projectId ? (
+          <Link
+            to={`/projects/${issue.projectId}#finish-line`}
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors rounded px-1 -mx-1 py-0.5 min-w-0"
+            title={taggedFinishLineItem.title}
+          >
+            <ListChecks className="h-3 w-3 shrink-0" />
+            <span className="truncate">{taggedFinishLineItem.title}</span>
+          </Link>
+        ) : null}
 
         <IssueAttributionByline
           issue={issue}

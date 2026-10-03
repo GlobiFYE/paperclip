@@ -7,6 +7,7 @@ import { PROJECT_ZONE_LABELS, type AgentEnvConfig, type EnvBinding, type IssueWo
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
 import { executionWorkspacesApi } from "../api/execution-workspaces";
+import { finishLineItemsApi } from "../api/finishLineItems";
 import { issuesApi } from "../api/issues";
 import { MissingUserSecretsBanner } from "../pages/secrets/MissingUserSecretsBanner";
 import { instanceSettingsApi } from "../api/instanceSettings";
@@ -67,6 +68,7 @@ import {
   Flag,
   PauseCircle,
   Loader2,
+  ListChecks,
   ListTree,
   X,
   Eye,
@@ -529,6 +531,10 @@ export function NewIssueDialog() {
   const [participantMenuOpen, setParticipantMenuOpen] = useState(false);
   const [projectId, setProjectId] = useState("");
   const [projectWorkspaceId, setProjectWorkspaceId] = useState("");
+  // Which finish-line bullet ("what done looks like") the new task serves.
+  // Optional and quiet: only offered once a project is picked and it has open
+  // bullets, reset whenever the project (or dialog) resets.
+  const [finishLineItemId, setFinishLineItemId] = useState("");
   // Destination zone for the project picker when the lot view is enabled.
   // Defaults to the Active Lane; resets on every dialog open.
   const [destinationZone, setDestinationZone] = useState<ProjectZone>("b");
@@ -597,6 +603,20 @@ export function NewIssueDialog() {
       }),
     enabled: Boolean(effectiveCompanyId) && newIssueOpen && Boolean(projectId) && workspaceIsolationControlsVisible,
   });
+  // Finish-line bullets for the picked project — the "Serves finish line"
+  // row only mounts once this resolves with open bullets.
+  const { data: projectFinishLineItems } = useQuery({
+    queryKey: queryKeys.finishLineItems.list(effectiveCompanyId!, projectId),
+    queryFn: () => finishLineItemsApi.list(effectiveCompanyId!, projectId),
+    enabled: Boolean(effectiveCompanyId) && newIssueOpen && Boolean(projectId),
+  });
+  const openFinishLineOptions = useMemo<InlineEntityOption[]>(
+    () =>
+      (projectFinishLineItems ?? [])
+        .filter((item) => item.status === "open")
+        .map((item) => ({ id: item.id, label: item.title })),
+    [projectFinishLineItems],
+  );
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
@@ -1029,6 +1049,7 @@ export function NewIssueDialog() {
     setShowWatchdogRow(false);
     setProjectId("");
     setProjectWorkspaceId("");
+    setFinishLineItemId("");
     setDestinationZone("b");
     destinationTouchedRef.current = false;
     setAssigneeOptionsOpen(false);
@@ -1062,6 +1083,7 @@ export function NewIssueDialog() {
     setShowWatchdogRow(false);
     setProjectId("");
     setProjectWorkspaceId("");
+    setFinishLineItemId("");
     setAssigneeModelLane("primary");
     setAssigneeModelOverride("");
     setAssigneeThinkingEffort("");
@@ -1127,6 +1149,7 @@ export function NewIssueDialog() {
       ...(newIssueDefaults.parentId ? { parentId: newIssueDefaults.parentId } : {}),
       ...(newIssueDefaults.goalId ? { goalId: newIssueDefaults.goalId } : {}),
       ...(projectId ? { projectId } : {}),
+      ...(finishLineItemId ? { finishLineItemId } : {}),
       ...(projectWorkspaceId ? { projectWorkspaceId } : {}),
       ...(assigneeAdapterOverrides ? { assigneeAdapterOverrides } : {}),
       ...(executionWorkspacePolicy?.enabled ? { executionWorkspacePreference: executionWorkspaceMode } : {}),
@@ -1319,6 +1342,8 @@ export function NewIssueDialog() {
   const handleProjectChange = useCallback((nextProjectId: string) => {
     if (nextProjectId) trackRecentProject(nextProjectId);
     setProjectId(nextProjectId);
+    // The finish-line tag is project-scoped; a different project invalidates it.
+    setFinishLineItemId("");
     const nextProject = orderedProjects.find((project) => project.id === nextProjectId);
     executionWorkspaceDefaultProjectId.current = nextProjectId || null;
     setProjectWorkspaceId(defaultProjectWorkspaceIdForProject(nextProject));
@@ -1780,6 +1805,39 @@ export function NewIssueDialog() {
               </Popover>
               </div>
             </div>
+
+            {/* Serves finish line — the optional "what done looks like"
+                bullet this task serves. Quiet: it only appears once the
+                picked project has open bullets, offers only those, and
+                "No finish line" clears the pick. */}
+            {projectId && openFinishLineOptions.length > 0 ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span className="w-6 shrink-0 flex items-center justify-center">
+                  <ListChecks className="h-3.5 w-3.5" aria-hidden />
+                </span>
+                <InlineEntitySelector
+                  value={finishLineItemId}
+                  options={openFinishLineOptions}
+                  placeholder="Serves finish line"
+                  mobileTitle="Select finish-line bullet"
+                  className="h-8 px-2.5 py-0 sm:h-auto sm:px-2 sm:py-1"
+                  triggerDataSlot="new-issue-compact-control"
+                  contentStyle={entityPickerViewportStyle}
+                  noneLabel="No finish line"
+                  searchPlaceholder="Search finish-line bullets..."
+                  emptyMessage="No finish-line bullets found."
+                  onChange={setFinishLineItemId}
+                  renderTriggerValue={(option) =>
+                    option ? (
+                      <span className="truncate">{option.label}</span>
+                    ) : (
+                      <span className="text-muted-foreground">Serves finish line</span>
+                    )
+                  }
+                  renderOption={(option) => <span className="truncate">{option.label}</span>}
+                />
+              </div>
+            ) : null}
 
             {/* Calm empty hint when the chosen destination zone holds no
                 projects — never a dead dropdown. Submitting without a
