@@ -50,7 +50,7 @@ import {
 } from "../legacy-execution-recovery.js";
 import { logger } from "../../middleware/logger.js";
 import { failRunnerGoalAction } from "../runner-goals.js";
-import { evaluateAgentInvokability } from "../agent-invokability.js";
+import { evaluateAgentInvokability, evaluateAgentInvokabilityFromDb } from "../agent-invokability.js";
 import type { Db } from "@paperclipai/db";
 import type { issueService } from "../issues.js";
 import type { createHeartbeatQueue } from "./queue.js";
@@ -189,14 +189,23 @@ export function createHeartbeatScheduling(
     monitor: IssueExecutionMonitorPolicy | null;
     nextAttemptCount: number;
     now: Date;
+    // Preemptive (pre-dispatch) checks allow exactly `maxAttempts` attempts to
+    // be made before stopping on what would be attempt `maxAttempts + 1`. A
+    // check made *after* an attempt has already failed must instead treat
+    // that failed attempt as consuming its slot immediately: if it was the
+    // `maxAttempts`-th attempt, there is no attempt left to defer into.
+    attemptJustFailed?: boolean;
   }): IssueExecutionMonitorClearReason | null {
     const timeoutAt = parseMonitorDate(input.monitor?.timeoutAt ?? null);
     if (timeoutAt && input.now.getTime() >= timeoutAt.getTime()) {
       return "timeout_exceeded";
     }
     const maxAttempts = input.monitor?.maxAttempts ?? null;
-    if (maxAttempts !== null && input.nextAttemptCount > maxAttempts) {
-      return "max_attempts_exhausted";
+    if (maxAttempts !== null) {
+      const exhausted = input.attemptJustFailed
+        ? input.nextAttemptCount >= maxAttempts
+        : input.nextAttemptCount > maxAttempts;
+      if (exhausted) return "max_attempts_exhausted";
     }
     return null;
   }
@@ -416,6 +425,40 @@ export function createHeartbeatScheduling(
         entityType: "issue",
         entityId: input.claimed.id,
         details,
+      });
+      return;
+    }
+
+    const ownerAgent = await getAgent(input.claimed.assigneeAgentId!);
+    const ownerInvokability = await evaluateAgentInvokabilityFromDb(db, ownerAgent);
+    if (!ownerInvokability.invokable) {
+      // The assignee is the same agent the monitor just failed to dispatch
+      // to (most commonly paused for budget/quota reasons) — waking them now
+      // would hit the identical failure. Throwing here would also undo the
+      // clear's accounting in the caller and silently drop the recovery
+      // notice; fall back to a visible comment instead, like
+      // escalate_to_board does.
+      await db.insert(issueComments).values({
+        companyId: input.claimed.companyId,
+        issueId: input.claimed.id,
+        body: `${monitorRecoveryComment({
+          issue: input.claimed,
+          clearReason: input.clearReason,
+          recoveryPolicy: input.recoveryPolicy,
+          nextAttemptCount: input.nextAttemptCount,
+        })}\n\nThe assignee could not be woken (${ownerInvokability.reason ?? "not invokable"}); escalating here instead.`,
+      });
+
+      await logActivity(db, {
+        companyId: input.claimed.companyId,
+        actorType: input.actorType,
+        actorId: input.actorId,
+        agentId: input.agentId,
+        runId: input.runId,
+        action: "issue.monitor_recovery_wake_skipped",
+        entityType: "issue",
+        entityId: input.claimed.id,
+        details: { ...details, reason: ownerInvokability.reason ?? null },
       });
       return;
     }
@@ -799,6 +842,7 @@ export function createHeartbeatScheduling(
             monitor,
             nextAttemptCount,
             now: input.now,
+            attemptJustFailed: true,
           });
           if (deferClearReason) {
             return clearIssueMonitorAndRecover({
