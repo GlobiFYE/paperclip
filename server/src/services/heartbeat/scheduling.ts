@@ -553,6 +553,7 @@ export function createHeartbeatScheduling(
           policy: input.policy,
           clearReason: input.clearReason,
           clearedAt: input.now,
+          nextAttemptCount: input.nextAttemptCount,
         })),
         updatedAt: input.now,
       })
