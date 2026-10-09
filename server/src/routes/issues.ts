@@ -13020,6 +13020,12 @@ export function issueRoutes(
       const result = await svc.decomposeAcceptedPlan(sourceIssue.id, {
         acceptedPlanRevisionId: req.body.acceptedPlanRevisionId,
         children: normalizedChildren,
+        // Fingerprint the request as the caller submitted it, before a
+        // company/project default was resolved onto each child above --
+        // otherwise an identical retry 409s whenever the default's content
+        // (not just the ids normalizeIssueExecutionPolicy mints) changed
+        // between the original call and the retry.
+        fingerprintChildren: requestedChildren,
         actorAgentId: actor.agentId,
         actorUserId: actor.actorType === "user" ? actor.actorId : null,
         actorRunId: actor.runId ?? null,

@@ -6746,6 +6746,73 @@ describeEmbeddedPostgres("accepted plan decomposition", () => {
     expect(second.newlyCreatedIssues).toHaveLength(0);
   });
 
+  it("tolerates a retry whose resolved executionPolicy content changed (e.g. a board actor edited the company/project default in between), by fingerprinting fingerprintChildren instead of the resolved children", async () => {
+    const { sourceIssueId, acceptedPlanRevisionId, assigneeAgentId } = await seedAcceptedPlanIssue();
+
+    // The route resolves a company/project default onto any child that
+    // omitted an explicit executionPolicy before calling in here, so the
+    // resolved `children` content can legitimately differ between the
+    // original call and a retry if the default was edited in between (not
+    // just the ids normalizeIssueExecutionPolicy mints, which the previous
+    // test covers). fingerprintChildren captures what the caller actually
+    // requested (no explicit policy, both times) so the fingerprint stays
+    // stable even though `children` doesn't.
+    const requestedChild = {
+      title: "Implement the claim table",
+      status: "todo" as const,
+      workMode: "ask" as const,
+      priority: "medium" as const,
+    };
+
+    function resolvedChildWithPolicyContent(content: string) {
+      return {
+        ...requestedChild,
+        executionPolicy: {
+          mode: "normal" as const,
+          commentRequired: true,
+          maxReviewRounds: null,
+          stages: [
+            {
+              id: randomUUID(),
+              type: "approval" as const,
+              approvalsNeeded: 1 as const,
+              participants: [
+                {
+                  id: randomUUID(),
+                  type: "user" as const,
+                  userId: content,
+                  agentId: null,
+                },
+              ],
+            },
+          ],
+        },
+      };
+    }
+
+    const first = await svc.decomposeAcceptedPlan(sourceIssueId, {
+      acceptedPlanRevisionId,
+      children: [resolvedChildWithPolicyContent("default-reviewer-v1")],
+      fingerprintChildren: [requestedChild],
+      actorAgentId: assigneeAgentId,
+    });
+    expect(first.decomposition.status).toBe("completed");
+    expect(first.childIssueIds).toHaveLength(1);
+
+    // Simulate the default's content (not just its minted ids) having
+    // changed between the original call and this retry.
+    const second = await svc.decomposeAcceptedPlan(sourceIssueId, {
+      acceptedPlanRevisionId,
+      children: [resolvedChildWithPolicyContent("default-reviewer-v2-edited")],
+      fingerprintChildren: [requestedChild],
+      actorAgentId: assigneeAgentId,
+    });
+
+    expect(second.decomposition.status).toBe("completed");
+    expect(second.childIssueIds).toEqual(first.childIssueIds);
+    expect(second.newlyCreatedIssues).toHaveLength(0);
+  });
+
   it("rejects a different child set for the same accepted plan fingerprint", async () => {
     const { sourceIssueId, acceptedPlanRevisionId, assigneeAgentId } = await seedAcceptedPlanIssue();
 

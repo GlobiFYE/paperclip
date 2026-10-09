@@ -1966,6 +1966,14 @@ type IssueChildCreateInput = IssueCreateInput & {
 type AcceptedPlanDecompositionInput = {
   acceptedPlanRevisionId: string;
   children: IssueChildCreateInput[];
+  // What the fingerprint keys off, when it differs from `children`. Callers
+  // that resolve a company/project default executionPolicy onto `children`
+  // before calling in (the route does, via resolveDefaultIssueExecutionPolicy)
+  // should pass the pre-resolution request here instead, so that an identical
+  // retry doesn't 409 just because the default's *content* -- not only the
+  // ids normalizeIssueExecutionPolicy mints -- changed in between. Falls back
+  // to `children` when omitted.
+  fingerprintChildren?: IssueChildCreateInput[];
   actorAgentId?: string | null;
   actorUserId?: string | null;
   actorRunId?: string | null;
@@ -9707,7 +9715,7 @@ export function issueService(db: Db) {
       const requestFingerprint =
         createAcceptedPlanDecompositionRequestFingerprint({
           acceptedPlanRevisionId: data.acceptedPlanRevisionId,
-          children: data.children,
+          children: data.fingerprintChildren ?? data.children,
         });
 
       const initialClaim = await db.transaction(async (tx) => {

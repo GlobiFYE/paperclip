@@ -39,6 +39,7 @@ import { badRequest, conflict, forbidden, notFound, unprocessable } from "../err
 import { PORTABLE_ZIP_UPLOAD_LIMIT_BYTES } from "../http/body-limits.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
+import { normalizeIssueExecutionPolicy } from "../services/issue-execution-policy.js";
 import {
   assembleImportTransferZip,
   importTransferPartName,
@@ -503,7 +504,12 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
   // when its create call omits one (see resolveDefaultIssueExecutionPolicy in
   // ../services/issues.ts). Readable by anyone with company access; writable
   // only by board actors, matching the write-gating idiom used throughout
-  // this file and server/src/routes/access.ts.
+  // this file and server/src/routes/access.ts. Run through
+  // normalizeIssueExecutionPolicy so monitor.externalRef comes back
+  // redacted, same as every other execution-policy read path -- the stored
+  // value is the real one (resolveDefaultIssueExecutionPolicy needs it to
+  // authorize a resolved monitor), so returning it as-is to any
+  // company-access caller would leak it.
   router.get("/:companyId/default-execution-policy", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
@@ -512,7 +518,11 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
       res.status(404).json({ error: "Company not found" });
       return;
     }
-    res.json({ defaultExecutionPolicy: company.defaultExecutionPolicy ?? null });
+    res.json({
+      defaultExecutionPolicy: normalizeIssueExecutionPolicy(
+        company.defaultExecutionPolicy ?? null,
+      ),
+    });
   });
 
   router.put(

@@ -33,6 +33,7 @@ import { accessService, projectService, logActivity, workspaceOperationService }
 import { conflict, forbidden, unprocessable } from "../errors.js";
 import { externalObjectService } from "../services/external-objects.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
+import { normalizeIssueExecutionPolicy } from "../services/issue-execution-policy.js";
 import { assertBoard, assertCompanyAccess, getAccessibleResource, getActorInfo } from "./authz.js";
 import { ensureProjectAccessMember } from "../services/projects.js";
 import {
@@ -500,13 +501,20 @@ export function projectRoutes(db: Db) {
   // Project-level override of the company's defaultExecutionPolicy (see
   // GET/PUT /companies/:companyId/default-execution-policy in
   // ../routes/companies.ts). Readable by anyone with project access;
-  // writable only by board actors.
+  // writable only by board actors. Run through normalizeIssueExecutionPolicy
+  // so monitor.externalRef comes back redacted, same as every other
+  // execution-policy read path -- the stored value is the real one, so
+  // returning it as-is to any project-access caller would leak it.
   router.get("/projects/:id/default-execution-policy", async (req, res) => {
     const id = req.params.id as string;
     const project = await getAccessibleResource(req, res, svc.getById(id), "Project not found");
     if (!project) return;
     if (!(await assertProjectReadAllowed(req, res, project))) return;
-    res.json({ defaultExecutionPolicy: project.defaultExecutionPolicy ?? null });
+    res.json({
+      defaultExecutionPolicy: normalizeIssueExecutionPolicy(
+        project.defaultExecutionPolicy ?? null,
+      ),
+    });
   });
 
   router.put(

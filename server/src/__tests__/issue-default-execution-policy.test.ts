@@ -537,4 +537,57 @@ describeEmbeddedPostgres("company/project default execution policy", () => {
       userId: "company-reviewer",
     });
   });
+
+  it("redacts the company default execution policy's monitor externalRef on read", async () => {
+    const company = await seedCompany();
+
+    await request(app(boardActor))
+      .put(`/api/companies/${company.id}/default-execution-policy`)
+      .send({
+        defaultExecutionPolicy: {
+          ...approvalPolicy("company-reviewer"),
+          monitor: {
+            nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
+            kind: "external_service",
+            serviceName: "github",
+            externalRef: "https://example.com/webhook?token=super-secret",
+          },
+        },
+      })
+      .expect(200);
+
+    // Any caller with company access can read the default (see the route's
+    // own comment), not only the board actor who just wrote it.
+    const agent = await seedAgentRow(company.id);
+    const get = await request(app(agentActor(agent.id, company.id)))
+      .get(`/api/companies/${company.id}/default-execution-policy`)
+      .expect(200);
+    expect(get.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
+  });
+
+  it("redacts the project default execution policy's monitor externalRef on read", async () => {
+    const company = await seedCompany();
+    const project = await seedProject(company.id);
+
+    await request(app(boardActor))
+      .put(`/api/projects/${project.id}/default-execution-policy`)
+      .send({
+        defaultExecutionPolicy: {
+          ...approvalPolicy("project-reviewer"),
+          monitor: {
+            nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
+            kind: "external_service",
+            serviceName: "github",
+            externalRef: "https://example.com/webhook?token=super-secret",
+          },
+        },
+      })
+      .expect(200);
+
+    const agent = await seedAgentRow(company.id);
+    const get = await request(app(agentActor(agent.id, company.id)))
+      .get(`/api/projects/${project.id}/default-execution-policy`)
+      .expect(200);
+    expect(get.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
+  });
 });

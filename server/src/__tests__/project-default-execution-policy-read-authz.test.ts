@@ -83,7 +83,15 @@ describe("GET /projects/:id/default-execution-policy authorization", () => {
 
   it("returns the policy for an actor whose project:read is allowed", async () => {
     mockProjectService.getById.mockResolvedValue(
-      buildProject({ defaultExecutionPolicy: { mode: "normal", commentRequired: true, stages: [] } }),
+      buildProject({
+        defaultExecutionPolicy: {
+          mode: "normal",
+          commentRequired: true,
+          stages: [
+            { id: "stage-1", type: "approval", approvalsNeeded: 1, participants: [{ id: "p-1", type: "user", userId: "reviewer-1" }] },
+          ],
+        },
+      }),
     );
     mockAccessService.decide.mockResolvedValue({
       allowed: true,
@@ -96,7 +104,45 @@ describe("GET /projects/:id/default-execution-policy authorization", () => {
     const res = await request(app).get(`/api/projects/${PROJECT_ID}/default-execution-policy`);
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ defaultExecutionPolicy: { mode: "normal", commentRequired: true, stages: [] } });
+    expect(res.body.defaultExecutionPolicy.stages[0].participants[0]).toMatchObject({
+      type: "user",
+      userId: "reviewer-1",
+    });
+  });
+
+  // The route now runs the stored policy through normalizeIssueExecutionPolicy
+  // before responding (see the route's own comment) so monitor.externalRef
+  // comes back redacted -- previously it echoed company.defaultExecutionPolicy
+  // verbatim, leaking a real monitor token/URL to any caller whose
+  // project:read is allowed, not just the board actor who set it.
+  it("redacts the monitor externalRef on the stored policy", async () => {
+    mockProjectService.getById.mockResolvedValue(
+      buildProject({
+        defaultExecutionPolicy: {
+          mode: "normal",
+          commentRequired: true,
+          stages: [],
+          monitor: {
+            nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
+            kind: "external_service",
+            serviceName: "github",
+            externalRef: "https://example.com/webhook?token=super-secret",
+          },
+        },
+      }),
+    );
+    mockAccessService.decide.mockResolvedValue({
+      allowed: true,
+      action: "project:read",
+      reason: "allow_company_agent",
+      explanation: "Allowed by default same-company agent visibility.",
+    });
+    const app = createApp({ type: "agent", agentId: "agent-1", companyId: "company-1", runId: "run-1" });
+
+    const res = await request(app).get(`/api/projects/${PROJECT_ID}/default-execution-policy`);
+
+    expect(res.status).toBe(200);
+    expect(res.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
   });
 });
 
