@@ -69,6 +69,8 @@ import {
   allowsUnsupportedOpenCodeVersion,
   probeOpenCodeCliVersion,
   unsupportedOpenCodeVersionMessage,
+  usesOpenCodeV2Cli,
+  type OpenCodeCliVersion,
 } from "./version.js";
 
 const __moduleDir = path.dirname(fileURLToPath(import.meta.url));
@@ -336,6 +338,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     env.PAPERCLIP_API_KEY = authToken;
   }
   let openCodeCliVersionNote: string | null = null;
+  let openCodeCliVersion: OpenCodeCliVersion | null = null;
   const preparedRuntimeConfig = await prepareOpenCodeRuntimeConfig({ env, config });
   const localRuntimeConfigHome =
     preparedRuntimeConfig.notes.length > 0 ? preparedRuntimeConfig.env.XDG_CONFIG_HOME : "";
@@ -384,6 +387,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         env: runtimeEnv,
       });
       if (cliVersion) {
+        openCodeCliVersion = cliVersion;
         openCodeCliVersionNote = `OpenCode CLI version ${cliVersion.version}`;
         await onLog(
           "stdout",
@@ -403,6 +407,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         command,
         cwd,
         env: runtimeEnv,
+        openCodeMajor: openCodeCliVersion?.major,
       });
     }
 
@@ -648,12 +653,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     const printLogs = isTruthyEnvFlag(
       env.PAPERCLIP_OPENCODE_PRINT_LOGS ?? process.env.PAPERCLIP_OPENCODE_PRINT_LOGS,
     );
+    const openCodeV2 = usesOpenCodeV2Cli(openCodeCliVersion);
     const buildArgs = (resumeSessionId: string | null) => {
       const args = ["run", "--format", "json"];
       if (printLogs) args.push("--print-logs");
       if (resumeSessionId) args.push("--session", resumeSessionId);
-      if (model) args.push("--model", model);
-      if (variant) args.push("--variant", variant);
+      // OpenCode V2 dropped the `--variant` flag: the variant joins the model
+      // reference as `provider/model#variant`. V1 keeps the separate flag.
+      const modelArg = openCodeV2 && variant ? `${model}#${variant}` : model;
+      if (modelArg) args.push("--model", modelArg);
+      if (!openCodeV2 && variant) args.push("--variant", variant);
       // OpenCode prefers the inherited PWD over process.cwd(). Use the realized
       // workspace unless the operator already selected a directory explicitly.
       const optionTerminator = extraArgs.indexOf("--");
