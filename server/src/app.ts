@@ -633,6 +633,10 @@ export async function createApp(
     deferWebhookProcessing: true,
     heartbeat: connectionIntentHeartbeat,
     publicBaseUrl: opts.authPublicBaseUrl,
+    githubWizardOrigin: opts.deploymentMode === "local_trusted"
+      && ["127.0.0.1", "localhost", "::1"].includes(opts.bindHost ?? "")
+      && Number.isInteger(opts.serverPort) && opts.serverPort! > 0
+      ? `http://${opts.bindHost === "::1" ? "[::1]" : opts.bindHost}:${opts.serverPort}` : null,
     webhookPublicBaseUrl: opts.chatWebhookPublicBaseUrl,
     resolveNativeQuestion: (interaction) =>
       deliverNativeQuestionResponse(db, interaction),
@@ -642,6 +646,7 @@ export async function createApp(
   // mutation guard. The Chat SDK adapter verifies the provider signature
   // before Paperclip persists or acts on any event.
   const emailChannels = emailChannelService(db, {
+    isReconciliationEnabled: () => !isWarmStandby(),
     isBackgroundWorkEnabled: () => !isWarmStandby() && !isIdleTaskDrainActive(),
     heartbeat: connectionIntentHeartbeat,
     storage: opts.storageService,
@@ -650,12 +655,20 @@ export async function createApp(
   app.use(emailWebhookRoutes(emailChannels));
   app.use(chatWebhookRoutes(chatChannels));
   // The instance validates single-use registration state and its trusted
-  // current origin. This exact GET is the only public setup return.
+  // current origin. These exact callback routes are the public setup returns.
   app.get("/api/chat-github/manifest/callback", async (req, res) => {
     res.set("Cache-Control", "no-store");
     res.set("Referrer-Policy", "no-referrer");
-    const redirect = await chatChannels.completeGitHubRegistration(String(req.query.state ?? ""), String(req.query.code ?? ""));
+    const redirect = await chatChannels.githubWizard.directCallback(String(req.query.state ?? ""), String(req.query.code ?? ""));
     res.redirect(303, redirect);
+  });
+  app.get("/api/chat-github/cloud/callback", async (req, res) => {
+    res.set("Cache-Control", "no-store"); res.set("Referrer-Policy", "no-referrer");
+    res.redirect(303, await chatChannels.githubWizard.cloudCallback(String(req.query.state ?? ""), String(req.query.registration ?? ""), typeof req.query.claim === "string" ? req.query.claim : undefined));
+  });
+  app.get("/api/chat-github/identity/callback", async (req, res) => {
+    res.set("Cache-Control", "no-store"); res.set("Referrer-Policy", "no-referrer");
+    res.redirect(303, await chatChannels.githubWizard.identityCallback(String(req.query.state ?? ""), String(req.query.code ?? "")));
   });
   const managedAutoInstallKeys = opts.managedPluginAutoInstall ?? null;
   const bundledCatalogRoot =
@@ -1022,7 +1035,7 @@ export async function createApp(
     const dotOAuth = createPublicMcpOAuth(db, { ...publicMcpOAuth.config, resource: publicMcpOAuth.config.origin + "/mcp/runner" });
     dotMcpEvents = createPublicMcpEvents(db, dotOAuth, dispatch, { enableDotRunner: true, isBackgroundWorkEnabled: () => !isWarmStandby() && !isIdleTaskDrainActive() });
     dotMcpEvents.start();
-    publicMcpIngress.use(publicMcpIngressRoutes(dotOAuth, createPublicMcpExecutor(db, dotOAuth, dispatch), dotMcpEvents, createDotRunnerMcpTools(db)));
+    publicMcpIngress.use(publicMcpIngressRoutes(dotOAuth, createPublicMcpExecutor(db, dotOAuth, dispatch), dotMcpEvents, createDotRunnerMcpTools(db, connectionIntentHeartbeat)));
     api.use(publicMcpManagementRoutes(publicMcpOAuth, dotOAuth));
     api.use(dotRunnerRoutes(db, publicMcpOAuth.config.origin + "/mcp/runner"));
   }
