@@ -88,7 +88,14 @@ describe("GET /projects/:id/default-execution-policy authorization", () => {
           mode: "normal",
           commentRequired: true,
           stages: [
-            { id: "stage-1", type: "approval", approvalsNeeded: 1, participants: [{ id: "p-1", type: "user", userId: "reviewer-1" }] },
+            {
+              id: "22222222-2222-4222-8222-222222222222",
+              type: "approval",
+              approvalsNeeded: 1,
+              participants: [
+                { id: "33333333-3333-4333-8333-333333333333", type: "user", userId: "reviewer-1" },
+              ],
+            },
           ],
         },
       }),
