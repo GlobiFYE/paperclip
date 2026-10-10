@@ -27,6 +27,9 @@ export function createSlackManagerGrants(store: SlackRegistrationStore) {
     if (!(await instanceSettingsService(database as typeof db).getExperimental()).enableChatConnectors) throw forbidden("Chat connectors are disabled");
     if (!actor.bypassPermissionCheck && !await accessService(database as typeof db).hasPermission(companyId, "user", actor.userId, "tools:manage_connections")) throw forbidden("Missing permission: tools:manage_connections");
   }
+  // Deployment intent is stable across broker outages and preview rollbacks.
+  // A missing live profile pauses managed setup; it must not select token entry.
+  function defaultMethod(): "managed" | "automatic" { return broker() ? "managed" : "automatic"; }
   async function available() {
     const client = broker();
     if (!client || !(await instanceSettingsService(db).getExperimental()).enableChatConnectors) return false;
@@ -42,7 +45,7 @@ export function createSlackManagerGrants(store: SlackRegistrationStore) {
     const managedAvailable = await available();
     const managerAppId = managedAvailable ? await broker()!.getSlackManagerAppId() : null;
     const grants = managedAvailable && managerAppId ? await db.select().from(chatSlackManagerGrants).where(and(eq(chatSlackManagerGrants.companyId, companyId), eq(chatSlackManagerGrants.userId, actor.userId), eq(chatSlackManagerGrants.status, "active"), eq(chatSlackManagerGrants.managerAppId, managerAppId))) : [];
-    return { managedAvailable, defaultMethod: managedAvailable ? "managed" : "automatic", workspaces: grants.map(g => ({ grantId: g.id, workspaceId: g.workspaceId, workspaceName: g.workspaceName, userId: g.slackUserId })) };
+    return { managedAvailable, defaultMethod: defaultMethod(), workspaces: grants.map(g => ({ grantId: g.id, workspaceId: g.workspaceId, workspaceName: g.workspaceName, userId: g.slackUserId })) };
   }
   const callbackUri = () => `${origin(options.publicOrigin())}/api/chat-slack/managed/oauth/callback`;
   async function authorize(endpointId: string, actor: SlackSetupActor) {
@@ -255,5 +258,5 @@ export function createSlackManagerGrants(store: SlackRegistrationStore) {
     if ("error" in result) throw result.error;
     return result.value!;
   }
-  return { choices, available, authorize, pending, expiredReturn, complete, get, token, revoke, request };
+  return { choices, defaultMethod, available, authorize, pending, expiredReturn, complete, get, token, revoke, request };
 }

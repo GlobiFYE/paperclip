@@ -4,6 +4,9 @@ import { slackSetupState } from "./setup-state";
 const draft = (method?: "managed" | "automatic" | "manual" | "existing") => ({ id: "endpoint", setup: { step: "provider_setup", slackSetupMethod: method } }) as ChatEndpoint;
 const state = (endpoint: ChatEndpoint | null, extra = {}) => slackSetupState({ endpoint, repairing: false, credentialsReady: false, identityReady: false, ...extra });
 describe("Slack setup capabilities and progress", () => {
+  it("does not flash token instructions while discovery is pending", () => {
+    expect(state(null).labels).toEqual(["Choose agent", "Add to Slack", "Connect"]);
+  });
   it("defaults only new drafts and preserves legacy manual drafts", () => {
     expect(state(null, { defaultMethod: "managed" }).labels).toEqual(["Choose agent", "Add to Slack", "Connect"]);
     expect(state(draft(), { defaultMethod: "managed" }).provisioned).toBe(false);

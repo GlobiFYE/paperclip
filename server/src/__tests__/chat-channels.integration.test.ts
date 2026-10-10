@@ -4162,6 +4162,15 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         expect((await f.service.get(f.endpoint.id)).setup.slackSetupMethod).toBe("automatic");
         await expect(f.service.update(f.endpoint.id, { slackSetupMethod: "managed" }, actor.userId)).rejects.toThrow();
       });
+      it("keeps configured Cloud drafts managed when the broker profile disappears", async () => {
+        const f = await managedFixture();
+        f.broker.getSlackManagerAppId.mockResolvedValue(null);
+        expect(f.grants.defaultMethod()).toBe("managed");
+        expect(await f.grants.choices(f.companyId, actor)).toEqual({ managedAvailable: false, defaultMethod: "managed", workspaces: [] });
+        const next = await f.service.create(f.companyId, { provider: "slack", assignedAgentId: f.assignedAgentId }, actor.userId);
+        expect(next.setup.slackSetupMethod).toBe("managed");
+        await expect(f.provision()).rejects.toThrow();
+      });
       it("creates and installs once, uploads the avatar and links only the manager grant owner", async () => {
         const f = await managedFixture();
         await Promise.all([f.provision(), f.provision()]);

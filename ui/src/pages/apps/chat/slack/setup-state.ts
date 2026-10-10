@@ -15,7 +15,7 @@ export function slackSetupNavigation(method: string | undefined) {
 /** Logical stages stay compatible with existing draft URLs; navigation is derived here. */
 export function slackSetupState(input: { endpoint: ChatEndpoint | null; repairing: boolean; credentialsReady: boolean; identityReady: boolean; defaultMethod?: string }) {
   const { endpoint, repairing, credentialsReady, identityReady } = input;
-  const method = endpoint ? endpoint.setup?.slackSetupMethod : input.defaultMethod ?? "automatic";
+  const method = endpoint ? endpoint.setup?.slackSetupMethod : input.defaultMethod ?? "managed";
   const provisioned = isProvisionedSlackSetup(method);
   const complete = provisioned && (endpoint?.setup?.step === "test" || endpoint?.setup?.step === "complete");
   const finalStage = provisioned ? 3 : 5;

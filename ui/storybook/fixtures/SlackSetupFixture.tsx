@@ -10,7 +10,7 @@ import { defaultSlackAppConfiguration } from "@paperclipai/shared";
 export type SlackSetupScenario = "choose" | "create" | "manual" | "install" | "declined" | "approval_denied" | "uncertain" | "manifest_pending" | "recovery" | "verify" | "avatar_failed" | "welcome_failed" | "success";
 
 /** Production wizard over a local provider fixture. No requests go to Slack. */
-export function SlackSetupFixture({ scenario = "create", managed = false, managedAvailable = true, workspaceCount = 1 }: { scenario?: SlackSetupScenario; managed?: boolean; managedAvailable?: boolean; workspaceCount?: number }) {
+export function SlackSetupFixture({ scenario = "create", managed = false, managedAvailable = true, workspaceCount = 1, optionsDelayMs = 0, optionsError = false }: { scenario?: SlackSetupScenario; managed?: boolean; managedAvailable?: boolean; workspaceCount?: number; optionsDelayMs?: number; optionsError?: boolean }) {
   const [ready, setReady] = useState(false);
   const [signalVerification, setSignalVerification] = useState<() => void>(() => () => {});
   useLayoutEffect(() => {
@@ -55,7 +55,11 @@ export function SlackSetupFixture({ scenario = "create", managed = false, manage
     window.fetch = async (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, window.location.origin);
       const path = url.pathname;
-      if (path === "/api/companies/company-storybook/chat-slack/setup-options") return Response.json({ managedAvailable: managed && managedAvailable, defaultMethod: managed && managedAvailable ? "managed" : "automatic", workspaces: managed && authorized ? Array.from({ length: Math.max(1, workspaceCount) }, (_, i) => ({ grantId: i ? "22222222-2222-4222-8222-222222222222" : grantId, workspaceId: `TSTORY${i}`, workspaceName: i ? "Research workspace" : "Paperclip", userId: "UPERSON" })) : [] });
+      if (path === "/api/companies/company-storybook/chat-slack/setup-options") {
+        if (optionsDelayMs) await new Promise(resolve => setTimeout(resolve, optionsDelayMs));
+        if (optionsError) return Response.json({ error: "Slack setup unavailable" }, { status: 503 });
+        return Response.json({ managedAvailable: managed && managedAvailable, defaultMethod: managed ? "managed" : "automatic", workspaces: managed && authorized ? Array.from({ length: Math.max(1, workspaceCount) }, (_, i) => ({ grantId: i ? "22222222-2222-4222-8222-222222222222" : grantId, workspaceId: `TSTORY${i}`, workspaceName: i ? "Research workspace" : "Paperclip", userId: "UPERSON" })) : [] });
+      }
       if (path === "/api/chat-endpoints/slack-story/slack/managed/authorize") {
         authorized = true;
         const returnUrl = new URL(window.location.href);
@@ -70,6 +74,7 @@ export function SlackSetupFixture({ scenario = "create", managed = false, manage
         const input = JSON.parse(String(init?.body ?? "{}"));
         agent = agents.find(value => value.id === input.assignedAgentId) ?? agent;
         endpoint.assignedAgentId = agent.id; endpoint.assignedAgentName = agent.name;
+        endpoint.setup!.slackSetupMethod = input.slackSetupMethod ?? (managed ? "managed" : "automatic");
         endpoint.setup!.slackApp = input.slackApp ?? defaultSlackAppConfiguration(agent.name);
         return Response.json(endpoint);
       }
@@ -106,7 +111,7 @@ export function SlackSetupFixture({ scenario = "create", managed = false, manage
     };
     setReady(true);
     return () => { window.fetch = original; };
-  }, [scenario, managed, managedAvailable, workspaceCount]);
+  }, [scenario, managed, managedAvailable, workspaceCount, optionsDelayMs, optionsError]);
   return <div className="space-y-6 p-6">
     <aside className="flex flex-wrap items-center gap-3 rounded-lg border border-border p-3 text-sm text-muted-foreground">
       Preview fixture: Slack consent, callbacks, and identity discovery are simulated.

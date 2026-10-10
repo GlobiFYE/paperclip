@@ -103,3 +103,7 @@ Before enabling a deployment, create two test agents in the authorized workspace
 The second must reuse the personal grant without another configuration token or
 manager authorization. Verify avatars, identity linking, signed inbound events,
 and same-thread replies. Record real approval behavior separately from fixtures.
+
+### Managed setup during broker outages
+
+Cloud deployments configured for managed Slack keep the managed default when the broker profile is temporarily unavailable. New drafts remain on **Add to Slack** and offer **Retry**, with **Use your own app** as an explicit alternative. Discovery loading or failure never selects the configuration-token page. Self-hosted instances without managed configuration still use their independent own-app flow; saved draft methods do not change automatically. Provisioning continues to require current broker availability.

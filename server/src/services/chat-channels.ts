@@ -5927,7 +5927,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   ) {
     if ((input.provider as string) === "agentmail") throw badRequest("Use the email inbox setup API for AgentMail");
     if ((input.slackApp || input.slackSetupMethod) && input.provider !== "slack") throw unprocessable("Slack app details only apply to Slack connections");
-    if (input.slackSetupMethod === "managed" && !await slackRegistration.managerGrants.available()) throw conflict("Managed Slack setup is unavailable");
+    if (input.slackSetupMethod === "managed" && slackRegistration.managerGrants.defaultMethod() !== "managed") throw conflict("Managed Slack setup is unavailable");
     const agent = await db
       .select({ id: agents.id, name: agents.name, status: agents.status })
       .from(agents)
@@ -6038,7 +6038,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           step: "provider_setup",
           ...(input.provider === "slack"
             ? { slackApp: input.slackApp ?? defaultSlackAppConfiguration(agent.name),
-                command: (input.slackApp ?? defaultSlackAppConfiguration(agent.name)).command, slackSetupMethod: input.slackSetupMethod ?? "automatic" }
+                command: (input.slackApp ?? defaultSlackAppConfiguration(agent.name)).command, slackSetupMethod: input.slackSetupMethod ?? slackRegistration.managerGrants.defaultMethod() }
             : {}),
         },
       });
@@ -6084,7 +6084,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           }
           values.communicationInstructions = input.communicationInstructions;
         }
-        if (input.slackSetupMethod === "managed" && !await slackRegistration.managerGrants.available()) throw conflict("Managed Slack setup is unavailable");
+        if (input.slackSetupMethod === "managed" && slackRegistration.managerGrants.defaultMethod() !== "managed") throw conflict("Managed Slack setup is unavailable");
         if (input.slackSetupMethod && (existing.endpoint.provider !== "slack" || existing.endpoint.botExternalId || existing.endpoint.status !== "draft")) {
           throw conflict("Setup method can only change before connecting the app");
         }

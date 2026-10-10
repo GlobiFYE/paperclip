@@ -152,9 +152,9 @@ export function chatChannelRoutes(db: Db, options: ChatChannelRouteOptions) {
       const companyId = req.params.companyId as string;
       await assertConnectionManager(req, companyId);
       if (req.body.provider === "slack" && !req.body.slackSetupMethod) {
-        req.body.slackSetupMethod = await service.slackRegistration.managerGrants.available() ? "managed" : "automatic";
+        req.body.slackSetupMethod = service.slackRegistration.managerGrants.defaultMethod();
       }
-      if (req.body.slackSetupMethod === "managed" && !(await service.slackRegistration.managerGrants.available())) throw forbidden("Managed Slack setup is unavailable");
+      if (req.body.slackSetupMethod === "managed" && service.slackRegistration.managerGrants.defaultMethod() !== "managed") throw forbidden("Managed Slack setup is unavailable");
       res
         .status(201)
         .json(await service.create(companyId, req.body, actorUserId(req)));

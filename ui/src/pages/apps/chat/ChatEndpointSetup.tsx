@@ -105,10 +105,11 @@ export function isChatEndpointRepairing(
   );
 }
 
-export function ChatConnectionPurpose({ provider, onChat, onTools }: {
+export function ChatConnectionPurpose({ provider, onChat, onTools, slackLabels }: {
   provider: ChatProvider;
   onChat: () => void;
   onTools: () => void;
+  slackLabels?: string[];
 }) {
   const { setBreadcrumbs } = useBreadcrumbs();
   useEffect(() => {
@@ -117,7 +118,7 @@ export function ChatConnectionPurpose({ provider, onChat, onTools }: {
   }, [setBreadcrumbs]);
   return (
       <div className="max-w-2xl space-y-6">
-        <ChatSetupNavigation labels={provider === "slack" ? ["Choose agent", "App configuration access token", "Install Slack app", "Send a message"] : undefined} step={0} availableStep={0} onSelect={onChat} />
+        <ChatSetupNavigation labels={provider === "slack" ? slackLabels ?? ["Choose agent", "Add to Slack", "Connect"] : undefined} step={0} availableStep={0} onSelect={onChat} />
         <div>
           <h1 className="text-xl font-bold">Choose how to connect</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -294,12 +295,14 @@ function ChatSdkEndpointSetup() {
     retry: false,
   });
   const createEndpoint = useMutation({
-    mutationFn: () =>
-      chatEndpointsApi.create(selectedCompanyId!, {
+    mutationFn: () => {
+      if (provider === "slack" && !slackChoices.data) throw new Error("Slack setup is still loading. Try again.");
+      return chatEndpointsApi.create(selectedCompanyId!, {
         provider: provider!,
         assignedAgentId: agentId,
-        ...(provider === "slack" ? { slackApp: slackDetailsValidation.success ? slackDetailsValidation.data : slackDetails } : {}),
-      }),
+        ...(provider === "slack" ? { slackSetupMethod: slackChoices.data!.defaultMethod, slackApp: slackDetailsValidation.success ? slackDetailsValidation.data : slackDetails } : {}),
+      });
+    },
     onSuccess: (next) => {
       setViewedStep(null);
       syncEndpointSnapshot(next);
@@ -505,7 +508,7 @@ function ChatSdkEndpointSetup() {
     );
 
   if (purpose === "choice") {
-    return <ChatConnectionPurpose provider={provider} onChat={() => setPurpose("chat")} onTools={() => navigate(toolHref)} />;
+    return <ChatConnectionPurpose provider={provider} slackLabels={slackNavigation.labels} onChat={() => setPurpose("chat")} onTools={() => navigate(toolHref)} />;
   }
 
   return (
@@ -544,10 +547,13 @@ function ChatSdkEndpointSetup() {
                 onBlur={() => void persistSlackDetails().catch(() => {})} />
               {saveSlackDetails.isError && <p role="alert" className="text-sm text-destructive">Couldn&apos;t save the Slack app details. Try again before continuing.</p>}
             </SlackSetupAdvanced>}
+            {isSlack && !endpoint && !slackChoices.data && (slackChoices.isError
+              ? <div role="alert" className="text-sm text-destructive">Couldn&apos;t load Slack setup. <Button variant="link" disabled={slackChoices.isFetching} onClick={() => void slackChoices.refetch()}>Retry</Button></div>
+              : <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading Slack…</p>)}
             {provider === "github" && <GitHubAgentTrustWarning agent={selectedAgent} />}
-            <SetupWizardFooter disabled={createEndpoint.isPending || saveSlackDetails.isPending} onSaveExit={() => void continueFromAgent(true)}>
+            <SetupWizardFooter disabled={createEndpoint.isPending || saveSlackDetails.isPending || isSlack && !endpoint && Boolean(agentId) && !slackChoices.data} onSaveExit={() => void continueFromAgent(true)}>
               <Button
-                disabled={!agentId || createEndpoint.isPending || saveSlackDetails.isPending || isSlack && !slackDetailsValidation.success}
+                disabled={!agentId || createEndpoint.isPending || saveSlackDetails.isPending || isSlack && (!slackDetailsValidation.success || !endpoint && !slackChoices.data)}
                 onClick={() => void continueFromAgent(false)}
               >
                 {createEndpoint.isPending && (
