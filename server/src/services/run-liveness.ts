@@ -342,6 +342,27 @@ export function classifyRunLiveness(input: RunLivenessClassificationInput): RunL
     return output("blocked", issueStatus === "blocked" ? "Issue status is blocked" : "Run output declared a concrete blocker", nextAction);
   }
 
+  // A Pi run whose final turn was cut off at the model output limit is not a
+  // completed run, even though the process exited 0. The adapter records the
+  // machine-readable `finalStopReason` marker in resultJson; the raw
+  // transcript alone makes every run look "useful", so transcript heuristics
+  // cannot detect this edge. Unless the model still produced a non-empty
+  // completion and the run left durable progress evidence, classify the run
+  // as an actionable empty response so the bounded liveness continuation
+  // wakes the assignee to finish the turn or park the issue explicitly.
+  const truncatedFinalTurn = input.resultJson?.finalStopReason === "length";
+  const finalTurnDeliveredContent = input.resultJson?.finalMessageEmpty === false;
+  if (
+    truncatedFinalTurn &&
+    (!finalTurnDeliveredContent || !concreteEvidence)
+  ) {
+    return output(
+      "empty_response",
+      "Pi stopped at the model output limit before completing its final turn; the run ended mid-turn",
+      "Complete the remaining work in a fresh run without re-doing finished work, then finish the issue or mark it blocked with a specific unblock request",
+    );
+  }
+
   if (!usefulOutput && !concreteEvidence) {
     return output("empty_response", "Run succeeded without useful output or concrete action evidence");
   }
