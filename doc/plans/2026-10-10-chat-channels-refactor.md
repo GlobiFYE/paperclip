@@ -172,3 +172,18 @@ master, then retain the remaining four PRs for review in dependency order.
 - Existing public-service tests: 15 resource cases and the Telegram migration
   case passed before; the same 16 cases passed after. The name filter excludes
   unrelated cases. No live third-party provider calls were made.
+
+### Slice 3: identity linking
+
+Extract six identity-link operations into `identity-links.ts`. Keep the live
+public URL getter. Fetch confirmation runtime authority through a callback that
+reads the existing service map after awaiting runtime creation. Keep the same
+transaction locks, token consumption, membership checks and post-commit notice.
+
+- Source: 37,720 lines / 1,454,762 bytes → 37,295 lines / 1,436,867 bytes.
+- Destination: 459 lines / 19,970 bytes.
+- Baseline: complete CI and 5/5 review on slice 2 (`c01f34ad2b`, PR #15834).
+- Server typecheck, module boundaries and mechanical comparison pass. The only
+  body substitution moves the runtime lookup behind the supplied live callback.
+  All remaining statements are unchanged. Local PostgreSQL remains unavailable;
+  record this slice's complete CI and review in its PR before continuing.
