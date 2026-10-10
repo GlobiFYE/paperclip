@@ -1,5 +1,5 @@
 import type { ExecutionContinuationEnvelope } from "@paperclipai/shared";
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { constants as fsConstants, promises as fs, type Dirent } from "node:fs";
 import os from "node:os";
@@ -120,29 +120,67 @@ function resolveProcessGroupId(child: ChildProcess) {
   return typeof child.pid === "number" && child.pid > 0 ? child.pid : null;
 }
 
+// Resolved through path.win32 so the result is the same when tests run on POSIX.
+function resolveWindowsTaskkill(): string {
+  const root = process.env.SystemRoot || process.env.windir || "C:\\Windows";
+  return path.win32.join(root, "System32", "taskkill.exe");
+}
+
+// On Windows, child.kill() and process.kill() end only one process. Agent CLIs
+// installed by npm start through a .cmd wrapper, so the agent is a grandchild of
+// cmd.exe and survives a cancel or timeout (and keeps the output pipes open).
+// `taskkill /T /F` ends the whole tree. It does not block the event loop.
+// Resolves false when taskkill ends nothing (already gone) or cannot start.
+export function killWindowsProcessTree(pid: number): Promise<boolean> {
+  if (!Number.isInteger(pid) || pid <= 0) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    execFile(
+      resolveWindowsTaskkill(),
+      ["/pid", String(pid), "/T", "/F"],
+      { windowsHide: true, timeout: 10_000 },
+      (error) => resolve(!error),
+    );
+  });
+}
+
 // Exported so the direct-child fallback branch can be unit-tested directly.
+// Returns how the signal was delivered, or null when nothing was signaled.
 export function signalRunningProcess(
   running: Pick<RunningProcess, "child" | "processGroupId">,
   signal: NodeJS.Signals,
-) {
-  if (
-    process.platform !== "win32" &&
-    running.processGroupId &&
-    running.processGroupId > 0
-  ) {
+): "tree" | "group" | "child" | null {
+  const child = running.child;
+  // Gate on real liveness: `child.killed` only means a signal was sent, not that
+  // the process exited, so escalating on it would suppress a follow-up SIGKILL.
+  // `exitCode`/`signalCode` are null until the child actually closes.
+  const alive = child.exitCode === null && child.signalCode === null;
+  if (process.platform === "win32") {
+    // Windows console processes have no graceful SIGTERM, so every signal is a
+    // tree kill. Start it only while the child is alive: Node holds the process
+    // handle until it records exitCode/signalCode, so the pid cannot belong to
+    // another process yet. A reaped pid can be reused, and taskkill /T cannot
+    // reach the orphans of a reaped pid anyway.
+    if (alive && typeof child.pid === "number") {
+      void killWindowsProcessTree(child.pid).then((killed) => {
+        if (!killed && child.exitCode === null && child.signalCode === null) {
+          child.kill(signal);
+        }
+      });
+      return "tree";
+    }
+  } else if (running.processGroupId && running.processGroupId > 0) {
     try {
       process.kill(-running.processGroupId, signal);
-      return;
+      return "group";
     } catch {
       // Fall back to the direct child signal if group signaling fails.
     }
   }
-  // Gate on real liveness: `child.killed` only means a signal was sent, not that
-  // the process exited, so escalating on it would suppress a follow-up SIGKILL.
-  // `exitCode`/`signalCode` are null until the child actually closes.
-  if (running.child.exitCode === null && running.child.signalCode === null) {
-    running.child.kill(signal);
+  if (alive) {
+    child.kill(signal);
+    return "child";
   }
+  return null;
 }
 
 export const runningProcesses = new Map<string, RunningProcess>();
@@ -4791,6 +4829,15 @@ export async function runChildProcess(
         let terminalCleanupKillTimer: NodeJS.Timeout | null = null;
         let terminalResultStdoutScanOffset = 0;
         let terminalResultStderrScanOffset = 0;
+        // The first signal delivered by a Windows tree kill. taskkill /F ends
+        // cmd.exe with exit code 1 and no signal; the result reports this signal
+        // instead, as child.kill() did, so signal-based classification still works.
+        let windowsTreeKillSignal: NodeJS.Signals | null = null;
+        const sendSignal = (signal: NodeJS.Signals) => {
+          if (signalRunningProcess({ child, processGroupId }, signal) === "tree") {
+            windowsTreeKillSignal ??= signal;
+          }
+        };
 
         const clearTerminalCleanupTimers = () => {
           if (terminalCleanupTimer) clearTimeout(terminalCleanupTimer);
@@ -4844,13 +4891,13 @@ export async function runChildProcess(
             if (terminalCleanupStarted || timedOut) return;
             terminalCleanupStarted = true;
             terminalCleanupSignal = "SIGTERM";
-            signalRunningProcess({ child, processGroupId }, "SIGTERM");
+            sendSignal("SIGTERM");
             terminalCleanupKillTimer = setTimeout(
               () => {
                 terminalCleanupKillTimer = null;
                 terminalCleanupSignal = "SIGKILL";
                 terminalCleanupForceKilled = true;
-                signalRunningProcess({ child, processGroupId }, "SIGKILL");
+                sendSignal("SIGKILL");
               },
               Math.max(1, opts.graceSec) * 1000,
             );
@@ -4862,10 +4909,10 @@ export async function runChildProcess(
             ? setTimeout(() => {
                 timedOut = true;
                 clearTerminalCleanupTimers();
-                signalRunningProcess({ child, processGroupId }, "SIGTERM");
+                sendSignal("SIGTERM");
                 setTimeout(
                   () => {
-                    signalRunningProcess({ child, processGroupId }, "SIGKILL");
+                    sendSignal("SIGKILL");
                   },
                   Math.max(1, opts.graceSec) * 1000,
                 );
@@ -4941,13 +4988,14 @@ export async function runChildProcess(
             if (timeout) clearTimeout(timeout);
             clearTerminalCleanupTimers();
             runningProcesses.delete(runId);
+            const endedByTreeKill = signal === null && code === 1 && windowsTreeKillSignal !== null;
             void logChain.finally(() => {
               void Promise.resolve()
                 .then(() => target.cleanup?.())
                 .finally(() => {
                   resolve({
-                    exitCode: code,
-                    signal,
+                    exitCode: endedByTreeKill ? null : code,
+                    signal: endedByTreeKill ? windowsTreeKillSignal : signal,
                     timedOut,
                     stdout,
                     stderr,

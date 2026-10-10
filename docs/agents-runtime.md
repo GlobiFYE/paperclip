@@ -67,7 +67,7 @@ For local adapters, set:
 
 - `cwd` (working directory)
 - `timeoutSec` (max runtime per heartbeat; `0` uses the target default — no adapter timeout on local/SSH, a 4-hour backstop on sandbox targets — and a negative value disables the adapter timeout everywhere, including sandboxes)
-- `graceSec` (time before force-kill after timeout/cancel)
+- `graceSec` (time before force-kill after timeout/cancel). On Windows there is no graceful stop: Paperclip ends the agent's whole process tree at once (`taskkill /T /F`), so `graceSec` only sets the wait before the fallback signal.
 - optional env vars and extra CLI args
 - use **Test environment** in agent configuration to run adapter-specific diagnostics before saving
 

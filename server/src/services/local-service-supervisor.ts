@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { killWindowsProcessTree } from "@paperclipai/adapter-utils/server-utils";
 import { createHash } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
@@ -574,11 +575,21 @@ export async function terminateLocalService(
     return await targetIsGone();
   };
 
+  // On Windows, process.kill() ends only this pid. Agent CLIs run through .cmd
+  // wrappers and runtime services through shells, so the real work is in
+  // descendants. End the whole tree with taskkill /T /F, and fall back to
+  // process.kill when taskkill ends nothing.
+  const killWindowsTree = async () => process.platform === "win32" && (await killWindowsProcessTree(record.pid));
+  let windowsTreeKilled = false;
+
   try {
-    if (targetProcessGroup) {
-      process.kill(-record.processGroupId!, signal);
-    } else {
-      process.kill(record.pid, signal);
+    windowsTreeKilled = await killWindowsTree();
+    if (!windowsTreeKilled) {
+      if (targetProcessGroup) {
+        process.kill(-record.processGroupId!, signal);
+      } else {
+        process.kill(record.pid, signal);
+      }
     }
   } catch {
     if (await targetIsGone()) return;
@@ -586,10 +597,13 @@ export async function terminateLocalService(
 
   if (await waitUntilGone(opts?.forceAfterMs ?? 2_000)) return;
   try {
-    if (targetProcessGroup) {
-      process.kill(-record.processGroupId!, "SIGKILL");
-    } else {
-      process.kill(record.pid, "SIGKILL");
+    // A tree kill is already forceful; do not repeat it on a pid it ended.
+    if (windowsTreeKilled || !(await killWindowsTree())) {
+      if (targetProcessGroup) {
+        process.kill(-record.processGroupId!, "SIGKILL");
+      } else {
+        process.kill(record.pid, "SIGKILL");
+      }
     }
   } catch {
     // Ignore cleanup races.

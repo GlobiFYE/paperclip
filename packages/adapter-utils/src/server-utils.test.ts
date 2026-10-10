@@ -769,6 +769,42 @@ describe("runChildProcess", () => {
     },
   );
 
+  it.runIf(process.platform === "win32")(
+    "ends a .cmd wrapper's whole process tree on timeout on Windows",
+    async () => {
+      // npm installs agent CLIs as .cmd wrappers, so the agent is a grandchild
+      // of cmd.exe. Before the tree kill, a timeout ended only cmd.exe: the
+      // grandchild kept the output pipes open, so the run never settled.
+      const dir = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-cmd-tree-"));
+      try {
+        await fs.writeFile(
+          path.join(dir, "agent.js"),
+          "process.stdout.write(String(process.pid)); setInterval(() => {}, 1000);",
+        );
+        await fs.writeFile(path.join(dir, "agent.cmd"), `@"${process.execPath}" "%~dp0agent.js" %*\r\n`);
+
+        const startedAt = Date.now();
+        const result = await runChildProcess(randomUUID(), path.join(dir, "agent.cmd"), [], {
+          cwd: dir,
+          env: {},
+          timeoutSec: 1,
+          graceSec: 1,
+          onLog: async () => {},
+        });
+
+        const grandchildPid = Number.parseInt(result.stdout.trim(), 10);
+        expect(result.timedOut).toBe(true);
+        expect(result.signal).toBe("SIGTERM");
+        expect(Date.now() - startedAt).toBeLessThan(15_000);
+        expect(Number.isInteger(grandchildPid) && grandchildPid > 0).toBe(true);
+        expect(await waitForPidExit(grandchildPid, 5_000)).toBe(true);
+      } finally {
+        await fs.rm(dir, { recursive: true, force: true });
+      }
+    },
+    30_000,
+  );
+
   it.skipIf(process.platform === "win32")(
     "cleans up a lingering process group after terminal output and child exit",
     async () => {
