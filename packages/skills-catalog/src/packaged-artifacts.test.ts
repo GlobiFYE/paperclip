@@ -1,6 +1,6 @@
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -9,15 +9,23 @@ import { afterEach, describe, expect, it } from "vitest";
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 function readPackMetadata(packDestination: string) {
-  const output = execFileSync("npm", ["pack", "--json", "--pack-destination", packDestination], {
-    cwd: packageRoot,
-    encoding: "utf8",
-  });
+  const npmCliPath = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+  const output = existsSync(npmCliPath)
+    ? execFileSync(process.execPath, [npmCliPath, "pack", "--json", "--pack-destination", packDestination], {
+        cwd: packageRoot,
+        encoding: "utf8",
+      })
+    : execFileSync(
+        process.platform === "win32" ? "npm.cmd" : "npm",
+        ["pack", "--json", "--pack-destination", packDestination],
+        { cwd: packageRoot, encoding: "utf8", shell: process.platform === "win32" },
+      );
   const metadata = JSON.parse(output);
-  if (!Array.isArray(metadata) || metadata.length === 0 || typeof metadata[0]?.filename !== "string") {
+  const entry = Array.isArray(metadata) ? metadata[0] : Object.values(metadata)[0];
+  if (!entry || typeof entry?.filename !== "string") {
     throw new Error(`Unexpected npm pack output from ${packageRoot}: ${output}`);
   }
-  return metadata[0] as { filename: string; files: Array<{ path: string }> };
+  return entry as { filename: string; files: Array<{ path: string }> };
 }
 
 describe("skills catalog package artifacts", () => {

@@ -24,7 +24,15 @@ const EXPECTED_OPTIONAL_KEYS = [
   "paperclipai/optional/finance/ramp",
   "paperclipai/optional/product/design-critique",
   "paperclipai/optional/research/last30days",
+  "paperclipai/optional/software-development/ai-engineer-playbooks",
+  "paperclipai/optional/software-development/ai-software-factory",
+  "paperclipai/optional/software-development/archon-workflows",
+  "paperclipai/optional/software-development/claude-subagents-catalog",
+  "paperclipai/optional/software-development/matrixswarm-agent-mesh",
   "paperclipai/optional/software-development/prepare-mcp-integration",
+  "paperclipai/optional/software-development/prime-agent-skills",
+  "paperclipai/optional/software-development/tier1-integration-runtime",
+  "paperclipai/optional/software-development/wikiskill-skills",
 ];
 
 const MAX_FRONTMATTER_DESCRIPTION_LENGTH = 300;
