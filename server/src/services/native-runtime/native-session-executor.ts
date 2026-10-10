@@ -9805,6 +9805,7 @@ export function resolveNativeBilling(provider: NativeExecutionInput["provider"],
   }
   if (provider.kind === "acpx" && provider.agent === "claude") {
     if (env.CLAUDE_CODE_USE_BEDROCK === "1") return { provider: "anthropic", biller: "aws_bedrock", billingType: "metered_api" };
+    if (env.CLAUDE_CODE_USE_FOUNDRY === "1") return { provider: "anthropic", biller: "microsoft_foundry", billingType: "metered_api" };
     return { provider: "anthropic", biller: "anthropic", billingType: env.ANTHROPIC_API_KEY ? "metered_api" : env.CLAUDE_CODE_OAUTH_TOKEN ? "subscription_included" : "unknown" };
   }
   if (provider.kind === "opencode" || (provider.kind === "acpx" && provider.agent === "pi")) {

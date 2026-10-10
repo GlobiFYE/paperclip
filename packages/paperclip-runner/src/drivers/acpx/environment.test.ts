@@ -39,6 +39,18 @@ describe("ACPX launch environment", () => {
     expect(createSanitizedAcpxSpawnInput(source, "codex").env).toEqual({ PAPERCLIP_AI_PROVIDER_KEY: "codex-key" });
     expect(createSanitizedAcpxSpawnInput(source, "cursor").env).toEqual({});
   });
+  it("keeps Foundry settings and key confined to Claude", () => {
+    const source = {
+      CLAUDE_CODE_USE_FOUNDRY: "1", ANTHROPIC_FOUNDRY_RESOURCE: "contoso-ai",
+      ANTHROPIC_FOUNDRY_API_KEY: "foundry-key", ANTHROPIC_MODEL: "claude-opus-4-8",
+      AZURE_CLIENT_SECRET: "general-azure-secret", UNRELATED_SECRET: "private",
+    };
+    expect(createSanitizedAcpxSpawnInput(source, "claude").env).toEqual({
+      CLAUDE_CODE_USE_FOUNDRY: "1", ANTHROPIC_FOUNDRY_RESOURCE: "contoso-ai",
+      ANTHROPIC_FOUNDRY_API_KEY: "foundry-key", ANTHROPIC_MODEL: "claude-opus-4-8",
+    });
+    for (const agent of ["codex", "cursor"] as const) expect(createSanitizedAcpxSpawnInput(source, agent).env).toEqual({});
+  });
 
   it("projects only the selected agent's credentials and runtime allowlist", () => {
     const source = {

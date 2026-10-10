@@ -206,6 +206,7 @@ impl AcpxSidecarTransport {
                 "CLAUDE_CODE_OAUTH_TOKEN",
                 "ANTHROPIC_AUTH_TOKEN",
                 "AWS_BEARER_TOKEN_BEDROCK",
+                "ANTHROPIC_FOUNDRY_API_KEY",
             ],
             "codex" => &[
                 "OPENAI_API_KEY",
@@ -260,6 +261,8 @@ impl AcpxSidecarTransport {
                 "AWS_REGION",
                 "AWS_DEFAULT_REGION",
                 "AWS_EC2_METADATA_DISABLED",
+                "CLAUDE_CODE_USE_FOUNDRY",
+                "ANTHROPIC_FOUNDRY_RESOURCE",
                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
                 "ANTHROPIC_MODEL",
                 "ANTHROPIC_DEFAULT_OPUS_MODEL",

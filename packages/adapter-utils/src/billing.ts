@@ -35,7 +35,8 @@ export function resolveManagedOpenAiBilling(routing: unknown) {
   if (!routing || typeof routing !== "object") return undefined;
   return {
     provider: "openai",
-    biller: (routing as { kind?: unknown }).kind === "openrouter" ? "openrouter" : "unknown",
+    biller: (routing as { kind?: unknown }).kind === "openrouter" ? "openrouter"
+      : (routing as { kind?: unknown }).kind === "foundry" ? "microsoft_foundry" : "unknown",
     billingType: "api" as const,
   };
 }
