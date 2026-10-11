@@ -453,6 +453,93 @@ describe("copilot_local execute", () => {
     expect(prompt).not.toContain(instrDir);
   });
 
+  it("uses the server-registered remote instruction copy for a managed legacy bundle without staging a duplicate", async () => {
+    const root = await makeTempRoot();
+    const instrDir = path.join(root, ".paperclip-runtime", "instruction-edits-run-1", "instructions");
+    await fs.mkdir(instrDir, { recursive: true });
+    await fs.writeFile(path.join(instrDir, "AGENTS.md"), "BE NICE", "utf8");
+    isRemoteMock.mockReturnValue(true);
+    prepareRuntimeMock.mockResolvedValueOnce({
+      workspaceRemoteDir: "/remote/ws",
+      restoreWorkspace: async () => {},
+      assetDirs: { skills: "/remote/rt/skills", instructions: "/remote/rt/instructions" },
+      runtimeRootDir: "/remote/rt",
+    });
+    let seenArgs: string[] = [];
+    runProcessMock.mockImplementation(async (_r, _t, _c, args) => {
+      seenArgs = args;
+      return ok(RUN);
+    });
+    await execute(makeContext(root, {
+      config: { cwd: root, instructionsFilePath: path.join(instrDir, "AGENTS.md") },
+      executionTarget: { kind: "remote" } as never,
+    }));
+    const assets = (prepareRuntimeMock.mock.calls[0]?.[0] as { assets: Array<{ key: string }> }).assets;
+    expect(assets.find((a) => a.key === "instructions")).toBeUndefined();
+    const registered = `${root}/.paperclip-runtime/instruction-edits-run-1/instructions`;
+    expect(seenArgs[seenArgs.indexOf("--add-dir") + 1]).toBe(registered);
+    const prompt = seenArgs[seenArgs.indexOf("-p") + 1];
+    expect(prompt).toContain(`loaded from ${registered}/AGENTS.md`);
+    expect(prompt).not.toContain("/remote/rt/instructions");
+  });
+
+  it("uses paperclipWorkspace.agentHome as the registered remote root for a managed agent directory", async () => {
+    const root = await makeTempRoot();
+    const liveDir = path.join(root, "file-sync", "runs", "origin-1", "live");
+    await fs.mkdir(liveDir, { recursive: true });
+    await fs.writeFile(path.join(liveDir, "AGENTS.md"), "BE NICE", "utf8");
+    isRemoteMock.mockReturnValue(true);
+    prepareRuntimeMock.mockResolvedValueOnce({
+      workspaceRemoteDir: "/remote/ws",
+      restoreWorkspace: async () => {},
+      assetDirs: { skills: "/remote/rt/skills", instructions: "/remote/rt/instructions" },
+      runtimeRootDir: "/remote/rt",
+    });
+    let seenArgs: string[] = [];
+    runProcessMock.mockImplementation(async (_r, _t, _c, args) => {
+      seenArgs = args;
+      return ok(RUN);
+    });
+    const agentHome = "/remote/ws/.paperclip-runtime/agent-files/agent-1/origin-1";
+    await execute(makeContext(root, {
+      config: { cwd: root, instructionsFilePath: path.join(liveDir, "AGENTS.md") },
+      context: { paperclipWorkspace: { cwd: root, agentHome } },
+      executionTarget: { kind: "remote" } as never,
+    }));
+    const assets = (prepareRuntimeMock.mock.calls[0]?.[0] as { assets: Array<{ key: string }> }).assets;
+    expect(assets.find((a) => a.key === "instructions")).toBeUndefined();
+    expect(seenArgs[seenArgs.indexOf("--add-dir") + 1]).toBe(agentHome);
+    expect(seenArgs[seenArgs.indexOf("-p") + 1]).toContain(`loaded from ${agentHome}/AGENTS.md`);
+  });
+
+  it("prefers context.paperclipInstructionCopy over path-pattern inference", async () => {
+    const root = await makeTempRoot();
+    const instrDir = path.join(root, "arbitrary");
+    await fs.mkdir(instrDir);
+    await fs.writeFile(path.join(instrDir, "AGENTS.md"), "BE NICE", "utf8");
+    isRemoteMock.mockReturnValue(true);
+    prepareRuntimeMock.mockResolvedValueOnce({
+      workspaceRemoteDir: "/remote/ws",
+      restoreWorkspace: async () => {},
+      assetDirs: { skills: "/remote/rt/skills", instructions: "/remote/rt/instructions" },
+      runtimeRootDir: "/remote/rt",
+    });
+    let seenArgs: string[] = [];
+    runProcessMock.mockImplementation(async (_r, _t, _c, args) => {
+      seenArgs = args;
+      return ok(RUN);
+    });
+    await execute(makeContext(root, {
+      config: { cwd: root, instructionsFilePath: path.join(instrDir, "AGENTS.md") },
+      context: { paperclipInstructionCopy: { executionRoot: "/remote/registered/", entryFile: "AGENTS.md", kind: "instructions_bundle" } },
+      executionTarget: { kind: "remote" } as never,
+    }));
+    const assets = (prepareRuntimeMock.mock.calls[0]?.[0] as { assets: Array<{ key: string }> }).assets;
+    expect(assets.find((a) => a.key === "instructions")).toBeUndefined();
+    expect(seenArgs[seenArgs.indexOf("--add-dir") + 1]).toBe("/remote/registered");
+    expect(seenArgs[seenArgs.indexOf("-p") + 1]).toContain("loaded from /remote/registered/AGENTS.md");
+  });
+
   it("forces CI=1, NO_COLOR=1 and pins COPILOT_ALLOW_ALL=false over config.env", async () => {
     const root = await makeTempRoot();
     let seenEnv: Record<string, string> = {};

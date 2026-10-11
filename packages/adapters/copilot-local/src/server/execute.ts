@@ -176,6 +176,42 @@ async function buildCopilotSkillsDir(
   return target;
 }
 
+/**
+ * Maps a server-managed instruction working copy (host path) to the registered
+ * copy on the remote target. Mirrors server path conventions in
+ * agent-instruction-working-copies.ts (legacy single-file copy) and
+ * agent-directory-working-copies.ts (agent files; remote root is exposed as
+ * paperclipWorkspace.agentHome). Returns null for external instruction files.
+ */
+function resolveManagedRemoteInstructions(input: {
+  localInstructionsFilePath: string;
+  remoteCwd: string;
+  agentHome: string;
+  instructionCopy: Record<string, unknown>;
+}): { dir: string; filePath: string } | null {
+  // Preferred: explicit structured field from the server.
+  const explicitRoot = asString(input.instructionCopy.executionRoot, "").trim().replace(/\/+$/, "");
+  const explicitEntry = asString(input.instructionCopy.entryFile, "").trim();
+  if (explicitRoot && explicitEntry) {
+    return { dir: explicitRoot, filePath: path.posix.join(explicitRoot, explicitEntry) };
+  }
+  // Fallback only (older servers without context.paperclipInstructionCopy):
+  // infer from the server's host path conventions.
+  const file = input.localInstructionsFilePath.split(path.sep).join("/");
+  if (!file) return null;
+  const legacy = /\/\.paperclip-runtime\/(instruction-edits-[^/]+)\/instructions\/(.+)$/.exec(file);
+  if (legacy && input.remoteCwd) {
+    const dir = path.posix.join(input.remoteCwd, ".paperclip-runtime", legacy[1]!, "instructions");
+    return { dir, filePath: path.posix.join(dir, legacy[2]!) };
+  }
+  const directory = /\/file-sync\/runs\/[^/]+\/live\/(.+)$/.exec(file);
+  if (directory && input.agentHome) {
+    const dir = input.agentHome.replace(/\/+$/, "");
+    return { dir, filePath: path.posix.join(dir, directory[1]!) };
+  }
+  return null;
+}
+
 export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExecutionResult> {
   const providerStop = createProviderStoppedBoundary(ctx.onProviderStopped);
 
@@ -310,6 +346,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   let paperclipBridge: Awaited<ReturnType<typeof startAdapterExecutionTargetPaperclipBridge>> = null;
 
   const localInstructionsFilePath = asString(config.instructionsFilePath, "").trim();
+  // Paperclip-managed instruction bundles are already staged on the remote
+  // target by the server, which harvests agent edits only from that registered
+  // directory. Reuse it instead of staging a duplicate copy.
+  const managedRemoteInstructions = executionTargetIsRemote
+    ? resolveManagedRemoteInstructions({
+        localInstructionsFilePath,
+        remoteCwd: effectiveExecutionCwd,
+        agentHome: asString(parseObject(context.paperclipWorkspace).agentHome, ""),
+        instructionCopy: parseObject(context.paperclipInstructionCopy),
+      })
+    : null;
   if (executionTargetIsRemote) {
     try {
       localSkillsDir = await buildCopilotSkillsDir(config);
@@ -331,7 +378,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           key: "skills",
           localDir: localSkillsDir,
           followSymlinks: true,
-        }, ...(localInstructionsFilePath
+        }, ...(localInstructionsFilePath && !managedRemoteInstructions
           ? [{ key: "instructions", localDir: path.dirname(localInstructionsFilePath) }]
           : [])],
       });
@@ -368,7 +415,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       }
       // The instructions directory is a host path; point Copilot at the staged
       // copy on the remote target instead.
-      if (localInstructionsFilePath && preparedExecutionTargetRuntime.assetDirs.instructions) {
+      if (localInstructionsFilePath && !managedRemoteInstructions && preparedExecutionTargetRuntime.assetDirs.instructions) {
         remoteInstructionsDir = preparedExecutionTargetRuntime.assetDirs.instructions;
       }
     } catch (error) {
@@ -435,16 +482,22 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     // and --add-dir when running on a remote target.
     const instructionsFilePath = localInstructionsFilePath;
     // Local path locally, staged path remotely, null when unavailable.
+    const effectiveInstructionsFilePath: string | null = !instructionsFilePath
+      ? null
+      : !executionTargetIsRemote
+        ? instructionsFilePath
+        : managedRemoteInstructions
+          ? managedRemoteInstructions.filePath
+          : remoteInstructionsDir
+            ? path.posix.join(remoteInstructionsDir.replace(/\/+$/, ""), path.basename(instructionsFilePath))
+            : null;
     const effectiveInstructionsDirPath: string | null = !instructionsFilePath
       ? null
-      : executionTargetIsRemote
-        ? remoteInstructionsDir?.replace(/\/+$/, "") || null
-        : path.dirname(instructionsFilePath);
-    const effectiveInstructionsFilePath = effectiveInstructionsDirPath
-      ? executionTargetIsRemote
-        ? path.posix.join(effectiveInstructionsDirPath, path.basename(instructionsFilePath))
-        : instructionsFilePath
-      : null;
+      : !executionTargetIsRemote
+        ? path.dirname(instructionsFilePath)
+        : managedRemoteInstructions
+          ? managedRemoteInstructions.dir
+          : remoteInstructionsDir?.replace(/\/+$/, "") || null;
     const instructionsDir = effectiveInstructionsDirPath ? `${effectiveInstructionsDirPath}/` : "";
     let instructionsPrefix = "";
     if (instructionsFilePath) {

@@ -315,7 +315,7 @@ import {
   prepareGitHubExecutionEnvironment,
   startAdapterExecutionTargetPaperclipBridge,
 } from "@paperclipai/adapter-utils/execution-target";
-import { agentInstructionWorkingCopyService, collectStoppedInstructionCopyWithRetries, instructionWorkingCopyGuidance } from "./agent-instruction-working-copies.js";
+import { agentInstructionWorkingCopyService, collectStoppedInstructionCopyWithRetries, instructionCopyContext, instructionWorkingCopyGuidance } from "./agent-instruction-working-copies.js";
 
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -4412,6 +4412,7 @@ export function heartbeatService(
                 message: storageWarning, payload: instructionSave });
             }
             runtimeConfig = { ...runtimeConfig, instructionsFilePath: path.join(instructionCopy.localRoot, instructionCopy.entryFile) };
+            context.paperclipInstructionCopy = instructionCopyContext(instructionCopy);
             if (isAgentDirectoryCopy(instructionCopy)) {
               const workspace = parseObject(context.paperclipWorkspace);
               context.paperclipWorkspace = { ...workspace, agentHome: instructionCopy.executionRoot,
