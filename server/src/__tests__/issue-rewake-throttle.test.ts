@@ -1,7 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   ISSUE_REWAKE_BASE_COOLDOWN_MS,
-  ISSUE_REWAKE_COMMENT_ONLY_PROGRESS_MAX_STREAK,
   ISSUE_REWAKE_MAX_COOLDOWN_MS,
   ISSUE_REWAKE_NO_PROGRESS_THRESHOLD,
   computeIssueRewakeCooldownMs,
@@ -217,8 +216,43 @@ describe("evaluateIssueRewakeThrottle", () => {
     expect(decision).toEqual({ blocked: false, noProgressStreak: 0 });
   });
 
+});
+
+// The comment-only exemption cap is read from `process.env` once, at module
+// load. These tests pin behavior that only holds for the in-repo default
+// (1), so they load their own isolated copy of the module with that
+// override var explicitly cleared first — otherwise an operator override
+// left in the ambient test-process environment (a legitimately supported
+// setting) would make these assertions fail even though nothing is broken.
+describe("evaluateIssueRewakeThrottle (comment-only exemption cap, default)", () => {
+  const previousOverride = process.env.ISSUE_REWAKE_COMMENT_ONLY_PROGRESS_MAX_STREAK;
+  let throttle: typeof import("../services/issue-rewake-throttle.ts");
+
+  beforeAll(async () => {
+    delete process.env.ISSUE_REWAKE_COMMENT_ONLY_PROGRESS_MAX_STREAK;
+    vi.resetModules();
+    throttle = await import("../services/issue-rewake-throttle.ts");
+  });
+
+  afterAll(() => {
+    if (previousOverride === undefined) {
+      delete process.env.ISSUE_REWAKE_COMMENT_ONLY_PROGRESS_MAX_STREAK;
+    } else {
+      process.env.ISSUE_REWAKE_COMMENT_ONLY_PROGRESS_MAX_STREAK = previousOverride;
+    }
+    vi.resetModules();
+  });
+
+  it("confirms the in-repo default cap this file's narrative depends on, independent of ambient env overrides", () => {
+    // The single-exemption test below and the cap-exceeded test below only
+    // mean what they say if the default is exactly 1 — pin it so a future
+    // change to the default fails loudly here instead of silently changing
+    // what those two tests actually exercise.
+    expect(throttle.ISSUE_REWAKE_COMMENT_ONLY_PROGRESS_MAX_STREAK).toBe(1);
+  });
+
   it("still exempts a single comment-only run, matching a one-off status update", () => {
-    const decision = evaluateIssueRewakeThrottle({
+    const decision = throttle.evaluateIssueRewakeThrottle({
       now: NOW,
       recentTerminalRuns: [
         runSample({ id: "r2", finishedSecondsAgo: 10 }),
@@ -243,7 +277,7 @@ describe("evaluateIssueRewakeThrottle", () => {
       runSample({ id: "r2", finishedSecondsAgo: 70 }),
       runSample({ id: "r1", finishedSecondsAgo: 100 }),
     ];
-    const decision = evaluateIssueRewakeThrottle({
+    const decision = throttle.evaluateIssueRewakeThrottle({
       now: NOW,
       recentTerminalRuns: runs,
       runIdsWithIssueProgress: new Set(),
@@ -257,21 +291,13 @@ describe("evaluateIssueRewakeThrottle", () => {
     }
   });
 
-  it("confirms the in-repo default cap this file's narrative depends on", () => {
-    // The single-exemption test above and the cap-exceeded test below only
-    // mean what they say if the default is exactly 1 — pin it so a future
-    // change to the default fails loudly here instead of silently changing
-    // what those two tests actually exercise.
-    expect(ISSUE_REWAKE_COMMENT_ONLY_PROGRESS_MAX_STREAK).toBe(1);
-  });
-
   it("stops converting comment-only runs at the first real progress action further back", () => {
     // r4/r3/r2 are consecutive comment-only runs past the cap; r1 (oldest)
     // has real (non-comment) progress. The conversion must still stop at r1
     // exactly as the original "break on first progress" check always did —
     // this proves the exhausted-cap path doesn't walk past genuine progress
     // once it starts counting comment-only runs as no-progress.
-    const decision = evaluateIssueRewakeThrottle({
+    const decision = throttle.evaluateIssueRewakeThrottle({
       now: NOW,
       recentTerminalRuns: [
         runSample({ id: "r4", finishedSecondsAgo: 10 }),
@@ -289,6 +315,31 @@ describe("evaluateIssueRewakeThrottle", () => {
       expect(decision.cooldownMs).toBe(ISSUE_REWAKE_BASE_COOLDOWN_MS * 2);
     }
   });
+
+  it("stops exempting an alternating comment/empty-run pattern once the comment-only count among them exceeds the cap", () => {
+    // Regression for the exact gap Greptile flagged on this PR: an agent
+    // alternating a comment-only run with a truly empty one (no comment, no
+    // other progress) must not be able to hold its exemption open forever
+    // just because no single *consecutive* comment-only run longer than the
+    // cap ever appears.
+    const decision = throttle.evaluateIssueRewakeThrottle({
+      now: NOW,
+      recentTerminalRuns: [
+        runSample({ id: "c3", finishedSecondsAgo: 10 }),
+        runSample({ id: "e2", finishedSecondsAgo: 40 }),
+        runSample({ id: "c2", finishedSecondsAgo: 70 }),
+        runSample({ id: "e1", finishedSecondsAgo: 100 }),
+        runSample({ id: "c1", finishedSecondsAgo: 130 }),
+      ],
+      runIdsWithIssueProgress: new Set(),
+      runIdsWithCommentOnlyProgress: new Set(["c3", "c2", "c1"]),
+      hasNewIssueInputSinceLastRun: false,
+    });
+    expect(decision.blocked).toBe(true);
+    if (decision.blocked) {
+      expect(decision.noProgressStreak).toBe(5);
+    }
+  });
 });
 
 describe("resolveCommentOnlyProgressStreakCap", () => {
@@ -303,5 +354,16 @@ describe("resolveCommentOnlyProgressStreakCap", () => {
     expect(resolveCommentOnlyProgressStreakCap("3.9")).toBe(3);
     expect(resolveCommentOnlyProgressStreakCap("5")).toBe(5);
     expect(resolveCommentOnlyProgressStreakCap(undefined, 2)).toBe(2);
+  });
+
+  it("clamps an override at or past the run sample window, so the exhaustion check stays reachable", () => {
+    // The exhaustion check requires the leading comment-only streak to
+    // exceed this cap, but that streak can never be longer than
+    // ISSUE_REWAKE_RUN_SAMPLE_LIMIT (8) runs. A cap of 8 or higher could
+    // therefore never be exceeded, silently disabling the bound for any
+    // operator who set a value that size or larger.
+    expect(resolveCommentOnlyProgressStreakCap("7")).toBe(7);
+    expect(resolveCommentOnlyProgressStreakCap("8")).toBe(7);
+    expect(resolveCommentOnlyProgressStreakCap("100")).toBe(7);
   });
 });

@@ -62,10 +62,15 @@ export function resolveCommentOnlyProgressStreakCap(
   fallback = 1,
 ): number {
   const parsed = Number(raw);
-  if (raw === undefined || raw.trim() === "" || !Number.isFinite(parsed)) {
-    return fallback;
-  }
-  return Math.max(1, Math.floor(parsed));
+  const value =
+    raw === undefined || raw.trim() === "" || !Number.isFinite(parsed)
+      ? fallback
+      : Math.floor(parsed);
+  // The exhaustion check below requires a leading comment-only streak to
+  // exceed this cap, but the streak can never be longer than the sampled
+  // run window. A cap at or past that window size can therefore never be
+  // exceeded, so clamp it to leave room for at least one disqualifying run.
+  return Math.max(1, Math.min(value, ISSUE_REWAKE_RUN_SAMPLE_LIMIT - 1));
 }
 
 export const ISSUE_REWAKE_COMMENT_ONLY_PROGRESS_MAX_STREAK =
@@ -207,18 +212,24 @@ export function evaluateIssueRewakeThrottle(input: IssueRewakeThrottleInput): Is
   if (runs.length === 0) return { blocked: false, noProgressStreak: 0 };
   if (input.hasNewIssueInputSinceLastRun) return { blocked: false, noProgressStreak: 0 };
 
-  // Measure the leading run of consecutive comment-only "progress" before
-  // deciding whether any of it is exempt. A single evaluation only ever sees
-  // a fresh slice of an ongoing loop — every run in a self-sustaining storm
-  // posts its own comment, so the newest run alone can never distinguish a
-  // one-off status update from the 50th repeat. Counting the whole
-  // consecutive prefix first makes that distinction possible.
+  // Measure comment-only "progress" across the whole leading run of
+  // no-progress history before deciding whether any of it is exempt. A
+  // single evaluation only ever sees a fresh slice of an ongoing loop —
+  // every run in a self-sustaining storm posts its own comment, so the
+  // newest run alone can never distinguish a one-off status update from the
+  // 50th repeat. Counting the whole no-progress prefix first makes that
+  // distinction possible. A run with neither a comment nor other progress
+  // does not end this prefix — if it did, an agent could keep its comment
+  // exemption open forever by alternating a comment-only run with a truly
+  // empty one, since neither individual run would ever be counted against
+  // the cap below.
   let leadingCommentOnlyStreak = 0;
   for (const run of runs) {
     if (run.status !== "succeeded" || !run.finishedAt) break;
     if (input.runIdsWithIssueProgress.has(run.id)) break;
-    if (!input.runIdsWithCommentOnlyProgress.has(run.id)) break;
-    leadingCommentOnlyStreak += 1;
+    if (input.runIdsWithCommentOnlyProgress.has(run.id)) {
+      leadingCommentOnlyStreak += 1;
+    }
   }
   const commentOnlyGraceExhausted =
     leadingCommentOnlyStreak > ISSUE_REWAKE_COMMENT_ONLY_PROGRESS_MAX_STREAK;
