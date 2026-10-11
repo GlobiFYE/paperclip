@@ -192,6 +192,36 @@ function notFoundSnapshot(identity: GitHubObjectIdentity, etag: string | null): 
   };
 }
 
+/**
+ * Probe `/repos/{owner}/{repo}` to classify a 404 on a pull request or issue.
+ *
+ * GitHub returns 404 both when the object does not exist and when the repository
+ * exists but the credentials cannot see it (private repos are deliberately hidden
+ * behind 404). This probes the repo metadata with the same credentials to tell the
+ * two apart:
+ *
+ * - "visible": the repo returns 2xx — the referenced object really is gone.
+ * - "hidden": the repo returns 404/403 — the credentials lack access to the repo,
+ *   so the object status cannot be determined and should not be frozen as "Not found".
+ * - "uncertain": the probe itself failed (network/5xx/rate limit) — retry later.
+ */
+async function probeRepoVisibility(
+  identity: GitHubObjectIdentity,
+  opts: { fetch: FetchLike; headers?: Record<string, string> | undefined },
+): Promise<"visible" | "hidden" | "uncertain"> {
+  try {
+    const probe = await opts.fetch(
+      `${gitHubApiBase(identity.host)}/repos/${encodeURIComponent(identity.owner)}/${encodeURIComponent(identity.repo)}`,
+      { headers: opts.headers },
+    );
+    if (probe.ok) return "visible";
+    if (probe.status === 404 || probe.status === 403) return "hidden";
+    return "uncertain";
+  } catch {
+    return "uncertain";
+  }
+}
+
 function pullRequestSnapshot(identity: GitHubObjectIdentity, body: Record<string, unknown>, etag: string | null): ExternalObjectResolverSnapshot {
   const title = asString(body.title);
   const state = asString(body.state) ?? "unknown";
@@ -414,7 +444,35 @@ export function createGitHubExternalObjectProvider(
 
         const etag = response.headers.get("etag");
         if (response.status === 404) {
-          return { ok: true, snapshot: notFoundSnapshot(identity, etag) };
+          // GitHub deliberately returns 404 for repositories the credentials cannot
+          // see, to avoid leaking that a private repo exists. A 404 therefore means
+          // either "object deleted/never existed" or "repo private / no access".
+          // Probe the repository metadata to classify: if the repo itself is visible
+          // the object truly is gone; if it is not, surface credentials-needed
+          // instead of permanently freezing a reference as "Not found".
+          const repoVisibility = await probeRepoVisibility(identity, {
+            fetch: fetchImpl,
+            headers,
+          });
+          if (repoVisibility === "visible") {
+            return { ok: true, snapshot: notFoundSnapshot(identity, etag) };
+          }
+          if (repoVisibility === "hidden") {
+            return {
+              ok: false,
+              liveness: "auth_required",
+              errorCode: "github_repo_not_accessible",
+              errorMessage: `GitHub returned not-found for ${identity.owner}/${identity.repo}. The repository may be private, deleted, or the configured GitHub credentials may lack access to it.`,
+              retryAfterSeconds: GITHUB_OBJECT_TTL_SECONDS,
+            };
+          }
+          return {
+            ok: false,
+            liveness: "unreachable",
+            errorCode: "github_repo_probe_failed",
+            errorMessage: "GitHub could not verify this repository while checking this object.",
+            retryAfterSeconds: GITHUB_OBJECT_TTL_SECONDS,
+          };
         }
 
         const failure = failureFromGitHubResponse(response);
