@@ -2,6 +2,7 @@ import {
   codexLocalReasoningEffortsForModel,
   type CodexLocalReasoningEffort,
 } from "@paperclipai/adapter-codex-local";
+import { DEEPSEEK_REASONING_EFFORTS, isDeepSeekModel } from "@paperclipai/shared";
 
 const CODEX_REASONING_EFFORT_LABELS: Record<CodexLocalReasoningEffort, string> = {
   minimal: "Minimal",
@@ -18,10 +19,10 @@ export function codexReasoningEffortOptions(
   defaultLabel = "Default",
 ) {
   // DeepSeek on the Codex harness accepts only low/high/max; the Codex-native
-  // model list does not apply and would offer unsupported values.
-  const isDeepSeek = typeof model === "string" && model.toLowerCase().includes("deepseek");
-  const values: CodexLocalReasoningEffort[] = isDeepSeek
-    ? ["low", "high", "max"]
+  // model list does not apply and would offer unsupported values. The shared
+  // helper keeps this list identical to the server-side MCP validation.
+  const values: CodexLocalReasoningEffort[] = isDeepSeekModel(model)
+    ? [...DEEPSEEK_REASONING_EFFORTS]
     : [...codexLocalReasoningEffortsForModel(model)];
   return [
     { value: "", label: defaultLabel },

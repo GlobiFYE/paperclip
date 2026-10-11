@@ -43,6 +43,12 @@ export function priceDeepSeekReceipt(
   now: Date = new Date(),
 ): AdapterUsageCheckpoint {
   if (
+    // Only the projected `paperclip` provider is priced here. The model name
+    // alone is not enough: an OpenRouter/custom route can serve a DeepSeek model
+    // id at different (or zero) rates, and the neighbors (`codex-pricing`,
+    // `anthropic-pricing`) gate on provider and biller the same way.
+    receipt.provider !== "paperclip" ||
+    receipt.biller !== "paperclip" ||
     !receipt.complete ||
     !receipt.usage ||
     receipt.usageBasis !== "per_run" ||

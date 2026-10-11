@@ -67,6 +67,10 @@ describe("DeepSeek receipt pricing", () => {
     { cacheAdjustedCostUsd: 0.12 },
     { model: "paperclip/deepseek-unknown" },
     { model: "openrouter/deepseek/deepseek-v4-flash-0731" },
+    // A DeepSeek model id reachable through another provider must not be priced
+    // with the native DeepSeek card.
+    { provider: "openrouter", biller: "openrouter", model: "openrouter/deepseek/deepseek-v4-pro" },
+    { provider: "custom", biller: "custom", model: "custom/deepseek-flash" },
     { usage: { inputTokens: -1, cachedInputTokens: 0, outputTokens: 0 } },
   ] as Partial<AdapterUsageCheckpoint>[])(
     "preserves incomplete, incompatible or already priced receipts: %j",

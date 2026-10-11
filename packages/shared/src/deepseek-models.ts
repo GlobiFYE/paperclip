@@ -48,3 +48,16 @@ export function protocolForDeepSeekHarness(
       ? "messages"
       : "chat";
 }
+
+/** DeepSeek's own reasoning-effort domain, in Paperclip's value space. */
+export const DEEPSEEK_REASONING_EFFORTS = ["low", "high", "max"] as const;
+
+/**
+ * True when a model id names a DeepSeek model, including the projected
+ * (`paperclip/deepseek-flash`) and window-suffixed (`deepseek-flash[1m]`)
+ * forms. Shared so the UI controls and the server-side MCP effort validation
+ * accept the same values for the same model.
+ */
+export function isDeepSeekModel(model: string | null | undefined): boolean {
+  return typeof model === "string" && /(^|\/)deepseek(-|$|\/)/.test(model.toLowerCase());
+}
