@@ -44,7 +44,16 @@ export {
  * prefer detectModel() plus manual entry over curated placeholder models,
  * since Hermes availability depends on the user's local configuration.
  */
-export const models: { id: string; label: string }[] = [];
+export const models: { id: string; label: string }[] = [
+  { id: "mimo-v2.6-pro", label: "MiMo 2.6 Pro (Xiaomi)" },
+  { id: "mimo-v2.6-flash", label: "MiMo 2.6 Flash (Xiaomi)" },
+  { id: "mimo-v2.5-pro", label: "MiMo 2.5 Pro (Xiaomi)" },
+  { id: "gemini-3-flash-preview", label: "Gemini 3 Flash Preview" },
+  { id: "gemini-3.1-flash-lite", label: "Gemini 3.1 Flash-Lite" },
+  { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+  { id: "MiniMax-M2.7", label: "MiniMax M2.7" },
+  { id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron 3 Ultra (NVIDIA)" },
+];
 
 const sessionManagement: AdapterSessionManagement = {
   supportsSessionResume: true,

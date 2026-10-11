@@ -510,8 +510,16 @@ export async function execute(
   if (envCommentId) env.PAPERCLIP_WAKE_COMMENT_ID = envCommentId;
 
   // ── Resolve working directory ──────────────────────────────────────────
+  // Pantheon local change: when the issue belongs to a project, run in that
+  // project's workspace (Paperclip passes it as context.paperclipWorkspace)
+  // instead of the agent's configured cwd.
+  const pcWorkspace: Record<string, unknown> =
+    ctxContext.paperclipWorkspace && typeof ctxContext.paperclipWorkspace === "object"
+      ? (ctxContext.paperclipWorkspace as Record<string, unknown>)
+      : {};
+  const projectCwd = pcWorkspace.projectId ? cfgString(pcWorkspace.cwd) : "";
   const cwd =
-    cfgString(config.cwd) || cfgString(ctx.config?.workspaceDir) || ".";
+    projectCwd || cfgString(config.cwd) || cfgString(ctx.config?.workspaceDir) || ".";
   try {
     await ensureAbsoluteDirectory(cwd);
   } catch {

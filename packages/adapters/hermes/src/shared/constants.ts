@@ -25,7 +25,7 @@ export const DEFAULT_GRACE_SEC = 10;
  * user's configured default (e.g. MiniMax, OpenRouter, etc.) with a
  * hardcoded Anthropic model during Paperclip onboarding.
  */
-export const DEFAULT_MODEL = "auto";
+export const DEFAULT_MODEL = "mimo-v2.6-pro";
 
 /**
  * Valid --provider choices for the hermes CLI.
@@ -33,6 +33,9 @@ export const DEFAULT_MODEL = "auto";
  */
 export const VALID_PROVIDERS = [
   "auto",
+  "xiaomi",
+  "gemini",
+  "nvidia",
   "openrouter",
   "nous",
   "openai-codex",
@@ -56,6 +59,10 @@ export const VALID_PROVIDERS = [
  * Longer prefixes are matched first (order matters).
  */
 export const MODEL_PREFIX_PROVIDER_HINTS: [string, string][] = [
+  // Pantheon local change: Xiaomi MiMo and NVIDIA-suffixed models first
+  // (longer/specific prefixes must be matched before generic ones).
+  ["mimo", "xiaomi"],
+  ["nvidia/", "nvidia"],
   // OpenAI-native models
   ["gpt-4", "openai-codex"],
   ["gpt-5", "copilot"],
