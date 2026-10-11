@@ -23,6 +23,7 @@ PAPERCLIP_HOME = "/Volumes/AI-Models/paperclip/data"
 NODE = "/Users/clawd/.nvm/versions/node/v24.14.0/bin/node"
 env = dict(os.environ, PAPERCLIP_HOME=PAPERCLIP_HOME,
            PORT="3100", HOST="127.0.0.1",
+           NODE_OPTIONS="--conditions=pantheon-dist",
            PATH="/Users/clawd/.nvm/versions/node/v24.14.0/bin:/Users/clawd/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin")
 log = open(f"{PAPERCLIP_HOME}/server.log", "ab")
 p = subprocess.Popen([NODE, f"{ROOT}/cli/dist/index.js", "run"], cwd=ROOT, env=env,
