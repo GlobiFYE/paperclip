@@ -5,9 +5,9 @@ import { and, desc, eq, inArray, sql } from "drizzle-orm";
 const MAX_CANDIDATES_PER_POOL = 1_000;
 const ACTIVE_STATUSES = ["queued", "running"];
 
-/** Same identity recovery uses: native issue, then context issue, then task id. */
-export function dashboardTaskIssueId() {
-  return sql<string | null>`coalesce(${heartbeatRuns.nativeIssueId}::text, ${heartbeatRuns.contextSnapshot}->>'issueId', ${heartbeatRuns.contextSnapshot}->>'taskId')`;
+/** Task identity for a card: bound issue, then native issue, then context issue, then task id. */
+function dashboardTaskIssueId() {
+  return sql<string | null>`coalesce(${heartbeatRuns.issueId}::text, ${heartbeatRuns.nativeIssueId}::text, ${heartbeatRuns.contextSnapshot}->>'issueId', ${heartbeatRuns.contextSnapshot}->>'taskId')`;
 }
 
 /** Select recent dashboard cards without ranking the company's full run history. */
