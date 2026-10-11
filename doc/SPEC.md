@@ -91,6 +91,13 @@ The Board sets Company-level budgets. The CEO can set budgets for Agents below t
 
 ## 2. Agent Model [DRAFT]
 
+A human's personal primary agent is a company-scoped navigation and assignment
+preference, independent of the org chart, roles, stars, and authority. First human
+creation initializes it automatically. Later explicit choices persist across
+devices; recent task/chat choices take precedence. The profile owns the setting
+and replacement confirmation. See the personal-primary addendum in
+`SPEC-implementation.md` for persistence and lifecycle rules.
+
 Every employee is an agent. Agents are the workforce.
 
 ### Cryptographic identity
@@ -316,6 +323,9 @@ should name the rejected action and the specific restriction.
 
 There is no separate messaging or chat system. Tasks are the communication channel. This keeps all context attached to the work it relates to and creates a natural audit trail.
 
+Experimental external chat and voice connections are transports into this task
+system. They preserve the selected agent, task context, current caller authority,
+and governed-action checks; a voice session is not a separate authority or inbox.
 Experimental Agent Chat presents one persistent task per person and agent as a simplified conversation. Chat has a searchable secondary sidebar with agent avatars that lists every eligible agent, conversations first; adding an agent starts or reopens their single conversation. It retains the task composer, transcript, tools, attachments, documents, and existing Subtasks panel, with ordinary company visibility. New execution tasks are ordinary project tasks, not children of the conversation. Idle conversations wait for a message without entering execution-task work queues. Agents clarify goals here and create assigned tasks for substantial execution. `/new` resets provider context at an ordered session boundary within the same task while preserving visible history. `enableAgentChat` is disabled by default; the V1 lifecycle and rollout contract is specified in `SPEC-implementation.md`.
 
 ### Question recipients
@@ -722,6 +732,12 @@ configuration, plugin packages and outstanding hosted release gates. The
 [delivery plan](plans/2026-09-30-paperclip-public-mcp-and-plugins.md) separates
 external agent participation and granted third-party tools into later releases.
 
+The experimental OpenAI Dot Runner provider uses a separate `/mcp/runner`
+agent OAuth resource. It reuses browser/device consent and signed event delivery
+while preserving agent pairing, normal run admission and task authority.
+Personal grants cannot authorize Runner operations. See
+[OpenAI Dot Runner](openai-dot-runner.md) for its supported release boundary.
+
 ### Experimental connection routing
 
 A virtual AI connection can rotate new task/agent allocations through an
@@ -737,3 +753,11 @@ as free-form text in the instance database. Legacy agents use the default
 in standard, ask, and planning modes. Submission never changes task disposition
 or routes feedback externally. See [Agent commentary](agent-commentary.md) for
 authentication, replay, document-sized limits, inspection, and deletion semantics.
+
+### Managed decision models
+
+A company may configure a shared decision model for optional Paperclip features. The instance owns credential resolution, authorization, budget admission, and attributable service charges. Company-sponsored background use is enabled by default during configuration; explicit opt-out persists. User and agent requests keep their own access boundaries and cannot become sponsored background requests after denial. Availability is a cheap local capability check, and metadata-only request history makes service usage inspectable. The implemented V1 contract is in [decision-models.md](decision-models.md).
+
+### Fast responses
+
+A company may use a shared API model to acknowledge accepted human messages across tasks, agent chat and external channels while normal work starts. Acknowledgements retain their platform provenance and cannot satisfy execution or completion requirements. The bounded inference, authorization, sponsorship and independent accounting contract is defined in [fast-responses.md](fast-responses.md).

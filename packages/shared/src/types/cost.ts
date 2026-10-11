@@ -2,9 +2,12 @@ import type { AgentAppearance } from "../agent-appearance.js";
 import type { BillingType, CostStatus } from "../constants.js";
 
 export interface CostEvent {
+  subscriptionId?: string | null;
+  usageKind?: "agent" | "decision" | "fast_response";
+  responsibleUserId?: string | null;
   id: string;
   companyId: string;
-  agentId: string;
+  agentId: string | null;
   issueId: string | null;
   projectId: string | null;
   goalId: string | null;
@@ -80,7 +83,7 @@ export interface CostByUserReport {
 }
 
 export interface CostByAgent {
-  agentId: string;
+  agentId: string | null;
   agentName: string | null;
   agentAppearance?: AgentAppearance | null;
   avatarUrl?: string;
@@ -135,7 +138,7 @@ export interface CostByBiller {
 
 /** per-agent breakdown by provider + model, for identifying token-hungry agents */
 export interface CostByAgentModel {
-  agentId: string;
+  agentId: string | null;
   agentName: string | null;
   agentAppearance?: AgentAppearance | null;
   avatarUrl?: string;
@@ -172,6 +175,9 @@ export interface CostWindowSpendRow {
 export interface CostByProject {
   projectId: string | null;
   projectName: string | null;
+  /** Ledger events in this project and selected date range, not distinct runs. */
+  eventCount: number;
+  estimatedEventCount: number;
   costCents: number;
   costCentsExact?: string;
   inputTokens: number;
