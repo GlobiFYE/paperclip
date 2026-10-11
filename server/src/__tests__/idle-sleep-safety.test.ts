@@ -714,21 +714,23 @@ if (!support.supported) console.warn(`Skipping idle sleep Postgres tests: ${supp
     const [project] = await db.insert(projects).values({ companyId, name: "Fixture project" }).returning();
     const [workspace] = await db.insert(executionWorkspaces).values({
       companyId, projectId: project!.id, name: "Fixture workspace", mode: "isolated_workspace",
-      strategyType: "git_worktree", status: "active", providerType: "local_fs",
+      strategyType: "git_worktree", status: "active", providerType: "git_worktree",
       cwd: "/tmp/fixture-retained-worktree", providerRef: "/tmp/fixture-retained-worktree",
       ...change,
     }).returning();
     return workspace!;
   }
 
-  it.each(["active", "idle", "in_review", "archived"])(
-    "permits a passive %s local directory without removing retained data", async status => {
+  it.each(["local_fs", "git_worktree"].flatMap(providerType =>
+    ["active", "idle", "in_review", "archived"].map(status => ({ providerType, status }))))(
+    "permits a passive local directory without removing retained data: %j", async ({ providerType, status }) => {
       const metadata = { config: {
         environmentId: randomUUID(), provisionCommand: null, runtimeProvisionCommand: null,
         teardownCommand: null, cleanupCommand: null, workspaceRuntime: null,
         desiredState: null, serviceStates: null,
       }, retainedFixture: true };
-      const workspace = await seedRetainedWorkspace({ status, metadata, cleanupEligibleAt: new Date(Date.UTC(2099, 0, 1)) });
+      const strategyType = providerType === "local_fs" ? "project_primary" : "git_worktree";
+      const workspace = await seedRetainedWorkspace({ providerType, strategyType, status, metadata, cleanupEligibleAt: new Date(Date.UTC(2099, 0, 1)) });
       expect(await read()).toEqual(none);
       expect(await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, workspace.id)))
         .toMatchObject([{ status, metadata, cwd: workspace.cwd, cleanupEligibleAt: workspace.cleanupEligibleAt }]);

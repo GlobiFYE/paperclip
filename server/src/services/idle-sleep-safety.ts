@@ -99,7 +99,7 @@ const WORK_CHECKS = [
   // operations, runtime services, retained leases and backup work are checked
   // separately; inspecting the row never deletes or shortens retained data.
   `SELECT 1 FROM execution_workspaces w WHERE (
-    w.provider_type = 'local_fs'
+    w.provider_type IN ('local_fs', 'git_worktree')
     AND w.strategy_type IN ('project_primary', 'git_worktree')
     AND w.mode IN ('inherit', 'shared_workspace', 'isolated_workspace', 'operator_branch', 'reuse_existing', 'agent_default')
     AND w.status IN ('active', 'idle', 'in_review', 'archived')
