@@ -188,12 +188,34 @@ export function githubReviewSchedulingDecision(input: {
   };
 }
 
+// Some models send the whole numbers of a tool call as text ("5", "12"). A string of digits only is read as that
+// number before the schema check, so the review is not refused over quoting; anything else is left to the schema.
+function wholeNumberFromText(value: unknown): unknown {
+  return typeof value === "string" && /^[0-9]{1,9}$/.test(value.trim()) ? Number(value.trim()) : value;
+}
+
+export function normalizeGitHubReviewAssessmentNumbers(input: unknown): unknown {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const record = input as Record<string, unknown>;
+  return {
+    ...record,
+    score: wholeNumberFromText(record.score),
+    findings: Array.isArray(record.findings)
+      ? record.findings.map((finding: unknown) =>
+          finding && typeof finding === "object" && !Array.isArray(finding) && "line" in finding
+            ? { ...finding, line: wholeNumberFromText((finding as Record<string, unknown>).line) }
+            : finding,
+        )
+      : record.findings,
+  };
+}
+
 export function validateGitHubReviewAssessment(
   input: unknown,
   headSha: string,
   policy: GitHubReviewPolicy,
 ): GitHubReviewAssessment {
-  const parsed = githubReviewAssessmentSchema.safeParse(input);
+  const parsed = githubReviewAssessmentSchema.safeParse(normalizeGitHubReviewAssessmentNumbers(input));
   if (!parsed.success) {
     throw badRequest(
       `Invalid review assessment: ${parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`,
