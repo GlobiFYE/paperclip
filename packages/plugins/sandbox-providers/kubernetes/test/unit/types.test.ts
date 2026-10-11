@@ -36,4 +36,27 @@ describe("kubernetesProviderConfigSchema", () => {
       parseKubernetesProviderConfig({ inCluster: true, egressAllowCidrs: ["not-a-cidr"] }),
     ).toThrow(/CIDR/i);
   });
+
+  it("accepts podAntiAffinity configuration", () => {
+    const parsedWithDefault = parseKubernetesProviderConfig({
+      inCluster: true,
+      podAntiAffinity: { enabled: true },
+    });
+    expect(parsedWithDefault.podAntiAffinity).toEqual({
+      enabled: true,
+      topologyKey: undefined,
+    });
+
+    const parsedWithCustomTopology = parseKubernetesProviderConfig({
+      inCluster: true,
+      podAntiAffinity: {
+        enabled: true,
+        topologyKey: "topology.kubernetes.io/zone",
+      },
+    });
+    expect(parsedWithCustomTopology.podAntiAffinity).toEqual({
+      enabled: true,
+      topologyKey: "topology.kubernetes.io/zone",
+    });
+  });
 });
