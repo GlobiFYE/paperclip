@@ -1,0 +1,36 @@
+import { secretService } from "../../services/secrets.js";
+import { computerRepository, type ComputerDatabase } from "./adapters/repository.js";
+import { boatBackend } from "./adapters/boat.js";
+import { createComputerService } from "./application/service.js";
+export { COMPUTER_RETIREMENT_GRACE_MS, ComputerError, ComputerStopPendingError } from "./domain/ledger.js";
+export type {
+  OwnerRef as ComputerOwnerRef,
+  ProcessClaim as ComputerProcessClaim,
+} from "./domain/ledger.js";
+export type ComputerService = ReturnType<typeof createComputerService>;
+export type ComputerBinding = Awaited<ReturnType<ComputerService["admit"]>>;
+const services = new WeakMap<ComputerDatabase, ComputerService>();
+export function computerService(db: ComputerDatabase): ComputerService {
+  const existing = services.get(db);
+  if (existing) return existing;
+  const secrets = secretService(db);
+  const service = createComputerService(
+    computerRepository(db),
+    boatBackend((record) =>
+      secrets.resolveSecretValue(
+        record.companyId,
+        record.ledger.secretRef.secretId,
+        record.ledger.secretRef.version ?? "latest",
+        {
+          consumerType: "environment",
+          consumerId: record.environmentId,
+          configPath: "apiKeySecretRef",
+          actorType: "system",
+          actorId: null,
+        },
+      ),
+    ),
+  );
+  services.set(db, service);
+  return service;
+}

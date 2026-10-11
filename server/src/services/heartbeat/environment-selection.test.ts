@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { agents, companies, createDb, environments, heartbeatRuns, issues, projects, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, type Db } from "@paperclipai/db";
+import { agents, companies, createDb, environmentLeases, environments, heartbeatRuns, issues, projects, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, type Db } from "@paperclipai/db";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "../../__tests__/helpers/embedded-postgres.js";
@@ -73,6 +73,25 @@ describe.skipIf(!support.supported)("heartbeat environment selection boundary", 
     };
     return { input, issue, project, workspace, recover };
   }
+
+  it.each(["agent", "instance"] as const)("selects the %s Boat environment without acquiring a lease", async source => {
+    const { input } = await fixture();
+    const [boat] = await db.insert(environments).values({
+      name: `Selected Boat ${source}`, driver: "computer", status: "active", config: { provider: "boat" },
+    }).returning();
+    const [other] = await db.insert(environments).values({
+      name: `Other environment ${source}`, driver: "ssh", status: "active", config: {},
+    }).returning();
+    input.agent.defaultEnvironmentId = source === "agent" ? boat.id : null;
+    const settings = await input.services.instanceSettings.get();
+    input.services.instanceSettings.get = vi.fn(async () => ({
+      ...settings, defaultEnvironmentId: source === "instance" ? boat.id : other.id,
+    }));
+    const result = await selectHeartbeatEnvironment(db, input);
+    expect(result.selectedEnvironmentId).toBe(boat.id);
+    expect(result.selectedEnvironmentForConfig).toMatchObject({ id: boat.id, driver: "computer" });
+    expect(await db.select().from(environmentLeases).where(eq(environmentLeases.heartbeatRunId, input.run.id))).toEqual([]);
+  });
 
   it("keeps the admitted workspace binding when the issue points at a newer workspace", async () => {
     const { input, workspace, recover } = await fixture();

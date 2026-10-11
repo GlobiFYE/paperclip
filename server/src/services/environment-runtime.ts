@@ -1,3 +1,4 @@
+import { createComputerEnvironmentDriver } from "./computer-environment-driver.js";
 import { beginIdleTrackedWork } from "./task-admission.js";
 import { hasStopOnlyCleanup, prepareSandboxStopAndRetain, readStopOnlyCleanup, settleStopOnlyCleanup, stopOnlyCleanupKey } from "./sandbox-stop-and-retain.js";
 import { JsonRpcCallError, readEnvironmentAcquisitionDiagnostic, readEnvironmentCreationCleanupError } from "@paperclipai/plugin-sdk";
@@ -432,6 +433,8 @@ function stripSecretRefValuesFromPluginLeaseMetadata(input: {
 }
 
 export interface EnvironmentDriverAcquireInput {
+  /** Stable selected execution configuration; command-backed warm owners fence changes. */
+  executionConfigurationKey?: string;
   companyId: string;
   environment: Environment;
   issueId: string | null;
@@ -523,6 +526,8 @@ export interface EnvironmentDriverLeaseInput {
 }
 
 export interface EnvironmentDriverRealizeWorkspaceInput extends EnvironmentDriverLeaseInput {
+  /** Ephemeral authentication for the initial checkout, excluded from durable metadata. */
+  gitAuth?: { configArgs: string[]; env: Record<string, string> };
   workspace: {
     localPath?: string;
     remotePath?: string;
@@ -3839,6 +3844,7 @@ export function environmentRuntimeService(
   const defaultDrivers = [
     createLocalEnvironmentDriver(db),
     createSshEnvironmentDriver(db),
+    createComputerEnvironmentDriver(db),
     createSandboxEnvironmentDriver(db, {
       pluginWorkerManager: options.pluginWorkerManager,
       pluginWorkerReadyTimeoutMs: options.pluginWorkerReadyTimeoutMs,
@@ -3977,6 +3983,7 @@ export function environmentRuntimeService(
     },
 
     async acquireRunLease(input: {
+      executionConfigurationKey?: string;
       companyId: string;
       environment: Environment;
       issueId: string | null;
@@ -4015,6 +4022,7 @@ export function environmentRuntimeService(
       });
       const driver = requireDriver(input.environment);
       const lease = await driver.acquireRunLease({
+        executionConfigurationKey: input.executionConfigurationKey,
         companyId: input.companyId,
         environment: input.environment,
         issueId: input.issueId,
@@ -4113,11 +4121,23 @@ export function environmentRuntimeService(
             providerResourceDisposition === "keep_running" &&
             leaseSnapshot.leasePolicy === "reuse_by_environment"
           ) {
-            const lease = await environmentsSvc.releaseLease(
-              leaseRow.id,
-              "retained",
-              { cleanupStatus: "success" },
-            );
+            // A concurrent stop or owner replacement outranks this stale warm
+            // return. Never erase its termination receipt or restore retention.
+            const now = new Date();
+            const [retained] = await db.update(environmentLeases).set({
+              status: "retained", cleanupStatus: "success", releasedAt: null,
+              lastUsedAt: now, updatedAt: now,
+              metadata: sql`${environmentLeases.metadata} - 'remoteExecutionTermination'`,
+            }).where(and(
+              eq(environmentLeases.id, leaseRow.id),
+              eq(environmentLeases.companyId, leaseRow.companyId),
+              eq(environmentLeases.heartbeatRunId, heartbeatRunId),
+              eq(environmentLeases.status, "active"),
+              sql`${environmentLeases.environmentId} is not distinct from ${leaseRow.environmentId}`,
+              sql`${environmentLeases.providerLeaseId} is not distinct from ${leaseRow.providerLeaseId}`,
+              sql`${environmentLeases.metadata} is not distinct from ${leaseRow.metadata === null ? null : JSON.stringify(leaseRow.metadata)}::jsonb`,
+            )).returning();
+            const lease = retained ? toEnvironmentLeaseSnapshot(retained) : null;
             if (lease) {
               released.push({
                 environment,

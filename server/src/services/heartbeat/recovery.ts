@@ -1,3 +1,4 @@
+import { COMPUTER_RETIREMENT_GRACE_MS } from "../../modules/computers/index.js";
 import { preserveWorkspaceRestoreRecoveryMetadataSql } from "../legacy-workspace-restore-recovery.js";
 import { pendingNativeWorkspaceFinalizationCondition } from "../native-runtime/native-workspace-finalization-state.js";
 import { CHAT_COMPLETION_WAKE_REASON } from "../chat-completion-delivery.js";
@@ -30,6 +31,7 @@ import {
 import type { Db } from "@paperclipai/db";
 import {
   agents,
+  computers,
   environmentLeases,
   heartbeatRuns,
   issues,
@@ -49,7 +51,8 @@ import {
   reconcileRetainedNativeSessionCleanup,
   reconcileRetainedNativeSessionCleanups,
 } from "../native-runtime/index.js";
-import { drainRetainedRunnerdMaintenanceOperations } from "../../vendor/paperclip-runner/index.js";
+import { readNativeComputerWorkspaceReference } from "../native-runtime/native-workspace-sync.js";
+import { drainRetainedRunnerdMaintenanceOperations, parseNativeExecutionInput } from "../../vendor/paperclip-runner/index.js";
 import { runningProcesses } from "../../adapters/index.js";
 import { parseObject } from "../../adapters/utils.js";
 import {
@@ -1413,7 +1416,7 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
     const cutoff = new Date(Date.now() - opts.backoffMs);
 
     const rows = await db
-      .select({ lease: environmentLeases })
+      .select({ lease: environmentLeases, runAgentId: heartbeatRuns.agentId })
       .from(environmentLeases)
       .leftJoin(
         heartbeatRuns,
@@ -1435,7 +1438,7 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
       .limit(ORPHANED_ACTIVE_LEASE_SWEEP_PAGE_SIZE);
 
     let recovered = 0;
-    for (const { lease } of rows) {
+    for (const { lease, runAgentId } of rows) {
       // A provider resource id names one physical sandbox. A different lease
       // row can still hold that same resource in a live status, so this sweep
       // must not tear down a sandbox that a different lease still owns.
@@ -1470,19 +1473,59 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
       // pending_cleanup sweep can accept the same row in this same tick. A
       // fresh timestamp here would push the row inside that sweep's own
       // backoff window and delay the teardown by one full tick.
-      const flipped = await db
+      const sameLease = and(
+          eq(environmentLeases.id, lease.id),
+          eq(environmentLeases.status, "active"),
+          // A completed heartbeat may retain or replace its bookkeeping while
+          // this sweep waits for the computer serialization boundary.
+          eq(environmentLeases.companyId, lease.companyId),
+          lease.environmentId ? eq(environmentLeases.environmentId, lease.environmentId) : isNull(environmentLeases.environmentId),
+          lease.heartbeatRunId ? eq(environmentLeases.heartbeatRunId, lease.heartbeatRunId) : isNull(environmentLeases.heartbeatRunId),
+          lease.metadata === null ? isNull(environmentLeases.metadata) : eq(environmentLeases.metadata, lease.metadata),
+          lease.provider === null ? isNull(environmentLeases.provider) : eq(environmentLeases.provider, lease.provider),
+          lease.providerLeaseId === null ? isNull(environmentLeases.providerLeaseId) : eq(environmentLeases.providerLeaseId, lease.providerLeaseId),
+        );
+      const claim = (query: Pick<Db, "update">) => query
         .update(environmentLeases)
-        .set({
-          status: "pending_cleanup",
-          failureReason: "orphaned_active_lease_recovered",
-        })
-        .where(
-          and(
-            eq(environmentLeases.id, lease.id),
-            eq(environmentLeases.status, "active"),
-          ),
-        )
+        .set({ status: "pending_cleanup", failureReason: "orphaned_active_lease_recovered" })
+        .where(sameLease)
         .returning({ id: environmentLeases.id });
+      const binding = parseObject(lease.metadata?.computerOwner);
+      const flipped = lease.provider === "boat" && lease.metadata?.driver === "computer"
+        ? await db.transaction(async (tx) => {
+          const [computer] = typeof binding.computerId === "string" && lease.environmentId
+            ? await tx.select().from(computers).where(and(
+              eq(sql`${computers.id}::text`, binding.computerId),
+              eq(computers.companyId, lease.companyId),
+              eq(computers.environmentId, lease.environmentId),
+              eq(computers.provider, "boat"),
+            )).for("update") : [];
+          const owner = Array.isArray(computer?.ledger.owners)
+            ? computer.ledger.owners.map(parseObject).find((value) =>
+              value.id === binding.ownerId && value.id === lease.providerLeaseId &&
+              Number.isSafeInteger(binding.generation) && Number(binding.generation) > 0 &&
+              value.generation === binding.generation && value.kind === "runner" &&
+              value.runId === lease.heartbeatRunId && runAgentId !== null &&
+              value.agentId === runAgentId && value.agentId === lease.metadata?.agentId)
+            : undefined;
+          const process = parseObject(owner?.process);
+          const processBound = [process.bootId, process.unitName, process.nonce]
+            .every((value) => typeof value === "string" && value.length > 0) &&
+            Number.isSafeInteger(process.launchGeneration) && Number(process.launchGeneration) > 0;
+          const deadline = typeof owner?.deadline === "string" ? Date.parse(owner.deadline) : NaN;
+          if (owner?.phase === "warm" && processBound && Number.isFinite(deadline) &&
+              deadline + COMPUTER_RETIREMENT_GRACE_MS > Date.now()) {
+            // Native completion retains the durable owner before heartbeat's
+            // later instruction cleanup can mark the lease retained. A terminal
+            // run is not permission to kill this bounded warm process. Keep it
+            // out of the page until a later sweep; expired/mismatched owners
+            // still follow the ordinary orphan cleanup path.
+            await tx.update(environmentLeases).set({ updatedAt: new Date() })
+              .where(sameLease);
+            return [];
+          }
+          return claim(tx);
+        }) : await claim(db);
       if (flipped.length > 0) recovered += 1;
     }
 
@@ -1796,9 +1839,30 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
     succeeded: boolean;
   }) {
     const settledRun = await getRun(input.runId);
-    const workspaceSyncReference = readNativeWorkspaceSyncReference(
-      parseObject(settledRun?.runnerProfileJson).nativeWorkspaceSync,
-    );
+    const profile = parseObject(settledRun?.runnerProfileJson);
+    const workspaceSyncReference = readNativeWorkspaceSyncReference(profile.nativeWorkspaceSync);
+    let computerLifecycle: { mode: "warm" | "per_turn" } | null = null;
+    if (settledRun?.runtimeMode === "native" &&
+        settledRun.companyId === input.companyId && settledRun.agentId === input.agentId &&
+        !profile.nativeWorkspaceSync && !parseObject(settledRun.resultJson).workspaceExportRetry &&
+        readNativeComputerWorkspaceReference(profile.nativeComputerWorkspace)) {
+      try {
+        const execution = parseNativeExecutionInput(profile.nativeExecutionInput);
+        if (execution.binding.runId === input.runId && execution.binding.companyId === input.companyId &&
+            execution.binding.agentId === input.agentId &&
+            execution.binding.issueId === (settledRun.nativeIssueId ?? settledRun.issueId)) {
+          computerLifecycle = execution.session.lifecyclePolicy;
+        }
+      } catch { /* Unreadable persisted policy cannot earn warm retention. */ }
+    }
+    // Persistent computer workspaces never hand off copy-back. The local
+    // executor owns this suffix until its finally releases the lease; recovery
+    // must not stop its warm session between terminalization and that release.
+    // Sandbox copy-back callbacks still own their explicitly delegated suffix.
+    if (computerLifecycle && activeRunExecutions.has(input.runId)) return;
+    const resourceDisposition = computerLifecycle?.mode === "warm" && settledRun?.status === "succeeded"
+      ? "keep_running"
+      : workspaceSyncReference?.resourceDisposition ?? "stop_and_retain";
     await releaseEnvironmentLeasesForRun({
       runId: input.runId,
       companyId: input.companyId,
@@ -1806,7 +1870,7 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
       status: settledRun?.status,
       failureReason: settledRun?.error ?? undefined,
       providerResourceDisposition: input.succeeded && (!parseObject(settledRun?.resultJson).workspaceExportRetry || workspaceSyncReference?.resourceDisposition === "destroy")
-        ? (workspaceSyncReference?.resourceDisposition ?? "stop_and_retain")
+        ? resourceDisposition
         : "stop_and_retain",
     });
     await releaseRuntimeServicesForRun(input.runId).catch(() => undefined);
