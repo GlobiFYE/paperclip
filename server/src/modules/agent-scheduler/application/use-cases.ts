@@ -26,9 +26,9 @@ export function createEvaluateAgentSchedulerAdmission(deps: {
       return { action: "materialize" };
     }
 
-    const runnable = await deps.writer.listRunnableWakes(input.agentId, 500);
-    const queueDepth = runnable.length + 1;
-    await deps.writer.parkWakeAsRunnable({
+    const parkedCount = await deps.writer.countRunnableWakes(input.agentId);
+    const queueDepth = parkedCount + 1;
+    const parked = await deps.writer.parkWakeAsRunnable({
       wakeRequestId: input.wakeRequestId,
       companyId: input.companyId,
       agentId: input.agentId,
@@ -41,6 +41,9 @@ export function createEvaluateAgentSchedulerAdmission(deps: {
         queueDepth,
       },
     });
+    if (!parked) {
+      return { action: "materialize" };
+    }
     await deps.host.appendSchedulerEvent({
       companyId: input.companyId,
       agentId: input.agentId,
@@ -87,22 +90,52 @@ export function createPromoteAgentRunnableWork(deps: {
       return { promoted: 0, runIds: [] };
     }
 
-    const pending = await deps.writer.listRunnableWakes(input.agentId, availableSlots);
     const runIds: string[] = [];
     let promoted = 0;
+    let slotsRemaining = availableSlots;
+    const skippedWakeIds = new Set<string>();
 
-    for (const wake of pending) {
+    while (slotsRemaining > 0) {
+      const candidates = await deps.writer.listRunnableWakes(input.agentId, 50);
+      const wake = candidates.find((row) => !skippedWakeIds.has(row.id));
+      if (!wake) break;
+      const claimed = await deps.writer.tryClaimRunnableWake(wake.id);
+      if (!claimed) {
+        skippedWakeIds.add(wake.id);
+        continue;
+      }
       const runId = await input.createRunForWake(wake);
-      if (!runId) continue;
+      if (!runId) {
+        await deps.writer.releaseClaimedRunnableWake({
+          wakeId: wake.id,
+          companyId: wake.companyId,
+          agentId: wake.agentId,
+          enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON,
+        });
+        skippedWakeIds.add(wake.id);
+        continue;
+      }
       const linked = await deps.writer.materializeRunnableWake({
         wake,
         runId,
         dequeueReason: AGENT_SCHEDULER_DEQUEUE_REASON,
       });
-      if (!linked) continue;
+      if (!linked) {
+        await deps.writer.releaseClaimedRunnableWake({
+          wakeId: wake.id,
+          companyId: wake.companyId,
+          agentId: wake.agentId,
+          enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON,
+        });
+        skippedWakeIds.add(wake.id);
+        continue;
+      }
       promoted += 1;
       runIds.push(runId);
-      const queueDepth = Math.max(0, pending.length - promoted);
+      slotsRemaining -= 1;
+      skippedWakeIds.delete(wake.id);
+      const remainingRunnable = await deps.writer.countRunnableWakes(input.agentId);
+      const queueDepth = Math.max(0, remainingRunnable);
       await deps.host.appendSchedulerEvent({
         companyId: input.companyId,
         agentId: input.agentId,
