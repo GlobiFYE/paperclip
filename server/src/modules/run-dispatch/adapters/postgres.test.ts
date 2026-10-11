@@ -903,6 +903,8 @@ describeEmbeddedPostgres("run-dispatch postgres adapter", () => {
         contextSnapshot: {
           issueId,
           providerQuotaHoldPreviousRetryReason: "native_safe_replacement",
+          providerQuotaHoldUntil: new Date(now.getTime() + 60_000).toISOString(),
+          failureRetriesBeforeProviderQuotaHold: 0,
         },
       });
 
@@ -953,12 +955,47 @@ describeEmbeddedPostgres("run-dispatch postgres adapter", () => {
         .select({
           status: heartbeatRuns.status,
           scheduledRetryReason: heartbeatRuns.scheduledRetryReason,
+          contextSnapshot: heartbeatRuns.contextSnapshot,
         })
         .from(heartbeatRuns)
         .where(eq(heartbeatRuns.id, runId));
       expect(row).toMatchObject({
         status: "queued",
         scheduledRetryReason: "native_safe_replacement",
+        contextSnapshot: { issueId },
+      });
+    });
+
+    it("gates a quota-held interaction wake by its original retry reason", async () => {
+      const { companyId, agentId } = await seedCompanyAndAgent();
+      const issueId = randomUUID();
+      const runId = randomUUID();
+      const now = new Date();
+      await seedIssue({ companyId, issueId, status: "done", assigneeAgentId: agentId });
+      await seedScheduledRetryRun({
+        runId,
+        companyId,
+        agentId,
+        issueId,
+        now,
+        scheduledRetryReason: "provider_quota_hold",
+        contextSnapshot: {
+          issueId,
+          wakeReason: "issue_comment_mentioned",
+          wakeCommentId: randomUUID(),
+          providerQuotaHoldPreviousRetryReason: "native_safe_replacement",
+        },
+      });
+
+      const outcome = await createPostgresRunDispatchAdapter(db).promoteOrCancelDueRetry({
+        runId,
+        companyId,
+        now,
+      });
+
+      expect(outcome).toMatchObject({
+        outcome: "gate_suppressed",
+        errorCode: "issue_terminal_status",
       });
     });
 

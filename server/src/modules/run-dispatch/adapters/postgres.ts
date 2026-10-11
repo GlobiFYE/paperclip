@@ -40,6 +40,7 @@ import { parseIssueExecutionState } from "../../../services/issue-execution-poli
 import {
   PROVIDER_QUOTA_HOLD_RETRY_REASON,
   providerQuotaHoldPreviousRetryReason,
+  providerQuotaHoldRestoredContextSnapshot,
 } from "../../../services/provider-quota-dispatch-hold.js";
 import { decideQueuedRunStaleness, decideScheduledRetryGate } from "../domain/policy.js";
 import type {
@@ -671,6 +672,7 @@ export function createPostgresRunDispatchAdapter(
     tx: Db,
     input: PromoteOrCancelDueRetryInput & {
       restoreScheduledRetryReason?: string | null;
+      restoreContextSnapshot?: Record<string, unknown>;
     },
   ): Promise<
     | { applied: true; run: HeartbeatRun; postCommitEffects: PostCommitEffect[] }
@@ -682,6 +684,9 @@ export function createPostgresRunDispatchAdapter(
         status: "queued",
         ...(input.restoreScheduledRetryReason !== undefined
           ? { scheduledRetryReason: input.restoreScheduledRetryReason }
+          : {}),
+        ...(input.restoreContextSnapshot !== undefined
+          ? { contextSnapshot: input.restoreContextSnapshot }
           : {}),
         updatedAt: input.now,
         resultJson: sql`case when ${heartbeatRuns.resultJson}->'executionWait'->>'cause' = 'execution_owner_active'
@@ -892,6 +897,10 @@ export function createPostgresRunDispatchAdapter(
         restoreScheduledRetryReason:
           run.scheduledRetryReason === PROVIDER_QUOTA_HOLD_RETRY_REASON
             ? providerQuotaHoldPreviousRetryReason(run.contextSnapshot)
+            : undefined,
+        restoreContextSnapshot:
+          run.scheduledRetryReason === PROVIDER_QUOTA_HOLD_RETRY_REASON
+            ? providerQuotaHoldRestoredContextSnapshot(run.contextSnapshot)
             : undefined,
       });
       return promoted.applied

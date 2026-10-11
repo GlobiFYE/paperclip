@@ -32,6 +32,18 @@ export function providerQuotaHoldPreviousRetryReason(
   );
 }
 
+export function providerQuotaHoldRestoredContextSnapshot(
+  contextSnapshot: unknown,
+): Record<string, unknown> {
+  const {
+    [PROVIDER_QUOTA_HOLD_PREVIOUS_RETRY_REASON_KEY]: _previousRetryReason,
+    providerQuotaHoldUntil: _holdUntil,
+    failureRetriesBeforeProviderQuotaHold: _failureRetries,
+    ...rest
+  } = objectValue(contextSnapshot);
+  return rest;
+}
+
 const ADAPTER_PROVIDERS: Record<string, string> = {
   claude_local: "anthropic",
   codex_local: "openai",
