@@ -243,6 +243,7 @@ function MarkdownExternalLink({
   const statusLabel = externalObjectDisplayStatusLabel(reference);
   const livenessLabel = externalObjectLivenessLabel(reference.liveness);
   const livenessSuffix = reference.liveness === "fresh" || reference.liveness === "unknown"
+    || livenessLabel.toLowerCase() === statusLabel.toLowerCase()
     ? ""
     : ` (${livenessLabel})`;
   const titleParts = [

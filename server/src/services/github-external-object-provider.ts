@@ -200,10 +200,10 @@ function notFoundSnapshot(identity: GitHubObjectIdentity, etag: string | null): 
  * behind 404). This probes the repo metadata with the same credentials to tell the
  * two apart:
  *
- * - "visible": the repo returns 2xx — the referenced object really is gone.
+* - "visible": the repo returns 2xx — the referenced object really is gone.
  * - "hidden": the repo returns 404/403 — the credentials lack access to the repo,
  *   so the object status cannot be determined and should not be frozen as "Not found".
- * - "uncertain": the probe itself failed (network/5xx/rate limit) — retry later.
+ * - "uncertain": the probe itself failed (network/rate limit) — retry later.
  */
 async function probeRepoVisibility(
   identity: GitHubObjectIdentity,
@@ -215,7 +215,15 @@ async function probeRepoVisibility(
       { headers: opts.headers },
     );
     if (probe.ok) return "visible";
-    if (probe.status === 404 || probe.status === 403) return "hidden";
+    if (probe.status === 404) return "hidden";
+    if (probe.status === 403) {
+      // GitHub can return 403 for both "credentials lack access" and "rate limit
+      // reached". A rate-limited probe cannot tell the two apart, so treat it as
+      // uncertain (retry later) instead of implying missing access.
+      const rateLimitRemaining = probe.headers.get("x-ratelimit-remaining");
+      if (rateLimitRemaining === "0") return "uncertain";
+      return "hidden";
+    }
     return "uncertain";
   } catch {
     return "uncertain";

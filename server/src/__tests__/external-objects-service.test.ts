@@ -431,6 +431,37 @@ describe("GitHub external object provider", () => {
     );
     expect(JSON.stringify(result)).not.toContain("http");
   });
+
+  it("classifies a 404 as unreachable when the repository probe is rate-limited", async () => {
+    const fetch = vi.fn(async (url: string) => {
+      if (url.endsWith("/repos/acme/app")) {
+        return new Response("", {
+          status: 403,
+          headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String(Math.floor(Date.now() / 1000) + 120) },
+        });
+      }
+      return new Response("", { status: 404, headers: { etag: '"missing"' } });
+    });
+    const provider = createGitHubExternalObjectProvider({} as any, { fetch, tokenProvider: null });
+    const resolver = provider.resolvers.find((entry) => entry.objectType === "pull_request")!;
+
+    const result = await resolver.resolve({
+      companyId: "company-1",
+      object: githubObject("pull/42", "pull_request"),
+    });
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        ok: false,
+        liveness: "unreachable",
+        errorCode: "github_repo_probe_failed",
+      }),
+    );
+    expect(result).not.toEqual(
+      expect.objectContaining({ ok: false, liveness: "auth_required", errorCode: "github_repo_not_accessible" }),
+    );
+    expect(JSON.stringify(result)).not.toContain("http");
+  });
 });
 
 describeEmbeddedPostgres("externalObjectService", () => {
@@ -889,6 +920,12 @@ describeEmbeddedPostgres("externalObjectService", () => {
     await svc.syncIssue(issueId);
     const object = await db.select().from(externalObjects).then((rows) => rows[0]!);
     await svc.refreshObject(object.id, { companyId, force: true });
+    // Expire the refresh window so the display path computes liveness from
+    // scratch. Terminal objects must still show as fresh, never as stale.
+    await db
+      .update(externalObjects)
+      .set({ nextRefreshAt: new Date(0) })
+      .where(eq(externalObjects.id, object.id));
 
     const summary = await svc.getIssueSummary(issueId);
     const displayed = summary.objects[0];
