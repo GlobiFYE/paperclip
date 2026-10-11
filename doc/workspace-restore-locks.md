@@ -57,6 +57,14 @@ that an earlier failed collection discarded.
 
 ## Required remote restore failures
 
+The copy-back first repairs itself. While the run still holds its merge
+baseline, a workspace copy-back that fails before writing any host file is
+retried up to three times in total, with a short backoff. This covers dropped
+transfers, provider errors, and a merge lock held by another restore. An unsafe
+archive, a permission failure, or any failure after the merge started writing
+host files is never retried. Only a copy-back that still fails reaches the
+repair hold below.
+
 When a legacy sandbox run cannot copy required workspace files back, the server
 keeps the original allocation for repair. It writes the failed run, the exact
 lease retention intent, and a board-owned repair hold in one transaction. The
