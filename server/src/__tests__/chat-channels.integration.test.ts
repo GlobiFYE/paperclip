@@ -69764,6 +69764,46 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     }
   });
 
+  it("skips a pre-run FIFO candidate whose payload ids are not uuids without failing the sweep", async () => {
+    const context = await deferredChatQueueFixture();
+    try {
+      const [receipt] = await db
+        .select()
+        .from(agentWakeupRequests)
+        .where(eq(agentWakeupRequests.id, context.action.id));
+      await db
+        .update(agentWakeupRequests)
+        .set({
+          payload: {
+            ...receipt.payload,
+            coalescedIntoWakeupRequestId: "not-a-uuid",
+          },
+        })
+        .where(eq(agentWakeupRequests.id, context.action.id));
+      await db
+        .update(chatActions)
+        .set({
+          payload: {
+            ...context.action.payload,
+            issueId: "not-a-uuid",
+            commentId: "not-a-uuid",
+          },
+        })
+        .where(eq(chatActions.id, context.action.id));
+      await expect(
+        context.service.enqueueInboundWakeupPublications(),
+      ).resolves.toBe(0);
+      await expect(
+        db
+          .select()
+          .from(chatPublications)
+          .where(eq(chatPublications.endpointId, context.endpoint.id)),
+      ).resolves.toEqual([]);
+    } finally {
+      await context.service.shutdown();
+    }
+  });
+
   it("never promises a queued follow-up before durable admission succeeds", async () => {
     const context = await deferredChatQueueFixture(true);
     try {
