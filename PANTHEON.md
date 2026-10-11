@@ -62,15 +62,41 @@ Manual smoke run (test instance, does NOT touch live data):
 
 ```sh
 export PATH=/Users/clawd/.nvm/versions/node/v24.14.0/bin:$PATH
-cd /Volumes/AI-Models/pantheon-app
-PAPERCLIP_HOME=/Volumes/AI-Models/pantheon-app/.test-home \
-PORT=3200 HOST=127.0.0.1 NODE_OPTIONS=--conditions=pantheon-dist \
-node cli/dist/index.js run
+export TMPDIR=/tmp
+
+# 1. Fresh home + first-run config (non-interactive quickstart, no service):
+env -i PATH="$PATH" HOME=/Users/clawd TMPDIR=/tmp \
+  PAPERCLIP_HOME=/Volumes/AI-Models/pantheon-app/.test-home \
+  node cli/dist/index.js onboard -y --no-install-service
+
+# 2. Start the instance on the test port (loopback only):
+env -i PATH="$PATH" HOME=/Users/clawd TMPDIR=/tmp \
+  PAPERCLIP_HOME=/Volumes/AI-Models/pantheon-app/.test-home \
+  PORT=3200 HOST=127.0.0.1 NODE_OPTIONS=--conditions=pantheon-dist \
+  node cli/dist/index.js run
 ```
 
-Verified checks (see "Verification" in the issue for full output):
-`/api/health` -> `{"status":"ok",...}`, `/api/adapters` lists `hermes_local`
-with the Pantheon model list, and the UI HTML `<title>` is "Pantheon".
+**Pitfall — always start test instances with `env -i` (or unset every
+inherited `PAPERCLIP_*` variable).** When launched from inside a Paperclip
+agent session, inherited `PAPERCLIP_CONFIG` / `PAPERCLIP_INSTANCE_ID` make
+`paperclipai run` resolve the LIVE instance config
+(`/Volumes/AI-Models/paperclip/data/instances/default/config.json`) and attach
+to the live database even though `PAPERCLIP_HOME` points elsewhere. The boot
+banner is the tell: it prints `Home:` and `Config:` — the `Config:` path MUST
+be under the test home. `NODE_OPTIONS=--conditions=pantheon-dist` is required
+on `run` (without it the CLI resolves the server's source entry instead of the
+built runtime and fails on a missing module).
+
+Verified checks (2026-10-11, isolated instance at commit `b440cd4`):
+`/api/health` -> `{"status":"ok","commit":"b440cd4..."}`
+`/api/adapters` -> `hermes_local`, `modelsCount: 8`
+`/api/companies/:id/adapters/hermes_local/models` -> the 8 Pantheon models
+UI HTML `<title>` -> `<title>Pantheon</title>`
+screenshot -> `screenshots/test.png` (Playwright headless, Chrome channel)
+
+Stop cleanly with SIGTERM to the `node cli/dist/index.js run` process; the
+boot log shows `Stopping embedded PostgreSQL` and the instance's postgres
+child (datadir `<home>/instances/default/db`) exits with it.
 
 ## 3. Pulling upstream updates
 
@@ -159,7 +185,10 @@ Steps:
 
    ```sh
    curl -sS http://127.0.0.1:3100/api/health
-   # -> {"status":"ok",...}  (version/commit now report the fork build)
+   # -> {"status":"ok",...}  (commit reports the fork build; note the
+   #    cosmetic change: "version" becomes "0.3.1+0.git.<sha>" — the
+   #    source-build version string — instead of the npm-release
+   #    "2026.1005.0" the old server reported)
 
    curl -sS http://127.0.0.1:3100/api/companies/57cfaea0-c864-4bff-9433-2fad7be3d4c5/agents | jq length
    # -> 19
