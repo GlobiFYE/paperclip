@@ -304,10 +304,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   let restoreRemoteWorkspace: (() => Promise<void>) | null = null;
   let localSkillsDir: string | null = null;
   let remoteSkillsDir: string | null = null;
+  let remoteInstructionsDir: string | null = null;
   const usageFiles: string[] = [];
   let remoteRuntimeRootDir: string | null = null;
   let paperclipBridge: Awaited<ReturnType<typeof startAdapterExecutionTargetPaperclipBridge>> = null;
 
+  const localInstructionsFilePath = asString(config.instructionsFilePath, "").trim();
   if (executionTargetIsRemote) {
     try {
       localSkillsDir = await buildCopilotSkillsDir(config);
@@ -329,7 +331,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           key: "skills",
           localDir: localSkillsDir,
           followSymlinks: true,
-        }],
+        }, ...(localInstructionsFilePath
+          ? [{ key: "instructions", localDir: path.dirname(localInstructionsFilePath) }]
+          : [])],
       });
       restoreRemoteWorkspace = () =>
         preparedExecutionTargetRuntime.restoreWorkspace((line) => onLog("stdout", line));
@@ -361,6 +365,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       // ~/.copilot/skills home, which may hold skills Paperclip does not own.
       if (desiredCopilotSkillNames.length > 0 && preparedExecutionTargetRuntime.assetDirs.skills) {
         remoteSkillsDir = preparedExecutionTargetRuntime.assetDirs.skills;
+      }
+      // The instructions directory is a host path; point Copilot at the staged
+      // copy on the remote target instead.
+      if (localInstructionsFilePath && preparedExecutionTargetRuntime.assetDirs.instructions) {
+        remoteInstructionsDir = preparedExecutionTargetRuntime.assetDirs.instructions;
       }
     } catch (error) {
       await Promise.allSettled([
@@ -422,18 +431,32 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       );
     }
 
-    const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
-    const instructionsDir = instructionsFilePath ? `${path.dirname(instructionsFilePath)}/` : "";
+    // Read from the local path; reference the staged remote copy in the prompt
+    // and --add-dir when running on a remote target.
+    const instructionsFilePath = localInstructionsFilePath;
+    // Local path locally, staged path remotely, null when unavailable.
+    const effectiveInstructionsDirPath: string | null = !instructionsFilePath
+      ? null
+      : executionTargetIsRemote
+        ? remoteInstructionsDir?.replace(/\/+$/, "") || null
+        : path.dirname(instructionsFilePath);
+    const effectiveInstructionsFilePath = effectiveInstructionsDirPath
+      ? executionTargetIsRemote
+        ? path.posix.join(effectiveInstructionsDirPath, path.basename(instructionsFilePath))
+        : instructionsFilePath
+      : null;
+    const instructionsDir = effectiveInstructionsDirPath ? `${effectiveInstructionsDirPath}/` : "";
     let instructionsPrefix = "";
     if (instructionsFilePath) {
       try {
         const instructionsContents = await fs.readFile(instructionsFilePath, "utf8");
-        instructionsPrefix =
-          `${instructionsContents}\n\n` +
-          `The above agent instructions were loaded from ${instructionsFilePath}. ` +
-          `Resolve any relative file references from ${instructionsDir}. ` +
-          `This base directory is authoritative for sibling instruction files such as ` +
-          `./HEARTBEAT.md, ./SOUL.md, and ./TOOLS.md; do not resolve those from the parent agent directory.\n\n`;
+        instructionsPrefix = effectiveInstructionsFilePath
+          ? `${instructionsContents}\n\n` +
+            `The above agent instructions were loaded from ${effectiveInstructionsFilePath}. ` +
+            `Resolve any relative file references from ${instructionsDir}. ` +
+            `This base directory is authoritative for sibling instruction files such as ` +
+            `./HEARTBEAT.md, ./SOUL.md, and ./TOOLS.md; do not resolve those from the parent agent directory.\n\n`
+          : `${instructionsContents}\n\n`;
       } catch (err) {
         const reason = err instanceof Error ? err.message : String(err);
         await onLog(
@@ -451,15 +474,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       if (effectiveSkillsDir) {
         notes.push(`Exposing ${desiredCopilotSkillNames.length} desired skill(s) via COPILOT_SKILLS_DIRS=${effectiveSkillsDir}.`);
       }
-      if (!executionTargetIsRemote && instructionsFilePath) {
-        notes.push(`Added --add-dir ${path.dirname(instructionsFilePath)} so sibling instruction files are readable.`);
+      if (effectiveInstructionsDirPath) {
+        notes.push(`Added --add-dir ${effectiveInstructionsDirPath} so sibling instruction files are readable.`);
       }
       if (!instructionsFilePath) return notes;
       if (instructionsPrefix.length > 0) {
-        notes.push(
-          `Loaded agent instructions from ${instructionsFilePath}`,
-          `Prepended instructions + path directive to prompt (relative references from ${instructionsDir}).`,
-        );
+        notes.push(`Loaded agent instructions from ${instructionsFilePath}`);
+        if (effectiveInstructionsDirPath) {
+          notes.push(`Prepended instructions + path directive to prompt (relative references from ${instructionsDir}).`);
+        } else {
+          notes.push("Instructions directory was not staged on the remote target; prepended instructions content without path directive.");
+        }
         return notes;
       }
       notes.push(
@@ -491,9 +516,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       const args = buildCopilotBaseArgs({ model, reasoningEffort, allowAllPaths, disableBuiltinMcps });
       // Make the agent instructions directory readable so Copilot can open
       // sibling instruction files (./HEARTBEAT.md, ./SOUL.md, ./TOOLS.md).
-      // Local-only: the directory is a host path not synced to remote targets.
-      if (!executionTargetIsRemote && instructionsFilePath) {
-        args.push("--add-dir", path.dirname(instructionsFilePath));
+      // Remote targets use the staged copy of the directory.
+      if (effectiveInstructionsDirPath) {
+        args.push("--add-dir", effectiveInstructionsDirPath);
       }
       if (usageFile) args.push("--usage-output-file", usageFile);
       if (resumeSessionId) args.push(`--resume=${resumeSessionId}`);
@@ -648,7 +673,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         : null;
       const billing = {
         // Copilot bills GitHub premium requests, not dollars: leave USD unpriced.
-        usageComplete: true,
+        // Only complete when final usage evidence exists: the usage file was
+        // read or the stream carried its trailing `result` line.
+        usageComplete: attempt.usageReport !== null || attempt.parsed.resultExitCode !== null,
         costStatus: "unpriced" as const,
         usageBasis: "per_run" as const,
         provider: "github",

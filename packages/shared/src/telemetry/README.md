@@ -116,6 +116,10 @@ data paths document their own contract in their own file:
 
 ## Dimension Values
 
+The `adapter_type` dimension enumerates the agent adapter types, including
+`copilot_local` (GitHub Copilot CLI local adapter). The generated contract
+remains the authority for the full list.
+
 Telemetry dimension values must be primitives. Use only the value types allowed
 by `TelemetryDimensionValue`:
 

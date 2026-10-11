@@ -22,9 +22,9 @@ export function CopilotLocalConfigFields({
   mark,
   hideInstructionsFile,
 }: AdapterConfigFieldsProps) {
-  if (hideInstructionsFile) return null;
   return configFieldsForSection(section, (
     <>
+      {!hideInstructionsFile && (
       <Field label="Agent instructions file" hint={instructionsFileHint}>
         <div className="flex items-center gap-2">
           <DraftInput
@@ -49,6 +49,7 @@ export function CopilotLocalConfigFields({
           <ChoosePathButton />
         </div>
       </Field>
+      )}
       {/* The create-time config builder does not emit these flags, so they are edit-only. */}
       {!isCreate && (
         <>

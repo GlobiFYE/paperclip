@@ -23,6 +23,13 @@ describe("printCopilotStreamEvent", () => {
     expect(out()).toEqual(["assistant: DONE"]);
   });
 
+  it("prints reasoningText before assistant text", () => {
+    printCopilotStreamEvent(JSON.stringify({
+      type: "assistant.message", data: { content: "DONE", reasoningText: "hmm" },
+    }), false);
+    expect(out()).toEqual(["thinking: hmm", "assistant: DONE"]);
+  });
+
   it("prints tool starts with arguments and completions with content", () => {
     printCopilotStreamEvent(JSON.stringify({
       type: "tool.execution_start", data: { toolName: "bash", arguments: { command: "ls" } },

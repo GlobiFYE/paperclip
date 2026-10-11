@@ -54,7 +54,8 @@ export function summarizeCopilotResult(parsed: Record<string, unknown>): string 
 /**
  * Map one `copilot -p ... --output-format json` stdout line to transcript
  * entries. Ephemeral events (token deltas, MCP status, model call markers)
- * are dropped; the complete `assistant.message` carries the final text. Tool
+ * are dropped; the complete `assistant.message` carries the final text and
+ * any `reasoningText` (emitted first as a thinking entry). Tool
  * requests inside assistant.message are not rendered because the matching
  * tool.execution_start event produces the tool_call entry. user.message is
  * dropped because it echoes the (very large) prompt.
@@ -82,12 +83,14 @@ export function parseCopilotStdoutLine(line: string, ts: string): TranscriptEntr
 
   switch (type) {
     case "assistant.message": {
+      // Complete assistant.reasoning events are ephemeral in real output;
+      // the same text arrives as reasoningText on the final message.
+      const entries: TranscriptEntry[] = [];
+      const reasoning = asString(data.reasoningText).trim();
+      if (reasoning) entries.push({ kind: "thinking", ts, text: reasoning });
       const text = asString(data.content).trim();
-      return text ? [{ kind: "assistant", ts, text }] : [];
-    }
-    case "assistant.reasoning": {
-      const text = asString(data.content).trim();
-      return text ? [{ kind: "thinking", ts, text }] : [];
+      if (text) entries.push({ kind: "assistant", ts, text });
+      return entries;
     }
     case "tool.execution_start": {
       const name = asString(data.toolName, "tool").trim() || "tool";

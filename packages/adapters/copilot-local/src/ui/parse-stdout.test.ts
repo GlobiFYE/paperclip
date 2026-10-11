@@ -71,12 +71,26 @@ describe("parseCopilotStdoutLine", () => {
     expect((entry as { text: string }).text).toContain("exit code 1");
   });
 
-  it("renders non-ephemeral reasoning only", () => {
+  it("emits thinking from reasoningText before the assistant text (real fixture line)", () => {
+    const lines = fs
+      .readFileSync(path.join(fixtureDir, "copilot-run-1.0.86.jsonl"), "utf8")
+      .split("\n")
+      .filter((l) => l.includes('"reasoningText":"'));
+    expect(lines.length).toBeGreaterThan(0);
+    const entries = parseCopilotStdoutLine(lines[0], ts);
+    expect(entries.map((e) => e.kind)).toEqual(["thinking", "assistant"]);
+    expect((entries[0] as { text: string }).text).toContain("Creating the hello.txt file");
+  });
+
+  it("emits no thinking entry for empty reasoningText, and ignores reasoning events", () => {
+    expect(parseCopilotStdoutLine(
+      JSON.stringify({ type: "assistant.message", data: { content: "x", reasoningText: "  " } }), ts,
+    )).toEqual([{ kind: "assistant", ts, text: "x" }]);
     expect(parseCopilotStdoutLine(
       JSON.stringify({ type: "assistant.reasoning", data: { content: "thinking" } }), ts,
-    )).toEqual([{ kind: "thinking", ts, text: "thinking" }]);
+    )).toEqual([]);
     expect(parseCopilotStdoutLine(
-      JSON.stringify({ type: "assistant.reasoning", ephemeral: true, data: { content: "thinking" } }), ts,
+      JSON.stringify({ type: "assistant.reasoning_delta", ephemeral: true, data: { deltaContent: "t" } }), ts,
     )).toEqual([]);
   });
 

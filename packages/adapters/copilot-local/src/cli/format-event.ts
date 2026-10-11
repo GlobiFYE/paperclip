@@ -62,6 +62,8 @@ export function printCopilotStreamEvent(raw: string, _debug: boolean): void {
       return;
     }
     case "assistant.message": {
+      const reasoning = asString(data.reasoningText).trim();
+      if (reasoning) console.log(pc.gray(`thinking: ${reasoning}`));
       const text = asString(data.content).trim();
       if (text) console.log(pc.green(`assistant: ${text}`));
       return;

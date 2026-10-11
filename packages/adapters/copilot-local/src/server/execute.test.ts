@@ -7,15 +7,18 @@ import type { AdapterExecutionContext } from "@paperclipai/adapter-utils";
 
 const ensureRuntimeInstalledMock = vi.hoisted(() => vi.fn(async () => {}));
 const ensureCommandMock = vi.hoisted(() => vi.fn(async () => {}));
-const prepareRuntimeMock = vi.hoisted(() => vi.fn(async () => ({
-  workspaceRemoteDir: null,
+const isRemoteMock = vi.hoisted(() => vi.fn((_target?: unknown) => false));
+const prepareRuntimeMock = vi.hoisted(() => vi.fn(async (_input?: unknown) => ({
+  workspaceRemoteDir: null as string | null,
   restoreWorkspace: async () => {},
+  assetDirs: {} as Record<string, string>,
+  runtimeRootDir: null as string | null,
 })));
 const resolveCommandForLogsMock = vi.hoisted(() => vi.fn(async () => "copilot"));
 const runProcessMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@paperclipai/adapter-utils/execution-target", () => ({
-  adapterExecutionTargetIsRemote: () => false,
+  adapterExecutionTargetIsRemote: (target: unknown) => isRemoteMock(target),
   adapterExecutionTargetRemoteCwd: (_target: unknown, cwd: string) => cwd,
   overrideAdapterExecutionTargetRemoteCwd: (target: unknown, _cwd: string) => target,
   adapterExecutionTargetSessionIdentity: () => ({ kind: "local" }),
@@ -81,6 +84,8 @@ describe("copilot_local execute", () => {
     ensureRuntimeInstalledMock.mockClear();
     ensureCommandMock.mockClear();
     prepareRuntimeMock.mockClear();
+    isRemoteMock.mockReset();
+    isRemoteMock.mockReturnValue(false);
     resolveCommandForLogsMock.mockClear();
     runProcessMock.mockReset();
     RUN = await fixture("copilot-run-1.0.86.jsonl");
@@ -377,6 +382,75 @@ describe("copilot_local execute", () => {
     const result = await execute(makeContext(root));
     expect(result.usage).toBeUndefined();
     expect(result.exitCode).toBe(0);
+    // The JSONL `result` line is still final evidence.
+    expect(result.usageComplete).toBe(true);
+  });
+
+  it("marks usage incomplete when neither the usage file nor a result line exists", async () => {
+    const root = await makeTempRoot();
+    runProcessMock.mockImplementation(async () => ok(""));
+    const result = await execute(makeContext(root));
+    expect(result.usageComplete).toBe(false);
+  });
+
+  it("omits path directives and --add-dir when remote instructions staging is missing", async () => {
+    const root = await makeTempRoot();
+    const instrDir = path.join(root, "instr");
+    await fs.mkdir(instrDir);
+    await fs.writeFile(path.join(instrDir, "AGENTS.md"), "BE NICE", "utf8");
+    isRemoteMock.mockReturnValue(true);
+    prepareRuntimeMock.mockResolvedValueOnce({
+      workspaceRemoteDir: "/remote/ws",
+      restoreWorkspace: async () => {},
+      assetDirs: { skills: "/remote/rt/skills" },
+      runtimeRootDir: "/remote/rt",
+    });
+    let seenArgs: string[] = [];
+    runProcessMock.mockImplementation(async (_r, _t, _c, args) => {
+      seenArgs = args;
+      return ok(RUN);
+    });
+    await execute(makeContext(root, {
+      config: { cwd: root, instructionsFilePath: path.join(instrDir, "AGENTS.md") },
+      executionTarget: { kind: "remote" } as never,
+    }));
+    expect(seenArgs).not.toContain("--add-dir");
+    const prompt = seenArgs[seenArgs.indexOf("-p") + 1];
+    expect(prompt).toContain("BE NICE");
+    expect(prompt).not.toContain("were loaded from");
+    expect(prompt).not.toContain("Resolve any relative file references");
+    expect(prompt).not.toContain(instrDir);
+  });
+
+  it("points the prompt and --add-dir at the staged remote instructions dir", async () => {
+    const root = await makeTempRoot();
+    const instrDir = path.join(root, "instr");
+    await fs.mkdir(instrDir);
+    await fs.writeFile(path.join(instrDir, "AGENTS.md"), "BE NICE", "utf8");
+    isRemoteMock.mockReturnValue(true);
+    prepareRuntimeMock.mockResolvedValueOnce({
+      workspaceRemoteDir: "/remote/ws",
+      restoreWorkspace: async () => {},
+      assetDirs: { skills: "/remote/rt/skills", instructions: "/remote/rt/instructions" },
+      runtimeRootDir: "/remote/rt",
+    });
+    let seenArgs: string[] = [];
+    runProcessMock.mockImplementation(async (_r, _t, _c, args) => {
+      seenArgs = args;
+      return ok(RUN);
+    });
+    await execute(makeContext(root, {
+      config: { cwd: root, instructionsFilePath: path.join(instrDir, "AGENTS.md") },
+      executionTarget: { kind: "remote" } as never,
+    }));
+    const assets = (prepareRuntimeMock.mock.calls[0]?.[0] as { assets: Array<{ key: string; localDir: string }> }).assets;
+    expect(assets.find((a) => a.key === "instructions")?.localDir).toBe(instrDir);
+    expect(seenArgs[seenArgs.indexOf("--add-dir") + 1]).toBe("/remote/rt/instructions");
+    const prompt = seenArgs[seenArgs.indexOf("-p") + 1];
+    expect(prompt).toContain("BE NICE");
+    expect(prompt).toContain("loaded from /remote/rt/instructions/AGENTS.md");
+    expect(prompt).toContain("from /remote/rt/instructions/.");
+    expect(prompt).not.toContain(instrDir);
   });
 
   it("forces CI=1, NO_COLOR=1 and pins COPILOT_ALLOW_ALL=false over config.env", async () => {
@@ -490,7 +564,7 @@ describe("copilot_local execute", () => {
     }));
     const result = await execute(makeContext(root, { config: { cwd: root, timeoutSec: 5 } }));
     expect(result.timedOut).toBe(true);
-    expect(result.usageComplete).toBe(true);
+    expect(result.usageComplete).toBe(false);
     expect(result.costStatus).toBe("unpriced");
     expect(result.errorMessage).toContain("5s");
   });

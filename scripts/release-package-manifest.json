@@ -52,7 +52,7 @@
   {
     "dir": "packages/adapters/copilot-local",
     "name": "@paperclipai/adapter-copilot-local",
-    "publishFromCi": true
+    "publishFromCi": false
   },
   {
     "dir": "packages/adapters/opencode-local",
