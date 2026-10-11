@@ -404,6 +404,47 @@ describeEmbeddedPostgres("heartbeat run privacy routes", { concurrent: false }, 
     expect(await fs.readFile(filePath)).toEqual(original);
   });
 
+  it("hides a split second URL after a host-only URL in historical HTTP log pages", async () => {
+    const fixture = await seedFixture();
+    const first = "reader:pa";
+    const second = "ssword";
+    const store = createLocalFileWorkspaceOperationLogStore(logRoot);
+    const handle = await store.begin({ companyId: fixture.companyId, operationId: fixture.operationId });
+    const ts = new Date().toISOString();
+    await store.append(handle, { stream: "stdout", chunk: `https://example.test\npostgres://${first}`, ts });
+    await store.append(handle, { stream: "stdout", chunk: `${second}@db.test/app`, ts });
+    const filePath = path.join(logRoot, handle.logRef);
+    const original = await fs.readFile(filePath);
+    const expected = Buffer.from(original);
+    for (const part of [first, second]) {
+      const start = original.indexOf(part);
+      expect(start).toBeGreaterThan(0);
+      expected.fill(0x2a, start, start + part.length);
+    }
+    await db.update(workspaceOperations)
+      .set({ logRef: handle.logRef, stdoutExcerpt: `https://example.test\npostgres://${first}${second}@db.test/app` })
+      .where(eq(workspaceOperations.id, fixture.operationId));
+
+    for (const app of [
+      createBoardApp(fixture.companyId, fixture.ownerUserId),
+      createApp(fixture.companyId, fixture.ownerAgentId),
+    ]) {
+      const list = await request(app).get(`/api/heartbeat-runs/${fixture.privateRunId}/workspace-operations`);
+      expect(list.status).toBe(200);
+      expect(list.body[0].stdoutExcerpt).toContain("postgres://[REDACTED]@db.test/app");
+      let offset = 0;
+      while (offset < original.length) {
+        const page = await request(app)
+          .get(`/api/workspace-operations/${fixture.operationId}/log?offset=${offset}&limitBytes=7`);
+        expect(page.status).toBe(200);
+        const nextOffset = page.body.nextOffset ?? original.length;
+        expect(page.body.content).toBe(expected.subarray(offset, nextOffset).toString("utf8"));
+        offset = nextOffset;
+      }
+    }
+    expect(await fs.readFile(filePath)).toEqual(original);
+  });
+
   it("hides raw @ and quote in new output, fields, and historical board/agent byte pages", async () => {
     const fixture = await seedFixture();
     const first = "synthetic-reader:pa@";

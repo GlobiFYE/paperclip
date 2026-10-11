@@ -29,6 +29,13 @@ function authorityEnd(value: string, rawJson = false): number {
   return value.length;
 }
 
+/** A new scheme can begin before the slash that ended the current authority. */
+function nextUrlPrefixBeforeBoundary(value: string, boundary: number): number | null {
+  URL_PREFIX_RE.lastIndex = 0;
+  const match = URL_PREFIX_RE.exec(value);
+  return match && match.index < boundary ? match.index : null;
+}
+
 function redactAuthority(authority: string, incomplete = false): string {
   const separator = authority.lastIndexOf("@");
   if (separator > 0) return `${REDACTED_USERINFO}${authority.slice(separator)}`;
@@ -142,9 +149,11 @@ export function createWorkspaceOperationByteRangeScanner() {
       const suffix = state.pending.slice(userinfoStart);
       const boundary = authorityEnd(suffix, true);
       if (boundary < suffix.length) {
-        const separator = suffix.slice(0, boundary).lastIndexOf("@");
+        const nextUrl = nextUrlPrefixBeforeBoundary(suffix, boundary);
+        const end = nextUrl ?? boundary;
+        const separator = suffix.slice(0, end).lastIndexOf("@");
         if (separator > 0) mark(state.positions.slice(userinfoStart, userinfoStart + separator));
-        const consumed = userinfoStart + boundary + 1;
+        const consumed = userinfoStart + end + (nextUrl === null ? 1 : 0);
         state.pending = state.pending.slice(consumed);
         state.positions = state.positions.slice(consumed);
         continue;
@@ -253,8 +262,11 @@ export function createWorkspaceOperationUrlStreamRedactor() {
         break;
       }
 
-      output += prefix + redactAuthority(afterPrefix.slice(0, end)) + afterPrefix[end];
-      input = afterPrefix.slice(end + 1);
+      const nextUrl = nextUrlPrefixBeforeBoundary(afterPrefix, end);
+      const authorityLength = nextUrl ?? end;
+      output += prefix + redactAuthority(afterPrefix.slice(0, authorityLength));
+      if (nextUrl === null) output += afterPrefix[end];
+      input = afterPrefix.slice(authorityLength + (nextUrl === null ? 1 : 0));
     }
     return output;
   }

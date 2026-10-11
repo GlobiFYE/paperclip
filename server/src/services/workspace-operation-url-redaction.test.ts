@@ -41,6 +41,18 @@ describe("workspace operation URL redaction", () => {
     expect(output).toBe("connect postgresql://[REDACTED]");
   });
 
+  it("masks a second URL after a host-only URL across output chunks", () => {
+    for (const chunks of [
+      ["https://example.test\npostgres://reader:pa", "ssword@db.test/app"],
+      ["https://example.test\npost", "gres://reader:password@db.test/app"],
+    ]) {
+      const redactor = createWorkspaceOperationUrlStreamRedactor();
+      const output = chunks.map((chunk) => redactor.push(chunk)).join("") + redactor.flush();
+      expect(output).toBe("https://example.test\npostgres://[REDACTED]@db.test/app");
+      expect(output).not.toContain("password");
+    }
+  });
+
   it("accepts an apostrophe inside userinfo and hostless PostgreSQL excerpts", () => {
     const credential = "synthetic-reader:it's-a-password";
     const url = `postgresql://${credential}@db.example.test/app`;
@@ -189,6 +201,33 @@ describe("workspace operation URL redaction", () => {
       let offset = 0;
       while (offset < original.length) {
         const page = await store.read(handle, { offset, limitBytes: 9 });
+        const nextOffset = page.nextOffset ?? original.length;
+        expect(page.content).toBe(expected.subarray(offset, nextOffset).toString("utf8"));
+        offset = nextOffset;
+      }
+      expect(await fs.readFile(filePath)).toEqual(original);
+    });
+
+    it("masks a second URL after a host-only URL across historical events and pages", async () => {
+      const store = createLocalFileWorkspaceOperationLogStore(logRoot);
+      const handle = await store.begin({ companyId: randomUUID(), operationId: randomUUID() });
+      const first = "reader:pa";
+      const second = "ssword";
+      const ts = new Date().toISOString();
+      await store.append(handle, { stream: "stdout", chunk: `https://example.test\npostgres://${first}`, ts });
+      await store.append(handle, { stream: "stdout", chunk: `${second}@db.test/app`, ts });
+      const filePath = path.join(logRoot, handle.logRef);
+      const original = await fs.readFile(filePath);
+      const expected = Buffer.from(original);
+      for (const part of [first, second]) {
+        const start = original.indexOf(part);
+        expect(start).toBeGreaterThan(0);
+        expected.fill(0x2a, start, start + part.length);
+      }
+
+      let offset = 0;
+      while (offset < original.length) {
+        const page = await store.read(handle, { offset, limitBytes: 7 });
         const nextOffset = page.nextOffset ?? original.length;
         expect(page.content).toBe(expected.subarray(offset, nextOffset).toString("utf8"));
         offset = nextOffset;
