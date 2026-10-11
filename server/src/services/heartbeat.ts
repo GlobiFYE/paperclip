@@ -398,6 +398,7 @@ import {
 import { createNativeSessionHandoffLoader } from "./native-runtime/native-session-handoff.js";
 
 import { getRunLogStore, type RunLogHandle } from "./run-log-store.js";
+import { createPostgresUrlStreamRedactor } from "@paperclipai/adapter-utils/command-redaction";
 import {
   providerTraceStore,
 } from "./provider-trace-store.js";
@@ -4241,6 +4242,7 @@ export function heartbeatService(
       };
 
       let handle: RunLogHandle | null = null;
+      let flushRunLogRedactors: (() => Promise<void>) | null = null;
       const goalCheckpointSession: {
         current: {
           params: Record<string, unknown>;
@@ -4453,8 +4455,27 @@ export function heartbeatService(
             },
           });
         };
-        const onLog = (stream: "stdout" | "stderr", chunk: string) =>
-          appendIdentityRedactedLog(stream, identityRedactor.chunk(stream, chunk));
+        const postgresUrlRedactor = createPostgresUrlStreamRedactor();
+        const onLog = (stream: "stdout" | "stderr", chunk: string) => {
+          const redactedChunk = postgresUrlRedactor.chunk(
+            stream,
+            identityRedactor.chunk(stream, chunk),
+          );
+          return redactedChunk
+            ? appendIdentityRedactedLog(stream, redactedChunk)
+            : Promise.resolve();
+        };
+        flushRunLogRedactors = async () => {
+          for (const stream of ["stdout", "stderr"] as const) {
+            const tail = identityRedactor.finish(stream);
+            if (tail) {
+              const redactedTail = postgresUrlRedactor.chunk(stream, tail);
+              if (redactedTail) await appendIdentityRedactedLog(stream, redactedTail);
+            }
+            const uriTail = postgresUrlRedactor.finish(stream);
+            if (uriTail) await appendIdentityRedactedLog(stream, uriTail);
+          }
+        };
         if (runScopedMentionedSkillKeys.length > 0) {
           await onLog(
             "stdout",
@@ -4842,7 +4863,7 @@ export function heartbeatService(
           },
           output: {
             identityRedactor,
-            appendIdentityRedactedLog,
+            flushRunLogRedactors,
             onLog,
             onAdapterEvent,
             onAdapterMeta,
@@ -4974,6 +4995,11 @@ export function heartbeatService(
           issueContext, onLog,
         });
       } catch (err) {
+        try {
+          await flushRunLogRedactors?.();
+        } catch {
+          logger.warn({ runId: run.id }, "failed to flush sanitized run-log tail after error");
+        }
         await persistUsageCaptureFailure?.();
         if (err instanceof NativeControllerDetachedForRestartError) {
           nativeSessionResumeScheduled = true;
@@ -5478,7 +5504,7 @@ export function heartbeatService(
           store: run.logStore as "local_file",
           logRef: run.logRef,
         },
-        opts,
+        { ...opts, redactPostgresCredentials: true },
       );
 
       return {
@@ -5486,8 +5512,7 @@ export function heartbeatService(
         store: run.logStore,
         logRef: run.logRef,
         ...result,
-        // Run-log chunks are already redacted before they are appended to the store.
-        // Rewriting the full chunk again on every poll creates avoidable string copies.
+        // The store rechecks historical ranges with stable byte offsets.
         content: result.content,
       };
     },
