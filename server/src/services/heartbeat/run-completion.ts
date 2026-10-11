@@ -1294,6 +1294,7 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
       signal.reason instanceof LegacyControllerLeaseLostError;
     // Setup code before adapter.execute threw (e.g. ensureRuntimeState, resolveWorkspaceForRun).
     // The inner catch did not fire, so we must record the failure here.
+    // Provider quota refusals are finalized from adapter results above, where their reset evidence is captured.
     const message = redactCurrentUserText(
       identityRedactor.redact(outerErr instanceof Error
         ? outerErr.message
