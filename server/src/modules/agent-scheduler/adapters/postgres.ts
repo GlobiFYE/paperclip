@@ -1,5 +1,6 @@
 import { agentWakeupRequests } from "@paperclipai/db";
-import { and, asc, count, eq, isNull, sql } from "drizzle-orm";
+import { and, asc, count, eq, isNull, or, sql } from "drizzle-orm";
+import { AGENT_SCHEDULER_ENQUEUE_REASON } from "../domain/policy.js";
 import type { AgentSchedulerDb, AgentSchedulerWriter, RunnableWakeRow } from "../application/ports.js";
 
 const AGENT_RUNNABLE_STATUS = "agent_runnable";
@@ -87,6 +88,10 @@ export function createPostgresAgentSchedulerAdapter(db: AgentSchedulerDb): Agent
             eq(agentWakeupRequests.id, wakeId),
             eq(agentWakeupRequests.status, AGENT_RUNNABLE_STATUS),
             isNull(agentWakeupRequests.runId),
+            or(
+              isNull(agentWakeupRequests.reason),
+              eq(agentWakeupRequests.reason, AGENT_SCHEDULER_ENQUEUE_REASON),
+            ),
           ),
         )
         .returning({ id: agentWakeupRequests.id });
