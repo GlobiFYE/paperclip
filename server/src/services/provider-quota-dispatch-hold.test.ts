@@ -252,6 +252,7 @@ describe.skipIf(!support.supported)("provider quota dispatch hold database bound
 
     expect(deferred?.run.contextSnapshot).toMatchObject({
       failureRetriesBeforeProviderQuotaHold: 0,
+      providerQuotaHoldPreviousRetryReason: "ai_connection_busy",
     });
     expect(executionFailureRetryCount(deferred!.run)).toBe(0);
   });

@@ -11,6 +11,8 @@ type Agent = typeof agents.$inferSelect;
 type HeartbeatRun = typeof heartbeatRuns.$inferSelect;
 
 export const PROVIDER_QUOTA_HOLD_RETRY_REASON = "provider_quota_hold";
+export const PROVIDER_QUOTA_HOLD_PREVIOUS_RETRY_REASON_KEY =
+  "providerQuotaHoldPreviousRetryReason";
 
 function objectValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -20,6 +22,14 @@ function objectValue(value: unknown): Record<string, unknown> {
 
 function nonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+export function providerQuotaHoldPreviousRetryReason(
+  contextSnapshot: unknown,
+): string | null {
+  return nonEmptyString(
+    objectValue(contextSnapshot)[PROVIDER_QUOTA_HOLD_PREVIOUS_RETRY_REASON_KEY],
+  );
 }
 
 const ADAPTER_PROVIDERS: Record<string, string> = {
@@ -162,6 +172,13 @@ export async function deferQueuedRunForProviderQuotaHold(
       return null;
     }
 
+    const contextSnapshot = objectValue(input.run.contextSnapshot);
+    const previousRetryReason =
+      (input.run.scheduledRetryReason &&
+      input.run.scheduledRetryReason !== PROVIDER_QUOTA_HOLD_RETRY_REASON
+        ? input.run.scheduledRetryReason
+        : null) ?? providerQuotaHoldPreviousRetryReason(contextSnapshot);
+
     const [deferred] = await tx
       .update(heartbeatRuns)
       .set({
@@ -171,8 +188,14 @@ export async function deferQueuedRunForProviderQuotaHold(
         // before replacing the resource-wait reason below.
         scheduledRetryReason: PROVIDER_QUOTA_HOLD_RETRY_REASON,
         contextSnapshot: {
-          ...objectValue(input.run.contextSnapshot),
+          ...contextSnapshot,
           providerQuotaHoldUntil: hold.holdUntil.toISOString(),
+          ...(previousRetryReason
+            ? {
+                [PROVIDER_QUOTA_HOLD_PREVIOUS_RETRY_REASON_KEY]:
+                  previousRetryReason,
+              }
+            : {}),
           failureRetriesBeforeProviderQuotaHold:
             executionFailureRetryCount(input.run),
         },

@@ -37,6 +37,10 @@ import {
   getIssueContinuationSummaryDocument,
 } from "../../../services/issue-continuation-summary.js";
 import { parseIssueExecutionState } from "../../../services/issue-execution-policy.js";
+import {
+  PROVIDER_QUOTA_HOLD_RETRY_REASON,
+  providerQuotaHoldPreviousRetryReason,
+} from "../../../services/provider-quota-dispatch-hold.js";
 import { decideQueuedRunStaleness, decideScheduledRetryGate } from "../domain/policy.js";
 import type {
   QueuedRunFacts,
@@ -665,7 +669,9 @@ export function createPostgresRunDispatchAdapter(
 
   async function promoteDueRetryInTx(
     tx: Db,
-    input: PromoteOrCancelDueRetryInput,
+    input: PromoteOrCancelDueRetryInput & {
+      restoreScheduledRetryReason?: string | null;
+    },
   ): Promise<
     | { applied: true; run: HeartbeatRun; postCommitEffects: PostCommitEffect[] }
     | { applied: false }
@@ -674,6 +680,9 @@ export function createPostgresRunDispatchAdapter(
       .update(heartbeatRuns)
       .set({
         status: "queued",
+        ...(input.restoreScheduledRetryReason !== undefined
+          ? { scheduledRetryReason: input.restoreScheduledRetryReason }
+          : {}),
         updatedAt: input.now,
         resultJson: sql`case when ${heartbeatRuns.resultJson}->'executionWait'->>'cause' = 'execution_owner_active'
           then ${heartbeatRuns.resultJson} - 'executionWait' else ${heartbeatRuns.resultJson} end`,
@@ -802,7 +811,11 @@ export function createPostgresRunDispatchAdapter(
           responsibleUserId: run.responsibleUserId,
           contextSnapshot: parseObject(run.contextSnapshot),
           scheduledRetryReason: run.scheduledRetryReason,
-          retryReasonOverride: run.scheduledRetryReason,
+          retryReasonOverride:
+            run.scheduledRetryReason === PROVIDER_QUOTA_HOLD_RETRY_REASON
+              ? providerQuotaHoldPreviousRetryReason(run.contextSnapshot) ??
+                run.scheduledRetryReason
+              : run.scheduledRetryReason,
           wakeupRequestId: run.wakeupRequestId,
         },
         now,
@@ -876,6 +889,10 @@ export function createPostgresRunDispatchAdapter(
         runId: input.runId,
         companyId: input.companyId,
         now,
+        restoreScheduledRetryReason:
+          run.scheduledRetryReason === PROVIDER_QUOTA_HOLD_RETRY_REASON
+            ? providerQuotaHoldPreviousRetryReason(run.contextSnapshot)
+            : undefined,
       });
       return promoted.applied
         ? {
