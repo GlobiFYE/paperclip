@@ -141,9 +141,11 @@ export interface TestHarness {
   /** Read raw in-memory state for assertions. */
   getState(input: ScopeKey): unknown;
   /**
-   * Simulate a streaming event arriving for an active session. An event whose
-   * `runId` is one a `sendMessage` call returned goes to that send's
-   * `onEvent`; any other goes to the session's latest `onEvent`.
+   * Simulate a streaming event arriving for an active session. As in the
+   * real worker, the event goes only to the `onEvent` of the `sendMessage`
+   * call that returned its `runId`. It is dropped when no send returned that
+   * run id, after that run's `done` or `error` event, or after the session
+   * is closed. Pass the `runId` that `sendMessage` returned.
    */
   simulateSessionEvent(sessionId: string, event: Omit<AgentSessionEvent, "sessionId">): void;
   logs: TestHarnessLogEntry[];
@@ -580,9 +582,8 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
   const localFolderFiles = new Map<string, string>();
 
   const sessions = new Map<string, AgentSession>();
-  // Latest callback per session (fallback for events of runs the harness did
-  // not create), and each send's own callback keyed by its run id.
-  const sessionEventCallbacks = new Map<string, (event: AgentSessionEvent) => void>();
+  // Each send's own callback, keyed by the run id the send returned. Routing
+  // and release match the worker RPC host.
   const sessionRunCallbacks = new Map<string, { sessionId: string; onEvent: (event: AgentSessionEvent) => void }>();
 
   const events: EventRegistration[] = [];
@@ -2293,7 +2294,6 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           }
           const runId = randomUUID();
           if (opts.onEvent) {
-            sessionEventCallbacks.set(sessionId, opts.onEvent);
             sessionRunCallbacks.set(runId, { sessionId, onEvent: opts.onEvent });
           }
           return { runId };
@@ -2304,7 +2304,6 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           if (!session) throw new Error(`Session not found: ${sessionId}`);
           if (session.companyId !== companyId) throw new Error(`Session not found: ${sessionId}`);
           session.status = "closed";
-          sessionEventCallbacks.delete(sessionId);
           for (const [runId, owner] of sessionRunCallbacks) {
             if (owner.sessionId === sessionId) sessionRunCallbacks.delete(runId);
           }
@@ -2700,10 +2699,15 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
       return state.get(stateMapKey(input));
     },
     simulateSessionEvent(sessionId, event) {
+      // Like the worker: an event reaches only the callback of the send that
+      // returned its run id, and is dropped once that run ended or its
+      // session closed.
       const owner = sessionRunCallbacks.get(event.runId);
-      const cb = owner?.sessionId === sessionId ? owner.onEvent : sessionEventCallbacks.get(sessionId);
-      if (!cb) throw new Error(`No active session event callback for session: ${sessionId}`);
-      cb({ ...event, sessionId });
+      if (!owner || owner.sessionId !== sessionId) return;
+      if (event.eventType === "done" || event.eventType === "error") {
+        sessionRunCallbacks.delete(event.runId);
+      }
+      owner.onEvent({ ...event, sessionId });
     },
     logs,
     activity,

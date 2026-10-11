@@ -398,16 +398,42 @@ describe("plugin SDK test harness", () => {
         prompt: "second",
         onEvent: (event) => seenB.push(event.message ?? ""),
       });
-      const event = (runId: string, message: string) =>
-        harness.simulateSessionEvent(session.sessionId, { runId, seq: 0, eventType: "done", stream: "system", message, payload: null });
+      const event = (runId: string, eventType: "chunk" | "done" | "error", message: string) =>
+        harness.simulateSessionEvent(session.sessionId, { runId, seq: 0, eventType, stream: "stdout", message, payload: null });
 
-      event(a.runId, "answer a");
-      event(b.runId, "answer b");
-      // A run the harness did not create still reaches the latest callback.
-      event("run-unknown", "other");
+      event(a.runId, "chunk", "part a");
+      event(b.runId, "chunk", "part b");
+      event(a.runId, "done", "answer a");
+      event(b.runId, "error", "failed b");
 
-      expect(seenA).toEqual(["answer a"]);
-      expect(seenB).toEqual(["answer b", "other"]);
+      expect(seenA).toEqual(["part a", "answer a"]);
+      expect(seenB).toEqual(["part b", "failed b"]);
+    });
+
+    it("drops simulated events the worker drops", async () => {
+      const harness = sessionHarness(["agent.sessions.send", "agent.sessions.close"]);
+      const session = await harness.ctx.agents.sessions.create("agent-1", "company-1");
+      const seen: string[] = [];
+      const send = () => harness.ctx.agents.sessions.sendMessage(session.sessionId, "company-1", {
+        prompt: "hello",
+        onEvent: (event) => seen.push(event.message ?? ""),
+      });
+      const event = (runId: string, eventType: "chunk" | "done", message: string) =>
+        harness.simulateSessionEvent(session.sessionId, { runId, seq: 0, eventType, stream: "stdout", message, payload: null });
+
+      const first = await send();
+      // A run no send returned has no callback.
+      event("run-unknown", "chunk", "unknown run");
+      // A run's callback is released after its terminal event.
+      event(first.runId, "done", "answer");
+      event(first.runId, "chunk", "after done");
+      expect(seen).toEqual(["answer"]);
+      // Closing the session releases its remaining callbacks.
+      const second = await send();
+      await harness.ctx.agents.sessions.close(session.sessionId, "company-1");
+      event(second.runId, "chunk", "after close");
+
+      expect(seen).toEqual(["answer"]);
     });
   });
 });
