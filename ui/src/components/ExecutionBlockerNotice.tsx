@@ -41,10 +41,11 @@ export function ExecutionBlockerNotice({ companyId, issueId, blocker, onRetried,
         {modelRejected && <p>Choose a supported model or clear the task's model override, then retry.</p>}
         {blocker.workspaceRepairRequired ? (
           <>
-            {/* The stored next action is an operator runbook step; lead with what happened. */}
+            {/* The stored next action is an operator runbook step; lead with what happened. This hold also covers
+                unsafe archives and local runs, so do not claim retries or a retained sandbox here. */}
             <p>
-              Paperclip could not copy the agent's files back from its sandbox, even after retrying. The sandbox is
-              kept, so no work is lost. A board operator must recover the files before the agent can continue.
+              Paperclip could not restore the agent's workspace files after its last run. A board operator must
+              recover the files before the agent can continue.
             </p>
             <details>
               <summary className="cursor-pointer">Technical details</summary>

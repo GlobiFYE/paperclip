@@ -4560,6 +4560,43 @@ describe("sandbox git-bundle export transport", () => {
     } finally { vi.restoreAllMocks(); }
   });
 
+  it("does not retry a non-Git copy-back that failed after writing a host file", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-restore-partial-"));
+    cleanupDirs.push(rootDir);
+    const localWorkspaceDir = path.join(rootDir, "local-workspace");
+    const remoteWorkspaceDir = path.join(rootDir, "remote-workspace");
+    await mkdir(localWorkspaceDir, { recursive: true });
+    await writeFile(path.join(localWorkspaceDir, "base.txt"), "base\n", "utf8");
+    const client = makeTransportClient(true, { syncOutOperations: [], readFilePaths: [] });
+    const prepared = await prepareSandboxManagedRuntime({
+      spec: gitSpec(remoteWorkspaceDir), adapterKey: "test-adapter", client, workspaceLocalDir: localWorkspaceDir,
+      workspaceRestoreRetryDelaysMs: [0, 0],
+    });
+    await writeFile(path.join(remoteWorkspaceDir, "a-first.txt"), "first\n", "utf8");
+    await writeFile(path.join(remoteWorkspaceDir, "z-later.txt"), "later\n", "utf8");
+    let directoryTransfers = 0;
+    const syncOut = client.syncOut!;
+    client.syncOut = async (operations) => {
+      if (operations.some((operation) => operation.files.some((file) => file.kind === "directory"))) directoryTransfers++;
+      return syncOut(operations);
+    };
+    // The merge copies entries in path order, so the first file lands before the
+    // later copy fails with an otherwise retryable I/O error.
+    const failure = Object.assign(new Error("i/o error"), { code: "EIO" });
+    const copyFile = fsPromises.copyFile.bind(fsPromises);
+    vi.spyOn(fsPromises, "copyFile").mockImplementation(async (source, target, mode) => {
+      if (path.basename(String(source)) === "z-later.txt") throw failure;
+      return copyFile(source, target, mode);
+    });
+    const merge = vi.spyOn(restoreMerge, "mergeDirectoryWithBaseline");
+    try {
+      await expect(prepared.restoreWorkspace()).rejects.toBe(failure);
+      await expect(readFile(path.join(localWorkspaceDir, "a-first.txt"), "utf8")).resolves.toBe("first\n");
+      expect(directoryTransfers).toBe(1);
+      expect(merge).toHaveBeenCalledTimes(1);
+    } finally { vi.restoreAllMocks(); }
+  });
+
   it("moves the bundle through one native syncOut file mapping, never through readFile", async () => {
     const capture: TransportCapture = { syncOutOperations: [], readFilePaths: [] };
     const { localWorkspaceDir, remoteWorkspaceDir } = await setupGitBackedWorkspace("paperclip-bundle-native-");
