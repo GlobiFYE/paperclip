@@ -24,7 +24,8 @@
       ],
       "whenToUse": "Use a restricted customer-owned key when browser sign-in is not suitable.",
       "defaults": {
-        "serverUrl": "https://api.serply.io/mcp"
+        "serverUrl": "https://api.serply.io/mcp",
+        "mcpSessionRequired": true
       },
       "guidanceMd": "Use a customer-created Serply key. A Serply API key from app.serply.io. Each search or scrape call uses account credits.",
       "riskTier": "S2",
@@ -36,7 +37,8 @@
           "type": "password",
           "required": true,
           "placeholder": "Paste your Serply API key",
-          "secret": true
+          "secret": true,
+          "helperMd": "None: Google, Bing, Amazon and Reddit search tools plus public page scraping (usage is billed to the Serply account). Any Serply API key works."
         }
       ],
       "keyPlacement": {
