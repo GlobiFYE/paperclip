@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, lte, not, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { companies, documents, externalObjectMentions, externalObjects, issueComments, issueDocuments, issues, plugins } from "@paperclipai/db";
 import {
@@ -1036,14 +1036,20 @@ export function externalObjectService(
     // verdict is only trustworthy while the repository is actually visible to
     // the configured credentials. GitHub hides inaccessible (often private)
     // repos behind a 404, so a not-found object can become resolvable later
-    // when credentials or repo visibility improve. Re-check those objects on
-    // their normal schedule so they self-heal instead of freezing.
+    // when credentials or repo visibility improve. Re-check objects that were
+    // frozen as "not found" before the repository probe existed so they
+    // self-heal instead of freezing. Once the provider has probed the repo and
+    // confirmed it is visible (data.probeVerified = "true"), the not-found
+    // verdict is definitive, so stop re-polling that object to avoid burning
+    // the company's GitHub API budget on deleted references forever.
+    const probeVerifiedNotFound = sql`coalesce(${externalObjects.data}->>'probeVerified', 'false') = 'true'`;
     const refreshable = or(
       eq(externalObjects.isTerminal, false),
       and(
         eq(externalObjects.isTerminal, true),
         eq(externalObjects.providerKey, "github"),
         eq(externalObjects.statusKey, "not_found"),
+        not(probeVerifiedNotFound),
       ),
     )!;
     const due = await db

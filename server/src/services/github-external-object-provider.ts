@@ -188,6 +188,12 @@ function notFoundSnapshot(identity: GitHubObjectIdentity, etag: string | null): 
       repo: identity.repo,
       number: identity.number,
       notFound: true,
+      // The repository was probed with the configured credentials and found
+      // to be visible, so this not-found verdict is definitive, not a stale
+      // guess from a time when credentials could not see the repo. The due
+      // sweep uses this flag to avoid re-polling a confirmed-deleted object
+      // forever and exhausting the company's GitHub API budget.
+      probeVerified: true,
     },
   };
 }
@@ -377,6 +383,27 @@ export function createGitHubExternalObjectProvider(
     ? opts.tokenProvider
     : ((companyId: string) => defaultTokenProvider(db, companyId, secretNames));
 
+  // Cache repository-visibility probe results so many objects in the same repo
+  // share a single probe instead of each issuing its own request every refresh
+  // cycle. Only determined outcomes ("visible"/"hidden") are cached; uncertain
+  // probes are retried on the next cycle. The cache is keyed per company+repo
+  // because visibility is a property of the credential, which is company-scoped.
+  const probeCache = new Map<string, { result: "visible" | "hidden"; expiresAt: number }>();
+  async function cachedProbeRepoVisibility(
+    companyId: string,
+    identity: GitHubObjectIdentity,
+    headers: Record<string, string>,
+  ): Promise<"visible" | "hidden" | "uncertain"> {
+    const key = `${companyId}\u0000${identity.owner.toLowerCase()}\u0000${identity.repo.toLowerCase()}`;
+    const cached = probeCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.result;
+    const result = await probeRepoVisibility(identity, { fetch: fetchImpl, headers });
+    if (result !== "uncertain") {
+      probeCache.set(key, { result, expiresAt: Date.now() + GITHUB_OBJECT_TTL_SECONDS * 1000 });
+    }
+    return result;
+  }
+
   const detector: ExternalObjectDetector = {
     key: "github",
     detect({ urls }): ExternalObjectDetection[] {
@@ -458,10 +485,7 @@ export function createGitHubExternalObjectProvider(
           // Probe the repository metadata to classify: if the repo itself is visible
           // the object truly is gone; if it is not, surface credentials-needed
           // instead of permanently freezing a reference as "Not found".
-          const repoVisibility = await probeRepoVisibility(identity, {
-            fetch: fetchImpl,
-            headers,
-          });
+          const repoVisibility = await cachedProbeRepoVisibility(companyId, identity, headers);
           if (repoVisibility === "visible") {
             return { ok: true, snapshot: notFoundSnapshot(identity, etag) };
           }

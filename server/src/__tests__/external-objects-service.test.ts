@@ -376,9 +376,32 @@ describe("GitHub external object provider", () => {
         statusCategory: "archived",
         statusTone: "muted",
         isTerminal: true,
+        data: expect.objectContaining({ provider: "github", notFound: true, probeVerified: true }),
       }),
     });
     expect(JSON.stringify(result)).not.toContain("http");
+  });
+
+  it("caches repository-visibility probes per company and repo", async () => {
+    let probeCalls = 0;
+    const fetch = vi.fn(async (url: string) => {
+      if (url.endsWith("/repos/acme/app")) {
+        probeCalls += 1;
+        return new Response(JSON.stringify({ full_name: "acme/app" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response("", { status: 404, headers: { etag: '"missing"' } });
+    });
+    const provider = createGitHubExternalObjectProvider({} as any, { fetch, tokenProvider: null });
+    const resolver = provider.resolvers.find((entry) => entry.objectType === "pull_request")!;
+
+    await resolver.resolve({ companyId: "company-1", object: githubObject("pull/42", "pull_request") });
+    await resolver.resolve({ companyId: "company-1", object: githubObject("pull/99", "pull_request") });
+
+    expect(probeCalls).toBe(1);
+    expect(fetch.mock.calls.filter(([url]) => String(url).endsWith("/repos/acme/app"))).toHaveLength(1);
   });
 
   it("classifies a 404 as auth-required when the repository itself is hidden", async () => {
@@ -988,6 +1011,50 @@ describeEmbeddedPostgres("externalObjectService", () => {
     expect(updated.statusLabel).toBe("Open");
     expect(updated.isTerminal).toBe(false);
     expect(updated.liveness).toBe("fresh");
+  });
+
+  it("does not re-check probe-verified GitHub not-found objects (deleted references are terminal)", async () => {
+    const { companyId } = await createIssue();
+    const canonical = canonicalizeExternalObjectUrl("https://github.com/acme/app/pull/42");
+    if (!canonical) throw new Error("expected canonical url");
+    await db.insert(externalObjects).values({
+      companyId,
+      providerKey: "github",
+      objectType: "pull_request",
+      externalId: "acme/app#pull/42",
+      sanitizedCanonicalUrl: canonical.sanitizedCanonicalUrl,
+      canonicalIdentityHash: canonical.canonicalIdentityHash,
+      displayTitle: "acme/app#42",
+      statusKey: "not_found",
+      statusLabel: "Not found",
+      statusCategory: "archived",
+      statusTone: "muted",
+      liveness: "fresh",
+      isTerminal: true,
+      nextRefreshAt: new Date(0),
+      data: { provider: "github", notFound: true, probeVerified: true },
+    });
+    const resolver: ExternalObjectResolver = {
+      providerKey: "github",
+      objectType: "pull_request",
+      resolve: vi.fn(async () => ({
+        ok: true as const,
+        snapshot: {
+          statusKey: "open",
+          statusLabel: "Open",
+          statusCategory: "open" as const,
+          statusTone: "info" as const,
+          isTerminal: false,
+          ttlSeconds: 300,
+        },
+      })),
+    };
+    const svc = externalObjectService(db, { resolvers: [resolver], github: false });
+
+    const refreshed = await svc.refreshDueObjects(companyId);
+
+    expect(refreshed).toEqual([]);
+    expect(resolver.resolve).not.toHaveBeenCalled();
   });
 
   it("does not re-check terminal objects that are not GitHub not-found verdicts", async () => {
