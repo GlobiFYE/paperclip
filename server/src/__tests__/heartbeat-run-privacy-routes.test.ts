@@ -363,7 +363,7 @@ describeEmbeddedPostgres("heartbeat run privacy routes", { concurrent: false }, 
 
   it("redacts historical operation URL userinfo for board and agent HTTP readers across byte pages", async () => {
     const fixture = await seedFixture();
-    const credential = "synthetic-reader:synthetic-password";
+    const credential = "synthetic-reader:paàssword";
     const url = `postgresql://${credential}@db.example.test/app`;
     const store = createLocalFileWorkspaceOperationLogStore(logRoot);
     const handle = await store.begin({ companyId: fixture.companyId, operationId: fixture.operationId });
@@ -376,7 +376,7 @@ describeEmbeddedPostgres("heartbeat run privacy routes", { concurrent: false }, 
     const original = await fs.readFile(filePath);
     const credentialOffset = original.indexOf(credential);
     const expected = Buffer.from(original);
-    expected.fill(0x2a, credentialOffset, credentialOffset + credential.length);
+    expected.fill(0x2a, credentialOffset, credentialOffset + Buffer.byteLength(credential));
     await db.update(workspaceOperations)
       .set({ logRef: handle.logRef, stdoutExcerpt: `connect ${url} complete`, command: `echo ${url}` })
       .where(eq(workspaceOperations.id, fixture.operationId));

@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createLocalFileWorkspaceOperationLogStore } from "./workspace-operation-log-store.js";
 import {
   createWorkspaceOperationUrlStreamRedactor,
+  maskWorkspaceOperationUrlUserInfoBytes,
   redactTruncatedWorkspaceOperationOutput,
   redactWorkspaceOperationExcerpt,
   redactWorkspaceOperationUrlUserInfo,
@@ -60,6 +61,17 @@ describe("workspace operation URL redaction", () => {
     expect(redactTruncatedWorkspaceOperationOutput(captured)).not.toContain("thetic'password");
   });
 
+  it("masks UTF-8 userinfo bytes in a complete metadata URL without moving offsets", () => {
+    const credential = "synthetic-reader:paàssword";
+    const input = Buffer.from('{"metadata":"postgresql://' + credential + '@db.example.test/app"}');
+    const expected = Buffer.from(input);
+    const start = input.indexOf(credential);
+    expect(start).toBeGreaterThan(0);
+    expected.fill(0x2a, start, start + Buffer.byteLength(credential));
+    expect(maskWorkspaceOperationUrlUserInfoBytes(input)).toEqual(expected);
+    expect(input.includes(Buffer.from(credential))).toBe(true);
+  });
+
   describe("historical byte-range pages", () => {
     let logRoot: string;
     beforeAll(async () => {
@@ -98,8 +110,8 @@ describe("workspace operation URL redaction", () => {
     it("masks a historical URL whose userinfo spans two NDJSON events", async () => {
       const store = createLocalFileWorkspaceOperationLogStore(logRoot);
       const handle = await store.begin({ companyId: randomUUID(), operationId: randomUUID() });
-      const first = "synthetic-reader:synthetic-";
-      const second = "password";
+      const first = "synthetic-reader:pa";
+      const second = "àssword";
       const ts = new Date().toISOString();
       await store.append(handle, { stream: "stdout", chunk: `postgres://${first}`, ts });
       await store.append(handle, { stream: "stderr", chunk: "unrelated output", ts });
@@ -112,7 +124,7 @@ describe("workspace operation URL redaction", () => {
       expect(firstAt).toBeGreaterThan(0);
       expect(secondAt).toBeGreaterThan(firstAt);
       expected.fill(0x2a, firstAt, firstAt + first.length);
-      expected.fill(0x2a, secondAt, secondAt + second.length);
+      expected.fill(0x2a, secondAt, secondAt + Buffer.byteLength(second));
 
       let offset = 0;
       while (offset < original.length) {
@@ -159,7 +171,7 @@ describe("workspace operation URL redaction", () => {
       const store = createLocalFileWorkspaceOperationLogStore(logRoot);
       const handle = await store.begin({ companyId: randomUUID(), operationId: randomUUID() });
       const apostropheCredential = "synthetic-reader:it's-a-password";
-      const truncatedCredential = "thetic'password";
+      const truncatedCredential = "thetic'paàssword";
       await store.append(handle, {
         stream: "stdout",
         chunk: `postgresql://${apostropheCredential}@db.example.test/app`,
@@ -176,7 +188,7 @@ describe("workspace operation URL redaction", () => {
       for (const credential of [apostropheCredential, truncatedCredential]) {
         const offset = original.indexOf(credential);
         expect(offset).toBeGreaterThan(0);
-        expected.fill(0x2a, offset, offset + credential.length);
+        expected.fill(0x2a, offset, offset + Buffer.byteLength(credential));
       }
       let offset = 0;
       while (offset < original.length) {

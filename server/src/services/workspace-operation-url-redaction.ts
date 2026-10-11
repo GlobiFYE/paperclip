@@ -1,6 +1,8 @@
 const URL_PREFIX_RE = /[a-z][a-z0-9+.-]{0,31}:\/\//gi;
 const PARTIAL_URL_PREFIX_RE = /[a-z][a-z0-9+.-]{0,31}(?::\/?)?(?![\s\S])/i;
 const URL_BOUNDARY_RE = /[@\s/\\"?#<>]/;
+// Latin-1 log scans represent UTF-8 bytes as characters; \s would treat 0xA0 as a boundary.
+const URL_BYTE_BOUNDARY_RE = /[@\x09-\x0d\x20/\\"?#<>]/;
 const TRUNCATED_OUTPUT_PREFIX_RE = /^\[output truncated to last \d+ bytes; total \d+ bytes\]\n/;
 const TRUNCATED_OUTPUT_RAW_PREFIX_RE = /^\[output truncated to last \d+ bytes; total \d+ bytes\]\\n/;
 const MAX_PREFIX_LENGTH = 35;
@@ -48,7 +50,7 @@ export function redactWorkspaceOperationUrls<T>(value: T): T {
 export function maskWorkspaceOperationUrlUserInfoBytes(input: Buffer): Buffer {
   const output = Buffer.from(input);
   const text = input.toString("latin1");
-  const pattern = /[a-z][a-z0-9+.-]{0,31}:\/\/([^\s/\\"?#<>@]+)@/gi;
+  const pattern = /[a-z][a-z0-9+.-]{0,31}:\/\/([^\x09-\x0d\x20/\\"?#<>@]+)@/gi;
   for (const match of text.matchAll(pattern)) {
     const userinfoStart = match.index + match[0].indexOf("://") + 3;
     output.fill(0x2a, userinfoStart, userinfoStart + match[1]!.length);
@@ -82,7 +84,7 @@ export function createWorkspaceOperationByteRangeScanner() {
   function drain(state: State) {
     while (state.pending) {
       if (state.droppingUserInfo) {
-        const boundary = URL_BOUNDARY_RE.exec(state.pending)?.index ?? -1;
+        const boundary = URL_BYTE_BOUNDARY_RE.exec(state.pending)?.index ?? -1;
         const count = boundary < 0 ? state.pending.length : boundary;
         mark(state.positions.slice(0, count));
         state.pending = state.pending.slice(boundary < 0 ? count : count + 1);
@@ -105,7 +107,7 @@ export function createWorkspaceOperationByteRangeScanner() {
       state.positions = state.positions.slice(match.index);
       const userinfoStart = match[0].length;
       const suffix = state.pending.slice(userinfoStart);
-      const boundary = URL_BOUNDARY_RE.exec(suffix)?.index ?? -1;
+      const boundary = URL_BYTE_BOUNDARY_RE.exec(suffix)?.index ?? -1;
       if (boundary >= 0) {
         if (suffix[boundary] === "@" && boundary > 0) {
           mark(state.positions.slice(userinfoStart, userinfoStart + boundary));
@@ -133,7 +135,7 @@ export function createWorkspaceOperationByteRangeScanner() {
       const truncatedPrefix = TRUNCATED_OUTPUT_RAW_PREFIX_RE.exec(rawChunk)?.[0];
       if (truncatedPrefix) {
         const tail = rawChunk.slice(truncatedPrefix.length);
-        const end = /[@\\\s"<>]/.exec(tail)?.index ?? tail.length;
+        const end = /[@\\\x09-\x0d\x20"<>]/.exec(tail)?.index ?? tail.length;
         if (end > 0) {
           ranges.push({
             start: byteOffset + truncatedPrefix.length,
