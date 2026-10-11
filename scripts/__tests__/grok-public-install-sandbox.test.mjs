@@ -154,7 +154,18 @@ test('the verifier stages only workspace packages, so it skips the standalone bu
   // them; the verifier packs only the closure of the server and the CLI under
   // `workspace:` specs, and a `workspace:` spec can only name a workspace
   // package, so no tarball here ever contains or depends on a standalone build.
-  assert.doesNotMatch(source, /build-standalone-public-packages/);
+  // The one reader of that build is qualification-package retention, which
+  // packs the Daytona plugin from its `dist`, so the build runs exactly when
+  // retention is requested: the single reference sits inside that gate, and
+  // the same flag is what later decides whether retention runs at all.
+  const standaloneBuild = "run(process.execPath, [join(repo, 'scripts/build-standalone-public-packages.mjs')], repo)";
+  assert.equal(source.split('build-standalone-public-packages').length - 1, 1, 'the standalone build is referenced once, inside the retention gate');
+  const gate = position("const retainQualificationPackages = Boolean(process.env.PAPERCLIP_RUNNER_QUALIFICATION_PACKAGES_DIR);\n  if (retainQualificationPackages) {\n    const standaloneStarted = performance.now();\n    " + standaloneBuild);
+  assert.ok(source.includes('timing.stage_standalone_build_ms ='), 'the gated build is timed under its own key');
+  assert.ok(source.includes('if (retainQualificationPackages) {\n    const retained = retainRunnerQualificationPackages({'), 'retention is gated by the same flag as the build');
+  assert.doesNotMatch(source, /if \(process\.env\.PAPERCLIP_RUNNER_QUALIFICATION_PACKAGES_DIR\)/, 'no second reading of the retention flag can diverge from the build gate');
+  const retention = readFileSync(new URL('../retain-runner-qualification-packages.mjs', import.meta.url), 'utf8');
+  assert.ok(retention.includes("const pluginRelative = 'packages/plugins/sandbox-providers/daytona';") && retention.includes("cpSync(join(repo, pluginRelative, 'dist'), join(plugin, 'dist'), { recursive: true })"), 'retention still packs the Daytona plugin from its dist, which is why the gated build exists');
   const repo = new URL('../../', import.meta.url);
   const listing = spawnSync(process.execPath, [fileURLToPath(new URL('scripts/release-package-map.mjs', repo)), 'list'], { cwd: fileURLToPath(repo), encoding: 'utf8' });
   assert.equal(listing.status, 0, listing.stderr);
@@ -170,13 +181,16 @@ test('the verifier stages only workspace packages, so it skips the standalone bu
   const workspace = parseWorkspaceEntries(readFileSync(new URL('pnpm-workspace.yaml', repo), 'utf8'));
   const standalone = [...packages.values()].filter(({ dir }) => !isWorkspacePackage(dir, workspace)).map(({ dir }) => dir);
   assert.ok(standalone.length > 0, 'the public package map must still carry standalone packages for this check to mean anything');
+  assert.ok(standalone.includes('packages/plugins/sandbox-providers/daytona'), 'the Daytona plugin retention packs is a standalone package, so pnpm build alone cannot produce its dist');
   for (const name of needed) assert.ok(isWorkspacePackage(packages.get(name).dir, workspace), `${name} is staged by the verifier but is not a workspace package`);
   // The server publishes `ui-dist`, so that copy stays, before any package is
-  // staged, reusing the UI that `pnpm build` produced, and it is timed.
+  // staged, reusing the UI that `pnpm build` produced, and it is timed. The
+  // gated standalone build keeps release.sh's order: after the closure is
+  // known and before the UI copy and any staged source.
   assert.deepEqual(JSON.parse(readFileSync(new URL('server/package.json', repo), 'utf8')).files, ['dist', 'ui-dist', 'skills']);
   assert.ok(source.includes("PAPERCLIP_RELEASE_REUSE_UI_DIST: '1'"));
   const uiDist = position("run('bash', [join(repo, 'scripts/prepare-server-ui-dist.sh')], repo)");
-  assert.ok(position("visit('paperclipai')") < uiDist && uiDist < position('timing.stage_ui_dist_ms =') && uiDist < position('const stageSource = '));
+  assert.ok(position("visit('paperclipai')") < gate && gate < uiDist && uiDist < position('timing.stage_ui_dist_ms =') && uiDist < position('const stageSource = '));
 });
 
 test('the installed Codex probe exercises the public export and rejects incomplete or mismatched packages', () => {
