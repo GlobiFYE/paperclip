@@ -35,7 +35,18 @@ export const kubernetesProviderConfigSchema = z
     podAntiAffinity: z
       .object({
         enabled: z.boolean().default(false),
-        topologyKey: z.string().regex(k8sLabelKeyRegex, "Invalid Kubernetes label key for topologyKey").optional(),
+        topologyKey: z
+          .string()
+          .min(1, "topologyKey cannot be empty")
+          .regex(k8sLabelKeyRegex, "Invalid Kubernetes label key for topologyKey")
+          .refine((val) => {
+            const parts = val.split("/");
+            if (parts.length === 2) {
+              return parts[0].length <= 253 && parts[1].length <= 63;
+            }
+            return val.length <= 63;
+          }, "topologyKey name cannot exceed 63 characters and prefix cannot exceed 253 characters")
+          .optional(),
       })
       .optional(),
 

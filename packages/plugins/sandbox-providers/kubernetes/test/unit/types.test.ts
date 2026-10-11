@@ -80,5 +80,25 @@ describe("kubernetesProviderConfigSchema", () => {
         },
       }),
     ).toThrow(/Invalid Kubernetes label key/i);
+
+    expect(() =>
+      parseKubernetesProviderConfig({
+        inCluster: true,
+        podAntiAffinity: {
+          enabled: true,
+          topologyKey: "a".repeat(64),
+        },
+      }),
+    ).toThrow(/cannot exceed 63 characters/i);
+
+    expect(() =>
+      parseKubernetesProviderConfig({
+        inCluster: true,
+        podAntiAffinity: {
+          enabled: true,
+          topologyKey: `${"a".repeat(254)}/hostname`,
+        },
+      }),
+    ).toThrow();
   });
 });
