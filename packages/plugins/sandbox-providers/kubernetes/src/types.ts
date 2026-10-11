@@ -3,6 +3,8 @@ import { adapterRegistrySchema } from "./adapter-registry.js";
 import { KNOWN_ADAPTER_TYPES } from "./adapter-defaults.js";
 
 const cidrRegex = /^(\d{1,3}\.){3}\d{1,3}\/\d{1,2}$/;
+// Kubernetes label key format: optional prefix (DNS subdomain, max 253 chars + "/") followed by name (max 63 chars, alphanum start/end)
+const k8sLabelKeyRegex = /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*\/)?[a-zA-Z0-9](?:[a-zA-Z0-9_.-]{0,61}[a-zA-Z0-9])?$/;
 
 export const kubernetesProviderConfigSchema = z
   .object({
@@ -33,7 +35,7 @@ export const kubernetesProviderConfigSchema = z
     podAntiAffinity: z
       .object({
         enabled: z.boolean().default(false),
-        topologyKey: z.string().optional(),
+        topologyKey: z.string().regex(k8sLabelKeyRegex, "Invalid Kubernetes label key for topologyKey").optional(),
       })
       .optional(),
 

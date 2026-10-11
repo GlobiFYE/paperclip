@@ -91,8 +91,10 @@ export function buildSandboxCrManifest(
                             },
                           },
                           topologyKey:
-                            input.podAntiAffinity.topologyKey ??
-                            "kubernetes.io/hostname",
+                            input.podAntiAffinity.topologyKey &&
+                            input.podAntiAffinity.topologyKey.trim().length > 0
+                              ? input.podAntiAffinity.topologyKey.trim()
+                              : "kubernetes.io/hostname",
                         },
                       },
                     ],

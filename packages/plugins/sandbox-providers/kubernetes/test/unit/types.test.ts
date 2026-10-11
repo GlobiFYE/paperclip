@@ -59,4 +59,26 @@ describe("kubernetesProviderConfigSchema", () => {
       topologyKey: "topology.kubernetes.io/zone",
     });
   });
+
+  it("rejects invalid topologyKey in podAntiAffinity", () => {
+    expect(() =>
+      parseKubernetesProviderConfig({
+        inCluster: true,
+        podAntiAffinity: {
+          enabled: true,
+          topologyKey: "",
+        },
+      }),
+    ).toThrow(/Invalid Kubernetes label key/i);
+
+    expect(() =>
+      parseKubernetesProviderConfig({
+        inCluster: true,
+        podAntiAffinity: {
+          enabled: true,
+          topologyKey: "invalid_prefix//hostname",
+        },
+      }),
+    ).toThrow(/Invalid Kubernetes label key/i);
+  });
 });
