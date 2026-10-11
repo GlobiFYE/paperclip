@@ -28,6 +28,16 @@ export function setupProviderKeys(adapter: string) {
 }
 
 export function setupEfforts(adapter: string, model = ""): string[] {
+  // DeepSeek exposes only low/high/max (it normalizes the full domain itself).
+  // Both the Claude and Codex harnesses route DeepSeek through their own effort
+  // controls, so list the DeepSeek domain for a DeepSeek model instead of the
+  // harness's native model list.
+  if (
+    (adapter === "claude_local" || adapter === "codex_local") &&
+    /(^|\/)deepseek(-|$|\/)/.test(model.toLowerCase())
+  ) {
+    return ["low", "high", "max"];
+  }
   switch (adapter) {
     case "claude_local":
       return [...claudeLocalReasoningEffortsForModel(model || DEFAULT_CLAUDE_LOCAL_MODEL)];

@@ -17,9 +17,15 @@ export function codexReasoningEffortOptions(
   model: string | null | undefined,
   defaultLabel = "Default",
 ) {
+  // DeepSeek on the Codex harness accepts only low/high/max; the Codex-native
+  // model list does not apply and would offer unsupported values.
+  const isDeepSeek = typeof model === "string" && model.toLowerCase().includes("deepseek");
+  const values: CodexLocalReasoningEffort[] = isDeepSeek
+    ? ["low", "high", "max"]
+    : [...codexLocalReasoningEffortsForModel(model)];
   return [
     { value: "", label: defaultLabel },
-    ...codexLocalReasoningEffortsForModel(model).map((value) => ({
+    ...values.map((value) => ({
       value,
       label: CODEX_REASONING_EFFORT_LABELS[value],
     })),
