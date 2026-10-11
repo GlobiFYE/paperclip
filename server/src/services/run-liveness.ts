@@ -78,6 +78,15 @@ const RUNNABLE_RE =
   /\b(?:(?:run|rerun|execute)\s+(?:pnpm|npm|yarn|bun|vitest|jest|pytest|cargo|go test|curl|tests?|typecheck|build|lint|package|verification)|(?:inspect|check|review|look|investigate|analy[sz]e|open|read|start|begin|continue|implement|fix|test|update|create|add|write|verify|validate|report)\b)/i;
 const UNMANAGED_BACKGROUND_TASK_STOP_REASON = "unmanaged_background_task_stopped";
 const UNMANAGED_BACKGROUND_TASK_LIVENESS_REASON = "unmanaged background task stopped; no durable live path";
+// Shared wording for the truncated-final-turn edge. The pi_local adapter maps
+// a length-stopped terminal turn with no completion text to a failed run and
+// records the machine-readable finalStopReason marker in resultJson; both the
+// failed-run and succeeded-run classification paths must name the same edge so
+// the bounded liveness continuation fires identically.
+const TRUNCATED_FINAL_TURN_LIVENESS_REASON =
+  "Pi stopped at the model output limit before completing its final turn; the run ended mid-turn";
+const TRUNCATED_FINAL_TURN_NEXT_ACTION =
+  "Complete the remaining work in a fresh run without re-doing finished work, then finish the issue or mark it blocked with a specific unblock request";
 
 function compactReason(reason: string) {
   return reason.length <= 500 ? reason : `${reason.slice(0, 497)}...`;
@@ -331,6 +340,17 @@ export function classifyRunLiveness(input: RunLivenessClassificationInput): RunL
     if (hasUnmanagedBackgroundTaskEvidence(input.resultJson)) {
       return output("failed", UNMANAGED_BACKGROUND_TASK_LIVENESS_REASON);
     }
+    // A pi run whose final turn was cut off at the model output limit is
+    // recorded as a failed run by the adapter. The generic branch below would
+    // classify it as terminal "failed" and never resume it — the exact stall
+    // this fix addresses. The raw transcript makes every run look useful, so
+    // only the machine-readable marker reveals the edge. Classify it as an
+    // actionable empty response so the bounded liveness continuation wakes the
+    // assignee to finish the turn or park the issue explicitly. Unrelated
+    // failures carry no marker and keep the generic failed handling.
+    if (input.runStatus === "failed" && input.resultJson?.finalStopReason === "length") {
+      return output("empty_response", TRUNCATED_FINAL_TURN_LIVENESS_REASON, TRUNCATED_FINAL_TURN_NEXT_ACTION);
+    }
     return output("failed", input.errorCode ? `Run ended with ${input.runStatus} (${input.errorCode})` : `Run ended with ${input.runStatus}`);
   }
 
@@ -342,7 +362,7 @@ export function classifyRunLiveness(input: RunLivenessClassificationInput): RunL
     return output("blocked", issueStatus === "blocked" ? "Issue status is blocked" : "Run output declared a concrete blocker", nextAction);
   }
 
-  // A Pi run whose final turn was cut off at the model output limit is not a
+  // A pi run whose final turn was cut off at the model output limit is not a
   // completed run, even though the process exited 0. The adapter records the
   // machine-readable `finalStopReason` marker in resultJson; the raw
   // transcript alone makes every run look "useful", so transcript heuristics
@@ -350,17 +370,15 @@ export function classifyRunLiveness(input: RunLivenessClassificationInput): RunL
   // completion and the run left durable progress evidence, classify the run
   // as an actionable empty response so the bounded liveness continuation
   // wakes the assignee to finish the turn or park the issue explicitly.
+  // (The failed-run path above handles the same marker for runs the adapter
+  // recorded as failed.)
   const truncatedFinalTurn = input.resultJson?.finalStopReason === "length";
   const finalTurnDeliveredContent = input.resultJson?.finalMessageEmpty === false;
   if (
     truncatedFinalTurn &&
     (!finalTurnDeliveredContent || !concreteEvidence)
   ) {
-    return output(
-      "empty_response",
-      "Pi stopped at the model output limit before completing its final turn; the run ended mid-turn",
-      "Complete the remaining work in a fresh run without re-doing finished work, then finish the issue or mark it blocked with a specific unblock request",
-    );
+    return output("empty_response", TRUNCATED_FINAL_TURN_LIVENESS_REASON, TRUNCATED_FINAL_TURN_NEXT_ACTION);
   }
 
   if (!usefulOutput && !concreteEvidence) {

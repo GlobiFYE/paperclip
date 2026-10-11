@@ -261,20 +261,24 @@ describe("run liveness classifier", () => {
 });
 
 describe("truncated final turn (model output limit) liveness", () => {
-  const truncated = {
-    finalStopReason: "length",
-    finalMessageEmpty: true,
-  };
+  // The adapter maps a length-stopped terminal turn with no completion text
+  // to a failed run (exit 1, typed error code) and records the
+  // machine-readable marker in resultJson. These shapes are what the
+  // classifier actually sees for the truncation edge.
+  const marker = { finalStopReason: "length", finalMessageEmpty: true } as Record<string, unknown>;
 
-  it("treats a length-stopped run with an empty final message as an actionable empty response", () => {
+  it("treats a failed run cut off at the output limit as an actionable empty response", () => {
     const classification = classifyRunLiveness({
       ...baseInput,
+      runStatus: "failed",
+      error: "Pi stopped at the model output limit before completing its final turn",
+      errorCode: "pi_completion_truncated",
       resultJson: {
-        ...truncated,
+        ...marker,
         // The raw transcript is present, so transcript heuristics see a
         // "useful" run; only the machine-readable marker reveals the
         // truncation edge.
-        stdoutExcerpt: 'line1\nline2',
+        stdoutExcerpt: "line1\nline2",
         summary: "",
       },
     });
@@ -288,12 +292,15 @@ describe("truncated final turn (model output limit) liveness", () => {
     expect(classification.lastUsefulActionAt).toBeNull();
   });
 
-  it("continues a truncated run that left no durable progress even when the transcript looks busy", () => {
+  it("continues a failed truncated run that left no durable progress even when the transcript looks busy", () => {
     const classification = classifyRunLiveness({
       ...baseInput,
+      runStatus: "failed",
+      error: "Pi stopped at the model output limit before completing its final turn",
+      errorCode: "pi_completion_truncated",
       resultJson: {
-        ...truncated,
-        stdoutExcerpt: 'tool result lines and a partial summary that was cut off mid-sentence',
+        ...marker,
+        stdoutExcerpt: "tool result lines and a partial summary that was cut off mid-sentence",
         summary: "Partial summary that was cut off",
       },
       evidence: null,
@@ -303,7 +310,19 @@ describe("truncated final turn (model output limit) liveness", () => {
     expect(classification.livenessReason).toMatch(/output limit/i);
   });
 
-  it("does not continue a truncated run that left durable concrete progress", () => {
+  it("keeps unrelated failed runs terminal (no truncation marker)", () => {
+    const classification = classifyRunLiveness({
+      ...baseInput,
+      runStatus: "failed",
+      error: "process lost",
+      errorCode: "process_lost",
+      resultJson: null,
+    });
+
+    expect(classification.livenessState).toBe("failed");
+  });
+
+  it("keeps a succeeded run that delivered completion text plus durable progress advanced", () => {
     const latestEvidenceAt = new Date("2026-10-09T12:00:00Z");
     const classification = classifyRunLiveness({
       ...baseInput,
@@ -322,16 +341,13 @@ describe("truncated final turn (model output limit) liveness", () => {
     expect(classification.lastUsefulActionAt).toBe(latestEvidenceAt);
   });
 
-  it("keeps failed runs terminal even when the final turn was truncated", () => {
+  it("wakes a succeeded run cut off at the output limit with no completion text", () => {
     const classification = classifyRunLiveness({
       ...baseInput,
-      runStatus: "failed",
-      error: "Pi stopped at the model output limit before completing its final turn",
-      resultJson: {
-        ...truncated,
-      },
+      resultJson: { ...marker },
     });
 
-    expect(classification.livenessState).toBe("failed");
+    expect(classification.livenessState).toBe("empty_response");
+    expect(classification.livenessReason).toMatch(/output limit/i);
   });
 });
