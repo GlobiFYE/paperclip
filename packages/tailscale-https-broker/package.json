@@ -6,8 +6,14 @@
   "type": "module",
   "description": "Least-privilege host broker that manages only Paperclip-owned, same-number Tailscale HTTPS-to-loopback listeners for managed branch runtimes.",
   "exports": {
-    ".": "./src/index.ts",
-    "./*": "./src/*.ts"
+    ".": {
+      "pantheon-dist": "./dist/index.js",
+      "default": "./src/index.ts"
+    },
+    "./*": {
+      "pantheon-dist": "./dist/*.js",
+      "default": "./src/*.ts"
+    }
   },
   "bin": {
     "paperclip-tailscale-https-broker": "./dist/main.js"

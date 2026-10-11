@@ -16,7 +16,10 @@
     "paperclip-kv-demo-mcp-server": "./dist/main.js"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "pantheon-dist": "./dist/index.js",
+      "default": "./src/index.ts"
+    }
   },
   "publishConfig": {
     "access": "public",

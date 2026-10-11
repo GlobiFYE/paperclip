@@ -13,9 +13,18 @@
   },
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./telemetry": "./src/telemetry/index.ts",
-    "./*": "./src/*.ts"
+    ".": {
+      "pantheon-dist": "./dist/index.js",
+      "default": "./src/index.ts"
+    },
+    "./telemetry": {
+      "pantheon-dist": "./dist/telemetry/index.js",
+      "default": "./src/telemetry/index.ts"
+    },
+    "./*": {
+      "pantheon-dist": "./dist/*.js",
+      "default": "./src/*.ts"
+    }
   },
   "publishConfig": {
     "access": "public",

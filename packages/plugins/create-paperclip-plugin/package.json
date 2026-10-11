@@ -16,7 +16,10 @@
     "create-paperclip-plugin": "./dist/bin.js"
   },
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "pantheon-dist": "./dist/index.js",
+      "default": "./src/index.ts"
+    }
   },
   "publishConfig": {
     "access": "public",
