@@ -2568,7 +2568,35 @@ describe("Daytona sandbox provider plugin", () => {
         } finally { vi.useRealTimers(); }
       });
 
-      it.each(["stream", "status", "snapshot", "dispatch"])("preserves a command deadline during a healthy or stalled %s observation", async (phase) => {
+      it("removes deadline listeners from completed reads during a quiet polling run", async () => {
+        process.env.DAYTONA_API_KEY = "host-key";
+        const sandbox = createMockSandbox();
+        sandbox.process.getSessionCommand.mockResolvedValue({ exitCode: undefined });
+        sandbox.process.getSessionCommandLogs.mockImplementation(async (_s: string, _c: string, stdout?: (chunk: string) => void) => {
+          if (stdout) { stdout("partial;"); return; }
+          return { stdout: "partial;", stderr: "" };
+        });
+        mockGet.mockResolvedValue(sandbox);
+        const added = vi.spyOn(AbortSignal.prototype, "addEventListener");
+        const removed = vi.spyOn(AbortSignal.prototype, "removeEventListener");
+        vi.useFakeTimers();
+        try {
+          const pending = plugin.definition.onEnvironmentExecute?.(streamExecParams({ timeoutMs: 60_000, commandTimeoutMs: 60_000 }));
+          await vi.advanceTimersByTimeAsync(30_000);
+          const signal = added.mock.contexts.find((value, index) => added.mock.calls[index]?.[0] === "abort");
+          expect(signal).toBeDefined();
+          const count = (spy: typeof added | typeof removed) => spy.mock.calls.filter((call, index) => call[0] === "abort" && spy.mock.contexts[index] === signal).length;
+          expect(count(added)).toBeGreaterThan(50);
+          expect(count(added) - count(removed)).toBeLessThanOrEqual(1);
+          await vi.advanceTimersByTimeAsync(30_000);
+          expect(await pending).toMatchObject({ timedOut: true, exitCode: null, stdout: "partial;" });
+          expect(count(removed)).toBe(count(added));
+          expect(sandbox.process.executeSessionCommand).toHaveBeenCalledTimes(1);
+          expect(vi.getTimerCount()).toBe(0);
+        } finally { added.mockRestore(); removed.mockRestore(); vi.useRealTimers(); }
+      });
+
+      it.each(["stream", "status", "snapshot", "dispatch", "final snapshot"])("preserves a command deadline during a healthy or stalled %s observation", async (phase) => {
         process.env.DAYTONA_API_KEY = "host-key";
         const executionLog = vi.fn();
         const restore = __setDaytonaPluginContextForTest({ execution: { log: executionLog } } as unknown as PluginContext);
@@ -2576,10 +2604,10 @@ describe("Daytona sandbox provider plugin", () => {
         let lateOutput: ((chunk: string) => void) | undefined;
         let rejectStream: ((error: Error) => void) | undefined;
         let keepAlive: ReturnType<typeof setInterval> | undefined;
-        sandbox.process.getSessionCommand.mockResolvedValue({ exitCode: undefined });
+        sandbox.process.getSessionCommand.mockResolvedValue({ exitCode: phase === "final snapshot" ? 0 : undefined });
         sandbox.process.getSessionCommandLogs.mockImplementation(async (_s: string, _c: string, stdout?: (chunk: string) => void) => {
           if (!stdout) {
-            if (phase === "snapshot") return new Promise(() => {});
+            if (phase === "snapshot" || phase === "final snapshot") return new Promise(() => {});
             return { stdout: "first;", stderr: "" };
           }
           stdout("first;");
@@ -2602,7 +2630,10 @@ describe("Daytona sandbox provider plugin", () => {
           await vi.advanceTimersByTimeAsync(1);
           const result = await pending;
           expect(result).toMatchObject({ timedOut: true, exitCode: null });
-          expect(result?.stderr).toContain("Command timed out after 60 s.");
+          if (phase === "final snapshot") {
+            expect(result?.metadata).toMatchObject({ timeoutScope: "session_log_observation", commandExitConfirmed: true, observedExitCode: 0 });
+            expect(result?.stderr).toContain("Session log observation timed out after 60 s; final output may be incomplete.");
+          } else expect(result?.stderr).toContain("Command timed out after 60 s.");
           expect(sandbox.process.executeSessionCommand).toHaveBeenCalledTimes(1);
           expect(sandbox.process.executeCommand).not.toHaveBeenCalled();
           const logged = executionLog.mock.calls.length;

@@ -1934,20 +1934,27 @@ function createCommandDeadline(timeoutMs: number | undefined) {
   }
   let expired = false;
   const dueAt = Date.now() + timeoutMs;
-  let rejectDeadline!: (error: SessionCommandDeadlineError) => void;
-  const deadline = new Promise<never>((_resolve, reject) => { rejectDeadline = reject; });
-  // The timer can fire before the first provider await installs its race.
-  void deadline.catch(() => {});
+  const controller = new AbortController();
   const timer = setTimeout(() => {
     expired = true;
-    rejectDeadline(new SessionCommandDeadlineError());
+    controller.abort();
   }, timeoutMs);
   return {
     expired: () => expired,
     remainingMs: () => Math.max(0, dueAt - Date.now()),
     race: async <T>(action: () => Promise<T>): Promise<T> => {
       if (expired) throw new SessionCommandDeadlineError();
-      return await Promise.race([action(), deadline]);
+      let rejectDeadline!: (error: SessionCommandDeadlineError) => void;
+      const deadline = new Promise<never>((_resolve, reject) => { rejectDeadline = reject; });
+      const onAbort = () => rejectDeadline(new SessionCommandDeadlineError());
+      controller.signal.addEventListener("abort", onAbort, { once: true });
+      try {
+        return await Promise.race([action(), deadline]);
+      } finally {
+        // Retain only active observations. A shared pending promise would keep
+        // every finished poll and its result until a long command ends.
+        controller.signal.removeEventListener("abort", onAbort);
+      }
     },
     clear: () => clearTimeout(timer),
   };
@@ -1955,6 +1962,16 @@ function createCommandDeadline(timeoutMs: number | undefined) {
 type CommandDeadline = ReturnType<typeof createCommandDeadline>;
 function withinCommandDeadline<T>(deadline: CommandDeadline, action: () => Promise<T>): Promise<T> {
   return deadline ? deadline.race(action) : action();
+}
+
+async function sleepWithinCommandDeadline(deadline: CommandDeadline, delayMs: number): Promise<void> {
+  if (!deadline) return await sleep(delayMs);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await deadline.race(() => new Promise<void>((resolve) => { timer = setTimeout(resolve, delayMs); }));
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }
 
 async function beforeSessionDeadline<T>(deadlineMs: number, action: () => Promise<T>): Promise<T> {
@@ -2078,7 +2095,7 @@ async function readSessionExitCode(
     return first.exitCode;
   }
   for (const delayMs of SESSION_EXIT_CODE_RETRY_DELAYS_MS) {
-    await withinCommandDeadline(commandDeadline, () => sleep(delayMs));
+    await sleepWithinCommandDeadline(commandDeadline, delayMs);
     const status = await observeSessionCommand(timeoutMs, () => sandbox.process.getSessionCommand(sessionId, commandId), commandDeadline);
     if (typeof status.exitCode === "number") {
       return status.exitCode;
@@ -2225,11 +2242,12 @@ async function executeInSession(
       // Full log snapshots are heavier than a status read. Limit fallback
       // traffic to one snapshot per second. Failed-stream fallback retains
       // its original deadline, including the time spent waiting between reads.
-      await withinCommandDeadline(commandDeadline, () => sleep(streamResult.pollUntilExit ? SESSION_LOG_POLL_INTERVAL_MS
-        : Math.max(0, Math.min(SESSION_LOG_POLL_INTERVAL_MS, deadlineMs - Date.now()))));
+      await sleepWithinCommandDeadline(commandDeadline, streamResult.pollUntilExit ? SESSION_LOG_POLL_INTERVAL_MS
+        : Math.max(0, Math.min(SESSION_LOG_POLL_INTERVAL_MS, deadlineMs - Date.now())));
     }
   } catch (error) {
-    if (error instanceof SessionObservationTimeoutError) {
+    if (error instanceof SessionObservationTimeoutError ||
+      (error instanceof SessionCommandDeadlineError && confirmedExitCode !== null)) {
       // Preserve undecided decoder suffixes in the partial result, without
       // injecting a possibly incomplete character into the live protocol.
       streamBuffer.finish(false);
@@ -2237,7 +2255,7 @@ async function executeInSession(
         exitCode: null,
         timedOut: true,
         stdout: streamBuffer.stdout,
-        stderr: `${streamBuffer.stderr}Session log observation timed out after ${Math.round(effectiveTimeoutMs / 1000)} s; ${confirmedExitCode === null ? "command exit remains unconfirmed" : "final output may be incomplete"}.\n`,
+        stderr: `${streamBuffer.stderr}Session log observation timed out after ${Math.round((commandDeadline?.expired() ? params.commandTimeoutMs! : effectiveTimeoutMs) / 1000)} s; ${confirmedExitCode === null ? "command exit remains unconfirmed" : "final output may be incomplete"}.\n`,
         metadata: {
           ...(execStart != null ? { durationMs: timingNow() - execStart } : {}),
           timeoutScope: "session_log_observation",
