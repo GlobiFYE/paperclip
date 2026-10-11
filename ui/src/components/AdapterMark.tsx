@@ -14,6 +14,7 @@ const brandMarks: Record<string, { src: string; dark?: string }> = {
     [
       ["cursor", "cursor"],
       ["cursor_cloud", "cursor"],
+      ["copilot_local", "copilot"],
       ["grok_local", "grok"],
       ["hermes_local", "hermesagent"],
       ["hermes_gateway", "hermesagent"],

@@ -1,0 +1,57 @@
+{
+  "totalPremiumRequestCost": 0.33,
+  "totalUserRequests": 1,
+  "totalNanoAiu": 0,
+  "totalApiDurationMs": 20599,
+  "sessionStartTime": "2026-10-11T11:31:28.220Z",
+  "codeChanges": {
+    "linesAdded": 1,
+    "linesRemoved": 0,
+    "filesModifiedCount": 1,
+    "filesModified": [
+      "/private/tmp/copilot-fixture.ri4HrN/hello.txt"
+    ]
+  },
+  "modelMetrics": {
+    "gpt-5-mini": {
+      "requests": {
+        "count": 2,
+        "cost": 0.33
+      },
+      "usage": {
+        "inputTokens": 24029,
+        "outputTokens": 547,
+        "cacheReadTokens": 12160,
+        "cacheWriteTokens": 0,
+        "reasoningTokens": 448
+      },
+      "cacheExpiresAt": "2026-10-11T12:01:49.082Z",
+      "totalNanoAiu": 0
+    }
+  },
+  "agentMetrics": {
+    "main": {
+      "totalApiDurationMs": 20599,
+      "totalNanoAiu": 0,
+      "modelMetrics": {
+        "gpt-5-mini": {
+          "requests": {
+            "count": 2,
+            "cost": 0.33
+          },
+          "usage": {
+            "inputTokens": 24029,
+            "outputTokens": 547,
+            "cacheReadTokens": 12160,
+            "cacheWriteTokens": 0,
+            "reasoningTokens": 448
+          },
+          "totalNanoAiu": 0
+        }
+      }
+    }
+  },
+  "currentModel": "gpt-5-mini",
+  "lastCallInputTokens": 12299,
+  "lastCallOutputTokens": 5
+}

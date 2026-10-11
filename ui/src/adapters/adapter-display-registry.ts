@@ -101,6 +101,11 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     description: "Kimi Code CLI harness",
     icon: Moon,
   },
+  copilot_local: {
+    label: "GitHub Copilot CLI",
+    description: "GitHub Copilot CLI harness",
+    icon: Bot,
+  },
   hermes_gateway: {
     label: "Hermes Gateway",
     description: "Remote Hermes API server",

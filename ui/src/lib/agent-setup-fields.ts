@@ -1,5 +1,6 @@
 import { DEFAULT_CODEX_LOCAL_MODEL } from "@paperclipai/adapter-codex-local";
 import { claudeLocalReasoningEffortsForModel, DEFAULT_CLAUDE_LOCAL_MODEL } from "@paperclipai/adapter-claude-local";
+import { COPILOT_REASONING_EFFORTS } from "@paperclipai/adapter-copilot-local";
 import { grokLocalReasoningEffortsForModel } from "@paperclipai/adapter-grok-local";
 import { codexReasoningEffortOptions } from "./codex-reasoning-effort";
 import { PROVIDER_ENV_KEYS } from "./provider-credential";
@@ -10,6 +11,7 @@ export const SETUP_CREDENTIAL_KEYS: Record<string, string> = {
   cursor_cloud: "CURSOR_API_KEY",
   gemini_local: "GEMINI_API_KEY",
   kimi_local: "KIMI_MODEL_API_KEY",
+  copilot_local: "COPILOT_GITHUB_TOKEN",
   hermes_gateway: "API_SERVER_KEY",
 };
 
@@ -36,6 +38,8 @@ export function setupEfforts(adapter: string, model = ""): string[] {
         .filter(Boolean);
     case "pi_local":
       return ["off", "minimal", "low", "medium", "high", "xhigh"];
+    case "copilot_local":
+      return [...COPILOT_REASONING_EFFORTS];
     case "grok_local":
       return [...grokLocalReasoningEffortsForModel(model)];
     default:
@@ -50,6 +54,8 @@ export const SETUP_LOGIN_HINTS: Record<string, string> = {
     "Use a Gemini API key, or an existing supported Gemini CLI login on the selected environment's host.",
   kimi_local:
     "Use a Kimi API key and model settings below, or run kimi login on the selected environment's host.",
+  copilot_local:
+    "Use copilot login on the selected environment's host, or set COPILOT_GITHUB_TOKEN (a fine-grained PAT with the Copilot Requests permission).",
   grok_local:
     "Grok Build uses its CLI sign-in. Run grok login on the selected environment's host, then test the connection here.",
   hermes_local:

@@ -21,6 +21,7 @@ export type ConnectionHarness = typeof connectionHarnesses[number];
 /** Inventory entries remain visible even when no live journey can be selected. */
 export const connectionScopeGaps = [
   { adapter: "cursor", status: "unsupported", reason: "No managed connection flow; qualify the harness-specific login separately." },
+  { adapter: "copilot_local", status: "unsupported", reason: "No managed connection flow; harness-specific credentials remain outside this suite." },
   { adapter: "kimi_local", status: "unsupported", reason: "No managed connection flow; harness-specific credentials remain outside this suite." },
   { adapter: "pi_local", status: "unsupported", reason: "No managed connection flow or qualified model source." },
   { adapter: "openclaw_gateway", status: "excluded", reason: "Remote gateway owns provider configuration." },

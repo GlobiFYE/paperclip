@@ -42,6 +42,7 @@ const DIRECT_ADAPTER_TYPES = [
   "acpx_local",
   "claude_local",
   "codex_local",
+  "copilot_local",
   "cursor_cloud",
   "cursor",
   "gemini_local",

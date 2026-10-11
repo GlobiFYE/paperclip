@@ -265,6 +265,16 @@ describe("adapter routes", () => {
       },
     });
 
+    const copilotAdapter = res.body.find((a: any) => a.type === "copilot_local");
+    expect(copilotAdapter).toBeDefined();
+    expect(copilotAdapter.capabilities).toMatchObject({
+      supportsInstructionsBundle: true,
+      supportsSkills: true,
+      supportsLocalAgentJwt: true,
+      requiresMaterializedRuntimeSkills: true,
+      supportsAcp: false,
+    });
+
     const hermesLocal = res.body.find((a: any) => a.type === "hermes_local");
     expect(hermesLocal).toBeDefined();
     expect(hermesLocal.source).toBe("builtin");

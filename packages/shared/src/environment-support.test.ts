@@ -60,6 +60,14 @@ describe("isSandboxProviderSupportedForAdapter", () => {
     ).toBe(true);
   });
 
+  it("treats copilot_local as a remote-managed local adapter", () => {
+    expect(adapterSupportsRemoteManagedEnvironments("copilot_local")).toBe(true);
+    expect(supportedEnvironmentDriversForAdapter("copilot_local")).toEqual(["local", "ssh", "sandbox"]);
+    expect(
+      isSandboxProviderSupportedForAdapter("copilot_local", "fake-plugin", ["fake-plugin"]),
+    ).toBe(true);
+  });
+
   it("includes kimi_local sandbox support in environment capabilities", () => {
     const capabilities = getEnvironmentCapabilities(["kimi_local"], {
       sandboxProviders: {
