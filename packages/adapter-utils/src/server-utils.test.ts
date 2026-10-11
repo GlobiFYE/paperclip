@@ -19,6 +19,7 @@ import {
   isPaperclipExternalChatContractTurn,
   isPaperclipExternalChatQuestionResponseTurn,
   isPaperclipExternalChatTurn,
+  ensurePaperclipSkillSymlink,
   materializePaperclipSkillCopy,
   PAPERCLIP_OPERATIONAL_SKILL_KEY,
   refreshPaperclipWorkspaceEnvForExecution,
@@ -4016,5 +4017,99 @@ describe("wake continuation comment ownership", () => {
       executionContinuation: { ...continuation([]), objective },
     }, { suppressIssueDescription: true });
     expect(legacy).toContain(`"objective":"${objective}"`);
+  });
+});
+
+describe("ensurePaperclipSkillSymlink", () => {
+  function eexistError(): NodeJS.ErrnoException {
+    const err = new Error("EEXIST: file already exists") as NodeJS.ErrnoException;
+    err.code = "EEXIST";
+    return err;
+  }
+
+  async function makeFixture(): Promise<{ dir: string; source: string; target: string }> {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-skill-symlink-"));
+    const source = path.join(dir, "skill-src");
+    await fs.mkdir(source);
+    await fs.writeFile(path.join(source, "SKILL.md"), "# skill\n");
+    const target = path.join(dir, "skills-home", "skill-src");
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    return { dir, source, target };
+  }
+
+  it("creates a symlink when the target is free", async () => {
+    const { dir, source, target } = await makeFixture();
+    try {
+      const result = await ensurePaperclipSkillSymlink(source, target);
+      expect(result).toBe("created");
+      expect(await fs.readlink(target)).toBe(source);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("treats EEXIST from a concurrent creator as success when the link already points at the source", async () => {
+    const { dir, source, target } = await makeFixture();
+    try {
+      // Simulate a concurrent sync winning the race between our existence
+      // check and our symlink call: it creates the correct link, then our
+      // link attempt fails with EEXIST.
+      const racingLink = async (linkSource: string, linkTarget: string) => {
+        await fs.symlink(linkSource, linkTarget);
+        throw eexistError();
+      };
+      const result = await ensurePaperclipSkillSymlink(source, target, racingLink);
+      expect(result).toBe("created");
+      expect(await fs.readlink(target)).toBe(source);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rethrows EEXIST when the raced link points at a different source", async () => {
+    const { dir, source, target } = await makeFixture();
+    const otherSource = path.join(dir, "other-skill");
+    await fs.mkdir(otherSource);
+    try {
+      const racingLink = async (_linkSource: string, linkTarget: string) => {
+        await fs.symlink(otherSource, linkTarget);
+        throw eexistError();
+      };
+      await expect(
+        ensurePaperclipSkillSymlink(source, target, racingLink),
+      ).rejects.toMatchObject({ code: "EEXIST" });
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("repairs a dangling symlink and tolerates a concurrent repair racing the relink", async () => {
+    const { dir, source, target } = await makeFixture();
+    try {
+      await fs.symlink(path.join(dir, "missing-skill"), target);
+      const racingLink = async (linkSource: string, linkTarget: string) => {
+        await fs.symlink(linkSource, linkTarget);
+        throw eexistError();
+      };
+      const result = await ensurePaperclipSkillSymlink(source, target, racingLink);
+      expect(result).toBe("repaired");
+      expect(await fs.readlink(target)).toBe(source);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("leaves a symlink to an existing foreign install untouched", async () => {
+    const { dir, source, target } = await makeFixture();
+    const otherSource = path.join(dir, "other-skill");
+    await fs.mkdir(otherSource);
+    try {
+      await fs.symlink(otherSource, target);
+      const result = await ensurePaperclipSkillSymlink(source, target);
+      expect(result).toBe("skipped");
+      expect(await fs.readlink(target)).toBe(otherSource);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 });

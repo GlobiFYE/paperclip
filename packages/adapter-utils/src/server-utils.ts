@@ -4331,6 +4331,30 @@ export function writePaperclipSkillSyncPreference(
   return next;
 }
 
+async function linkPaperclipSkillIdempotently(
+  source: string,
+  target: string,
+  linkSkill: (source: string, target: string) => Promise<void>,
+): Promise<void> {
+  try {
+    await linkSkill(source, target);
+  } catch (err) {
+    const code =
+      err && typeof err === "object" ? (err as { code?: unknown }).code : null;
+    if (code !== "EEXIST") throw err;
+    // Concurrent skill syncs sharing the same target directory (e.g. runs
+    // sharing one Hermes profile) can race our existence check and both
+    // attempt to create the same symlink. When the occupying entry is a
+    // symlink to the expected source the desired state is already in place,
+    // so treat EEXIST as success and keep the sync idempotent.
+    const occupyingLink = await fs.readlink(target).catch(() => null);
+    const resolvedOccupyingLink = occupyingLink
+      ? path.resolve(path.dirname(target), occupyingLink)
+      : null;
+    if (resolvedOccupyingLink !== path.resolve(source)) throw err;
+  }
+}
+
 export async function ensurePaperclipSkillSymlink(
   source: string,
   target: string,
@@ -4341,7 +4365,7 @@ export async function ensurePaperclipSkillSymlink(
 ): Promise<"created" | "repaired" | "skipped"> {
   const existing = await fs.lstat(target).catch(() => null);
   if (!existing) {
-    await linkSkill(source, target);
+    await linkPaperclipSkillIdempotently(source, target, linkSkill);
     return "created";
   }
 
@@ -4365,8 +4389,12 @@ export async function ensurePaperclipSkillSymlink(
     return "skipped";
   }
 
-  await fs.unlink(target);
-  await linkSkill(source, target);
+  // A concurrent sync may remove the same dangling link between our check
+  // and this unlink; ENOENT means the desired state is already in place.
+  await fs.unlink(target).catch((err: NodeJS.ErrnoException) => {
+    if (err?.code !== "ENOENT") throw err;
+  });
+  await linkPaperclipSkillIdempotently(source, target, linkSkill);
   return "repaired";
 }
 
