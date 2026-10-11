@@ -124,6 +124,17 @@ auth_config() {
   printf 'header = "Authorization: Bearer %s"\n' "$PAPERCLIP_API_KEY"
 }
 
+helper_state_directory() {
+  printf '%s' "${PAPERCLIP_HELPER_STATE_DIR:-${PAPERCLIP_WORKSPACE_CWD:-$PWD}/.paperclip/artifact-helper}"
+}
+
+helper_response_file() {
+  local directory
+  directory="$(helper_state_directory)"
+  # TMPDIR can name a controller-owned directory outside a CLI sandbox.
+  (umask 077; mkdir -p "$directory" && mktemp "$directory/response.XXXXXX")
+}
+
 request_json() {
   local method="$1"
   local url="$2"
@@ -131,7 +142,7 @@ request_json() {
   local response_file
   local status_code
 
-  response_file="$(mktemp)"
+  response_file="$(helper_response_file)"
   if [[ -n "$body" ]]; then
     status_code="$(
       auth_config | curl --disable -sS -X "$method" -w '%{http_code}' -o "$response_file" \
@@ -174,7 +185,7 @@ upload_file() {
 
   escaped_path="${path//\\/\\\\}"
   escaped_path="${escaped_path//\"/\\\"}"
-  response_file="$(mktemp)"
+  response_file="$(helper_response_file)"
   status_code="$(
     auth_config | curl --disable -sS -X POST -w '%{http_code}' -o "$response_file" \
       "$url" \
@@ -234,7 +245,7 @@ acquire_operation_lock() {
   local attempts=0
 
   umask 077
-  operation_state_root="${PAPERCLIP_HELPER_STATE_DIR:-${TMPDIR:-/tmp}/paperclip-upload-artifact}"
+  operation_state_root="$(helper_state_directory)"
   mkdir -p "$operation_state_root"
   operation_lock_path="$operation_state_root/$operation_key.lock"
   operation_lock_owner="$$|$(process_start_identity "$$" || true)"
