@@ -10,7 +10,12 @@ describe("createUuid", () => {
   });
 
   it("uses crypto.randomUUID when available", () => {
-    expect(createUuid()).toMatch(UUID_V4);
+    const uuid = "12345678-1234-4123-8123-123456789abc";
+    const randomUUID = vi.fn(() => uuid);
+    vi.stubGlobal("crypto", { randomUUID });
+
+    expect(createUuid()).toBe(uuid);
+    expect(randomUUID).toHaveBeenCalledOnce();
   });
 
   it("falls back to a v4-shaped id when crypto.randomUUID is unavailable", () => {
