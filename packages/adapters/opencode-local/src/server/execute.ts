@@ -666,6 +666,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       });
       const proc = await runAdapterExecutionTargetProcess(runId, runtimeExecutionTarget, command, args, {
         onProcessStopped: providerStop.beginInvocation(),
+        // Keep a long sandbox run off the synchronous command HTTP request.
+        // Probes and preparation keep their existing execution paths.
+        useSession: true,
         cwd,
         env: preparedRuntimeConfig.env,
         stdin: prompt,

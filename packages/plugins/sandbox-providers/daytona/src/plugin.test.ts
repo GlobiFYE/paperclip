@@ -2512,6 +2512,43 @@ describe("Daytona sandbox provider plugin", () => {
         finally { clearInterval(timer); }
       }
 
+      it("completes a session command beyond a synchronous gateway deadline without redispatch", async () => {
+        process.env.DAYTONA_API_KEY = "host-key";
+        const sandbox = createMockSandbox();
+        sandbox.process.executeCommand.mockRejectedValue(new MockDaytonaTimeoutError("opaque gateway timeout"));
+        sandbox.process.getSessionCommand.mockResolvedValue({ exitCode: 0 });
+        sandbox.process.getSessionCommandLogs.mockImplementation(
+          async (_sid: string, _cmdId: string, onStdout?: (chunk: string) => void, onStderr?: (chunk: string) => void) => {
+            if (!onStdout) return { stdout: "first;last;", stderr: "" };
+            onStdout("first;");
+            await streamFor(3_600_001, onStderr);
+            onStdout("last;");
+          },
+        );
+        mockGet.mockResolvedValue(sandbox);
+        vi.useFakeTimers();
+        try {
+          const params = streamExecParams({ timeoutMs: 14_400_000 });
+          // Characterize the one-shot transport failure with the same command
+          // and budget, then exercise the existing asynchronous session path.
+          expect(await plugin.definition.onEnvironmentExecute?.({ ...params, bypassSession: true }))
+            .toMatchObject({ timedOut: true, exitCode: null });
+          sandbox.process.executeCommand.mockClear();
+          const pending = plugin.definition.onEnvironmentExecute?.(params);
+          await vi.advanceTimersByTimeAsync(3_600_002);
+          expect(await pending).toMatchObject({ timedOut: false, exitCode: 0, stdout: "first;last;" });
+          expect(sandbox.process.executeCommand).not.toHaveBeenCalled();
+          expect(sandbox.process.executeSessionCommand).toHaveBeenCalledTimes(1);
+          expect(sandbox.process.executeSessionCommand.mock.calls[0]![1]).toMatchObject({ runAsync: true });
+          expect(sandbox.process.executeSessionCommand.mock.calls[0]![2]).toBe(14400);
+          await plugin.definition.onEnvironmentReleaseLease?.({
+            driverKey: "daytona", companyId: "company-1", environmentId: "env-1",
+            providerLeaseId: "sandbox-123", config: params.config,
+          });
+          expect(sandbox.process.deleteSession).toHaveBeenCalledTimes(1);
+        } finally { vi.useRealTimers(); }
+      });
+
       it.each(["", "prefix;🙂;"])("recovers unseen output and cancellation from a stuck socket after prefix %j", async (prefix) => {
         process.env.DAYTONA_API_KEY = "host-key";
         const executionLog = vi.fn();

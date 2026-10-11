@@ -643,6 +643,14 @@ resolved policy describes the configured limit, not proof that its timer fired;
 stderr remains in the instance run log and is not used as the timeout exception
 message. An earlier provider timeout does not establish its upstream cause.
 
+Legacy OpenCode requests the sandbox provider's persistent process session for
+its main CLI command. Providers with the effective persistent-session capability
+use asynchronous dispatch and log observation instead of holding one synchronous
+command HTTP request open for the whole run. Probes and workspace preparation
+keep their existing paths. Local and SSH execution do not use this option.
+The resolved execution budget and lease cleanup remain unchanged; the session
+request does not prove that a previously observed gateway timeout had this cause.
+
 When settlement records a workspace restore failure, `run_execution` also
 includes `workspaceRestoreFailure` with one of the shared, path-free codes:
 `restore_permission_denied`, `restore_lock_timeout`, `restore_unsafe_archive`,
