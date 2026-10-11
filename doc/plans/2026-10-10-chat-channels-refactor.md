@@ -203,3 +203,20 @@ Slack connect journey: discovery, preview, outsider access request, duplicate
 request, member confirmation, provider notice, consumed-token rejection and
 endpoint isolation. Receipt queries, access-request transaction and notice
 payload retain their statements with explicit parameter substitutions.
+
+### Slice 4: publication replacement and supersession
+
+Move 13 functions into `publication-replacement.ts`. The module selects the exact
+provider message a publication can replace and suppresses obsolete progress. It
+uses the database, endpoint lookup and retained-source authorization callback.
+Transport execution, publication claims and receipt reactions remain coordinated
+by the service. No state or registration moves in this slice.
+
+- Source: 37,295 lines / 1,436,867 bytes → 36,393 lines / 1,400,636 bytes.
+- Destination: 963 lines / 38,724 bytes.
+- Baseline: all 51 checks and 5/5 review passed on slice 3 (`581dd656c1`, #15836).
+- All 13 bodies and every remaining statement match the predecessor exactly.
+  Server typecheck, module boundaries and whitespace checks pass.
+- Existing CI fixtures cover exact outbound ownership, interleaved control
+  messages, consumed progress, interactions, committed failure replacement and
+  issue-to-run lock order. Local database capacity remains blocked.
