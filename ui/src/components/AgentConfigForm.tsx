@@ -1304,7 +1304,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             : adapterType === "pi_local"
               ? [{ id: "", label: "Auto" }, ...["off", "minimal", "low", "medium", "high", "xhigh"].map(id => ({ id, label: id }))]
               : adapterType === "claude_local" || adapterType === "grok_local"
-                ? [{ id: "", label: "Auto" }, ...setupEfforts(adapterType, currentModelId).map((id) => ({
+                ? [{ id: "", label: "Auto" }, ...setupEfforts(adapterType, currentModelId, models).map((id) => ({
                     id,
                     label: id === "xhigh" ? "X-High" : id[0].toUpperCase() + id.slice(1),
                   }))]
@@ -1749,7 +1749,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 loadingModels={connectionModels?.isLoading ?? fetchingModels}
                 value={currentModelId}
                 onChange={(v) => {
-                  const supportedEfforts = setupEfforts(adapterType, v);
+                  const supportedEfforts = setupEfforts(adapterType, v, models);
                   const clearUnsupportedEffort = ["codex_local", "claude_local", "grok_local"].includes(adapterType)
                     && Boolean(currentThinkingEffort)
                     && !supportedEfforts.includes(String(currentThinkingEffort));
