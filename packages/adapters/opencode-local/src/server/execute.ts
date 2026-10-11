@@ -668,7 +668,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         onProcessStopped: providerStop.beginInvocation(),
         // Keep a long sandbox run off the synchronous command HTTP request.
         // Probes and preparation keep their existing execution paths.
-        useSession: true,
+        ...(runtimeExecutionTarget?.kind === "remote" && runtimeExecutionTarget.transport === "sandbox"
+          && runtimeExecutionTarget.providerKey === "daytona" ? { useSession: true } : {}),
         cwd,
         env: preparedRuntimeConfig.env,
         stdin: prompt,

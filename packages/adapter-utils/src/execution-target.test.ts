@@ -248,6 +248,8 @@ describe("runAdapterExecutionTargetProcess", () => {
     expect(call).toMatchObject({ command: "opencode", args: ["run"], cwd: "/workspace", timeoutMs: 14400000 });
     if (useSession === undefined) expect(call).not.toHaveProperty("useSession");
     else expect(call).toHaveProperty("useSession", useSession);
+    if (useSession === true) expect(call).toHaveProperty("commandTimeoutMs", 14400000);
+    else expect(call).not.toHaveProperty("commandTimeoutMs");
     expect(result).toEqual(completed);
     expect(execute).toHaveBeenCalledTimes(1);
     expect(onLog.mock.calls).toEqual([["stdout", "partial output"]]);

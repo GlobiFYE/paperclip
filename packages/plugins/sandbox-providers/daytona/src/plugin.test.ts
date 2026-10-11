@@ -2528,7 +2528,7 @@ describe("Daytona sandbox provider plugin", () => {
         mockGet.mockResolvedValue(sandbox);
         vi.useFakeTimers();
         try {
-          const params = streamExecParams({ timeoutMs: 14_400_000 });
+          const params = streamExecParams({ timeoutMs: 14_400_000, commandTimeoutMs: 14_400_000 });
           // Characterize the one-shot transport failure with the same command
           // and budget, then exercise the existing asynchronous session path.
           expect(await plugin.definition.onEnvironmentExecute?.({ ...params, bypassSession: true }))
@@ -2547,6 +2547,75 @@ describe("Daytona sandbox provider plugin", () => {
           });
           expect(sandbox.process.deleteSession).toHaveBeenCalledTimes(1);
         } finally { vi.useRealTimers(); }
+      });
+
+      it.each([undefined, 0])("preserves the existing healthy session lifetime with command timeout %s", async (commandTimeoutMs) => {
+        process.env.DAYTONA_API_KEY = "host-key";
+        const sandbox = createMockSandbox();
+        sandbox.process.getSessionCommand.mockResolvedValue({ exitCode: 0 });
+        sandbox.process.getSessionCommandLogs.mockImplementation(async (_s: string, _c: string, stdout?: (chunk: string) => void, stderr?: (chunk: string) => void) => {
+          if (!stdout) return { stdout: "done;", stderr: "" };
+          await streamFor(60_000, stderr);
+          stdout("done;");
+        });
+        mockGet.mockResolvedValue(sandbox);
+        vi.useFakeTimers();
+        try {
+          const pending = plugin.definition.onEnvironmentExecute?.(streamExecParams({ timeoutMs: 1000, commandTimeoutMs }));
+          await vi.advanceTimersByTimeAsync(60_000);
+          expect(await pending).toMatchObject({ timedOut: false, exitCode: 0, stdout: "done;" });
+          expect(vi.getTimerCount()).toBe(0);
+        } finally { vi.useRealTimers(); }
+      });
+
+      it.each(["stream", "status", "snapshot", "dispatch"])("preserves a command deadline during a healthy or stalled %s observation", async (phase) => {
+        process.env.DAYTONA_API_KEY = "host-key";
+        const executionLog = vi.fn();
+        const restore = __setDaytonaPluginContextForTest({ execution: { log: executionLog } } as unknown as PluginContext);
+        const sandbox = createMockSandbox();
+        let lateOutput: ((chunk: string) => void) | undefined;
+        let rejectStream: ((error: Error) => void) | undefined;
+        let keepAlive: ReturnType<typeof setInterval> | undefined;
+        sandbox.process.getSessionCommand.mockResolvedValue({ exitCode: undefined });
+        sandbox.process.getSessionCommandLogs.mockImplementation(async (_s: string, _c: string, stdout?: (chunk: string) => void) => {
+          if (!stdout) {
+            if (phase === "snapshot") return new Promise(() => {});
+            return { stdout: "first;", stderr: "" };
+          }
+          stdout("first;");
+          if (phase === "stream") {
+            lateOutput = stdout;
+            keepAlive = setInterval(() => stdout("."), 10000);
+            return new Promise((_resolve, reject) => { rejectStream = reject; });
+          }
+        });
+        if (phase === "status") sandbox.process.getSessionCommand.mockImplementation(async () => new Promise(() => {}));
+        if (phase === "dispatch") sandbox.process.executeSessionCommand.mockImplementation(async () => new Promise(() => {}));
+        mockGet.mockResolvedValue(sandbox);
+        vi.useFakeTimers();
+        try {
+          const pending = plugin.definition.onEnvironmentExecute?.(streamExecParams({ timeoutMs: 14_400_000, commandTimeoutMs: 60000 }));
+          let settled = false;
+          void pending?.then(() => { settled = true; });
+          await vi.advanceTimersByTimeAsync(59999);
+          expect(settled).toBe(false);
+          await vi.advanceTimersByTimeAsync(1);
+          const result = await pending;
+          expect(result).toMatchObject({ timedOut: true, exitCode: null });
+          expect(result?.stderr).toContain("Command timed out after 60 s.");
+          expect(sandbox.process.executeSessionCommand).toHaveBeenCalledTimes(1);
+          expect(sandbox.process.executeCommand).not.toHaveBeenCalled();
+          const logged = executionLog.mock.calls.length;
+          lateOutput?.("late private output");
+          rejectStream?.(new Error("late transport rejection"));
+          await vi.advanceTimersByTimeAsync(1);
+          expect(executionLog.mock.calls.length).toBe(logged);
+          expect(JSON.stringify(result)).not.toContain("late private");
+          clearInterval(keepAlive);
+          await plugin.definition.onEnvironmentReleaseLease?.({ driverKey: "daytona", companyId: "company-1", environmentId: "env-1", providerLeaseId: "sandbox-123", config: streamExecParams().config });
+          expect(sandbox.process.deleteSession).toHaveBeenCalledTimes(1);
+          expect(vi.getTimerCount()).toBe(0);
+        } finally { clearInterval(keepAlive); restore(); vi.useRealTimers(); }
       });
 
       it.each(["", "prefix;🙂;"])("recovers unseen output and cancellation from a stuck socket after prefix %j", async (prefix) => {
