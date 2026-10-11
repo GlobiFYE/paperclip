@@ -355,4 +355,84 @@ describeEmbeddedPostgres("budgetService release gate enforcement", () => {
     });
     expect(overviewAfterResume.activeIncidents).toHaveLength(0);
   });
+
+  it("overview skips policies whose scope row was deleted instead of failing with Agent not found (#3060)", async () => {
+    const { companyId, agentId, projectId } = await createBudgetFixture();
+    const orphanAgentId = randomUUID();
+    const service = budgetService(db);
+    await db.insert(budgetPolicies).values([
+      {
+        companyId,
+        scopeType: "agent",
+        scopeId: agentId,
+        metric: "billed_cents",
+        windowKind: "calendar_month_utc",
+        amount: 500,
+        warnPercent: 80,
+        hardStopEnabled: true,
+      },
+      {
+        // Simulates an orphan left behind by an agent deletion that did
+        // not clean up budget rows: the scope agent does not exist.
+        companyId,
+        scopeType: "agent",
+        scopeId: orphanAgentId,
+        metric: "billed_cents",
+        windowKind: "calendar_month_utc",
+        amount: 500,
+        warnPercent: 80,
+        hardStopEnabled: true,
+      },
+      {
+        companyId,
+        scopeType: "project",
+        scopeId: projectId,
+        metric: "billed_cents",
+        windowKind: "calendar_month_utc",
+        amount: 500,
+        warnPercent: 80,
+        hardStopEnabled: true,
+      },
+    ]);
+
+    const overview = await service.overview(companyId);
+    expect(overview.policies.map((policy) => policy.scopeId).sort()).toEqual([agentId, projectId].sort());
+  });
+
+  it("overview degrades incidents whose scope row was deleted instead of failing (#3060)", async () => {
+    const { companyId } = await createBudgetFixture();
+    const orphanAgentId = randomUUID();
+    const service = budgetService(db);
+    const [policy] = await db
+      .insert(budgetPolicies)
+      .values({
+        companyId,
+        scopeType: "agent",
+        scopeId: orphanAgentId,
+        metric: "billed_cents",
+        windowKind: "calendar_month_utc",
+        amount: 500,
+        warnPercent: 80,
+        hardStopEnabled: true,
+      })
+      .returning();
+    await db.insert(budgetIncidents).values({
+      companyId,
+      policyId: policy!.id,
+      scopeType: "agent",
+      scopeId: orphanAgentId,
+      metric: "billed_cents",
+      windowKind: "calendar_month_utc",
+      windowStart: new Date(),
+      windowEnd: new Date(),
+      thresholdType: "hard",
+      amountLimit: 500,
+      amountObserved: 600,
+      status: "open",
+    });
+
+    const overview = await service.overview(companyId);
+    expect(overview.activeIncidents).toHaveLength(1);
+    expect(overview.activeIncidents[0]).toMatchObject({ scopeId: orphanAgentId, scopeName: "agent" });
+  });
 });
