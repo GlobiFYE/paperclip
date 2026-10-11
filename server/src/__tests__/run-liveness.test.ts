@@ -322,6 +322,26 @@ describe("truncated final turn (model output limit) liveness", () => {
     expect(classification.livenessState).toBe("failed");
   });
 
+  it("keeps a failed run terminal when the length marker was written for a turn that delivered text", () => {
+    // The adapter records the marker for any length-stopped terminal turn and
+    // keeps it when the run fails for an unrelated reason. Only the
+    // empty-completion edge may trigger the continuation.
+    const classification = classifyRunLiveness({
+      ...baseInput,
+      runStatus: "failed",
+      error: "provider returned an error mid-run",
+      errorCode: "provider_error",
+      resultJson: {
+        finalStopReason: "length",
+        finalMessageEmpty: false,
+        summary: "Partial answer that was cut mid-sentence",
+      },
+    });
+
+    expect(classification.livenessState).toBe("failed");
+    expect(classification.livenessReason).not.toMatch(/output limit/i);
+  });
+
   it("keeps a succeeded run that delivered completion text plus durable progress advanced", () => {
     const latestEvidenceAt = new Date("2026-10-09T12:00:00Z");
     const classification = classifyRunLiveness({
