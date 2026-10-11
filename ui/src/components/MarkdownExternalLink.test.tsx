@@ -91,4 +91,22 @@ describe("MarkdownBody external object decoration", () => {
     });
     expect(html).toContain('aria-label="HubSpot Reconnect (Requires auth): Acme deal"');
   });
+
+  it("labels detected-but-unresolved GitHub objects as not yet refreshed, not not yet resolved", () => {
+    const html = render("See https://github.com/acme/web/pull/241", {
+      "https://github.com/acme/web/pull/241": {
+        providerKey: "github",
+        objectType: "pull_request",
+        displayKey: "Github Pull Request",
+        iconKey: "github",
+        statusCategory: "unknown",
+        liveness: "unknown",
+        statusLabel: null,
+        displayTitle: "acme/web#241",
+      },
+    });
+    expect(html).toContain("data-external-link=\"resolved\"");
+    expect(html).toContain('aria-label="Github Pull Request Not yet refreshed: acme/web#241"');
+    expect(html).not.toContain("Not yet resolved");
+  });
 });
