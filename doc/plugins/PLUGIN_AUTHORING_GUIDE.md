@@ -475,7 +475,9 @@ Authoring rules:
   project must list the session's agent, and the `actorUserId` user when
   given, as access members. Every send gets its own run; the host never
   merges it into a queued or running run of the same session, and runs of
-  one session run one after another. Older hosts
+  one session run one after another. Each send's `onEvent` receives only its
+  own run's events, so a chat relay can pass a different callback per
+  message. Older hosts
   drop `projectId` without any signal, so state a minimum host version if
   your plugin relies on it.
 - Use managed routines for recurring or externally triggered work that should

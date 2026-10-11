@@ -384,5 +384,30 @@ describe("plugin SDK test harness", () => {
         harness.ctx.agents.sessions.sendMessage(session.sessionId, "company-1", { prompt: "hello", projectId }),
       ).rejects.toThrow("Project not found");
     });
+
+    it("routes simulated events of each send's run to that send's onEvent", async () => {
+      const harness = sessionHarness(["agent.sessions.send"]);
+      const session = await harness.ctx.agents.sessions.create("agent-1", "company-1");
+      const seenA: string[] = [];
+      const seenB: string[] = [];
+      const a = await harness.ctx.agents.sessions.sendMessage(session.sessionId, "company-1", {
+        prompt: "first",
+        onEvent: (event) => seenA.push(event.message ?? ""),
+      });
+      const b = await harness.ctx.agents.sessions.sendMessage(session.sessionId, "company-1", {
+        prompt: "second",
+        onEvent: (event) => seenB.push(event.message ?? ""),
+      });
+      const event = (runId: string, message: string) =>
+        harness.simulateSessionEvent(session.sessionId, { runId, seq: 0, eventType: "done", stream: "system", message, payload: null });
+
+      event(a.runId, "answer a");
+      event(b.runId, "answer b");
+      // A run the harness did not create still reaches the latest callback.
+      event("run-unknown", "other");
+
+      expect(seenA).toEqual(["answer a"]);
+      expect(seenB).toEqual(["answer b", "other"]);
+    });
   });
 });

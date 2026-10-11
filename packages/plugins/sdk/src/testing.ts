@@ -140,7 +140,11 @@ export interface TestHarness {
   executeTool<T = ToolResult>(name: string, params: unknown, runCtx?: Partial<ToolRunContext>): Promise<T>;
   /** Read raw in-memory state for assertions. */
   getState(input: ScopeKey): unknown;
-  /** Simulate a streaming event arriving for an active session. */
+  /**
+   * Simulate a streaming event arriving for an active session. An event whose
+   * `runId` is one a `sendMessage` call returned goes to that send's
+   * `onEvent`; any other goes to the session's latest `onEvent`.
+   */
   simulateSessionEvent(sessionId: string, event: Omit<AgentSessionEvent, "sessionId">): void;
   logs: TestHarnessLogEntry[];
   activity: Array<{ message: string; entityType?: string; entityId?: string; metadata?: Record<string, unknown> }>;
@@ -576,7 +580,10 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
   const localFolderFiles = new Map<string, string>();
 
   const sessions = new Map<string, AgentSession>();
+  // Latest callback per session (fallback for events of runs the harness did
+  // not create), and each send's own callback keyed by its run id.
   const sessionEventCallbacks = new Map<string, (event: AgentSessionEvent) => void>();
+  const sessionRunCallbacks = new Map<string, { sessionId: string; onEvent: (event: AgentSessionEvent) => void }>();
 
   const events: EventRegistration[] = [];
   const jobs = new Map<string, (job: PluginJobContext) => Promise<void>>();
@@ -2284,10 +2291,12 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           if (opts.projectId && !isInCompany(projects.get(opts.projectId), companyId)) {
             throw new Error("Project not found");
           }
+          const runId = randomUUID();
           if (opts.onEvent) {
             sessionEventCallbacks.set(sessionId, opts.onEvent);
+            sessionRunCallbacks.set(runId, { sessionId, onEvent: opts.onEvent });
           }
-          return { runId: randomUUID() };
+          return { runId };
         },
         async close(sessionId, companyId) {
           requireCapability(manifest, capabilitySet, "agent.sessions.close");
@@ -2296,6 +2305,9 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           if (session.companyId !== companyId) throw new Error(`Session not found: ${sessionId}`);
           session.status = "closed";
           sessionEventCallbacks.delete(sessionId);
+          for (const [runId, owner] of sessionRunCallbacks) {
+            if (owner.sessionId === sessionId) sessionRunCallbacks.delete(runId);
+          }
         },
       },
     },
@@ -2688,7 +2700,8 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
       return state.get(stateMapKey(input));
     },
     simulateSessionEvent(sessionId, event) {
-      const cb = sessionEventCallbacks.get(sessionId);
+      const owner = sessionRunCallbacks.get(event.runId);
+      const cb = owner?.sessionId === sessionId ? owner.onEvent : sessionEventCallbacks.get(sessionId);
       if (!cb) throw new Error(`No active session event callback for session: ${sessionId}`);
       cb({ ...event, sessionId });
     },

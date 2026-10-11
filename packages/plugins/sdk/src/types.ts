@@ -1794,6 +1794,11 @@ export interface PluginAgentSessionsClient {
      * it must state a minimum host version.
      */
     projectId?: string;
+    /**
+     * Receives the events of this send's own run only, including events that
+     * arrive before `sendMessage` returns. Released after the run's `done` or
+     * `error` event, or when the session is closed.
+     */
     onEvent?: (event: AgentSessionEvent) => void;
   }): Promise<AgentSessionSendResult>;
 

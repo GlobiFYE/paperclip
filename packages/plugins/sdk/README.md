@@ -1299,6 +1299,13 @@ several runs at once: a send made while a run of that session is running
 waits in the queue until that run finishes, because both runs resume and
 save the same session conversation.
 
+Each send's `onEvent` receives only the events of the run that send created,
+including events that arrive before `sendMessage` returns. Two sends on one
+session can therefore pass different callbacks, for example one per relayed
+chat message, and each answer reaches its own callback. A send's callback is
+released after its run's `done` or `error` event, or when the session is
+closed.
+
 Older hosts silently drop `projectId` (and `actorUserId`), and there is no
 runtime signal that tells a plugin whether the host applied them. A plugin
 that relies on project scoping must state the minimum Paperclip host version
