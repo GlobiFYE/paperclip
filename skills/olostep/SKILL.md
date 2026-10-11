@@ -1,12 +1,9 @@
 ---
 name: olostep
 description: >
-  Scrape webpages, search Google, crawl sites, batch-scrape URLs, map site
-  structure, and get AI-powered answers using the Olostep API. Use when your
-  task requires fetching live web content — research, competitor analysis,
-  documentation scraping, error debugging, data extraction, or any work that
-  needs real-time information from the internet. Do NOT use for Paperclip
-  coordination (use the paperclip skill for that).
+  Fetch live web data with the Olostep API: scrape pages, search Google, crawl
+  sites, batch-scrape URLs, map site structure, and get cited answers. Use for
+  research, docs scraping and data extraction. Not for Paperclip coordination.
 ---
 
 # Olostep Web Skill
