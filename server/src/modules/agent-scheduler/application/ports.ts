@@ -30,12 +30,20 @@ export type AgentSchedulerHost = {
 
 export type AgentSchedulerWriter = {
   listRunnableWakes(agentId: string, limit: number): Promise<RunnableWakeRow[]>;
+  countRunnableWakes(agentId: string): Promise<number>;
   parkWakeAsRunnable(input: {
     wakeRequestId: string;
     companyId: string;
     agentId: string;
     enqueueReason: string;
     schedulerMeta: Record<string, unknown>;
+  }): Promise<boolean>;
+  tryClaimRunnableWake(wakeId: string): Promise<boolean>;
+  releaseClaimedRunnableWake(input: {
+    wakeId: string;
+    companyId: string;
+    agentId: string;
+    enqueueReason: string;
   }): Promise<void>;
   materializeRunnableWake(input: {
     wake: RunnableWakeRow;

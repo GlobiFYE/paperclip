@@ -22,8 +22,14 @@ export type AgentSchedulerDeps = {
 
 export function createAgentScheduler(db: Db, host: AgentSchedulerHost, deps: AgentSchedulerDeps = {}) {
   const writer = deps.adapter ?? createPostgresAgentSchedulerAdapter(db);
+  const evaluateAdmissionForDb = (conn: Db) =>
+    createEvaluateAgentSchedulerAdmission({
+      host,
+      writer: deps.adapter ?? createPostgresAgentSchedulerAdapter(conn),
+    });
   return {
-    evaluateAdmission: createEvaluateAgentSchedulerAdmission({ host, writer }),
+    evaluateAdmission: evaluateAdmissionForDb(db),
+    evaluateAdmissionForDb,
     promoteRunnableWork: createPromoteAgentRunnableWork({ host, writer }),
     readAgentParallelExecutionAllowed,
   };
