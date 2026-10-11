@@ -59,9 +59,11 @@ export function redactTruncatedWorkspaceOperationOutput(value: string): string {
   if (!prefix) return value;
   const tail = value.slice(prefix.length);
   const end = authorityEnd(tail);
-  if (end === 0) return value;
+  const nextUrl = nextUrlPrefixBeforeBoundary(tail, end);
+  const unknownEnd = nextUrl ?? end;
+  if (unknownEnd === 0) return value;
   // The preceding bytes were discarded, so this first token cannot be classified safely.
-  return prefix + redactAuthority(tail.slice(0, end), true) + tail.slice(end);
+  return prefix + redactAuthority(tail.slice(0, unknownEnd), true) + tail.slice(unknownEnd);
 }
 
 /** An old 4096-character excerpt may start in the middle of URL userinfo. */
@@ -70,7 +72,7 @@ export function redactWorkspaceOperationExcerpt(value: string | null): string | 
   const sanitized = redactWorkspaceOperationUrlUserInfo(redactTruncatedWorkspaceOperationOutput(value));
   const captureMarker = TRUNCATED_OUTPUT_PREFIX_RE.exec(sanitized)?.[0] ?? "";
   return captureMarker + sanitized.slice(captureMarker.length)
-    .replace(/([^/]+)@(?=(?:\[[^\]\s/?#@]+\]|[a-z0-9.-]+)?(?::\d+)?(?:[/?#\s"'<>;,}]|$))/gi, `${REDACTED_USERINFO}@`);
+    .replace(/([^/]+)@(?=(?:\[[^\]\s/?#@]+\]|[^/?#\s"'<>;,}@]+)?(?::\d+)?(?:[/?#\s"'<>;,}]|$))/gi, `${REDACTED_USERINFO}@`);
 }
 
 export function redactWorkspaceOperationUrls<T>(value: T): T {
@@ -128,12 +130,22 @@ export function createWorkspaceOperationByteRangeScanner() {
     while (state.pending) {
       if (state.droppingUserInfo) {
         const boundary = authorityEnd(state.pending, true);
-        mark(state.positions.slice(0, boundary));
+        const nextUrl = nextUrlPrefixBeforeBoundary(state.pending, boundary);
+        if (nextUrl !== null) {
+          mark(state.positions.slice(0, nextUrl));
+          state.pending = state.pending.slice(nextUrl);
+          state.positions = state.positions.slice(nextUrl);
+          state.droppingUserInfo = false;
+          continue;
+        }
         if (boundary === state.pending.length) {
-          state.pending = "";
-          state.positions = [];
+          const keep = PARTIAL_URL_PREFIX_RE.exec(state.pending)?.[0].length ?? 0;
+          mark(state.positions.slice(0, state.pending.length - keep));
+          state.pending = state.pending.slice(state.pending.length - keep);
+          state.positions = state.positions.slice(state.positions.length - keep);
           return;
         }
+        mark(state.positions.slice(0, boundary));
         state.pending = state.pending.slice(boundary + 1);
         state.positions = state.positions.slice(boundary + 1);
         state.droppingUserInfo = false;
@@ -183,11 +195,13 @@ export function createWorkspaceOperationByteRangeScanner() {
       if (truncatedPrefix) {
         const tail = rawChunk.slice(truncatedPrefix.length);
         const end = authorityEnd(tail, true);
-        if (end > 0) {
-          const separator = tail.slice(0, end).lastIndexOf("@");
+        const nextUrl = nextUrlPrefixBeforeBoundary(tail, end);
+        const unknownEnd = nextUrl ?? end;
+        if (unknownEnd > 0) {
+          const separator = tail.slice(0, unknownEnd).lastIndexOf("@");
           ranges.push({
             start: byteOffset + truncatedPrefix.length,
-            end: byteOffset + truncatedPrefix.length + (separator > 0 ? separator : end),
+            end: byteOffset + truncatedPrefix.length + (separator > 0 ? separator : unknownEnd),
           });
         }
       }
@@ -200,7 +214,11 @@ export function createWorkspaceOperationByteRangeScanner() {
     },
     finish(): WorkspaceOperationMaskedByteRange[] {
       for (const state of states.values()) {
-        if (state.droppingUserInfo) continue;
+        if (state.droppingUserInfo) {
+          // A retained scheme-like suffix is still userinfo if no later chunk completes it.
+          mark(state.positions);
+          continue;
+        }
         URL_PREFIX_RE.lastIndex = 0;
         const match = URL_PREFIX_RE.exec(state.pending);
         if (match) {
@@ -225,6 +243,7 @@ export function createWorkspaceOperationByteRangeScanner() {
 export function createWorkspaceOperationUrlStreamRedactor() {
   let pending = "";
   let droppingUserInfo = false;
+  let droppingPending = "";
 
   function consume(chunk: string, final = false): string {
     let input = pending + chunk;
@@ -232,10 +251,19 @@ export function createWorkspaceOperationUrlStreamRedactor() {
     let output = "";
 
     if (droppingUserInfo) {
+      input = droppingPending + input;
+      droppingPending = "";
       const boundary = authorityEnd(input);
-      if (boundary === input.length) return output;
-      output += input[boundary];
-      input = input.slice(boundary + 1);
+      const nextUrl = nextUrlPrefixBeforeBoundary(input, boundary);
+      if (nextUrl !== null) {
+        input = input.slice(nextUrl);
+      } else if (boundary === input.length) {
+        if (!final) droppingPending = PARTIAL_URL_PREFIX_RE.exec(input)?.[0] ?? "";
+        return output;
+      } else {
+        output += input[boundary];
+        input = input.slice(boundary + 1);
+      }
       droppingUserInfo = false;
     }
 

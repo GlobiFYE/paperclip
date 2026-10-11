@@ -54,6 +54,43 @@ describe("workspace operation URL redaction", () => {
     }
   });
 
+  it("keeps a full URL recognizable after a truncated capture marker", () => {
+    const marker = "[output truncated to last 262144 bytes; total 262200 bytes]\n";
+    const url = "postgres://synthetic-reader:synthetic-password@db_internal/app";
+    const captured = marker + url;
+    expect(redactTruncatedWorkspaceOperationOutput(captured)).toBe(captured);
+    const redactor = createWorkspaceOperationUrlStreamRedactor();
+    const output = redactor.push(redactTruncatedWorkspaceOperationOutput(captured)) + redactor.flush();
+    expect(output).toBe(marker + "postgres://[REDACTED]@db_internal/app");
+    expect(redactWorkspaceOperationExcerpt(captured)).not.toContain("synthetic-password");
+  });
+
+  it("recognizes a second URL after the first userinfo exceeds the pending limit", () => {
+    for (const nextChunks of [
+      ["\npostgres:/", "/synthetic-reader:synthetic-password@db_internal/app"],
+      ["\npost", "gres:/", "/synthetic-reader:synthetic-password@db_internal/app"],
+    ]) {
+      const redactor = createWorkspaceOperationUrlStreamRedactor();
+      const output = redactor.push("postgres://" + "a".repeat(8200))
+        + nextChunks.map((chunk) => redactor.push(chunk)).join("")
+        + redactor.flush();
+      // The newline is part of the unknown, truncated authority and is conservatively hidden.
+      expect(output).toBe("postgres://[REDACTED]postgres://[REDACTED]@db_internal/app");
+      expect(output).not.toContain("synthetic-password");
+    }
+  });
+
+  it("masks an unfinished scheme-like suffix after capped historical userinfo", () => {
+    const first = "postgres://" + "a".repeat(8200);
+    const second = "post";
+    const scanner = createWorkspaceOperationByteRangeScanner();
+    scanner.feed("stdout", first, 0);
+    scanner.feed("stdout", second, first.length);
+    const masked = Buffer.from(first + second);
+    for (const range of scanner.finish()) masked.fill(0x2a, range.start, range.end);
+    expect(masked.toString("utf8")).toBe("postgres://" + "*".repeat(8204));
+  });
+
   it("accepts an apostrophe inside userinfo and hostless PostgreSQL excerpts", () => {
     const credential = "synthetic-reader:it's-a-password";
     const url = `postgresql://${credential}@db.example.test/app`;
@@ -237,6 +274,31 @@ describe("workspace operation URL redaction", () => {
         }
         expect(await fs.readFile(filePath)).toEqual(original);
       }
+    });
+
+    it("masks a full URL after a truncated marker and a second URL after long userinfo", async () => {
+      const store = createLocalFileWorkspaceOperationLogStore(logRoot);
+      const handle = await store.begin({ companyId: randomUUID(), operationId: randomUUID() });
+      const credential = "synthetic-reader:synthetic-password";
+      const url = `postgres://${credential}@db_internal/app`;
+      const ts = new Date().toISOString();
+      await store.append(handle, {
+        stream: "stdout",
+        chunk: `[output truncated to last 262144 bytes; total 262200 bytes]\n${url}`,
+        ts,
+      });
+      await store.append(handle, { stream: "stderr", chunk: "postgres://" + "a".repeat(8200), ts });
+      await store.append(handle, { stream: "stderr", chunk: "\npostgres:/", ts });
+      await store.append(handle, { stream: "stderr", chunk: "/" + url.slice("postgres://".length), ts });
+      const filePath = path.join(logRoot, handle.logRef);
+      const original = await fs.readFile(filePath);
+      expect(original.toString("utf8").split(credential)).toHaveLength(3);
+
+      const page = await store.read(handle, { offset: 0, limitBytes: original.length });
+      expect(page.content).not.toContain(credential);
+      expect(page.content).not.toContain("synthetic-password");
+      expect(page.content).toContain("postgres://" + "*".repeat(credential.length) + "@db_internal/app");
+      expect(await fs.readFile(filePath)).toEqual(original);
     });
 
     it("masks raw @ and escaped quote across historical NDJSON events and byte pages", async () => {
