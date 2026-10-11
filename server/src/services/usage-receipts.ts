@@ -187,7 +187,7 @@ export async function recoverPendingRunUsageReceipts(db: Db, input: { companyId:
   throw new Error("Accounting spool changed during recovery; retry required");
 }
 
-export async function createRunUsageRecorder(db: Db, input: { companyId: string; runId: string; adapterType: string }, directory = usageReceiptSpoolPath()) {
+export async function createRunUsageRecorder(db: Db, input: { companyId: string; runId: string; adapterType: string; aiRouting?: unknown }, directory = usageReceiptSpoolPath()) {
   registerIdleSpoolDirectory(directory);
   const sourceId = randomUUID();
   // Verify durable storage before starting paid work, including a directory
@@ -248,7 +248,7 @@ export async function createRunUsageRecorder(db: Db, input: { companyId: string;
     if (!attempts.has(attempt)) currentAttempt = attempt;
     const previous = attempts.get(attempt);
     const priced = priceDeepSeekReceipt(priceAnthropicReceipt(priceCodexReceipt({ ...parsed, usage: parsed.usage ?? previous?.usage,
-      complete: parsed.complete && !(previous?.usage && !parsed.usage) })));
+      complete: parsed.complete && !(previous?.usage && !parsed.usage) })), new Date(), input.aiRouting);
     priced.pricingProvenance ??= {
       source: priced.costUsd != null || priced.costUsdExact != null || priced.cacheAdjustedCostUsd != null ? "provider_reported" : "unknown",
       version: "accounting-receipt/v1",

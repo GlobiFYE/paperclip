@@ -31,24 +31,35 @@ function normalizeDeepSeekModel(model: string): string {
 }
 
 /**
+ * Only a native DeepSeek connection may be priced by this card.
+ *
+ * The model id alone is not enough: OpenRouter, a custom gateway, or a local
+ * OpenAI-compatible endpoint can serve the same DeepSeek model id at different
+ * (or zero) rates. Provider/biller labels are not enough either, because each
+ * harness reports its own (`paperclip` on OpenCode, `openai`/`unknown` on Codex,
+ * `anthropic` on Claude). The server therefore passes the connection's routing
+ * descriptor, which the projection already synthesizes as `kind: "deepseek"`.
+ */
+function isNativeDeepSeekRoute(routing: unknown): boolean {
+  return typeof routing === "object" && routing !== null && (routing as { kind?: unknown }).kind === "deepseek";
+}
+
+/**
  * Price new DeepSeek receipts that the harness left unpriced.
  *
- * The projected `paperclip` provider (an `@ai-sdk/openai-compatible` provider
- * pointed at api.deepseek.com) is not a models.dev provider, so OpenCode emits
- * cost 0 / unknown. This card fills that gap on the server so budget and spend
- * work. A real provider-reported cost always wins.
+ * The projected provider (an `@ai-sdk/openai-compatible` provider pointed at
+ * api.deepseek.com, or the `paperclip` Codex stanza) is not a models.dev
+ * provider, so the harness emits cost 0 / unknown. This card fills that gap on
+ * the server so budget and spend work. A real provider-reported cost always
+ * wins.
  */
 export function priceDeepSeekReceipt(
   receipt: AdapterUsageCheckpoint,
   now: Date = new Date(),
+  routing?: unknown,
 ): AdapterUsageCheckpoint {
   if (
-    // Only the projected `paperclip` provider is priced here. The model name
-    // alone is not enough: an OpenRouter/custom route can serve a DeepSeek model
-    // id at different (or zero) rates, and the neighbors (`codex-pricing`,
-    // `anthropic-pricing`) gate on provider and biller the same way.
-    receipt.provider !== "paperclip" ||
-    receipt.biller !== "paperclip" ||
+    !isNativeDeepSeekRoute(routing) ||
     !receipt.complete ||
     !receipt.usage ||
     receipt.usageBasis !== "per_run" ||
