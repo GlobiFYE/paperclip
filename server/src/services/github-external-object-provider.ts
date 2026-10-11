@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { Db } from "@paperclipai/db";
 import type { ExternalObjectCanonicalUrl } from "@paperclipai/shared";
 import { DEFAULT_GITHUB_TOKEN_SECRET_NAMES } from "./git-credentials.js";
@@ -382,19 +383,22 @@ export function createGitHubExternalObjectProvider(
   const tokenProvider = Object.prototype.hasOwnProperty.call(opts, "tokenProvider") && opts.tokenProvider !== undefined
     ? opts.tokenProvider
     : ((companyId: string) => defaultTokenProvider(db, companyId, secretNames));
-
-  // Cache repository-visibility probe results so many objects in the same repo
+// Cache repository-visibility probe results so many objects in the same repo
   // share a single probe instead of each issuing its own request every refresh
   // cycle. Only determined outcomes ("visible"/"hidden") are cached; uncertain
-  // probes are retried on the next cycle. The cache is keyed per company+repo
-  // because visibility is a property of the credential, which is company-scoped.
+  // probes are retried on the next cycle. The cache is keyed per company+repo+
+  // credential fingerprint so a verdict obtained under one token is never
+  // reused after the company rotates its credentials — that would freeze a
+  // reference as "probe-verified not-found" using an out-of-date result.
+
   const probeCache = new Map<string, { result: "visible" | "hidden"; expiresAt: number }>();
   async function cachedProbeRepoVisibility(
     companyId: string,
     identity: GitHubObjectIdentity,
     headers: Record<string, string>,
   ): Promise<"visible" | "hidden" | "uncertain"> {
-    const key = `${companyId}\u0000${identity.owner.toLowerCase()}\u0000${identity.repo.toLowerCase()}`;
+    const credentialFingerprint = createHash("sha256").update(headers.authorization ?? "anonymous").digest("hex");
+    const key = `${companyId}\u0000${credentialFingerprint}\u0000${identity.owner.toLowerCase()}\u0000${identity.repo.toLowerCase()}`;
     const cached = probeCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.result;
     const result = await probeRepoVisibility(identity, { fetch: fetchImpl, headers });

@@ -404,6 +404,49 @@ describe("GitHub external object provider", () => {
     expect(fetch.mock.calls.filter(([url]) => String(url).endsWith("/repos/acme/app"))).toHaveLength(1);
   });
 
+  it("does not reuse a cached probe verdict across credential changes", async () => {
+    const fetch = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url.endsWith("/repos/acme/app")) {
+        const auth = (init?.headers as Record<string, string> | undefined)?.authorization;
+        if (auth === "Bearer token-A" || auth === "Bearer token-B") {
+          return new Response(JSON.stringify({ full_name: "acme/app" }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response("", { status: 404 });
+      }
+      return new Response("", { status: 404, headers: { etag: '"missing"' } });
+    });
+    let token: string | null = "token-A";
+    const provider = createGitHubExternalObjectProvider({} as any, {
+      fetch,
+      tokenProvider: async () => token,
+    });
+    const resolver = provider.resolvers.find((entry) => entry.objectType === "pull_request")!;
+
+    const visibleVerdict = await resolver.resolve({ companyId: "company-1", object: githubObject("pull/42", "pull_request") });
+
+    // Same repo, same credentials: probe result is reused.
+    await resolver.resolve({ companyId: "company-1", object: githubObject("pull/99", "pull_request") });
+    const probesUnderTokenA = fetch.mock.calls.filter(([url]) => String(url).endsWith("/repos/acme/app"));
+    expect(probesUnderTokenA).toHaveLength(1);
+
+    // Credential now only has access to a different repo — cache must not
+    // serve the stale "visible" verdict, or this object would be frozen as a
+    // probe-verified not-found forever.
+    token = "other-token";
+    const hiddenVerdict = await resolver.resolve({ companyId: "company-1", object: githubObject("pull/10", "pull_request") });
+
+    expect(visibleVerdict).toEqual(
+      expect.objectContaining({ ok: true, snapshot: expect.objectContaining({ isTerminal: true }) }),
+    );
+    expect(hiddenVerdict).toEqual(
+      expect.objectContaining({ ok: false, liveness: "auth_required", errorCode: "github_repo_not_accessible" }),
+    );
+    expect(fetch.mock.calls.filter(([url]) => String(url).endsWith("/repos/acme/app"))).toHaveLength(2);
+  });
+
   it("classifies a 404 as auth-required when the repository itself is hidden", async () => {
     const fetch = vi.fn(async (url: string) => {
       if (url.endsWith("/repos/acme/app")) {
