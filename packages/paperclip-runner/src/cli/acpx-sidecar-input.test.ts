@@ -1,3 +1,7 @@
+import { createRequire } from "node:module";
+import { readdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -126,6 +130,66 @@ describe("ACPX sidecar input sequencing", () => {
     expect(acpxSidecarErrorCode(new Error("wrapped", { cause: error }))).toBe(code);
   });
 
+  it.each(["RESOLUTION", "OPEN", "BOUNDS", "ANCESTRY", "FORMAT", "PATH_IDENTITY", "READ_RESULT",
+    "SIZE", "DEVICE", "INODE", "MODE", "UID", "GID", "LINK_COUNT", "MTIME", "BYTE_CONTINUITY", "REPEATED_CTIME"])(
+    "preserves only closed module fence %s", fence => {
+      const classify = (marker: string) => acpxSidecarErrorCode(Object.assign(new Error("private-canary"), {
+        detailCode: "AGENT_STARTUP_FAILED", stderrSummary: `${marker}\nprivate-canary /secret`, exitCode: 1,
+      }));
+      expect(classify(`PAPERCLIP_ACPX_IMPORT_FAILURE:UNVERIFIED_MODULE:${fence}`))
+        .toBe(`AGENT_STARTUP_FAILED.UNVERIFIED_MODULE.${fence}`);
+      for (const suffix of ["PRIVATE_CANARY", `${fence} private-canary`, `${fence}.PRIVATE_CANARY`]) {
+        expect(classify(`PAPERCLIP_ACPX_IMPORT_FAILURE:UNVERIFIED_MODULE:${suffix}`))
+          .toBe("AGENT_STARTUP_FAILED.EXIT_NONZERO");
+      }
+    },
+  );
+
+  it.each(["RESOLUTION", "OPEN", "BOUNDS", "ANCESTRY", "FORMAT", "PATH_IDENTITY", "READ_RESULT",
+    "SIZE", "DEVICE", "INODE", "MODE", "UID", "GID", "LINK_COUNT", "MTIME", "BYTE_CONTINUITY", "REPEATED_CTIME"])(
+    "preserves delimited fence %s through ACPX stderr summarization", fence => {
+      // ACPX 0.13.1 summarizeStartupStderr collapses whitespace before exposing
+      // AgentStartupError.stderrSummary; line boundaries do not survive.
+      const summarize = (stderr: string) => stderr.replace(/\s+/gu, " ").trim().slice(0, 8192);
+      const classify = (stderr: string) => acpxSidecarErrorCode(Object.assign(new Error("private-canary"), {
+        detailCode: "AGENT_STARTUP_FAILED", stderrSummary: summarize(stderr), exitCode: 1,
+      }));
+      expect(classify(`prior diagnostic\nPAPERCLIP_ACPX_IMPORT_FAILURE:UNVERIFIED_MODULE:${fence}:END\nError: private-canary /secret\ncode: ERR_ACPX_UNVERIFIED_MODULE`))
+        .toBe(`AGENT_STARTUP_FAILED.UNVERIFIED_MODULE.${fence}`);
+      for (const marker of [
+        `UNVERIFIED_MODULE:${fence}:EN`,
+        `UNVERIFIED_MODULE:${fence}:END_PRIVATE_CANARY`,
+        `UNVERIFIED_MODULE:${fence}.PRIVATE_CANARY:END`,
+        "UNVERIFIED_MODULE:PRIVATE_CANARY:END",
+      ]) {
+        expect(classify(`PAPERCLIP_ACPX_IMPORT_FAILURE:${marker}\nprivate-canary`))
+          .toBe("AGENT_STARTUP_FAILED.EXIT_NONZERO");
+      }
+    },
+  );
+
+  it.each(["OTHER", "UNVERIFIED_MODULE"])("classifies closed import marker %s without private stderr", category => {
+    const classify = (stderrSummary: string) => acpxSidecarErrorCode(Object.assign(new Error("private-canary"), {
+      detailCode: "AGENT_STARTUP_FAILED", stderrSummary, exitCode: 1,
+    }));
+    expect(classify(`PAPERCLIP_ACPX_IMPORT_FAILURE:${category}\nprivate-canary /secret`))
+      .toBe(`AGENT_STARTUP_FAILED.${category}`);
+    expect(classify(`private-canary PAPERCLIP_ACPX_IMPORT_FAILURE:OTHER\n`))
+      .toBe("AGENT_STARTUP_FAILED.EXIT_NONZERO");
+    expect(classify(`PAPERCLIP_ACPX_IMPORT_FAILURE:OTHER private-canary\n`))
+      .toBe("AGENT_STARTUP_FAILED.EXIT_NONZERO");
+  });
+
+  it.each([
+    ["Error [ERR_MODULE_NOT_FOUND]: private-canary", "MODULE_NOT_FOUND"],
+    ["SyntaxError: private-canary", "SYNTAX_ERROR"],
+  ])("preserves detailed closed startup category with a generic import marker (%s)", (detail, category) => {
+    expect(acpxSidecarErrorCode(Object.assign(new Error("private-canary"), {
+      detailCode: "AGENT_STARTUP_FAILED",
+      stderrSummary: `PAPERCLIP_ACPX_IMPORT_FAILURE:OTHER\n${detail}`,
+    }))).toBe(`AGENT_STARTUP_FAILED.${category}`);
+  });
+
   it("preserves stable ACPX error identities without copying startup stderr", () => {
     const missingModule = Object.assign(new Error("provider exited"), {
       detailCode: "AGENT_STARTUP_FAILED",
@@ -184,5 +248,33 @@ describe("ACPX sidecar input sequencing", () => {
     expect(acpxSidecarErrorCode(nestedHandshake)).toBe(
       "ACPX_SESSION_HANDSHAKE_TIMEOUT",
     );
+  });
+});
+
+
+describe("closed link-count failure detail", () => {
+  const classify = (detail: string) => acpxSidecarErrorCode(Object.assign(new Error("private-canary"), {
+    detailCode: "AGENT_STARTUP_FAILED", stderrSummary: `PAPERCLIP_ACPX_IMPORT_FAILURE:UNVERIFIED_MODULE:LINK_COUNT:END PAPERCLIP_ACPX_LINK_COUNT:${detail}:END private-canary /secret`,
+  }));
+  it.each(["1:1:2:I:11111110", "2:2:1:D:11111101", "1:0:18446744073709551615:I:11111111"])("preserves bounded metadata %s", detail => {
+    expect(classify(detail)).toBe(`AGENT_STARTUP_FAILED.UNVERIFIED_MODULE.LINK_COUNT.READ.${detail.replaceAll(":", ".")}`);
+  });
+  it.each(["0:1:2:I:11111110", "3:1:2:I:11111110", "1:-1:2:I:11111110", "1:01:2:I:11111110", "1:1:18446744073709551616:I:11111110", "1:1:2:D:11111110", "1:1:1:I:11111110", "1:1:2:I:01111110", "1:1:2:I:111111100", "1:1:2:I:11111110.PRIVATE", "1:1:2:I:11111110:END_PRIVATE"])("drops malformed metadata without dropping fence: %s", detail => {
+    expect(classify(detail)).toBe("AGENT_STARTUP_FAILED.UNVERIFIED_MODULE.LINK_COUNT");
+  });
+  it("survives the installed ACPX summarizer without leaking or accepting truncated details", async () => {
+    const directory = dirname(createRequire(import.meta.url).resolve("acpx/runtime"));
+    const chunk = (await readdir(directory)).find(name => /^live-checkpoint-.*\.js$/.test(name));
+    expect(chunk).toBeDefined();
+    const exports = await import(pathToFileURL(join(directory, chunk!)).href);
+    const client = Object.values(exports).find(value => typeof value === "function" && typeof value.prototype?.summarizeStartupStderr === "function") as { prototype: { summarizeStartupStderr: (parts: string[]) => string } };
+    const base = "PAPERCLIP_ACPX_IMPORT_FAILURE:UNVERIFIED_MODULE:LINK_COUNT:END";
+    const detail = "PAPERCLIP_ACPX_LINK_COUNT:1:2:1:D:11111110:END";
+    for (const complete of [true, false]) {
+      const summary = client.prototype.summarizeStartupStderr([`${base}\n${complete ? detail : detail.slice(0, -1)}\nprivate-canary /secret`]);
+      const code = acpxSidecarErrorCode(Object.assign(new Error("private-canary"), { detailCode: "AGENT_STARTUP_FAILED", stderrSummary: summary }));
+      expect(code).toBe(`AGENT_STARTUP_FAILED.UNVERIFIED_MODULE.LINK_COUNT${complete ? ".READ.1.2.1.D.11111110" : ""}`);
+      expect(code).not.toMatch(/private|secret/);
+    }
   });
 });

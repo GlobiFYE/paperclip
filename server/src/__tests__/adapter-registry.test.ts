@@ -313,6 +313,46 @@ describe("server adapter registry", () => {
     });
   });
 
+  it("probes native Codex through CLI on a persistent computer without changing agent config", async () => {
+    const config = { provider: "codex", model: "gpt-5.4", env: { OPENAI_API_KEY: "test-key" } };
+    const execute = vi.fn(async (input: { command: string; args?: string[] }) => ({
+      exitCode: 0, timedOut: false, stderr: "", signal: null, pid: null, startedAt: new Date().toISOString(),
+      stdout: input.args?.includes("--json") ? JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "hello" } })
+        : input.args?.includes("--version") ? "codex-cli 0.135.0" : "",
+    }));
+    const result = await requireServerAdapter("paperclip_runner").testEnvironment({
+      companyId: "company-1", adapterType: "paperclip_runner", config,
+      executionTarget: { kind: "remote", transport: "computer", remoteCwd: "/workspace", resourceAuthority: { computerId: "computer" },
+        workspaceRealization: { mode: "in_place", authoritativeRoot: "/workspace", pathAliases: [], outboundRestorePaths: [] },
+        runner: { execute },
+      } as never,
+    });
+    expect(result.checks).toContainEqual(expect.objectContaining({ code: "codex_hello_probe_passed", level: "info" }));
+    expect(result.checks.some(check => check.code === "adapter_engine_unavailable")).toBe(false);
+    expect(config).not.toHaveProperty("engine");
+  });
+
+  it.each([true, false])("retains the unverified ACPX warning after a computer Claude CLI probe (succeeds: %s)", async (succeeds) => {
+    const calls: string[] = [];
+    const result = await requireServerAdapter("paperclip_runner").testEnvironment({
+      companyId: "company-1", adapterType: "paperclip_runner",
+      config: { provider: "acpx", acpxAgent: "claude", model: "claude-sonnet-4-6", env: { ANTHROPIC_API_KEY: "test-key" } },
+      executionTarget: { kind: "remote", transport: "computer", remoteCwd: "/workspace", resourceAuthority: { computerId: "computer" },
+        runner: { execute: async (input: { command: string; args?: string[] }) => {
+          calls.push(input.command);
+          const stdout = input.command === "claude" ? JSON.stringify({ type: "result", result: "hello", usage: { input_tokens: 1, output_tokens: 1 } })
+            : input.args?.some(arg => arg.includes("uname -s")) ? "Linux\nx86_64\n" : "";
+          return { exitCode: input.command === "claude" && !succeeds ? 1 : 0, timedOut: false, stdout, stderr: "", signal: null, pid: null, startedAt: new Date().toISOString() };
+        } },
+      } as never,
+    });
+    expect(calls).toContain("claude");
+    expect(result.status).toBe(succeeds ? "warn" : "fail");
+    expect(result.checks).toContainEqual(expect.objectContaining({ code: "acpx_remote_runtime_unverified", level: "warn" }));
+    if (succeeds) expect(result.checks).toContainEqual(expect.objectContaining({ code: "claude_hello_probe_passed", level: "info" }));
+    expect(result.checks.some(check => check.level === "error")).toBe(!succeeds);
+  });
+
   it.each([true, false])("checks actual local ACPX installation readiness (%s)", async (ready) => {
     const probe = vi.mocked(probeAcpxClaudeInstallation);
     if (ready) probe.mockResolvedValueOnce(undefined);

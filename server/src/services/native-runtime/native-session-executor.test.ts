@@ -8,6 +8,7 @@ import {
   chmod,
   cp,
   lstat,
+  link,
   mkdir,
   mkdtemp,
   open,
@@ -1289,6 +1290,28 @@ describe("remote provider pack manifest", () => {
     expect(readRemoteProviderPackManifest(root).payload.pins.opencode).toBe(
       "1.18.34",
     );
+    // Content digests cannot distinguish hardlinks from independent files.
+    const legacyDigest = readRemoteProviderPackManifest(root).digest;
+    const alias = join(root, "node_modules", "node-alias");
+    await link(join(root, "node_modules", "node", "bin", "node"), alias);
+    expect(readRemoteProviderPackManifest(root).digest).toBe(legacyDigest);
+    Object.assign(payload, { fileLayout: "independent-regular-files-v1" });
+    await writeManifest();
+    expect(() => readRemoteProviderPackManifest(root)).toThrow("provider pack file layout");
+    expect((await lstat(alias)).nlink).toBe(2); // Reject; never repair immutable caches.
+    await rm(alias);
+    const independent = readRemoteProviderPackManifest(root);
+    expect(independent.digest).not.toBe(legacyDigest);
+    expect(readBundledRemoteProviderPackManifest(join(root, "provider-pack.json")).digest).toBe(independent.digest);
+    expect(independent.payload.distDigest).toBe(payload.distDigest);
+    expect(readRemoteProviderPackManifest(root).digest).toBe(independent.digest);
+    Object.assign(payload, { fileLayout: "unknown-policy" });
+    await writeManifest();
+    expect(() => readRemoteProviderPackManifest(root)).toThrow("provider pack file layout");
+    expect(() => readBundledRemoteProviderPackManifest(join(root, "provider-pack.json"))).toThrow("provider pack file layout");
+    delete (payload as typeof payload & { fileLayout?: string }).fileLayout;
+    await writeManifest();
+    expect(readRemoteProviderPackManifest(root).digest).toBe(legacyDigest);
     const cursorPath = "provider-assets/cursor/linux-x64";
     await mkdir(join(root, cursorPath), { recursive: true });
     await writeFile(join(root, cursorPath, "runtime"), "pinned Cursor runtime");
@@ -7398,6 +7421,41 @@ describe("native warm session supervision", () => {
       expect(f.close).toHaveBeenCalledOnce();
       expect(f.copy.collectStopped).not.toHaveBeenCalled();
       expect(secondCopy.collectStopped).toHaveBeenCalledOnce();
+    });
+
+    it.each(["same", "generation", "owner", "computer"])("preserves command-transport directory identity across %s changes", async change => {
+      const name = `managed-computer-identity-${change}`;
+      const current = { ...execution, binding: { ...execution.binding, runId: `${name}-one`, executionWorkspaceId: name },
+        session: { ...execution.session, normalizedSessionId: name, lifecyclePolicy: { mode: "warm", idleTimeoutMs: 60_000 } } } as NativeExecutionInputV1;
+      const close = vi.fn(async () => undefined);
+      const collectStopped = vi.fn(async () => undefined);
+      const target = { kind: "remote", transport: "computer", environmentId: name, remoteCwd: `/tmp/${name}`,
+        resourceAuthority: { kind: "computer-owner", computerId: name, ownerId: name, generation: 1 } };
+      state.execute.mockReset().mockImplementationOnce(async options => { await options.onSession?.({ close }); return result; });
+      await executePaperclipNativeSession({ db: leaseDb(current), execution: current, runnerInstanceId: name,
+        runnerExecutionTarget: target as never,
+        instructionWorkingCopy: { runId: current.binding.runId, root: `/tmp/${name}/home`, collectStopped,
+          checkpointWarm: async () => true, hasChanges: async () => false } });
+      const canReuse = vi.fn(async () => true);
+      const nextAuthority = { ...target.resourceAuthority,
+        ...(change === "generation" ? { generation: 2 } : {}),
+        ...(change === "owner" ? { ownerId: "different-owner" } : {}),
+        ...(change === "computer" ? { computerId: "different-computer" } : {}),
+      };
+      const reservation = await reserveWarmNativeInstructionDirectory({ companyId: current.binding.companyId,
+        agentId: current.binding.agentId, previousRunId: current.binding.runId, runId: `${name}-two`, canReuse,
+        target: { ...target, resourceAuthority: nextAuthority } as never });
+      if (change === "same" || change === "generation") {
+        expect(reservation?.reuseRunId).toBe(current.binding.runId);
+        expect(canReuse).toHaveBeenCalledOnce();
+        expect(close).not.toHaveBeenCalled();
+        await reservation!.release();
+      } else {
+        expect(reservation).toBeNull();
+        expect(canReuse).not.toHaveBeenCalled();
+        expect(close).toHaveBeenCalledOnce();
+        expect(collectStopped).toHaveBeenCalledOnce();
+      }
     });
 
     it("stops before collecting when a checkpoint cannot stabilize", async () => {

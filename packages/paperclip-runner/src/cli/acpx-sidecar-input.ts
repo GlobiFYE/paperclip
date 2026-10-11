@@ -88,6 +88,18 @@ function directAcpxSidecarErrorCode(error: Error): string | null {
 
   const stderr =
     typeof details.stderrSummary === "string" ? details.stderrSummary : "";
+  // Bootstrap writes this fixed marker before printing private error details and
+  // terminating. Never copy those details into the public classification.
+  // ACPX collapses stderr whitespace into one line. An explicit terminator
+  // preserves the token boundary without accepting arbitrary appended text.
+  // Retain the original line-delimited form for older immutable provider packs.
+  const importFailure = /(?:^|\s)PAPERCLIP_ACPX_IMPORT_FAILURE:(UNVERIFIED_MODULE|OTHER)(?::([A-Z_]+))?:END(?=\s|$)/.exec(stderr)
+    ?? /(?:^|\n)PAPERCLIP_ACPX_IMPORT_FAILURE:(UNVERIFIED_MODULE|OTHER)(?::([A-Z_]+))?(?:\r?\n|$)/.exec(stderr);
+  if (importFailure?.[1] === "UNVERIFIED_MODULE" && importFailure[2] === undefined) return "AGENT_STARTUP_FAILED.UNVERIFIED_MODULE";
+  if (importFailure?.[1] === "UNVERIFIED_MODULE" && MODULE_FENCES.has(importFailure[2])) {
+    const detail = importFailure[2] === "LINK_COUNT" ? moduleLinkCountDetail(stderr) : null;
+    return `AGENT_STARTUP_FAILED.UNVERIFIED_MODULE.${importFailure[2]}${detail ? `.READ.${detail.replaceAll(":", ".")}` : ""}`;
+  }
   if (/ERR_ACPX_UNVERIFIED_MODULE/.test(stderr)) {
     return "AGENT_STARTUP_FAILED.UNVERIFIED_MODULE";
   }
@@ -106,6 +118,7 @@ function directAcpxSidecarErrorCode(error: Error): string | null {
   if (/ERR_INVALID_ARG|invalid argument/i.test(stderr)) {
     return "AGENT_STARTUP_FAILED.INVALID_ARGUMENT";
   }
+  if (importFailure?.[1] === "OTHER" && importFailure[2] === undefined) return "AGENT_STARTUP_FAILED.OTHER";
   if (!stderr.trim()) return "AGENT_STARTUP_FAILED.NO_STDERR";
   if (typeof details.signal === "string" && details.signal) {
     return "AGENT_STARTUP_FAILED.SIGNAL";
@@ -129,6 +142,8 @@ const GENERIC_ACPX_OUTPUT_CODES = new Set([
   "USAGE",
 ]);
 
+const MODULE_FENCES = new Set(["RESOLUTION", "OPEN", "BOUNDS", "ANCESTRY", "FORMAT", "PATH_IDENTITY", "READ_RESULT", "SIZE", "DEVICE", "INODE", "MODE", "UID", "GID", "LINK_COUNT", "MTIME", "BYTE_CONTINUITY", "REPEATED_CTIME"]);
+
 const STABLE_ACPX_SIDECAR_CODES = new Set([
   "COPILOT_POLICY_VIOLATION",
   "COPILOT_DETACHED_WORK_UNSUPPORTED",
@@ -146,6 +161,7 @@ const STABLE_ACPX_SIDECAR_CODES = new Set([
   "AGENT_STARTUP_FAILED.SIGNAL",
   "AGENT_STARTUP_FAILED.SYNTAX_ERROR",
   "AGENT_STARTUP_FAILED.UNVERIFIED_MODULE",
+  ...Array.from(MODULE_FENCES, fence => `AGENT_STARTUP_FAILED.UNVERIFIED_MODULE.${fence}`),
   "AUTH_REQUIRED",
   "CLAUDE_ACP_SESSION_CREATE_TIMEOUT",
   "SESSION_CONFIG_OPTION_REPLAY_FAILED",
@@ -166,3 +182,15 @@ const STABLE_ACPX_SIDECAR_CODES = new Set([
   "ACPX_TOOL_CALL_STALE",
   ...GENERIC_ACPX_OUTPUT_CODES,
 ]);
+
+
+/** Failure-only unsigned metadata; no provider strings or identifiers cross. */
+function moduleLinkCountDetail(stderr: string): string | null {
+  const match = /(?:^|\s)PAPERCLIP_ACPX_LINK_COUNT:([12]):(0|[1-9][0-9]{0,19}):(0|[1-9][0-9]{0,19}):([ID]):(111111[01]{2}):END(?=\s|$)/.exec(stderr);
+  if (!match) return null;
+  const before = BigInt(match[2]!);
+  const after = BigInt(match[3]!);
+  if (before > 18446744073709551615n || after > 18446744073709551615n || before === after
+    || match[4] !== (after > before ? "I" : "D")) return null;
+  return match.slice(1).join(":");
+}

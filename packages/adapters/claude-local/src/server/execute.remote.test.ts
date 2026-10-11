@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -95,7 +95,7 @@ describe("claude remote execution", () => {
     }
   });
 
-  it("prepares the workspace, syncs Claude runtime assets, and restores workspace changes for remote SSH execution", async () => {
+  it.each([true, false])("prepares and restores a copied SSH workspace (already exists: %s)", async (exists) => {
     vi.stubEnv("CLAUDE_CODE_USE_BEDROCK", "1");
     vi.stubEnv("ANTHROPIC_MODEL", "host-only-model");
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-remote-"));
@@ -104,7 +104,11 @@ describe("claude remote execution", () => {
     const alternateWorkspaceDir = path.join(rootDir, "workspace-other");
     const instructionsPath = path.join(rootDir, "instructions.md");
     const managedRemoteWorkspace = "/remote/workspace/.paperclip-runtime/runs/run-1/workspace";
-    await mkdir(workspaceDir, { recursive: true });
+    if (exists) await mkdir(workspaceDir, { recursive: true });
+    prepareWorkspaceForSshExecution.mockImplementationOnce(async () => {
+      expect((await stat(workspaceDir)).isDirectory()).toBe(true);
+      return { gitBacked: false };
+    });
     await mkdir(alternateWorkspaceDir, { recursive: true });
     await writeFile(instructionsPath, "Use the remote workspace.\n", "utf8");
 
@@ -229,6 +233,31 @@ describe("claude remote execution", () => {
       localDir: workspaceDir,
       remoteDir: managedRemoteWorkspace,
     }));
+  });
+
+  it("keeps an authoritative remote workspace in place while delivering managed Claude assets", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-claude-in-place-"));
+    cleanupDirs.push(rootDir);
+    await execute({
+      runId: "run-in-place",
+      agent: { id: "agent-1", companyId: "company-1", name: "Claude", adapterType: "claude_local", adapterConfig: {} },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: { engine: "cli", command: "claude", cwd: "/stale-host-cwd" },
+      context: { paperclipWorkspace: { cwd: "/remote-only-agent-home", source: "agent_home" } },
+      executionTarget: {
+        kind: "remote", transport: "ssh", remoteCwd: "/old-copied-workspace",
+        workspaceRealization: { mode: "in_place", authoritativeRoot: "/persistent-project", pathAliases: [], outboundRestorePaths: [] },
+        spec: { host: "127.0.0.1", port: 2222, username: "fixture", remoteWorkspacePath: "/persistent-project", remoteCwd: "/persistent-project",
+          privateKey: "PRIVATE KEY", knownHosts: "[127.0.0.1]:2222 ssh-ed25519 AAAA", strictHostKeyChecking: true },
+      },
+      onLog: async () => {},
+    });
+    expect(prepareWorkspaceForSshExecution).not.toHaveBeenCalled();
+    expect(restoreWorkspaceFromSshExecution).not.toHaveBeenCalled();
+    expect(syncDirectoryToSsh).toHaveBeenCalledTimes(2);
+    expect(syncDirectoryToSsh).toHaveBeenCalledWith(expect.objectContaining({ remoteDir: "/persistent-project/.paperclip-runtime/claude/skills" }));
+    const call = runChildProcess.mock.calls[0] as unknown as [string, string, string[], { remoteExecution: { remoteCwd: string } }];
+    expect(call[3].remoteExecution.remoteCwd).toBe("/persistent-project");
   });
 
   it("does not resume saved Claude sessions for remote SSH execution without a matching remote identity", async () => {
