@@ -346,9 +346,19 @@ export function classifyRunLiveness(input: RunLivenessClassificationInput): RunL
     // this fix addresses. The raw transcript makes every run look useful, so
     // only the machine-readable marker reveals the edge. Classify it as an
     // actionable empty response so the bounded liveness continuation wakes the
-    // assignee to finish the turn or park the issue explicitly. Unrelated
-    // failures carry no marker and keep the generic failed handling.
-    if (input.runStatus === "failed" && input.resultJson?.finalStopReason === "length") {
+    // assignee to finish the turn or park the issue explicitly.
+    //
+    // Both marker fields are required: the adapter writes the marker for any
+    // length-stopped terminal turn, including turns that delivered text, and
+    // keeps it when the run later fails for an unrelated reason (transport
+    // loss, provider error). Only a length-stopped turn that produced no
+    // completion text is the truncation edge; unrelated failures keep the
+    // generic failed handling.
+    if (
+      input.runStatus === "failed" &&
+      input.resultJson?.finalStopReason === "length" &&
+      input.resultJson?.finalMessageEmpty === true
+    ) {
       return output("empty_response", TRUNCATED_FINAL_TURN_LIVENESS_REASON, TRUNCATED_FINAL_TURN_NEXT_ACTION);
     }
     return output("failed", input.errorCode ? `Run ended with ${input.runStatus} (${input.errorCode})` : `Run ended with ${input.runStatus}`);
