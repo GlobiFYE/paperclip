@@ -14,7 +14,7 @@ The `copilot_local` adapter runs the GitHub Copilot CLI (`copilot`, npm package 
 - Authentication configured via one of:
   - `copilot login` (device code or web flow; the token is stored in the OS keychain, with a plaintext fallback in `~/.copilot/config.json`)
   - `COPILOT_GITHUB_TOKEN` set in the adapter env or server shell. Use a fine-grained personal access token with the "Copilot Requests" permission. Classic `ghp_` tokens are not supported.
-  - The CLI also honours `GH_TOKEN` and `GITHUB_TOKEN`, but this is not recommended in Paperclip because those variables are treated as git push keys.
+  - The CLI also honours `GH_TOKEN` and `GITHUB_TOKEN`, but this is not recommended in Paperclip because Paperclip reserves those variables for git remote access.
 
 ## Configuration Fields
 
