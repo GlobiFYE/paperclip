@@ -45,6 +45,7 @@ describe("workspace operation URL redaction", () => {
     for (const chunks of [
       ["https://example.test\npostgres://reader:pa", "ssword@db.test/app"],
       ["https://example.test\npost", "gres://reader:password@db.test/app"],
+      ["https://example.test\npostgres:/", "/reader:password@db.test/app"],
     ]) {
       const redactor = createWorkspaceOperationUrlStreamRedactor();
       const output = chunks.map((chunk) => redactor.push(chunk)).join("") + redactor.flush();
@@ -209,30 +210,33 @@ describe("workspace operation URL redaction", () => {
     });
 
     it("masks a second URL after a host-only URL across historical events and pages", async () => {
-      const store = createLocalFileWorkspaceOperationLogStore(logRoot);
-      const handle = await store.begin({ companyId: randomUUID(), operationId: randomUUID() });
-      const first = "reader:pa";
-      const second = "ssword";
-      const ts = new Date().toISOString();
-      await store.append(handle, { stream: "stdout", chunk: `https://example.test\npostgres://${first}`, ts });
-      await store.append(handle, { stream: "stdout", chunk: `${second}@db.test/app`, ts });
-      const filePath = path.join(logRoot, handle.logRef);
-      const original = await fs.readFile(filePath);
-      const expected = Buffer.from(original);
-      for (const part of [first, second]) {
-        const start = original.indexOf(part);
-        expect(start).toBeGreaterThan(0);
-        expected.fill(0x2a, start, start + part.length);
-      }
+      for (const [firstChunk, secondChunk] of [
+        ["https://example.test\npostgres://reader:pa", "ssword@db.test/app"],
+        ["https://example.test\npostgres:/", "/reader:password@db.test/app"],
+      ]) {
+        const store = createLocalFileWorkspaceOperationLogStore(logRoot);
+        const handle = await store.begin({ companyId: randomUUID(), operationId: randomUUID() });
+        const ts = new Date().toISOString();
+        await store.append(handle, { stream: "stdout", chunk: firstChunk, ts });
+        await store.append(handle, { stream: "stdout", chunk: secondChunk, ts });
+        const filePath = path.join(logRoot, handle.logRef);
+        const original = await fs.readFile(filePath);
+        const expected = Buffer.from(original);
+        for (const part of ["reader:pa", "ssword"]) {
+          const start = original.indexOf(part);
+          expect(start).toBeGreaterThan(0);
+          expected.fill(0x2a, start, start + part.length);
+        }
 
-      let offset = 0;
-      while (offset < original.length) {
-        const page = await store.read(handle, { offset, limitBytes: 7 });
-        const nextOffset = page.nextOffset ?? original.length;
-        expect(page.content).toBe(expected.subarray(offset, nextOffset).toString("utf8"));
-        offset = nextOffset;
+        let offset = 0;
+        while (offset < original.length) {
+          const page = await store.read(handle, { offset, limitBytes: 7 });
+          const nextOffset = page.nextOffset ?? original.length;
+          expect(page.content).toBe(expected.subarray(offset, nextOffset).toString("utf8"));
+          offset = nextOffset;
+        }
+        expect(await fs.readFile(filePath)).toEqual(original);
       }
-      expect(await fs.readFile(filePath)).toEqual(original);
     });
 
     it("masks raw @ and escaped quote across historical NDJSON events and byte pages", async () => {

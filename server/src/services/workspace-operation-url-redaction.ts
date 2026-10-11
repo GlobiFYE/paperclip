@@ -33,7 +33,13 @@ function authorityEnd(value: string, rawJson = false): number {
 function nextUrlPrefixBeforeBoundary(value: string, boundary: number): number | null {
   URL_PREFIX_RE.lastIndex = 0;
   const match = URL_PREFIX_RE.exec(value);
-  return match && match.index < boundary ? match.index : null;
+  if (match && match.index < boundary) return match.index;
+  // The second slash may arrive in the next output chunk or NDJSON event.
+  if (boundary === value.length - 1 && value[boundary] === "/") {
+    const partial = /[a-z][a-z0-9+.-]{0,31}:\/$/i.exec(value);
+    if (partial && partial.index < boundary) return partial.index;
+  }
+  return null;
 }
 
 function redactAuthority(authority: string, incomplete = false): string {
