@@ -17232,10 +17232,12 @@ export function heartbeatService(
     enrichedContextSnapshot: Record<string, unknown>;
     sessionIdBefore: string | null;
     continuationAttempt: number;
+    tx?: Db;
   }): Promise<boolean> {
     if (!(await isAgentRunnableSchedulerEnabled())) return false;
     const runningRunCount = await countRunningRunsForAgent(input.agent.id);
-    const admission = await agentScheduler.evaluateAdmission({
+    const schedulerDb = input.tx ?? db;
+    const admission = await agentScheduler.evaluateAdmissionForDb(schedulerDb)({
       schedulerEnabled: true,
       allowParallelExecution: readAgentParallelExecutionAllowed(input.agent.runtimeConfig),
       configuredMaxConcurrentRuns: input.policy.maxConcurrentRuns,
@@ -17246,7 +17248,7 @@ export function heartbeatService(
       issueId: input.issueId,
     });
     if (admission.action !== "park") return false;
-    await db
+    const updated = await schedulerDb
       .update(agentWakeupRequests)
       .set({
         payload: sql`coalesce(${agentWakeupRequests.payload}, '{}'::jsonb) || ${JSON.stringify({
@@ -17258,8 +17260,9 @@ export function heartbeatService(
         })}::jsonb`,
         updatedAt: new Date(),
       })
-      .where(eq(agentWakeupRequests.id, input.wakeRequestId));
-    return true;
+      .where(eq(agentWakeupRequests.id, input.wakeRequestId))
+      .returning({ id: agentWakeupRequests.id });
+    return updated.length > 0;
   }
 
   async function promoteAgentRunnableWorkForAgent(
@@ -29089,6 +29092,7 @@ export function heartbeatService(
               enrichedContextSnapshot: queuedContextSnapshot,
               sessionIdBefore: explicitContinuation ? null : sessionBefore,
               continuationAttempt,
+              tx: tx as unknown as Db,
             })
           ) {
             return { kind: "agent_runnable_parked" as const };
@@ -29374,8 +29378,9 @@ export function heartbeatService(
           wakeRequestId: wakeupRequest.id,
           issueId: readNonEmptyString(enrichedContextSnapshot.issueId),
           enrichedContextSnapshot,
-          sessionIdBefore,
+          sessionIdBefore: sessionBefore,
           continuationAttempt,
+          tx: tx as unknown as Db,
         })
       ) {
         return { kind: "agent_runnable_parked" as const };
