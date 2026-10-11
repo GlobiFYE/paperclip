@@ -38,17 +38,23 @@ function createMemoryWriter(): AgentSchedulerWriter & {
   parked: Array<{ wakeRequestId: string; schedulerMeta: Record<string, unknown> }>;
   runnable: RunnableWakeRow[];
   materialized: Array<{ wakeId: string; runId: string }>;
+  claimed: Set<string>;
 } {
   const parked: Array<{ wakeRequestId: string; schedulerMeta: Record<string, unknown> }> = [];
   const runnable: RunnableWakeRow[] = [];
   const materialized: Array<{ wakeId: string; runId: string }> = [];
+  const claimed = new Set<string>();
 
   return {
     parked,
     runnable,
     materialized,
+    claimed,
     async listRunnableWakes(_agentId, limit) {
       return runnable.slice(0, limit);
+    },
+    async countRunnableWakes() {
+      return runnable.length;
     },
     async parkWakeAsRunnable(input) {
       parked.push({
@@ -60,11 +66,22 @@ function createMemoryWriter(): AgentSchedulerWriter & {
           requestedAt: new Date(parked.length * 1000 + Date.now()),
         }),
       );
+      return true;
+    },
+    async tryClaimRunnableWake(wakeId) {
+      if (claimed.has(wakeId)) return false;
+      if (!runnable.some((row) => row.id === wakeId)) return false;
+      claimed.add(wakeId);
+      return true;
+    },
+    async releaseClaimedRunnableWake(input) {
+      claimed.delete(input.wakeId);
     },
     async materializeRunnableWake(input) {
       const index = runnable.findIndex((row) => row.id === input.wake.id);
       if (index < 0) return false;
       runnable.splice(index, 1);
+      claimed.delete(input.wake.id);
       materialized.push({ wakeId: input.wake.id, runId: input.runId });
       return true;
     },
@@ -194,6 +211,43 @@ describe("createPromoteAgentRunnableWork", () => {
     expect(result).toEqual({ promoted: 0, runIds: [] });
     expect(writer.runnable).toHaveLength(1);
     expect(host.events).toHaveLength(0);
+  });
+
+  it("skips a wake that cannot materialize and promotes the next runnable wake", async () => {
+    const writer = createMemoryWriter();
+    const host = createFakeHost(0);
+    await writer.parkWakeAsRunnable({
+      wakeRequestId: "wake-stuck",
+      companyId: "company-1",
+      agentId: "agent-1",
+      enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON,
+      schedulerMeta: {},
+    });
+    await writer.parkWakeAsRunnable({
+      wakeRequestId: "wake-ready",
+      companyId: "company-1",
+      agentId: "agent-1",
+      enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON,
+      schedulerMeta: {},
+    });
+
+    const promote = createPromoteAgentRunnableWork({ host, writer });
+    const createRunForWake = vi.fn(async (wake: RunnableWakeRow) =>
+      wake.id === "wake-stuck" ? null : `run-for-${wake.id}`,
+    );
+
+    const result = await promote({
+      schedulerEnabled: true,
+      allowParallelExecution: false,
+      configuredMaxConcurrentRuns: 20,
+      agentId: "agent-1",
+      companyId: "company-1",
+      createRunForWake,
+    });
+
+    expect(result).toEqual({ promoted: 1, runIds: ["run-for-wake-ready"] });
+    expect(createRunForWake).toHaveBeenCalledTimes(2);
+    expect(writer.runnable.map((row) => row.id)).toEqual(["wake-stuck"]);
   });
 
   it("serializes two back-to-back assignments: park then promote one at a time", async () => {
