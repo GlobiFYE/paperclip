@@ -404,6 +404,83 @@ describeEmbeddedPostgres("heartbeat run privacy routes", { concurrent: false }, 
     expect(await fs.readFile(filePath)).toEqual(original);
   });
 
+  it("hides raw @ and quote in new output, fields, and historical board/agent byte pages", async () => {
+    const fixture = await seedFixture();
+    const first = "synthetic-reader:pa@";
+    const second = '"ssword';
+    const credential = first + second;
+    const url = `postgres://${credential}@db.example.test/app`;
+    expect(new URL(url).hostname).toBe("db.example.test");
+    const operation = await workspaceOperationService(db)
+      .createRecorder({ companyId: fixture.companyId, heartbeatRunId: fixture.privateRunId, issueId: fixture.issueId })
+      .recordOperation({
+        phase: "provision",
+        command: `echo ${url}`,
+        metadata: { connection: url },
+        run: async (reportProgress) => {
+          await reportProgress({ stdout: `connect postgres://${first}` });
+          await reportProgress({ stdout: `${second}@db.example.test/app complete` });
+          return { status: "succeeded" };
+        },
+      });
+    const newFile = await fs.readFile(path.join(logRoot, operation.logRef!), "utf8");
+    expect(newFile).toContain("postgres://[REDACTED]@db.example.test/app");
+    expect(newFile).not.toContain(first);
+    expect(newFile).not.toContain(second);
+
+    const store = createLocalFileWorkspaceOperationLogStore(logRoot);
+    const handle = await store.begin({ companyId: fixture.companyId, operationId: fixture.operationId });
+    const ts = new Date().toISOString();
+    await store.append(handle, { stream: "stdout", chunk: `postgres://${first}`, ts });
+    await store.append(handle, { stream: "stdout", chunk: `${second}@db.example.test/app`, ts });
+    const filePath = path.join(logRoot, handle.logRef);
+    const original = await fs.readFile(filePath);
+    const expected = Buffer.from(original);
+    const escapedSecond = JSON.stringify(second).slice(1, -1);
+    const firstAt = original.indexOf(first);
+    const secondAt = original.indexOf(escapedSecond);
+    expect(firstAt).toBeGreaterThan(0);
+    expect(secondAt).toBeGreaterThan(firstAt);
+    expected.fill(0x2a, firstAt, firstAt + Buffer.byteLength(first));
+    expected.fill(0x2a, secondAt, secondAt + Buffer.byteLength(escapedSecond));
+    await db.update(workspaceOperations)
+      .set({ logRef: handle.logRef, stdoutExcerpt: `connect ${url}`, command: `echo ${url}`, metadata: { connection: url } })
+      .where(eq(workspaceOperations.id, fixture.operationId));
+
+    for (const app of [
+      createBoardApp(fixture.companyId, fixture.ownerUserId),
+      createApp(fixture.companyId, fixture.ownerAgentId),
+    ]) {
+      const list = await request(app).get(`/api/heartbeat-runs/${fixture.privateRunId}/workspace-operations`);
+      expect(list.status).toBe(200);
+      for (const operationId of [operation.id, fixture.operationId]) {
+        const row = list.body.find((entry: { id: string }) => entry.id === operationId);
+        expect(row.command).toContain("postgres://[REDACTED]@db.example.test/app");
+        expect(row.metadata.connection).toBe("postgres://[REDACTED]@db.example.test/app");
+        expect(row.stdoutExcerpt).toContain("postgres://[REDACTED]@db.example.test/app");
+      }
+      expect(JSON.stringify(list.body)).not.toContain(credential);
+      expect(JSON.stringify(list.body)).not.toContain(first);
+      expect(JSON.stringify(list.body)).not.toContain(second);
+
+      const newLog = await request(app).get(`/api/workspace-operations/${operation.id}/log`);
+      expect(newLog.status).toBe(200);
+      expect(newLog.body.content).toContain("postgres://" + "*".repeat("[REDACTED]".length) + "@db.example.test/app");
+      expect(newLog.body.content).not.toContain(first);
+      expect(newLog.body.content).not.toContain(second);
+      let offset = 0;
+      while (offset < original.length) {
+        const page = await request(app)
+          .get(`/api/workspace-operations/${fixture.operationId}/log?offset=${offset}&limitBytes=7`);
+        expect(page.status).toBe(200);
+        const nextOffset = page.body.nextOffset ?? original.length;
+        expect(page.body.content).toBe(expected.subarray(offset, nextOffset).toString("utf8"));
+        offset = nextOffset;
+      }
+    }
+    expect(await fs.readFile(filePath)).toEqual(original);
+  });
+
   it("redacts 4096-character historical excerpts cut inside userinfo for all supported hosts", async () => {
     const fixture = await seedFixture();
     const credential = "synthetic-reader:synthetic-password";

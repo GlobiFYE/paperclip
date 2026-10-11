@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createLocalFileWorkspaceOperationLogStore } from "./workspace-operation-log-store.js";
 import {
+  createWorkspaceOperationByteRangeScanner,
   createWorkspaceOperationUrlStreamRedactor,
   maskWorkspaceOperationUrlUserInfoBytes,
   redactTruncatedWorkspaceOperationOutput,
@@ -27,7 +28,9 @@ describe("workspace operation URL redaction", () => {
     expect(redactWorkspaceOperationUrlUserInfo("postgres://reader:one@db.test/app"))
       .toBe("postgres://[REDACTED]@db.test/app");
     expect(redactWorkspaceOperationExcerpt("the tail synthetic-password@db.test/app"))
-      .toBe("the tail [REDACTED]@db.test/app");
+      .toContain("[REDACTED]@db.test/app");
+    expect(redactWorkspaceOperationExcerpt("the tail synthetic-password@db.test/app"))
+      .not.toContain("synthetic-password");
   });
 
   it("masks an unfinished URL when a stream ends before the @", () => {
@@ -47,11 +50,68 @@ describe("workspace operation URL redaction", () => {
     expect(redactWorkspaceOperationUrlUserInfo(url)).toBe("postgresql://[REDACTED]@db.example.test/app");
     for (const hostAndPath of ["/app", "?host=db.example.test/app"]) {
       expect(redactWorkspaceOperationExcerpt(`word tail'password@${hostAndPath}`))
-        .toBe(`word [REDACTED]@${hostAndPath}`);
+        .toContain(`[REDACTED]@${hostAndPath}`);
+      expect(redactWorkspaceOperationExcerpt(`word tail'password@${hostAndPath}`))
+        .not.toContain("tail'password");
     }
   });
 
+  it("masks URL-parser userinfo containing raw delimiters across all redactors", () => {
+    for (const [credential, splitAt] of [
+      ["synthetic-reader:pa@ssword", "synthetic-reader:pa@"],
+      ['synthetic-reader:pa"ssword', "synthetic-reader:pa"],
+      ["synthetic-reader:pa\\ssword", "synthetic-reader:pa\\"],
+      ["synthetic-reader:pa<ssword", "synthetic-reader:pa<"],
+      ["synthetic-reader:pa>ssword", "synthetic-reader:pa>"],
+      ["synthetic-reader:pa ssword", "synthetic-reader:pa "],
+      ["synthetic-reader:pa\tssword", "synthetic-reader:pa\t"],
+      ["synthetic-reader:pa\nssword", "synthetic-reader:pa\n"],
+    ]) {
+      const url = `postgres://${credential}@db.example.test/app`;
+      expect(new URL(url).hostname).toBe("db.example.test");
+      const redactor = createWorkspaceOperationUrlStreamRedactor();
+      const output = redactor.push(`connect postgres://${splitAt}`)
+        + redactor.push(`${credential.slice(splitAt.length)}@db.example.test/app`)
+        + redactor.flush();
+      expect(output).toBe("connect postgres://[REDACTED]@db.example.test/app");
+      expect(redactWorkspaceOperationUrlUserInfo(url)).toBe("postgres://[REDACTED]@db.example.test/app");
+      expect(redactWorkspaceOperationExcerpt(`tail ${credential}@db.example.test/app`))
+        .toContain("[REDACTED]@db.example.test/app");
+      expect(redactWorkspaceOperationExcerpt(`tail ${credential}@db.example.test/app`))
+        .not.toContain(credential);
+
+      const raw = Buffer.from(JSON.stringify({ chunk: url }));
+      const expected = Buffer.from(raw);
+      const start = raw.indexOf("postgres://") + "postgres://".length;
+      const hostSeparator = raw.indexOf("@db.example.test");
+      expect(start).toBeGreaterThan(0);
+      expect(hostSeparator).toBeGreaterThan(start);
+      expected.fill(0x2a, start, hostSeparator);
+      expect(maskWorkspaceOperationUrlUserInfoBytes(raw)).toEqual(expected);
+    }
+  });
+
+  it("keeps an escaped quote together when it crosses the byte scanner's internal part boundary", () => {
+    const prefix = "postgres://synthetic-reader:";
+    const url = prefix + "a".repeat(8191 - prefix.length) + '"secret@db.example.test/app';
+    const rawChunk = JSON.stringify(url).slice(1, -1);
+    expect(rawChunk.charAt(8191)).toBe("\\");
+    expect(rawChunk.charAt(8192)).toBe('"');
+    const scanner = createWorkspaceOperationByteRangeScanner();
+    scanner.feed("stdout", rawChunk, 0);
+    const masked = Buffer.from(rawChunk);
+    for (const range of scanner.finish()) masked.fill(0x2a, range.start, range.end);
+    const expected = Buffer.from(rawChunk);
+    expected.fill(0x2a, "postgres://".length, rawChunk.indexOf("@db.example.test"));
+    expect(masked).toEqual(expected);
+  });
+
   it("hides the first uncertain token of a truncated process capture", () => {
+    for (const tail of ['thetic@pa"ssword@db.example.test/app', 'thetic"pa@ssword@db.example.test/app']) {
+      const capturedWithSymbols = "[output truncated to last 262144 bytes; total 262200 bytes]\n" + tail;
+      expect(redactTruncatedWorkspaceOperationOutput(capturedWithSymbols))
+        .toContain("\n[REDACTED]@db.example.test/app");
+    }
     const captured = "[output truncated to last 262144 bytes; total 262200 bytes]\n"
       + "thetic'password@db.example.test/app complete";
     expect(redactTruncatedWorkspaceOperationOutput(captured))
@@ -134,6 +194,38 @@ describe("workspace operation URL redaction", () => {
         offset = nextOffset;
       }
       expect(await fs.readFile(filePath)).toEqual(original);
+    });
+
+    it("masks raw @ and escaped quote across historical NDJSON events and byte pages", async () => {
+      for (const [first, second] of [
+        ["synthetic-reader:pa@", "ssword"],
+        ["synthetic-reader:pa", '"ssword'],
+      ]) {
+        const store = createLocalFileWorkspaceOperationLogStore(logRoot);
+        const handle = await store.begin({ companyId: randomUUID(), operationId: randomUUID() });
+        const ts = new Date().toISOString();
+        await store.append(handle, { stream: "stdout", chunk: `postgres://${first}`, ts });
+        await store.append(handle, { stream: "stdout", chunk: `${second}@db.example.test/app`, ts });
+        const filePath = path.join(logRoot, handle.logRef);
+        const original = await fs.readFile(filePath);
+        const expected = Buffer.from(original);
+        const escapedSecond = JSON.stringify(second).slice(1, -1);
+        const firstAt = original.indexOf(first);
+        const secondAt = original.indexOf(escapedSecond);
+        expect(firstAt).toBeGreaterThan(0);
+        expect(secondAt).toBeGreaterThan(firstAt);
+        expected.fill(0x2a, firstAt, firstAt + Buffer.byteLength(first));
+        expected.fill(0x2a, secondAt, secondAt + Buffer.byteLength(escapedSecond));
+
+        let offset = 0;
+        while (offset < original.length) {
+          const page = await store.read(handle, { offset, limitBytes: 7 });
+          const nextOffset = page.nextOffset ?? original.length;
+          expect(page.content).toBe(expected.subarray(offset, nextOffset).toString("utf8"));
+          offset = nextOffset;
+        }
+        expect(await fs.readFile(filePath)).toEqual(original);
+      }
     });
 
     it("hides a damaged event and the remaining log when it may complete split userinfo", async () => {

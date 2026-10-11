@@ -1,17 +1,43 @@
 const URL_PREFIX_RE = /[a-z][a-z0-9+.-]{0,31}:\/\//gi;
 const PARTIAL_URL_PREFIX_RE = /[a-z][a-z0-9+.-]{0,31}(?::\/?)?(?![\s\S])/i;
-const URL_BOUNDARY_RE = /[@\s/\\"?#<>]/;
-// Latin-1 log scans represent UTF-8 bytes as characters; \s would treat 0xA0 as a boundary.
-const URL_BYTE_BOUNDARY_RE = /[@\x09-\x0d\x20/\\"?#<>]/;
 const TRUNCATED_OUTPUT_PREFIX_RE = /^\[output truncated to last \d+ bytes; total \d+ bytes\]\n/;
 const TRUNCATED_OUTPUT_RAW_PREFIX_RE = /^\[output truncated to last \d+ bytes; total \d+ bytes\]\\n/;
 const MAX_PREFIX_LENGTH = 35;
 const MAX_PENDING_USERINFO_LENGTH = 8192;
 const REDACTED_USERINFO = "[REDACTED]";
 
+/** The last @ before an authority boundary separates userinfo from the host. */
+function authorityEnd(value: string, rawJson = false): number {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (rawJson && code === 0x5c) {
+      // A saved NDJSON string may contain an escaped quote inside userinfo.
+      // Wait if the escape pair is split across the scanner's 8192-byte parts.
+      if (index + 1 === value.length) return value.length;
+      index += 1;
+      continue;
+    }
+    if (rawJson && code === 0x22 && (index + 1 === value.length || /[},\]]/.test(value[index + 1]!))) {
+      return index;
+    }
+    // The URL parser accepts raw quotes, backslashes, angle brackets, and
+    // whitespace in userinfo. Only these characters end its authority.
+    if (code === 0x2f || code === 0x3f || code === 0x23) {
+      return index;
+    }
+  }
+  return value.length;
+}
+
+function redactAuthority(authority: string, incomplete = false): string {
+  const separator = authority.lastIndexOf("@");
+  if (separator > 0) return `${REDACTED_USERINFO}${authority.slice(separator)}`;
+  return incomplete && authority ? REDACTED_USERINFO : authority;
+}
+
 /** Redact URL userinfo in operation fields and complete output strings. */
 export function redactWorkspaceOperationUrlUserInfo(value: string): string {
-  return value.replace(/([a-z][a-z0-9+.-]{0,31}:\/\/)([^\s/\\"?#<>@]+)@/gi, `$1${REDACTED_USERINFO}@`);
+  return value.replace(/([a-z][a-z0-9+.-]{0,31}:\/\/)([^/?#]+)@/gi, `$1${REDACTED_USERINFO}@`);
 }
 
 /** A bounded process capture can start inside userinfo, before the URL scheme. */
@@ -19,17 +45,19 @@ export function redactTruncatedWorkspaceOperationOutput(value: string): string {
   const prefix = TRUNCATED_OUTPUT_PREFIX_RE.exec(value)?.[0];
   if (!prefix) return value;
   const tail = value.slice(prefix.length);
-  const end = /[@\s"<>]/.exec(tail)?.index ?? tail.length;
+  const end = authorityEnd(tail);
   if (end === 0) return value;
   // The preceding bytes were discarded, so this first token cannot be classified safely.
-  return prefix + REDACTED_USERINFO + tail.slice(end);
+  return prefix + redactAuthority(tail.slice(0, end), true) + tail.slice(end);
 }
 
 /** An old 4096-character excerpt may start in the middle of URL userinfo. */
 export function redactWorkspaceOperationExcerpt(value: string | null): string | null {
   if (value === null) return null;
-  return redactWorkspaceOperationUrlUserInfo(redactTruncatedWorkspaceOperationOutput(value))
-    .replace(/([^\s/@]+)@(?=(?:\[[^\]\s/?#@]+\]|[a-z0-9.-]+)?(?::\d+)?(?:[/?#\s"'<>;,}]|$))/gi, `${REDACTED_USERINFO}@`);
+  const sanitized = redactWorkspaceOperationUrlUserInfo(redactTruncatedWorkspaceOperationOutput(value));
+  const captureMarker = TRUNCATED_OUTPUT_PREFIX_RE.exec(sanitized)?.[0] ?? "";
+  return captureMarker + sanitized.slice(captureMarker.length)
+    .replace(/([^/]+)@(?=(?:\[[^\]\s/?#@]+\]|[a-z0-9.-]+)?(?::\d+)?(?:[/?#\s"'<>;,}]|$))/gi, `${REDACTED_USERINFO}@`);
 }
 
 export function redactWorkspaceOperationUrls<T>(value: T): T {
@@ -50,10 +78,12 @@ export function redactWorkspaceOperationUrls<T>(value: T): T {
 export function maskWorkspaceOperationUrlUserInfoBytes(input: Buffer): Buffer {
   const output = Buffer.from(input);
   const text = input.toString("latin1");
-  const pattern = /[a-z][a-z0-9+.-]{0,31}:\/\/([^\x09-\x0d\x20/\\"?#<>@]+)@/gi;
+  const pattern = /[a-z][a-z0-9+.-]{0,31}:\/\//gi;
   for (const match of text.matchAll(pattern)) {
-    const userinfoStart = match.index + match[0].indexOf("://") + 3;
-    output.fill(0x2a, userinfoStart, userinfoStart + match[1]!.length);
+    const userinfoStart = match.index + match[0].length;
+    const suffix = text.slice(userinfoStart);
+    const separator = suffix.slice(0, authorityEnd(suffix, true)).lastIndexOf("@");
+    if (separator > 0) output.fill(0x2a, userinfoStart, userinfoStart + separator);
   }
   return output;
 }
@@ -84,12 +114,15 @@ export function createWorkspaceOperationByteRangeScanner() {
   function drain(state: State) {
     while (state.pending) {
       if (state.droppingUserInfo) {
-        const boundary = URL_BYTE_BOUNDARY_RE.exec(state.pending)?.index ?? -1;
-        const count = boundary < 0 ? state.pending.length : boundary;
-        mark(state.positions.slice(0, count));
-        state.pending = state.pending.slice(boundary < 0 ? count : count + 1);
-        state.positions = state.positions.slice(boundary < 0 ? count : count + 1);
-        if (boundary < 0) return;
+        const boundary = authorityEnd(state.pending, true);
+        mark(state.positions.slice(0, boundary));
+        if (boundary === state.pending.length) {
+          state.pending = "";
+          state.positions = [];
+          return;
+        }
+        state.pending = state.pending.slice(boundary + 1);
+        state.positions = state.positions.slice(boundary + 1);
         state.droppingUserInfo = false;
         continue;
       }
@@ -107,11 +140,10 @@ export function createWorkspaceOperationByteRangeScanner() {
       state.positions = state.positions.slice(match.index);
       const userinfoStart = match[0].length;
       const suffix = state.pending.slice(userinfoStart);
-      const boundary = URL_BYTE_BOUNDARY_RE.exec(suffix)?.index ?? -1;
-      if (boundary >= 0) {
-        if (suffix[boundary] === "@" && boundary > 0) {
-          mark(state.positions.slice(userinfoStart, userinfoStart + boundary));
-        }
+      const boundary = authorityEnd(suffix, true);
+      if (boundary < suffix.length) {
+        const separator = suffix.slice(0, boundary).lastIndexOf("@");
+        if (separator > 0) mark(state.positions.slice(userinfoStart, userinfoStart + separator));
         const consumed = userinfoStart + boundary + 1;
         state.pending = state.pending.slice(consumed);
         state.positions = state.positions.slice(consumed);
@@ -135,11 +167,12 @@ export function createWorkspaceOperationByteRangeScanner() {
       const truncatedPrefix = TRUNCATED_OUTPUT_RAW_PREFIX_RE.exec(rawChunk)?.[0];
       if (truncatedPrefix) {
         const tail = rawChunk.slice(truncatedPrefix.length);
-        const end = /[@\\\x09-\x0d\x20"<>]/.exec(tail)?.index ?? tail.length;
+        const end = authorityEnd(tail, true);
         if (end > 0) {
+          const separator = tail.slice(0, end).lastIndexOf("@");
           ranges.push({
             start: byteOffset + truncatedPrefix.length,
-            end: byteOffset + truncatedPrefix.length + end,
+            end: byteOffset + truncatedPrefix.length + (separator > 0 ? separator : end),
           });
         }
       }
@@ -155,7 +188,11 @@ export function createWorkspaceOperationByteRangeScanner() {
         if (state.droppingUserInfo) continue;
         URL_PREFIX_RE.lastIndex = 0;
         const match = URL_PREFIX_RE.exec(state.pending);
-        if (match) mark(state.positions.slice(match.index + match[0].length));
+        if (match) {
+          const start = match.index + match[0].length;
+          const separator = state.pending.slice(start).lastIndexOf("@");
+          mark(state.positions.slice(start, separator > 0 ? start + separator : undefined));
+        }
       }
       ranges.sort((left, right) => left.start - right.start);
       const merged: WorkspaceOperationMaskedByteRange[] = [];
@@ -169,7 +206,7 @@ export function createWorkspaceOperationByteRangeScanner() {
   };
 }
 
-/** Hold a possible URL until the @ or URL boundary arrives in a later chunk. */
+/** Hold a possible URL until the authority boundary arrives in a later chunk. */
 export function createWorkspaceOperationUrlStreamRedactor() {
   let pending = "";
   let droppingUserInfo = false;
@@ -180,9 +217,9 @@ export function createWorkspaceOperationUrlStreamRedactor() {
     let output = "";
 
     if (droppingUserInfo) {
-      const boundary = URL_BOUNDARY_RE.exec(input)?.index ?? -1;
-      if (boundary < 0) return output;
-      output += input[boundary] === "@" ? "@" : input[boundary];
+      const boundary = authorityEnd(input);
+      if (boundary === input.length) return output;
+      output += input[boundary];
       input = input.slice(boundary + 1);
       droppingUserInfo = false;
     }
@@ -202,11 +239,11 @@ export function createWorkspaceOperationUrlStreamRedactor() {
       output += input.slice(0, match.index);
       const prefix = match[0];
       const afterPrefix = input.slice(match.index + prefix.length);
-      const end = URL_BOUNDARY_RE.exec(afterPrefix)?.index ?? -1;
-      if (end < 0) {
+      const end = authorityEnd(afterPrefix);
+      if (end === afterPrefix.length) {
         if (final) {
           // An interrupted stream may end inside userinfo, before its @ arrives.
-          output += prefix + (afterPrefix ? REDACTED_USERINFO : "");
+          output += prefix + redactAuthority(afterPrefix, true);
         } else if (afterPrefix.length > MAX_PENDING_USERINFO_LENGTH) {
           output += prefix + REDACTED_USERINFO;
           droppingUserInfo = true;
@@ -216,11 +253,7 @@ export function createWorkspaceOperationUrlStreamRedactor() {
         break;
       }
 
-      if (afterPrefix[end] === "@" && end > 0) {
-        output += prefix + REDACTED_USERINFO + "@";
-      } else {
-        output += prefix + afterPrefix.slice(0, end + 1);
-      }
+      output += prefix + redactAuthority(afterPrefix.slice(0, end)) + afterPrefix[end];
       input = afterPrefix.slice(end + 1);
     }
     return output;
