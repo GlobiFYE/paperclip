@@ -118,6 +118,7 @@ import {
 import {
   ISSUE_BLOCKERS_RESOLVED_WAKE_REASON,
   buildIssueBlockersResolvedWakeStateKey,
+  findRecentCompletedWakeForResolvedBlockerSet,
   findExistingIssueBlockersResolvedWakeForReadyState,
 } from "../issue-dependency-wakeups.js";
 import { evaluateAgentInvokabilityFromDb } from "../agent-invokability.js";
@@ -5752,6 +5753,24 @@ export function recoveryService(
             blockedTransitionAt: candidate.blockedTransitionAt,
           });
         if (existingWake) {
+          result.existingWakeSkipped += 1;
+          continue;
+        }
+
+        // Cycle-insensitive dedup. A woken assignee that re-blocks
+        // against the same already fully-resolved blocker set restamps
+        // `blockedTransitionAt`, so the cycle-aware key above never matches the
+        // completed wake and the backstop re-fires every pass (~30-60s, 90+
+        // wakes over 2h on one issue). One completed wake per blocker-set
+        // composition covers this ready state; the periodic pass must not
+        // re-heal it.
+        const completedWakeForBlockerSet =
+          await findRecentCompletedWakeForResolvedBlockerSet(db, {
+            companyId,
+            dependentIssueId: candidate.id,
+            blockerIssueIds: readiness.blockerIssueIds,
+          });
+        if (completedWakeForBlockerSet) {
           result.existingWakeSkipped += 1;
           continue;
         }
