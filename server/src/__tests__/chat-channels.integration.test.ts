@@ -69764,7 +69764,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     }
   });
 
-  it("skips a pre-run FIFO candidate whose payload ids are not uuids without failing the sweep", async () => {
+  it("skips a pre-run FIFO candidate whose coalesced owner id is not a uuid without failing the sweep", async () => {
     const context = await deferredChatQueueFixture();
     try {
       const [receipt] = await db
@@ -69780,6 +69780,32 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
           },
         })
         .where(eq(agentWakeupRequests.id, context.action.id));
+      await expect(
+        context.service.enqueueInboundWakeupPublications(),
+      ).resolves.toBe(0);
+      await expect(
+        db
+          .select()
+          .from(chatPublications)
+          .where(eq(chatPublications.endpointId, context.endpoint.id)),
+      ).resolves.toEqual([]);
+    } finally {
+      await context.service.shutdown();
+    }
+  });
+
+  it("keeps the pre-run FIFO sweep running when a valid owner's action has comment ids that are not uuids", async () => {
+    const context = await deferredChatQueueFixture();
+    try {
+      // Publish the queued notice first. The removed-comment and queued-notice
+      // checks then have real rows to compare the malformed ids against.
+      await context.service.processPendingPublications();
+      await expect(
+        db
+          .select({ state: chatPublications.state })
+          .from(chatPublications)
+          .where(eq(chatPublications.endpointId, context.endpoint.id)),
+      ).resolves.toEqual([{ state: "published" }]);
       await db
         .update(chatActions)
         .set({
@@ -69795,10 +69821,10 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       ).resolves.toBe(0);
       await expect(
         db
-          .select()
+          .select({ state: chatPublications.state })
           .from(chatPublications)
           .where(eq(chatPublications.endpointId, context.endpoint.id)),
-      ).resolves.toEqual([]);
+      ).resolves.toEqual([{ state: "published" }]);
     } finally {
       await context.service.shutdown();
     }
