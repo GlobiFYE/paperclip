@@ -102,6 +102,15 @@ API responses and MCP transports keep their existing compression behavior.
 
 The board UI Storybook keeps stories and Storybook config under `ui/storybook/` so component review files stay out of the app source routes.
 
+Start from the downstream [Storybook feature index](../maps/storybook-map/INDEX.md)
+to find existing stories by capability. Its [contract](../maps/storybook-map/README.md)
+separates production subjects, prototype implementations, simulated data, and
+source-review status. Use `maintain-storybook` to reconcile stories/fixtures with
+the feature map, and `review-storybook` to exercise them with existing tools.
+Run `node scripts/storybook-catalog.mjs` after affected story or review-source
+changes; review drift before updating fingerprints, then regenerate with `--write`.
+The feature map remains an upstream input and needs no Storybook-specific fields.
+
 **Chat & Comments → Human identity** covers other-human names and avatars on
 left-aligned task messages alongside agents; only the viewer’s own messages are blue/right-aligned. Its review guide explains the data flow; the task journey uses representative
 fixtures in the production shell and thread with an agent and two humans, both
