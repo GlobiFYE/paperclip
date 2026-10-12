@@ -425,7 +425,7 @@ const support = await getEmbeddedPostgresTestSupport();
     await expect(f.service.prepareForAdmission(f.admission)).resolves.toEqual([]);
     await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: f.issueId, executionPolicy: f.policy } }).where(eq(heartbeatRuns.id, f.runId));
     await expect(f.service.request({ companyId: f.companyId, issueId: peer.issueId, actor: peer.actor,
-      request: { repository: { kind: "catalog", id: "private-repo" }, requestKey: randomUUID() } })).rejects.toThrow(/anonymous public URLs only/);
+      request: { repository: { kind: "catalog", id: "private-repo" }, requestKey: randomUUID() } })).rejects.toThrow(/anonymous public URLs only|trusted task/);
     expect(await f.service.list(f.companyId, peer.workspace.id)).toEqual([]);
     expect(acquisition.materialize).not.toHaveBeenCalled();
   });
@@ -504,28 +504,57 @@ const support = await getEmbeddedPostgresTestSupport();
           await db.update(executionWorkspaces).set({ projectId: project.id, strategyType: "git_worktree" }).where(eq(executionWorkspaces.id, f.workspace.id));
         }
       }
-      await expect(f.request({ kind: "catalog", id: "private-repo" })).rejects.toThrow(/anonymous public URLs only/);
+      await expect(f.request({ kind: "catalog", id: "private-repo" })).rejects.toThrow(/anonymous public URLs only|trusted task/);
       expect(await db.select().from(executionWorkspaceRepositories).where(eq(executionWorkspaceRepositories.companyId, f.companyId))).toHaveLength(0);
       expect(acquisition.managedAuth).not.toHaveBeenCalled();
     },
   );
 
-  it("keeps a URL matching the sponsor's private catalog anonymous under retained run trust", async () => {
-    const f = await fixture();
-    await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: f.issueId, executionPolicy: f.policy } }).where(eq(heartbeatRuns.id, f.runId));
-    const receipt = await f.request({ kind: "url", url: "https://github.com/sponsor/private" });
-    expect(receipt.repository.catalogRepositoryId).toBeNull();
-    acquisition.materialize.mockImplementationOnce(async (_cwd, input) => {
-      const auth = await input.resolveGitAuth(input.repoUrl);
-      expect(auth).toEqual({ ...buildGitAuthInvocation({ token: "", source: "managed_connection", secretName: null }),
-        env: expect.objectContaining({ GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" }) });
-      throw new Error("Anonymous remote rejects private repository");
+  it.each(["agent", "issue", "project", "workspace_source_project", "run"] as const)(
+    "rejects public acquisition from raw %s policy even with full-auto provider permissions", async source => {
+      const f = await fixture();
+      await db.update(agents).set({ adapterConfig: { provider: "codex", codexPermissionMode: "never" },
+        ...(source === "agent" ? { permissions: f.policy } : {}) }).where(eq(agents.id, f.agentId));
+      if (source === "issue") await db.update(issues).set({ executionPolicy: f.policy }).where(eq(issues.id, f.issueId));
+      if (source === "run") {
+        await db.update(issues).set({ executionPolicy: {} }).where(eq(issues.id, f.issueId));
+        await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: f.issueId, executionPolicy: f.policy } }).where(eq(heartbeatRuns.id, f.runId));
+      }
+      if (source === "project" || source === "workspace_source_project") {
+        const [project] = await db.insert(projects).values({ companyId: f.companyId, name: "Restricted", executionWorkspacePolicy: f.policy }).returning();
+        if (source === "project") await db.update(issues).set({ projectId: project.id }).where(eq(issues.id, f.issueId));
+        else {
+          await db.update(projects).set({ executionWorkspacePolicy: { ...f.policy, authorizationPolicy: { ...f.policy.authorizationPolicy,
+            trustBoundary: { ...f.policy.authorizationPolicy.trustBoundary, projectIds: [project.id] } } } }).where(eq(projects.id, project.id));
+          await db.update(executionWorkspaces).set({ projectId: project.id, strategyType: "git_worktree" }).where(eq(executionWorkspaces.id, f.workspace.id));
+        }
+      }
+      for (const url of ["https://github.com/public/example", "https://github.com/sponsor/private"]) {
+        await expect(f.request({ kind: "url", url })).rejects.toThrow(/trusted task/);
+      }
+      expect(await f.service.list(f.companyId, f.workspace.id)).toEqual([]);
+      expect(acquisition.materialize).not.toHaveBeenCalled();
+      expect(acquisition.managedAuth).not.toHaveBeenCalled();
     });
-    await expect(f.service.prepareForAdmission(f.admission)).rejects.toThrow("Anonymous remote rejects private repository");
-    expect(acquisition.materialize).toHaveBeenCalledOnce();
+
+  it.each(["pending", "preparing"] as const)("blocks %s public acquisition after trust is downgraded", async state => {
+    const f = await fixture();
+    const receipt = await f.request({ kind: "url", url: "https://github.com/public/example" });
+    await db.update(executionWorkspaceRepositories).set({ state }).where(eq(executionWorkspaceRepositories.id, receipt.operationId));
+    await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: f.issueId, executionPolicy: f.policy } }).where(eq(heartbeatRuns.id, f.runId));
+    await expect(f.service.prepareForAdmission(f.admission)).rejects.toThrow(/trusted task/);
+    expect((await f.service.list(f.companyId, f.workspace.id))[0].state).toBe(state);
+    expect(acquisition.materialize).not.toHaveBeenCalled();
     expect(acquisition.managedAuth).not.toHaveBeenCalled();
-    const [stored] = await db.select().from(executionWorkspaceRepositories).where(eq(executionWorkspaceRepositories.id, receipt.operationId));
-    expect(stored).toMatchObject({ catalogRepositoryId: null, state: "needs_repair" });
+  });
+
+  it("rejects an unsponsored request even when the caller supplies a sponsor actor", async () => {
+    const f = await fixture();
+    await db.update(heartbeatRuns).set({ responsibleUserId: null }).where(eq(heartbeatRuns.id, f.runId));
+    await expect(f.request({ kind: "url", url: "https://github.com/public/example" })).rejects.toThrow(/responsible user/);
+    expect(await f.service.list(f.companyId, f.workspace.id)).toEqual([]);
+    await expect(f.service.prepareForAdmission({ ...f.admission, responsibleUserId: null })).resolves.toEqual([]);
+    expect(acquisition.materialize).not.toHaveBeenCalled();
   });
 
   it.each(["pending", "ready"] as const)("blocks a %s managed receipt after the run becomes low trust", async state => {
@@ -536,17 +565,34 @@ const support = await getEmbeddedPostgresTestSupport();
     const checkout = path.join(f.admission.cwd, receipt.repository.relativePath);
     if (state === "ready") { await mkdir(checkout, { recursive: true }); await writeFile(path.join(checkout, "private.txt"), "retained private bytes"); }
     await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: f.issueId, executionPolicy: f.policy } }).where(eq(heartbeatRuns.id, f.runId));
-    await expect(f.request({ kind: "url", url: receipt.repository.repoUrl })).rejects.toThrow(/anonymous public URLs only/);
-    await expect(f.service.prepareForAdmission(f.admission)).rejects.toThrow(/anonymous public URLs only/);
+    await expect(f.request({ kind: "url", url: receipt.repository.repoUrl })).rejects.toThrow(/anonymous public URLs only|trusted task/);
+    await expect(f.service.prepareForAdmission(f.admission)).rejects.toThrow(/anonymous public URLs only|trusted task/);
     expect(acquisition.materialize).not.toHaveBeenCalled();
     expect(acquisition.managedAuth).not.toHaveBeenCalled();
     if (state === "ready") expect(await readFile(path.join(checkout, "private.txt"), "utf8")).toBe("retained private bytes");
   });
 
-  it("prepares an anonymous public URL through actual local Git materialization", async () => {
+  it.each([
+    { status: "active", closedAt: new Date() },
+    { status: "idle", closedAt: new Date() },
+    { status: "archived", closedAt: null },
+    { status: "in_review", closedAt: null },
+  ])("rejects repository requests for unavailable $status workspaces (closed=$closedAt)", async lifecycle => {
     const f = await fixture();
-    await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: f.issueId, executionPolicy: f.policy } }).where(eq(heartbeatRuns.id, f.runId));
+    await db.update(executionWorkspaces).set(lifecycle).where(eq(executionWorkspaces.id, f.workspace.id));
+    await expect(f.request({ kind: "url", url: "https://github.com/public/example" })).rejects.toThrow("Execution workspace is unavailable");
+    expect(await f.service.list(f.companyId, f.workspace.id)).toEqual([]);
+    expect(acquisition.materialize).not.toHaveBeenCalled();
+  });
+
+  it.each(["sponsored", "local_board", "routine"] as const)("prepares public Git from an idle workspace for a trusted %s task and reuses verified bytes after trust downgrade", async principal => {
+    const f = await fixture();
+    await db.update(executionWorkspaces).set({ status: "idle" }).where(eq(executionWorkspaces.id, f.workspace.id));
+    if (principal === "local_board") await db.update(heartbeatRuns).set({ responsibleUserId: "local-board" }).where(eq(heartbeatRuns.id, f.runId));
     const receipt = await f.request({ kind: "url", url: "https://github.com/public/example" });
+    const responsibleUserId = principal === "local_board" ? "local-board" : principal === "routine" ? null : f.userId;
+    await db.update(heartbeatRuns).set({ responsibleUserId }).where(eq(heartbeatRuns.id, f.runId));
+    const admission = { ...f.admission, responsibleUserId };
     const source = path.join(root, `${f.issueId}-public-source`);
     await mkdir(source);
     const exec = promisify(execFileCallback);
@@ -563,9 +609,39 @@ const support = await getEmbeddedPostgresTestSupport();
       await exec("git", ["-C", cwd, "remote", "set-url", "origin", input.repoUrl]);
       return result;
     });
-    const [prepared] = await f.service.prepareForAdmission(f.admission);
+    const [prepared] = await f.service.prepareForAdmission(admission);
     expect(prepared.id).toBe(receipt.operationId);
     expect(await readFile(path.join(prepared.cwd, "public.txt"), "utf8")).toBe("Public fixture bytes\n");
+    expect(acquisition.managedAuth).not.toHaveBeenCalled();
+    await writeFile(path.join(prepared.cwd, "committed.txt"), "Later task commit\n");
+    await exec("git", ["-C", prepared.cwd, "add", "committed.txt"]);
+    await exec("git", ["-C", prepared.cwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "task changes"]);
+    const editedHead = (await exec("git", ["-C", prepared.cwd, "rev-parse", "HEAD"])).stdout.trim();
+    expect(editedHead).not.toBe(prepared.pinnedCommit);
+    await writeFile(path.join(prepared.cwd, "dirty.txt"), "Uncommitted task bytes\n");
+    acquisition.materialize.mockClear();
+    await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: f.issueId, executionPolicy: f.policy } }).where(eq(heartbeatRuns.id, f.runId));
+    await expect(f.service.prepareForAdmission(admission)).resolves.toEqual([prepared]);
+    await expect(f.service.reserveForRecovery(admission)).resolves.toBeUndefined();
+    expect(acquisition.materialize).not.toHaveBeenCalled();
+    expect(await readFile(path.join(prepared.cwd, "public.txt"), "utf8")).toBe("Public fixture bytes\n");
+    expect((await exec("git", ["-C", prepared.cwd, "rev-parse", "HEAD"])).stdout.trim()).toBe(editedHead);
+    expect(await readFile(path.join(prepared.cwd, "dirty.txt"), "utf8")).toBe("Uncommitted task bytes\n");
+    await rm(prepared.cwd, { recursive: true });
+    await expect(f.service.prepareForAdmission(admission)).rejects.toThrow(/trusted task/);
+    expect(acquisition.materialize).not.toHaveBeenCalled();
+  });
+
+  it("reauthorizes a public clone before publication after trust changes during Git", async () => {
+    const f = await fixture();
+    const receipt = await f.request({ kind: "url", url: "https://github.com/public/example" });
+    await localPrivateClone(f, async () => {
+      await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: f.issueId, executionPolicy: f.policy } }).where(eq(heartbeatRuns.id, f.runId));
+    });
+    await expect(f.service.prepareForAdmission(f.admission)).rejects.toThrow(/trusted task/);
+    await expect(fs.lstat(path.join(f.admission.cwd, receipt.repository.relativePath))).rejects.toMatchObject({ code: "ENOENT" });
+    expect((await f.service.list(f.companyId, f.workspace.id))[0]).toMatchObject({ pinnedCommit: null, state: "needs_repair" });
+    expect(acquisition.materialize).toHaveBeenCalledOnce();
     expect(acquisition.managedAuth).not.toHaveBeenCalled();
   });
 
@@ -595,8 +671,8 @@ const support = await getEmbeddedPostgresTestSupport();
       await db.update(issues).set({ executionRunId: runId }).where(eq(issues.id, issueId));
       if (scenario !== "empty_inventory") await expect(f.service.request({ companyId: f.companyId, issueId, actor: { ...f.actor, runId },
         request: { requestKey: randomUUID(), repository: { kind: "url", url: scenario === "same_repository" ? managed.repository.repoUrl : "https://github.com/public/other" } } }))
-        .rejects.toThrow(/anonymous public URLs only/);
-      await expect(f.service.prepareForAdmission({ ...f.admission, issueId, runId, workspaceId: peer.id })).rejects.toThrow(/anonymous public URLs only/);
+        .rejects.toThrow(/anonymous public URLs only|trusted task/);
+      await expect(f.service.prepareForAdmission({ ...f.admission, issueId, runId, workspaceId: peer.id })).rejects.toThrow(/anonymous public URLs only|trusted task/);
       expect(acquisition.materialize).not.toHaveBeenCalled();
       expect(acquisition.managedAuth).not.toHaveBeenCalled();
       if (scenario !== "pending_intent") expect(await readFile(path.join(checkout, "private.txt"), "utf8")).toBe("Private peer bytes");
@@ -642,10 +718,10 @@ const support = await getEmbeddedPostgresTestSupport();
       if (String(pathname).startsWith(aliasParent)) throw Object.assign(new Error("Unreadable legacy alias"), { code: "EACCES" });
       return actual(pathname);
     });
-    await expect(f.service.prepareForAdmission(peer.admission)).rejects.toThrow(/anonymous public URLs only/);
+    await expect(f.service.prepareForAdmission(peer.admission)).rejects.toThrow(/anonymous public URLs only|trusted task/);
     await expect(f.service.request({ companyId: f.companyId, issueId: peer.admission.issueId, actor: peer.actor,
       request: { repository: { kind: "url", url: "https://github.com/public/unrelated" }, requestKey: randomUUID() } }))
-      .rejects.toThrow(/anonymous public URLs only/);
+      .rejects.toThrow(/anonymous public URLs only|trusted task/);
     expect(await f.service.list(f.companyId, peer.workspace.id)).toEqual([]);
     expect(acquisition.materialize).not.toHaveBeenCalled();
     expect(acquisition.managedAuth).not.toHaveBeenCalled();
@@ -713,7 +789,7 @@ const support = await getEmbeddedPostgresTestSupport();
     await symlink(f.admission.cwd, alias);
     await db.update(executionWorkspaces).set({ cwd: alias }).where(eq(executionWorkspaces.id, f.workspace.id));
     const peer = await lowTrustPeer(f);
-    await expect(f.service.prepareForAdmission(peer.admission)).rejects.toThrow(/anonymous public URLs only/);
+    await expect(f.service.prepareForAdmission(peer.admission)).rejects.toThrow(/anonymous public URLs only|trusted task/);
   });
 
   it("reserves a legacy low-trust recovery folder after its task binding moves", async () => {
@@ -726,7 +802,7 @@ const support = await getEmbeddedPostgresTestSupport();
     await f.service.reserveForRecovery(peer.admission);
     await expect(executionWorkspaceRepositoryService(db).request({ companyId: f.companyId, issueId: f.issueId, actor: f.actor,
       request: { repository: { kind: "catalog", id: "private-repo" }, requestKey: randomUUID() } }))
-      .rejects.toThrow(/anonymous public URLs only/);
+      .rejects.toThrow(/anonymous public URLs only|trusted task/);
     const [reservation] = await db.select().from(executionWorkspaceRepositoryRoots).where(eq(executionWorkspaceRepositoryRoots.companyId, f.companyId));
     expect(reservation).toMatchObject({ canonicalCwd: await realpath(f.admission.cwd), mode: "anonymous_only" });
     expect(acquisition.materialize).not.toHaveBeenCalled();
@@ -740,7 +816,7 @@ const support = await getEmbeddedPostgresTestSupport();
     const peer = await lowTrustPeer(f);
     await f.service.reserveForRecovery(f.admission);
     await db.update(executionWorkspaces).set({ cwd: path.join(root, "moved-managed-recovery") }).where(eq(executionWorkspaces.id, f.workspace.id));
-    await expect(executionWorkspaceRepositoryService(db).reserveForRecovery(peer.admission)).rejects.toThrow(/anonymous public URLs only/);
+    await expect(executionWorkspaceRepositoryService(db).reserveForRecovery(peer.admission)).rejects.toThrow(/anonymous public URLs only|trusted task/);
     expect(acquisition.materialize).not.toHaveBeenCalled();
   });
 
@@ -760,9 +836,9 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(reservation.mode).toBe(outcomes[0].status === "fulfilled" ? "anonymous_only" : "managed");
     const restarted = executionWorkspaceRepositoryService(db);
     if (reservation.mode === "anonymous_only") {
-      await expect(f.request({ kind: "catalog", id: "private-repo" })).rejects.toThrow(/anonymous public URLs only/);
+      await expect(f.request({ kind: "catalog", id: "private-repo" })).rejects.toThrow(/anonymous public URLs only|trusted task/);
       await expect(restarted.prepareForAdmission(peer.admission)).resolves.toEqual([]);
-    } else await expect(restarted.prepareForAdmission(peer.admission)).rejects.toThrow(/anonymous public URLs only/);
+    } else await expect(restarted.prepareForAdmission(peer.admission)).rejects.toThrow(/anonymous public URLs only|trusted task/);
     expect(acquisition.materialize).not.toHaveBeenCalled();
   });
 
@@ -778,10 +854,10 @@ const support = await getEmbeddedPostgresTestSupport();
       .where(eq(executionWorkspaces.id, peer.workspace.id));
     const restarted = executionWorkspaceRepositoryService(db);
     await expect(restarted.request({ companyId: f.companyId, issueId: f.issueId, actor: f.actor,
-      request: { repository: { kind: "catalog", id: "private-repo" }, requestKey: randomUUID() } })).rejects.toThrow(/anonymous public URLs only/);
+      request: { repository: { kind: "catalog", id: "private-repo" }, requestKey: randomUUID() } })).rejects.toThrow(/anonymous public URLs only|trusted task/);
     acquisition.catalog.mockResolvedValue({ repositories: [{ id: "later", fullName: "public/later-catalog", private: true,
       url: pending.repository.repoUrl, connections: ["sponsor-github"] }] });
-    await expect(restarted.prepareForAdmission(f.admission)).rejects.toThrow(/anonymous public URLs only/);
+    await expect(restarted.prepareForAdmission(f.admission)).rejects.toThrow(/anonymous public URLs only|trusted task/);
     expect(acquisition.managedAuth).not.toHaveBeenCalled();
     expect(acquisition.materialize).not.toHaveBeenCalled();
     expect((await db.select().from(executionWorkspaceRepositories).where(eq(executionWorkspaceRepositories.id, pending.operationId)))[0].catalogRepositoryId).toBeNull();
@@ -820,11 +896,11 @@ const support = await getEmbeddedPostgresTestSupport();
       // The reservation remains anchored to the physical root even if ordinary
       // metadata/placement maintenance changes the originating workspace row.
       await db.update(executionWorkspaces).set({ cwd: path.join(root, "moved-managed-workspace"), metadata: {} }).where(eq(executionWorkspaces.id, f.workspace.id));
-      await expect(executionWorkspaceRepositoryService(db).prepareForAdmission(peer.admission)).rejects.toThrow(/anonymous public URLs only/);
+      await expect(executionWorkspaceRepositoryService(db).prepareForAdmission(peer.admission)).rejects.toThrow(/anonymous public URLs only|trusted task/);
     } finally { release(); }
     const [prepared] = await preparation;
     expect(await readFile(path.join(prepared.cwd, "private.txt"), "utf8")).toBe("Private fixture bytes\n");
-    await expect(executionWorkspaceRepositoryService(db).prepareForAdmission(peer.admission)).rejects.toThrow(/anonymous public URLs only/);
+    await expect(executionWorkspaceRepositoryService(db).prepareForAdmission(peer.admission)).rejects.toThrow(/anonymous public URLs only|trusted task/);
   });
 
   it("retains previous run trust without confusing a board request's reassigned agent", async () => {
@@ -837,7 +913,7 @@ const support = await getEmbeddedPostgresTestSupport();
       request: { requestKey: randomUUID(), repository: { kind: "catalog", id: "private-repo" } } });
     await expect(request()).resolves.toMatchObject({ kind: "requires_next_admission" });
     await db.update(heartbeatRuns).set({ contextSnapshot: { taskId: f.issueId, executionPolicy: f.policy } }).where(eq(heartbeatRuns.id, f.runId));
-    await expect(request()).rejects.toThrow(/anonymous public URLs only/);
+    await expect(request()).rejects.toThrow(/anonymous public URLs only|trusted task/);
   });
 
   it("preserves standard empty-inventory admission without repository mutation authority", async () => {

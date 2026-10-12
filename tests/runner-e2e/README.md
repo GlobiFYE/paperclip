@@ -2205,6 +2205,13 @@ lease attribution. Daytona uses per-turn leases, so a warm process cannot stand
 in for persisted files. This suite does not qualify channel-default configuration
 or arbitrary repository credentials.
 
+These cells exercise trusted app-created tasks. Low-trust chat tasks cannot use
+`prepare_repository` to initiate controller clones, even for public URLs with
+full-auto provider permissions. Their pending acquisitions fail after a trust
+downgrade; verified existing public checkouts can be reused without acquisition.
+No-repository admission and immutable recovery remain supported. Trusted
+acquisition does not yet impose repository byte or cumulative storage quotas.
+
 Each cell allows three turns, one attempt, four minutes per turn and fifteen
 minutes total, with 1,000-cent company and agent budget hard stops. `--all` excludes
 it. `OPENROUTER_API_KEY` is required; Daytona also requires `DAYTONA_API_KEY`, a

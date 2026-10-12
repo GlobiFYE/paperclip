@@ -13,6 +13,7 @@ import { parseNativeExecutionInput } from "../vendor/paperclip-runner/index.js";
 import { assertTaskWorkspaceAccess, assertTaskWorkspaceSourceProjectAccess } from "./task-workspace-source-access.js";
 import { authorizationService, canActorReadExecutionWorkspace, executionWorkspaceReadSqlCondition, issueReadSqlCondition, projectReadSqlCondition, type AuthorizationActor } from "./authorization.js";
 import { resolveCoreTrustPreset } from "./trust-preset-resolver.js";
+import { taskWorkspaceSelectableCondition } from "./task-workspace-selection.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { toolAccessService } from "./tool-access.js";
 import { normalizeProjectRepositoryUrl } from "./project-repositories.js";
@@ -63,7 +64,8 @@ async function legacyRepositoryRootMayMatch(cwd: string, candidate: string): Pro
   }
 }
 
-const lowTrustRepositoryMessage = "Low-trust tasks may prepare anonymous public URLs only. Use an authorized configured source for private repositories.";
+const controllerAcquisitionMessage = "New controller repository acquisition requires a trusted task. Existing verified public checkouts remain available.";
+const lowTrustRepositoryMessage = "Low-trust repository reuse permits anonymous public URLs only; new acquisition is unavailable. Use an authorized configured source for private repositories.";
 
 function resolveAcquisitionSource(request: PrepareWorkspaceRepository["repository"], available: ProjectRepository[], anonymousOnly: boolean) {
   if (anonymousOnly && request.kind === "catalog") throw forbidden(lowTrustRepositoryMessage);
@@ -286,6 +288,12 @@ export function executionWorkspaceRepositoryService(db: Db) {
     if (trust.kind === "denied") throw forbidden(trust.detail);
     return trust.kind === "low_trust_review";
   }
+  async function assertCurrentControllerAcquisition(input: { companyId: string; issueId: string; workspaceId: string; agentId: string; runId: string }) {
+    const [issue] = await db.select().from(issues).where(and(eq(issues.id, input.issueId), eq(issues.companyId, input.companyId)));
+    const [workspace] = await db.select().from(executionWorkspaces).where(and(eq(executionWorkspaces.id, input.workspaceId), eq(executionWorkspaces.companyId, input.companyId)));
+    if (!issue || !workspace || issue.executionWorkspaceId !== workspace.id) throw forbidden("Task repository workspace binding is unavailable");
+    if (await requiresAnonymousAcquisition(db, { issue, workspace, agentId: input.agentId, runId: input.runId })) throw forbidden(controllerAcquisitionMessage);
+  }
   async function reserveRootPolicy(tx: DbTransaction, companyId: string, cwd: string, mode: "anonymous_only" | "managed") {
     const canonicalCwd = await canonicalRepositoryRoot(cwd);
     const rootKey = createHash("sha256").update(canonicalCwd).digest("hex");
@@ -447,8 +455,8 @@ export function executionWorkspaceRepositoryService(db: Db) {
       if (!issue.executionWorkspaceId) throw conflict("The task has no admitted workspace yet. Start it once before preparing a repository.");
       if (!(await canActorReadExecutionWorkspace(db, input.actor, issue.executionWorkspaceId))) throw notFound("Execution workspace not found");
       // Serialize receipts across tasks without blocking unchanged-ID foreign-key reads.
-      const [workspace] = await tx.select().from(executionWorkspaces).where(and(eq(executionWorkspaces.id, issue.executionWorkspaceId), eq(executionWorkspaces.companyId, input.companyId))).for("no key update");
-      if (!workspace || workspace.status !== "active") throw conflict("Execution workspace is unavailable");
+      const [workspace] = await tx.select().from(executionWorkspaces).where(and(eq(executionWorkspaces.id, issue.executionWorkspaceId), eq(executionWorkspaces.companyId, input.companyId), taskWorkspaceSelectableCondition())).for("no key update");
+      if (!workspace) throw conflict("Execution workspace is unavailable");
       await assertTaskWorkspaceAccess(tx, input.actor, input.companyId, workspace.id, { write: true, issueId: input.issueId });
       const anonymousOnly = await requiresAnonymousAcquisition(tx, { issue, workspace,
         agentId: input.actor.agentId, runId: input.actor.runId });
@@ -459,6 +467,7 @@ export function executionWorkspaceRepositoryService(db: Db) {
       }
       if (!workspace.cwd) throw conflict("The task workspace has no directory for repository preparation");
       await authorizeRootAccess(tx, { companyId: input.companyId, cwd: workspace.cwd, sourceWorkspaceId: workspace.id, actor: input.actor, issueId: input.issueId });
+      if (anonymousOnly) throw forbidden(controllerAcquisitionMessage);
       const existing = await tx.select().from(executionWorkspaceRepositories).where(and(eq(executionWorkspaceRepositories.executionWorkspaceId, workspace.id), or(eq(executionWorkspaceRepositories.repositoryIdentity, source.repositoryIdentity), sql`${executionWorkspaceRepositories.requestKeys} ? ${parsed.requestKey}`)));
       for (const row of existing) {
         assertAcquisitionReceipt(row, anonymousOnly);
@@ -568,9 +577,13 @@ export function executionWorkspaceRepositoryService(db: Db) {
         sourceWorkspaceId: workspace.id, preserveOwnAdmission: true });
       return [];
     }
+    const acquisitionRestricted = anonymousOnly;
+    if (acquisitionRestricted && rows.some(row => row.state !== "ready" || !row.pinnedCommit || !/^[a-f0-9]{40,64}$/.test(row.pinnedCommit))) {
+      throw forbidden(controllerAcquisitionMessage);
+    }
     await assertTaskWorkspaceAccess(db, actor, input.companyId, input.workspaceId, { write: true, issueId: input.issueId });
     const root = await fs.realpath(input.cwd);
-    const available = anonymousOnly ? [] : await catalog(input.companyId, input.responsibleUserId, input.responsibleUserId === "local-board");
+    const available = acquisitionRestricted ? [] : await catalog(input.companyId, input.responsibleUserId, input.responsibleUserId === "local-board");
     const resolveAuth = createGitRemoteAuthProvider(db, input.companyId, { issueId: input.issueId, heartbeatRunId: input.runId, agentId: input.agentId, responsibleUserId: input.responsibleUserId });
     // Validate every receipt before reading or transferring any prepared bytes.
     const sources = rows.map(row => {
@@ -583,37 +596,39 @@ export function executionWorkspaceRepositoryService(db: Db) {
     }
     await reserveRootAccess({ companyId: input.companyId, cwd: root, sourceWorkspaceId: input.workspaceId, reader: input });
     const repositoryRoot = path.join(root, ".paperclip-repositories");
-    await fs.mkdir(repositoryRoot, { recursive: true });
+    if (!acquisitionRestricted) await fs.mkdir(repositoryRoot, { recursive: true });
     if ((await fs.lstat(repositoryRoot)).isSymbolicLink() || await fs.realpath(repositoryRoot) !== repositoryRoot) throw conflict("Repository directory escapes the task workspace");
     // Incomplete clones belong to the runtime tree, which is excluded from
     // transfer and recovery. The published namespace contains checkouts only.
     let stagingParent = root;
-    for (const name of [".paperclip-runtime", "repository-staging"]) {
-      stagingParent = path.join(stagingParent, name);
-      await fs.mkdir(stagingParent, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
-        if (error.code !== "EEXIST") throw error;
-      });
-      const entry = await fs.lstat(stagingParent);
-      if (!entry.isDirectory() || entry.isSymbolicLink() || await fs.realpath(stagingParent) !== stagingParent) {
-        throw conflict("Repository staging directory escapes the task workspace");
+    if (!acquisitionRestricted) {
+      for (const name of [".paperclip-runtime", "repository-staging"]) {
+        stagingParent = path.join(stagingParent, name);
+        await fs.mkdir(stagingParent, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
+          if (error.code !== "EEXIST") throw error;
+        });
+        const entry = await fs.lstat(stagingParent);
+        if (!entry.isDirectory() || entry.isSymbolicLink() || await fs.realpath(stagingParent) !== stagingParent) {
+          throw conflict("Repository staging directory escapes the task workspace");
+        }
       }
+      // Self-ignore before any clone writes, including when the task directory
+      // is a subfolder of another checkout. Never follow a supplied ignore file.
+      const ignorePath = path.join(stagingParent, ".gitignore");
+      const ignoreEntry = await fs.lstat(ignorePath).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (ignoreEntry && (!ignoreEntry.isFile() || ignoreEntry.isSymbolicLink())) {
+        throw conflict("Repository staging ignore file is not a regular file");
+      }
+      const ignoreTemporary = path.join(stagingParent, `.ignore-${randomUUID()}.tmp`);
+      try {
+        await fs.writeFile(ignoreTemporary, "*\n", { flag: "wx", mode: 0o600 });
+        await fs.rename(ignoreTemporary, ignorePath);
+      } finally { await fs.rm(ignoreTemporary, { force: true }); }
+      await ensureManagedRepositoriesIgnored(root);
     }
-    // Self-ignore before any clone writes, including when the task directory
-    // is a subfolder of another checkout. Never follow a supplied ignore file.
-    const ignorePath = path.join(stagingParent, ".gitignore");
-    const ignoreEntry = await fs.lstat(ignorePath).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return null;
-      throw error;
-    });
-    if (ignoreEntry && (!ignoreEntry.isFile() || ignoreEntry.isSymbolicLink())) {
-      throw conflict("Repository staging ignore file is not a regular file");
-    }
-    const ignoreTemporary = path.join(stagingParent, `.ignore-${randomUUID()}.tmp`);
-    try {
-      await fs.writeFile(ignoreTemporary, "*\n", { flag: "wx", mode: 0o600 });
-      await fs.rename(ignoreTemporary, ignorePath);
-    } finally { await fs.rm(ignoreTemporary, { force: true }); }
-    await ensureManagedRepositoriesIgnored(root);
     const prepared: Array<{ id: string; cwd: string; repoUrl: string; relativePath: string; pinnedCommit: string; branchName: string | null }> = [];
     for (const [index, row] of rows.entries()) {
       const source = sources[index];
@@ -627,10 +642,11 @@ export function executionWorkspaceRepositoryService(db: Db) {
           const metadata = await fs.lstat(gitDir).catch(() => null);
           if (!metadata?.isDirectory() || metadata.isSymbolicLink() || await fs.realpath(gitDir) !== gitDir) throw conflict("Repository Git metadata escapes the managed checkout");
         }
+        if (acquisitionRestricted && !existing) throw forbidden(controllerAcquisitionMessage);
         // Uncataloged URLs may use anonymous public Git only. Never borrow a user's/company's credential for an arbitrary URL.
         const anonymous = buildGitAuthInvocation({ token: "", source: "managed_connection", secretName: null });
         anonymous.env = { ...anonymous.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" };
-        await db.update(executionWorkspaceRepositories).set({ state: "preparing", catalogRepositoryId: source.catalogRepositoryId, failureCode: null, updatedAt: new Date() }).where(eq(executionWorkspaceRepositories.id, row.id));
+        if (!acquisitionRestricted) await db.update(executionWorkspaceRepositories).set({ state: "preparing", catalogRepositoryId: source.catalogRepositoryId, failureCode: null, updatedAt: new Date() }).where(eq(executionWorkspaceRepositories.id, row.id));
         try {
           const ownershipPath = path.join(cwd, ".git", "paperclip-workspace-owner.json");
           const readOwnership = async () => {
@@ -649,25 +665,30 @@ export function executionWorkspaceRepositoryService(db: Db) {
           if (existing && !authorizedPin && initialOwnership?.repositoryId !== row.id) {
             throw conflict("Repository directory has no matching preparation receipt; repair it before retrying");
           }
-          const result = await materializeManagedProjectWorkspace(cwd, {
-            repoUrl: row.repoUrl,
-            stagingParent,
-            repoRef: authorizedPin ?? (row.requestedRef === "HEAD" ? null : row.requestedRef),
-            resolveGitAuth: source.catalogRepositoryId ? resolveAuth : async () => anonymous,
-            beforePublish: async cloneCwd => {
-              await reserveRootAccess({ companyId: input.companyId, cwd: root, sourceWorkspaceId: input.workspaceId, reader: input });
-              const pinnedCommit = (await execFile("git", ["-C", cloneCwd, "rev-parse", "HEAD"], { timeout: 30_000 })).stdout.trim();
-              await fs.writeFile(path.join(cloneCwd, ".git", "paperclip-workspace-owner.json"), JSON.stringify({ version: 1, repositoryId: row.id, pinnedCommit }), { flag: "wx", mode: 0o600 });
-            },
-          });
-          if (result.warning) throw conflict(result.warning);
-          const git = async (...args: string[]) => (await execFile("git", ["-C", cwd, ...args], { timeout: 30_000 })).stdout.trim();
+          if (!acquisitionRestricted) {
+            await assertCurrentControllerAcquisition(input);
+            const result = await materializeManagedProjectWorkspace(cwd, {
+              repoUrl: row.repoUrl,
+              stagingParent,
+              repoRef: authorizedPin ?? (row.requestedRef === "HEAD" ? null : row.requestedRef),
+              resolveGitAuth: source.catalogRepositoryId ? resolveAuth : async () => anonymous,
+              beforePublish: async cloneCwd => {
+                await assertCurrentControllerAcquisition(input);
+                await reserveRootAccess({ companyId: input.companyId, cwd: root, sourceWorkspaceId: input.workspaceId, reader: input });
+                const pinnedCommit = (await execFile("git", ["-C", cloneCwd, "rev-parse", "HEAD"], { timeout: 30_000 })).stdout.trim();
+                await fs.writeFile(path.join(cloneCwd, ".git", "paperclip-workspace-owner.json"), JSON.stringify({ version: 1, repositoryId: row.id, pinnedCommit }), { flag: "wx", mode: 0o600 });
+              },
+            });
+            if (result.warning) throw conflict(result.warning);
+          }
+          const git = async (...args: string[]) => (await execFile("git", ["-C", cwd, ...args], { timeout: 30_000, env: { ...process.env, GIT_NO_LAZY_FETCH: "1" } })).stdout.trim();
           const origin = normalizeProjectRepositoryUrl(await git("remote", "get-url", "origin"));
           if (origin.url.toLowerCase() !== row.repositoryIdentity) throw conflict("Repository checkout belongs to a different origin");
           const ownership = await readOwnership();
           if (!authorizedPin && (ownership?.repositoryId !== row.id || !/^[a-f0-9]{40,64}$/.test(ownership.pinnedCommit))) throw conflict("Repository publication has no valid preparation receipt");
           // The pre-publication commit survives a crash before the database update.
           const pinnedCommit: string = authorizedPin ?? ownership.pinnedCommit;
+          if (acquisitionRestricted) await git("cat-file", "-e", `${pinnedCommit}^{commit}`);
           const branchName = await git("symbolic-ref", "--quiet", "--short", "HEAD").catch(() => null);
           await db.update(executionWorkspaceRepositories).set({ state: "ready", pinnedCommit, branchName, failureCode: null, updatedAt: new Date() }).where(eq(executionWorkspaceRepositories.id, row.id));
           prepared.push({ id: row.id, cwd, repoUrl: row.repoUrl, relativePath: row.relativePath, pinnedCommit, branchName });

@@ -64644,7 +64644,10 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     }
   });
 
-  it("migrates Telegram basic-group reach and topic tasks to the replacement supergroup", async () => {
+  it.each([
+    ...["unset", "inherit", "clear", "configured"].flatMap((defaultsMode) =>
+      [false, true].map((existingDestination) => ({ defaultsMode, existingDestination }))),
+  ])("migrates Telegram basic-group reach, topic tasks and $defaultsMode defaults (existing destination: $existingDestination)", async ({ defaultsMode, existingDestination }) => {
     const fixture = await seedCompany();
     const { callbacks, endpoint, service, wakeup } =
       await configuredTelegramEndpoint(fixture);
@@ -64652,6 +64655,17 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       .update(chatEndpoints)
       .set({ status: "active" })
       .where(eq(chatEndpoints.id, endpoint.id));
+    const [defaultProject, selectedProject] = await db.insert(projects).values([
+      { companyId: fixture.companyId, name: "Endpoint default project" },
+      { companyId: fixture.companyId, name: "Migrated resource project" },
+    ]).returning();
+    await service.update(endpoint.id, { executionDefaults: {
+      projectId: defaultProject.id, workspace: { kind: "task_directory" },
+    } }, "owner-user");
+    const executionDefaults = defaultsMode === "unset" ? null
+      : defaultsMode === "inherit" ? {}
+      : defaultsMode === "clear" ? { projectId: null, workspace: null }
+      : { projectId: selectedProject.id, workspace: { kind: "task_directory" as const } };
     const previousChatId = "-5546433913";
     const migratedChatId = "-1004415501660";
     const topicId = 77;
@@ -64665,8 +64679,14 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         label: "Telegram migration group",
         availability: "available",
         enabled: true,
+        executionDefaults,
       })
       .returning();
+    if (existingDestination) await db.insert(chatEndpointResources).values({
+      companyId: fixture.companyId, endpointId: endpoint.id, type: "chat",
+      providerResourceId: migratedChatId, label: "Existing destination", availability: "available",
+      executionDefaults: { projectId: selectedProject.id, workspace: null },
+    });
     const previousTopic = makeThread({
       channelId: `telegram:${previousChatId}`,
       id: `telegram:${previousChatId}:${topicId}`,
@@ -64725,6 +64745,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         }),
         expect.objectContaining({
           providerResourceId: migratedChatId,
+          executionDefaults,
           label: "Telegram migration group",
           availability: "available",
           enabled: true,
@@ -64779,6 +64800,22 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       { body: "Continue by replying after the group migration" },
     ]);
     expect(wakeup).toHaveBeenCalledTimes(2);
+
+    // A new topic must snapshot the migrated destination's defaults, while the
+    // existing topic above keeps its original task and workspace selection.
+    const newTopic = makeThread({ channelId: `telegram:${migratedChatId}`,
+      id: `telegram:${migratedChatId}:${topicId + 1}`, name: "New migrated topic" });
+    await deliverMessage({ callbacks, endpointId: endpoint.id, provider: "telegram", thread: newTopic.thread,
+      message: makeMessage({ id: `${migratedChatId}:43`, raw: { message_id: 43, message_thread_id: topicId + 1 },
+        text: "Start a new topic after migration", mentioned: true, userId: "telegram-migration-user" }), trigger: "mention" });
+    const newConversation = (await service.listConversations(endpoint.id)).find(row => row.id !== beforeMigration.id);
+    expect(newConversation).toBeDefined();
+    const [newTask] = await readIssuesById(newConversation!.issueId);
+    expect(newTask.projectId).toBe(defaultsMode === "clear" ? null
+      : defaultsMode === "configured" ? selectedProject.id : defaultProject.id);
+    expect(newTask.workspaceSelection).toEqual(defaultsMode === "clear" ? null
+      : { version: 1, selection: { kind: "task_directory" }, source: "channel" });
+    expect(wakeup).toHaveBeenCalledTimes(3);
   });
 
   it("enforces Telegram group reach and privacy-mode addressing before retaining message content", async () => {

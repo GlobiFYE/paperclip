@@ -434,6 +434,7 @@ export function createChatResourceReconciliation(db: Db, options: ResourceReconc
                   (currentEndpoint.provider === "slack" &&
                     effect.resourceType === "channel" &&
                     effect.availability === "available"),
+                ...(previousResource ? { executionDefaults: previousResource.executionDefaults } : {}),
                 metadata: effect.metadata ?? {},
               })
               .onConflictDoUpdate({
@@ -453,6 +454,7 @@ export function createChatResourceReconciliation(db: Db, options: ResourceReconc
                         enabled: sql<boolean>`${chatEndpointResources.enabled} or ${migratedEnabled}`,
                       }
                     : {}),
+                  ...(previousResource ? { executionDefaults: previousResource.executionDefaults } : {}),
                   metadata: effect.metadata ?? {},
                   updatedAt: now,
                 },

@@ -14,9 +14,9 @@ const support = await getEmbeddedPostgresTestSupport();
   const originalSecret = process.env.PAPERCLIP_AGENT_JWT_SECRET;
   beforeAll(async () => { process.env.PAPERCLIP_AGENT_JWT_SECRET = randomUUID(); server = await startRunnerApiTestServer(); }, 60_000);
   afterAll(async () => { await server?.close(); if (originalSecret === undefined) delete process.env.PAPERCLIP_AGENT_JWT_SECRET; else process.env.PAPERCLIP_AGENT_JWT_SECRET = originalSecret; });
-  it("inspects admitted files, durably requests a repository, and stages root selection without interrupting", async () => {
+  it("inspects an idle admitted workspace, requests a repository, and stages root selection without interrupting", async () => {
     const f = await server.fixture({ conversation: true, disableWakeOnDemand: true });
-    const [workspace] = await server.db.insert(executionWorkspaces).values({ companyId: f.companyId, projectId: null, sourceIssueId: f.issueId, name: "Task files", cwd: f.workspace, mode: "shared_workspace", strategyType: "task_directory" }).returning();
+    const [workspace] = await server.db.insert(executionWorkspaces).values({ companyId: f.companyId, projectId: null, sourceIssueId: f.issueId, name: "Task files", cwd: f.workspace, mode: "shared_workspace", strategyType: "task_directory", status: "idle" }).returning();
     await server.db.update(issues).set({ projectId: null, projectWorkspaceId: null, executionWorkspaceId: workspace.id }).where(eq(issues.id, f.issueId));
     const authority = new PaperclipRunnerToolAuthority(server.db, { companyId: f.companyId, issueId: f.issueId, agentId: f.agentId, runId: f.runId, apiUrl: server.apiUrl, workspaceRoot: "/admitted/task" });
     const call = (tool: string, args: Record<string, unknown>) => authority.execute({ tool, arguments: args, callId: randomUUID() });
@@ -55,6 +55,24 @@ const support = await getEmbeddedPostgresTestSupport();
     ]);
     await expect(call("select_workspace", selection)).resolves.toMatchObject({ kind: "scheduled" });
     await expect(call("prepare_repository", repository)).resolves.toMatchObject({ kind: "requires_next_admission" });
+  });
+
+  it("denies new public clones for unlinked full-auto chat while keeping workspace discovery readable", async () => {
+    const f = await server.fixture({ conversation: true, disableWakeOnDemand: true });
+    const cwd = await mkdtemp(join(dirname(f.workspace), "unlinked-task-"));
+    const [workspace] = await server.db.insert(executionWorkspaces).values({ companyId: f.companyId, sourceIssueId: f.issueId,
+      name: "Unlinked chat files", cwd, mode: "isolated_workspace", strategyType: "task_directory" }).returning();
+    const policy = { trustPreset: "low_trust_review", authorizationPolicy: { trustPreset: "low_trust_review",
+      trustBoundary: { mode: "low_trust_review", companyId: f.companyId, rootIssueId: f.issueId } } };
+    await server.db.update(agents).set({ adapterConfig: { provider: "codex", codexPermissionMode: "never" } }).where(eq(agents.id, f.agentId));
+    await server.db.update(issues).set({ projectId: null, projectWorkspaceId: null, executionWorkspaceId: workspace.id,
+      executionPolicy: {} }).where(eq(issues.id, f.issueId));
+    await server.db.update(heartbeatRuns).set({ contextSnapshot: { issueId: f.issueId, executionPolicy: policy } }).where(eq(heartbeatRuns.id, f.runId));
+    const call = (tool: string, args: Record<string, unknown>) => f.authority.execute({ tool, arguments: args, callId: randomUUID() });
+    await expect(call("get_workspace", {})).resolves.toMatchObject({ workspace: { id: workspace.id } });
+    await expect(call("prepare_repository", { repository: { kind: "url", url: "https://github.com/public/example" }, requestKey: "unlinked-full-auto" }))
+      .rejects.toThrow(/trusted task/);
+    expect(await server.db.select().from(executionWorkspaceRepositories).where(eq(executionWorkspaceRepositories.companyId, f.companyId))).toHaveLength(0);
   });
 
   it("does not expose repository preparation or workspace selection to Ask mode", async () => {
@@ -121,7 +139,7 @@ const support = await getEmbeddedPostgresTestSupport();
     const unrelatedCwd = await mkdtemp(join(dirname(f.workspace), "unrelated-workspace-"));
     await server.db.update(executionWorkspaces).set({ cwd: unrelatedCwd }).where(eq(executionWorkspaces.id, unrelated.id));
     await expect(call("select_workspace", { selection: { kind: "existing", workspaceId: source.id }, expectedBindingRevision: 0, requestKey: "source-allowed" })).resolves.toMatchObject({ kind: "scheduled" });
-    await expect(call("prepare_repository", repository)).resolves.toMatchObject({ kind: "requires_next_admission" });
+    await expect(call("prepare_repository", repository)).rejects.toThrow(/trusted task/);
     expect((await server.db.select().from(issues).where(eq(issues.id, f.issueId)))[0]?.projectId).toBeNull();
   });
 });
