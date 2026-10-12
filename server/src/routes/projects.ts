@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
-import { activityLog } from "@paperclipai/db";
+import { activityLog, projects as projectsTable } from "@paperclipai/db";
 import { projectToolContext } from "../services/project-tool-context.js";
 import { persistActivity, publishActivity } from "../services/activity-log.js";
 import { z } from "zod";
@@ -36,6 +36,7 @@ import { instanceSettingsService } from "../services/instance-settings.js";
 import {
   normalizeIssueExecutionPolicy,
   preserveRedactedDefaultExecutionPolicyMonitorExternalRef,
+  REDACTED_ISSUE_MONITOR_EXTERNAL_REF,
 } from "../services/issue-execution-policy.js";
 import { assertBoard, assertCompanyAccess, getAccessibleResource, getActorInfo } from "./authz.js";
 import { ensureProjectAccessMember } from "../services/projects.js";
@@ -535,10 +536,21 @@ export function projectRoutes(db: Db) {
       // The GET above returns monitor.externalRef redacted, so a client that
       // round-trips that response back into this PUT submits the "[redacted]"
       // marker literally. Preserve the real stored value in that case instead
-      // of overwriting it with the marker string.
+      // of overwriting it with the marker string. svc.getById() already runs
+      // every row through the same redaction (attachWorkspaces), so the real
+      // value has to come from a raw column read, not existing -- only pay for
+      // that extra read when the marker is actually present.
+      let rawStoredDefaultExecutionPolicy = null;
+      if (req.body.defaultExecutionPolicy?.monitor?.externalRef === REDACTED_ISSUE_MONITOR_EXTERNAL_REF) {
+        const [rawProjectRow] = await db
+          .select({ defaultExecutionPolicy: projectsTable.defaultExecutionPolicy })
+          .from(projectsTable)
+          .where(eq(projectsTable.id, id));
+        rawStoredDefaultExecutionPolicy = rawProjectRow?.defaultExecutionPolicy ?? null;
+      }
       const submittedDefaultExecutionPolicy = preserveRedactedDefaultExecutionPolicyMonitorExternalRef(
         req.body.defaultExecutionPolicy,
-        existing.defaultExecutionPolicy ?? null,
+        rawStoredDefaultExecutionPolicy,
       );
       const project = await svc.update(id, { defaultExecutionPolicy: submittedDefaultExecutionPolicy });
       if (!project) {

@@ -4,7 +4,7 @@ import multer from "multer";
 import { and, count as countFn, eq } from "drizzle-orm";
 import { z } from "zod";
 import type { Db } from "@paperclipai/db";
-import { agents as agentsTable } from "@paperclipai/db";
+import { agents as agentsTable, companies as companiesTable } from "@paperclipai/db";
 import type { CompanyPortabilityImportResult } from "@paperclipai/shared";
 import {
   MAX_ZIP_ENTRY_DECOMPRESSED_BYTES,
@@ -42,6 +42,7 @@ import { validate } from "../middleware/validate.js";
 import {
   normalizeIssueExecutionPolicy,
   preserveRedactedDefaultExecutionPolicyMonitorExternalRef,
+  REDACTED_ISSUE_MONITOR_EXTERNAL_REF,
 } from "../services/issue-execution-policy.js";
 import {
   assembleImportTransferZip,
@@ -547,10 +548,21 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
       // The GET above returns monitor.externalRef redacted, so a client that
       // round-trips that response back into this PUT submits the "[redacted]"
       // marker literally. Preserve the real stored value in that case instead
-      // of overwriting it with the marker string.
+      // of overwriting it with the marker string. svc.getById() already runs
+      // every row through the same redaction (enrichCompany), so the real
+      // value has to come from a raw column read, not existingCompany -- only
+      // pay for that extra read when the marker is actually present.
+      let rawStoredDefaultExecutionPolicy = null;
+      if (req.body.defaultExecutionPolicy?.monitor?.externalRef === REDACTED_ISSUE_MONITOR_EXTERNAL_REF) {
+        const [rawCompanyRow] = await db
+          .select({ defaultExecutionPolicy: companiesTable.defaultExecutionPolicy })
+          .from(companiesTable)
+          .where(eq(companiesTable.id, companyId));
+        rawStoredDefaultExecutionPolicy = rawCompanyRow?.defaultExecutionPolicy ?? null;
+      }
       const submittedDefaultExecutionPolicy = preserveRedactedDefaultExecutionPolicyMonitorExternalRef(
         req.body.defaultExecutionPolicy,
-        existingCompany.defaultExecutionPolicy ?? null,
+        rawStoredDefaultExecutionPolicy,
       );
       const company = await svc.update(
         companyId,
