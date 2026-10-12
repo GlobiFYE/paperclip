@@ -3,7 +3,7 @@ import { skillFileLinkHref } from "@/lib/skill-file-links";
 import { SkillSourceProvenance } from "../components/SkillSourceProvenance";
 import { AgentIdentity } from "@/components/AgentIdentity";
 import { AgentAvatar } from "@/components/AgentAvatar";
-import { useEffect, useMemo, useRef, useState, type SVGProps } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type SVGProps } from "react";
 import { Link, useNavigate, useParams, useSearchParams } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
@@ -2992,6 +2992,11 @@ export function SkillDetailPage({
     return () => window.removeEventListener("beforeunload", handler);
   }, [isDirty]);
 
+  const resolveFileLinkHref = useCallback(
+    (href: string) => detail ? skillFileLinkHref(detail, selectedPath, href, routeSkills ?? [detail]) : null,
+    [detail, selectedPath, routeSkills],
+  );
+
   if (!detail) {
     return loading ? <PageSkeleton variant="detail" /> : <EmptyState icon={Boxes} message="Skill not found." />;
   }
@@ -3121,7 +3126,7 @@ export function SkillDetailPage({
             <MarkdownBody
               softBreaks={false}
               linkIssueReferences={false}
-              resolveLinkHref={(href) => skillFileLinkHref(skill, selectedPath, href, routeSkills ?? [skill])}
+              resolveLinkHref={resolveFileLinkHref}
             >
               {body}
             </MarkdownBody>
