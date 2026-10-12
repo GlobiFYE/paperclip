@@ -1295,7 +1295,7 @@ function invalidateActivityQueries(
       !!currentActor.agentId &&
       actorId === currentActor.agentId);
 
-  if (action?.startsWith("ai_connection.") || action?.startsWith("connection_grant.")) {
+  if (action?.startsWith("ai_connection.") || action?.startsWith("connection_grant.") || action === "tool_connection.archived") {
     queryClient.invalidateQueries({ queryKey: ["ai-connections", companyId] });
   }
 

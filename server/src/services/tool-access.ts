@@ -17778,6 +17778,8 @@ export function toolAccessService(
           name: input.name ?? existing.name,
           description: input.description ?? existing.description,
           status: input.status ?? existing.status,
+          // Explicit status changes supersede automatic last-connection archival.
+          ...(input.status !== undefined ? { archivedAt: null } : {}),
           pluginId: input.pluginId ?? existing.pluginId,
           ownerAgentId: input.ownerAgentId ?? existing.ownerAgentId,
           ownerUserId: input.ownerUserId ?? existing.ownerUserId,

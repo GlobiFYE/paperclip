@@ -141,6 +141,8 @@ type ConnectionRemovalTarget = {
   poolRevision?: number;
 } & ({ kind: "chat"; provider: ChatProvider } | { kind?: undefined });
 
+type ScopedConnectionRemovalTarget = ConnectionRemovalTarget & { companyId: string };
+
 // Temporary, page-only hold until Google OAuth verification is approved.
 // Keep definitions, direct setup/management routes, and runtime access intact.
 // Remove this filter after approval; reviewer instances stay on their pinned build.
@@ -343,6 +345,8 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
   const queryClient = useQueryClient();
   const { pushToast } = useToast();
   const { selectedCompanyId } = useCompany();
+  const currentCompanyId = useRef(selectedCompanyId);
+  currentCompanyId.current = selectedCompanyId;
   const assistantConnections = useAssistantConnections();
   const { userId: viewingUserId, settled: identitySettled } = useAccountIdentity();
   const { enabled: chatConnectorsEnabled, githubEnabled } = useChatConnectorsEnabled();
@@ -359,7 +363,7 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
   const [aggregatorToManage, setAggregatorToManage] = useState<{ app: AggregatorAppCatalogEntry; connectionId?: string } | null>(null);
   const [initialAggregatorProvider, setInitialAggregatorProvider] = useState<AggregatorAppCatalogEntry["routes"][number]["provider"]>();
   const [connectionToRemove, setConnectionToRemove] =
-    useState<ConnectionRemovalTarget | null>(null);
+    useState<ScopedConnectionRemovalTarget | null>(null);
 
   useEffect(() => {
     setBreadcrumbs([{ label: "Connectors" }]);
@@ -438,7 +442,7 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
   }
   const removeConnection = useMutation({
     retry: false,
-    mutationFn: async (target: ConnectionRemovalTarget) => {
+    mutationFn: async (target: ScopedConnectionRemovalTarget) => {
       if (target.kind === "chat") {
         if (target.provider === "agentmail") {
           await emailApi.control(target.id, "remove");
@@ -447,24 +451,25 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
         }
       } else if (target.pool) {
         if (!target.poolRevision) throw new Error("Open the confirmation again before removing this pool.");
-        await aiConnectionPoolsApi.remove(selectedCompanyId!, target.id, target.poolRevision);
+        await aiConnectionPoolsApi.remove(target.companyId, target.id, target.poolRevision);
       } else {
         await toolsApi.archiveConnection(target.id);
       }
     },
     onSuccess: (_connection, target) => {
-      queryClient.invalidateQueries({ queryKey: ["email-inboxes", selectedCompanyId!] });
+      queryClient.invalidateQueries({ queryKey: ["ai-connections", target.companyId] });
+      queryClient.invalidateQueries({ queryKey: ["email-inboxes", target.companyId] });
       queryClient.invalidateQueries({
-        queryKey: queryKeys.chatEndpoints.list(selectedCompanyId!),
+        queryKey: queryKeys.chatEndpoints.list(target.companyId),
       });
       queryClient.invalidateQueries({
-        queryKey: queryKeys.tools.connections(selectedCompanyId!),
+        queryKey: queryKeys.tools.connections(target.companyId),
       });
       queryClient.invalidateQueries({
-        queryKey: queryKeys.tools.applications(selectedCompanyId!),
+        queryKey: queryKeys.tools.applications(target.companyId),
       });
       queryClient.invalidateQueries({
-        queryKey: queryKeys.apps.attention(selectedCompanyId!),
+        queryKey: queryKeys.apps.attention(target.companyId),
       });
       pushToast({
         title: "Connection removed",
@@ -486,15 +491,18 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
       }),
   });
   async function requestConnectionRemoval(target: ConnectionRemovalTarget) {
+    const scopedTarget = { ...target, companyId: selectedCompanyId! };
     removeConnection.reset();
-    if (!target.pool) { setConnectionToRemove(target); return; }
+    if (!target.pool) { setConnectionToRemove(scopedTarget); return; }
     try {
-      const pool = (await aiConnectionPoolsApi.list(selectedCompanyId!)).find(pool => pool.id === target.id);
+      const pool = (await aiConnectionPoolsApi.list(scopedTarget.companyId)).find(pool => pool.id === target.id);
+      if (currentCompanyId.current !== scopedTarget.companyId) return;
       if (!pool) throw new Error("This connection pool is no longer available.");
       // Capture the revision when presenting the confirmation. Never replace
       // it at submission time: concurrent edits must invalidate this consent.
-      setConnectionToRemove({ ...target, accountName: pool.name, poolRevision: pool.revision });
+      setConnectionToRemove({ ...scopedTarget, accountName: pool.name, poolRevision: pool.revision });
     } catch (error) {
+      if (currentCompanyId.current !== scopedTarget.companyId) return;
       pushToast({ title: "Couldn't open the connection pool", body: error instanceof Error ? error.message : "Please try again.", tone: "error" });
     }
   }

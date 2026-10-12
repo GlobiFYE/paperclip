@@ -38,7 +38,7 @@ import {
   type CreateAiConnection,
   type AiConnectionLoginIntent,
 } from "@paperclipai/shared";
-import { forbidden, notFound, unprocessable } from "../errors.js";
+import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { aiConnectionConfigurationFailure, aiConnectionCredentialNotSharedFailure } from "./ai-connection-configuration-failure.js";
 import { quotaCredentialRecovery, quotaCredentialHash } from "./quota-credential-recovery.js";
 import { logger } from "../middleware/logger.js";
@@ -132,6 +132,9 @@ export function aiConnectionService(db: Db) {
           ),
       ]);
     return accounts.flatMap(({ connection, grant }) => {
+      // Removal leaves historical rows and grants, but they are no longer choices.
+      // A revoked grant on a retained connection remains visible for reconnect.
+      if (connection.status === "archived") return [];
       const metadata = aiConnectionMetadataSchema.safeParse(
         connection.config.ai,
       );
@@ -733,11 +736,16 @@ export function aiConnectionService(db: Db) {
       // Removing the last connection archives the provider application, and the
       // Connectors page hides archived applications. Reactivate it so the new
       // account is visible.
-      if (app.status === "archived")
+      if (app.status === "archived") {
+        // Last-connection removal sets archivedAt; an explicit operator archive
+        // does not. Connecting must not reverse that operator decision.
+        if (app.archivedAt === null)
+          throw conflict("An operator archived this provider application. Restore it before connecting another account.");
         await tx
           .update(toolApplications)
           .set({ status: "active", archivedAt: null, updatedAt: new Date() })
           .where(eq(toolApplications.id, app.id));
+      }
       if (reconnect)
         await tx
           .update(toolConnections)

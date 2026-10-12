@@ -76,6 +76,24 @@ setup shows an agent-access checkbox, enabled for all company agents by default
 for connection managers. The owner can limit access to the current agent. This access applies only to
 the owner's tasks. Reconnect never expands existing access.
 
+## Account removal and provider recovery
+
+Remove an account from its row on the Connectors page. A removed account no
+longer appears among an agent's connection choices. An agent that was bound to
+that account shows an unavailable connection and needs an explicit new choice.
+Removal does not select another account. Revoking an identity keeps the account
+visible so its owner can reconnect it.
+
+Removing the last account automatically archives its provider application.
+Connecting again restores an automatically archived provider. An application
+that an operator explicitly archived must be restored before a new connection
+can be saved. An explicit status change clears the automatic archive marker.
+
+The recovery runs when an account is connected or reconnected. It does not
+repair existing hidden accounts at startup. For an older affected instance,
+check for active AI accounts under an archived provider and confirm the archive
+source before restoring that provider. Do not restore every archived provider.
+
 ## Storage and API
 
 AI connections pair `connectionPurpose: ai` with `transport: runtime_auth`.

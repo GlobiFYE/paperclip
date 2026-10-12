@@ -16,6 +16,23 @@ import { __liveUpdatesTestUtils } from "./LiveUpdatesProvider";
 import { queryKeys } from "../lib/queryKeys";
 
 describe("LiveUpdatesProvider issue invalidation", () => {
+  it("#15947 invalidates cached AI choices for all agents after a connection is removed elsewhere", () => {
+    const client = new QueryClient();
+    const keys = [["ai-connections", "company-1", "agent-1"], ["ai-connections", "company-1", "agent-2"]];
+    for (const key of keys) client.setQueryData(key, { connections: [{ id: "removed-account" }] });
+    const otherCompany = ["ai-connections", "company-2", "agent-1"];
+    client.setQueryData(otherCompany, { connections: [{ id: "other-account" }] });
+
+    __liveUpdatesTestUtils.invalidateActivityQueries(client, "company-1", {
+      entityType: "tool_connection", entityId: "removed-account", action: "tool_connection.archived",
+      actorType: "user", actorId: "another-operator",
+    }, { userId: "current-operator", agentId: null });
+
+    for (const key of keys) expect(client.getQueryState(key)?.isInvalidated).toBe(true);
+    expect(client.getQueryState(otherCompany)?.isInvalidated).toBe(false);
+    client.clear();
+  });
+
   it("refreshes personal membership state when a primary changes on another device", () => {
     const client = new QueryClient();
     const invalidate = vi.spyOn(client, "invalidateQueries");

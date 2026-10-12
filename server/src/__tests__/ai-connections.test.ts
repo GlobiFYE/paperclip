@@ -1367,6 +1367,189 @@ console.log(JSON.stringify({ type: "result", subtype: "success", result: "hello"
     }
   });
 
+  it("#15947 omits removed accounts from the AI list and preserves another valid account", async () => {
+    const scope = randomUUID();
+    await db.insert(companies).values({ id: scope, name: "Removed AI list", issuePrefix: "AIL" });
+    await db.insert(companyMemberships).values({ companyId: scope, principalId: "list-owner", principalType: "user", status: "active", membershipRole: "member" });
+    const intent = { provider: "anthropic", method: "api_key", ownership: "personal", apiKey: "fixture", agentIds: [], allAgents: true } as const;
+    const removed = await service.save(scope, "list-owner", { ...intent, name: "Remove me" }, "fixture-remove");
+    const retained = await service.save(scope, "list-owner", { ...intent, name: "Keep me" }, "fixture-keep");
+    await toolAccessService(db).archiveConnection(removed.connectionId, scope);
+
+    const accounts = await service.list(scope, "list-owner");
+    expect(accounts.map(account => account.id)).toEqual([retained.connectionId]);
+    expect(accounts[0].status).toBe("connected");
+    await expect(service.select({ companyId: scope, userId: "list-owner", agentId,
+      adapterType: "claude_local", binding: { provider: "anthropic", method: "api_key", mode: "delegated",
+      connectionId: removed.connectionId, grantId: removed.grantId } })).rejects.toMatchObject({ status: 422 });
+  });
+
+  it("#15947 keeps a revoked personal default visible without selecting another account", async () => {
+    const scope = randomUUID();
+    await db.insert(companies).values({ id: scope, name: "Revoked default", issuePrefix: "AIRD" });
+    await db.insert(companyMemberships).values({ companyId: scope, principalId: "revoke-owner", principalType: "user", status: "active", membershipRole: "member" });
+    const intent = { provider: "anthropic", method: "api_key", ownership: "personal", apiKey: "fixture", agentIds: [], allAgents: true } as const;
+    const first = await service.save(scope, "revoke-owner", { ...intent, name: "Default" }, "fixture-default");
+    const other = await service.save(scope, "revoke-owner", { ...intent, name: "Other" }, "fixture-other");
+    await toolAccessService(db).revokeConnectionGrant(first.connectionId, first.grantId, { actorType: "user", actorId: "revoke-owner" });
+
+    const accounts = await service.list(scope, "revoke-owner");
+    expect(accounts.find(account => account.id === first.connectionId)).toMatchObject({ status: "revoked", isDefault: true });
+    expect(accounts.find(account => account.id === other.connectionId)).toMatchObject({ status: "connected", isDefault: false });
+  });
+
+  it("#15947 preserves a provider application explicitly archived by the operator", async () => {
+    const scope = randomUUID();
+    await db.insert(companies).values({ id: scope, name: "Operator archive", issuePrefix: "AIOP" });
+    await db.insert(companyMemberships).values({ companyId: scope, principalId: "archive-owner", principalType: "user", status: "active", membershipRole: "member" });
+    const intent = { provider: "anthropic", method: "api_key", ownership: "personal", apiKey: "fixture", agentIds: [], allAgents: true } as const;
+    const first = await service.save(scope, "archive-owner", { ...intent, name: "First" }, "fixture-first");
+    const [connection] = await db.select().from(toolConnections).where(eq(toolConnections.id, first.connectionId));
+    await toolAccessService(db).updateApplication(connection.applicationId, { status: "archived" });
+
+    await expect(service.save(scope, "archive-owner", { ...intent, name: "Second" }, "fixture-second"))
+      .rejects.toMatchObject({ status: 409 });
+    const [app] = await db.select().from(toolApplications).where(eq(toolApplications.id, connection.applicationId));
+    expect(app.status).toBe("archived");
+    const rows = await db.select().from(toolConnections).where(eq(toolConnections.applicationId, app.id));
+    expect(rows.map(row => row.id)).toEqual([first.connectionId]);
+  });
+
+  it("#15947 respects an explicit archive after manually restoring an automatically archived provider", async () => {
+    const scope = randomUUID();
+    await db.insert(companies).values({ id: scope, name: "Repeated operator archive", issuePrefix: "AIRP" });
+    await db.insert(companyMemberships).values({ companyId: scope, principalId: "repeat-owner", principalType: "user", status: "active", membershipRole: "member" });
+    const intent = { provider: "anthropic", method: "api_key", ownership: "personal", apiKey: "fixture", agentIds: [], allAgents: true } as const;
+    const first = await service.save(scope, "repeat-owner", { ...intent, name: "First" }, "fixture-first");
+    const [connection] = await db.select().from(toolConnections).where(eq(toolConnections.id, first.connectionId));
+    const tools = toolAccessService(db);
+    await tools.archiveConnection(first.connectionId, scope);
+    const [automaticallyArchived] = await db.select().from(toolApplications).where(eq(toolApplications.id, connection.applicationId));
+    expect(automaticallyArchived.archivedAt).not.toBeNull();
+    await tools.updateApplication(connection.applicationId, { status: "active" });
+    await tools.updateApplication(connection.applicationId, { status: "archived" });
+
+    await expect(service.save(scope, "repeat-owner", { ...intent, name: "Second" }, "fixture-second"))
+      .rejects.toMatchObject({ status: 409 });
+    const [app] = await db.select().from(toolApplications).where(eq(toolApplications.id, connection.applicationId));
+    expect(app).toMatchObject({ status: "archived", archivedAt: null });
+    const rows = await db.select().from(toolConnections).where(eq(toolConnections.applicationId, app.id));
+    expect(rows.map(row => row.id)).toEqual([first.connectionId]);
+  });
+
+  it("#15947 does not replay an old automatic archive marker from a delayed name edit", async () => {
+    const scope = randomUUID();
+    await db.insert(companies).values({ id: scope, name: "Archive marker race", issuePrefix: "AIMR" });
+    await db.insert(companyMemberships).values({ companyId: scope, principalId: "marker-owner", principalType: "user", status: "active", membershipRole: "member" });
+    const intent = { provider: "anthropic", method: "api_key", ownership: "personal", apiKey: "fixture", agentIds: [], allAgents: true } as const;
+    const first = await service.save(scope, "marker-owner", { ...intent, name: "First" }, "fixture-first");
+    const [connection] = await db.select().from(toolConnections).where(eq(toolConnections.id, first.connectionId));
+    const tools = toolAccessService(db);
+    await tools.archiveConnection(first.connectionId, scope);
+    const reached = deferredSignal();
+    const release = deferredSignal();
+    const originalUpdate = db.update.bind(db);
+    // Pause only the name edit before its real SQL executes. All reads and
+    // writes still use the real database; the explicit archive can finish first.
+    const update = vi.spyOn(db, "update").mockImplementation((table) => {
+      const builder = originalUpdate(table);
+      const originalSet = builder.set.bind(builder);
+      builder.set = (values) => {
+        const query = originalSet(values);
+        if (table === toolApplications && values.name === "Renamed provider") {
+          const returning = query.returning.bind(query);
+          query.returning = (() => {
+            reached.resolve();
+            return release.promise.then(() => returning());
+          }) as typeof query.returning;
+        }
+        return query;
+      };
+      return builder;
+    });
+    const editing = tools.updateApplication(connection.applicationId, { name: "Renamed provider" });
+    try {
+      await reached.promise;
+      await tools.updateApplication(connection.applicationId, { status: "archived" });
+      release.resolve();
+      await editing;
+      await expect(service.save(scope, "marker-owner", { ...intent, name: "Second" }, "fixture-second"))
+        .rejects.toMatchObject({ status: 409 });
+      const [app] = await db.select().from(toolApplications).where(eq(toolApplications.id, connection.applicationId));
+      expect(app).toMatchObject({ name: "Renamed provider", status: "archived", archivedAt: null });
+    } finally {
+      release.resolve();
+      await Promise.allSettled([editing]);
+      update.mockRestore();
+    }
+  });
+
+  it.each(["removal first", "connect first"] as const)(
+    "#15947 deterministically keeps the provider application active under contention (%s)",
+    async (order) => {
+      const raceCompanyId = randomUUID();
+      await db.insert(companies).values({ id: raceCompanyId, name: `Racing provider app (${order})`, issuePrefix: order === "removal first" ? "ARR" : "ARC" });
+      await db.insert(companyMemberships).values({ companyId: raceCompanyId, principalId: "dave", principalType: "user", status: "active", membershipRole: "member" });
+      const account = { provider: "anthropic", method: "api_key", ownership: "personal", apiKey: "fixture", agentIds: [], allAgents: true } as const;
+      const initial = await service.save(raceCompanyId, "dave", { ...account, name: "Initial" }, `fixture-initial-${order}`);
+      const [initialConnection] = await db.select().from(toolConnections).where(eq(toolConnections.id, initial.connectionId));
+      const applicationId = initialConnection!.applicationId;
+
+      // Hold the application row lock so both operations queue behind it in a known order.
+      // Postgres grants a row lock to its waiters in arrival order.
+      const lockWaiters = async () => {
+        const rows = await db.execute(sql`select count(*)::int as count from pg_stat_activity where datname = current_database() and wait_event_type = 'Lock'`);
+        return Number((rows as unknown as Array<{ count: number }>)[0]?.count ?? 0);
+      };
+      const waitForLockWaiters = async (count: number, label: string) => {
+        for (let attempt = 0; attempt < 200; attempt += 1) {
+          if ((await lockWaiters()) >= count) return;
+          await new Promise((resolve) => setTimeout(resolve, 25));
+        }
+        throw new Error(`${label} did not wait for the provider application lock`);
+      };
+      let lockHeld!: () => void;
+      let releaseLock!: () => void;
+      const held = new Promise<void>((resolve) => (lockHeld = resolve));
+      const released = new Promise<void>((resolve) => (releaseLock = resolve));
+      const holder = db.transaction(async (tx) => {
+        await tx.select({ id: toolApplications.id }).from(toolApplications).where(eq(toolApplications.id, applicationId)).for("update");
+        lockHeld();
+        await released;
+      });
+      await held;
+
+      const removal = () => toolAccessService(db).archiveConnection(initial.connectionId, raceCompanyId);
+      const connect = () => service.save(raceCompanyId, "dave", { ...account, name: "Next" }, `fixture-next-${order}`);
+      let removed!: Promise<unknown>;
+      let connected!: Promise<{ connectionId: string }>;
+      try {
+        if (order === "removal first") {
+          removed = removal();
+          await waitForLockWaiters(1, "The removal");
+          connected = connect();
+          await waitForLockWaiters(2, "The connect");
+        } else {
+          connected = connect();
+          await waitForLockWaiters(1, "The connect");
+          removed = removal();
+          await waitForLockWaiters(2, "The removal");
+        }
+      } finally {
+        // Release even when a waiter check fails, so no blocked transaction outlives this test.
+        releaseLock();
+        await holder;
+        await Promise.allSettled([removed, connected]);
+      }
+      const [, next] = await Promise.all([removed, connected]);
+
+      const [connection] = await db.select().from(toolConnections).where(eq(toolConnections.id, next.connectionId));
+      const [app] = await db.select().from(toolApplications).where(eq(toolApplications.id, applicationId));
+      expect(connection).toMatchObject({ applicationId, status: "active" });
+      expect(app).toMatchObject({ status: "active", archivedAt: null });
+    },
+  );
+
   it("preserves connection identity and defaults through reconnect; revocation wins over older attempts", async () => {
     const current = await service.select({ ...input, userId: "bob" });
     const reconnect = { ...binding, ownership: "personal" as const, name: current.connection.name, apiKey: "fixture", agentIds: [], allAgents: true, connectionId: current.connection.id };
