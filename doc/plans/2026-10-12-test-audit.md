@@ -13,6 +13,36 @@ Workspace typecheck and build pass. The previous round's completed owner and
 chat proof is recorded separately below. This is a reviewed subset of the
 repository, not an exhaustive review or a complete default-suite run.
 
+## PR delivery verification
+
+The cleanup is published in [PR #15978](https://github.com/paperclipai/paperclip/pull/15978).
+The three cleanup commits rebased onto `914b70572c` without changing their
+patches. At code revision `454e3a91ff`, fresh `pnpm -r typecheck` and
+`pnpm build` pass.
+
+The local `pnpm test:run` started at that code revision. During its first
+general-server invocation, one unchanged tool-access case timed out at
+15,035ms: `rejects unavailable Workspace gmail.read (other profile advertised:
+true)`. The invocation was stopped after the reported failure and exited 130.
+It did not complete the 882 general-server files or reach the remaining
+workspace and 158 serialized suites. **There is no full local default-suite
+pass.** The timing discrepancy remains unresolved; earlier passes alone do
+not establish its cause.
+
+Commit `37eb57418b` only corrects a coverage-guide link to the retained HTTP
+route suite. It arrived during the local default invocation, so that run is
+not an immutable run of the later head, although its executable sources are
+unchanged. The complete tool-access owner then runs at immutable
+`37eb57418b` and passes all **419 cases**, including the timed-out matrix row,
+with its existing assertions, fixtures and timeout. UI token gates also pass.
+No test was skipped, removed or given a longer budget in response to the failure.
+
+At `37eb57418b`, all remote CI and security checks pass, Greptile completes a
+fresh **5/5** review, and there are zero unresolved review threads. The review
+fix and this delivery record change Markdown only. Check the PR for the final
+head and its required CI/review results; the local failure remains disclosed
+in the PR verification section.
+
 ## Second expansion
 
 Baseline: `8538e024d7`. Refreshed `origin/master` remains at `fb21a3f30a`.
@@ -109,7 +139,8 @@ receipt, broad skip or longer timeout replaces behavioral proof.
   and `git diff --check` pass. No UI source changed in this round.
 - The full default repository suite remains unverified; this is complete
   affected-owner/sibling proof. A full default run is still required before
-  claiming a PR-ready handoff. All commits remain local.
+  claiming a full local pass. These commits were local at the end of that
+  round; later PR verification is recorded above.
 
 ### Retained second-round nominees
 
