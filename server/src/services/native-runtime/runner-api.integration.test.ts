@@ -217,7 +217,12 @@ else if(m.id!==undefined) send({id:m.id,result:{}});
   });
 
   it("preserves the REST skill-test credential scope after a task mode edit", async () => {
-    const fixture = await server.fixture({ contextSnapshot: { issueWorkMode: "skill_test" } });
+    const fixture = await server.fixture();
+    await server.db.update(heartbeatRuns).set({ contextSnapshot: { issueId: fixture.issueId,
+      paperclipAgentJwtScope: { kind: "skill_test", issueId: fixture.issueId },
+    } }).where(eq(heartbeatRuns.id, fixture.runId));
+    await server.db.update(issues).set({ workMode: "skill_test" }).where(eq(issues.id, fixture.issueId));
+    await server.db.update(issues).set({ workMode: "standard" }).where(eq(issues.id, fixture.issueId));
     const body = { kind: "secret", name: "parity/skill-test", value: "disposable-skill-test-value", justification: "Must remain denied" };
     const token = createLocalAgentJwt(fixture.agentId, fixture.companyId, "paperclip_runner", fixture.runId,
       fixture.responsibleUserId, { kind: "skill_test", issueId: fixture.issueId });

@@ -703,7 +703,7 @@ export class PaperclipRunnerToolAuthority {
     // Preserve the scope admitted at run creation, even if the task mode is
     // edited later. This matches the legacy runner's issued REST credential.
     const snapshot = record(context.run.contextSnapshot);
-    const skillTest = snapshot.issueWorkMode === "skill_test" || Boolean(snapshot.paperclipSkillTest)
+    const skillTest = record(snapshot.paperclipAgentJwtScope).kind === "skill_test" || Boolean(snapshot.paperclipSkillTest)
       || context.issue.workMode === "skill_test";
     return createLocalAgentJwt(this.binding.agentId, this.binding.companyId, context.actor.adapterType,
       this.binding.runId, context.run.responsibleUserId,

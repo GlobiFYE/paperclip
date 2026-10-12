@@ -79,6 +79,11 @@ export async function prepareHeartbeatTaskContext(db: Db, input: HeartbeatTaskCo
   } else {
     delete context.paperclipContinuationSummary;
   }
+  // Server-owned admission metadata. API transports must retain the scope
+  // issued to this run even if the task mode changes during execution.
+  context.paperclipAgentJwtScope = issueRef?.workMode === "skill_test"
+    ? { kind: "skill_test", issueId: issueRef.id }
+    : { kind: "standard" };
   const pinnedSkillTestContext =
     issueRef?.workMode === "skill_test"
       ? await getPinnedSkillTestContext(agent.companyId, issueRef.id)
