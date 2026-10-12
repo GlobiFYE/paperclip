@@ -1,6 +1,6 @@
 import { normalizeEscapedLineBreaks } from "@paperclipai/shared/validators/text";
 import { notifyDeliveryWork, DELIVERY_QUEUES } from "./delivery-work-notifications.js";
-import { activeIssueInteractionCondition, historicalQuestionCondition } from "./issue-question-context.js";
+import { historicalQuestionCondition } from "./issue-question-context.js";
 import {
   currentContinuationOrigins,
   deliveredContinuationCommentIds,
@@ -4767,9 +4767,6 @@ export function issueThreadInteractionService(
             eq(issueThreadInteractions.companyId, issue.companyId),
             eq(issueThreadInteractions.issueId, issue.id),
             eq(issueThreadInteractions.status, "pending"),
-            // Completed work retains ordinary historical questions for later
-            // human answers. Cancellation and governed requests still expire.
-            issue.status === "done" ? activeIssueInteractionCondition() : undefined,
           ),
         );
       if (rows.length === 0) return [];

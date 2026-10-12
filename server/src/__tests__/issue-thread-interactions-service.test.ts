@@ -3701,6 +3701,61 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
     })).rejects.toThrow("Interaction is no longer actionable because the issue is closed");
   });
 
+  it("expirePendingInteractionsForTerminalIssue expires historical ask_user_questions on done issues", async () => {
+    const { companyId, issueId } = await seedConfirmationIssue("Historical question on done issue");
+    const interactionCreatedAt = new Date("2026-05-18T10:00:00.000Z");
+
+    const created = await interactionsSvc.create({ id: issueId, companyId }, {
+      kind: "ask_user_questions",
+      payload: {
+        version: 1,
+        supersedeOnUserComment: true,
+        questions: [{
+          id: "q1",
+          prompt: "Is the morning digest worth reading?",
+          selectionMode: "single",
+          options: [{ id: "yes", label: "Yes" }],
+        }],
+      },
+    }, { userId: "local-board" });
+    await db.update(issueThreadInteractions)
+      .set({ createdAt: interactionCreatedAt, updatedAt: interactionCreatedAt })
+      .where(eq(issueThreadInteractions.id, created.id));
+
+    // A newer human comment makes this question "historical" — the old cascade
+    // intentionally skipped these on done issues, leaving them pending forever.
+    await db.insert(issueComments).values({
+      id: randomUUID(),
+      companyId,
+      issueId,
+      authorUserId: "local-board",
+      authorType: "user",
+      body: "Moving on, let's wrap up.",
+      createdAt: new Date("2026-05-18T10:05:00.000Z"),
+      updatedAt: new Date("2026-05-18T10:05:00.000Z"),
+    });
+
+    await db.update(issues).set({ status: "done" }).where(eq(issues.id, issueId));
+    const expired = await interactionsSvc.expirePendingInteractionsForTerminalIssue(
+      { id: issueId, companyId, status: "done" },
+    );
+
+    expect(expired).toHaveLength(1);
+    expect(expired[0]).toMatchObject({
+      id: created.id,
+      kind: "ask_user_questions",
+      status: "expired",
+      result: expect.objectContaining({ outcome: "issue_closed" }),
+    });
+
+    const stored = await db
+      .select({ status: issueThreadInteractions.status })
+      .from(issueThreadInteractions)
+      .where(eq(issueThreadInteractions.id, created.id))
+      .then((rows) => rows[0]);
+    expect(stored?.status).toBe("expired");
+  });
+
   it("does not supersede request confirmations for agent, system, or older user comments", async () => {
     const { companyId, issueId } = await seedConfirmationIssue("Comment supersede exclusions");
 

@@ -1225,6 +1225,11 @@ export function attentionService(db: Db, serviceOptions: AttentionServiceOptions
           updatedAt: issueThreadInteractions.updatedAt,
         })
         .from(issueThreadInteractions)
+        .innerJoin(issues, and(
+          eq(issues.id, issueThreadInteractions.issueId),
+          eq(issues.companyId, companyId),
+          notInArray(issues.status, ["done", "cancelled"]),
+        ))
         .where(and(
           eq(issueThreadInteractions.companyId, companyId),
           inArray(issueThreadInteractions.status, [...PENDING_INTERACTION_STATUSES]),
