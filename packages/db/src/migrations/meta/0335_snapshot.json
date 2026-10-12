@@ -1,5 +1,5 @@
 {
-  "id": "64d5296c-df05-406b-b19c-cc7d6b492eb8",
+  "id": "18c156f2-8344-4282-98b7-f702f0035c81",
   "prevId": "39d82f2c-8fd5-4606-84df-f51880dbd6a7",
   "version": "7",
   "dialect": "postgresql",
@@ -9858,12 +9858,6 @@
           "notNull": true,
           "default": false
         },
-        "execution_defaults": {
-          "name": "execution_defaults",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
         "metadata": {
           "name": "metadata",
           "type": "jsonb",
@@ -10103,12 +10097,6 @@
           "primaryKey": false,
           "notNull": true,
           "default": "''"
-        },
-        "execution_defaults": {
-          "name": "execution_defaults",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
         },
         "allow_direct_messages": {
           "name": "allow_direct_messages",
@@ -12445,6 +12433,189 @@
       },
       "isRLSEnabled": false
     },
+    "public.chat_slack_manager_grants": {
+      "name": "chat_slack_manager_grants",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "company_id": {
+          "name": "company_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slack_user_id": {
+          "name": "slack_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "workspace_name": {
+          "name": "workspace_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "manager_app_id": {
+          "name": "manager_app_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "access_secret_id": {
+          "name": "access_secret_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "refresh_secret_id": {
+          "name": "refresh_secret_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "rate_limits": {
+          "name": "rate_limits",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "chat_slack_manager_grants_company_id_idx": {
+          "name": "chat_slack_manager_grants_company_id_idx",
+          "columns": [
+            {
+              "expression": "company_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_slack_manager_grants_owner_idx": {
+          "name": "chat_slack_manager_grants_owner_idx",
+          "columns": [
+            {
+              "expression": "company_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "manager_app_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "chat_slack_manager_grants_company_id_companies_id_fk": {
+          "name": "chat_slack_manager_grants_company_id_companies_id_fk",
+          "tableFrom": "chat_slack_manager_grants",
+          "tableTo": "companies",
+          "columnsFrom": [
+            "company_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chat_slack_manager_grants_status_check": {
+          "name": "chat_slack_manager_grants_status_check",
+          "value": "\"chat_slack_manager_grants\".\"status\" in ('active', 'revoked', 'reauthorize')"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.chat_slack_registrations": {
       "name": "chat_slack_registrations",
       "schema": "",
@@ -12460,6 +12631,12 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
+        },
+        "manager_grant_id": {
+          "name": "manager_grant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "request_id": {
           "name": "request_id",
@@ -12551,6 +12728,21 @@
       },
       "indexes": {},
       "foreignKeys": {
+        "chat_slack_registrations_company_id_manager_grant_id_chat_slack_manager_grants_company_id_id_fk": {
+          "name": "chat_slack_registrations_company_id_manager_grant_id_chat_slack_manager_grants_company_id_id_fk",
+          "tableFrom": "chat_slack_registrations",
+          "tableTo": "chat_slack_manager_grants",
+          "columnsFrom": [
+            "company_id",
+            "manager_grant_id"
+          ],
+          "columnsTo": [
+            "company_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
         "chat_slack_registrations_company_id_endpoint_id_chat_endpoints_company_id_id_fk": {
           "name": "chat_slack_registrations_company_id_endpoint_id_chat_endpoints_company_id_id_fk",
           "tableFrom": "chat_slack_registrations",
@@ -26389,252 +26581,6 @@
       "checkConstraints": {},
       "isRLSEnabled": false
     },
-    "public.execution_workspace_repositories": {
-      "name": "execution_workspace_repositories",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "company_id": {
-          "name": "company_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "execution_workspace_id": {
-          "name": "execution_workspace_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "requested_by_issue_id": {
-          "name": "requested_by_issue_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "repository_identity": {
-          "name": "repository_identity",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "catalog_repository_id": {
-          "name": "catalog_repository_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "repo_url": {
-          "name": "repo_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "relative_path": {
-          "name": "relative_path",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "requested_ref": {
-          "name": "requested_ref",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'HEAD'"
-        },
-        "pinned_commit": {
-          "name": "pinned_commit",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "branch_name": {
-          "name": "branch_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "request_key": {
-          "name": "request_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "request_keys": {
-          "name": "request_keys",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'[]'::jsonb"
-        },
-        "state": {
-          "name": "state",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'pending'"
-        },
-        "failure_code": {
-          "name": "failure_code",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "execution_workspace_repositories_identity_idx": {
-          "name": "execution_workspace_repositories_identity_idx",
-          "columns": [
-            {
-              "expression": "execution_workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "repository_identity",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "execution_workspace_repositories_path_idx": {
-          "name": "execution_workspace_repositories_path_idx",
-          "columns": [
-            {
-              "expression": "execution_workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "relative_path",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "execution_workspace_repositories_request_idx": {
-          "name": "execution_workspace_repositories_request_idx",
-          "columns": [
-            {
-              "expression": "execution_workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "request_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "execution_workspace_repositories_company_workspace_idx": {
-          "name": "execution_workspace_repositories_company_workspace_idx",
-          "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "execution_workspace_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "execution_workspace_repositories_company_id_companies_id_fk": {
-          "name": "execution_workspace_repositories_company_id_companies_id_fk",
-          "tableFrom": "execution_workspace_repositories",
-          "tableTo": "companies",
-          "columnsFrom": [
-            "company_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "execution_workspace_repositories_execution_workspace_id_execution_workspaces_id_fk": {
-          "name": "execution_workspace_repositories_execution_workspace_id_execution_workspaces_id_fk",
-          "tableFrom": "execution_workspace_repositories",
-          "tableTo": "execution_workspaces",
-          "columnsFrom": [
-            "execution_workspace_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "execution_workspace_repositories_requested_by_issue_id_issues_id_fk": {
-          "name": "execution_workspace_repositories_requested_by_issue_id_issues_id_fk",
-          "tableFrom": "execution_workspace_repositories",
-          "tableTo": "issues",
-          "columnsFrom": [
-            "requested_by_issue_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
     "public.execution_workspace_runtime_leases": {
       "name": "execution_workspace_runtime_leases",
       "schema": "",
@@ -26890,7 +26836,7 @@
           "name": "project_id",
           "type": "uuid",
           "primaryKey": false,
-          "notNull": false
+          "notNull": true
         },
         "project_workspace_id": {
           "name": "project_workspace_id",
@@ -27168,7 +27114,7 @@
           "columnsTo": [
             "id"
           ],
-          "onDelete": "restrict",
+          "onDelete": "cascade",
           "onUpdate": "no action"
         },
         "execution_workspaces_project_workspace_id_project_workspaces_id_fk": {
@@ -37953,25 +37899,6 @@
         "execution_workspace_id": {
           "name": "execution_workspace_id",
           "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "workspace_binding_revision": {
-          "name": "workspace_binding_revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 0
-        },
-        "workspace_selection": {
-          "name": "workspace_selection",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "workspace_pending_selection": {
-          "name": "workspace_pending_selection",
-          "type": "jsonb",
           "primaryKey": false,
           "notNull": false
         },

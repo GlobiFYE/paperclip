@@ -86,9 +86,10 @@ export const createChatEndpointSchema = z
     applicationId: z.string().uuid().optional(),
     name: z.string().trim().min(1).max(160).optional(),
     slackApp: slackAppConfigurationSchema.optional(),
+    slackSetupMethod: z.enum(["managed", "automatic", "manual", "existing"]).optional(),
   })
   .strict()
-  .refine(value => !value.slackApp || value.provider === "slack", {
+  .refine(value => (!value.slackApp && !value.slackSetupMethod) || value.provider === "slack", {
     message: "Slack app details only apply to Slack connections", path: ["slackApp"],
   });
 
@@ -97,7 +98,7 @@ export const updateChatEndpointSchema = z
     executionDefaults: chatExecutionDefaultsSchema.nullable().optional(),
     communicationInstructions: multilineTextSchema.pipe(z.string().trim().max(4000)).optional(),
     slackApp: slackAppConfigurationSchema.optional(),
-    slackSetupMethod: z.enum(["automatic", "manual", "existing"]).optional(),
+    slackSetupMethod: z.enum(["managed", "automatic", "manual", "existing"]).optional(),
     allowDirectMessages: z.boolean().optional(),
     requireAtMention: z.boolean().optional(),
     allowGroupChats: z.boolean().optional(),

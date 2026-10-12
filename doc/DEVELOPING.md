@@ -495,10 +495,16 @@ npx paperclipai allowed-hostname dotta-macbook-pro
 
 ## Test Commands
 
-The [feature map](../feature-map/README.md) is an optional reference for user
+The [feature map](../maps/feature-map/README.md) is an optional reference for user
 entry points, targeted tests, manual verification recipes, and coverage gaps.
 Its page inventory is a source snapshot. The documented journeys have separate
 verification steps and do not run automatically from the map.
+
+The sibling [agent access map](../maps/agent-access-map/README.md) describes API
+and agent reachability for the same capabilities. The [map contract](../maps/README.md)
+defines synchronization, permissions and evidence. After map edits, run
+`node scripts/check-maps.mjs` for structural/reference checks; it does not start an
+instance or qualify access as an agent.
 
 Use the cheap local default unless you are specifically working on browser flows:
 
@@ -2234,7 +2240,6 @@ it needs no running Paperclip instance or provider credentials. The same spec li
 in the default `test:e2e` discovery tree, so the existing Chrome CI shards run it
 on pull requests.
 
-
 ### Workspace feature checks (2026-10-09)
 
 Task files, personal agent state (`AGENT_HOME`), and provider home are distinct. New filesystem tasks without an explicit source use a stable company/task directory. Debug workspace placement through the task workspace API rather than inferring it from organizational project or agent identity.
@@ -2242,3 +2247,12 @@ Task files, personal agent state (`AGENT_HOME`), and provider home are distinct.
 Focused coverage lives in `task-workspace-binding.test.ts`, `task-workspace-repositories*.test.ts`, `task-workspace-tools.test.ts`, channel integration tests, and adapter-utils checkpoint/native persistence tests. Full handoff still requires the repository typecheck, test, and build commands. Remote transport fixtures establish protocol behavior; they do not qualify production provider throughput.
 
 Channel defaults can be configured in Apps connection settings and per destination. They affect new conversations only. A queued selection or repository request is applied on the next normal admission; configuration changes do not interrupt a live run. See [the architecture](plans/2026-10-09-task-workspaces.md).
+
+### Slack provisioning paths
+
+Self-hosted development continues to use independent Slack app setup. Managed
+Slack installation is a disabled-by-default Cloud feature that also requires the
+companion broker profile and Slack approval. Do not add manager client credentials
+to a local `.env` or an open-source deployment. See
+[Slack setup and Cloud qualification](connections/slack-setup.md) for the gates,
+recovery behavior, and production-component stories.

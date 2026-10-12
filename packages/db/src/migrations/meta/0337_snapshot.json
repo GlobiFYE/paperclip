@@ -1,6 +1,6 @@
 {
-  "id": "8e479a0d-bcc2-48ce-b384-977d558a9019",
-  "prevId": "1406b8ee-7ae0-4d36-b08b-909b9486b5f6",
+  "id": "65f48b10-7f94-449e-b2ce-a68f220910f3",
+  "prevId": "a9f48522-347d-4290-83dd-07299afb8d03",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -12445,6 +12445,189 @@
       },
       "isRLSEnabled": false
     },
+    "public.chat_slack_manager_grants": {
+      "name": "chat_slack_manager_grants",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "gen_random_uuid()"
+        },
+        "company_id": {
+          "name": "company_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "slack_user_id": {
+          "name": "slack_user_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "workspace_name": {
+          "name": "workspace_name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "manager_app_id": {
+          "name": "manager_app_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'active'"
+        },
+        "access_secret_id": {
+          "name": "access_secret_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "refresh_secret_id": {
+          "name": "refresh_secret_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "revision": {
+          "name": "revision",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 0
+        },
+        "rate_limits": {
+          "name": "rate_limits",
+          "type": "jsonb",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'{}'::jsonb"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "chat_slack_manager_grants_company_id_idx": {
+          "name": "chat_slack_manager_grants_company_id_idx",
+          "columns": [
+            {
+              "expression": "company_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "chat_slack_manager_grants_owner_idx": {
+          "name": "chat_slack_manager_grants_owner_idx",
+          "columns": [
+            {
+              "expression": "company_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "manager_app_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "workspace_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "chat_slack_manager_grants_company_id_companies_id_fk": {
+          "name": "chat_slack_manager_grants_company_id_companies_id_fk",
+          "tableFrom": "chat_slack_manager_grants",
+          "tableTo": "companies",
+          "columnsFrom": [
+            "company_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "chat_slack_manager_grants_status_check": {
+          "name": "chat_slack_manager_grants_status_check",
+          "value": "\"chat_slack_manager_grants\".\"status\" in ('active', 'revoked', 'reauthorize')"
+        }
+      },
+      "isRLSEnabled": false
+    },
     "public.chat_slack_registrations": {
       "name": "chat_slack_registrations",
       "schema": "",
@@ -12460,6 +12643,12 @@
           "type": "uuid",
           "primaryKey": false,
           "notNull": true
+        },
+        "manager_grant_id": {
+          "name": "manager_grant_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
         },
         "request_id": {
           "name": "request_id",
@@ -12551,6 +12740,21 @@
       },
       "indexes": {},
       "foreignKeys": {
+        "chat_slack_registrations_company_id_manager_grant_id_chat_slack_manager_grants_company_id_id_fk": {
+          "name": "chat_slack_registrations_company_id_manager_grant_id_chat_slack_manager_grants_company_id_id_fk",
+          "tableFrom": "chat_slack_registrations",
+          "tableTo": "chat_slack_manager_grants",
+          "columnsFrom": [
+            "company_id",
+            "manager_grant_id"
+          ],
+          "columnsTo": [
+            "company_id",
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
         "chat_slack_registrations_company_id_endpoint_id_chat_endpoints_company_id_id_fk": {
           "name": "chat_slack_registrations_company_id_endpoint_id_chat_endpoints_company_id_id_fk",
           "tableFrom": "chat_slack_registrations",
@@ -26626,136 +26830,6 @@
             "id"
           ],
           "onDelete": "set null",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.execution_workspace_repository_access": {
-      "name": "execution_workspace_repository_access",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "company_id": {
-          "name": "company_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "root_key": {
-          "name": "root_key",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "canonical_cwd": {
-          "name": "canonical_cwd",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "scope_id": {
-          "name": "scope_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "issue_id": {
-          "name": "issue_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "agent_id": {
-          "name": "agent_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "responsible_user_id": {
-          "name": "responsible_user_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "execution_workspace_repository_access_scope_idx": {
-          "name": "execution_workspace_repository_access_scope_idx",
-          "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "root_key",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "kind",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "scope_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "execution_workspace_repository_access_company_id_companies_id_fk": {
-          "name": "execution_workspace_repository_access_company_id_companies_id_fk",
-          "tableFrom": "execution_workspace_repository_access",
-          "tableTo": "companies",
-          "columnsFrom": [
-            "company_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
           "onUpdate": "no action"
         }
       },
