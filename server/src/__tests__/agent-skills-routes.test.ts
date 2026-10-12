@@ -1,4 +1,5 @@
 import express from "express";
+import { readFile } from "node:fs/promises";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -113,7 +114,9 @@ vi.mock("../services/instance-settings.js", async (importOriginal) => ({
 
 vi.mock("../adapters/index.js", () => ({
   findServerAdapter: vi.fn(() => mockAdapter),
-  findActiveServerAdapter: vi.fn(() => mockAdapter),
+  findActiveServerAdapter: vi.fn((adapterType: string) => adapterType === "paperclip_runner"
+    ? { ...mockAdapter, supportsInstructionsBundle: true }
+    : mockAdapter),
   listAdapterModels: vi.fn(),
   detectAdapterModel: vi.fn(),
 }));
@@ -156,7 +159,9 @@ function registerModuleMocks() {
 
   vi.doMock("../adapters/index.js", () => ({
     findServerAdapter: vi.fn(() => mockAdapter),
-    findActiveServerAdapter: vi.fn(() => mockAdapter),
+    findActiveServerAdapter: vi.fn((adapterType: string) => adapterType === "paperclip_runner"
+      ? { ...mockAdapter, supportsInstructionsBundle: true }
+      : mockAdapter),
     listAdapterModels: vi.fn(),
     detectAdapterModel: vi.fn(),
   }));
@@ -177,15 +182,14 @@ function createDb(requireBoardApprovalForNewAgents = false) {
   };
 }
 
-async function createApp(db: Record<string, unknown> = createDb()) {
-  const [{ agentRoutes }, { errorHandler }] = await Promise.all([
-    vi.importActual<typeof import("../routes/agents.js")>("../routes/agents.js"),
-    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
-  ]);
+let agentRoutes: (typeof import("../routes/agents.js"))["agentRoutes"];
+let errorHandler: (typeof import("../middleware/index.js"))["errorHandler"];
+
+async function createApp(db: Record<string, unknown> = createDb(), actor?: Record<string, unknown>) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).actor = {
+    (req as any).actor = actor ?? {
       type: "board",
       userId: "local-board",
       companyIds: ["company-1"],
@@ -245,8 +249,19 @@ function makeAgent(adapterType: string) {
   };
 }
 
-describe.sequential("agent skill routes", () => {
-  beforeEach(() => {
+function skillSnapshot(adapterType = "claude_local", mode = "ephemeral") {
+  return {
+    adapterType: adapterType,
+    supported: true,
+    mode: mode,
+    desiredSkills: ["paperclipai/paperclip/paperclip"],
+    entries: [],
+    warnings: [],
+  };
+}
+
+describe("agent skill routes", () => {
+  beforeEach(async () => {
     vi.resetModules();
     vi.doUnmock("../routes/agents.js");
     vi.doUnmock("../routes/authz.js");
@@ -301,22 +316,8 @@ describe.sequential("agent skill routes", () => {
         unresolved: [],
       }),
     );
-    mockAdapter.listSkills.mockResolvedValue({
-      adapterType: "claude_local",
-      supported: true,
-      mode: "ephemeral",
-      desiredSkills: ["paperclipai/paperclip/paperclip"],
-      entries: [],
-      warnings: [],
-    });
-    mockAdapter.syncSkills.mockResolvedValue({
-      adapterType: "claude_local",
-      supported: true,
-      mode: "ephemeral",
-      desiredSkills: ["paperclipai/paperclip/paperclip"],
-      entries: [],
-      warnings: [],
-    });
+    mockAdapter.listSkills.mockResolvedValue(skillSnapshot());
+    mockAdapter.syncSkills.mockResolvedValue(skillSnapshot());
     mockAgentService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => {
       const previousAgent = persistedAgent ?? makeAgent("claude_local");
       persistedAgent = {
@@ -369,6 +370,13 @@ describe.sequential("agent skill routes", () => {
     mockAccessService.listPrincipalGrants.mockResolvedValue([]);
     mockAccessService.ensureMembership.mockResolvedValue(undefined);
     mockAccessService.setPrincipalPermission.mockResolvedValue(undefined);
+
+    // Prepare the module graph inside the setup budget after every reset. Each
+    // test still constructs its own app after configuring its request-specific mocks.
+    [{ agentRoutes }, { errorHandler }] = await Promise.all([
+      vi.importActual<typeof import("../routes/agents.js")>("../routes/agents.js"),
+      vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+    ]);
   });
 
   it("skips runtime materialization when listing Claude skills", async () => {
@@ -452,61 +460,11 @@ describe.sequential("agent skill routes", () => {
     );
   });
 
-  it("threads a non-undefined actor secret context into resolveAdapterConfigForRuntime on both skills routes (audit fidelity, skipUserSecrets preserved)", async () => {
-    const expectedContext = {
-      consumerType: "agent",
-      consumerId: "11111111-1111-4111-8111-111111111111",
-      actorType: "user",
-      actorId: "local-board",
-      actorSource: "local_implicit",
-      responsibleUserId: "local-board",
-    };
 
-    // GET /agents/:id/skills
-    mockAgentService.getById.mockResolvedValue(makeAgent("claude_local"));
-    const listRes = await requestApp(
-      await createApp(),
-      (baseUrl) => request(baseUrl)
-        .get("/api/agents/11111111-1111-4111-8111-111111111111/skills?companyId=company-1"),
-    );
-    expect(listRes.status, JSON.stringify(listRes.body)).toBe(200);
-    const listCall = mockSecretService.resolveAdapterConfigForRuntime.mock.calls.at(-1);
-    expect(listCall?.[2]).toBeDefined();
-    expect(listCall?.[2]).toEqual(expectedContext);
-    expect(listCall?.[3]).toEqual({ adapterType: "claude_local", skipUserSecrets: true });
-
-    // POST /agents/:id/skills/sync
-    mockAdapter.syncSkills.mockResolvedValue({
-      adapterType: "claude_local",
-      supported: true,
-      mode: "ephemeral",
-      desiredSkills: ["paperclipai/paperclip/paperclip"],
-      entries: [],
-      warnings: [],
-    });
-    const syncRes = await requestApp(
-      await createApp(),
-      (baseUrl) => request(baseUrl)
-        .post("/api/agents/11111111-1111-4111-8111-111111111111/skills/sync?companyId=company-1")
-        .send({ desiredSkills: ["paperclip"], mode: "replace" }),
-    );
-    expect(syncRes.status, JSON.stringify(syncRes.body)).toBe(200);
-    const syncCall = mockSecretService.resolveAdapterConfigForRuntime.mock.calls.at(-1);
-    expect(syncCall?.[2]).toBeDefined();
-    expect(syncCall?.[2]).toEqual(expectedContext);
-    expect(syncCall?.[3]).toEqual({ adapterType: "claude_local", skipUserSecrets: true });
-  });
 
   it("skips runtime materialization when listing Codex skills", async () => {
     mockAgentService.getById.mockResolvedValue(makeAgent("codex_local"));
-    mockAdapter.listSkills.mockResolvedValue({
-      adapterType: "codex_local",
-      supported: true,
-      mode: "ephemeral",
-      desiredSkills: ["paperclipai/paperclip/paperclip"],
-      entries: [],
-      warnings: [],
-    });
+    mockAdapter.listSkills.mockResolvedValue(skillSnapshot("codex_local"));
 
     const res = await requestApp(
       await createApp(),
@@ -529,14 +487,7 @@ describe.sequential("agent skill routes", () => {
     mockSecretService.resolveAdapterConfigForRuntime.mockResolvedValueOnce({
       config: { agent: "claude" },
     });
-    mockAdapter.listSkills.mockResolvedValue({
-      adapterType: "acpx_local",
-      supported: true,
-      mode: "ephemeral",
-      desiredSkills: ["paperclipai/paperclip/paperclip"],
-      entries: [],
-      warnings: [],
-    });
+    mockAdapter.listSkills.mockResolvedValue(skillSnapshot("acpx_local"));
 
     const res = await requestApp(
       await createApp(),
@@ -577,14 +528,7 @@ describe.sequential("agent skill routes", () => {
         },
       },
     });
-    mockAdapter.syncSkills.mockResolvedValue({
-      adapterType: "acpx_local",
-      supported: true,
-      mode: "ephemeral",
-      desiredSkills: ["paperclipai/paperclip/paperclip"],
-      entries: [],
-      warnings: [],
-    });
+    mockAdapter.syncSkills.mockResolvedValue(skillSnapshot("acpx_local"));
 
     const res = await requestApp(await createApp(), (baseUrl) => request(baseUrl)
       .post("/api/agents/11111111-1111-4111-8111-111111111111/skills/sync?companyId=company-1")
@@ -805,14 +749,7 @@ describe.sequential("agent skill routes", () => {
 
   it("skips runtime materialization when listing persistent skill adapters", async () => {
     mockAgentService.getById.mockResolvedValue(makeAgent("cursor"));
-    mockAdapter.listSkills.mockResolvedValue({
-      adapterType: "cursor",
-      supported: true,
-      mode: "persistent",
-      desiredSkills: ["paperclipai/paperclip/paperclip"],
-      entries: [],
-      warnings: [],
-    });
+    mockAdapter.listSkills.mockResolvedValue(skillSnapshot("cursor", "persistent"));
 
     const res = await requestApp(
       await createApp(),
@@ -836,6 +773,55 @@ describe.sequential("agent skill routes", () => {
 
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(mockAdapter.syncSkills).toHaveBeenCalled();
+  });
+
+  it("ignores the reserved legacy Paperclip skill for paperclip_runner", async () => {
+    mockAgentService.getById.mockResolvedValue(makeAgent("paperclip_runner"));
+
+    const res = await requestApp(await createApp(), (baseUrl) => request(baseUrl)
+      .post("/api/agents/11111111-1111-4111-8111-111111111111/skills/sync?companyId=company-1")
+      .send({ desiredSkills: ["paperclipai/paperclip/paperclip"], mode: "replace" }));
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        adapterConfig: expect.objectContaining({
+          paperclipSkillSync: { desiredSkills: [] },
+        }),
+      }),
+      expect.any(Object),
+    );
+    expect(mockAdapter.syncSkills).toHaveBeenCalledWith(
+      expect.any(Object),
+      [],
+    );
+  });
+
+  it("allows paperclip_runner to remove a pre-existing legacy Paperclip skill", async () => {
+    mockAgentService.getById.mockResolvedValue({
+      ...makeAgent("paperclip_runner"),
+      adapterConfig: {
+        paperclipSkillSync: {
+          desiredSkills: ["company-1/keep", "paperclipai/paperclip/paperclip"],
+        },
+      },
+    });
+
+    const res = await requestApp(await createApp(), (baseUrl) => request(baseUrl)
+      .post("/api/agents/11111111-1111-4111-8111-111111111111/skills/sync?companyId=company-1")
+      .send({ desiredSkills: ["paperclipai/paperclip/paperclip"], mode: "remove" }));
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockAgentService.update).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        adapterConfig: expect.objectContaining({
+          paperclipSkillSync: { desiredSkills: ["company-1/keep"] },
+        }),
+      }),
+      expect.any(Object),
+    );
   });
 
   it("syncs skills without resolving required user-secret env bindings", async () => {
@@ -945,7 +931,7 @@ describe.sequential("agent skill routes", () => {
           }),
         }),
       }),
-      { claudeLogin: { storedSessionId: null, ownerUserId: "local-board", applyExistingWithoutClaim: false } },
+      { createdByUserId: "local-board", responsibleUserId: "local-board", claudeLogin: { storedSessionId: null, ownerUserId: "local-board", applyExistingWithoutClaim: false } },
     );
     expect(mockTrackAgentCreated).toHaveBeenCalledWith(
       expect.anything(),
@@ -995,7 +981,7 @@ describe.sequential("agent skill routes", () => {
       expect.objectContaining({
         role: "security",
       }),
-      { claudeLogin: { storedSessionId: null, ownerUserId: "local-board", applyExistingWithoutClaim: false } },
+      { createdByUserId: "local-board", responsibleUserId: "local-board", claudeLogin: { storedSessionId: null, ownerUserId: "local-board", applyExistingWithoutClaim: false } },
     );
     expect(mockTrackAgentCreated).toHaveBeenCalledWith(
       expect.anything(),
@@ -1062,35 +1048,69 @@ describe.sequential("agent skill routes", () => {
     expect(mockAgentInstructionsService.materializeManagedBundle).not.toHaveBeenCalled();
   });
 
-  it("materializes the bundled CEO instruction set for default CEO agents", async () => {
+  it.each(["claude_local", "paperclip_runner"].flatMap((adapterType) =>
+    ["agents", "agent-hires"].map((route) => ({ adapterType, route })),
+  ))("materializes only the CEO entry file for $adapterType via $route", async ({ adapterType, route }) => {
+    mockInstanceSettingsService.getExperimental.mockResolvedValue({
+      enableBetaSkills: false,
+      enableNativeRunner: true,
+    });
     const res = await requestApp(await createApp(), (baseUrl) => request(baseUrl)
-      .post("/api/companies/company-1/agents")
+      .post(`/api/companies/company-1/${route}`)
       .send({
         name: "CEO",
         role: "ceo",
-        adapterType: "claude_local",
-        adapterConfig: {},
+        adapterType,
+        adapterConfig: adapterType === "paperclip_runner" ? { provider: "codex" } : {},
       }));
 
-    expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
-    const createdAgentId = expectResponseId(res.body.id);
-    expect(mockAgentInstructionsService.materializeManagedBundle).toHaveBeenCalledWith(
-      expect.objectContaining({
-        id: createdAgentId,
-        role: "ceo",
-        adapterType: "claude_local",
-      }),
-      expect.objectContaining({
-        "AGENTS.md": expect.stringContaining("You are the CEO."),
-        "HEARTBEAT.md": expect.stringContaining("CEO Heartbeat Checklist"),
-        "SOUL.md": expect.stringContaining("CEO Persona"),
-        "TOOLS.md": expect.stringContaining("# Tools"),
-      }),
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const createdAgentId = expectResponseId(route === "agents" ? res.body.id : res.body.agent.id);
+    const entry = await readFile(new URL("../onboarding-assets/ceo/AGENTS.md", import.meta.url), "utf8");
+    expect(mockAgentInstructionsService.materializeManagedBundle).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: createdAgentId, role: "ceo", adapterType }),
+      { "AGENTS.md": entry },
       { entryFile: "AGENTS.md", replaceExisting: false },
     );
   });
 
-  it("materializes the bundled default instruction set for non-CEO agents with no prompt template", async () => {
+  it.each(["claude_local", "paperclip_runner"].flatMap((adapterType) =>
+    ["agents", "agent-hires"].map((route) => ({ adapterType, route })),
+  ))("preserves an explicit CEO instruction bundle for $adapterType via $route", async ({ adapterType, route }) => {
+    mockInstanceSettingsService.getExperimental.mockResolvedValue({
+      enableBetaSkills: false,
+      enableNativeRunner: true,
+    });
+    const customFiles = {
+      "AGENTS.md": "You lead the bespoke research company. Read NOTES.md for its current focus.",
+      "NOTES.md": "Focus on the board's research questions.",
+    };
+    const res = await requestApp(await createApp(), (baseUrl) => request(baseUrl)
+      .post(`/api/companies/company-1/${route}`)
+      .send({
+        name: "Research Lead",
+        role: "ceo",
+        adapterType,
+        adapterConfig: adapterType === "paperclip_runner" ? { provider: "codex" } : {},
+        instructionsBundle: { entryFile: "AGENTS.md", files: customFiles },
+      }));
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const createdAgentId = expectResponseId(route === "agents" ? res.body.id : res.body.agent.id);
+    expect(mockAgentInstructionsService.materializeManagedBundle).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: createdAgentId, role: "ceo", adapterType }),
+      customFiles,
+      { entryFile: "AGENTS.md", replaceExisting: false },
+    );
+    const returnedAgent = route === "agents" ? res.body : res.body.agent;
+    expect(returnedAgent.adapterConfig).toMatchObject({
+      instructionsEntryFile: "AGENTS.md",
+      instructionsFilePath: `/tmp/${createdAgentId}/instructions/AGENTS.md`,
+    });
+    expect(returnedAgent.adapterConfig).not.toHaveProperty("promptTemplate");
+  });
+
+  it("materializes minimal default instructions for non-CEO agents with no prompt template", async () => {
     const res = await requestApp(await createApp(), (baseUrl) => request(baseUrl)
       .post("/api/companies/company-1/agents")
       .send({
@@ -1110,39 +1130,121 @@ describe.sequential("agent skill routes", () => {
           adapterType: "claude_local",
         }),
         expect.objectContaining({
-          "AGENTS.md": expect.stringMatching(/Start actionable work in the same heartbeat\.[\s\S]*Keep the work moving until it is done\./),
+          "AGENTS.md": "You are an agent in a Paperclip company.\n",
         }),
         { entryFile: "AGENTS.md", replaceExisting: false },
       );
+    });
+  });
+
+  it("seeds the chief-of-staff persona for the onboarding first agent", async () => {
+    const res = await requestApp(await createApp(), (baseUrl) => request(baseUrl)
+      .post("/api/companies/company-1/agents")
+      .send({
+        name: "Ada",
+        role: "general",
+        adapterType: "claude_local",
+        adapterConfig: {},
+        onboardingFirstAgent: true,
+      }));
+
+    expect([200, 201], JSON.stringify(res.body)).toContain(res.status);
+    const createdAgentId = expectResponseId(res.body.id);
+    await vi.waitFor(() => {
       expect(mockAgentInstructionsService.materializeManagedBundle).toHaveBeenCalledWith(
-        expect.any(Object),
+        expect.objectContaining({ id: createdAgentId, role: "general" }),
         expect.objectContaining({
-          "AGENTS.md": expect.stringContaining('kind: "request_confirmation"'),
+          "AGENTS.md": expect.stringContaining("You are Ada, chief of staff for"),
         }),
-        expect.any(Object),
-      );
-      expect(mockAgentInstructionsService.materializeManagedBundle).toHaveBeenCalledWith(
-        expect.any(Object),
-        expect.objectContaining({
-          "AGENTS.md": expect.stringContaining("confirmation:{issueId}:plan:{revisionId}"),
-        }),
-        expect.any(Object),
-      );
-      expect(mockAgentInstructionsService.materializeManagedBundle).toHaveBeenCalledWith(
-        expect.any(Object),
-        expect.objectContaining({
-          "AGENTS.md": expect.stringMatching(/PUT \/issues\/\{id\}\/documents\/plan[\s\S]*Re-`GET \/documents\/plan`, assert it returns `200`[\s\S]*latestRevisionId[\s\S]*target=\{ type: 'issue_document', key: 'plan', revisionId: latestRevisionId \}[\s\S]*Never present a plan only in a thread comment or through `ask_user_questions`/),
-        }),
-        expect.any(Object),
-      );
-      expect(mockAgentInstructionsService.materializeManagedBundle).toHaveBeenCalledWith(
-        expect.any(Object),
-        expect.objectContaining({
-          "AGENTS.md": expect.stringContaining("skills/paperclip/scripts/paperclip-upload-artifact.sh"),
-        }),
-        expect.any(Object),
+        { entryFile: "AGENTS.md", replaceExisting: false },
       );
     });
+    // The generic default persona must NOT be what was seeded over the entry file.
+    const seededCalls = mockAgentInstructionsService.materializeManagedBundle.mock.calls;
+    const entrySeed = seededCalls.at(-1)?.[1] as Record<string, string> | undefined;
+    expect(entrySeed?.["AGENTS.md"]).toContain("chief of staff");
+    // The normal onboarding flow has beta skill version selection disabled.
+    expect(mockAgentService.create.mock.calls[0][1].adapterConfig.paperclipSkillSync.desiredSkills)
+      .toContain("paperclipai/paperclip/first-task");
+  });
+
+  it.each(["codex_local", "claude_local"].flatMap((adapterType) => [
+    ["agents", "paperclipai/paperclip/paperclip-create-agent"],
+    ["agent-hires", "paperclipai/paperclip/paperclip-create-agent"],
+    ["agents", "paperclip"],
+    ["agent-hires", "paperclip"],
+    ["agents", "paperclipai/paperclip/first-task"],
+    ["agent-hires", "paperclipai/paperclip/first-task"],
+  ].map(([route, skill]) => ({ adapterType, route, skill }))))("gives $adapterType onboarding agents core and first-task skills via $route, preserving $skill pins", async ({ adapterType, route, skill }) => {
+    mockInstanceSettingsService.getExperimental.mockResolvedValue({ enableBetaSkills: true });
+    const versionId = "22222222-2222-4222-8222-222222222222";
+    const res = await request(await createApp(createDb(route === "agent-hires")))
+      .post(`/api/companies/company-1/${route}`)
+      .send({
+        name: "Chiff", role: "general", adapterType,
+        onboardingFirstAgent: true,
+        desiredSkills: [{ key: skill, versionId }],
+      });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const input = mockAgentService.create.mock.calls[0][1];
+    expect(input.role).toBe("general");
+    const canonicalKey = skill === "paperclip" ? "paperclipai/paperclip/paperclip" : skill;
+    const expected = ["paperclip", "paperclip-board", "paperclip-converting-plans-to-tasks", "paperclip-create-agent", "para-memory-files", "first-task"]
+      .map((name) => ({ key: `paperclipai/paperclip/${name}`, versionId: `paperclipai/paperclip/${name}` === canonicalKey ? versionId : null }));
+    expect(input.adapterConfig.paperclipSkillSync.desiredSkills).toEqual(expect.arrayContaining(expected));
+    expect(input.adapterConfig.paperclipSkillSync.desiredSkills).toHaveLength(6);
+  });
+
+  it.each(["agents", "agent-hires"])("leaves ordinary general agents' defaults unchanged via %s", async (route) => {
+    const res = await request(await createApp())
+      .post(`/api/companies/company-1/${route}`)
+      .send({ name: "Biff", role: "general", adapterType: "codex_local" });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentService.create.mock.calls[0][1].adapterConfig.paperclipSkillSync).toBeUndefined();
+  });
+
+  it.each(["agents", "agent-hires"])("does not assign first-task to ordinary CEOs via %s", async (route) => {
+    const res = await request(await createApp())
+      .post(`/api/companies/company-1/${route}`)
+      .send({ name: "CEO", role: "ceo", adapterType: "codex_local" });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const desiredSkills = mockAgentService.create.mock.calls[0][1].adapterConfig.paperclipSkillSync.desiredSkills;
+    expect(desiredSkills).toContain("paperclipai/paperclip/paperclip");
+    expect(desiredSkills).not.toContain("paperclipai/paperclip/first-task");
+  });
+
+  it("does not trust an agent-supplied onboarding marker to select chief-of-staff defaults", async () => {
+    mockAgentService.getById.mockResolvedValue(makeAgent("claude_local"));
+    const res = await request(await createApp(createDb(), {
+      type: "agent", agentId: "11111111-1111-4111-8111-111111111111", companyId: "company-1",
+    }))
+      .post("/api/companies/company-1/agent-hires")
+      .send({ name: "Biff", role: "general", adapterType: "claude_local", onboardingFirstAgent: true });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentService.create.mock.calls[0][1].adapterConfig.paperclipSkillSync).toBeUndefined();
+    await vi.waitFor(() => expect(mockAgentInstructionsService.materializeManagedBundle).toHaveBeenCalled());
+    expect(mockAgentInstructionsService.materializeManagedBundle.mock.calls[0][1]["AGENTS.md"])
+      .not.toContain("chief of staff");
+  });
+
+  it("creates nothing for rejected Biff payloads and exactly one approval-gated hire after correction", async () => {
+    const app = await createApp(createDb(true));
+    const hire = { name: "Biff", role: "general", adapterType: "codex_local", capabilities: "Be a friendly, affable robot" };
+    const retired = await request(app).post("/api/companies/company-1/agent-hires")
+      .send({ ...hire, adapterConfig: { promptTemplate: "Be friendly" } });
+    expect(retired.status).toBe(422);
+    const malformed = await request(app).post("/api/companies/company-1/agent-hires")
+      .send({ ...hire, instructionsBundle: { files: [{ path: "AGENTS.md", content: "Be friendly" }] } });
+    expect(malformed.status).toBe(400);
+    expect(mockAgentService.create).not.toHaveBeenCalled();
+    expect(mockApprovalService.create).not.toHaveBeenCalled();
+    const corrected = await request(app).post("/api/companies/company-1/agent-hires")
+      .send({ ...hire, instructionsBundle: { files: { "AGENTS.md": "Be a friendly, affable robot." } } });
+    expect(corrected.status, JSON.stringify(corrected.body)).toBe(201);
+    expect(corrected.body.agent).toMatchObject({ name: "Biff", status: "pending_approval" });
+    expect(corrected.body.approval).toMatchObject({ type: "hire_agent", status: "pending" });
+    expect(mockAgentService.create).toHaveBeenCalledTimes(1);
+    expect(mockApprovalService.create).toHaveBeenCalledTimes(1);
   });
 
   it("includes canonical desired skills in hire approvals", async () => {
@@ -1170,6 +1272,101 @@ describe.sequential("agent skill routes", () => {
         }),
       }),
     );
+  });
+
+  it("gives a CEO hire the core paperclip skills when none are requested", async () => {
+    const res = await request(await createApp(createDb(true)))
+      .post("/api/companies/company-1/agent-hires")
+      .send({
+        name: "First Lead",
+        role: "ceo",
+        adapterType: "claude_local",
+        adapterConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockAgentService.create).toHaveBeenCalledWith(
+      "company-1",
+      expect.objectContaining({
+        adapterConfig: expect.objectContaining({
+          paperclipSkillSync: expect.objectContaining({
+            desiredSkills: expect.arrayContaining([
+              "paperclipai/paperclip/paperclip",
+              "paperclipai/paperclip/paperclip-board",
+              "paperclipai/paperclip/paperclip-converting-plans-to-tasks",
+              "paperclipai/paperclip/paperclip-create-agent",
+              "paperclipai/paperclip/para-memory-files",
+            ]),
+          }),
+        }),
+      }),
+      expect.anything(),
+    );
+  });
+
+  it("omits the legacy operational skill from paperclip_runner CEO defaults", async () => {
+    mockInstanceSettingsService.getExperimental.mockResolvedValue({
+      enableBetaSkills: false,
+      enableNativeRunner: true,
+    });
+
+    const res = await request(await createApp(createDb(true)))
+      .post("/api/companies/company-1/agent-hires")
+      .send({
+        name: "Native Lead",
+        role: "ceo",
+        adapterType: "paperclip_runner",
+        adapterConfig: { provider: "codex" },
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const createInput = mockAgentService.create.mock.calls[0]?.[1] as {
+      adapterConfig: { paperclipSkillSync: { desiredSkills: string[] } };
+    };
+    expect(createInput.adapterConfig.paperclipSkillSync.desiredSkills).not.toContain(
+      "paperclipai/paperclip/paperclip",
+    );
+    expect(createInput.adapterConfig.paperclipSkillSync.desiredSkills).toContain(
+      "paperclipai/paperclip/paperclip-board",
+    );
+  });
+
+  it("unions requested skills with the CEO defaults instead of replacing them", async () => {
+    const res = await request(await createApp(createDb(true)))
+      .post("/api/companies/company-1/agent-hires")
+      .send({
+        name: "First Lead",
+        role: "ceo",
+        adapterType: "claude_local",
+        desiredSkills: ["paperclip"],
+        adapterConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const createInput = mockAgentService.create.mock.calls[0]?.[1] as {
+      adapterConfig: { paperclipSkillSync: { desiredSkills: string[] } };
+    };
+    const desired = createInput.adapterConfig.paperclipSkillSync.desiredSkills;
+    // "paperclip" resolves to its canonical key and dedupes with the default.
+    expect(desired).toHaveLength(5);
+    expect(desired).toContain("paperclipai/paperclip/paperclip");
+  });
+
+  it("does not add default skills to non-CEO hires", async () => {
+    const res = await request(await createApp(createDb(true)))
+      .post("/api/companies/company-1/agent-hires")
+      .send({
+        name: "QA Agent",
+        role: "engineer",
+        adapterType: "claude_local",
+        adapterConfig: {},
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    const createInput = mockAgentService.create.mock.calls[0]?.[1] as {
+      adapterConfig: Record<string, unknown>;
+    };
+    expect(createInput.adapterConfig.paperclipSkillSync).toBeUndefined();
   });
 
   it("rejects version pins in agent hires while beta skills are disabled", async () => {
@@ -1219,7 +1416,15 @@ describe.sequential("agent skill routes", () => {
           }),
         }),
       }),
-      { claudeLogin: { storedSessionId: null, ownerUserId: "local-board", applyExistingWithoutClaim: false } },
+      {
+        createdByUserId: "local-board", responsibleUserId: "local-board",
+        claudeLogin: {
+          storedSessionId: null,
+          ownerUserId: "local-board",
+          applyExistingWithoutClaim: false,
+          inheritedFromAgentId: null,
+        },
+      },
     );
     expect(mockApprovalService.create).toHaveBeenCalledWith(
       "company-1",
@@ -1295,4 +1500,11 @@ describe.sequential("agent skill routes", () => {
     expect(mockAgentService.create).not.toHaveBeenCalled();
     expect(mockAgentInstructionsService.materializeManagedBundle).not.toHaveBeenCalled();
   });
+});
+
+vi.mock("../services/agent-lifecycle.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/agent-lifecycle.js")>();
+  return { ...actual, createAgentLifecycle: () => ({
+    requestHire: (...args: unknown[]) => mockAgentService.create(...args),
+  }) };
 });
