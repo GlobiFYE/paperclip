@@ -136,6 +136,39 @@ sample of interactions and rendering, not execution of all 2,210 stories.
 The fixture-server story and visual-baseline comparisons remain untested for the
 reasons below. The owned static preview was left running for the requested test-drive.
 
+## Complete feature index follow-up — 2026-10-12
+
+Source baseline: `88bf4c6c1d222f818faa56257efe79207c892a6c` (merged PR #16049).
+Storybook now derives all eight sections, 35 feature families, and 171 capabilities
+from the feature map. Each feature has a generated Overview, including the seven
+without primary suites. Related example links cross primary homes without copying
+stories. Generated guides are separate from the authored catalog and example counts.
+The upstream feature map remains unchanged. Deeper authored scenario groups remain
+intact; this pass does not establish new production parity.
+
+The built index preserved all 2,210 existing story IDs and the docs ID, adding only
+35 feature overviews in map order. Catalog/generator tests (16), token gates, map
+checks, both skill validators, workspace typecheck, workspace build, and Storybook
+build passed. The UI project passed 8,170 tests in 728 files. The broad local test
+run encountered a failure in the unchanged GitHub chat case `authorizes description
+edits as the editor, never inheriting the original author's access`; that exact
+case passed alone without changing code or expectations. A complete local repository
+suite pass is not established. PR #16052 records the final CI result separately.
+
+The local built Storybook passed browser checks for the complete index/sidebar,
+capability-ID search, empty search, Goals cross-feature suite links, all five
+Execution environments capability gaps, and the existing Questions suite links.
+The original `composer-question-flow--editable-initial-text` bookmark still renders.
+The CLI feature uses a comma in its sidebar label because Storybook treats `/` as
+a folder separator; its guide heading retains the upstream name.
+
+Review fixes retain matching shared foundations during search and validate review
+fingerprints after generated files are written. Searching `Primitive Matrix` shows
+and opens the existing foundation story. A regression test changes a capability
+description and proves regeneration reports the resulting review drift without
+updating fingerprints. These checks establish navigation and generation behavior,
+not production acceptance or visual-baseline comparison.
+
 ## Remaining review work
 
 1. Review the 188 unreviewed suites by capability and production subject. Compare

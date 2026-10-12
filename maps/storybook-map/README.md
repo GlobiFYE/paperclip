@@ -98,6 +98,9 @@ duplicate entries/IDs, missing review sources, changed fingerprints and a stale
 generated indexes and feature pages. `--write` only regenerates these outputs; it never refreshes review
 fingerprints or blesses drift. Preserve IDs when changing titles or moving files;
 compare the existing built Storybook index before and after such changes.
+Feature outputs are regenerated before fingerprints are checked. If those writes
+change a review source, the command fails with the affected review entries. Inspect
+the generated change before updating those fingerprints and rerunning the command.
 
 Use the existing [Storybook workflow](../../doc/DEVELOPING.md#storybook) for builds,
 browser review, and visual tests. Report source inspection, rendering, `play`

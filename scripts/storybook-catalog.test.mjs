@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { fingerprint, renderIndex, scanStories, validateCatalog } from "./storybook-catalog.mjs";
-import { featureIndex } from "./storybook-feature-index.mjs";
+import { fingerprint, reconcileCatalog, renderIndex, scanStories, validateCatalog } from "./storybook-catalog.mjs";
+import { featureIndex, reconcileFeatureArtifacts } from "./storybook-feature-index.mjs";
 
 function fixture(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), "storybook-catalog-"));
@@ -128,6 +128,29 @@ test("authored stories cannot collide with generated overview IDs", t => {
   const f = fixture(t);
   f.stories[0].ids = ["feature-map-tasks--overview"];
   assert.match(validateCatalog(f.root, f.catalog, f.stories).join("\n"), /Duplicate story IDs/);
+});
+
+test("regeneration reports review drift from its own writes without refreshing fingerprints", t => {
+  const f = fixture(t);
+  f.write("ui/storybook/.storybook/preview.tsx", "export default { parameters: { options: { storySort: { order: [],\n}, } } };\n");
+  reconcileFeatureArtifacts(f.root, featureIndex(f.root), true);
+  f.write("maps/storybook-map/INDEX.md", "");
+  const generatedSource = "ui/storybook/generated/feature-index.json";
+  f.catalog.sharedReview.sources.push(generatedSource);
+  f.catalog.entries[0].sources.push(generatedSource);
+  f.catalog.sharedReview.fingerprint = fingerprint(f.root, f.catalog.sharedReview.sources);
+  f.catalog.entries[0].fingerprint = fingerprint(f.root, f.catalog.entries[0].sources);
+  assert.deepEqual(reconcileCatalog(f.root, f.catalog, f.stories, true), []);
+  const reviewed = f.catalog.sharedReview.fingerprint;
+  f.write("maps/feature-map/tasks.md", "## Sub-features\n- `create`: Updated description.\n- `discussion`: discuss\n## Gotchas\n");
+  const errors = reconcileCatalog(f.root, f.catalog, f.stories, true);
+  assert.equal(errors.filter(error => error.includes("source changed; review")).length, 2);
+  assert.equal(f.catalog.sharedReview.fingerprint, reviewed);
+  assert.notEqual(fingerprint(f.root, f.catalog.sharedReview.sources), reviewed);
+  f.catalog.sharedReview.fingerprint = fingerprint(f.root, f.catalog.sharedReview.sources);
+  f.catalog.entries[0].fingerprint = fingerprint(f.root, f.catalog.entries[0].sources);
+  assert.deepEqual(reconcileCatalog(f.root, f.catalog, f.stories, true), []);
+  assert.deepEqual(reconcileCatalog(f.root, f.catalog, f.stories), []);
 });
 
 test("Storybook parser discovers nested files, filters helpers, preserves explicit IDs and counts play functions", t => {

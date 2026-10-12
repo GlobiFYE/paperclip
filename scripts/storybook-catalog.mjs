@@ -141,19 +141,24 @@ export function renderIndex(catalog, stories, index) {
   return lines.join("\n") + "\n";
 }
 
+export function reconcileCatalog(root, catalog, stories, write = false) {
+  const index = featureIndex(root);
+  const errors = reconcileFeatureArtifacts(root, index, write);
+  errors.push(...validateCatalog(root, catalog, stories));
+  if (!errors.length) {
+    const generated = renderIndex(catalog, stories, index);
+    if (write) writeFileSync(path.join(root, indexPath), generated);
+    else if (!existsSync(path.join(root, indexPath)) || readFileSync(path.join(root, indexPath), "utf8") !== generated) errors.push("Generated INDEX.md is stale; run with --write after reviewing catalog changes");
+  }
+  return errors;
+}
+
 if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
   const args = process.argv.slice(2);
   if (args.some(arg => arg !== "--write")) throw new Error("Usage: node scripts/storybook-catalog.mjs [--write]");
   const catalog = JSON.parse(readFileSync(path.join(defaultRoot, catalogPath), "utf8"));
   const stories = scanStories();
-  const errors = validateCatalog(defaultRoot, catalog, stories);
-  if (!errors.length) {
-    const index = featureIndex(defaultRoot);
-    errors.push(...reconcileFeatureArtifacts(defaultRoot, index, args.includes("--write")));
-    const generated = renderIndex(catalog, stories, index);
-    if (args.includes("--write")) writeFileSync(path.join(defaultRoot, indexPath), generated);
-    else if (!existsSync(path.join(defaultRoot, indexPath)) || readFileSync(path.join(defaultRoot, indexPath), "utf8") !== generated) errors.push("Generated INDEX.md is stale; run with --write after reviewing catalog changes");
-  }
+  const errors = reconcileCatalog(defaultRoot, catalog, stories, args.includes("--write"));
   if (errors.length) { errors.forEach(error => console.error(error)); process.exitCode = 1; }
   else console.log(`Storybook catalog aligned: ${stories.length} files, ${stories.reduce((n, story) => n + story.ids.length, 0)} stories. Structure and review fingerprints only; no runtime proof.`);
 }

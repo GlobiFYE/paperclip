@@ -68,7 +68,8 @@ export function FeatureMapIndex() {
       ].join(" ").toLowerCase().includes(search);
     }),
   })).filter(section => section.features.length), [search]);
-  const foundations = examples.filter(entry => !entry.capabilities.length);
+  const foundations = examples.filter(entry => !entry.capabilities.length
+    && ["Shared foundations", entry.purpose, entry.status, entry.implementation, entry.boundary].join(" ").toLowerCase().includes(search));
   return (
     <main className="paperclip-story__inner space-y-6 p-6">
       <header className="space-y-3">
@@ -78,7 +79,7 @@ export function FeatureMapIndex() {
         <a className="text-sm underline underline-offset-4" href={`${recipeRoot}README.md`} target="_blank" rel="noreferrer">Read the feature-map index</a>
         <Input aria-label="Find a feature or capability" placeholder="Find a feature, capability, or example…" value={query} onChange={event => setQuery(event.target.value)} />
       </header>
-      {sections.length === 0 ? <p>No matching features.</p> : null}
+      {sections.length === 0 && foundations.length === 0 ? <p>No matching features or examples.</p> : null}
       {sections.map(section => (
         <section key={section.title} className="space-y-3">
           <h2 className="text-lg font-semibold">{section.title}</h2>
@@ -98,7 +99,7 @@ export function FeatureMapIndex() {
           </ul>
         </section>
       ))}
-      {!search && foundations.length ? (
+      {foundations.length ? (
         <section className="space-y-3">
           <h2 className="text-lg font-semibold">Shared foundations</h2>
           <p className="text-sm text-muted-foreground">Shared UI components sit outside the product feature index.</p>
