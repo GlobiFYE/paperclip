@@ -2043,14 +2043,20 @@ unavailable. Preserve current ownership and newer-work fences. See
   the current caller and audit the requested package at the scanned immutable commit;
   discovery and source metadata contain no file contents. Reference checks are advisory,
   do not establish complete runtime dependencies, and never expand package boundaries automatically.
-- Optional `packageMode: repository` preserves the full regular-file repository tree
+- New UI imports use `packageMode: repository` to preserve supported repository files
   in one company-scoped immutable snapshot. Selected entrypoints become library skills;
   other skills remain supporting files. The root `paperclip.skills.json` may declare
-  version 1, default `skills` paths and `requirements` text. Invalid manifests, unsupported
-  entries, invalid skill entrypoints or blocked content reject the entire repository.
-  Limits are 9,990 files, 1 MiB per file and 61 MiB total. Directory mode remains the default.
-  The dialog exposes included repository files and setup requirements, and blocks invalid
-  selected imports rather than silently skipping them.
+  version 1, validated `skills` paths and `requirements` text. Invalid manifests fall
+  back to discovery. The dialog shows every skill and containing folder, selects all
+  discovered skills, and collapses package files. There is no import-mode chooser;
+  existing directory-mode sources and API callers remain compatible.
+  Unsupported links, oversized files and files rejected for unsafe execution or
+  secret disclosure are omitted with persistent warnings. Malformed entrypoints
+  stay selected with Needs setup warnings; usable selected skills still publish.
+  Limits are 9,990 repository entries, 1 MiB per file and 61 MiB total. The dialog
+  exposes included files and setup requirements without repair choices or another
+  confirmation. Installed file views read saved repository bytes and resolve links
+  from each instruction file's original directory.
 - Each repository-backed version references its snapshot and original entrypoint path.
   Runtime materialization adds a discovery wrapper and preserves the original tree under
   `.paperclip-repository/`, including binaries, modes and credits. Original instructions

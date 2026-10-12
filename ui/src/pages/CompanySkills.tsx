@@ -1,4 +1,5 @@
 import { SkillBinaryFile } from "../components/SkillBinaryFile";
+import { skillFileLinkHref } from "@/lib/skill-file-links";
 import { SkillSourceProvenance } from "../components/SkillSourceProvenance";
 import { AgentIdentity } from "@/components/AgentIdentity";
 import { AgentAvatar } from "@/components/AgentAvatar";
@@ -3117,7 +3118,13 @@ export function SkillDetailPage({
               />
             )
           ) : file.markdown && viewMode === "preview" ? (
-            <MarkdownBody softBreaks={false} linkIssueReferences={false}>{body}</MarkdownBody>
+            <MarkdownBody
+              softBreaks={false}
+              linkIssueReferences={false}
+              resolveLinkHref={(href) => skillFileLinkHref(skill, selectedPath, href, routeSkills ?? [skill])}
+            >
+              {body}
+            </MarkdownBody>
           ) : (
             <pre className="overflow-x-auto whitespace-pre-wrap wrap-break-word border-0 bg-transparent p-0 font-mono text-sm text-foreground">
               <code>{file.content}</code>
