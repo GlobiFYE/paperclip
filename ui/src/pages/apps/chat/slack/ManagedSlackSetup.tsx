@@ -44,7 +44,7 @@ export function ManagedSlackSetup({ endpoint, disabled, saveDetails, onSaved, on
       await authorize(); return;
     }
     if (!started) await saveDetails();
-    if (confirmed || registration?.status === "failed" || reconnect) requestId.current = crypto.randomUUID();
+    if (confirmed || registration?.status === "failed") requestId.current = crypto.randomUUID();
     const input = { requestId: requestId.current, grantId, ...(reconnect ? { reconnect: true } : {}), ...(confirmed ? { confirmedNoAppCreated: true } : {}) };
     setConfirmed(false);
     const result = await chatEndpointsApi.provisionManagedSlack(endpoint.id, input);

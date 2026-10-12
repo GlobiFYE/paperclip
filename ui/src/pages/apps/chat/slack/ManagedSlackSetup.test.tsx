@@ -45,6 +45,17 @@ it("requests explicit reinstall when reconnecting a configured app", async () =>
   await act(async () => button!.click());
   expect(api.provisionManagedSlack).toHaveBeenCalledWith("endpoint", expect.objectContaining({ grantId: "grant", reconnect: true, requestId: expect.any(String) }));
 });
+it("reuses the reconnect receipt after a lost response and failed recovery read", async () => {
+  endpoint.setup!.slackRegistration = { status: "configured", appId: "app", managerGrantId: "grant" } as NonNullable<ChatEndpoint["setup"]>["slackRegistration"];
+  api.provisionManagedSlack.mockRejectedValue(new Error("Response lost"));
+  api.get.mockRejectedValue(new Error("Recovery read unavailable"));
+  await render({ autoStart: false, reconnect: true });
+  const button = () => Array.from(container.querySelectorAll("button")).find(item => item.textContent === "Continue in Slack")!;
+  await act(async () => button().click());
+  await act(async () => button().click());
+  expect(api.provisionManagedSlack).toHaveBeenCalledTimes(2);
+  expect(api.provisionManagedSlack.mock.calls[1]![1]).toEqual(api.provisionManagedSlack.mock.calls[0]![1]);
+});
 it("opens manager authorization directly when there is no saved workspace", async () => {
   api.slackSetupOptions.mockResolvedValue({ managedAvailable: true, workspaces: [] });
   await render();
