@@ -360,7 +360,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       ),
     );
   try {
-    let runtimeEnv = buildRuntimeEnv();
     const adapterExecutionTimeout = resolveAdapterExecutionTargetTimeout(
       executionTarget,
       asNumber(config.timeoutSec, 0),
@@ -371,7 +370,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       runId,
       target: executionTarget,
       installCommand: ctx.runtimeCommandSpec?.installCommand,
-    detectCommand: ctx.runtimeCommandSpec?.detectCommand,
+      detectCommand: ctx.runtimeCommandSpec?.detectCommand,
       cwd,
       env: buildRuntimeEnv(),
       timeoutSec,

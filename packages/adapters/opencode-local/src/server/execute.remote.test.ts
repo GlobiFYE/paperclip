@@ -111,6 +111,18 @@ vi.mock("@paperclipai/adapter-utils/execution-target", async () => {
   };
 });
 
+// The remote path probes the target CLI version before the run (`opencode
+// --version` through the execution target). That probe would consume the
+// per-case `runChildProcess` mock below, so answer it with the same V2 version
+// the hoisted mock reports and keep these cases focused on billing.
+vi.mock("./version.js", async () => {
+  const actual = await vi.importActual<typeof import("./version.js")>("./version.js");
+  return {
+    ...actual,
+    probeOpenCodeCliVersionOnTarget: vi.fn(async () => actual.parseOpenCodeCliVersion("2.0.26\n")),
+  };
+});
+
 import { execute } from "./execute.js";
 
 describe("opencode remote execution", () => {
