@@ -64,7 +64,10 @@ inspect its state rather than retrying it to obtain a smaller response.
 
 Connection setup and stalled response reads time out after 30 seconds. An active
 capture has a 10-minute total download deadline. Responses above 24 KiB stream
-into a private temporary file, then into a company-owned asset. Memory stays
+into a private temporary file, then into a company-owned asset scoped to the
+issuing agent and responsible user (plus authorized board administrators).
+Ordinary task or run visibility does not grant access to another actor’s API
+snapshot. Explicit deliverables use the existing attachment/work-product flow. Memory stays
 bounded by the inline prefix and stream buffers. Binary responses also become
 assets; text previews are limited to 2,000 bytes.
 
@@ -163,7 +166,8 @@ failed to return a valid response.
 The server revalidates the active native run, assigned task and actor, then
 creates a server-held agent JWT bound to that company and run. Requests go
 through the actual HTTP router with its authorization, validation and domain
-audit behavior. An additional `runner.api_called` receipt attributes mutations
+audit behavior. Skill-test runs retain the same task-scoped `skill_test` JWT
+as legacy REST runs, including after later edits to the task mode. An additional `runner.api_called` receipt attributes mutations
 to the run even where older route audit events omit that field.
 The run and work mode are checked again after asynchronous file preparation, so
 a stopped run cannot dispatch an upload prepared under its earlier binding.
@@ -193,8 +197,14 @@ no-symlink file opens covering every path component, and bounded descriptor read
 Local uploads require Linux or macOS; authorized artifacts work on other hosts.
 Artifacts must belong to the bound company. Request bodies and uploads go
 through the route's validation and authorization; the fallback does not reject
-fields that an agent can supply through REST. Route-authorized responses are
-returned using the same bounded inline/artifact capture and replay mechanism.
+fields that an agent can supply through REST. Route-authorized responses normally use the bounded inline/artifact capture and
+replay mechanism. Credential-bearing responses (secret values, issued keys,
+invites, webhook secrets and gateway credentials) stay inline, with a 10 MiB
+response bound. They never spill into plaintext files or saved response assets.
+Their durable mutation receipts encrypt the response with the existing local
+secret provider. Replays decrypt it only inside the authorized run; no HTTP
+request repeats. A working secret store is checked before credential dispatch.
+Other API responses retain the existing 24 KiB inline and 1 GiB capture limits.
 
 Agent credentials are never returned to the model. Streaming, WebSocket, MCP and authentication
 handshakes are documented as protocol operations requiring their existing clients.

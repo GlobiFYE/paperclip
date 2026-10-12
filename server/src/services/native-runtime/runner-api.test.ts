@@ -288,6 +288,17 @@ describe("runner API request boundary", () => {
       ).toBe("GET");
     }
   });
+  it("returns credential responses above the ordinary inline limit without creating plaintext artifacts", async () => {
+    const value = "fixture-credential-".repeat(3000);
+    const transport = io(async () => Response.json({ value }));
+    const save = vi.fn(transport.saveResponse);
+    const reserve = vi.fn(async () => vi.fn(async () => {}));
+    const result = await executeRunnerApi({ operationId: "POST /api/agents/me/secrets/{key}/value", pathParams: { key: "FIXTURE_TOKEN" } }, context, { ...transport, saveResponse: save, reserveResponseCapture: reserve });
+    expect(result).toMatchObject({ ok: true, status: 200, data: { value } });
+    expect(result).not.toHaveProperty("artifact");
+    expect(save).not.toHaveBeenCalled();
+    expect(reserve).not.toHaveBeenCalled();
+  });
   it("forwards only server-owned authentication and preserves API denials", async () => {
     const request = vi.fn<typeof fetch>(async () =>
       Response.json({ error: "Board access required" }, { status: 403 }),

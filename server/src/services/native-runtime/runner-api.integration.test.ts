@@ -5,6 +5,7 @@ import { join, dirname } from "node:path";
 import { eq } from "drizzle-orm";
 import { agents, assets, documents, heartbeatRuns, issues, projects, routineDocuments, routines, runnerApiResponseReservations, companySkills, companyMemberships, principalPermissionGrants } from "@paperclipai/db";
 import { beforeAll, afterAll, beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { secretService } from "../secrets.js";
 import { startRunnerApiTestServer } from "../../__tests__/helpers/runner-api-server.js";
 import { createRunnerdCodexTransport, defaultCapabilityRunnerdBinary } from "../../vendor/paperclip-runner/index.js";
 import { runnerApiCatalog } from "./runner-api-catalog.js";
@@ -16,6 +17,7 @@ import { PaperclipRunnerToolAuthority } from "./paperclip-runner-tool-authority.
 describe("runner API against real HTTP routes", () => {
   let server: Awaited<ReturnType<typeof startRunnerApiTestServer>>;
   const oldSecret = process.env.PAPERCLIP_AGENT_JWT_SECRET;
+  const oldMasterKeyFile = process.env.PAPERCLIP_SECRETS_MASTER_KEY_FILE;
   beforeEach(() => {
     vi.stubEnv("PAPERCLIP_RUNNER_API_TOOLS_ENABLED", undefined);
     vi.stubEnv("PAPERCLIP_RUNNER_API_TOOLS_COMPANY_IDS", undefined);
@@ -24,9 +26,12 @@ describe("runner API against real HTTP routes", () => {
   beforeAll(async () => {
     process.env.PAPERCLIP_AGENT_JWT_SECRET = randomUUID();
     server = await startRunnerApiTestServer();
+    process.env.PAPERCLIP_SECRETS_MASTER_KEY_FILE = join(server.root, "master.key");
   }, 60_000);
   afterAll(async () => {
     await server?.close();
+    if (oldMasterKeyFile === undefined) delete process.env.PAPERCLIP_SECRETS_MASTER_KEY_FILE;
+    else process.env.PAPERCLIP_SECRETS_MASTER_KEY_FILE = oldMasterKeyFile;
     if (oldSecret === undefined) delete process.env.PAPERCLIP_AGENT_JWT_SECRET;
     else process.env.PAPERCLIP_AGENT_JWT_SECRET = oldSecret;
   });
@@ -168,6 +173,62 @@ else if(m.id!==undefined) send({id:m.id,result:{}});
     expect(result).toMatchObject({ ok: true, status: 201, data: { skillId: skill.id, agentId: fixture.agentId } });
     expect(await fixture.authority.execute(call)).toEqual(result);
     expect((await fixture.snapshot()).issues.some(issue => issue.id === result.data.issueId)).toBe(true);
+  });
+
+  it("keeps saved API responses within the issuing actor's scope", async () => {
+    const fixture = await server.fixture();
+    const body = "Private API response\n".repeat(2000);
+    const saved = await fixture.authority.execute({ tool: "call_api", callId: "private-snapshot", arguments: {
+      operationId: "PUT /api/issues/{id}/documents/{key}", pathParams: { id: fixture.issueId, key: "private-api-result" },
+      body: { title: "Private API result", body, format: "markdown", baseRevisionId: null },
+    } }) as any;
+    expect(saved).toMatchObject({ ok: true, status: 201, artifact: { artifactId: expect.any(String) } });
+    const url = `${fixture.apiUrl}/api/assets/${saved.artifact.artifactId}/content`;
+    const owner = createLocalAgentJwt(fixture.agentId, fixture.companyId, "paperclip_runner", fixture.runId);
+    expect((await fetch(url, { headers: { Authorization: `Bearer ${owner}` } })).status).toBe(200);
+    const [peer] = await server.db.insert(agents).values({ companyId: fixture.companyId, name: "Peer snapshot reader", status: "active" }).returning();
+    const [peerRun] = await server.db.insert(heartbeatRuns).values({ companyId: fixture.companyId, agentId: peer.id, status: "running" }).returning();
+    const token = createLocalAgentJwt(peer.id, fixture.companyId, "codex_local", peerRun.id);
+    expect((await fetch(url, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(404);
+  });
+
+  it("returns and replays scoped secret values without plaintext receipts or response assets", async () => {
+    const fixture = await server.fixture();
+    const value = "disposable-private-credential-".repeat(1500);
+    const secrets = secretService(server.db);
+    const secret = await secrets.create(fixture.companyId, { name: "parity/private-value", key: "PARITY_TOKEN", provider: "local_encrypted", value });
+    await secrets.createBinding({ companyId: fixture.companyId, secretId: secret.id, targetType: "agent", targetId: fixture.agentId, configPath: "env.PARITY_TOKEN" });
+    const call = { tool: "call_api", callId: "secret-value", arguments: { operationId: "POST /api/agents/me/secrets/{key}/value", pathParams: { key: secret.key } } };
+    const result = await fixture.authority.execute(call);
+    expect(result).toMatchObject({ ok: true, status: 200, data: { key: secret.key, value } });
+    expect(await fixture.authority.execute(call)).toEqual(result);
+    const snapshot = await fixture.snapshot();
+    expect(snapshot.assets.filter(asset => asset.objectKey.includes("/runner-api/"))).toEqual([]);
+    const [run] = await server.db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, fixture.runId));
+    expect(JSON.stringify(run.resultJson)).not.toContain(value);
+    expect(Object.values((run.resultJson as any).apiToolReceipts)[0]).toHaveProperty("encryptedResult");
+    expect(snapshot.activity.filter(row => row.action === "runner.api_called")).toHaveLength(1);
+    const otherAgentId = randomUUID();
+    await server.db.insert(agents).values({ id: otherAgentId, companyId: fixture.companyId, name: "Unbound peer", status: "active" });
+    const [peerRun] = await server.db.insert(heartbeatRuns).values({ companyId: fixture.companyId, agentId: otherAgentId, status: "running", runtimeMode: "native", nativeIssueId: fixture.blockerId, contextSnapshot: { issueId: fixture.blockerId } }).returning();
+    await server.db.update(issues).set({ assigneeAgentId: otherAgentId, status: "in_progress", executionRunId: peerRun.id }).where(eq(issues.id, fixture.blockerId));
+    const token = createLocalAgentJwt(otherAgentId, fixture.companyId, "paperclip_runner", peerRun.id);
+    expect((await fetch(`${fixture.apiUrl}/api/agents/me/secrets/${secret.key}/value`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "X-Paperclip-Run-Id": peerRun.id } })).status).toBe(403);
+  });
+
+  it("preserves the REST skill-test credential scope after a task mode edit", async () => {
+    const fixture = await server.fixture({ contextSnapshot: { issueWorkMode: "skill_test" } });
+    const body = { kind: "secret", name: "parity/skill-test", value: "disposable-skill-test-value", justification: "Must remain denied" };
+    const token = createLocalAgentJwt(fixture.agentId, fixture.companyId, "paperclip_runner", fixture.runId,
+      fixture.responsibleUserId, { kind: "skill_test", issueId: fixture.issueId });
+    const direct = await fetch(`${fixture.apiUrl}/api/agents/me/secret-proposals`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", "X-Paperclip-Run-Id": fixture.runId }, body: JSON.stringify(body),
+    });
+    expect(direct.status).toBe(403);
+    const result = await fixture.authority.execute({ tool: "call_api", callId: "skill-test-secret-denied", arguments: {
+      operationId: "POST /api/agents/me/secret-proposals", body,
+    } });
+    expect(result).toMatchObject({ ok: false, status: direct.status, data: await direct.json() });
   });
 
   it("creates and reads secret proposals while preserving redaction and board review", async () => {

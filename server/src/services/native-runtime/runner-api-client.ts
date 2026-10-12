@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { badRequest, forbidden, unprocessable } from "../../errors.js";
+import { runnerApiSensitiveResponse } from "./runner-api-sensitive-response.js";
 import { runnerApiOperation, type RunnerApiOperation } from "./runner-api-catalog.js";
 import { captureRunnerApiResponse, type RunnerApiResponseBody } from "./runner-api-response.js";
 import { RunnerApiResponseLimitError, RunnerApiResponseCleanupError, RUNNER_API_RESPONSE_MAX_BYTES } from "./runner-api-response-limits.js";
@@ -124,6 +125,7 @@ export async function readBoundedResponse(response: Response, maxBytes = RUNNER_
 export async function executeRunnerApi(input: RunnerApiCall, context: RunnerApiContext, io: RunnerApiIo) {
   const { operation, input: validated } = validateRunnerApiCall(input, context);
   input = validated;
+  const sensitiveResponse = runnerApiSensitiveResponse(operation.method, operation.path);
   const url = runnerApiUrl(operation, input, context, io.apiUrl);
   if (!io.token) throw new Error("Paperclip run authentication is unavailable");
   const headers = new Headers({ Authorization: `Bearer ${io.token}`, "X-Paperclip-Run-Id": context.runId });
@@ -188,7 +190,12 @@ export async function executeRunnerApi(input: RunnerApiCall, context: RunnerApiC
   try {
     response = await (io.fetch ?? fetch)(url, { method: operation.method, headers, body, redirect: "manual", signal: controller.signal });
     clearTimeout(timeout);
-    if (assetTextRange && response.ok) {
+    if (sensitiveResponse) {
+      // Credential responses must not spill into plaintext temporary files or
+      // saved assets. Their replay receipt is encrypted by the tool authority.
+      timeout = setTimeout(() => controller.abort(), RUNNER_API_TIMEOUT_MS);
+      bytes = await readBoundedResponse(response);
+    } else if (assetTextRange && response.ok) {
       timeout = setTimeout(() => controller.abort(), RUNNER_API_TIMEOUT_MS);
       bytes = await readBoundedResponse(response, textLimit + 2);
     } else {
@@ -267,10 +274,11 @@ export async function executeRunnerApi(input: RunnerApiCall, context: RunnerApiC
         guidance: "Read this asset with responseText: { offsetBytes: 0 }. Continue with responseText.nextOffsetBytes until null." };
     }
     if (!totalBytes) return { ...base, data: null };
-    if (totalBytes > RUNNER_API_INLINE_BYTES || !/json|^text\//i.test(type)) {
+    if (!sensitiveResponse && (totalBytes > RUNNER_API_INLINE_BYTES || !/json|^text\//i.test(type))) {
       return { ...base, artifact: await saveResponse(captured?.body ?? bytes, type), byteSize: totalBytes, preview: /json|^text\//i.test(type) ? bytes.subarray(0, 2000).toString("utf8") : null,
         ...(/json|^text\//i.test(type) ? { guidance: "Read the saved artifact with GET /api/assets/{assetId}/content and responseText: { offsetBytes: 0 }. Continue with responseText.nextOffsetBytes until null. Do not repeat a mutation to read its response." } : {}) };
     }
+    if (sensitiveResponse && !/json|^text\//i.test(type)) return { ...base, ok: false, error: "credential_response_requires_text_content" };
     const text = bytes.toString("utf8");
     if (/json/i.test(type)) {
       try { return { ...base, data: JSON.parse(text) as unknown }; }

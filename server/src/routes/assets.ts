@@ -348,7 +348,14 @@ export function assetRoutes(db: Db, storage: StorageService) {
       .where(and(eq(runnerApiResponseReservations.assetId, asset.id), eq(runnerApiResponseReservations.companyId, asset.companyId)));
     if (namespace === "runner-api" && !captures.length) { res.status(404).json({ error: "Asset not found" }); return; }
     for (const { run } of captures) {
-      if (!run || !(await canActorReadHeartbeatRun(db, access, req.actor, run))) {
+      // API captures inherit the issuing actor, rather than turning an
+      // actor-authorized response into a shared task attachment. Ordinary run
+      // visibility alone does not grant the source API's permissions.
+      const ownsCapture = run && (req.actor.type === "agent"
+        ? req.actor.agentId === run.agentId && (!run.responsibleUserId || req.actor.onBehalfOfUserId === run.responsibleUserId)
+        : req.actor.type === "board" && (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin
+          || (Boolean(req.actor.userId) && req.actor.userId === run.responsibleUserId)));
+      if (!ownsCapture || !run || !(await canActorReadHeartbeatRun(db, access, req.actor, run))) {
         res.status(404).json({ error: "Asset not found" }); return;
       }
     }
