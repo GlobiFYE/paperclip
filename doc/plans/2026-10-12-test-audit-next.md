@@ -3,20 +3,25 @@
 Date: 2026-10-12
 Branch: `codex/test-audit-next`
 Discovery baseline: `b4aee6ea18905690686fb318fa9cc6d4cc71a7e1`
+Integration base: `1e0cfcb4fc4ed78d10f46cd60990935af4ac9973` (merged master)
+Verified code commit: `4261a7fc1b964e54059c68246a0a4b7ea74bdcea`
 Parent cleanup: [PR #15978](https://github.com/paperclipai/paperclip/pull/15978)
 
 This follow-up removes **2,041 net test lines across five files**. Every
 registered case and assertion remains. It changes no application source.
-The seven complete owner/sibling files pass all **990 cases** before and after;
-UI typecheck, token gates and diff checks pass. This is fixture compaction,
-not a runtime speedup or another reduction in execution count.
+The seven complete owner/sibling files pass all **990 cases** before and after.
+Workspace typecheck, build, token gates and diff checks pass. The change
+consolidates fixture setup while preserving execution count.
 
-The parent PR is handled in the original d9b0 worktree. This branch has a
-separate managed checkout and dependency installation, based on the prior
-cleanup commit. It does not modify the parent PR's files or report. After the
-parent merges, replay only the commits after this discovery baseline onto
-merged master, inherit its review fixes, and reverify the affected owners.
-The earlier cleanup evidence lives in `2026-10-12-test-audit.md`.
+The parent PR merged on 2026-10-12 after all remote checks passed and a
+fresh Greptile 5/5 review. This branch used a separate managed checkout and
+dependency installation. Only its new follow-up commit was replayed onto
+the parent merge, with no conflicts or duplicated cleanup commits. All five
+test files still exactly match the independently reviewed candidates, and
+all 990 owner/sibling cases pass again on the merged base. The follow-up remains
+committed locally on its own branch. Earlier cleanup evidence, including its
+disclosed local timeout and passing owner reproduction, lives in
+`2026-10-12-test-audit.md`.
 
 ## Measured change
 
@@ -93,13 +98,24 @@ earlier parent PR's mutation proof is recorded in its report.
 
 - Complete baseline: seven files, 990 passed, zero failed/skipped.
 - Complete candidate: the same seven files, 990 passed, zero failed/skipped.
-- `pnpm --filter @paperclipai/ui typecheck`: pass.
+- Rebased candidate: the same seven files, 990 passed, zero failed/skipped.
+- `pnpm --filter @paperclipai/ui typecheck`: pass before integration.
+- `pnpm -r typecheck`: pass before integration and at the verified code commit.
+- `pnpm build`: pass at the verified code commit.
 - Token gates, palette synchronization and character synchronization: pass.
 - `git diff --check`: pass.
 - The new checkout used its own workspace-linked dependencies and built its
   own TypeScript runner/shared/plugin SDK prerequisites. No dependencies or
   source files were linked to the concurrently changing PR checkout.
-- Full workspace typecheck/build and a complete default run have not been
-  repeated for this follow-up branch. This is complete affected-owner/sibling
-  proof; it is not yet a PR-ready handoff. The parent PR owns its separate
-  full verification and merge. No wall-time speedup is attributed to this work.
+- A complete default `pnpm test:run` has not been repeated for this follow-up.
+  Its test-only fixture changes have complete affected-owner/sibling proof.
+  Browser suites were not run; none of those suites changed. The parent PR
+  has its own full CI evidence. No wall-time speedup is attributed to this work.
+
+## Additional retirement search
+
+A bounded independent search found no further defensible retirement of
+200 or more lines. Provider-specific behavior, separately implemented
+parsers, CSS contrast/theme/layout contracts and runtime/SDK wiring retain
+independent proof. Similar source guards or DOM class assertions did not
+provide complete behavioral keepers, so those layers remain.
