@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { Server as TlsServer } from "node:tls";
 
+
 type SupertestServer = NetServer & {
   address(): ReturnType<NetServer["address"]>;
   listen(port: number): NetServer;
@@ -30,6 +31,7 @@ const { home: paperclipTestHome, cleanup: cleanupPaperclipTestHome } = createIso
 process.env.PAPERCLIP_HOME = paperclipTestHome;
 // Setup-file afterAll hooks run before suites drain asynchronous heartbeats.
 // Cleanup at worker exit, after all suite teardown, avoids deleting live state.
+// The owned-home cleanup also handles read-only runtime-context bundles.
 process.once("exit", cleanupPaperclipTestHome);
 
 const require = createRequire(import.meta.url);
