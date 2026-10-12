@@ -60,6 +60,7 @@ interface IssueCreateOptions extends BaseClientOptions {
   projectId?: string;
   goalId?: string;
   parentId?: string;
+  standalone?: boolean;
   requestDepth?: string;
   billingCode?: string;
 }
@@ -81,6 +82,7 @@ interface IssueUpdateOptions extends BaseClientOptions {
 
 interface IssueCommentOptions extends BaseClientOptions {
   body: string;
+  attachmentId?: string[];
   reopen?: boolean;
   resume?: boolean;
 }
@@ -286,10 +288,17 @@ export function registerIssueCommands(program: Command): void {
       .option("--project-id <id>", "Project ID")
       .option("--goal-id <id>", "Goal ID")
       .option("--parent-id <id>", "Parent issue ID")
+      .option(
+        "--standalone",
+        "Create a top-level issue. Without --parent-id, an agent run's issue otherwise becomes the parent.",
+      )
       .option("--request-depth <n>", "Request depth integer")
       .option("--billing-code <code>", "Billing code")
       .action(async (opts: IssueCreateOptions) => {
         try {
+          if (opts.standalone && opts.parentId) {
+            throw new Error("--standalone cannot be combined with --parent-id");
+          }
           const ctx = resolveCommandContext(opts, { requireCompany: true });
           const payload = createIssueSchema.parse({
             title: opts.title,
@@ -299,7 +308,7 @@ export function registerIssueCommands(program: Command): void {
             assigneeAgentId: opts.assigneeAgentId,
             projectId: opts.projectId,
             goalId: opts.goalId,
-            parentId: opts.parentId,
+            parentId: opts.standalone ? null : opts.parentId,
             requestDepth: parseOptionalInt(opts.requestDepth),
             billingCode: opts.billingCode,
           });
@@ -362,6 +371,10 @@ export function registerIssueCommands(program: Command): void {
       .description("Add comment to issue")
       .argument("<issueId>", "Issue ID")
       .requiredOption("--body <text>", "Comment body")
+      .option(
+        "--attachment-id <id...>",
+        "Bind uploaded issue attachments to this comment",
+      )
       .option("--reopen", "Reopen if issue is done/cancelled")
       .option("--resume", "Request explicit follow-up and wake the assignee when resumable")
       .action(async (issueId: string, opts: IssueCommentOptions) => {
@@ -369,6 +382,7 @@ export function registerIssueCommands(program: Command): void {
           const ctx = resolveCommandContext(opts);
           const payload = addIssueCommentSchema.parse({
             body: opts.body,
+            attachmentIds: opts.attachmentId,
             reopen: opts.reopen,
             resume: opts.resume,
           });
@@ -1309,7 +1323,7 @@ export function registerIssueCommands(program: Command): void {
   addCommonClientOptions(
     issue
       .command("release")
-      .description("Release issue back to todo and clear assignee")
+      .description("Release issue execution locks; clear the assignee only for unfinished issues")
       .argument("<issueId>", "Issue ID")
       .action(async (issueId: string, opts: BaseClientOptions) => {
         try {
