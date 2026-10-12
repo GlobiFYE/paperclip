@@ -158,6 +158,7 @@ import {
 } from "../../log-redaction.js";
 import {
   redactEventPayload,
+  redactPostgresUrlsInValue,
   redactSensitiveText,
 } from "../../redaction.js";
 import {
@@ -2043,9 +2044,9 @@ export function createHeartbeatLifecycle(db: Db, dependencies: HeartbeatLifecycl
     const eventAt = new Date();
     const currentUserRedactionOptions = await getCurrentUserRedactionOptions();
     const sanitizedMessage = event.message
-      ? redactSensitiveText(
+      ? redactPostgresUrlsInValue(redactSensitiveText(
           redactCurrentUserText(event.message, currentUserRedactionOptions),
-        )
+        ), { possiblyPartial: true })
       : event.message;
     const boundedPayload = event.payload
       ? boundHeartbeatRunEventPayloadForStorage(event.payload)

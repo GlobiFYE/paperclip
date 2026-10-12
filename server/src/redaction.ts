@@ -1,5 +1,10 @@
 import { redactCommandText } from "@paperclipai/adapter-utils";
-import { isPublicExecutorToolSelector, looksLikeCredentialJwt } from "@paperclipai/adapter-utils/command-redaction";
+import { isPublicExecutorToolSelector, looksLikeCredentialJwt, redactPostgresUrlQuery, redactPostgresUrlUserinfo } from "@paperclipai/adapter-utils/command-redaction";
+import { MAX_EXCERPT_BYTES } from "@paperclipai/adapter-utils/server-utils";
+import {
+  HEARTBEAT_RUN_RESULT_OUTPUT_MAX_CHARS,
+  HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS,
+} from "./services/heartbeat-run-summary.js";
 
 const SECRET_FIELD_NAME_PATTERN = String.raw`[A-Za-z0-9_-]*(?:api[-_]?key|access[-_]?token|auth(?:_?token)?|token|authorization(?:[-_]?code)?|bearer|secrets?|passwd|passwords?|credentials?|jwt|private[-_]?key|cookie|connectionstring|browser[-_]?code|login[-_]?url)(?:[-_]?(?:value|header|prod(?:uction)?|dev(?:elopment)?|test|staging|primary|secondary))*`;
 
@@ -384,6 +389,8 @@ function maybeContainsSecretText(input: string) {
   const lower = input.toLowerCase();
   return (
     SECRET_TEXT_HINTS.some((hint) => lower.includes(hint)) ||
+    lower.includes("postgres://") ||
+    lower.includes("postgresql://") ||
     input.includes(".")
   );
 }
@@ -883,12 +890,15 @@ export function sanitizeRecord(
 ): Record<string, unknown> {
   const redacted: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(record)) {
+    // Adapter payload field names are untrusted text too. A URI used as a key
+    // must not bypass the value redactors on persisted and live run events.
+    const safeKey = redactPostgresUrlsInValueAtKey(redactSensitiveText(key), undefined, true);
     if (COMMAND_ARGS_PAYLOAD_KEY_RE.test(key) && Array.isArray(value)) {
-      redacted[key] = sanitizeCommandArgs(value);
+      redacted[safeKey] = sanitizeCommandArgs(value);
       continue;
     }
     if (COMMAND_PAYLOAD_KEY_RE.test(key) && typeof value === "string") {
-      redacted[key] = redactSensitiveText(value);
+      redacted[safeKey] = redactSensitiveText(value);
       continue;
     }
     if (
@@ -897,31 +907,31 @@ export function sanitizeRecord(
       !isAuditCountField(key, value)
     ) {
       if (isSecretRefBinding(value)) {
-        redacted[key] = sanitizeValue(value);
+        redacted[safeKey] = sanitizeValue(value);
         continue;
       }
       if (isUserSecretRefBinding(value)) {
-        redacted[key] = sanitizeValue(value);
+        redacted[safeKey] = sanitizeValue(value);
         continue;
       }
       if (isPlainBinding(value)) {
-        redacted[key] = { type: "plain", value: REDACTED_EVENT_VALUE };
+        redacted[safeKey] = { type: "plain", value: REDACTED_EVENT_VALUE };
         continue;
       }
-      redacted[key] = REDACTED_EVENT_VALUE;
+      redacted[safeKey] = REDACTED_EVENT_VALUE;
       continue;
     }
     // Preserve public protocol identities before scanning diagnostic values.
     if (isKnownPrpEventDiscriminator(record, key, value)) {
-      redacted[key] = value;
+      redacted[safeKey] = value;
       continue;
     }
     if (isPaperclipSchemaDiscriminator(key, value)) {
-      redacted[key] = value;
+      redacted[safeKey] = value;
       continue;
     }
     if (AUDIT_SURFACE_PAYLOAD_KEY_RE.test(key) && typeof value === "string") {
-      redacted[key] = redactSensitiveText(value);
+      redacted[safeKey] = redactSensitiveText(value);
       continue;
     }
     if (
@@ -930,10 +940,10 @@ export function sanitizeRecord(
       !isPublicExecutorToolSelector(value) &&
       !isPaperclipSchemaDiscriminator(key, value)
     ) {
-      redacted[key] = REDACTED_EVENT_VALUE;
+      redacted[safeKey] = REDACTED_EVENT_VALUE;
       continue;
     }
-    redacted[key] = sanitizeValue(value);
+    redacted[safeKey] = sanitizeValue(value);
   }
   return redacted;
 }
@@ -1000,4 +1010,62 @@ export function redactSensitiveText(input: string): string {
       ),
     REDACTED_EVENT_VALUE,
   );
+}
+
+// These fields can be shortened by run-list and oversized-run projections.
+// An authority at their exact right edge may have lost its closing @.
+const RUN_METADATA_RIGHT_TRUNCATION_CAPS: Record<string, number> = {
+  summary: HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS,
+  result: HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS,
+  message: HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS,
+  error: HEARTBEAT_RUN_RESULT_SUMMARY_MAX_CHARS,
+  stdout: HEARTBEAT_RUN_RESULT_OUTPUT_MAX_CHARS,
+  stderr: HEARTBEAT_RUN_RESULT_OUTPUT_MAX_CHARS,
+};
+const RUN_METADATA_TRUNCATION_MARKER_RE =
+  /^\n\[(?:paperclip truncated run log chunk: omitted \d+ chars|truncated \d+ chars|truncated for run retrieval;[^\]]+)\]/;
+
+/** Recheck historical run metadata without changing its response shape. */
+function redactPostgresUrlsInValueAtKey<T>(input: T, key?: string, possiblyPartial = false, onlyPartial = false): T {
+  if (typeof input === "string") {
+    const completeUrlsRedacted = onlyPartial
+      ? input
+      : redactPostgresUrlQuery(redactPostgresUrlUserinfo(input, REDACTED_EVENT_VALUE), REDACTED_EVENT_VALUE);
+    // Only a capped field or an explicit truncation marker makes a trailing
+    // authority undecidable. Preserve hosts in complete diagnostic text.
+    const cap = key ? RUN_METADATA_RIGHT_TRUNCATION_CAPS[key] : undefined;
+    const mayBeRightTruncated = possiblyPartial || (cap !== undefined && input.length >= cap);
+    const redacted = completeUrlsRedacted.replace(
+      /(postgres(?:ql)?:\/\/)([^@\s"`<>\\/?#]+)/gi,
+      (match, scheme: string, _authority: string, offset: number, source: string) => {
+        const suffix = source.slice(offset + match.length);
+        return (mayBeRightTruncated && suffix.trim().length === 0)
+          || RUN_METADATA_TRUNCATION_MARKER_RE.test(suffix)
+          ? scheme + REDACTED_EVENT_VALUE
+          : match;
+      },
+    );
+    // The 32 KiB stdout/stderr excerpt cap keeps the right edge. Historical
+    // rows can therefore start inside userinfo with no scheme to recognize.
+    // Hide the first token only when the excerpt reached that cap.
+    return (key === "stdoutExcerpt" || key === "stderrExcerpt") &&
+      Buffer.byteLength(input, "utf8") >= MAX_EXCERPT_BYTES - 3 &&
+      !/^postgres(?:ql)?:\/\//i.test(redacted)
+      ? redacted.replace(/^[^\s@]+/, REDACTED_EVENT_VALUE) as T
+      : redacted as T;
+  }
+  if (Array.isArray(input)) {
+    return input.map((value) => redactPostgresUrlsInValueAtKey(value, undefined, possiblyPartial, onlyPartial)) as T;
+  }
+  if (input instanceof Date || !isPlainObject(input)) return input;
+  return Object.fromEntries(
+    Object.entries(input).map(([childKey, value]) => [
+      redactPostgresUrlsInValueAtKey(childKey, undefined, possiblyPartial, onlyPartial),
+      redactPostgresUrlsInValueAtKey(value, childKey, possiblyPartial, onlyPartial),
+    ]),
+  ) as T;
+}
+
+export function redactPostgresUrlsInValue<T>(input: T, options: { possiblyPartial?: boolean; onlyPartial?: boolean } = {}): T {
+  return redactPostgresUrlsInValueAtKey(input, undefined, options.possiblyPartial, options.onlyPartial);
 }
