@@ -535,6 +535,13 @@ export function projectRoutes(db: Db) {
         return;
       }
       const actor = getActorInfo(req);
+      // Redact monitor.externalRef before this leaves the write path too --
+      // the stored value is the real one, so echoing it back unredacted in
+      // the response or activity-log details would leak it to the same
+      // audience the GET route above already protects against.
+      const redactedDefaultExecutionPolicy = normalizeIssueExecutionPolicy(
+        project.defaultExecutionPolicy ?? null,
+      );
       await logActivity(db, {
         companyId: project.companyId,
         actorType: actor.actorType,
@@ -543,9 +550,9 @@ export function projectRoutes(db: Db) {
         action: "project.updated",
         entityType: "project",
         entityId: project.id,
-        details: { defaultExecutionPolicy: project.defaultExecutionPolicy ?? null },
+        details: { defaultExecutionPolicy: redactedDefaultExecutionPolicy },
       });
-      res.json({ defaultExecutionPolicy: project.defaultExecutionPolicy ?? null });
+      res.json({ defaultExecutionPolicy: redactedDefaultExecutionPolicy });
     },
   );
 

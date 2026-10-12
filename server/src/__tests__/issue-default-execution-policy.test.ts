@@ -565,6 +565,27 @@ describeEmbeddedPostgres("company/project default execution policy", () => {
     expect(get.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
   });
 
+  it("also redacts the company default execution policy's monitor externalRef in the PUT response itself", async () => {
+    const company = await seedCompany();
+
+    const put = await request(app(boardActor))
+      .put(`/api/companies/${company.id}/default-execution-policy`)
+      .send({
+        defaultExecutionPolicy: {
+          ...approvalPolicy("company-reviewer"),
+          monitor: {
+            nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
+            kind: "external_service",
+            serviceName: "github",
+            externalRef: "https://example.com/webhook?token=super-secret",
+          },
+        },
+      })
+      .expect(200);
+
+    expect(put.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
+  });
+
   it("redacts the project default execution policy's monitor externalRef on read", async () => {
     const company = await seedCompany();
     const project = await seedProject(company.id);
@@ -589,5 +610,27 @@ describeEmbeddedPostgres("company/project default execution policy", () => {
       .get(`/api/projects/${project.id}/default-execution-policy`)
       .expect(200);
     expect(get.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
+  });
+
+  it("also redacts the project default execution policy's monitor externalRef in the PUT response itself", async () => {
+    const company = await seedCompany();
+    const project = await seedProject(company.id);
+
+    const put = await request(app(boardActor))
+      .put(`/api/projects/${project.id}/default-execution-policy`)
+      .send({
+        defaultExecutionPolicy: {
+          ...approvalPolicy("project-reviewer"),
+          monitor: {
+            nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
+            kind: "external_service",
+            serviceName: "github",
+            externalRef: "https://example.com/webhook?token=super-secret",
+          },
+        },
+      })
+      .expect(200);
+
+    expect(put.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
   });
 });

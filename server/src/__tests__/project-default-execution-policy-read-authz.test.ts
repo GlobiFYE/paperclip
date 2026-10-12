@@ -204,17 +204,77 @@ describe("PUT /projects/:id/default-execution-policy authorization", () => {
       reason: "allow_company_agent",
       explanation: "Allowed by default same-company agent visibility.",
     });
+    // A stage with a participant, not an empty-stages policy: the route now
+    // runs the response through normalizeIssueExecutionPolicy (see the GET
+    // tests above), which collapses a stages-less, monitor-less policy to
+    // null -- this fixture needs real content to round-trip.
+    const policyWithStage = {
+      mode: "normal" as const,
+      commentRequired: true,
+      stages: [
+        {
+          id: "22222222-2222-4222-8222-222222222222",
+          type: "approval" as const,
+          approvalsNeeded: 1 as const,
+          participants: [
+            { id: "33333333-3333-4333-8333-333333333333", type: "user" as const, userId: "reviewer-1" },
+          ],
+        },
+      ],
+    };
     mockProjectService.update.mockResolvedValue(
-      buildProject({ defaultExecutionPolicy: { mode: "normal", commentRequired: true, stages: [] } }),
+      buildProject({ defaultExecutionPolicy: policyWithStage }),
     );
     const app = createApp({ type: "board", userId: "board-user", source: "local_implicit", isInstanceAdmin: true });
 
     const res = await request(app)
       .put(`/api/projects/${PROJECT_ID}/default-execution-policy`)
-      .send({ defaultExecutionPolicy: { mode: "normal", commentRequired: true, stages: [] } });
+      .send({ defaultExecutionPolicy: policyWithStage });
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ defaultExecutionPolicy: { mode: "normal", commentRequired: true, stages: [] } });
+    expect(res.body.defaultExecutionPolicy.stages[0].participants[0]).toMatchObject({
+      type: "user",
+      userId: "reviewer-1",
+    });
     expect(mockProjectService.update).toHaveBeenCalledTimes(1);
+  });
+
+  // The route now runs the response through normalizeIssueExecutionPolicy
+  // too (not just the GET route), so a monitor.externalRef set by this exact
+  // PUT call comes back redacted in the PUT's own response, not just on a
+  // later GET -- previously it echoed project.defaultExecutionPolicy
+  // verbatim here, leaking the token/URL to the very board actor who
+  // supplied it (visible in logs, proxies, etc. even though they already
+  // know the plaintext) and establishing the shape every other caller's
+  // subsequent GET would also see before the GET-side fix landed.
+  it("redacts the monitor externalRef in its own write response", async () => {
+    mockAccessService.decide.mockResolvedValue({
+      allowed: true,
+      action: "project:read",
+      reason: "allow_company_agent",
+      explanation: "Allowed by default same-company agent visibility.",
+    });
+    const policyWithMonitor = {
+      mode: "normal" as const,
+      commentRequired: true,
+      stages: [],
+      monitor: {
+        nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
+        kind: "external_service" as const,
+        serviceName: "github",
+        externalRef: "https://example.com/webhook?token=super-secret",
+      },
+    };
+    mockProjectService.update.mockResolvedValue(
+      buildProject({ defaultExecutionPolicy: policyWithMonitor }),
+    );
+    const app = createApp({ type: "board", userId: "board-user", source: "local_implicit", isInstanceAdmin: true });
+
+    const res = await request(app)
+      .put(`/api/projects/${PROJECT_ID}/default-execution-policy`)
+      .send({ defaultExecutionPolicy: policyWithMonitor });
+
+    expect(res.status).toBe(200);
+    expect(res.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
   });
 });

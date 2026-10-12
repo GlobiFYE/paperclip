@@ -545,6 +545,13 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
         res.status(404).json({ error: "Company not found" });
         return;
       }
+      // Redact monitor.externalRef before this leaves the write path too --
+      // the stored value is the real one, so echoing it back unredacted in
+      // the response or activity-log details would leak it to the same
+      // same-company audience the GET route above already protects against.
+      const redactedDefaultExecutionPolicy = normalizeIssueExecutionPolicy(
+        company.defaultExecutionPolicy ?? null,
+      );
       await logActivity(db, {
         companyId,
         actorType: actor.actorType,
@@ -555,9 +562,9 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
         action: "company.updated",
         entityType: "company",
         entityId: companyId,
-        details: { defaultExecutionPolicy: company.defaultExecutionPolicy ?? null },
+        details: { defaultExecutionPolicy: redactedDefaultExecutionPolicy },
       });
-      res.json({ defaultExecutionPolicy: company.defaultExecutionPolicy ?? null });
+      res.json({ defaultExecutionPolicy: redactedDefaultExecutionPolicy });
     },
   );
 
