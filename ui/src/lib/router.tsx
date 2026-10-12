@@ -1,19 +1,16 @@
 import * as React from "react";
 import * as RouterDom from "react-router-dom";
 import type { NavigateOptions, To } from "react-router-dom";
+import type { Issue } from "@paperclipai/shared";
 import { useCompany } from "@/context/CompanyContext";
 import { IssueLinkQuicklook } from "@/components/IssueLinkQuicklook";
 import {
   applyCompanyPrefix,
+  caseHref,
   extractCompanyPrefixFromPath,
   normalizeCompanyPrefix,
 } from "@/lib/company-routes";
-
-function parseIssuePathIdFromPath(pathname: string | null | undefined): string | null {
-  if (!pathname) return null;
-  const match = pathname.match(/(?:^|\/)issues\/([^/?#]+)/);
-  return match?.[1] ?? null;
-}
+import { parseIssuePathIdFromPath } from "@/lib/issue-reference";
 
 function resolveTo(to: To, companyPrefix: string | null): To {
   if (typeof to === "string") {
@@ -30,7 +27,7 @@ function resolveTo(to: To, companyPrefix: string | null): To {
   return to;
 }
 
-function useActiveCompanyPrefix(): string | null {
+export function useActiveCompanyPrefix(): string | null {
   const { selectedCompany } = useCompany();
   const params = RouterDom.useParams<{ companyPrefix?: string }>();
   const location = RouterDom.useLocation();
@@ -45,22 +42,54 @@ function useActiveCompanyPrefix(): string | null {
   return selectedCompany ? normalizeCompanyPrefix(selectedCompany.issuePrefix) : null;
 }
 
+/**
+ * Returns a builder for company-prefixed Cases hrefs bound to the active company
+ * (e.g. `/PAP/cases/PAP-C5`). Use for all case-to-case links so they emit
+ * prefixed paths directly instead of leaning on the PAP-13002 redirect.
+ */
+export function useCaseHref(): (...segments: string[]) => string {
+  const companyPrefix = useActiveCompanyPrefix();
+  return React.useCallback(
+    (...segments: string[]) => caseHref(companyPrefix, ...segments),
+    [companyPrefix],
+  );
+}
+
 export * from "react-router-dom";
 
 type CompanyLinkProps = React.ComponentProps<typeof RouterDom.Link> & {
   disableIssueQuicklook?: boolean;
+  issuePrefetch?: Issue | null;
+  issueQuicklookSide?: React.ComponentProps<typeof IssueLinkQuicklook>["issueQuicklookSide"];
+  issueQuicklookAlign?: React.ComponentProps<typeof IssueLinkQuicklook>["issueQuicklookAlign"];
 };
 
 export const Link = React.forwardRef<HTMLAnchorElement, CompanyLinkProps>(
-  function CompanyLink({ to, disableIssueQuicklook = false, ...props }, ref) {
+  function CompanyLink({
+    to,
+    disableIssueQuicklook = false,
+    issuePrefetch = null,
+    issueQuicklookSide,
+    issueQuicklookAlign,
+    ...props
+  }, ref) {
     const companyPrefix = useActiveCompanyPrefix();
     const resolvedTo = resolveTo(to, companyPrefix);
-    const issuePathId = disableIssueQuicklook
-      ? null
-      : parseIssuePathIdFromPath(typeof resolvedTo === "string" ? resolvedTo : resolvedTo.pathname);
+    const issuePathId = parseIssuePathIdFromPath(typeof resolvedTo === "string" ? resolvedTo : resolvedTo.pathname);
 
     if (issuePathId) {
-      return <IssueLinkQuicklook ref={ref} to={resolvedTo} issuePathId={issuePathId} {...props} />;
+      return (
+        <IssueLinkQuicklook
+          ref={ref}
+          to={resolvedTo}
+          issuePathId={issuePathId}
+          disableIssueQuicklook={disableIssueQuicklook}
+          issuePrefetch={issuePrefetch}
+          issueQuicklookSide={issueQuicklookSide}
+          issueQuicklookAlign={issueQuicklookAlign}
+          {...props}
+        />
+      );
     }
 
     return <RouterDom.Link ref={ref} to={resolvedTo} {...props} />;
