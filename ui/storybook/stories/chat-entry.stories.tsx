@@ -6,7 +6,7 @@ const meta = {
   title: "Design explorations/Chat entry",
   component: AgentChatPrototype,
   parameters: { layout: "fullscreen", docs: { description: { component:
-    "Review-only proposal: Chats contains starred and recent conversations, with the first-created agent always present as a default entry. First use uses the same compact rows as returning chats. The aligned compose icon appears on hover or keyboard focus (and stays visible on touch). The picker shows search and agent results with roles and paused status. The sidebar, picker, layout, transcript, and composer are production components. Only the first-use landing page and data are Storybook fixtures. Selecting and sending use in-memory fixtures; no real agents run."
+    "Historical chat-entry exploration: the local sidebar and landing composition keeps a first-created-agent default. The current product uses the personal primary-agent preference and recent-conversation rules. Shared layout, picker and conversation components remain useful here, but these entry/default rules are retained design history. Selecting and sending use in-memory fixtures; no real agents run. Use Primary Agent journeys for current default-selection examples."
   } } },
   args: { entryScenario: "returning", scenario: "returning", contextInitiallyOpen: false },
   render: (args) => <AgentChatPrototype key={JSON.stringify(args)} {...args} />,

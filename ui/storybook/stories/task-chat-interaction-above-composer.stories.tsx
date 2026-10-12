@@ -77,7 +77,10 @@ function InteractionAboveComposer({ interaction, mobile = false }: { interaction
   );
   const composer = (
     <TaskChatComposer
-      onAdd={async (body) => setMessages((current) => [...current, body])}
+      onAdd={async (body) => {
+        setMessages((current) => [...current, body]);
+        if (interaction.kind === "ask_user_questions") setOpen(false);
+      }}
       workMode={workMode}
       onWorkModeChange={setWorkMode}
       enableReassign
@@ -96,7 +99,9 @@ function InteractionAboveComposer({ interaction, mobile = false }: { interaction
         hideSkip: interaction.kind !== "ask_user_questions" && interaction.kind !== "request_item_verdicts",
         hideLabel: interaction.kind === "request_confirmation" && Boolean(interaction.payload.toolAction),
       } : null}
-      pendingTakeover={pending ? { count: 1, label: "1 pending input", onOpen: () => setOpen(true) } : null}
+      pendingTakeover={pending && interaction.kind !== "ask_user_questions"
+        ? { count: 1, label: "1 pending input", onOpen: () => setOpen(true) }
+        : null}
     />
   );
 
@@ -143,7 +148,7 @@ const meta = {
   parameters: {
     layout: "fullscreen",
     options: { showPanel: false },
-    docs: { description: { component: "The production task interaction card and composer shown together. Dismissal leaves a pending indicator; Skip or a decision resolves the card. The editor remains available throughout." } },
+    docs: { description: { component: "The production task interaction card and composer shown together. Dismissed questions do not contribute a composer pending indicator; other unresolved inputs retain one. Skip or a decision resolves the card. This local composition does not model persisted dismissal or the thread's history entry; use Task Chat Unanswered Questions for that fixture journey." } },
   },
   args: { interaction: pendingAskUserQuestionsInteraction, mobile: false },
 } satisfies Meta<typeof InteractionAboveComposer>;
@@ -154,11 +159,31 @@ export const AskUserQuestions: Story = {};
 export const AskUserQuestionsAndSend: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
-    const editor = canvas.getByTestId("mdx-editor");
+    const editor = canvas.getByRole("textbox", { name: "editable markdown" });
     await userEvent.click(editor);
     await userEvent.type(editor, "I can keep working while I decide.");
     await userEvent.click(canvas.getByRole("button", { name: "Send" }));
     await expect(canvas.getByText("I can keep working while I decide.")).toBeVisible();
+    await expect(canvas.queryByTestId("task-chat-composer-takeover")).not.toBeInTheDocument();
+    await expect(canvas.queryByRole("button", { name: /1 pending input/i })).not.toBeInTheDocument();
+  },
+};
+export const DismissQuestionWithoutPendingBadge: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: /^Dismiss / }));
+    await expect(canvas.queryByTestId("task-chat-composer-takeover")).not.toBeInTheDocument();
+    await expect(canvas.queryByRole("button", { name: /1 pending input/i })).not.toBeInTheDocument();
+    await expect(canvas.getByRole("textbox", { name: "editable markdown" })).toBeVisible();
+  },
+};
+export const DismissConfirmationKeepsPendingBadge: Story = {
+  args: { interaction: genericPendingRequestConfirmationInteraction },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", { name: /^Dismiss / }));
+    await expect(canvas.getByRole("button", { name: /1 pending input/i })).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", { name: /1 pending input/i }));
     await expect(canvas.getByTestId("task-chat-composer-takeover")).toBeVisible();
   },
 };
