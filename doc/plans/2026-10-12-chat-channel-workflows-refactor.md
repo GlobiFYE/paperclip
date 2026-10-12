@@ -38,3 +38,18 @@ handoff. Record failures honestly; a retry does not erase the original failure.
   be recorded in this slice's PR.
 - Reassessment: keep Telegram draft Stop admission and publication transport in
   the orchestrator. Slack durable session stopping remains the next cohesive cut.
+
+## Slice 2: Slack session stopping
+
+- Service: 33,718 lines / 1,306,801 bytes → 32,928 lines / 1,279,554 bytes.
+- `slack/session-stop.ts`: 858 lines / 30,166 bytes.
+- All six moved declarations and all remaining service statements preserve
+  token-level syntax. A getter retains the original live heartbeat property
+  access. Shared principal authorization and publication staging stay in the
+  caller; the entire captured-target claim and settlement transactions move.
+- Both existing public-service scenarios passed before and after. They cover
+  exact-run cancellation, retry/deduplication, guest denial, delayed events,
+  queued wakeups, a wakeup promoted after Stop, and cancellation losing to run
+  completion. Server typecheck passes. This factory owns no mutable state.
+- Reassessment: GitHub ingress/recovery has a coherent durable inbox and replay
+  contract; preserve its shutdown getter and persistence compare-and-set lease.
