@@ -10169,6 +10169,8 @@ export function issueService(db: Db) {
           const projection = await executionWorkspaceService(db).validateSelection({ companyId,
             actor: workspaceActor,
             selection: workspaceSelection, parentIssueId: issueData.parentId,
+            taskCreation: { parentIssueId: issueData.parentId, projectId: issueData.projectId,
+              assigneeAgentId: issueData.assigneeAgentId, executionPolicy: issueData.executionPolicy },
             assigneeAgentId: issueData.assigneeAgentId, assigneeUserId: issueData.assigneeUserId, assigneeAdapterOverrides: issueData.assigneeAdapterOverrides, projectId: issueData.projectId, executionPolicy: issueData.executionPolicy }, tx);
           projectWorkspaceId = projection.projectWorkspaceId;
           executionWorkspaceId = projection.executionWorkspaceId;

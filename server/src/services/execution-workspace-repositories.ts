@@ -12,7 +12,7 @@ import { conflict, forbidden, notFound } from "../errors.js";
 import { parseNativeExecutionInput } from "../vendor/paperclip-runner/index.js";
 import { assertTaskWorkspaceAccess, assertTaskWorkspaceSourceProjectAccess } from "./task-workspace-source-access.js";
 import { authorizationService, canActorReadExecutionWorkspace, executionWorkspaceReadSqlCondition, issueReadSqlCondition, projectReadSqlCondition, type AuthorizationActor } from "./authorization.js";
-import { resolveCoreTrustPreset } from "./trust-preset-resolver.js";
+import { LOW_TRUST_ISSUE_ANCESTRY_MAX_DEPTH, resolveCoreTrustPreset } from "./trust-preset-resolver.js";
 import { taskWorkspaceSelectableCondition } from "./task-workspace-selection.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { toolAccessService } from "./tool-access.js";
@@ -370,9 +370,13 @@ export async function retainIsolatedWorkspaceSourceAccess(db: Db, input: {
   if (denied) throw denied;
 }
 
+export type TaskWorkspaceCreationTrustContext = {
+  parentIssueId?: string | null; projectId?: string | null; assigneeAgentId?: string | null; executionPolicy?: unknown;
+};
+
 async function assertRootProjectTrust(db: Db | DbTransaction, input: {
   companyId: string; projectIds: Set<string>; actor: AuthorizationActor;
-  issueId?: string | null; sourceWorkspaceId?: string; assigneeAgentId?: string | null;
+  issueId?: string | null; sourceWorkspaceId?: string; assigneeAgentId?: string | null; taskCreation?: TaskWorkspaceCreationTrustContext;
 }) {
   if (!input.projectIds.size) return;
   const owners = await db.select().from(projects).where(and(eq(projects.companyId, input.companyId),
@@ -380,15 +384,18 @@ async function assertRootProjectTrust(db: Db | DbTransaction, input: {
   const restricted = owners.filter(owner => resolveCoreTrustPreset({ companyId: input.companyId, workspaceSourceProject: owner }).kind !== "standard");
   if (!restricted.length) return;
   const incompatible = () => forbidden("Physical workspace source trust is incompatible with the task's execution policy");
-  const [issue] = input.issueId ? await db.select().from(issues).where(and(eq(issues.id, input.issueId), eq(issues.companyId, input.companyId))) : [];
+  const runId = input.actor.runId;
+  const [run] = runId ? await db.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.id, runId), eq(heartbeatRuns.companyId, input.companyId))) : [];
+  const creation = !input.issueId && input.actor.type === "agent" && runId ? input.taskCreation : undefined;
+  const runIssueId = run?.nativeIssueId ?? run?.contextSnapshot?.issueId ?? run?.contextSnapshot?.taskId ?? run?.issueId;
+  const issueId = input.issueId ?? (creation && typeof runIssueId === "string" ? runIssueId : null);
+  const [issue] = issueId ? await db.select().from(issues).where(and(eq(issues.id, issueId), eq(issues.companyId, input.companyId))) : [];
   const agentId = input.actor.type === "agent" ? input.actor.agentId : issue?.assigneeAgentId ?? input.assigneeAgentId;
   const [agent] = agentId ? await db.select().from(agents).where(and(eq(agents.id, agentId), eq(agents.companyId, input.companyId))) : [];
   const [project] = issue?.projectId ? await db.select().from(projects).where(and(eq(projects.id, issue.projectId), eq(projects.companyId, input.companyId))) : [];
   const workspaceId = input.sourceWorkspaceId ?? issue?.executionWorkspaceId;
   const [workspace] = workspaceId ? await db.select().from(executionWorkspaces).where(and(eq(executionWorkspaces.id, workspaceId), eq(executionWorkspaces.companyId, input.companyId))) : [];
   const [source] = workspace?.projectId ? await db.select().from(projects).where(and(eq(projects.id, workspace.projectId), eq(projects.companyId, input.companyId))) : [];
-  const runId = input.actor.runId;
-  const [run] = runId ? await db.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.id, runId), eq(heartbeatRuns.companyId, input.companyId))) : [];
   if ((agentId && !agent) || (runId && (!run || run.agentId !== agentId || !issue
     || (run.nativeIssueId ?? run.contextSnapshot?.issueId ?? run.contextSnapshot?.taskId ?? run.issueId) !== issue.id))) throw incompatible();
   const retainedPolicy = run?.contextSnapshot?.executionPolicy;
@@ -399,6 +406,37 @@ async function assertRootProjectTrust(db: Db | DbTransaction, input: {
     : current;
   if (selected.kind !== "low_trust_review" || current.kind !== "low_trust_review"
     || !isDeepStrictEqual(selected.boundary, current.boundary)) throw incompatible();
+  if (creation) {
+    const sponsor = run!.responsibleUserId === "local-board" ? null : run!.responsibleUserId;
+    if ((input.actor.onBehalfOfUserId ?? null) !== sponsor) throw incompatible();
+    let parentId = creation.parentIssueId;
+    const ancestors: Array<typeof issues.$inferSelect> = [];
+    for (let depth = 0; parentId && depth < LOW_TRUST_ISSUE_ANCESTRY_MAX_DEPTH; depth++) {
+      const [parent] = await db.select().from(issues).where(and(eq(issues.id, parentId), eq(issues.companyId, input.companyId)));
+      if (!parent || ancestors.some(ancestor => ancestor.id === parent.id)) throw incompatible();
+      ancestors.push(parent);
+      if (parent.id === issue!.id) break;
+      parentId = parent.parentId;
+    }
+    if (ancestors.at(-1)?.id !== issue!.id) throw incompatible();
+    const decision = await authorizationService(db).decide({ actor: input.actor, action: "issue:mutate",
+      resource: { type: "issue", companyId: input.companyId, parentIssueId: creation.parentIssueId,
+        projectId: creation.projectId, assigneeAgentId: creation.assigneeAgentId } });
+    if (!decision.allowed) throw incompatible();
+    const [childAgent] = creation.assigneeAgentId ? await db.select().from(agents).where(and(
+      eq(agents.id, creation.assigneeAgentId), eq(agents.companyId, input.companyId))) : [];
+    if (creation.assigneeAgentId && !childAgent) throw incompatible();
+    for (const candidate of [...ancestors, { companyId: input.companyId, projectId: creation.projectId,
+      executionPolicy: creation.executionPolicy }]) {
+      const [candidateProject] = candidate.projectId ? await db.select().from(projects).where(and(
+        eq(projects.id, candidate.projectId), eq(projects.companyId, input.companyId))) : [];
+      if (candidate.projectId && !candidateProject) throw incompatible();
+      const prospective = resolveCoreTrustPreset({ companyId: input.companyId,
+        agent: "id" in candidate ? agent : childAgent, project: candidateProject, workspaceSourceProject: source,
+        issue: candidate, run: { companyId: input.companyId, executionPolicy: retainedPolicy } });
+      if (prospective.kind !== "low_trust_review" || !isDeepStrictEqual(prospective.boundary, selected.boundary)) throw incompatible();
+    }
+  }
   const selectedPolicy = { trustPreset: selected.preset, authorizationPolicy: {
     trustPreset: selected.preset, trustBoundary: selected.boundary,
   } };
@@ -410,7 +448,7 @@ async function assertRootProjectTrust(db: Db | DbTransaction, input: {
 }
 
 export async function assertExecutionWorkspaceRootWriteAccess(db: Db | DbTransaction, input: {
-  companyId: string; cwd: string; actor: AuthorizationActor; sourceWorkspaceId?: string;
+  companyId: string; cwd: string; actor: AuthorizationActor; sourceWorkspaceId?: string; taskCreation?: TaskWorkspaceCreationTrustContext;
 } & Omit<NonNullable<Parameters<typeof assertTaskWorkspaceSourceProjectAccess>[4]>, "write">): Promise<void> {
   const { sourceIds, sourceProjectIds, sharedProjectIds } = await resolveRepositoryRootSources(db, { ...input, inspectCurrentAliases: true });
   for (const sourceId of sourceIds) await assertTaskWorkspaceAccess(db, input.actor, input.companyId, sourceId);

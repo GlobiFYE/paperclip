@@ -53,6 +53,8 @@ provision script must not run on the host during fresh creation, reuse, or rebui
 Verify the adapter still selects the sandbox and ordinary trusted provisioning
 continues to work.
 
+For a child created by an admitted agent with an explicit existing workspace, verify that a matching sandbox boundary permits creation before the child has an ID. A changed child policy, unrelated parent, or forged creator run must fail. See the [child workspace trust regression](../../server/src/__tests__/task-workspace-child-trust.test.ts). This automated contract does not add live acceptance evidence.
+
 ### `workspace-management`
 
 Automated: [workspace detail](../../ui/src/pages/ExecutionWorkspaceDetail.test.tsx) and [runtime service](../../server/src/__tests__/workspace-runtime.test.ts) cover UI and runtime contracts separately.

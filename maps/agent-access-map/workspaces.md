@@ -42,6 +42,7 @@ source projects' trust boundaries. Incompatible choices are rejected before
 dispatch; a projectless alias cannot bypass required sandbox containment.
 Source-copy checks apply the same trust boundary before provisioning. Low-trust
 sandbox runs skip host worktree provisioning, including built-in scripts.
+Child creation by an admitted agent checks an explicit prospective-task context before the child is saved. The creator run must have an authoritative saved policy and a verified company/agent/parent lineage. Current parent, prospective child and physical source policies must fit that boundary. This creation path does not relax exact task/run checks for existing-task writes. The [child trust regression](../../server/src/__tests__/task-workspace-child-trust.test.ts) is automated source-level evidence, not live agent qualification.
 Source review for these additions: PR #15749 and
 [task workspace routes](../../server/src/routes/task-workspaces.ts),
 [native authority](../../server/src/services/native-runtime/paperclip-runner-tool-authority.ts),

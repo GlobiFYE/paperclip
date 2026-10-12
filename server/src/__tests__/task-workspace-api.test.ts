@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { agents, executionWorkspaceRepositories, executionWorkspaces, issues, heartbeatRuns, projects, projectWorkspaces, principalPermissionGrants, companyMemberships } from "@paperclipai/db";
+import { createLocalAgentJwt } from "../agent-auth-jwt.js";
 import { startRunnerApiTestServer } from "./helpers/runner-api-server.js";
 import { getEmbeddedPostgresTestSupport } from "./helpers/embedded-postgres.js";
 import { PaperclipRunnerToolAuthority } from "../services/native-runtime/paperclip-runner-tool-authority.js";
@@ -14,6 +15,30 @@ const support = await getEmbeddedPostgresTestSupport();
   const originalSecret = process.env.PAPERCLIP_AGENT_JWT_SECRET;
   beforeAll(async () => { process.env.PAPERCLIP_AGENT_JWT_SECRET = randomUUID(); server = await startRunnerApiTestServer(); }, 60_000);
   afterAll(async () => { await server?.close(); if (originalSecret === undefined) delete process.env.PAPERCLIP_AGENT_JWT_SECRET; else process.env.PAPERCLIP_AGENT_JWT_SECRET = originalSecret; });
+  it("creates an explicit-workspace child through the authenticated low-trust API without repeating its saved policy", async () => {
+    const f = await server.fixture({ connectionScenario: "fresh", disableWakeOnDemand: true });
+    const policy = { trustPreset: "low_trust_review", authorizationPolicy: { trustPreset: "low_trust_review",
+      trustBoundary: { mode: "low_trust_review", companyId: f.companyId, rootIssueId: f.issueId, projectIds: [f.projectId] } } };
+    const [workspace] = await server.db.insert(executionWorkspaces).values({ companyId: f.companyId, projectId: f.projectId,
+      projectWorkspaceId: f.projectWorkspaceId, sourceIssueId: f.issueId, name: "Review files", cwd: f.workspace,
+      mode: "isolated_workspace", strategyType: "task_directory" }).returning();
+    await server.db.update(projects).set({ executionWorkspacePolicy: policy }).where(eq(projects.id, f.projectId));
+    await server.db.update(issues).set({ executionPolicy: policy, executionWorkspaceId: workspace.id }).where(eq(issues.id, f.issueId));
+    await server.db.update(heartbeatRuns).set({ contextSnapshot: { issueId: f.issueId, executionPolicy: policy } }).where(eq(heartbeatRuns.id, f.runId));
+    const token = createLocalAgentJwt(f.agentId, f.companyId, "paperclip_runner", f.runId, f.userId);
+    const create = (parentId: string) => fetch(`${server.apiUrl}/api/companies/${f.companyId}/issues`, {
+      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ title: `Review child ${randomUUID()}`, parentId, projectId: f.projectId,
+        assigneeAgentId: f.agentId, status: "backlog", workspaceSelection: { kind: "existing", workspaceId: workspace.id } }),
+    });
+    const response = await create(f.issueId), body = await response.json();
+    expect({ status: response.status, body }).toMatchObject({ status: 201, body: {
+      parentId: f.issueId, executionWorkspaceId: workspace.id,
+      executionPolicy: { authorizationPolicy: { trustBoundary: policy.authorizationPolicy.trustBoundary } },
+    } });
+    const denied = await create(f.blockerId);
+    expect(denied.status).toBe(403);
+  });
   it("inspects an idle admitted workspace, requests a repository, and stages root selection without interrupting", async () => {
     const f = await server.fixture({ conversation: true, disableWakeOnDemand: true });
     const [workspace] = await server.db.insert(executionWorkspaces).values({ companyId: f.companyId, projectId: null, sourceIssueId: f.issueId, name: "Task files", cwd: f.workspace, mode: "shared_workspace", strategyType: "task_directory", status: "idle" }).returning();

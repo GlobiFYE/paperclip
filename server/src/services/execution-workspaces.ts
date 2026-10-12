@@ -3,7 +3,7 @@ import { parseObject } from "../adapters/utils.js";
 import { resolveCoreTrustPreset } from "./trust-preset-resolver.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { taskWorkspaceSelectableCondition } from "./task-workspace-selection.js";
-import { executionWorkspaceRepositoryService, lockExecutionWorkspaceRootProvenance, preserveExecutionWorkspaceRootProvenance, assertExecutionWorkspaceRootWriteAccess, assertExecutionWorkspaceRootReadAccess, assertIsolatedWorkspaceSourceReadAccess, retainIsolatedWorkspaceSourceAccess, canonicalRepositoryRoot, type IsolatedWorkspaceSourceAccess } from "./execution-workspace-repositories.js";
+import { executionWorkspaceRepositoryService, lockExecutionWorkspaceRootProvenance, preserveExecutionWorkspaceRootProvenance, assertExecutionWorkspaceRootWriteAccess, assertExecutionWorkspaceRootReadAccess, assertIsolatedWorkspaceSourceReadAccess, retainIsolatedWorkspaceSourceAccess, canonicalRepositoryRoot, type IsolatedWorkspaceSourceAccess, type TaskWorkspaceCreationTrustContext } from "./execution-workspace-repositories.js";
 import { forbidden } from "../errors.js";
 import { taskWorkspaceSelectionSchema, type TaskWorkspaceSelection, type TaskWorkspaceIntent } from "@paperclipai/shared";
 import { authorizationService, executionWorkspaceReadSqlCondition, projectReadSqlCondition, issueReadSqlCondition, type AuthorizationActor } from "./authorization.js";
@@ -1393,7 +1393,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
     return resolveEffectiveWorkspaceStrategyType(mode, config);
   }
 
-  async function validateSelection(input: { companyId: string; actor: AuthorizationActor; selection: TaskWorkspaceSelection; issueId?: string | null; parentIssueId?: string | null; assigneeAgentId?: string | null; assigneeUserId?: string | null; assigneeAdapterOverrides?: unknown; projectId?: string | null; executionPolicy?: unknown }, reader: Db | DbTransaction = db) {
+  async function validateSelection(input: { taskCreation?: TaskWorkspaceCreationTrustContext; companyId: string; actor: AuthorizationActor; selection: TaskWorkspaceSelection; issueId?: string | null; parentIssueId?: string | null; assigneeAgentId?: string | null; assigneeUserId?: string | null; assigneeAdapterOverrides?: unknown; projectId?: string | null; executionPolicy?: unknown }, reader: Db | DbTransaction = db) {
     const selection = taskWorkspaceSelectionSchema.parse(input.selection);
     if (selection.kind === "existing") {
       const [workspace] = await reader.select().from(executionWorkspaces).where(and(
@@ -1404,7 +1404,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       if (!workspace) throw notFound("Workspace is unavailable or inaccessible");
       await assertTaskWorkspaceAccess(reader, input.actor, input.companyId, workspace.id, { write: true, issueId: input.issueId, parentIssueId: input.parentIssueId, assigneeAgentId: input.assigneeAgentId, assigneeUserId: input.assigneeUserId });
       if (workspace.cwd) await assertExecutionWorkspaceRootWriteAccess(reader, {
-        companyId: input.companyId, cwd: workspace.cwd, sourceWorkspaceId: workspace.id, actor: input.actor,
+        companyId: input.companyId, cwd: workspace.cwd, sourceWorkspaceId: workspace.id, actor: input.actor, taskCreation: input.taskCreation,
         issueId: input.issueId, parentIssueId: input.parentIssueId, assigneeAgentId: input.assigneeAgentId, assigneeUserId: input.assigneeUserId,
       });
       return { executionWorkspaceId: workspace.id, projectWorkspaceId: workspace.projectWorkspaceId,
