@@ -53,8 +53,10 @@ feature coverage.
 Preserve story exports and IDs. Before moves/title changes, capture the existing
 built `index.json`; use explicit meta IDs when needed and compare IDs afterward.
 Keep review links and snapshot names working. Prefer classification/index fixes
-before bulk directory moves. Keep the catalog's review dependencies and hashes
-current only after inspecting the changed source; do not refresh hashes merely
+before bulk directory moves. Record every directly rendered production subject in
+the catalog's review sources, including relative imports and primitives when they
+are the demonstrated subject. Do not cap the number of source references.
+Update review fingerprints only after inspecting the changed source; do not refresh hashes merely
 to silence drift checks.
 
 Update the catalog and run `node scripts/storybook-catalog.mjs --write` to refresh

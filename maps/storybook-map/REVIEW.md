@@ -22,8 +22,8 @@ stable to preserve links and snapshot identity.
 | Dimension | Initial classification |
 | --- | --- |
 | Product alignment | 18 current subjects, 4 proposals, 5 historical suites, 8 mixed suites, 188 requiring deeper parity review |
-| Rendered subject | 199 production, 8 prototype, 11 mixed, 5 guides |
-| Data boundary | 217 fixture-based, 1 separate fixture server, 5 static guides |
+| Rendered subject | 203 production, 8 prototype, 11 mixed, 1 guide |
+| Data boundary | 221 fixture-based, 1 separate fixture server, 1 static guide |
 
 A production subject can have unreviewed state parity. A current subject can still
 have untested loading, error, permission, or backend behavior. The catalog's notes
@@ -81,13 +81,26 @@ and verify that the fixture resets to an open question. Screenshots were inspect
 locally and are not committed as new regression baselines.
 
 Built-index comparison: all 2,208 prior story IDs remain; only the two new dismissal
-regressions were added (2,210 total). Catalog validation, seven checker tests,
+regressions were added (2,210 total). Catalog validation, eight checker tests,
 feature-map validation, both skill validators, token gates, workspace typecheck,
 and workspace build passed. Fast-response settings `empty`, `configured`, and
 `result` subsequently reached `storyFinished: success` with no page exceptions
 following the explicit callback fix. These three cases are render checks, not save
-or backend-persistence tests. The full Vitest suite is still running at this review
-checkpoint; the PR verification records its final outcome.
+or backend-persistence tests. The UI Vitest project passed all 8,176 tests in 728
+files. The full `pnpm test:run` reported a 15-second timeout in the unchanged backend
+case `connects advertised Workspace gmail.read without mutating definitions in
+authenticated`. That exact case passed standalone without changing expectations
+or timeouts. The remaining broad run was stopped after this failure; a complete
+repository suite pass is not established.
+
+Automated review found missing directly rendered subjects in the initial dependency
+list. Expanded the catalog across affected suites, including relative production
+imports, all direct non-primitive subjects in local wrappers, and the primitives
+that foundation stories demonstrate. Classified those foundation suites as
+production-component examples rather than explanatory guides. This records change
+detection, not new parity
+acceptance. Added a real CSF parser regression for nested discovery, include/exclude
+rules, stable explicit IDs, and play counts.
 
 ## Remaining review work
 

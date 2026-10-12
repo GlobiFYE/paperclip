@@ -42,6 +42,8 @@ Production components can legitimately use mock data. A prototype directory name
 does not establish implementation: some wrappers there re-export shipped UI.
 
 Review sources include the story, relevant local support and production subjects.
+Include directly rendered subjects regardless of import spelling, and primitives
+when the suite demonstrates them. Do not truncate the list to a fixed source count.
 Fingerprints make changes to those declared dependencies visible. They do not
 follow every transitive production import or infer semantic correctness. Shared
 preview/config/fixture changes have a separate fingerprint and require reviewing

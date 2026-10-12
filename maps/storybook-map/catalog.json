@@ -243,7 +243,10 @@
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/agent-chat.md",
+        "ui/src/components/AgentChatPicker.tsx",
+        "ui/src/components/AgentIconPicker.tsx",
         "ui/src/components/Layout.tsx",
+        "ui/src/components/SidebarAgentChats.tsx",
         "ui/src/pages/AgentChat.tsx",
         "ui/src/pages/AgentChats.tsx",
         "ui/src/pages/AgentDetail.tsx",
@@ -257,7 +260,7 @@
         "ui/storybook/prototypes/chat-entry/ChatEntryReview.tsx",
         "ui/storybook/stories/agent-chat-sidebar.stories.tsx"
       ],
-      "fingerprint": "cfeff784f75ac7df6329e90b692a2d92272bad193ce2cd82545c072e52416916"
+      "fingerprint": "06118dfa08dfe635b484e629cd7c0f60b2659362a364586dd0769274dcf7d835"
     },
     {
       "file": "ui/storybook/stories/agent-chat-unanswered-questions.stories.tsx",
@@ -295,7 +298,10 @@
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/agent-chat.md",
+        "ui/src/components/AgentChatPicker.tsx",
+        "ui/src/components/AgentIconPicker.tsx",
         "ui/src/components/Layout.tsx",
+        "ui/src/components/SidebarAgentChats.tsx",
         "ui/src/pages/AgentChat.tsx",
         "ui/src/pages/AgentChats.tsx",
         "ui/src/pages/AgentDetail.tsx",
@@ -309,7 +315,7 @@
         "ui/storybook/prototypes/chat-entry/ChatEntryReview.tsx",
         "ui/storybook/stories/agent-chat.stories.tsx"
       ],
-      "fingerprint": "05963377ce9ccb78e517fe651968608855e8b0a0d66ff027bf2d0e57eef72959"
+      "fingerprint": "fb9e699105a458fb3d5737cb56fdbe9fe2d2d057263866a151eca5b3027706f8"
     },
     {
       "file": "ui/storybook/stories/agent-connection-reuse.stories.tsx",
@@ -408,6 +414,7 @@
       "sources": [
         "maps/feature-map/agents.md",
         "ui/src/components/ActiveAgentsPanel.tsx",
+        "ui/src/components/AgentActionButtons.tsx",
         "ui/src/components/AgentConfigForm.tsx",
         "ui/src/components/AgentIconPicker.tsx",
         "ui/src/components/AgentProperties.tsx",
@@ -416,7 +423,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/agent-management.stories.tsx"
       ],
-      "fingerprint": "8cb1cd789563d02142842d249ba25d7cdf28725634fdf7ad0124a2010702c39c"
+      "fingerprint": "16725cb4e0337cd38458dbc497c614de2252b564afc80648c7311c36bfa2ad11"
     },
     {
       "file": "ui/storybook/stories/agent-persona-pages.stories.tsx",
@@ -434,6 +441,7 @@
         "maps/feature-map/agents.md",
         "maps/feature-map/navigation-preferences.md",
         "ui/src/components/Layout.tsx",
+        "ui/src/components/new-agent/AgentBasicsDialog.tsx",
         "ui/src/pages/AgentDetail.tsx",
         "ui/src/pages/Agents.tsx",
         "ui/src/pages/Dashboard.tsx",
@@ -442,7 +450,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/agent-persona-pages.stories.tsx"
       ],
-      "fingerprint": "38e6b17ffed2830b412c876a82a0524b0dc8c989f8134f3fa5c402711315aa2a"
+      "fingerprint": "e32cbe590cef4e26e04dad1207814c21321c97b9e227b80867dd8643351e6671"
     },
     {
       "file": "ui/storybook/stories/agent-personas.stories.tsx",
@@ -482,10 +490,14 @@
       "sources": [
         "maps/feature-map/agents.md",
         "ui/src/components/AgentActionButtons.tsx",
+        "ui/src/components/AgentConfigForm.tsx",
         "ui/src/components/AgentContextualSidebar.tsx",
+        "ui/src/components/NewIssueDialog.tsx",
         "ui/src/components/RuntimeTestCard.tsx",
+        "ui/src/components/onboarding/PillGuy.tsx",
         "ui/src/pages/AgentDetail.tsx",
         "ui/src/pages/AgentToolsTab.tsx",
+        "ui/src/pages/agent-detail-navigation.ts",
         "ui/src/pages/agent-skills/AgentSkillsTab.tsx",
         "ui/storybook/fixtures/onboardingEnvironment.ts",
         "ui/storybook/fixtures/paperclipData.ts",
@@ -495,7 +507,7 @@
         "ui/storybook/prototypes/new-agent-fixtures.ts",
         "ui/storybook/stories/agent-settings-redesign.stories.tsx"
       ],
-      "fingerprint": "27031b2b11fe40df611e1170bbdbf5d88562b14a2a712a9d94f1fc9e88ae0fd5"
+      "fingerprint": "68fb03c2e0b52e178b3e4a31330a23de8a6568e683d7b6c1e0288fa9e8817cef"
     },
     {
       "file": "ui/storybook/stories/agent-setup-prompt.stories.tsx",
@@ -513,6 +525,7 @@
         "maps/feature-map/connection-setup.md",
         "maps/feature-map/gateways-profiles.md",
         "ui/src/components/AgentSetupPrompt.tsx",
+        "ui/src/components/IssueContinuationHandoff.tsx",
         "ui/src/components/routine-triggers/TriggerWizard.tsx",
         "ui/src/components/routine-triggers/WebhookFields.tsx",
         "ui/src/pages/apps/chat/GitHubSetupPrompt.tsx",
@@ -522,7 +535,7 @@
         "ui/storybook/fixtures/routineTriggerWizard.tsx",
         "ui/storybook/stories/agent-setup-prompt.stories.tsx"
       ],
-      "fingerprint": "3a381c5aa6b95a84e6904bfc3d00a507fb1f0ac367c9a512ed84deb28df55273"
+      "fingerprint": "fc121ecd05c89050c58aa621dc8fded8b5cf0573a1190bacca73e31c560421f9"
     },
     {
       "file": "ui/storybook/stories/agent-skill-row.stories.tsx",
@@ -674,11 +687,17 @@
       "sources": [
         "maps/feature-map/runs-adapters.md",
         "ui/src/components/BreadcrumbBar.tsx",
+        "ui/src/components/ai-connections/AiConnectionAccountControls.tsx",
         "ui/src/components/ai-connections/AiConnectionAuth.tsx",
         "ui/src/components/ai-connections/AiConnectionManagement.tsx",
         "ui/src/components/ai-connections/AiConnectionPicker.tsx",
         "ui/src/components/ai-connections/model.ts",
+        "ui/src/components/onboarding/CredentialModeLink.tsx",
         "ui/src/components/onboarding/ModelSourceTiles.tsx",
+        "ui/src/features/connections/ConnectionIntentInteractionBody.tsx",
+        "ui/src/features/connections/ConnectionSetupFlow.tsx",
+        "ui/src/pages/apps/AppDetail.tsx",
+        "ui/src/pages/apps/Browse.tsx",
         "ui/storybook/fixtures/aiConnections.ts",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/prototypes/AiConnectionsReview.tsx",
@@ -687,7 +706,7 @@
         "ui/storybook/prototypes/AiTaskConnectionReview.tsx",
         "ui/storybook/stories/ai-connections.stories.tsx"
       ],
-      "fingerprint": "f7735b71a5c02da306066542f21d787eb0d56e872b2696d2e4b0b70d1f95b238"
+      "fingerprint": "fc716216e27fe7f4e51ce86bd85932032868845e326b7921d7d8de7e6d3694f2"
     },
     {
       "file": "ui/storybook/stories/announcement-card.stories.tsx",
@@ -974,13 +993,14 @@
         "ui/src/components/side-panel/SidePanelFrame.tsx",
         "ui/src/components/side-panel/SidePanelMobileTabs.tsx",
         "ui/src/components/side-panel/SidePanelTabs.tsx",
+        "ui/src/components/side-panel/types.ts",
         "ui/src/components/task-side-panel/TaskDocumentPanel.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/artifact-upload/01-components.stories.tsx",
         "ui/storybook/stories/artifact-upload/UploadPreview.tsx",
         "ui/storybook/stories/artifact-upload/fixtures.ts"
       ],
-      "fingerprint": "6d02db04760fbee58af080b9b0c4665d690f52e0fb94277fdaee1141a3294486"
+      "fingerprint": "a4a362aff84256bf6c9d668d1af32beacc213df283be72f0c15274e862d711d2"
     },
     {
       "file": "ui/storybook/stories/artifact-upload/02-task-journey.stories.tsx",
@@ -999,14 +1019,19 @@
         "ui/src/components/StatusBadge.tsx",
         "ui/src/components/artifacts/ArtifactUploadArea.tsx",
         "ui/src/components/issue-properties/IssuePropertiesArtifactsTab.tsx",
+        "ui/src/components/side-panel/SidePanelFrame.tsx",
+        "ui/src/components/side-panel/SidePanelMobileTabs.tsx",
+        "ui/src/components/side-panel/SidePanelTabs.tsx",
+        "ui/src/components/side-panel/types.ts",
         "ui/src/components/task-chat/TaskChatBubble.tsx",
         "ui/src/components/task-chat/TaskChatPausedTakeover.tsx",
+        "ui/src/components/task-side-panel/TaskDocumentPanel.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/artifact-upload/02-task-journey.stories.tsx",
         "ui/storybook/stories/artifact-upload/UploadPreview.tsx",
         "ui/storybook/stories/artifact-upload/fixtures.ts"
       ],
-      "fingerprint": "b7b54699ee41b838475be18ca472f006aca9e3e1970852eefddc6eb3069844af"
+      "fingerprint": "3234dc9f9f9f8554c70c5e47ce99e7625d9be6c18fde2f68e9919b67c94d189e"
     },
     {
       "file": "ui/storybook/stories/artifacts.stories.tsx",
@@ -1182,9 +1207,13 @@
         "ui/src/components/BudgetSidebarMarker.tsx",
         "ui/src/components/ClaudeSubscriptionPanel.tsx",
         "ui/src/components/CodexSubscriptionPanel.tsx",
+        "ui/src/components/FinanceBillerCard.tsx",
+        "ui/src/components/FinanceKindCard.tsx",
+        "ui/src/components/FinanceTimelineCard.tsx",
+        "ui/src/components/ProviderQuotaCard.tsx",
         "ui/storybook/stories/budget-finance.stories.tsx"
       ],
-      "fingerprint": "9458c6a1685f056bfbb57df915800b1c0ea75c820db23a1a9618c41599e44f22"
+      "fingerprint": "87b870bba22a1ce4ec0fec08bdaf04e45c5cffe47c74a3b0de4950fee8f716f3"
     },
     {
       "file": "ui/storybook/stories/built-in-agents.stories.tsx",
@@ -1200,6 +1229,7 @@
       "sources": [
         "maps/feature-map/agents.md",
         "ui/src/components/BuiltInAgentBadges.tsx",
+        "ui/src/components/BuiltInBundlePanel.tsx",
         "ui/src/components/ConfigureBuiltInAgentModal.tsx",
         "ui/src/components/EmptyState.tsx",
         "ui/src/components/EntityRow.tsx",
@@ -1207,7 +1237,7 @@
         "ui/src/components/StatusBadge.tsx",
         "ui/storybook/stories/built-in-agents.stories.tsx"
       ],
-      "fingerprint": "f964774439cebc584f16dce4801f67093bc3ebef6dfebf0e5b414eb355a308a7"
+      "fingerprint": "340d7f75d5e4fe1cf8a4da2de80993db12476da37f865095d85f8f3ad199d322"
     },
     {
       "file": "ui/storybook/stories/chat-comments.stories.tsx",
@@ -1267,7 +1297,10 @@
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/agent-chat.md",
+        "ui/src/components/AgentChatPicker.tsx",
+        "ui/src/components/AgentIconPicker.tsx",
         "ui/src/components/Layout.tsx",
+        "ui/src/components/SidebarAgentChats.tsx",
         "ui/src/pages/AgentChat.tsx",
         "ui/src/pages/AgentChats.tsx",
         "ui/src/pages/AgentDetail.tsx",
@@ -1281,7 +1314,7 @@
         "ui/storybook/prototypes/chat-entry/ChatEntryReview.tsx",
         "ui/storybook/stories/chat-entry.stories.tsx"
       ],
-      "fingerprint": "592bcffae31e77b7ad981ef63fa589f1993ce4ac73e1cb6738617fb734f87402",
+      "fingerprint": "bd01b59465cfd0306600927d9d866699aae96586d86b9d4dd62d44fb95b9e559",
       "replacement": "ui/storybook/stories/primary-agent/05-chat.stories.tsx"
     },
     {
@@ -1581,10 +1614,11 @@
         "ui/src/components/Identity.tsx",
         "ui/src/components/IssueRow.tsx",
         "ui/src/components/PriorityIcon.tsx",
+        "ui/src/components/StatusBadge.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/control-plane-surfaces.stories.tsx"
       ],
-      "fingerprint": "f1414dba816f6067f08558cb0a6d7eb43582f9783ff095d316479a7239210e4e"
+      "fingerprint": "48e463f33df3edee88e408325f106f057cf626392a7798db29ff21e67cc1751b"
     },
     {
       "file": "ui/storybook/stories/costs/subscriptions.stories.tsx",
@@ -1688,10 +1722,16 @@
         "ui/src/components/EntityRow.tsx",
         "ui/src/components/FilterBar.tsx",
         "ui/src/components/KanbanBoard.tsx",
+        "ui/src/components/LiveRunWidget.tsx",
+        "ui/src/components/OnboardingWizard.tsx",
+        "ui/src/components/PackageFileTree.tsx",
+        "ui/src/components/PageSkeleton.tsx",
+        "ui/src/components/StatusBadge.tsx",
+        "ui/src/components/SwipeToArchive.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/data-viz-misc.stories.tsx"
       ],
-      "fingerprint": "c7660992724096426ec8ab59794884b93e3cfe2adc31d156591168afb6f7cf22"
+      "fingerprint": "ad2d828d1515d8e6143029578a298b6c7d43b28134b3f0881d0389859b815abc"
     },
     {
       "file": "ui/storybook/stories/decision-card.stories.tsx",
@@ -1839,10 +1879,12 @@
         "ui/src/components/NewAgentDialog.tsx",
         "ui/src/components/NewGoalDialog.tsx",
         "ui/src/components/NewIssueDialog.tsx",
+        "ui/src/components/NewProjectDialog.tsx",
+        "ui/src/components/PathInstructionsModal.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/dialogs-modals.stories.tsx"
       ],
-      "fingerprint": "379a5e08d63f2063c24f67cf033c113c07bfb3d860f7774e47da202270c4b059"
+      "fingerprint": "92e635333d20802c9677c94bc00eff89a6b65fbdef225b9701e71b5919a6ddb5"
     },
     {
       "file": "ui/storybook/stories/document-annotations.stories.tsx",
@@ -2050,10 +2092,12 @@
         "ui/src/components/IssueFiltersPopover.tsx",
         "ui/src/components/IssueProperties.tsx",
         "ui/src/components/IssueRelatedWorkPanel.tsx",
+        "ui/src/components/IssueRow.tsx",
+        "ui/src/components/MarkdownBody.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/external-objects.stories.tsx"
       ],
-      "fingerprint": "3559bbcd61f6eac6c83c032af758afbe997590da9bbfcb8ceaf181aba830008c"
+      "fingerprint": "2e6a73b716687244aee6f93214c025bfe755ce41a4aa6bd65a37a4d6d3275596"
     },
     {
       "file": "ui/storybook/stories/fast-responses/01-settings.stories.tsx",
@@ -2131,16 +2175,21 @@
         "maps/feature-map/connection-setup.md",
         "maps/feature-map/routines.md",
         "ui/src/components/Layout.tsx",
+        "ui/src/components/RoutineTriggerCard.tsx",
+        "ui/src/components/routine-sections/context.tsx",
+        "ui/src/components/routine-sections/editable-sections.production.tsx",
+        "ui/src/components/routine-triggers/TriggerWizard.tsx",
         "ui/src/features/connections/ConnectionSetupFlow.tsx",
         "ui/src/pages/RoutineDetail.tsx",
         "ui/src/pages/Routines.tsx",
         "ui/src/pages/apps/AppLogo.tsx",
         "ui/src/pages/apps/Browse.tsx",
+        "ui/src/pages/apps/app-detail/PermissionsPanel.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/fixtures/routineWebhooks.tsx",
         "ui/storybook/stories/fireflies-pr.stories.tsx"
       ],
-      "fingerprint": "fa00d3a60a3fa7f99c8b3e424c5ca071dc40b606843524e3b6efa2ff5e1f60c0"
+      "fingerprint": "0dc5bda5ecbb676ba9758350884e51ebe017a0e17b24802107a1472296acae51"
     },
     {
       "file": "ui/storybook/stories/fork-skill-flow.stories.tsx",
@@ -2177,12 +2226,20 @@
         "ui/src/components/InlineEditor.tsx",
         "ui/src/components/InlineEntitySelector.tsx",
         "ui/src/components/JsonSchemaForm.tsx",
+        "ui/src/components/MarkdownBody.tsx",
+        "ui/src/components/MarkdownEditor.tsx",
+        "ui/src/components/ReportsToPicker.tsx",
+        "ui/src/components/RoutineRunVariablesDialog.tsx",
+        "ui/src/components/RoutineVariablesEditor.tsx",
+        "ui/src/components/ScheduleEditor.tsx",
         "ui/src/components/environment-variables-editor/index.tsx",
+        "ui/src/components/ui/badge.tsx",
+        "ui/src/components/ui/button.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/forms-editors.stories.tsx"
       ],
       "exception": "Shared foundations or contributor guide; no single business capability owns this suite.",
-      "fingerprint": "f3c1666fcb5e12619c80f6512634db76393dc9feaa76f197487f569e2226ef40"
+      "fingerprint": "1e30e2c2e33d155a068ccbc1a5709d1ea5d40ad8d87fe81c9981dd19fd2fb497"
     },
     {
       "file": "ui/storybook/stories/foundations.stories.tsx",
@@ -2194,10 +2251,24 @@
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
       "reviewedAt": "2026-10-12",
       "sources": [
+        "ui/src/components/ui/badge.tsx",
+        "ui/src/components/ui/button.tsx",
+        "ui/src/components/ui/card.tsx",
+        "ui/src/components/ui/checkbox.tsx",
+        "ui/src/components/ui/dialog.tsx",
+        "ui/src/components/ui/input.tsx",
+        "ui/src/components/ui/label.tsx",
+        "ui/src/components/ui/popover.tsx",
+        "ui/src/components/ui/select.tsx",
+        "ui/src/components/ui/separator.tsx",
+        "ui/src/components/ui/tabs.tsx",
+        "ui/src/components/ui/textarea.tsx",
+        "ui/src/components/ui/toggle-switch.tsx",
+        "ui/src/components/ui/tooltip.tsx",
         "ui/storybook/stories/foundations.stories.tsx"
       ],
       "exception": "Shared foundations or contributor guide; no single business capability owns this suite.",
-      "fingerprint": "28e25e0ac82bb755e33c1d65dfb7a40ad7a62f70287291d1752665049282e516"
+      "fingerprint": "d6d2f239b4d934521156ed03cc515de419e02a48256fc33aab9cb0fc9b57c078"
     },
     {
       "file": "ui/storybook/stories/frontmatter-panel.stories.tsx",
@@ -2251,8 +2322,11 @@
         "maps/feature-map/chat-channels.md",
         "ui/src/components/Layout.tsx",
         "ui/src/components/OnboardingWizard.tsx",
+        "ui/src/pages/apps/chat/ChatConversationList.tsx",
         "ui/src/pages/apps/chat/ChatEndpointDetail.tsx",
+        "ui/src/pages/apps/chat/GitHubAppIdentity.tsx",
         "ui/src/pages/apps/chat/GitHubBotConfiguration.tsx",
+        "ui/src/pages/apps/chat/GitHubBotManagement.tsx",
         "ui/src/pages/apps/chat/GitHubChatSetup.tsx",
         "ui/src/pages/apps/chat/GitHubConnectionComplete.tsx",
         "ui/storybook/fixtures/onboardingDraft.ts",
@@ -2261,7 +2335,7 @@
         "ui/storybook/stories/github-bot-management/fixtures.ts",
         "ui/storybook/stories/github-bot-management/management.stories.tsx"
       ],
-      "fingerprint": "a1f39dca589084c791a6f248b934384c897fe470a011da9686e4fcb4bcbe1233"
+      "fingerprint": "b48f3a6a4aae5c83d4a8481105c6d2e80d80c694006e2f18804f1a4eed107fb5"
     },
     {
       "file": "ui/storybook/stories/github-chat.stories.tsx",
@@ -2523,16 +2597,24 @@
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/tasks.md",
+        "ui/src/components/Identity.tsx",
         "ui/src/components/IssueColumns.tsx",
         "ui/src/components/IssueContinuationHandoff.tsx",
         "ui/src/components/IssueDocumentsSection.tsx",
         "ui/src/components/IssueFiltersPopover.tsx",
         "ui/src/components/IssueGroupHeader.tsx",
         "ui/src/components/IssueLinkQuicklook.tsx",
+        "ui/src/components/IssueProperties.tsx",
+        "ui/src/components/IssueRunLedger.tsx",
+        "ui/src/components/IssueWorkspaceCard.tsx",
+        "ui/src/components/IssuesList.tsx",
+        "ui/src/components/IssuesQuicklook.tsx",
+        "ui/src/components/PriorityIcon.tsx",
+        "ui/src/components/StatusBadge.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/issue-management.stories.tsx"
       ],
-      "fingerprint": "7cb3a77c310ac87a0d2a0b3427f48a315d90667ff1666b222ea34419957863df"
+      "fingerprint": "a5012bece16d1825dbabc03512795d082ebcd08e55cedf04b05fcef82e0f4395"
     },
     {
       "file": "ui/storybook/stories/issue-plan-decompositions.stories.tsx",
@@ -2747,10 +2829,14 @@
         "ui/src/components/KeyboardShortcutsCheatsheet.tsx",
         "ui/src/components/MobileBottomNav.tsx",
         "ui/src/components/PageTabBar.tsx",
+        "ui/src/components/Sidebar.tsx",
+        "ui/src/components/SidebarAccountMenu.tsx",
+        "ui/src/components/SidebarCompanyMenu.tsx",
+        "ui/src/components/StatusBadge.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/navigation-layout.stories.tsx"
       ],
-      "fingerprint": "563801cfb0b00f17c74ab88ed0b51889cd7dd3aabfefdbfcc1a405176bdff1b1"
+      "fingerprint": "322ff8736c38f3c9c0778a2ad232edc916daaf170905330a1594000f17a9b025"
     },
     {
       "file": "ui/storybook/stories/new-agent-onboarding.stories.tsx",
@@ -2765,12 +2851,18 @@
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/agents.md",
+        "ui/src/components/AdapterLoginChrome.tsx",
         "ui/src/components/AgentConfigForm.tsx",
         "ui/src/components/NewIssueDialog.tsx",
+        "ui/src/components/RuntimeTestCard.tsx",
         "ui/src/components/agent-config-primitives.tsx",
         "ui/src/components/new-agent/AgentBasicsDialog.tsx",
+        "ui/src/components/onboarding/CredentialModeLink.tsx",
+        "ui/src/components/onboarding/FooterNav.tsx",
+        "ui/src/components/onboarding/ModelSourceTiles.tsx",
         "ui/src/components/onboarding/OnboardingPrimitives.tsx",
         "ui/src/components/onboarding/PillGuy.tsx",
+        "ui/src/components/onboarding/onboarding-motion.ts",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/prototypes/NewAgentWizard.tsx",
         "ui/storybook/prototypes/ProviderConnectionPreview.tsx",
@@ -2779,7 +2871,7 @@
         "ui/storybook/stories/new-agent-onboarding.stories.tsx"
       ],
       "replacement": "ui/storybook/stories/agent-persona-pages.stories.tsx",
-      "fingerprint": "abe2233a1af489bfca3bf30c98ed73463ce3d0660465487b319d045f541a3392"
+      "fingerprint": "a4172933b445ae3b6d73008e4fa2b6988c3ef722602ef82f363e288d354441b2"
     },
     {
       "file": "ui/storybook/stories/new-project-repos.stories.tsx",
@@ -2945,10 +3037,12 @@
       "notes": "Generated inventory counts replace stale hand-maintained Planned/Covered claims; no execution coverage is implied.",
       "reviewedAt": "2026-10-12",
       "sources": [
+        "ui/src/components/ui/badge.tsx",
+        "ui/src/components/ui/input.tsx",
         "ui/storybook/stories/overview.stories.tsx"
       ],
       "exception": "Shared foundations or contributor guide; no single business capability owns this suite.",
-      "fingerprint": "8535c8f37cd02eed03c5103bf9dcf536c50c923970b985003f6347996e34b86e"
+      "fingerprint": "e4937a04090633914db07616816556caa1b980e0b1cbb9f9b9d132094f960a6d"
     },
     {
       "file": "ui/storybook/stories/paused-composer.stories.tsx",
@@ -3020,9 +3114,9 @@
       ],
       "purpose": "Primary Agent/00 Review guide",
       "status": "unreviewed",
-      "implementation": "guide",
-      "boundary": "static",
-      "notes": "Review guide retained; explanatory content does not establish runtime or production coverage.",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Shared production primitives/components demonstrated with local fixture/layout wrappers; visual and interaction parity still require review.",
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/agent-chat.md",
@@ -3054,12 +3148,16 @@
         "ui/src/components/Layout.tsx",
         "ui/src/components/SidebarAgents.tsx",
         "ui/src/components/primary-agent/PrimaryAgentPresentation.tsx",
+        "ui/src/pages/AgentChat.tsx",
+        "ui/src/pages/AgentChats.tsx",
+        "ui/src/pages/AgentDetail.tsx",
+        "ui/src/pages/Agents.production.tsx",
         "ui/src/pages/Agents.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/primary-agent/01-components.stories.tsx",
         "ui/storybook/stories/primary-agent/PrimaryAgentStory.tsx"
       ],
-      "fingerprint": "1c37ed0826431595bb491283b80c9b50df1ca27f89092033b4d9234fe678e915"
+      "fingerprint": "5d6db5bda14b16e0dfec87a3d44e8e805ceefde034b53774d948392edcbb2373"
     },
     {
       "file": "ui/storybook/stories/primary-agent/02-sidebar.stories.tsx",
@@ -3081,6 +3179,9 @@
         "ui/src/components/Layout.production.tsx",
         "ui/src/components/Layout.tsx",
         "ui/src/components/SidebarAgents.tsx",
+        "ui/src/components/primary-agent/PrimaryAgentPresentation.tsx",
+        "ui/src/pages/AgentChat.tsx",
+        "ui/src/pages/AgentChats.tsx",
         "ui/src/pages/AgentDetail.tsx",
         "ui/src/pages/Agents.production.tsx",
         "ui/src/pages/Agents.tsx",
@@ -3088,7 +3189,7 @@
         "ui/storybook/stories/primary-agent/02-sidebar.stories.tsx",
         "ui/storybook/stories/primary-agent/PrimaryAgentStory.tsx"
       ],
-      "fingerprint": "48c3fea0d043349d6f39b277a89a00acc48dc21ac0a84460c172600d07a6d51c"
+      "fingerprint": "7407f13fb2987fbd52b0adc72dda0eac39ab209005179b999ad3e1ed4f4b85d2"
     },
     {
       "file": "ui/storybook/stories/primary-agent/03-agents.stories.tsx",
@@ -3110,6 +3211,9 @@
         "ui/src/components/Layout.production.tsx",
         "ui/src/components/Layout.tsx",
         "ui/src/components/SidebarAgents.tsx",
+        "ui/src/components/primary-agent/PrimaryAgentPresentation.tsx",
+        "ui/src/pages/AgentChat.tsx",
+        "ui/src/pages/AgentChats.tsx",
         "ui/src/pages/AgentDetail.tsx",
         "ui/src/pages/Agents.production.tsx",
         "ui/src/pages/Agents.tsx",
@@ -3117,7 +3221,7 @@
         "ui/storybook/stories/primary-agent/03-agents.stories.tsx",
         "ui/storybook/stories/primary-agent/PrimaryAgentStory.tsx"
       ],
-      "fingerprint": "2009ac726d53ab8e51ac23c6efae314a47b69d2ccdd995cd5e09c8cb0501bed1"
+      "fingerprint": "1713ccdafd4b46cf1b91ee6bf3c13c4bae35d2546793a6756b370261df175ef0"
     },
     {
       "file": "ui/storybook/stories/primary-agent/04-new-task.stories.tsx",
@@ -3139,6 +3243,9 @@
         "ui/src/components/Layout.production.tsx",
         "ui/src/components/Layout.tsx",
         "ui/src/components/SidebarAgents.tsx",
+        "ui/src/components/primary-agent/PrimaryAgentPresentation.tsx",
+        "ui/src/pages/AgentChat.tsx",
+        "ui/src/pages/AgentChats.tsx",
         "ui/src/pages/AgentDetail.tsx",
         "ui/src/pages/Agents.production.tsx",
         "ui/src/pages/Agents.tsx",
@@ -3146,7 +3253,7 @@
         "ui/storybook/stories/primary-agent/04-new-task.stories.tsx",
         "ui/storybook/stories/primary-agent/PrimaryAgentStory.tsx"
       ],
-      "fingerprint": "107958ef0a010265b3df0f89c984eb05a0d967e99c65313e12b65f75b7089f01"
+      "fingerprint": "ead0839536fb6b3d24449548e4a67cab23d1f704e7753ea1918eb734740c880f"
     },
     {
       "file": "ui/storybook/stories/primary-agent/05-chat.stories.tsx",
@@ -3168,6 +3275,9 @@
         "ui/src/components/Layout.production.tsx",
         "ui/src/components/Layout.tsx",
         "ui/src/components/SidebarAgents.tsx",
+        "ui/src/components/primary-agent/PrimaryAgentPresentation.tsx",
+        "ui/src/pages/AgentChat.tsx",
+        "ui/src/pages/AgentChats.tsx",
         "ui/src/pages/AgentDetail.tsx",
         "ui/src/pages/Agents.production.tsx",
         "ui/src/pages/Agents.tsx",
@@ -3175,7 +3285,7 @@
         "ui/storybook/stories/primary-agent/05-chat.stories.tsx",
         "ui/storybook/stories/primary-agent/PrimaryAgentStory.tsx"
       ],
-      "fingerprint": "43691ed9d38ff5e92a0f62348b2eb6c9230f2bbcfb8293df701e09658f99a938"
+      "fingerprint": "b2c0128668180437fb0f416693e9cd91faa272b1dd8e1d376d67623873fb66b1"
     },
     {
       "file": "ui/storybook/stories/primary-agent/06-journeys.stories.tsx",
@@ -3197,6 +3307,9 @@
         "ui/src/components/Layout.production.tsx",
         "ui/src/components/Layout.tsx",
         "ui/src/components/SidebarAgents.tsx",
+        "ui/src/components/primary-agent/PrimaryAgentPresentation.tsx",
+        "ui/src/pages/AgentChat.tsx",
+        "ui/src/pages/AgentChats.tsx",
         "ui/src/pages/AgentDetail.tsx",
         "ui/src/pages/Agents.production.tsx",
         "ui/src/pages/Agents.tsx",
@@ -3204,7 +3317,7 @@
         "ui/storybook/stories/primary-agent/06-journeys.stories.tsx",
         "ui/storybook/stories/primary-agent/PrimaryAgentStory.tsx"
       ],
-      "fingerprint": "5046e4a9c9542570af413cd549d798f9d83d3ef8cd349dd0fd53dbaf5b39f084"
+      "fingerprint": "2dadd05767979d2e9cc2b17486bb33648cb7edc2ef0310ad176854d9351758fc"
     },
     {
       "file": "ui/storybook/stories/primary-agent/07-confirmation.stories.tsx",
@@ -3226,6 +3339,9 @@
         "ui/src/components/Layout.production.tsx",
         "ui/src/components/Layout.tsx",
         "ui/src/components/SidebarAgents.tsx",
+        "ui/src/components/primary-agent/PrimaryAgentPresentation.tsx",
+        "ui/src/pages/AgentChat.tsx",
+        "ui/src/pages/AgentChats.tsx",
         "ui/src/pages/AgentDetail.tsx",
         "ui/src/pages/Agents.production.tsx",
         "ui/src/pages/Agents.tsx",
@@ -3233,7 +3349,7 @@
         "ui/storybook/stories/primary-agent/07-confirmation.stories.tsx",
         "ui/storybook/stories/primary-agent/PrimaryAgentStory.tsx"
       ],
-      "fingerprint": "c78a7851b2c4b60de57a489388c944dfd015df583ec6266d3536aa456afdc3b2"
+      "fingerprint": "6d3a3ce92995071c644c1032a3c9a3e9551af080e7c5c18507146428d6c7d49d"
     },
     {
       "file": "ui/storybook/stories/primitives-coverage.stories.tsx",
@@ -3245,10 +3361,21 @@
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
       "reviewedAt": "2026-10-12",
       "sources": [
+        "ui/src/components/ui/alert-dialog.tsx",
+        "ui/src/components/ui/avatar.tsx",
+        "ui/src/components/ui/breadcrumb.tsx",
+        "ui/src/components/ui/button.tsx",
+        "ui/src/components/ui/collapsible.tsx",
+        "ui/src/components/ui/command.tsx",
+        "ui/src/components/ui/dropdown-menu.tsx",
+        "ui/src/components/ui/radio-card.tsx",
+        "ui/src/components/ui/scroll-area.tsx",
+        "ui/src/components/ui/sheet.tsx",
+        "ui/src/components/ui/skeleton.tsx",
         "ui/storybook/stories/primitives-coverage.stories.tsx"
       ],
       "exception": "Shared foundations or contributor guide; no single business capability owns this suite.",
-      "fingerprint": "ee1ad1906b48bfa3277c0f92bb85d79c5178b4002dc9dfdaeb2b11c399d177e4"
+      "fingerprint": "be31785092ae0b06c86bcaa52241ebe2cc209325310c811417cb2d7134a2fa69"
     },
     {
       "file": "ui/storybook/stories/private-tasks/00-review-guide.stories.tsx",
@@ -3258,9 +3385,9 @@
       ],
       "purpose": "Private tasks/00 Review guide",
       "status": "unreviewed",
-      "implementation": "guide",
-      "boundary": "static",
-      "notes": "Review guide retained; explanatory content does not establish runtime or production coverage.",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Shared production primitives/components demonstrated with local fixture/layout wrappers; visual and interaction parity still require review.",
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/access.md",
@@ -3285,6 +3412,7 @@
         "maps/feature-map/access.md",
         "maps/feature-map/tasks.md",
         "ui/src/components/Layout.tsx",
+        "ui/src/components/ToastViewport.tsx",
         "ui/src/pages/DesignGuide.tsx",
         "ui/src/pages/IssueDetail.tsx",
         "ui/src/pages/Issues.tsx",
@@ -3296,7 +3424,7 @@
         "ui/storybook/stories/private-tasks/06-full-product-pages.stories.tsx",
         "ui/storybook/stories/private-tasks/PrivacyStory.tsx"
       ],
-      "fingerprint": "429793578a2f29e4dbecbeb79b0387feedf2a46c597433644ab7f4799571578d"
+      "fingerprint": "cacab6c556db61f247ba64a80a9785b8d4bda1292a255d689ed5b6fc6bdc3428"
     },
     {
       "file": "ui/storybook/stories/private-tasks/02-sharing.stories.tsx",
@@ -3365,6 +3493,7 @@
         "ui/src/components/IssueReferencePill.tsx",
         "ui/src/components/LockedIssueChip.tsx",
         "ui/src/components/MarkdownBody.tsx",
+        "ui/src/components/ToastViewport.tsx",
         "ui/src/components/issue-properties/relation-controls.tsx",
         "ui/src/components/task-detail/TaskDetailRelationsPanel.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
@@ -3372,7 +3501,7 @@
         "ui/storybook/stories/private-tasks/04-references-and-blockers.stories.tsx",
         "ui/storybook/stories/private-tasks/PrivacyStory.tsx"
       ],
-      "fingerprint": "5d355913b37f10c9acb42ceb2e19542fe402d47e779994855874c91d251f327f"
+      "fingerprint": "993d88c52dc315938430be9a903a1de1f0a1b7ef3850ae6debab1ba0607cce24"
     },
     {
       "file": "ui/storybook/stories/private-tasks/05-projects.stories.tsx",
@@ -3420,6 +3549,7 @@
         "maps/feature-map/projects.md",
         "maps/feature-map/tasks.md",
         "ui/src/components/Layout.tsx",
+        "ui/src/components/ToastViewport.tsx",
         "ui/src/pages/DesignGuide.tsx",
         "ui/src/pages/IssueDetail.tsx",
         "ui/src/pages/Issues.tsx",
@@ -3430,7 +3560,7 @@
         "ui/storybook/stories/private-tasks/06-full-product-pages.stories.tsx",
         "ui/storybook/stories/private-tasks/PrivacyStory.tsx"
       ],
-      "fingerprint": "608cf970bcf960fb2d85c90c37c884ccc2650c7bc06acea8e6b35bf368d3a214"
+      "fingerprint": "2acb548a73de6c8b7d6cdb39d9680018400a2739297309b6d0a4246301349ce6"
     },
     {
       "file": "ui/storybook/stories/private-tasks/07-user-stories.stories.tsx",
@@ -3451,8 +3581,19 @@
         "ui/src/components/IssuePrivacyActions.tsx",
         "ui/src/components/IssueReferencePill.tsx",
         "ui/src/components/IssueShareSheet.tsx",
+        "ui/src/components/Layout.tsx",
         "ui/src/components/LockedIssueChip.tsx",
+        "ui/src/components/MarkdownBody.tsx",
+        "ui/src/components/ProjectAccessMembers.tsx",
+        "ui/src/components/ProjectProperties.tsx",
+        "ui/src/components/ToastViewport.tsx",
+        "ui/src/components/issue-properties/relation-controls.tsx",
         "ui/src/components/task-detail/TaskDetailRelationsPanel.tsx",
+        "ui/src/pages/DesignGuide.tsx",
+        "ui/src/pages/IssueDetail.tsx",
+        "ui/src/pages/Issues.tsx",
+        "ui/src/pages/ProjectDetail.tsx",
+        "ui/src/pages/Projects.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/fixtures/privateTasks.ts",
         "ui/storybook/stories/private-tasks/01-creation.stories.tsx",
@@ -3464,7 +3605,7 @@
         "ui/storybook/stories/private-tasks/07-user-stories.stories.tsx",
         "ui/storybook/stories/private-tasks/PrivacyStory.tsx"
       ],
-      "fingerprint": "034ffbd114b86629f11800cee7c50ce8fb45377fd17af8f3ddfe057f2ad1f24e"
+      "fingerprint": "ec90dd616ca5b936fcd597d3da85b62b2f379a6b5308348b55ba60592f4e405d"
     },
     {
       "file": "ui/storybook/stories/project-execution-workspace-strategy.stories.tsx",
@@ -3537,10 +3678,11 @@
         "ui/src/components/ProjectWorkspaceSummaryCard.tsx",
         "ui/src/components/ProjectWorkspacesContent.tsx",
         "ui/src/components/WorkspaceRuntimeControls.tsx",
+        "ui/src/components/WorktreeBanner.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/projects-goals-workspaces.stories.tsx"
       ],
-      "fingerprint": "822408729ef0d6a70a3ef58ee58f45983dd46962548eb870172901e513a8a6de"
+      "fingerprint": "d1a5b5eced02dd205ae8acc07ebe41f29edfeb8fb38434a5c12f9d0927679a7e"
     },
     {
       "file": "ui/storybook/stories/provider-routing-00-overview.stories.tsx",
@@ -3549,9 +3691,9 @@
       ],
       "purpose": "AI Connections/Provider routing/00 Overview",
       "status": "unreviewed",
-      "implementation": "guide",
-      "boundary": "static",
-      "notes": "Review guide retained; explanatory content does not establish runtime or production coverage.",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Shared production primitives/components demonstrated with local fixture/layout wrappers; visual and interaction parity still require review.",
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/runs-adapters.md",
@@ -3575,12 +3717,25 @@
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/runs-adapters.md",
+        "ui/src/components/AdapterLoginChrome.tsx",
+        "ui/src/components/AdapterMark.tsx",
         "ui/src/components/AgentActionButtons.tsx",
+        "ui/src/components/AgentConfigForm.tsx",
         "ui/src/components/AgentContextualSidebar.tsx",
+        "ui/src/components/NewIssueDialog.tsx",
         "ui/src/components/RuntimeTestCard.tsx",
+        "ui/src/components/agent-config-primitives.tsx",
+        "ui/src/components/ai-connections/AiConnectionManagement.tsx",
+        "ui/src/components/onboarding/CredentialModeLink.tsx",
+        "ui/src/components/onboarding/ModelSourceTiles.tsx",
+        "ui/src/components/onboarding/PillGuy.tsx",
+        "ui/src/features/connections/ConnectionChoiceList.tsx",
+        "ui/src/features/connections/ConnectionSetupFlow.tsx",
         "ui/src/pages/AgentDetail.tsx",
         "ui/src/pages/AgentToolsTab.tsx",
+        "ui/src/pages/agent-detail-navigation.ts",
         "ui/src/pages/agent-skills/AgentSkillsTab.tsx",
+        "ui/src/pages/apps/AppLogo.tsx",
         "ui/storybook/fixtures/onboardingEnvironment.ts",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/prototypes/RuntimeTestCard.tsx",
@@ -3595,7 +3750,7 @@
         "ui/storybook/prototypes/provider-routing/story-support.ts",
         "ui/storybook/stories/provider-routing-01-onboarding.stories.tsx"
       ],
-      "fingerprint": "5c41ce3144638019ac88c0ea2ec88913ce9304389828338daa9ccaf4eac6aa28"
+      "fingerprint": "c4867ec22b6b54a872d42fbe210ad0b671e64b920bdcf5e450d88091995c5965"
     },
     {
       "file": "ui/storybook/stories/provider-routing-02-connect.stories.tsx",
@@ -3614,6 +3769,7 @@
         "ui/src/components/ai-connections/AiProviderSetup.tsx",
         "ui/src/features/connections/ConnectionChoiceList.tsx",
         "ui/src/features/connections/ConnectionSetupFlow.tsx",
+        "ui/src/pages/apps/AppLogo.tsx",
         "ui/src/pages/apps/Browse.tsx",
         "ui/src/pages/apps/app-definition-display.ts",
         "ui/storybook/prototypes/provider-routing/ConnectionCatalog.tsx",
@@ -3623,7 +3779,7 @@
         "ui/storybook/prototypes/provider-routing/story-support.ts",
         "ui/storybook/stories/provider-routing-02-connect.stories.tsx"
       ],
-      "fingerprint": "143e208f3dee25529ad83aad28cd6d5ce6b54a05fe510419c70dbf2985dba889"
+      "fingerprint": "a6cd3df8023c60a14a54dfb399ae3d5c42c42300daa22f6fffd9f8f75d1dd14c"
     },
     {
       "file": "ui/storybook/stories/provider-routing-03-agent.stories.tsx",
@@ -3638,12 +3794,25 @@
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/runs-adapters.md",
+        "ui/src/components/AdapterLoginChrome.tsx",
+        "ui/src/components/AdapterMark.tsx",
         "ui/src/components/AgentActionButtons.tsx",
+        "ui/src/components/AgentConfigForm.tsx",
         "ui/src/components/AgentContextualSidebar.tsx",
+        "ui/src/components/NewIssueDialog.tsx",
         "ui/src/components/RuntimeTestCard.tsx",
+        "ui/src/components/agent-config-primitives.tsx",
+        "ui/src/components/ai-connections/AiConnectionManagement.tsx",
+        "ui/src/components/onboarding/CredentialModeLink.tsx",
+        "ui/src/components/onboarding/ModelSourceTiles.tsx",
+        "ui/src/components/onboarding/PillGuy.tsx",
+        "ui/src/features/connections/ConnectionChoiceList.tsx",
+        "ui/src/features/connections/ConnectionSetupFlow.tsx",
         "ui/src/pages/AgentDetail.tsx",
         "ui/src/pages/AgentToolsTab.tsx",
+        "ui/src/pages/agent-detail-navigation.ts",
         "ui/src/pages/agent-skills/AgentSkillsTab.tsx",
+        "ui/src/pages/apps/AppLogo.tsx",
         "ui/storybook/fixtures/onboardingEnvironment.ts",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/prototypes/RuntimeTestCard.tsx",
@@ -3658,7 +3827,7 @@
         "ui/storybook/prototypes/provider-routing/story-support.ts",
         "ui/storybook/stories/provider-routing-03-agent.stories.tsx"
       ],
-      "fingerprint": "97030644b2e3a50a03a89fb4d65ef31c395802f2e4bd3eac1c1f268acd25166a"
+      "fingerprint": "826b6dff2a44cbf04f433672b1a05daa6e479d3e4dddfbbe9f1b68b5a08ce90d"
     },
     {
       "file": "ui/storybook/stories/provider-routing-04-manage.stories.tsx",
@@ -3677,6 +3846,7 @@
         "ui/src/components/ai-connections/AiProviderSetup.tsx",
         "ui/src/features/connections/ConnectionChoiceList.tsx",
         "ui/src/features/connections/ConnectionSetupFlow.tsx",
+        "ui/src/pages/apps/AppLogo.tsx",
         "ui/src/pages/apps/Browse.tsx",
         "ui/src/pages/apps/app-definition-display.ts",
         "ui/storybook/prototypes/provider-routing/ConnectionCatalog.tsx",
@@ -3688,7 +3858,7 @@
         "ui/storybook/prototypes/provider-routing/story-support.ts",
         "ui/storybook/stories/provider-routing-04-manage.stories.tsx"
       ],
-      "fingerprint": "a4ca8ebb499fa7d2fdb7ebd0d44dd1d6a475ebc311d0b95babbee9f4340dbeb1"
+      "fingerprint": "2503a1f43bf4d887c466fca9b462ad21b603140dbaff0d3f940a4adcf37898f0"
     },
     {
       "file": "ui/storybook/stories/provider-routing-05-recovery.stories.tsx",
@@ -3726,9 +3896,12 @@
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/runs-adapters.md",
+        "ui/src/components/AgentConfigForm.tsx",
+        "ui/src/components/agent-config-primitives.tsx",
         "ui/src/components/ai-connections/AiConnectionField.tsx",
         "ui/src/components/ai-connections/AiConnectionSelect.tsx",
         "ui/src/components/ai-connections/AiProviderSetup.tsx",
+        "ui/src/components/ai-connections/useConnectionModels.ts",
         "ui/src/components/new-agent/AgentProviderConnection.tsx",
         "ui/src/pages/apps/Browse.tsx",
         "ui/src/pages/apps/app-definition-display.ts",
@@ -3737,7 +3910,7 @@
         "ui/storybook/prototypes/provider-routing/shared.tsx",
         "ui/storybook/stories/provider-routing-06-production.stories.tsx"
       ],
-      "fingerprint": "b09835b37cb0d6b6dd72d96e0567e29eb6f50c038028d2b8c64621fb8b3847ab"
+      "fingerprint": "05984862e300309f20b828d08375ebe545c561b02f3bfbf0968fbbc2f18ae210"
     },
     {
       "file": "ui/storybook/stories/public-mcp-connections.stories.tsx",
@@ -4067,11 +4240,12 @@
         "ui/src/components/task-chat/TaskChatRunnerTurn.tsx",
         "ui/src/components/task-chat/TaskChatThreadView.tsx",
         "ui/src/components/task-chat/expansion-state.tsx",
+        "ui/src/components/task-chat/task-chat-model.ts",
         "ui/src/components/task-chat/transcript-adapter.ts",
         "ui/storybook/prototypes/runner-activity/RunnerActivityPreview.tsx",
         "ui/storybook/stories/runner-activity.stories.tsx"
       ],
-      "fingerprint": "0895e68121df6ce68f17b4b1024444dca708677e31eb9493d3c28d75dd4c2e6d"
+      "fingerprint": "c49b64d79396d3a04dc7ec15d241758fc90ba47785d330fd5024b65e367d2c90"
     },
     {
       "file": "ui/storybook/stories/scheduled-retry.stories.tsx",
@@ -4107,6 +4281,7 @@
       "sources": [
         "maps/feature-map/inbox-search.md",
         "ui/src/components/PageTabBar.tsx",
+        "ui/src/components/StatusBadge.tsx",
         "ui/src/components/search/MatchSourceChip.tsx",
         "ui/src/components/search/SearchFilterBar.tsx",
         "ui/src/components/search/SearchFilterChips.tsx",
@@ -4115,7 +4290,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/search.stories.tsx"
       ],
-      "fingerprint": "7d5a90ce229b423b9be0c7486bf6be3e4b6831dcfcb9897bba8fe05be4ebc48e"
+      "fingerprint": "204fd804d9d5ff2235b0a770f2317e245e695c4bc9f069d8d09b4cb99d85b877"
     },
     {
       "file": "ui/storybook/stories/searchable-select.stories.tsx",
@@ -4349,9 +4524,10 @@
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/chat-channels.md",
+        "ui/src/pages/apps/chat/SlackToolSettings.tsx",
         "ui/storybook/stories/slack-tools.stories.tsx"
       ],
-      "fingerprint": "cc45152d322d5db0287e5f2a96c9d8ea9ed927f8d6b8cab2c01a4c1eb5d1ee0a"
+      "fingerprint": "9348c9d89befbf34e9eb905b290f7b73b192337cd498ddc028e4ddfe44e7d8bd"
     },
     {
       "file": "ui/storybook/stories/source-issue-recovery.stories.tsx",
@@ -4411,11 +4587,16 @@
         "ui/src/components/IssueBlockedNotice.tsx",
         "ui/src/components/IssueRow.tsx",
         "ui/src/components/MetricCard.tsx",
+        "ui/src/components/PriorityIcon.tsx",
+        "ui/src/components/QuotaBar.tsx",
+        "ui/src/components/StatusBadge.tsx",
+        "ui/src/components/StatusIcon.tsx",
+        "ui/src/components/ui/card.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/status-language.stories.tsx"
       ],
       "exception": "Shared foundations or contributor guide; no single business capability owns this suite.",
-      "fingerprint": "338acd22ccc353801bf6f491935e91468b88ab4f0e844aa5ca3e27a5ce90b8dc"
+      "fingerprint": "8514f6eaa6b793e7737f4aef33dd2a1bf1fe47bf7cf106f7fd56be1c1466be26"
     },
     {
       "file": "ui/storybook/stories/sub-issues-workflow.stories.tsx",
@@ -4722,9 +4903,9 @@
       ],
       "purpose": "Chat & Comments/Human identity/00 Review guide",
       "status": "unreviewed",
-      "implementation": "guide",
-      "boundary": "static",
-      "notes": "Review guide retained; explanatory content does not establish runtime or production coverage.",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Shared production primitives/components demonstrated with local fixture/layout wrappers; visual and interaction parity still require review.",
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/tasks.md",

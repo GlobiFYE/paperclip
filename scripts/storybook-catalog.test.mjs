@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { capabilities, fingerprint, renderIndex, validateCatalog } from "./storybook-catalog.mjs";
+import { fileURLToPath } from "node:url";
+import { capabilities, fingerprint, renderIndex, scanStories, validateCatalog } from "./storybook-catalog.mjs";
 
 function fixture(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), "storybook-catalog-"));
@@ -81,4 +82,33 @@ test("duplicate story IDs cannot silently collapse distinct examples", t => {
   const f = fixture(t);
   f.stories[0].ids.push(f.stories[0].ids[0]);
   assert.match(validateCatalog(f.root, f.catalog, f.stories).join("\n"), /Duplicate story IDs/);
+});
+
+test("Storybook parser discovers nested files, filters helpers, preserves explicit IDs and counts play functions", t => {
+  const f = fixture(t);
+  f.write("ui/package.json", '{"type":"module"}');
+  symlinkSync(fileURLToPath(new URL("../ui/node_modules", import.meta.url)), path.join(f.root, "ui/node_modules"), "junction");
+  f.write(f.file, `
+    import type { Meta, StoryObj } from "@storybook/react-vite";
+    const meta = { title: "Tasks/Create", id: "stable-task", excludeStories: ["empty"] } satisfies Meta;
+    export default meta;
+    type Story = StoryObj<typeof meta>;
+    export const empty = { value: "fixture" };
+    export const Empty: Story = {};
+    export const Filled: Story = { play: async () => {} };
+  `);
+  f.write("ui/storybook/stories/nested/other.stories.ts", `
+    export default { title: "Other/Subject", includeStories: ["Included"] };
+    export const helper = {};
+    export const Included = {};
+  `);
+  f.write("ui/storybook/stories/nested/fixture.ts", "export const fixture = {};");
+  const stories = scanStories(f.root);
+  assert.equal(stories.length, 2);
+  assert.deepEqual(stories.find(story => story.file === f.file), {
+    file: f.file, title: "Tasks/Create", ids: ["stable-task--empty", "stable-task--filled"], plays: 1,
+  });
+  assert.deepEqual(stories.find(story => story.file.endsWith("other.stories.ts")), {
+    file: "ui/storybook/stories/nested/other.stories.ts", title: "Other/Subject", ids: ["other-subject--included"], plays: 0,
+  });
 });
