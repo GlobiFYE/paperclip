@@ -56,6 +56,7 @@ test('omitted files warn without blocking import and warnings persist on the sav
   await expect(dialog).not.toBeVisible();
   const source = page.getByRole('region', { name: 'acme/team-skills', exact: true });
   await expect(source.getByText('Code review', { exact: true })).toBeVisible();
+  await expect(source.getByRole('status')).toHaveCount(0);
   const savedWarning = source.getByLabel('Import warnings', { exact: true });
   await expect(savedWarning.locator('summary')).toHaveText('2 import warnings');
   await savedWarning.locator('summary').click();

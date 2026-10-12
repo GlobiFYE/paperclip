@@ -3571,11 +3571,14 @@ export function companySkillService(db: Db) {
     if (!skill) return null;
     const usedByAgents = await usage(companyId, skill.key);
     const existingForks = await existingForkSummaries(companyId, skill.id, actor);
+    const currentVersion = await getCurrentVersion(skill);
+    const repositoryInventory = currentVersion?.repositorySnapshotId
+      ? await runtimeVersionInventory(companyId, currentVersion) : null;
     return enrichSkill(
-      skill,
+      repositoryInventory ? { ...skill, fileInventory: repositoryInventory.map(({ path, kind }) => ({ path, kind })) } : skill,
       usedByAgents.length,
       usedByAgents,
-      await getCurrentVersion(skill),
+      currentVersion,
       await isStarredByActor(companyId, skill.id, actor),
       existingForks,
     );
@@ -4353,19 +4356,19 @@ export function companySkillService(db: Db) {
 
   async function readLoadedSkillFile(skill: CompanySkill, relativePath: string): Promise<CompanySkillFileDetail> {
     const normalizedPath = normalizePortablePath(relativePath || "SKILL.md");
-    const fileEntry = skill.fileInventory.find((entry) => entry.path === normalizedPath);
-    if (!fileEntry) {
-      throw notFound("Skill file not found");
-    }
-
-    const source = deriveSkillSourceInfo(skill);
     if (skill.metadata?.skillSourceId && skill.metadata?.snapshotHash && skill.currentVersionId) {
       const version = await getCurrentVersion(skill);
-      const file = version?.fileInventory.find(entry => entry.path === normalizedPath);
+      // Keep original package-relative reads working, and expose the repository
+      // files from the same saved snapshot used by runtime delivery.
+      const file = version?.fileInventory.find(entry => entry.path === normalizedPath)
+        ?? (version?.repositorySnapshotId ? (await runtimeVersionInventory(skill.companyId, version)).find(entry => entry.path === normalizedPath) : undefined);
       if (!file) throw notFound("Installed skill snapshot is missing a file.");
       return { ...file, skillId: skill.id, language: file.encoding === "base64" ? null : inferLanguageFromPath(normalizedPath),
         markdown: file.encoding !== "base64" && isMarkdownPath(normalizedPath), editable: false };
     }
+    const fileEntry = skill.fileInventory.find((entry) => entry.path === normalizedPath);
+    if (!fileEntry) throw notFound("Skill file not found");
+    const source = deriveSkillSourceInfo(skill);
     let content = "";
 
     if (skill.sourceType === "local_path" || skill.sourceType === "catalog") {

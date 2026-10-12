@@ -212,10 +212,40 @@ async function scanRepository(input: SkillScanInput, providerRead: GitHubRead, o
         await report();
       }
       const findings = await auditSkillSnapshot(repositoryFiles, false);
+      const unsafe = findings.filter(f => f.severity === 'error' && ['remote_fetch_exec', 'secret_exfiltration'].includes(f.code));
+      if (unsafe.some(f => !f.path)) throw unprocessable('Repository audit could not identify an unsafe file.');
+      const omitted = new Map(unsafe.map(f => [f.path!, `${f.path} — ${f.message} File not included.`]));
+      repositoryFiles = repositoryFiles.filter(file => !omitted.has(file.path));
       repositoryPackage = repositoryPackageInspection(repositoryFiles, roots.map(root => root.path),
-        [...new Set([...packageWarnings, ...findings.filter(f => f.severity === 'error').map(f => `${f.path}: ${f.message}`)])], null);
+        [...new Set([...packageWarnings, ...omitted.values(), ...findings.filter(f => f.severity === 'error' && !omitted.has(f.path!)).map(f => `${f.path}: ${f.message}`)])], null);
       const included = indexSkillPackagePaths(repositoryFiles.map(file => file.path));
+      const byPath = new Map(repositoryFiles.map(file => [file.path, file]));
       for (const skill of skills) {
+        if (skill.inspection) {
+          const dir = path.posix.dirname(skill.path);
+          const repositoryPath = (relative: string) => relative === 'SKILL.md' ? skill.path : path.posix.join(dir, relative);
+          const omittedWarnings = skill.inspection.files.flatMap(file => {
+            const warning = omitted.get(repositoryPath(file.path));
+            return warning ? [warning] : [];
+          });
+          if (omittedWarnings.length) {
+            const supported = skill.inspection.files.flatMap(file => {
+              const original = byPath.get(repositoryPath(file.path));
+              return original ? [{ ...original, path: file.path, kind: file.path === 'SKILL.md' ? 'skill' as const : original.kind === 'script' ? 'script' as const : classifyInventoryKind(file.path) }] : [];
+            });
+            const markdown = supported.find(file => file.path === 'SKILL.md');
+            const frontmatter = markdown && markdown.encoding !== 'base64' ? parseFrontmatterMarkdown(markdown.content).frontmatter : {};
+            const remainingFindings = await auditSkillSnapshot(supported);
+            skill.error = rootsByDirectory.get(dir)!.length > 1 ? 'Multiple SKILL.md entrypoints share this package directory.'
+              : remainingFindings.filter(f => f.severity === 'error').map(f => `${f.path}: ${f.message}`).join(' ') || null;
+            const fileWarnings = skill.inspection.warnings.filter(warning => warning.includes('not included') || warning.includes('couldn’t be included'));
+            skill.inspection = { ...inspectSkillPackage(skill.path, supported, included, frontmatter, remainingFindings), commitSha: commit.sha };
+            skill.inspection.warnings.push(...fileWarnings, ...omittedWarnings);
+            skill.warnings = skill.inspection.warnings;
+            skill.fileCount = supported.length;
+            skill.files = options.retainFiles === false ? [] : supported;
+          }
+        }
         if (skill.inspection) skill.inspection.references = skill.inspection.references.filter(ref => !included.has(ref.resolvedPath));
       }
     }

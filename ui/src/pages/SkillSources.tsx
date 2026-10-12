@@ -93,7 +93,7 @@ export function SkillSources() {
       })}
     </div>
     {sourceId && (sourceId === 'new' || activeSource) && <SourceDialog key={`${companyId}:${sourceId}`} companyId={companyId} source={activeSource} onClose={() => navigate('/skills/sources')} onSaved={async result => {
-      setResults(prev => ({ ...prev, [result.source.id]: result.warnings.join(' · ') })); await invalidate(); navigate('/skills/sources');
+      setResults(prev => ({ ...prev, [result.source.id]: '' })); await invalidate(); navigate('/skills/sources');
     }} />}
     {sourceId && sourceId !== 'new' && query.isSuccess && !activeSource && <p role="alert" className="text-sm text-destructive">Source not found.</p>}
   </div>;
