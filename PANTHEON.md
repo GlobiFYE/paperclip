@@ -147,15 +147,15 @@ unfinished or failed gate stops this procedure.
   verification must pass. Confirm the desired source commit and clean tracked
   tree. Generated test homes, caches, raw exports and secrets stay untracked.
 - Port 3200 uses an isolated test database, with scheduling disabled. Its
-  rehearsal copy has 43 paused agents with inert process adapters, 561 skills,
-  166 issues and 5 projects from the export snapshot. This proves portable
+  rehearsal copy has 43 paused agents with inert process adapters, 562 skills,
+  169 issues and 5 projects after the bounded rehearsal delta. This proves portable
   content survives import, not that runtime secrets/history were cloned.
 - The real cutover uses the EXISTING live data directory. There is no export,
   import, migration, new company, agent recreation or data replacement.
 - Re-read live company `57cfaea0-c864-4bff-9433-2fad7be3d4c5` through the API.
   Capture agent/issue/skill/project IDs and counts, active runs, and automation
   settings into a private baseline file. The earlier 19-agent/36-skill baseline
-  is obsolete; the release snapshot has 43 agents and 561 skills. Issue counts
+  is obsolete; the release snapshot has 43 agents and 562 skills. Issue counts
   change while agents work; compare against the fresh drained baseline.
 - Inspect `git diff 467125f -- packages/db/src/migrations packages/db/src/schema`.
   This release adds no schema or migration changes. Reassess rollback if that
