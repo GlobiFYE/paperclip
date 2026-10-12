@@ -1,6 +1,7 @@
 import { DEFAULT_CODEX_LOCAL_MODEL } from "@paperclipai/adapter-codex-local";
 import { claudeLocalReasoningEffortsForModel, DEFAULT_CLAUDE_LOCAL_MODEL } from "@paperclipai/adapter-claude-local";
 import { grokLocalReasoningEffortsForModel } from "@paperclipai/adapter-grok-local";
+import { DEEPSEEK_REASONING_EFFORTS, isDeepSeekModel } from "@paperclipai/shared";
 import { codexReasoningEffortOptions } from "./codex-reasoning-effort";
 import { PROVIDER_ENV_KEYS } from "./provider-credential";
 
@@ -17,6 +18,7 @@ export const HERMES_PROVIDER_KEYS: Record<string, string> = {
   openrouter: "OPENROUTER_API_KEY",
   anthropic: "ANTHROPIC_API_KEY",
   openai: "OPENAI_API_KEY",
+  deepseek: "DEEPSEEK_API_KEY",
   zai: "ZAI_API_KEY",
   "kimi-coding": "KIMI_API_KEY",
   minimax: "MINIMAX_API_KEY",
@@ -27,6 +29,14 @@ export function setupProviderKeys(adapter: string) {
 }
 
 export function setupEfforts(adapter: string, model = ""): string[] {
+  // DeepSeek exposes only low/high/max (it normalizes the full domain itself).
+  // Both the Claude and Codex harnesses route DeepSeek through their own effort
+  // controls, so list the DeepSeek domain for a DeepSeek model instead of the
+  // harness's native model list. The shared helper keeps this identical to the
+  // server-side MCP validation so a saved value stays editable there.
+  if ((adapter === "claude_local" || adapter === "codex_local") && isDeepSeekModel(model)) {
+    return [...DEEPSEEK_REASONING_EFFORTS];
+  }
   switch (adapter) {
     case "claude_local":
       return [...claudeLocalReasoningEffortsForModel(model || DEFAULT_CLAUDE_LOCAL_MODEL)];
