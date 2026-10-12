@@ -23,7 +23,7 @@ Requirements: Node 24 (via nvm), pnpm (Homebrew, matching the pinned
 `packageManager` field).
 
 ```sh
-export PATH=/Users/clawd/.nvm/versions/node/v24.14.0/bin:$PATH
+export PATH=/Users/clawd/.nvm/versions/node/v24.14.0/bin:/Users/clawd/.cargo/bin:$PATH
 cd /Volumes/AI-Models/pantheon-app
 pnpm install          # once per dependency change (pnpm 9.15.4)
 pnpm build            # preflight:workspace-links + pnpm -r build
@@ -61,7 +61,7 @@ built CLI with the live data directory:
 Manual smoke run (test instance, does NOT touch live data):
 
 ```sh
-export PATH=/Users/clawd/.nvm/versions/node/v24.14.0/bin:$PATH
+export PATH=/Users/clawd/.nvm/versions/node/v24.14.0/bin:/Users/clawd/.cargo/bin:$PATH
 export TMPDIR=/tmp
 
 # 1. Fresh home + first-run config (non-interactive quickstart, no service):
@@ -168,7 +168,7 @@ unfinished or failed gate stops this procedure.
 ### Build assets before touching the live service
 
 ```sh
-export PATH=/Users/clawd/.nvm/versions/node/v24.14.0/bin:/opt/homebrew/bin:/usr/bin:/bin
+export PATH=/Users/clawd/.local/bin:/Users/clawd/.nvm/versions/node/v24.14.0/bin:/Users/clawd/.cargo/bin:/opt/homebrew/bin:/usr/bin:/bin
 export TMPDIR=/tmp
 cd /Volumes/AI-Models/pantheon-app
 pnpm build
