@@ -1,8 +1,15 @@
+import { sql } from "drizzle-orm";
 import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { errorHandler } from "../middleware/index.js";
 import { executionWorkspaceRoutes } from "../routes/execution-workspaces.js";
+
+vi.mock("../services/authorization.js", async (importActual) => ({
+  ...await importActual<typeof import("../services/authorization.js")>(),
+  executionWorkspaceReadSqlCondition: async () => sql<boolean>`true`,
+  canActorReadExecutionWorkspace: async () => true,
+}));
 
 const mockExecutionWorkspaceService = vi.hoisted(() => ({
   list: vi.fn(),
@@ -19,6 +26,7 @@ const mockExecutionWorkspaceService = vi.hoisted(() => ({
 const mockWorkspaceOperationService = vi.hoisted(() => ({
   listForExecutionWorkspace: vi.fn(),
   createRecorder: vi.fn(),
+  assertRuntimeControlAvailable: vi.fn(async () => undefined),
 }));
 
 const mockWorkspaceRuntimeLeaseService = vi.hoisted(() => ({
@@ -47,7 +55,7 @@ vi.mock("../services/index.js", () => ({
   logActivity: mockLogActivity,
   workspaceOperationService: () => mockWorkspaceOperationService,
   workspaceRuntimeLeaseService: () => mockWorkspaceRuntimeLeaseService,
-  LEASED_WORKSPACE_RUNTIME_ACTIONS: ["start", "stop", "restart"],
+  LEASED_WORKSPACE_RUNTIME_ACTIONS: ["start", "stop", "restart", "repair"],
 }));
 
 vi.mock("../services/environment-runtime.js", () => ({
@@ -87,7 +95,7 @@ function createApp(actor: Record<string, unknown> = {
   return app;
 }
 
-describe.sequential("execution workspace routes", () => {
+describe("execution workspace routes", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockAccessService.decide.mockResolvedValue({
@@ -132,6 +140,7 @@ describe.sequential("execution workspace routes", () => {
       },
     ]);
     expect(mockExecutionWorkspaceService.listSummaries).toHaveBeenCalledWith("company-1", {
+      readCondition: expect.anything(),
       projectId: undefined,
       projectWorkspaceId: undefined,
       issueId: undefined,
@@ -158,7 +167,7 @@ describe.sequential("execution workspace routes", () => {
       status: ["active", "idle"],
       limit: 25,
       offset: 10,
-    });
+    }, expect.anything());
   });
 
   it("rejects invalid workspace overview pagination", async () => {

@@ -49,6 +49,7 @@ export interface EnvironmentProviderCapability {
   templateRefKind?: string;
   templateConfigBinding?: PluginEnvironmentTemplateConfigBinding;
   supportsTemplateDelete: boolean;
+  supportsLoginPty: boolean;
   displayName?: string;
   description?: string;
   source?: "builtin" | "plugin";
@@ -66,9 +67,11 @@ export interface EnvironmentCapabilities {
 const REMOTE_MANAGED_ADAPTERS = new Set<AgentAdapterType>([
   "claude_local",
   "codex_local",
+  "paperclip_runner",
   "cursor",
   "gemini_local",
   "grok_local",
+  "kimi_local",
   "opencode_local",
   "pi_local",
 ]);
@@ -156,6 +159,7 @@ export function getEnvironmentCapabilities(
       interactiveSetupConnectionTypes: [],
       supportsTemplateCapture: false,
       supportsTemplateDelete: false,
+      supportsLoginPty: false,
       displayName: "Fake",
       source: "builtin",
     },
@@ -175,6 +179,7 @@ export function getEnvironmentCapabilities(
       templateRefKind: capability.templateRefKind,
       templateConfigBinding: capability.templateConfigBinding,
       supportsTemplateDelete: capability.supportsTemplateDelete ?? false,
+      supportsLoginPty: capability.supportsLoginPty ?? false,
       displayName: capability.displayName,
       description: capability.description,
       source: capability.source ?? "plugin",

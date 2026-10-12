@@ -10,6 +10,29 @@ Read [Sandbox file-sync lifecycle hooks](./SANDBOX_FILE_SYNC_HOOKS.md) for the
 native file-transfer hooks. Read the driver declaration shape in
 [the plugin specification](./PLUGIN_SPEC.md).
 
+## Fresh lease acquisition timeout
+
+A driver can declare `defaultAcquireTimeoutMs` as a positive integer of at most
+86,400,000 milliseconds. The host uses it for `environmentAcquireLease` when the
+resolved config has no positive finite numeric `timeoutMs`. A positive numeric
+`bridgeRequestTimeoutMs` can extend that budget. The host adds 30 seconds for RPC
+overhead. This applies to both sandbox providers and generic plugin drivers.
+
+Daytona declares 300,000 milliseconds for the entire fresh acquisition. Creation,
+workspace setup, shell detection, expiry setup, and inline failure cleanup share
+that budget. Its host RPC can therefore wait 330 seconds instead of the worker's
+normal 30 seconds. On timeout the provider returns the attempt's scoped cleanup
+record for durable host reconciliation. Late SDK results cannot admit the lease
+or start the next setup phase.
+Drivers that omit the declaration keep the existing fallback. The host does not
+infer this budget from config-schema defaults: a field named `timeoutMs` can
+describe sandbox lifetime instead of the time needed to acquire it.
+
+This declaration does not change provider config, lease expiry, the resume
+deadline, or other lifecycle calls. Providers must still enforce their operation
+timeouts and report uncertain allocations for cleanup. A bundled plugin must bump
+its manifest version when adding the field so existing installations receive it.
+
 ## How the host resolves an effective capability
 
 The host never trusts a declaration alone. For every run it resolves each
@@ -50,6 +73,7 @@ environmentDrivers: [
       nativeSyncOut: true,
       persistentProcessSessions: false,
       independentControlCommands: false,
+      incrementalSessionOutput: false,
     },
   },
 ]
@@ -61,8 +85,9 @@ states:
 - **Omitted** — the host defers to verified worker discovery. The capability is
   effective when the worker advertises the required methods and no narrowing
   removes it. Omission is the correct default for a provider that follows the
-  standard method contract. `reusableLeases` is the one exception: an omitted
-  `reusableLeases` key never grants reusable leases (see the next section).
+  standard method contract. `reusableLeases` and `incrementalSessionOutput` are
+  the two exceptions: an omitted key never grants either capability. Both are
+  opt-in (see the next two sections).
 - **`false`** — the host narrows the capability to off. The capability is never
   effective, even when the worker advertises the required methods.
 - **`true`** — the host still requires the verified prerequisites. A `true`
@@ -99,6 +124,25 @@ into `sandboxCapabilities.reusableLeases`.
 A manifest with legacy `true` and nested `false` therefore resolves to `false`.
 Prefer the nested `sandboxCapabilities.reusableLeases` in a new manifest.
 
+## Incremental session output needs an explicit opt-in
+
+Incremental session output is the second exception to the omission rule. The host
+selects the session-output streaming path only when the declaration sets
+`incrementalSessionOutput` to `true`. An omitted key resolves the capability to
+`false`, so the host keeps the output-file poll path.
+
+The reason is that this key is a behavioral guarantee, not a worker-method
+property. A generic one-shot provider can keep persistent process sessions and run
+independent control commands, yet it never emits incremental stdout and stderr
+from a live session. The two broad capabilities do not imply incremental output,
+so the host requires the provider to declare the behavior. A provider that streams
+incremental session output declares `sandboxCapabilities.incrementalSessionOutput:
+true`; every other provider omits the key and keeps the poll path.
+
+The opt-in never removes the prerequisites. The worker must still verify
+`environmentExecute`, and per-run narrowing still applies. A config-resolution
+failure narrows the capability to off (see [Failure behavior](#failure-behavior)).
+
 ## The capabilities and their worker-method prerequisites
 
 | Capability | Required worker methods | Meaning |
@@ -108,6 +152,7 @@ Prefer the nested `sandboxCapabilities.reusableLeases` in a new manifest.
 | `nativeSyncOut` | `environmentSyncOut` | The host transfers files out of the sandbox through the native outbound hook. |
 | `persistentProcessSessions` | `environmentExecute` | The provider keeps a persistent process session open across commands. |
 | `independentControlCommands` | `environmentExecute` | The provider runs a one-shot control command beside a long-lived command. |
+| `incrementalSessionOutput` | `environmentExecute` | The provider streams incremental stdout and stderr from a live session. Opt-in: an omitted key resolves `false`. |
 
 Reusable leases need all three lifecycle methods. The host resumes a lease with
 `environmentResumeLease`, ends it with `environmentReleaseLease`, and tears down a
@@ -131,18 +176,16 @@ this run cannot use.
   unable to run native file sync, disables native sync. The host narrows
   `nativeSyncIn` and `nativeSyncOut` to off and keeps the base64-over-exec
   fallback.
-- **`useSessions` provider config.** A session-based provider follows its
-  `useSessions` config value for `persistentProcessSessions`. Sessions default to
-  off. A config that omits the key adds no narrowing.
 
 ## Failure behavior
 
 The host fails closed on two failure states. It never grants a capability from an
 unknown state.
 
-- **Config-resolution failure.** When the host cannot resolve the provider
-  config, it cannot read `useSessions`. It narrows `persistentProcessSessions` to
-  off instead of allowing it through an empty config.
+- **Config-resolution failure.** A provider whose config the host cannot resolve
+  is untrusted. The host narrows `persistentProcessSessions` and
+  `incrementalSessionOutput` to off instead of allowing either through an empty
+  config.
 - **Exact-plugin identity failure.** A retained lease pins the exact plugin that
   acquired it. When that plugin is absent, or when it no longer declares this
   provider key with the `sandbox_provider` kind, the host cannot establish the
@@ -158,3 +201,9 @@ Earlier drafts listed two concurrency keys, `concurrentSyncAndExec` and
 read either key, so a declaration had no effect. The host removed both keys. The
 strict capability validator now rejects them as unknown keys. The host can
 reintroduce a concurrency capability when a runtime path enforces it.
+
+### Preserving an unexported workspace
+
+Native export recovery requires the separately discovered `environmentStopLease` RPC (`onEnvironmentStopLease`). It stops the exact allocation and preserves files regardless of its normal release policy. A failed or unconfirmed stop must throw and must never fall back to deletion. The host uses the recorded plugin ID and defers when that worker does not advertise the hook; a generic release method is insufficient evidence of stop-only support. Normal successful ephemeral release remains destructive after verified copyback.
+
+Daytona stop-only preservation disables provider auto-delete and refreshes the provider record to confirm the disabled policy before stopping. An unavailable or unconfirmed policy leaves cleanup pending; it never falls back to stop or delete. The original ephemeral destroy policy applies only after exact accepted-result copyback and commitment.
