@@ -34,6 +34,9 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 import { ONBOARDING_FIRST_TASK_ORIGIN_KIND } from "@paperclipai/shared";
+import type { PluginEvent } from "@paperclipai/plugin-sdk";
+import { setPluginEventBus } from "../services/activity-log.js";
+import { createPluginEventBus } from "../services/plugin-event-bus.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
 import { issueService } from "../services/issues.js";
 import { issueThreadInteractionService } from "../services/issue-thread-interactions.js";
@@ -47,16 +50,23 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
   let issuesSvc!: ReturnType<typeof issueService>;
   let interactionsSvc!: ReturnType<typeof issueThreadInteractionService>;
   let tempDb: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>> | null = null;
+  const issueCreatedEvents: PluginEvent[] = [];
 
   beforeAll(async () => {
     tempDb = await startEmbeddedPostgresTestDatabase("paperclip-issue-thread-interactions-");
     db = createDb(tempDb.connectionString);
     issuesSvc = issueService(db);
     interactionsSvc = issueThreadInteractionService(db);
+    const pluginEventBus = createPluginEventBus();
+    pluginEventBus.forPlugin("test.issue-created").subscribe("issue.created", async (event) => {
+      issueCreatedEvents.push(event);
+    });
+    setPluginEventBus(pluginEventBus);
   }, 20_000);
 
   afterEach(async () => {
     vi.unstubAllEnvs();
+    issueCreatedEvents.length = 0;
     await db.delete(issueThreadInteractions);
     await db.delete(activityLog);
     await db.delete(issueComments);
@@ -1477,6 +1487,72 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
         details: expect.objectContaining({ parentId: root!.id }),
       }),
     ]));
+
+    await vi.waitFor(() => expect(issueCreatedEvents).toHaveLength(2));
+    expect(issueCreatedEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        eventType: "issue.created",
+        companyId,
+        actorType: "user",
+        actorId: "local-board",
+        entityType: "issue",
+        entityId: root!.id,
+        payload: expect.objectContaining({
+          source: "suggest_tasks_accept",
+          interactionId: created.id,
+        }),
+      }),
+      expect.objectContaining({
+        eventType: "issue.created",
+        entityId: child!.id,
+      }),
+    ]));
+  });
+
+  it("publishes no issue.created event when accepting suggested tasks rolls back", async () => {
+    const { companyId, goalId, issueId } = await seedConfirmationIssue("Roll back suggested tasks");
+
+    const created = await interactionsSvc.create({
+      id: issueId,
+      companyId,
+    }, {
+      kind: "suggest_tasks",
+      continuationPolicy: "wake_assignee",
+      payload: {
+        version: 1,
+        tasks: [
+          {
+            clientKey: "first",
+            title: "Create the first follow-up",
+          },
+          {
+            clientKey: "second",
+            title: "Create the follow-up for a missing agent",
+            assigneeAgentId: randomUUID(),
+          },
+        ],
+      },
+    }, {
+      userId: "local-board",
+    });
+
+    await expect(interactionsSvc.acceptSuggestedTasks({
+      id: issueId,
+      companyId,
+      goalId,
+      projectId: null,
+    }, created.id, {}, {
+      userId: "local-board",
+    })).rejects.toThrow();
+
+    const createdActivity = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "issue.created"));
+    expect(createdActivity).toHaveLength(0);
+    const children = await db.select().from(issues).where(eq(issues.parentId, issueId));
+    expect(children).toHaveLength(0);
+    expect(issueCreatedEvents).toHaveLength(0);
   });
 
   it("rejects partial acceptance when a selected task omits its selected-tree parent", async () => {
