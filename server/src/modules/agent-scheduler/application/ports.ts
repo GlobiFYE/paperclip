@@ -27,7 +27,7 @@ export type AgentSchedulerEnqueueActivity = {
 export type AgentSchedulerHost = {
   countRunningRunsForAgent(agentId: string): Promise<number>;
   appendSchedulerEvent(input: AgentSchedulerEnqueueActivity & {
-    kind: "enqueue" | "dequeue";
+    kind: "enqueue" | "dequeue" | "blocked";
   }): Promise<void>;
 };
 
@@ -42,7 +42,9 @@ export type AgentSchedulerWriter = {
     schedulerMeta: Record<string, unknown>;
   }): Promise<boolean>;
   tryClaimRunnableWake(wakeId: string): Promise<boolean>;
+  /** Repair links to one persisted root run; NEVER re-enqueue based on age. */
   recoverStaleMaterializingClaims(agentId: string): Promise<number>;
+  /** Only safe after a confirmed null/no-write creation result. */
   releaseClaimedRunnableWake(input: {
     wakeId: string;
     companyId: string;

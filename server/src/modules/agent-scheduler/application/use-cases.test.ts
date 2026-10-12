@@ -6,33 +6,18 @@ import {
   AGENT_SCHEDULER_MATERIALIZING_CLAIM_TTL_MS,
   AGENT_SCHEDULER_MATERIALIZING_REASON,
 } from "../domain/policy.js";
-import {
-  createEvaluateAgentSchedulerAdmission,
-  createPromoteAgentRunnableWork,
-} from "./use-cases.js";
+import { createEvaluateAgentSchedulerAdmission, createPromoteAgentRunnableWork } from "./use-cases.js";
 
 const BASE_FACTS = {
-  schedulerEnabled: true,
-  allowParallelExecution: false,
-  configuredMaxConcurrentRuns: 20,
-  companyId: "company-1",
-  agentId: "agent-1",
+  schedulerEnabled: true, allowParallelExecution: false, configuredMaxConcurrentRuns: 20,
+  companyId: "company-1", agentId: "agent-1",
 };
 
 function runnableWake(id: string, overrides: Partial<RunnableWakeRow> = {}): RunnableWakeRow {
   return {
-    id,
-    companyId: "company-1",
-    agentId: "agent-1",
-    source: "automation",
-    triggerDetail: null,
-    reason: null,
-    payload: { issueId: `issue-${id}` },
-    requestedByActorType: "system",
-    requestedByActorId: null,
-    idempotencyKey: null,
-    requestedAt: new Date("2026-10-08T12:00:00.000Z"),
-    ...overrides,
+    id, companyId: "company-1", agentId: "agent-1", source: "automation", triggerDetail: null,
+    reason: null, payload: { issueId: `issue-${id}` }, requestedByActorType: "system",
+    requestedByActorId: null, idempotencyKey: null, requestedAt: new Date(0), ...overrides,
   };
 }
 
@@ -41,88 +26,67 @@ function createMemoryWriter(now: () => number = Date.now): AgentSchedulerWriter 
   runnable: RunnableWakeRow[];
   materialized: Array<{ wakeId: string; runId: string }>;
   claimed: Set<string>;
+  persistedRuns: Array<{ id: string; wakeId: string; agentId: string; companyId: string }>;
 } {
   const parked: Array<{ wakeRequestId: string; schedulerMeta: Record<string, unknown> }> = [];
   const runnable: RunnableWakeRow[] = [];
   const materialized: Array<{ wakeId: string; runId: string }> = [];
   const claimed = new Set<string>();
-  const claimedAt = new Map<string, number>();
-
+  const persistedRuns: Array<{ id: string; wakeId: string; agentId: string; companyId: string }> = [];
+  const roots = (row: RunnableWakeRow) => persistedRuns.filter((run) =>
+    run.wakeId === row.id && run.agentId === row.agentId && run.companyId === row.companyId);
+  const eligible = (row: RunnableWakeRow) =>
+    (row.reason === null || row.reason === AGENT_SCHEDULER_ENQUEUE_REASON) && roots(row).length === 0;
   return {
-    parked,
-    runnable,
-    materialized,
-    claimed,
+    parked, runnable, materialized, claimed, persistedRuns,
     async listRunnableWakes(agentId, limit) {
-      return runnable.filter((row) => row.agentId === agentId).slice(0, limit);
+      return runnable.filter((row) => row.agentId === agentId && eligible(row)).slice(0, limit);
     },
-    async countRunnableWakes(agentId) {
-      return runnable.filter((row) => row.agentId === agentId).length;
-    },
+    async countRunnableWakes(agentId) { return runnable.filter((row) => row.agentId === agentId).length; },
     async parkWakeAsRunnable(input) {
-      parked.push({
-        wakeRequestId: input.wakeRequestId,
-        schedulerMeta: input.schedulerMeta,
-      });
-      runnable.push(
-        runnableWake(input.wakeRequestId, {
-          companyId: input.companyId,
-          agentId: input.agentId,
-          reason: input.enqueueReason,
-          requestedAt: new Date(parked.length * 1000 + now()),
-        }),
-      );
+      parked.push({ wakeRequestId: input.wakeRequestId, schedulerMeta: input.schedulerMeta });
+      runnable.push(runnableWake(input.wakeRequestId, {
+        companyId: input.companyId, agentId: input.agentId,
+        reason: input.enqueueReason, requestedAt: new Date(parked.length * 1000 + now()),
+      }));
       return true;
     },
     async tryClaimRunnableWake(wakeId) {
       const row = runnable.find((entry) => entry.id === wakeId);
-      if (!row) return false;
-      const claimTime = claimedAt.get(wakeId);
-      const expiredClaim = row.reason === AGENT_SCHEDULER_MATERIALIZING_REASON &&
-        claimTime !== undefined &&
-        claimTime < now() - AGENT_SCHEDULER_MATERIALIZING_CLAIM_TTL_MS;
-      if (
-        row.reason !== null &&
-        row.reason !== AGENT_SCHEDULER_ENQUEUE_REASON &&
-        !expiredClaim
-      ) {
-        return false;
-      }
+      if (!row || !eligible(row)) return false;
       row.reason = AGENT_SCHEDULER_MATERIALIZING_REASON;
       claimed.add(wakeId);
-      claimedAt.set(wakeId, now());
       return true;
     },
     async recoverStaleMaterializingClaims(agentId) {
       let recovered = 0;
-      const staleBefore = now() - AGENT_SCHEDULER_MATERIALIZING_CLAIM_TTL_MS;
-      for (const row of runnable) {
-        const claimTime = claimedAt.get(row.id);
-        if (row.agentId === agentId &&
-          row.reason === AGENT_SCHEDULER_MATERIALIZING_REASON &&
-          claimTime !== undefined && claimTime < staleBefore) {
-          row.reason = AGENT_SCHEDULER_ENQUEUE_REASON;
-          claimed.delete(row.id);
-          claimedAt.delete(row.id);
-          recovered += 1;
-        }
+      for (const row of [...runnable]) {
+        if (row.agentId !== agentId) continue;
+        if (row.reason !== null && row.reason !== AGENT_SCHEDULER_ENQUEUE_REASON &&
+          row.reason !== AGENT_SCHEDULER_MATERIALIZING_REASON) continue;
+        const existing = roots(row);
+        if (existing.length !== 1) continue;
+        materialized.push({ wakeId: row.id, runId: existing[0]!.id });
+        runnable.splice(runnable.indexOf(row), 1);
+        claimed.delete(row.id);
+        recovered += 1;
       }
       return recovered;
     },
     async releaseClaimedRunnableWake(input) {
       const row = runnable.find((entry) => entry.id === input.wakeId &&
         entry.companyId === input.companyId && entry.agentId === input.agentId);
-      if (!row || row.reason !== AGENT_SCHEDULER_MATERIALIZING_REASON) return;
+      if (!row || row.reason !== AGENT_SCHEDULER_MATERIALIZING_REASON || roots(row).length !== 0) return;
       row.reason = input.enqueueReason;
       claimed.delete(input.wakeId);
-      claimedAt.delete(input.wakeId);
     },
     async materializeRunnableWake(input) {
+      const prior = materialized.find((row) => row.wakeId === input.wake.id);
+      if (prior) return prior.runId === input.runId;
       const index = runnable.findIndex((row) => row.id === input.wake.id);
       if (index < 0) return false;
       runnable.splice(index, 1);
       claimed.delete(input.wake.id);
-      claimedAt.delete(input.wake.id);
       materialized.push({ wakeId: input.wake.id, runId: input.runId });
       return true;
     },
@@ -130,333 +94,213 @@ function createMemoryWriter(now: () => number = Date.now): AgentSchedulerWriter 
 }
 
 function createFakeHost(runningRunCount = 0): AgentSchedulerHost & {
-  events: unknown[];
-  setRunningCount: (n: number) => void;
+  events: unknown[]; setRunningCount: (n: number) => void;
 } {
   let count = runningRunCount;
   const events: unknown[] = [];
   return {
-    events,
-    setRunningCount(n: number) {
-      count = n;
-    },
-    async countRunningRunsForAgent() {
-      return count;
-    },
-    async appendSchedulerEvent(input) {
-      events.push(input);
-    },
+    events, setRunningCount(n) { count = n; },
+    async countRunningRunsForAgent() { return count; },
+    async appendSchedulerEvent(input) { events.push(input); },
   };
 }
 
-describe("createEvaluateAgentSchedulerAdmission", () => {
+async function park(writer: AgentSchedulerWriter, id: string, agentId = "agent-1") {
+  await writer.parkWakeAsRunnable({ wakeRequestId: id, companyId: "company-1", agentId,
+    enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON, schedulerMeta: {} });
+}
+function persisted(writer: ReturnType<typeof createMemoryWriter>, wakeId: string, id: string, agentId = "agent-1") {
+  writer.persistedRuns.push({ id, wakeId, companyId: "company-1", agentId });
+}
+function setup(count = 0, clock: () => number = Date.now) {
+  const writer = createMemoryWriter(clock);
+  const host = createFakeHost(count);
+  return { writer, host, promote: createPromoteAgentRunnableWork({ host, writer }),
+    evaluate: createEvaluateAgentSchedulerAdmission({ host, writer }) };
+}
+
+describe("scheduler admission and promotion", () => {
   it("materializes when the agent has a free slot", async () => {
-    const writer = createMemoryWriter();
-    const host = createFakeHost(0);
-    const evaluate = createEvaluateAgentSchedulerAdmission({ host, writer });
-
-    const result = await evaluate({
-      ...BASE_FACTS,
-      runningRunCount: 0,
-      wakeRequestId: "wake-a",
-      issueId: "issue-a",
-    });
-
-    expect(result).toEqual({ action: "materialize" });
-    expect(writer.parked).toHaveLength(0);
-    expect(host.events).toHaveLength(0);
+    const { writer, host, evaluate } = setup();
+    expect(await evaluate({ ...BASE_FACTS, runningRunCount: 0, wakeRequestId: "a", issueId: "issue-a" }))
+      .toEqual({ action: "materialize" });
+    expect(writer.parked).toHaveLength(0); expect(host.events).toHaveLength(0);
   });
-
-  it("parks a second simultaneous assignment while one run is active", async () => {
-    const writer = createMemoryWriter();
-    const host = createFakeHost(1);
-    const evaluate = createEvaluateAgentSchedulerAdmission({ host, writer });
-
-    const result = await evaluate({
-      ...BASE_FACTS,
-      runningRunCount: 1,
-      wakeRequestId: "wake-b",
-      issueId: "issue-b",
-    });
-
-    expect(result).toEqual({ action: "park", queueDepth: 1 });
-    expect(writer.parked).toHaveLength(1);
-    expect(writer.parked[0]?.wakeRequestId).toBe("wake-b");
-    expect(host.events).toHaveLength(1);
-    expect(host.events[0]).toMatchObject({
-      kind: "enqueue",
-      wakeRequestId: "wake-b",
-      queueDepth: 1,
-      effectiveCapacity: 1,
-    });
+  it("parks a second assignment while one run is active", async () => {
+    const { writer, host, evaluate } = setup(1);
+    expect(await evaluate({ ...BASE_FACTS, runningRunCount: 1, wakeRequestId: "b", issueId: "issue-b" }))
+      .toEqual({ action: "park", queueDepth: 1 });
+    expect(writer.parked[0]?.wakeRequestId).toBe("b");
+    expect(host.events[0]).toMatchObject({ kind: "enqueue", wakeRequestId: "b", effectiveCapacity: 1 });
   });
-});
-
-describe("createPromoteAgentRunnableWork", () => {
-  it("promotes the oldest runnable wake when a slot opens after the active run finishes", async () => {
-    const writer = createMemoryWriter();
-    const host = createFakeHost(0);
-    await writer.parkWakeAsRunnable({
-      wakeRequestId: "wake-queued",
-      companyId: "company-1",
-      agentId: "agent-1",
-      enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON,
-      schedulerMeta: { parkedAt: new Date().toISOString() },
-    });
-
-    const promote = createPromoteAgentRunnableWork({ host, writer });
-    const createRunForWake = vi.fn(async (wake: RunnableWakeRow) => `run-for-${wake.id}`);
-
-    const result = await promote({
-      schedulerEnabled: true,
-      allowParallelExecution: false,
-      configuredMaxConcurrentRuns: 20,
-      agentId: "agent-1",
-      companyId: "company-1",
-      createRunForWake,
-    });
-
-    expect(result).toEqual({ promoted: 1, runIds: ["run-for-wake-queued"] });
-    expect(createRunForWake).toHaveBeenCalledTimes(1);
-    expect(writer.materialized).toEqual([{ wakeId: "wake-queued", runId: "run-for-wake-queued" }]);
-    expect(host.events).toHaveLength(1);
-    expect(host.events[0]).toMatchObject({
-      kind: "dequeue",
-      wakeRequestId: "wake-queued",
-      reason: AGENT_SCHEDULER_DEQUEUE_REASON,
-      effectiveCapacity: 1,
-    });
+  it("promotes the oldest runnable wake when capacity opens", async () => {
+    const { writer, host, promote } = setup(); await park(writer, "oldest"); await park(writer, "newer");
+    const create = vi.fn(async (wake: RunnableWakeRow) => `run-${wake.id}`);
+    expect(await promote({ ...BASE_FACTS, createRunForWake: create })).toEqual({ promoted: 1, runIds: ["run-oldest"] });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(writer.materialized).toEqual([{ wakeId: "oldest", runId: "run-oldest" }]);
+    expect(host.events[0]).toMatchObject({ kind: "dequeue", reason: AGENT_SCHEDULER_DEQUEUE_REASON, queueDepth: 1 });
   });
-
-  it("does not promote while the agent remains at serial capacity", async () => {
-    const writer = createMemoryWriter();
-    const host = createFakeHost(1);
-    await writer.parkWakeAsRunnable({
-      wakeRequestId: "wake-waiting",
-      companyId: "company-1",
-      agentId: "agent-1",
-      enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON,
-      schedulerMeta: {},
-    });
-
-    const promote = createPromoteAgentRunnableWork({ host, writer });
-    const result = await promote({
-      schedulerEnabled: true,
-      allowParallelExecution: false,
-      configuredMaxConcurrentRuns: 20,
-      agentId: "agent-1",
-      companyId: "company-1",
-      createRunForWake: vi.fn(async () => "run-should-not-happen"),
-    });
-
-    expect(result).toEqual({ promoted: 0, runIds: [] });
-    expect(writer.runnable).toHaveLength(1);
-    expect(host.events).toHaveLength(0);
+  it("does not create a run while the agent is at serial capacity", async () => {
+    const { writer, host, promote } = setup(1); await park(writer, "waiting");
+    const create = vi.fn(async () => "unexpected");
+    expect(await promote({ ...BASE_FACTS, createRunForWake: create })).toEqual({ promoted: 0, runIds: [] });
+    expect(create).toHaveBeenCalledTimes(0); expect(writer.runnable).toHaveLength(1); expect(host.events).toHaveLength(0);
   });
-
-  it("skips a wake that cannot materialize and promotes the next runnable wake", async () => {
-    const writer = createMemoryWriter();
-    const host = createFakeHost(0);
-    await writer.parkWakeAsRunnable({
-      wakeRequestId: "wake-stuck",
-      companyId: "company-1",
-      agentId: "agent-1",
-      enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON,
-      schedulerMeta: {},
-    });
-    await writer.parkWakeAsRunnable({
-      wakeRequestId: "wake-ready",
-      companyId: "company-1",
-      agentId: "agent-1",
-      enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON,
-      schedulerMeta: {},
-    });
-
-    const promote = createPromoteAgentRunnableWork({ host, writer });
-    const createRunForWake = vi.fn(async (wake: RunnableWakeRow) =>
-      wake.id === "wake-stuck" ? null : `run-for-${wake.id}`,
-    );
-
-    const result = await promote({
-      schedulerEnabled: true,
-      allowParallelExecution: false,
-      configuredMaxConcurrentRuns: 20,
-      agentId: "agent-1",
-      companyId: "company-1",
-      createRunForWake,
-    });
-
-    expect(result).toEqual({ promoted: 1, runIds: ["run-for-wake-ready"] });
-    expect(createRunForWake).toHaveBeenCalledTimes(2);
-    expect(writer.runnable.map((row) => row.id)).toEqual(["wake-stuck"]);
+  it("skips a null creation and promotes the next ready wake", async () => {
+    const { writer, promote } = setup(); await park(writer, "stuck"); await park(writer, "ready");
+    const create = vi.fn(async (wake: RunnableWakeRow) => wake.id === "stuck" ? null : "run-ready");
+    expect(await promote({ ...BASE_FACTS, createRunForWake: create })).toEqual({ promoted: 1, runIds: ["run-ready"] });
+    expect(create).toHaveBeenCalledTimes(2); expect(writer.runnable.map(row => row.id)).toEqual(["stuck"]);
   });
-
-  it("allows only one materializing claim per runnable wake", async () => {
-    const writer = createMemoryWriter();
-    await writer.parkWakeAsRunnable({
-      wakeRequestId: "wake-race",
-      companyId: "company-1",
-      agentId: "agent-1",
-      enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON,
-      schedulerMeta: {},
-    });
-
-    const first = await writer.tryClaimRunnableWake("wake-race");
-    const second = await writer.tryClaimRunnableWake("wake-race");
-
-    expect(first).toBe(true);
-    expect(second).toBe(false);
+  it("allows only one materializing claim per wake", async () => {
+    const { writer } = setup(); await park(writer, "race");
+    expect(await writer.tryClaimRunnableWake("race")).toBe(true);
+    expect(await writer.tryClaimRunnableWake("race")).toBe(false);
   });
-
-  it("serializes two back-to-back assignments: park then promote one at a time", async () => {
-    const writer = createMemoryWriter();
-    const host = createFakeHost(0);
-    const evaluate = createEvaluateAgentSchedulerAdmission({ host, writer });
-    const promote = createPromoteAgentRunnableWork({ host, writer });
-
-    const first = await evaluate({
-      ...BASE_FACTS,
-      runningRunCount: 0,
-      wakeRequestId: "wake-1",
-      issueId: "issue-1",
-    });
-    expect(first).toEqual({ action: "materialize" });
-
+  it("serializes two assignments through park and promotion", async () => {
+    const { writer, host, evaluate, promote } = setup();
+    expect(await evaluate({ ...BASE_FACTS, runningRunCount: 0, wakeRequestId: "one", issueId: "one" }))
+      .toEqual({ action: "materialize" });
     host.setRunningCount(1);
-    const second = await evaluate({
-      ...BASE_FACTS,
-      runningRunCount: 1,
-      wakeRequestId: "wake-2",
-      issueId: "issue-2",
-    });
-    expect(second).toEqual({ action: "park", queueDepth: 1 });
-
+    expect(await evaluate({ ...BASE_FACTS, runningRunCount: 1, wakeRequestId: "two", issueId: "two" }))
+      .toEqual({ action: "park", queueDepth: 1 });
     host.setRunningCount(0);
-    const afterFirstRun = await promote({
-      schedulerEnabled: true,
-      allowParallelExecution: false,
-      configuredMaxConcurrentRuns: 20,
-      agentId: "agent-1",
-      companyId: "company-1",
-      createRunForWake: async (wake) => `run-${wake.id}`,
-    });
-    expect(afterFirstRun.promoted).toBe(1);
+    expect(await promote({ ...BASE_FACTS, createRunForWake: async () => "run-two" }))
+      .toEqual({ promoted: 1, runIds: ["run-two"] });
     expect(writer.runnable).toHaveLength(0);
   });
 });
 
-
-describe("scheduler claim and deferred-activity regressions", () => {
-  async function park(writer: AgentSchedulerWriter, id: string, agentId = "agent-1") {
-    await writer.parkWakeAsRunnable({
-      wakeRequestId: id,
-      companyId: "company-1",
-      agentId,
-      enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON,
-      schedulerMeta: {},
-    });
-  }
-
-  it("restores a null-result claim so the same wake can retry on the next promotion", async () => {
-    const writer = createMemoryWriter();
-    const host = createFakeHost();
-    await park(writer, "wake-retry");
-    const promote = createPromoteAgentRunnableWork({ host, writer });
-    const first = await promote({ ...BASE_FACTS, createRunForWake: async () => null });
-    expect(first).toEqual({ promoted: 0, runIds: [] });
+describe("claim recovery and deferred activity", () => {
+  it("retries after a confirmed null/no-write creation result", async () => {
+    const { writer, promote } = setup(); await park(writer, "retry");
+    expect(await promote({ ...BASE_FACTS, createRunForWake: async () => null })).toEqual({ promoted: 0, runIds: [] });
     expect(writer.runnable[0]?.reason).toBe(AGENT_SCHEDULER_ENQUEUE_REASON);
     expect(writer.claimed.size).toBe(0);
-    const second = await promote({ ...BASE_FACTS, createRunForWake: async () => "run-retry" });
-    expect(second).toEqual({ promoted: 1, runIds: ["run-retry"] });
-    expect(writer.runnable).toHaveLength(0);
+    expect(await promote({ ...BASE_FACTS, createRunForWake: async () => "run-retry" }))
+      .toEqual({ promoted: 1, runIds: ["run-retry"] });
   });
-
-  it("releases a throwing claim, makes progress, and retries the released wake later", async () => {
-    const writer = createMemoryWriter();
-    const host = createFakeHost();
-    await park(writer, "wake-error");
-    await park(writer, "wake-ready");
-    const promote = createPromoteAgentRunnableWork({ host, writer });
-    const createRunForWake = vi.fn(async (wake: RunnableWakeRow) => {
-      if (wake.id === "wake-error") throw new Error("synthetic creation failure");
-      return "run-ready";
-    });
-    expect(await promote({ ...BASE_FACTS, createRunForWake }))
-      .toEqual({ promoted: 1, runIds: ["run-ready"] });
-    expect(createRunForWake).toHaveBeenCalledTimes(2);
-    expect(writer.runnable[0]?.reason).toBe(AGENT_SCHEDULER_ENQUEUE_REASON);
-    expect(writer.claimed.size).toBe(0);
-    expect(await promote({ ...BASE_FACTS, createRunForWake: async () => "run-recovered" }))
-      .toEqual({ promoted: 1, runIds: ["run-recovered"] });
+  it("does not retry a callback exception with an uncertain result", async () => {
+    const { writer, host, promote } = setup(); await park(writer, "error");
+    const create = vi.fn(async () => { throw new Error("synthetic failure"); });
+    await promote({ ...BASE_FACTS, createRunForWake: create });
+    await promote({ ...BASE_FACTS, createRunForWake: create });
+    expect(writer.runnable[0]?.reason).toBe(AGENT_SCHEDULER_MATERIALIZING_REASON);
+    expect(writer.claimed.has("error")).toBe(true); expect(create).toHaveBeenCalledTimes(1);
+    expect(host.events[0]).toMatchObject({ kind: "blocked", reason: "materialization_outcome_uncertain" });
   });
-
-  it("does not reclaim a live claim at the lease boundary", async () => {
-    let now = 1_000_000;
-    const writer = createMemoryWriter(() => now);
-    const host = createFakeHost();
-    await park(writer, "wake-live");
-    expect(await writer.tryClaimRunnableWake("wake-live")).toBe(true);
+  it("does not reclaim a live intent at the old lease boundary", async () => {
+    let now = 1_000_000; const { writer, promote } = setup(0, () => now);
+    await park(writer, "live"); await writer.tryClaimRunnableWake("live");
     now += AGENT_SCHEDULER_MATERIALIZING_CLAIM_TTL_MS;
-    const createRunForWake = vi.fn(async () => "run-unexpected");
-    expect(await createPromoteAgentRunnableWork({ host, writer })({ ...BASE_FACTS, createRunForWake }))
-      .toEqual({ promoted: 0, runIds: [] });
-    expect(createRunForWake).toHaveBeenCalledTimes(0);
-    expect(writer.claimed.has("wake-live")).toBe(true);
+    const create = vi.fn(async () => "unexpected");
+    expect(await promote({ ...BASE_FACTS, createRunForWake: create })).toEqual({ promoted: 0, runIds: [] });
+    expect(create).toHaveBeenCalledTimes(0); expect(writer.claimed.has("live")).toBe(true);
   });
-
-  it("recovers an expired claim and promotes the wake without manual repair", async () => {
-    let now = 1_000_000;
-    const writer = createMemoryWriter(() => now);
-    const host = createFakeHost();
-    await park(writer, "wake-stale");
-    expect(await writer.tryClaimRunnableWake("wake-stale")).toBe(true);
-    now += AGENT_SCHEDULER_MATERIALIZING_CLAIM_TTL_MS + 1;
-    const createRunForWake = vi.fn(async () => "run-after-expiry");
-    expect(await createPromoteAgentRunnableWork({ host, writer })({ ...BASE_FACTS, createRunForWake }))
-      .toEqual({ promoted: 1, runIds: ["run-after-expiry"] });
-    expect(createRunForWake).toHaveBeenCalledTimes(1);
-    expect(writer.claimed.size).toBe(0);
-    expect(writer.runnable).toHaveLength(0);
+  it("does not reauthorize an expired intent without evidence of its result", async () => {
+    let now = 1_000_000; const { writer, promote } = setup(0, () => now);
+    await park(writer, "stale"); await writer.tryClaimRunnableWake("stale");
+    now += AGENT_SCHEDULER_MATERIALIZING_CLAIM_TTL_MS * 10;
+    const create = vi.fn(async () => "duplicate");
+    expect(await promote({ ...BASE_FACTS, createRunForWake: create })).toEqual({ promoted: 0, runIds: [] });
+    expect(create).toHaveBeenCalledTimes(0); expect(writer.claimed.has("stale")).toBe(true);
   });
-
-  it("does not recover or count another agent's claims", async () => {
-    let now = 1_000_000;
-    const writer = createMemoryWriter(() => now);
-    await park(writer, "wake-other", "agent-2");
-    expect(await writer.tryClaimRunnableWake("wake-other")).toBe(true);
-    now += AGENT_SCHEDULER_MATERIALIZING_CLAIM_TTL_MS + 1;
+  it("does not recover, count or list another agent's claims", async () => {
+    const { writer } = setup(); await park(writer, "other", "agent-2"); await writer.tryClaimRunnableWake("other");
+    persisted(writer, "other", "run-other", "agent-2");
     expect(await writer.recoverStaleMaterializingClaims("agent-1")).toBe(0);
     expect(await writer.countRunnableWakes("agent-1")).toBe(0);
     expect(await writer.listRunnableWakes("agent-1", 50)).toEqual([]);
-    expect(writer.claimed.has("wake-other")).toBe(true);
+    expect(writer.claimed.has("other")).toBe(true);
     expect(await writer.recoverStaleMaterializingClaims("agent-2")).toBe(1);
-    expect(writer.runnable[0]?.reason).toBe(AGENT_SCHEDULER_ENQUEUE_REASON);
+    expect(writer.materialized).toEqual([{ wakeId: "other", runId: "run-other" }]);
   });
-
   it("returns deferred activity without calling the host inside admission", async () => {
-    const writer = createMemoryWriter();
-    const host = createFakeHost(1);
-    const result = await createEvaluateAgentSchedulerAdmission({ host, writer })({
-      ...BASE_FACTS,
-      runningRunCount: 1,
-      wakeRequestId: "wake-deferred",
-      issueId: "issue-deferred",
-      deferEnqueueActivity: true,
-    });
-    expect(result).toMatchObject({
-      action: "park",
-      queueDepth: 1,
-      deferredEnqueueActivity: {
-        wakeRequestId: "wake-deferred",
-        reason: "agent_at_capacity",
-        queueDepth: 1,
-      },
-    });
-    expect(host.events).toHaveLength(0);
-    // The host must publish this returned event AFTER its transaction commits.
-    // This unit assertion does not prove heartbeat.ts wires that boundary.
+    const { writer, host, evaluate } = setup(1);
+    const result = await evaluate({ ...BASE_FACTS, runningRunCount: 1, wakeRequestId: "deferred",
+      issueId: "issue-deferred", deferEnqueueActivity: true });
+    expect(result).toMatchObject({ action: "park", queueDepth: 1,
+      deferredEnqueueActivity: { wakeRequestId: "deferred", reason: "agent_at_capacity" } });
+    expect(writer.parked).toHaveLength(1); expect(host.events).toHaveLength(0);
     if (result.action !== "park" || !result.deferredEnqueueActivity) throw new Error("Missing event");
     await host.appendSchedulerEvent({ ...result.deferredEnqueueActivity, kind: "enqueue" });
     expect(host.events).toHaveLength(1);
+  });
+});
+
+describe("materialization uncertainty regressions", () => {
+  it("does not duplicate a live creator after the former five-minute lease expires", async () => {
+    let now = 1_000_000; const { writer, host, promote } = setup(0, () => now); await park(writer, "slow");
+    let release!: () => void; let started!: () => void; let calls = 0;
+    const entered = new Promise<void>(resolve => { started = resolve; });
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const create = vi.fn(async () => {
+      if (++calls > 1) { persisted(writer, "slow", "duplicate"); return "duplicate"; }
+      started(); await gate; persisted(writer, "slow", "run-only"); return "run-only";
+    });
+    const first = promote({ ...BASE_FACTS, createRunForWake: create }); await entered;
+    now += AGENT_SCHEDULER_MATERIALIZING_CLAIM_TTL_MS * 10;
+    try {
+      const second = await createPromoteAgentRunnableWork({ host, writer })({ ...BASE_FACTS, createRunForWake: create });
+      expect(second).toEqual({ promoted: 0, runIds: [] }); expect(create).toHaveBeenCalledTimes(1);
+    } finally { release(); await first; }
+    expect(writer.persistedRuns).toHaveLength(1);
+  });
+  it("repairs an INSERT committed before callback rejection without another INSERT", async () => {
+    const { writer, promote } = setup(); await park(writer, "committed");
+    const create = vi.fn(async () => { persisted(writer, "committed", "original"); throw new Error("publication failed"); });
+    await promote({ ...BASE_FACTS, createRunForWake: create }); expect(writer.claimed.has("committed")).toBe(true);
+    await promote({ ...BASE_FACTS, createRunForWake: create });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(writer.materialized).toEqual([{ wakeId: "committed", runId: "original" }]);
+  });
+  it("repairs an existing run link even while the agent is at capacity", async () => {
+    const { writer, promote } = setup(1); await park(writer, "running");
+    await writer.tryClaimRunnableWake("running"); persisted(writer, "running", "active");
+    const create = vi.fn(async () => "unexpected"); await promote({ ...BASE_FACTS, createRunForWake: create });
+    expect(create).toHaveBeenCalledTimes(0);
+    expect(writer.materialized).toEqual([{ wakeId: "running", runId: "active" }]);
+  });
+  it("does not release a confirmed creation when linking returns false", async () => {
+    const { writer, host, promote } = setup(); await park(writer, "link-false");
+    writer.materializeRunnableWake = async () => false;
+    const create = vi.fn(async () => { persisted(writer, "link-false", "created"); return "created"; });
+    await promote({ ...BASE_FACTS, createRunForWake: create });
+    expect(writer.claimed.has("link-false")).toBe(true);
+    expect(host.events[0]).toMatchObject({ kind: "blocked", reason: "materialization_link_unconfirmed" });
+    await promote({ ...BASE_FACTS, createRunForWake: create });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(writer.materialized).toEqual([{ wakeId: "link-false", runId: "created" }]);
+  });
+  it("does not release a creation intent after a rejected link response", async () => {
+    const { writer, promote } = setup(); await park(writer, "link-rejected");
+    writer.materializeRunnableWake = async () => { throw new Error("connection lost"); };
+    const create = vi.fn(async () => { persisted(writer, "link-rejected", "persisted"); return "persisted"; });
+    await promote({ ...BASE_FACTS, createRunForWake: create }); await promote({ ...BASE_FACTS, createRunForWake: create });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(writer.materialized).toEqual([{ wakeId: "link-rejected", runId: "persisted" }]);
+  });
+  it("preserves conflicting historical runs rather than creating a third", async () => {
+    const { writer, promote } = setup(); await park(writer, "ambiguous"); await writer.tryClaimRunnableWake("ambiguous");
+    persisted(writer, "ambiguous", "run-a"); persisted(writer, "ambiguous", "run-b");
+    const create = vi.fn(async () => "third"); await promote({ ...BASE_FACTS, createRunForWake: create });
+    expect(writer.materialized).toHaveLength(0); expect(writer.claimed.has("ambiguous")).toBe(true);
+    expect(create).toHaveBeenCalledTimes(0);
+  });
+  it("does not starve ready work behind 50 uncertain creation intents", async () => {
+    const { writer, promote } = setup();
+    for (let i = 0; i < 50; i++) { await park(writer, `held-${i}`); await writer.tryClaimRunnableWake(`held-${i}`); }
+    await park(writer, "ready-51"); const create = vi.fn(async () => "ready");
+    expect(await promote({ ...BASE_FACTS, createRunForWake: create })).toEqual({ promoted: 1, runIds: ["ready"] });
+    expect(create).toHaveBeenCalledTimes(1); expect(writer.claimed.size).toBe(50);
+  });
+  it("does not undo a recovered link when its original creator returns late", async () => {
+    const { writer } = setup(); await park(writer, "late"); await writer.tryClaimRunnableWake("late");
+    const wake = { ...writer.runnable[0]! }; persisted(writer, "late", "one");
+    await writer.recoverStaleMaterializingClaims("agent-1");
+    expect(await writer.materializeRunnableWake({ wake, runId: "one", dequeueReason: AGENT_SCHEDULER_DEQUEUE_REASON })).toBe(true);
+    expect(await writer.materializeRunnableWake({ wake, runId: "other", dequeueReason: AGENT_SCHEDULER_DEQUEUE_REASON })).toBe(false);
+    expect(writer.materialized).toHaveLength(1);
   });
 });

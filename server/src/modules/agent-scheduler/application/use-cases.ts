@@ -98,6 +98,7 @@ export function createPromoteAgentRunnableWork(deps: {
       return { promoted: 0, runIds: [] };
     }
 
+    await deps.writer.recoverStaleMaterializingClaims(input.agentId);
     const runningRunCount = await deps.host.countRunningRunsForAgent(input.agentId);
     const effectiveCapacity = resolveEffectiveAgentCapacity({
       schedulerEnabled: input.schedulerEnabled,
@@ -109,8 +110,6 @@ export function createPromoteAgentRunnableWork(deps: {
     if (availableSlots <= 0) {
       return { promoted: 0, runIds: [] };
     }
-
-    await deps.writer.recoverStaleMaterializingClaims(input.agentId);
 
     const runIds: string[] = [];
     let promoted = 0;
@@ -130,12 +129,21 @@ export function createPromoteAgentRunnableWork(deps: {
       try {
         runId = await input.createRunForWake(wake);
       } catch {
-        await deps.writer.releaseClaimedRunnableWake({
-          wakeId: wake.id,
+        // The callback can fail AFTER its INSERT commits (for example during
+        // publication). Releasing this intent would permit a duplicate run.
+        // Reconciliation may attach a persisted run, but time alone must never
+        // re-authorize creation. Keep the uncertain intent durable and visible.
+        await deps.host.appendSchedulerEvent({
           companyId: wake.companyId,
           agentId: wake.agentId,
-          enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON,
+          wakeRequestId: wake.id,
+          issueId: readIssueId(wake.payload),
+          kind: "blocked",
+          reason: "materialization_outcome_uncertain",
+          queueDepth: await deps.writer.countRunnableWakes(input.agentId),
+          effectiveCapacity,
         });
+        slotsRemaining -= 1;
         skippedWakeIds.add(wake.id);
         continue;
       }
@@ -149,18 +157,31 @@ export function createPromoteAgentRunnableWork(deps: {
         skippedWakeIds.add(wake.id);
         continue;
       }
-      const linked = await deps.writer.materializeRunnableWake({
-        wake,
-        runId,
-        dequeueReason: AGENT_SCHEDULER_DEQUEUE_REASON,
-      });
+      let linked = false;
+      try {
+        linked = await deps.writer.materializeRunnableWake({
+          wake,
+          runId,
+          dequeueReason: AGENT_SCHEDULER_DEQUEUE_REASON,
+        });
+      } catch {
+        // A rejected response does not prove that the link failed to commit.
+        // Keep the same creation intent; report only a sanitized reason below.
+      }
       if (!linked) {
-        await deps.writer.releaseClaimedRunnableWake({
-          wakeId: wake.id,
+        // Creation is confirmed. Never free the intent when linking is not.
+        // The adapter can repair this link from heartbeat_runs on the next pass.
+        await deps.host.appendSchedulerEvent({
           companyId: wake.companyId,
           agentId: wake.agentId,
-          enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON,
+          wakeRequestId: wake.id,
+          issueId: readIssueId(wake.payload),
+          kind: "blocked",
+          reason: "materialization_link_unconfirmed",
+          queueDepth: await deps.writer.countRunnableWakes(input.agentId),
+          effectiveCapacity,
         });
+        slotsRemaining -= 1;
         skippedWakeIds.add(wake.id);
         continue;
       }
