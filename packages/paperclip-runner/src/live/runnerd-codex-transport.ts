@@ -1,4 +1,3 @@
-import { openCodeApiVersionForVersion } from "../drivers/opencode/api-client.js";
 import { resolvePinnedOpenCodeCommand } from "../drivers/opencode/opencode-server-driver.js";
 import { ACPX_CAPABILITY_PROFILES } from "../drivers/acpx/capability-profiles.js";
 import { admittedPiThinkingLevel, resolvePiThinkingLevel } from "../drivers/acpx/pi-thinking.js";
@@ -3541,31 +3540,13 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
   #turnControls: NativeTurnControlCapabilities = { steering: false, queuedFollowUp: false };
 
   supportsTurnReasoning(): boolean {
-    if (this.options.provider !== "opencode") return false;
-    // Use the durable selected model on both fresh and recovered sessions.
-    // Older states may retain the provider only in the preparation command.
-    const state = this.#core?.store.state;
-    const template = this.#runAttachTemplate ?? state?.runAttachTemplate
-      ?? state?.commands.findLast(command =>
-        (command.type === "run.prepare" || command.type === "run.attach")
-        && record(command.payload).provider !== undefined,
-      )?.payload;
-    const provider = record(record(template).provider);
-    // OpenCode 2.x removed the per-turn reasoning variant that V1 exposes. The
-    // advertised capability must follow the provider line: claiming support for
-    // a V2 server would make a caller send a reasoningMode the OpenCode session
-    // rejects before any prompt runs.
-    const version =
-      this.#evidence.providerVersion ??
-      (typeof provider.providerVersion === "string"
-        ? provider.providerVersion
-        : null);
-    return (
-      typeof provider.model === "string" &&
-      provider.model.startsWith("openrouter/") &&
-      version !== null &&
-      openCodeApiVersionForVersion(version) === "v1"
-    );
+    // The runnerd OpenCode transport cannot observe the negotiated server
+    // generation: its durable provider version is the pinned V1 line while the
+    // proxy probes the actual binary, and a V2 server rejects the per-turn
+    // reasoning variant that V1 accepts. Advertising the capability from the
+    // model alone would let a caller send a reasoningMode that the session
+    // rejects before any prompt runs, so the runnerd path does not promise it.
+    return false;
   }
 
   turnControlCapabilities(): NativeTurnControlCapabilities | null {
