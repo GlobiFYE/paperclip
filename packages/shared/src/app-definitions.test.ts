@@ -1327,6 +1327,14 @@ describe("AppDefinition catalog", () => {
         ?.available,
     ).toBe(false);
   });
+  it("keeps Vercel MCP blocked at its documented root endpoint", () => {
+    const vercel = APP_DEFINITIONS.find((app) => app.slug === "vercel");
+    expect(vercel?.methods.find((method) => method.key === "mcp-oauth")?.defaults?.serverUrl)
+      .toBe("https://mcp.vercel.com");
+    expect(vercel?.availability?.available).toBe(false);
+    expect(BLOCKED_MCP_PROVIDERS.find((entry) => entry.slug === "vercel")?.serverUrl)
+      .toBe("https://mcp.vercel.com");
+  });
   it("enforces method and field invariants", () => {
     for (const app of APP_DEFINITIONS)
       for (const method of app.methods) {
