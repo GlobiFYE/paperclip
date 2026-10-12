@@ -190,6 +190,25 @@ exit 128
       await Promise.all([first, second].map((cwd) => fs.rm(cwd, { recursive: true, force: true })));
     }
   });
+  it("adopts the existing checkout when origin and repoUrl differ only by the \".git\" suffix", async () => {
+    // A run that re-pointed origin with a ".git" suffix must not turn the project checkout
+    // into a foreign repository: the side-path clone either strands the run on a private
+    // repo it cannot clone, or hides the unpushed work in the original checkout.
+    const source = await createLocalSourceRepo();
+    try {
+      const first = await ensureManagedProjectWorkspace({ companyId: "origin-suffix", projectId: "suffix-drift", repoUrl: source });
+      await execFile("git", ["-C", first.cwd, "remote", "set-url", "origin", `${source}.git`]);
+      const second = await ensureManagedProjectWorkspace({ companyId: "origin-suffix", projectId: "suffix-drift", repoUrl: source });
+      expect(second.cwd).toBe(first.cwd);
+
+      // Same in reverse: the suffix on the project side is cosmetic too.
+      await execFile("git", ["-C", first.cwd, "remote", "set-url", "origin", source]);
+      const third = await ensureManagedProjectWorkspace({ companyId: "origin-suffix", projectId: "suffix-drift", repoUrl: `${source}.git` });
+      expect(third.cwd).toBe(first.cwd);
+    } finally {
+      await fs.rm(source, { recursive: true, force: true });
+    }
+  });
   it("rechecks the repository when another process wins the checkout rename", async () => {
     const first = await createLocalSourceRepo();
     const second = await createLocalSourceRepo();
