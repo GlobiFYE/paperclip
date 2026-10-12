@@ -85,3 +85,40 @@ Remap these measurements after the fifth extraction and stop at five PRs.
   controls, receiver lease fencing, groups, echoes, restart and continuation.
   Server typecheck, boundaries, whitespace and syntax parity passed.
 - Next: Teams file-transfer authority, with no transport or timer ownership move.
+
+## Slice 5: Teams file-transfer authority
+
+- Service: 27,398 lines / 1,079,439 bytes → 26,461 lines / 1,046,711 bytes.
+- Destination: 1,041 lines / 36,532 bytes. Eleven declarations move into a
+  transaction-level authority factory exposing Board intent staging and fresh
+  authority derivation. It takes no database instance and starts no work.
+- The original per-service runtime maps and retry-proof callbacks are passed
+  after the retry factory initializes. No-wait row locks, identity advisory
+  locks, source ordering and byte/recipient proof hashes preserve their bodies.
+- All 50 selected Teams public-service cases passed before and after, including
+  exact recipient admission, retained source continuation, composed Board file
+  transfers, stale runtime callbacks and consent/file receipt recovery. Server
+  typecheck, module boundaries, whitespace and normalized syntax parity passed.
+
+## Reassessment after batch three
+
+The service falls from 29,897 lines / 1,170,080 bytes to 26,461 lines /
+1,046,711 bytes: 3,436 lines (11.5%) and 123,369 bytes removed. The five new
+modules total 3,813 lines / 139,009 bytes. All 117 selected cases passed before
+and after their respective extractions.
+
+The service function spans 24,484 lines. Its 191 nested functions span 23,829
+lines; 54 state/wiring/API statements span 425 lines. Imports span 412 lines.
+The largest remaining functions are `processMessage` (2,166 lines),
+`handleAction` (1,074), `configureWithCredentialLease` (868),
+`processSelectedPublication` (729), `handleModalSubmit` (708), `handleWebhook`
+(685), `processLifecycleDelivery` (657), `applyProviderLifecycleEffect` (593),
+and `ingestAttachments` (574).
+
+Future candidates include receipt-reaction recovery, provider-effect dispatch,
+attachment ingestion and inbound delivery persistence/drain ownership. Teams
+transport protocol and scheduling can be reconsidered after their lifetime
+contract is explicit; this batch deliberately moved only authority proofs.
+Do not move a large shared admission function wholesale merely to reduce LOC.
+Stop this batch at five PRs. Cumulative local gates and current-head CI/review
+results are recorded in the final PR; per-slice PRs retain their own evidence.
