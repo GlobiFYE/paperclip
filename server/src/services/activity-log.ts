@@ -146,6 +146,23 @@ export async function resolveResponsibleUserIdForActivity(db: Db, input: LogActi
   return readNonEmptyString(company?.defaultResponsibleUserId);
 }
 
+// approval.approved / approval.rejected historically reached plugins as the
+// catch-all approval.decided: the specific constants were missing from
+// PLUGIN_EVENT_TYPES, so the dot-form route actions fell through to the
+// underscore map. Now that the specific events exist, keep emitting the legacy
+// approval.decided alongside them so existing subscribers continue to receive
+// approval decisions.
+const LEGACY_COMPANION_EVENT: Readonly<Partial<Record<PluginEventType, PluginEventType>>> = {
+  "approval.approved": "approval.decided",
+  "approval.rejected": "approval.decided",
+};
+
+function legacyCompanionEvent(event: PluginEvent): PluginEvent | null {
+  const legacyType = LEGACY_COMPANION_EVENT[event.eventType];
+  if (!legacyType) return null;
+  return { ...event, eventId: randomUUID(), eventType: legacyType };
+}
+
 export function publishActivity(publication: ActivityPublication) {
   const finish = beginRunPhase("execution.realtime");
   try {
@@ -154,7 +171,11 @@ export function publishActivity(publication: ActivityPublication) {
     type: "activity.logged",
     payload: publication.payload,
   });
-  if (publication.pluginEvent) publishPluginDomainEvent(publication.pluginEvent);
+  if (publication.pluginEvent) {
+    publishPluginDomainEvent(publication.pluginEvent);
+    const legacy = legacyCompanionEvent(publication.pluginEvent);
+    if (legacy) publishPluginDomainEvent(legacy);
+  }
   } catch (error) {
     finish(true);
     throw error;
