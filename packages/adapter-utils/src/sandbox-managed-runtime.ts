@@ -29,6 +29,7 @@ import {
 } from "./git-workspace-sync.js";
 import {
   captureDirectorySnapshot,
+  classifyWorkspaceRestoreFailure,
   disposeDirectorySnapshot,
   selectDirectorySnapshot,
   mergeDirectoryWithBaseline,
@@ -49,7 +50,10 @@ import {
   type SyncOperationTask,
 } from "./sync-operation-schedule.js";
 import type { RuntimeSpanRunner } from "./acpx-engine/startup-timing.js";
-import { withWorkspaceRestoreDiagnostics } from "./workspace-restore-diagnostics.js";
+import {
+  recordWorkspaceRestoreDiagnostic, withWorkspaceRestoreDiagnostics, withWorkspaceRestoreStep,
+  type WorkspaceRestoreDiagnostic,
+} from "./workspace-restore-diagnostics.js";
 
 const execFile = promisify(execFileCallback);
 const SANDBOX_WORKSPACE_HEAVY_DIR_NAMES = [
@@ -309,6 +313,37 @@ const REFERENCED_SOURCE_IGNORE_SCAN_RETRY_DELAYS_MS = [1_000, 2_000] as const;
 
 async function delay(ms: number): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Backoff before each automatic retry of a workspace copy-back: three total
+ * attempts. A failed copy-back otherwise retains the sandbox for board repair,
+ * so a dropped transfer or a busy merge lock must not end the run's restore.
+ */
+const WORKSPACE_RESTORE_RETRY_DELAYS_MS = [2_000, 5_000] as const;
+
+/**
+ * Retry a copy-back attempt only while it has written nothing into the host
+ * workspace. The baseline stays valid until then, so a fresh attempt is the
+ * same merge. Never retry an unsafe archive or a permission failure, and never
+ * retry once the merge has started writing host files.
+ */
+async function retryWorkspaceRestoreBeforeHostWrite(
+  delaysMs: readonly number[],
+  attempt: (markHostWriteStarted: () => void) => Promise<void>,
+): Promise<void> {
+  for (let retry = 0; ; retry++) {
+    let hostWriteStarted = false;
+    try {
+      await attempt(() => { hostWriteStarted = true; });
+      return;
+    } catch (error) {
+      const code = classifyWorkspaceRestoreFailure(error);
+      const retryable = code === "restore_failed" || code === "restore_lock_timeout";
+      if (hostWriteStarted || !retryable || retry >= delaysMs.length) throw error;
+      await delay(delaysMs[retry]!);
+    }
+  }
 }
 
 /**
@@ -1094,6 +1129,9 @@ export async function prepareSandboxManagedRuntime(input: {
   client: SandboxManagedRuntimeClient;
   workspaceLocalDir: string;
   workspaceRemoteDir?: string;
+  /** Host-owned transfer scratch within the lease's reserved runtime tree.
+   * Persistent subdirectories can keep scratch outside their native file root. */
+  runtimeRootDir?: string;
   syncWorkspace?: boolean;
   /** Selects authoritative host staging, exact durable-seed replay, or no-overwrite adoption. */
   workspaceInboundMode?: WorkspaceInboundMode;
@@ -1122,9 +1160,18 @@ export async function prepareSandboxManagedRuntime(input: {
   // no-op that keeps the current behavior and control flow. A throwing runner
   // never changes control flow (see `createRuntimeSpanRunner`).
   runtimeSpan?: RuntimeSpanRunner;
+  /** Backoff before each automatic workspace copy-back retry. Tests shorten it. */
+  workspaceRestoreRetryDelaysMs?: readonly number[];
 }): Promise<PreparedSandboxManagedRuntime> {
   const workspaceRemoteDir = input.workspaceRemoteDir ?? input.spec.remoteCwd;
-  const runtimeRootDir = path.posix.join(workspaceRemoteDir, ".paperclip-runtime", input.adapterKey);
+  const runtimeRootDir = input.runtimeRootDir ?? path.posix.join(workspaceRemoteDir, ".paperclip-runtime", input.adapterKey);
+  if (input.runtimeRootDir !== undefined) {
+    const reservedRoot = path.posix.join(input.spec.remoteCwd, ".paperclip-runtime");
+    if (!path.posix.isAbsolute(runtimeRootDir) || path.posix.normalize(runtimeRootDir) !== runtimeRootDir
+      || runtimeRootDir.includes("\0") || runtimeRootDir.endsWith("/") || !runtimeRootDir.startsWith(`${reservedRoot}/`)) {
+      throw new Error("Transfer scratch must remain within the lease runtime tree");
+    }
+  }
   // A workspace directory that does not exist on this host has nothing to
   // stage, no files for ignore rules to govern, and nothing to restore into —
   // callers that only stage credential assets (the adapter env tests) hand
@@ -1717,6 +1764,7 @@ export async function prepareSandboxManagedRuntime(input: {
       // started task before it returns, so lease teardown never starts while an
       // outbound restore task still writes host data.
       const outboundTasks: Array<SyncOperationTask<void>> = [];
+      const outboundDiagnostics: Array<WorkspaceRestoreDiagnostic | undefined> = [];
 
       // The workspace restore task runs only when the run syncs the workspace.
       // The task exports the sandbox git history (git-backed workspace), reads
@@ -1758,10 +1806,13 @@ export async function prepareSandboxManagedRuntime(input: {
                   ignoredPaths: repository.snapshot.ignoredPaths,
                 }),
                 onRuntimeProgress: input.onRuntimeProgress,
+                workspaceRestoreRetryDelaysMs: input.workspaceRestoreRetryDelaysMs,
               });
               await nested.restoreWorkspace(restoreSink);
             }
-            await withTempDir("paperclip-sandbox-restore-", async (tempDir) => {
+            await retryWorkspaceRestoreBeforeHostWrite(
+              input.workspaceRestoreRetryDelaysMs ?? WORKSPACE_RESTORE_RETRY_DELAYS_MS,
+              (markHostWriteStarted) => withTempDir("paperclip-sandbox-restore-", async (tempDir) => {
               let importedRef: string | null = null;
               let importedHead: string | null = null;
               let remoteWorkspaceStatus = "dirty";
@@ -1780,7 +1831,7 @@ export async function prepareSandboxManagedRuntime(input: {
                   // the import fails on a missing prerequisite. In that case re-export
                   // a full, self-contained bundle from the still-live sandbox rather
                   // than discard the completed run.
-                  const exportAndImport = async (forceFullBundle: boolean): Promise<string> => {
+                  const exportAndImport = async (forceFullBundle: boolean): Promise<string> => withWorkspaceRestoreStep("git_export", async () => {
                     await input.client.run(
                       `sh -c ${shellQuote(buildRemoteGitDeltaBundleScript({
                         remoteDir: workspaceRemoteDir,
@@ -1838,14 +1889,14 @@ export async function prepareSandboxManagedRuntime(input: {
                       remoteWorkspaceStatus = remoteWorkspaceStatus === "clean" ? "clean" : "dirty";
                       await input.client.remove(remoteWorkspaceStatusPath).catch(() => undefined);
                     }
-                    return fetchGitBundleIntoLocalRef({
+                    return withWorkspaceRestoreStep("git_import", () => fetchGitBundleIntoLocalRef({
                       localDir: input.workspaceLocalDir,
                       bundlePath: localBundlePath,
                       exportRef,
                       importedRef: importedRef!,
                       baseSha: gitSnapshot.headCommit,
-                    });
-                  };
+                    }));
+                  });
 
                   try {
                     importedHead = await exportAndImport(false);
@@ -1885,19 +1936,19 @@ export async function prepareSandboxManagedRuntime(input: {
                     "workspace",
                     { sink: input.onRuntimeProgress, phase: "restore" },
                   );
-                  const syncResult = await input.client.syncOut!(operations);
+                  const syncResult = await withWorkspaceRestoreStep("workspace_transfer", () => input.client.syncOut!(operations));
                   const transferredBytes = sumSyncResultBytes(syncResult);
                   await workspaceRestore.finish(transferredBytes, transferredBytes);
                 } else {
                   const remoteWorkspaceTar = path.posix.join(runtimeRootDir, "workspace-download.tar");
-                  await input.client.run(
+                  await withWorkspaceRestoreStep("workspace_transfer", () => input.client.run(
                     `sh -c ${shellQuote(createRemoteTarballFromDirectoryCommand({
                       remoteDir: workspaceRemoteDir,
                       archivePath: remoteWorkspaceTar,
                       exclude: workspaceRestoreExclude,
                     }))}`,
                     { timeoutMs: input.spec.timeoutMs },
-                  );
+                  ));
                   const workspaceRestore = makeTransferProgress(
                     restoreSink,
                     "Restoring",
@@ -1905,52 +1956,58 @@ export async function prepareSandboxManagedRuntime(input: {
                     "workspace",
                     { sink: input.onRuntimeProgress, phase: "restore" },
                   );
-                  const archiveBytes = await input.client.readFile(remoteWorkspaceTar, workspaceRestore.options);
+                  const archiveBytes = await withWorkspaceRestoreStep("workspace_transfer", () => input.client.readFile(remoteWorkspaceTar, workspaceRestore.options));
                   const archiveBuffer = toBuffer(archiveBytes);
                   await workspaceRestore.finish(archiveBuffer.byteLength, archiveBuffer.byteLength);
                   await input.client.remove(remoteWorkspaceTar).catch(() => undefined);
                   const localArchivePath = path.join(tempDir, "workspace.tar");
-                  await fs.writeFile(localArchivePath, archiveBuffer);
-                  await extractTarballToDirectory({
-                    archivePath: localArchivePath,
-                    localDir: extractedDir,
+                  await withWorkspaceRestoreStep("workspace_extract", async () => {
+                    await fs.writeFile(localArchivePath, archiveBuffer);
+                    await extractTarballToDirectory({
+                      archivePath: localArchivePath,
+                      localDir: extractedDir,
+                    });
                   });
                 }
                 const gitHeadToIntegrate = importedHead;
-                const mergeBaseline = repositories.length === 0 ? baselineSnapshot! : await selectDirectorySnapshot(baselineSnapshot!, {
-                  omit: repositories.map((repo) => repo.path), exclude: workspaceRestoreExclude, ignoredPaths: gitSnapshot?.ignoredPaths,
-                });
-                try {
-                await mergeDirectoryWithBaseline({
-                  baseline: mergeBaseline,
-                  sourceDir: extractedDir,
-                  targetDir: input.workspaceLocalDir,
-                  beforeApply: gitHeadToIntegrate
-                    ? async () => {
-                        await integrateImportedGitHead({
+                await withWorkspaceRestoreStep("directory_merge", async () => {
+                  const mergeBaseline = repositories.length === 0 ? baselineSnapshot! : await selectDirectorySnapshot(baselineSnapshot!, {
+                    omit: repositories.map((repo) => repo.path), exclude: workspaceRestoreExclude, ignoredPaths: gitSnapshot?.ignoredPaths,
+                  });
+                  try {
+                    await mergeDirectoryWithBaseline({
+                      baseline: mergeBaseline,
+                      sourceDir: extractedDir,
+                      targetDir: input.workspaceLocalDir,
+                      // Runs under the merge lock, before the first host write.
+                      beforeApply: async () => {
+                        markHostWriteStarted();
+                        if (!gitHeadToIntegrate) return;
+                        await withWorkspaceRestoreStep("git_integration", () => integrateImportedGitHead({
                           localDir: input.workspaceLocalDir,
                           importedHead: gitHeadToIntegrate,
-                        });
-                      }
-                    : undefined,
-                  afterApply: gitSnapshot
-                    ? async () => {
-                        await resetLocalGitIndexToHead({
-                          localDir: input.workspaceLocalDir,
-                          checkWorkingTreeClean: remoteWorkspaceStatus === "clean",
-                        });
-                      }
-                    : undefined,
+                          baseline: gitSnapshot ?? undefined,
+                        }));
+                      },
+                      afterApply: gitSnapshot
+                        ? async () => {
+                            await withWorkspaceRestoreStep("index_reset", () => resetLocalGitIndexToHead({
+                              localDir: input.workspaceLocalDir,
+                              checkWorkingTreeClean: remoteWorkspaceStatus === "clean",
+                            }));
+                          }
+                        : undefined,
+                    });
+                  } finally { if (mergeBaseline !== baselineSnapshot) await disposeDirectorySnapshot(mergeBaseline); }
                 });
-                } finally { if (mergeBaseline !== baselineSnapshot) await disposeDirectorySnapshot(mergeBaseline); }
               } finally {
                 await emitRuntimeStatus(input.onRuntimeProgress, "finalize", "Finalizing workspace");
                 if (importedRef) {
-                  await deleteLocalGitRef({ localDir: input.workspaceLocalDir, ref: importedRef });
+                  await withWorkspaceRestoreStep("git_ref_cleanup", () => deleteLocalGitRef({ localDir: input.workspaceLocalDir, ref: importedRef! }));
                 }
               }
-            });
-          }), restoreSink),
+            }));
+          }), restoreSink, (diagnostic) => { outboundDiagnostics[0] = diagnostic; }),
         );
       }
 
@@ -1961,18 +2018,19 @@ export async function prepareSandboxManagedRuntime(input: {
         if (!asset.restore) continue;
         const assetRestore = asset.restore;
         const assetKey = asset.key;
+        const taskIndex = outboundTasks.length;
         outboundTasks.push(() =>
           withWorkspaceRestoreDiagnostics(
             "asset",
             () => runStepSpan(`restore.asset.${assetKey}`, async () => {
               await withTempDir("paperclip-sandbox-restore-", async (tempDir) => {
-                await assetRestore({
+                await withWorkspaceRestoreStep("asset_restore", () => assetRestore({
                   assetDir: path.posix.join(runtimeRootDir, assetKey),
                   readFile: async (remotePath) => toBuffer(await input.client.readFile(remotePath)),
                   tempDir,
-                });
+                }));
               });
-            }), restoreSink),
+            }), restoreSink, (diagnostic) => { outboundDiagnostics[taskIndex] = diagnostic; }),
         );
       }
 
@@ -1989,8 +2047,9 @@ export async function prepareSandboxManagedRuntime(input: {
       // Every outbound restore is a required operation: a rejection is fatal.
       // The workspace comes first, then each asset in order. Raise the first
       // rejection in stable task order, so two failures raise the earlier one.
-      for (const result of outboundResults) {
+      for (const [index, result] of outboundResults.entries()) {
         if (result.status === "rejected") {
+          recordWorkspaceRestoreDiagnostic(result.reason, outboundDiagnostics[index]);
           throw result.reason;
         }
       }
