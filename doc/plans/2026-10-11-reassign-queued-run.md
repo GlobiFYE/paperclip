@@ -4,11 +4,11 @@ Notes for the fix to public issue paperclipai/paperclip#14879: "Reassigning an
 issue does not cancel the previous assignee's queued run, so the new
 assignee's wake stays deferred".
 
-- Branch: `fix/14879-reassign-queued-run`
-- Started from: `e733bddc45e00efb1819fffa8677f7b0d07802c5` (`master`)
-- Rebased onto: `04d8eaef45ac05f684487f422e158973616fff54`
-  (`fix/15483-prestart-cancel-not-reconcile`, fork PR #2, the fix for
-  paperclipai/paperclip#15483). This branch is now stacked on that fix.
+- Branch: `fix/14879-reassign-queued-run-v3`
+- Stacked on the fix for paperclipai/paperclip#15483 (pull request
+  paperclipai/paperclip#15965). This change uses its pre-dispatch verifier.
+- The history below names commits from the earlier, unstacked work on a fork.
+  The final change is one commit on the rebased #15483 fix.
 
 ## Root Cause
 
@@ -318,8 +318,17 @@ cd server && runuser -u postgres -- env HOME=/tmp/pgtest-home TMPDIR=/tmp/pgtest
     `e733bdd` versions, so neither branch causes it.
   - `heartbeat-reassign-queued-run.test.ts`: 23 tests pass (the gate test was
     corrected after the first run of the set, then rerun alone).
+- After the rebase of both changes onto `master` of 2026-10-12, where
+  `master` added `issue_waiting_for_response` to the queued-run staleness
+  codes:
+  - The new code is a pre-dispatch cancel only with its connection-intent
+    snapshot, as on `master`. This change does not widen it.
+  - `pnpm check:module-boundaries`: passes.
+  - Reassignment, classification, ownership-route, `legacy-execution-recovery`,
+    `wake-queue/adapters/postgres`, dependency, connection-intent and retry
+    suites, 8 files: 374 of 374 tests pass.
+  - Not run on this head: the server typecheck. CI runs it.
 - Not run: the full monorepo typecheck, `pnpm test:run` and `pnpm build`.
-- GitHub Actions do not run on this fork.
 
 ## Open Questions
 
