@@ -32,7 +32,10 @@ describe("publishConfig publishes the duplex observability subpath", () => {
     expect(manifest.publishConfig.exports["./*"]).toBeDefined();
   });
 
-  it("keeps the top-level wildcard export unchanged", () => {
-    expect(manifest.exports["./*"]).toBe("./src/*.ts");
+  it("keeps source resolution by default and built resolution for the private fork", () => {
+    expect(manifest.exports["./*"]).toEqual({
+      "pantheon-dist": "./dist/*.js",
+      default: "./src/*.ts",
+    });
   });
 });

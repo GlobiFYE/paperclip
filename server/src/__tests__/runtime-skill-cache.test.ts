@@ -45,6 +45,8 @@ describe("runtime skill revision cache", () => {
     expect(new Set(sources).size).toBe(1);
     expect(read).toHaveBeenCalledTimes(2);
     expect((await fs.stat(sources[0]!)).mode & 0o222).toBe(0);
+    expect((await fs.stat(spec.entry)).mode & 0o222).toBe(0);
+    expect((await fs.stat(path.join(spec.entry, "manifest.json"))).mode & 0o222).toBe(0);
     expect((await fs.stat(path.join(sources[0]!, "SKILL.md"))).mode & 0o222).toBe(0);
     const before = await fs.stat(path.join(sources[0]!, "SKILL.md"));
     read.mockRejectedValue(new Error("Upstream offline"));
