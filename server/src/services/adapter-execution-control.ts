@@ -115,8 +115,8 @@ export async function waitForAdapterStop(
 
 // A Stop request's wait is a response budget, not the adapter's settlement
 // bound: workspace sync-back and cooperative provider cancellation routinely
-// settle a few minutes after it. Only a Stop still unsettled this long is an
-// operational failure worth reporting.
+// settle a few minutes after it. Only a Stop still unsettled this long after
+// it was requested is an operational failure worth reporting.
 export const UNSETTLED_ADAPTER_STOP_REPORT_MS = 10 * 60_000;
 const watchedAdapterStops = new WeakSet<Promise<void>>();
 
@@ -126,11 +126,16 @@ export function reportAdapterStopIfUnsettled(
   report: (error: AdapterStopTimeoutError) => void,
   diagnostics?: AdapterStopContext,
   owner?: ReturnType<typeof createAdapterExecutionControl>,
-  reportAfterMs = UNSETTLED_ADAPTER_STOP_REPORT_MS,
+  {
+    stopRequestedAt = Date.now(),
+    reportAfterMs = UNSETTLED_ADAPTER_STOP_REPORT_MS,
+  }: { stopRequestedAt?: number; reportAfterMs?: number } = {},
 ) {
   if (watchedAdapterStops.has(settled)) return;
   watchedAdapterStops.add(settled);
   let done = false;
+  // The bound runs from the Stop request, which already spent its response wait.
+  const remainingMs = Math.max(0, stopRequestedAt + reportAfterMs - Date.now());
   const timer = setTimeout(() => {
     if (done) return;
     try {
@@ -138,7 +143,7 @@ export function reportAdapterStopIfUnsettled(
     } catch {
       // Reporting is diagnostic only.
     }
-  }, reportAfterMs);
+  }, remainingMs);
   // Never hold process shutdown open for a diagnostic.
   timer.unref?.();
   void settled.then(() => {

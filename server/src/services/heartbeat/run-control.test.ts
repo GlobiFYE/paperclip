@@ -285,7 +285,12 @@ describe.skipIf(!support.supported)("heartbeat run-control database wiring", () 
     const deps = callbacks(db);
     deps.activeRunExecutions.add(run.id);
     try {
-      vi.mocked(waitForAdapterStop).mockRejectedValueOnce(new AdapterStopTimeoutError(60_000, { runId: run.id }));
+      let waitStartedAt = 0;
+      vi.mocked(waitForAdapterStop).mockImplementationOnce(async () => {
+        waitStartedAt = Date.now();
+        throw new AdapterStopTimeoutError(60_000, { runId: run.id });
+      });
+      const requestedAt = Date.now();
       const error = await createHeartbeatRunControl(db, deps).cancelRunInternal(run.id).catch((err: unknown) => err);
       expect(error).toBeInstanceOf(HttpError);
       expect(error).toMatchObject({
@@ -296,7 +301,12 @@ describe.skipIf(!support.supported)("heartbeat run-control database wiring", () 
       expect(control.controller.signal.aborted).toBe(true);
       // Only a Stop that never settles is reported, from the same execution.
       expect(reportAdapterStopIfUnsettled).toHaveBeenCalledWith(control.settled, captureException,
-        expect.objectContaining({ runId: run.id, adapterType: "codex_local", runtimeMode: "legacy", abortRequested: true }), control);
+        expect.objectContaining({ runId: run.id, adapterType: "codex_local", runtimeMode: "legacy", abortRequested: true }), control,
+        { stopRequestedAt: expect.any(Number) });
+      // Its report bound runs from the Stop request, before the response wait.
+      const { stopRequestedAt } = vi.mocked(reportAdapterStopIfUnsettled).mock.calls.at(-1)![4]!;
+      expect(stopRequestedAt).toBeGreaterThanOrEqual(requestedAt);
+      expect(stopRequestedAt).toBeLessThanOrEqual(waitStartedAt);
       // A pending Stop is not a cancellation receipt.
       expect(deps.setRunStatusFromLive).not.toHaveBeenCalled();
       expect(deps.finalizeAgentStatus).not.toHaveBeenCalled();

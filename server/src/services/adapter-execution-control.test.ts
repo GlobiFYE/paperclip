@@ -214,9 +214,9 @@ it("reports a Stop once, with its pending phase, only when it stays unsettled", 
   const report = vi.fn();
   try {
     control.phases.enter("workspace_restore");
-    reportAdapterStopIfUnsettled(control.settled, report, { runId, adapterType: "codex_local" }, control, 5000);
+    reportAdapterStopIfUnsettled(control.settled, report, { runId, adapterType: "codex_local" }, control, { reportAfterMs: 5000 });
     // A repeated Stop for the same execution must not add another report.
-    reportAdapterStopIfUnsettled(control.settled, report, { runId }, control, 5000);
+    reportAdapterStopIfUnsettled(control.settled, report, { runId }, control, { reportAfterMs: 5000 });
     await vi.advanceTimersByTimeAsync(4999);
     expect(report).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
@@ -238,7 +238,7 @@ it("does not report a Stop that settles before the report bound", async () => {
   vi.useFakeTimers();
   const control = createAdapterExecutionControl();
   const report = vi.fn();
-  reportAdapterStopIfUnsettled(control.settled, report, undefined, control, 5000);
+  reportAdapterStopIfUnsettled(control.settled, report, undefined, control, { reportAfterMs: 5000 });
   await vi.advanceTimersByTimeAsync(1000);
   control.finish();
   await control.settled;
@@ -247,11 +247,29 @@ it("does not report a Stop that settles before the report bound", async () => {
   expect(report).not.toHaveBeenCalled();
 });
 
+it("measures the report bound from the Stop request, including its response wait", async () => {
+  vi.useFakeTimers();
+  const control = createAdapterExecutionControl();
+  const report = vi.fn();
+  const stopRequestedAt = Date.now();
+  // The Stop request's own response wait elapses before the watch starts.
+  const responseWait = stopTimeout(waitForAdapterStop(control.settled, 2000));
+  await vi.advanceTimersByTimeAsync(2000);
+  await responseWait;
+  reportAdapterStopIfUnsettled(control.settled, report, undefined, control, { stopRequestedAt, reportAfterMs: 5000 });
+  await vi.advanceTimersByTimeAsync(2999);
+  expect(report).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect(report).toHaveBeenCalledOnce();
+  expect((report.mock.calls[0]![0] as AdapterStopTimeoutError).diagnostics).toMatchObject({ timeoutMs: 5000 });
+  control.finish();
+});
+
 it("keeps a failing reporter from escaping its timer", async () => {
   vi.useFakeTimers();
   const control = createAdapterExecutionControl();
   const report = vi.fn(() => { throw new Error("reporter down"); });
-  reportAdapterStopIfUnsettled(control.settled, report, undefined, undefined, 1000);
+  reportAdapterStopIfUnsettled(control.settled, report, undefined, undefined, { reportAfterMs: 1000 });
   await vi.advanceTimersByTimeAsync(1000);
   expect(report).toHaveBeenCalledOnce();
   control.finish();

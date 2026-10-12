@@ -1002,6 +1002,7 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
           processCancellationSettlement,
         );
       }
+      const stopRequestedAt = Date.now();
       const cancellation = await (async () => {
         try {
           if (control) {
@@ -1075,7 +1076,9 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
               // The owned adapter is still settling (for example copying the
               // workspace back) and keeps its Stop proof requirements. Answer
               // this request honestly; report only a Stop that never settles.
-              reportAdapterStopIfUnsettled(control.settled, captureException, stopDiagnostics, control);
+              reportAdapterStopIfUnsettled(control.settled, captureException, stopDiagnostics, control, {
+                stopRequestedAt,
+              });
               throw conflict(error.message, { code: "adapter_stop_pending", runId: run.id });
             }
             const stopped = await getRun(run.id);
