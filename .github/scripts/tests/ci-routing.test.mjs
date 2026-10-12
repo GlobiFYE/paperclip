@@ -4,6 +4,7 @@ import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import vm from "node:vm";
 
 const workflow = readFileSync(new URL("../../workflows/ci-routing.yml", import.meta.url), "utf8");
 const jobs = workflow.split(/^jobs:\n/m)[1];
@@ -12,9 +13,10 @@ test("routing uses reserved capacity and runs no PR code or actions", () => {
   assert.deepEqual([...jobs.matchAll(/^ {2}([a-z_]+):$/gm)].map((match) => match[1]), ["gate"]);
   const placement = jobs.match(/^ {4}runs-on: (.+)$/m)?.[1];
   assert.ok(placement, "routing placement must be defined");
-  assert.ok(placement.includes("vars.AWS_CI_ENABLED == 'true' && github.repository == 'paperclipai/paperclip' && github.repository_id == '1170821064'"));
-  assert.ok(placement.includes("github.event_name == 'pull_request' && contains(fromJSON(vars.AWS_CI_TRUSTED_USER_IDS || '[]'), github.event.pull_request.user.id) && contains(fromJSON(vars.AWS_CI_TRUSTED_USER_IDS || '[]'), github.event.sender.id)"));
-  assert.ok(placement.includes("github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && contains(fromJSON(vars.AWS_CI_TRUSTED_USER_IDS || '[]'), fromJSON(github.actor_id))"));
+  assert.doesNotMatch(placement, /fromJSON/);
+  assert.ok(placement.includes("vars.AWS_CI_TRUSTED_USER_IDS == vars.AWS_CI_ROUTING_USER_IDS_SOURCE"));
+  assert.ok(placement.includes("github.event.pull_request.user.id"));
+  assert.ok(placement.includes("github.event.sender.id"));
   assert.ok(placement.endsWith("&& 'runs-on/fleet=paperclip-ci-routing-x64/env=public-ci' || 'ubuntu-latest' }}"));
   assert.doesNotMatch(jobs, /uses:|actions\/checkout|secrets\./);
   assert.doesNotMatch(workflow, /^ {2}(?:actions|contents|pull-requests): write$/m);
@@ -138,5 +140,55 @@ for (const [name, stack, base, expected] of scopeCases) {
     assert.equal(executeStep("Select stacked PR CI scope", {
       STACK_JSON: JSON.stringify(stack), PR_BASE_REF: base,
     }).full_ci, expected);
+  });
+}
+
+
+function routingPlacement(vars = {}, github = {}) {
+  const source = "[34892728]";
+  const expression = jobs.match(/^ {4}runs-on: \$\{\{ (.+) \}\}$/m)?.[1];
+  assert.ok(expression, "routing expression is missing");
+  return vm.runInNewContext(expression, {
+    vars: {
+      AWS_CI_ENABLED: "true",
+      AWS_CI_TRUSTED_USER_IDS: source,
+      AWS_CI_ROUTING_USER_IDS_SOURCE: source,
+      AWS_CI_ROUTING_USER_IDS: "|34892728|",
+      ...vars,
+    },
+    github: {
+      repository: "paperclipai/paperclip",
+      repository_id: "1170821064",
+      event_name: "pull_request",
+      ref: "refs/heads/master",
+      actor_id: "34892728",
+      event: { pull_request: { user: { id: 34892728 } }, sender: { id: 34892728 } },
+      ...github,
+    },
+    contains: (search, item) => String(search).toLowerCase().includes(String(item).toLowerCase()),
+    format: (template, ...args) => template.replace(/\{(\d+)\}/g, (_, index) => String(args[Number(index)])),
+  }, { timeout: 1000 });
+}
+
+const placementCases = [
+  ["approved PR", {}, {}, "runs-on/fleet=paperclip-ci-routing-x64/env=public-ci"],
+  ["unapproved author", {}, { event: { pull_request: { user: { id: 999 } }, sender: { id: 34892728 } } }],
+  ["unapproved sender", {}, { event: { pull_request: { user: { id: 34892728 } }, sender: { id: 999 } } }],
+  ["partial ID cannot match", {}, { event: { pull_request: { user: { id: 4892728 } }, sender: { id: 34892728 } } }],
+  ["invalid JSON keeps hosted fallback", { AWS_CI_TRUSTED_USER_IDS: "[34892728,]" }, {}],
+  ["stale snapshot", { AWS_CI_TRUSTED_USER_IDS: "[34892728,999]" }, {}],
+  ["missing snapshot", { AWS_CI_ROUTING_USER_IDS_SOURCE: "" }, {}],
+  ["missing admission members", { AWS_CI_ROUTING_USER_IDS: "" }, {}],
+  ["disabled routing", { AWS_CI_ENABLED: "false" }, {}],
+  ["different repository", {}, { repository: "other/repo" }],
+  ["different repository ID", {}, { repository_id: "999" }],
+  ["approved manual master canary", {}, { event_name: "workflow_dispatch" }, "runs-on/fleet=paperclip-ci-routing-x64/env=public-ci"],
+  ["unapproved manual actor", {}, { event_name: "workflow_dispatch", actor_id: "999" }],
+  ["manual branch canary", {}, { event_name: "workflow_dispatch", ref: "refs/heads/other" }],
+];
+
+for (const [name, vars, github, expected = "ubuntu-latest"] of placementCases) {
+  test(`placement before allocation: ${name}`, () => {
+    assert.equal(routingPlacement(vars, github), expected);
   });
 }
