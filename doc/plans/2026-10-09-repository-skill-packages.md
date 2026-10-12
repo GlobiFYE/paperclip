@@ -1,10 +1,10 @@
 # Repository skill packages
 
-Outcome: GitHub imports can preserve a complete repository while independently selecting library entrypoints. Original authored files remain unchanged. Standalone skill-directory imports remain supported. Imports do not execute setup scripts.
+Outcome: GitHub imports can preserve a complete repository while independently selecting library entrypoints. Original authored files remain unchanged. Existing skill-directory sources remain supported; new imports keep repository files together. Imports do not execute setup scripts.
 
 Branch: `codex/skill-repository-packages`, based on `origin/master` at `7333e4eba8`.
 
-Acceptance: evaluation prose is accepted; dynamic execution checks remain; repository snapshots preserve shared references, binaries, executable files and credits through runtime copying; shared-file updates produce coherent pinned versions; invalid shared content blocks the package; the existing import dialog explains selection, files and requirements and supports inspecting both.
+Acceptance: evaluation prose is accepted; dynamic execution checks remain; repository snapshots preserve shared references, binaries, executable files and credits through runtime copying; shared-file updates produce coherent pinned versions; shared-file problems are disclosed without blocking the package; the existing import dialog explains selection, files and requirements and supports inspecting both.
 
 Implementation: one immutable, company-scoped repository snapshot is referenced by each imported skill version. Runtime projections contain a generated discovery entrypoint and the untouched tree under `.paperclip-repository/`, so all existing adapters carry the dependencies without introducing host-only symlinks. Projections may duplicate package files for multiple enabled entrypoints; the database stores each package once. Optional `paperclip.skills.json` declares version 1, public `skills` entrypoint paths and `requirements` text. It never runs installation commands.
 
@@ -18,4 +18,10 @@ The location oracle recognizes both provider-home copies and the immutable bundl
 
 The first broad test attempt was stopped when PostgreSQL-dependent suites skipped on the exhausted host. The new full `pnpm test:run` was stopped after seven failures across six test files unchanged by this PR (native session recovery, agent conversations, workspace runtime exposure, workspace dispatch, connection removal, and skill utility locking), plus 21 skipped connection-intent database cases. The recovery assertion reproduces in isolation; the failing test files are unchanged from the starting commit and the recovery fixture omits skill runtime context. The broad suite remains incomplete and is not counted as passed. Live qualification verifies import, delivery and instruction access, not every Poteto workflow or adapter.
 
-Review: [draft PR #15731](https://github.com/paperclipai/paperclip/pull/15731). The branch is based on master and has no unrelated checkout changes.
+Review: [PR #15731](https://github.com/paperclipai/paperclip/pull/15731). The branch is based on master and has no unrelated checkout changes.
+
+## October 12: import warnings
+
+The importer saves available repository files without asking for repair decisions. Unsupported links and oversized files are omitted with persistent path-specific warnings. Missing references remain visible on the source; repository imports include shared files automatically. An invalid optional manifest falls back to discovered entrypoints. A skill that cannot be registered remains selected with a Needs setup warning; its original bytes still travel as repository support content for usable entrypoints. Content audits remain available, and import never executes setup commands.
+
+The production dialog shows every skill by default, selects all discovered skills, and collapses individual package files. It uses one collapsed warnings disclosure and leaves Import repository available. The importer has no packaging option: new imports keep repository files together. Storybook covers omitted files, warning details, missing references, setup problems, warnings after import, and mobile review. Focused scanner/delivery/PostgreSQL tests and UI tests verify saved warnings and available bytes; browser fixtures exercise the production UI. This revision has not rerun the paid local/Daytona campaigns above.

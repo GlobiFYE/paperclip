@@ -36,7 +36,7 @@ function OutsideJourney() {
   </div>;
 }
 
-export function GitHubSkillsJourney({ step = "start", packageScenario }: { step?: Step; packageScenario?: "ready" | "blocked" }) {
+export function GitHubSkillsJourney({ step = "start", packageScenario }: { step?: Step; packageScenario?: "ready" | "warnings" | "missing" | "setup" }) {
   const client = useQueryClient();
   const navigate = useNavigate();
   const initialNavigate = useRef(navigate);
@@ -49,12 +49,12 @@ export function GitHubSkillsJourney({ step = "start", packageScenario }: { step?
     draftKeys.forEach(key => sessionStorage.removeItem(key));
     if (step === "scanning") sessionStorage.setItem(draftKeys[0]!, JSON.stringify({ repositoryUrl: "https://github.com/acme/team-skills" }));
     if (step === "selection" || step === "saving") {
-      const discovered = repositoryCandidates(packageScenario === "blocked").filter(candidate => packageScenario || !candidate.path.includes("/security/"));
+      const discovered = repositoryCandidates(packageScenario).filter(candidate => packageScenario || !candidate.path.includes("/security/"));
       sessionStorage.setItem(draftKeys[0]!, JSON.stringify({
         repositoryUrl: "https://github.com/acme/team-skills", trackingRef: "main", connectionId: "github-storybook",
         packageMode: "repository",
-        selectedPaths: repositoryFixture().skillPaths, excludedFolders: [],
-        discovery: { repositoryId: "123456", repositoryUrl: "https://github.com/acme/team-skills", fullName: "acme/team-skills", trackingRef: "main", commitSha: COMMIT, candidates: discovered, warnings: [], packageMode: "repository", repositoryPackage: repositoryFixture(packageScenario === "blocked") },
+        selectedPaths: discovered.map(candidate => candidate.path), excludedFolders: [],
+        discovery: { repositoryId: "123456", repositoryUrl: "https://github.com/acme/team-skills", fullName: "acme/team-skills", trackingRef: "main", commitSha: COMMIT, candidates: discovered, warnings: [], packageMode: "repository", repositoryPackage: repositoryFixture(packageScenario) },
       }));
     }
     client.setQueryData(queryKeys.apps.gallery(COMPANY_ID), {

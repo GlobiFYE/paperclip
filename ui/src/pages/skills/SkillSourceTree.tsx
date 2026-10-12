@@ -131,17 +131,17 @@ export function SkillSourceTree({ candidates, selected, excludedFolders, onChang
           if (!skill) return <span className="block truncate font-mono text-xs" title={included.get(node.path)?.filePath ?? node.path}>{node.name}</span>;
           return <span className="flex min-w-0 items-baseline gap-2" title={[skill.path, skill.description, skill.error].filter(Boolean).join('\n')}>
             <span className="max-w-full shrink-0 truncate font-medium text-foreground">{skill.name}</span>
-            {(skill.error ?? skill.description) && <span className={`min-w-0 flex-1 truncate text-xs ${skill.error ? 'text-destructive' : 'text-muted-foreground'}`}>{skill.error ?? skill.description}</span>}
+            {skill.description && <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{skill.description}</span>}
             <span className="hidden max-w-32 shrink-0 truncate font-mono text-xs text-muted-foreground md:inline" title={skill.path}>{skill.path.split('/').at(-2) ?? '.'}/</span>
           </span>;
         }}
         renderNodeExtra={node => {
           const skill = skillsByPath.get(node.path);
           if (!skill) return node.kind === 'file' ? <span className="text-xs text-muted-foreground">Included</span> : null;
-          const label = skill.error ? 'Invalid' : skill.inspection?.references.length ? 'Check references' : skill.note === 'New skill' ? 'New' : skill.note === 'Already imported' ? 'Installed' : skill.note?.startsWith('Removed from source') ? 'Removed' : skill.note;
+          const label = skill.error ? 'Needs setup' : skill.note === 'New skill' ? 'New' : skill.note === 'Already imported' ? 'Installed' : skill.note?.startsWith('Removed from source') ? 'Removed' : skill.note;
           const count = skill.inspection?.files.length ?? skill.fileCount;
           return <>
-            {label && <Badge variant="outline" className={skill.error ? 'font-normal text-destructive' : 'hidden font-normal text-muted-foreground sm:inline-flex'} title={skill.error ?? skill.note}>{label}</Badge>}
+            {label && <Badge variant="outline" className="hidden font-normal text-muted-foreground sm:inline-flex" title={skill.error ?? skill.note}>{label}</Badge>}
             {count !== undefined && <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{count} {count === 1 ? 'file' : 'files'}</span>}
             {onPreview && <Button type="button" size="icon-xs" variant="ghost" disabled={disabled} aria-label={`Inspect ${skill.name}`} onKeyDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); onPreview(skill); }}>{skill.inspection?.references.length ? <AlertTriangle className="size-3.5" /> : <Info className="size-3.5" />}</Button>}
           </>;

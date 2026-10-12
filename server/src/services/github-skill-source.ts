@@ -127,7 +127,7 @@ async function scanRepository(input: SkillScanInput, providerRead: GitHubRead, o
       }
       if (declaredBytes > MAX_SCAN_BYTES) throw unprocessable('Skill packages exceed the 100 MB scan limit.');
     }
-    const warnings = entries.filter(e => e.mode === '120000' || e.type === 'commit').map(e => `Not followed: ${e.path} (${e.mode === '120000' ? 'symlink' : 'submodule'}).`);
+    const warnings = entries.filter(e => e.mode === '120000' || e.type === 'commit').map(e => `${e.path} — ${e.mode === '120000' ? 'Symlink' : 'Submodule'} couldn’t be included.`);
     const repositoryInventory = input.packageMode === 'repository' ? entries.filter(entry => entry.type !== 'tree') : null;
     if (repositoryInventory && repositoryInventory.length > MAX_REPOSITORY_FILES) throw unprocessable('Repository package exceeds the 9,990 file limit.');
     const readable = repositoryInventory?.filter(entry => entry.type === 'blob' && ['100644', '100755'].includes(entry.mode) && (entry.size ?? 0) <= MAX_FILE_BYTES);
@@ -159,19 +159,21 @@ async function scanRepository(input: SkillScanInput, providerRead: GitHubRead, o
       Object.assign(progress, { currentPath: root.path, checkedFiles: 0, totalFiles: inventory.length });
       await report();
       const files: CompanySkillVersionFileInventoryEntry[] = [];
+      const fileWarnings: string[] = [];
       let error: string | null = rootsByDirectory.get(dir)!.length > 1 ? 'Multiple SKILL.md entrypoints share this package directory.' : null;
       for (const entry of inventory) {
         progress.currentPath = entry.path;
         await report();
         progress.checkedFiles++;
-        if (!['100644', '100755'].includes(entry.mode) || entry.type !== 'blob') { error = `Unsupported symlink or submodule: ${entry.path}`; continue; }
+        if (!['100644', '100755'].includes(entry.mode) || entry.type !== 'blob') { fileWarnings.push(`${entry.path} — ${entry.mode === '120000' ? 'Symlink' : 'Submodule'} couldn’t be included.`); continue; }
         const bytes = await readBlob(entry);
-        if (!bytes) { error = `File exceeds the 1 MB limit: ${entry.path}`; continue; }
+        if (!bytes) { fileWarnings.push(`${entry.path} — Exceeds the 1 MB file limit; not included.`); continue; }
         const relative = entry.path === root.path ? 'SKILL.md' : entry.path.slice(prefix.length);
         const kind = relative !== 'SKILL.md' && (entry.mode === '100755' || bytes.subarray(0, 2).toString() === '#!') ? 'script' : classifyInventoryKind(relative);
         files.push(snapshotFile(relative, kind, bytes, entry.mode === '100755'));
       }
       const markdown = files.find(f => f.path === 'SKILL.md');
+      if (!markdown) error = 'SKILL.md couldn’t be included.';
       const frontmatter = markdown && markdown.encoding !== 'base64' ? parseFrontmatterMarkdown(markdown.content).frontmatter : {};
       if (markdown?.encoding === 'base64') error = 'SKILL.md must contain UTF-8 text.';
       const name = typeof frontmatter.name === 'string' && frontmatter.name.trim() ? frontmatter.name.trim() : path.posix.basename(dir) || repo.full_name;
@@ -179,6 +181,7 @@ async function scanRepository(input: SkillScanInput, providerRead: GitHubRead, o
       const findings = !error ? await auditSkillSnapshot(files) : [];
       error ??= findings.filter(f => f.severity === 'error').map(f => `${f.path ?? root.path}: ${f.message}`).join(' ') || null;
       const inspection = { ...inspectSkillPackage(root.path, files, repositoryPaths, frontmatter, findings), commitSha: commit.sha };
+      inspection.warnings.push(...fileWarnings);
       skills.push({ path: root.path, name, description, fileCount: inventory.length, error, warnings: inspection.warnings, inspection, files: options.retainFiles === false ? [] : files });
       options.signal?.throwIfAborted();
       await options.onProgress?.({ type: 'candidate', candidate: { path: root.path, name, description, fileCount: inventory.length, error } });
@@ -190,16 +193,16 @@ async function scanRepository(input: SkillScanInput, providerRead: GitHubRead, o
     if (input.packageMode === 'repository') {
       const inventory = repositoryInventory!;
       repositoryFiles = [];
-      let packageError: string | null = skills.find(skill => skill.error)?.error ?? null;
+      const packageWarnings = [...warnings];
       totalBytes = 0;
       Object.assign(progress, { currentPath: null, checkedFiles: 0, totalFiles: inventory.length });
       for (const entry of inventory) {
         options.signal?.throwIfAborted();
         if (!['100644', '100755'].includes(entry.mode) || entry.type !== 'blob') {
-          packageError ??= `Unsupported symlink or submodule: ${entry.path}`; continue;
+          continue;
         }
         const bytes = await readBlob(entry);
-        if (!bytes) { packageError ??= `File exceeds the 1 MB limit: ${entry.path}`; continue; }
+        if (!bytes) { packageWarnings.push(`${entry.path} — Exceeds the 1 MB file limit; not included.`); continue; }
         if (totalBytes > MAX_REPOSITORY_BYTES) throw unprocessable('Repository package exceeds the 61 MB runtime limit.');
         const kind = entry.mode === '100755' || bytes.subarray(0, 2).toString() === '#!'
           ? 'script' : classifyInventoryKind(entry.path);
@@ -209,12 +212,10 @@ async function scanRepository(input: SkillScanInput, providerRead: GitHubRead, o
         await report();
       }
       const findings = await auditSkillSnapshot(repositoryFiles, false);
-      packageError ??= findings.filter(f => f.severity === 'error').map(f => `${f.path}: ${f.message}`).join(' ') || null;
       repositoryPackage = repositoryPackageInspection(repositoryFiles, roots.map(root => root.path),
-        [...new Set(findings.filter(f => f.severity === 'warning' && f.code !== 'broken_internal_link').map(f => f.message))], packageError);
+        [...new Set([...packageWarnings, ...findings.filter(f => f.severity === 'error').map(f => `${f.path}: ${f.message}`)])], null);
       const included = indexSkillPackagePaths(repositoryFiles.map(file => file.path));
       for (const skill of skills) {
-        skill.error = repositoryPackage.error ?? skill.error;
         if (skill.inspection) skill.inspection.references = skill.inspection.references.filter(ref => !included.has(ref.resolvedPath));
       }
     }
@@ -231,7 +232,6 @@ export async function previewGitHubSkillFile(input: SkillSourcePreviewRequest, r
   if (scan.commitSha.toLowerCase() !== input.commitSha.toLowerCase()) throw unprocessable('The preview commit did not match the requested snapshot.');
   const skill = scan.skills.find(candidate => candidate.path === input.skillPath);
   if (!skill) throw notFound('Skill package not found at this commit.');
-  if (skill.error) throw unprocessable(`Preview unavailable: ${skill.error}`);
   const file = (input.packageMode === 'repository' ? scan.repositoryFiles : skill.files)?.find(file => file.path === input.filePath);
   const manifest = (input.packageMode === 'repository' ? scan.repositoryPackage?.files : skill.inspection?.files)?.find(file => file.path === input.filePath);
   if (!file || !manifest) throw notFound('File is not included in this skill package.');

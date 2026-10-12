@@ -13,10 +13,11 @@ import { appSourceConnectHref } from './apps/app-connect-policy';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { SkillImportProgress, type FoundSkill } from './skills/SkillImportProgress';
 import { SkillPackagePreview } from './skills/SkillPackagePreview';
 import { SkillSourceTree, type SkillTreeCandidate } from './skills/SkillSourceTree';
+import { SkillImportWarnings, skillImportWarnings } from './skills/SkillImportWarnings';
 import { timeAgo } from '@/lib/timeAgo';
 import { skillRoute } from '@/lib/company-skill-routes';
 import { consumeSkillSourceReturn, rememberSkillSourceReturn } from '@/lib/skill-source-connect-return';
@@ -36,7 +37,7 @@ export function SkillSources() {
     await Promise.all([client.invalidateQueries({ queryKey: sourceKey(companyId) }), client.invalidateQueries({ queryKey: queryKeys.companySkills.list(companyId) })]);
   }
   const refresh = useMutation({ mutationFn: (id: string) => skillSourcesApi.refresh(companyId, id), onSuccess: async result => {
-    setResults(prev => ({ ...prev, [result.source.id]: result.warnings.join(' · ') })); await invalidate();
+    setResults(prev => ({ ...prev, [result.source.id]: '' })); await invalidate();
   }, onError: (error, id) => { setResults(prev => ({ ...prev, [id]: error.message })); void invalidate(); } });
   const disconnect = useMutation({ mutationFn: (id: string) => skillSourcesApi.disconnect(companyId, id), onSuccess: invalidate });
   const activeSource = query.data?.find(source => source.id === sourceId);
@@ -84,6 +85,7 @@ export function SkillSources() {
             </li>)}
           </ul>}
           {results[source.id] && <p role="status" className="text-xs text-muted-foreground">{results[source.id]}</p>}
+          <SkillImportWarnings warnings={skillImportWarnings(source.entries.filter(entry => entry.selection === 'selected'), source.repositoryPackage)} />
           {source.lastError && source.lastAttemptAt && <p className="text-xs text-muted-foreground">Last attempt {timeAgo(source.lastAttemptAt)}</p>}
           {source.lastError && <p role="alert" className="text-sm text-destructive">{source.lastError} <Link to={`/skills/sources/${source.id}`} className="underline">Review source</Link></p>}
           {source.connectionId && <Link to={`/apps/${source.connectionId}/permissions`} className="text-xs text-muted-foreground hover:text-foreground">Manage GitHub connection</Link>}
@@ -107,8 +109,8 @@ function SourceDialog({ companyId, source, onClose, onSaved }: {
   const [showRepositoryUrl, setShowRepositoryUrl] = useState<boolean>(draft.showRepositoryUrl ?? Boolean(draft.repositoryUrl));
   const [connectionId, setConnectionId] = useState<string | null>('connectionId' in draft ? draft.connectionId : source?.connectionId ?? null);
   const [preview, setPreview] = useState<{ skill: SkillTreeCandidate; filePath?: string; repository?: boolean } | null>(null);
-  const [packageMode, setPackageMode] = useState<'skills' | 'repository'>(draft.packageMode ?? source?.packageMode ?? 'repository');
-  const [discovery, setDiscovery] = useState<SkillSourceDiscovery | null>(draft.discovery ?? null);
+  const [packageMode, setPackageMode] = useState<'skills' | 'repository'>(source ? draft.packageMode ?? source.packageMode : 'repository');
+  const [discovery, setDiscovery] = useState<SkillSourceDiscovery | null>(!source && draft.packageMode === 'skills' ? null : draft.discovery ?? null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(draft.selectedPaths ?? (source ? source.entries.filter(entry => entry.selection !== 'excluded').map(entry => entry.path) : [])));
   const [excludedFolders, setExcludedFolders] = useState<string[]>(draft.excludedFolders ?? source?.excludedFolders ?? []);
   const repositories = useQuery({ queryKey: queryKeys.skillSources.repositories(companyId), queryFn: () => skillSourcesApi.repositories(companyId), refetchOnMount: 'always', retry: false });
@@ -133,17 +135,23 @@ function SourceDialog({ companyId, source, onClose, onSaved }: {
     scanController.current?.abort();
     scanController.current = controller;
     setProgress(null); setFound([]);
-    const result = await skillSourcesApi.discoverStream(companyId, { repositoryUrl, trackingRef: source?.trackingRef, packageMode: nextMode, connectionId: source ? sourceConnectionId : availableConnectionId }, event => {
+    const discover = (mode: 'skills' | 'repository') => skillSourcesApi.discoverStream(companyId, { repositoryUrl, trackingRef: source?.trackingRef, packageMode: mode, connectionId: source ? sourceConnectionId : availableConnectionId }, event => {
       if (controller.signal.aborted || scanController.current !== controller) return;
       if (event.type === 'progress') setProgress(event);
       else setFound(previous => [...previous.filter(skill => skill.path !== event.candidate.path), event.candidate].slice(-5));
     }, controller.signal);
+    let result = await discover(nextMode);
+    // Shared dependencies need their original repository layout. Include that
+    // layout automatically instead of asking the person to repair the package.
+    if (nextMode === 'skills' && result.candidates.some(candidate => candidate.inspection?.references.some(reference => reference.kind === 'outside_package'))) {
+      setFound([]);
+      result = await discover('repository');
+    }
     return { discovery: result, connectionId: result.connectionId === undefined ? availableConnectionId : result.connectionId, controller };
   }, onSuccess: result => {
     if (result.controller.signal.aborted || scanController.current !== result.controller) return;
     setDiscovery(result.discovery); setPackageMode(result.discovery.packageMode ?? packageMode); setConnectionId(result.connectionId);
-    if (!source) { setSelected(new Set(result.discovery.candidates.filter(candidate => !candidate.error &&
-      (!result.discovery.repositoryPackage?.skillPaths || result.discovery.repositoryPackage.skillPaths.includes(candidate.path))).map(candidate => candidate.path))); setExcludedFolders([]); }
+    if (!source) { setSelected(new Set(result.discovery.candidates.map(candidate => candidate.path))); setExcludedFolders([]); }
   } });
   const save = useMutation({ mutationFn: () => source
     ? skillSourcesApi.select(companyId, source.id, { revision: selectionRevision!, packageMode, selectedPaths: [...selected], excludedFolders, connectionId: sourceConnectionId })
@@ -155,26 +163,17 @@ function SourceDialog({ companyId, source, onClose, onSaved }: {
   })) : []);
   const ready = Boolean(source || discovery);
   const repositoryPackage = discovery?.repositoryPackage ?? source?.repositoryPackage;
-  const outsideCount = candidates.filter(candidate => candidate.inspection?.references.some(ref => ref.kind === 'outside_package')).length;
+  const warnings = skillImportWarnings(candidates.filter(candidate => selected.has(candidate.path)), packageMode === 'repository' ? repositoryPackage : null, discovery?.warnings);
   const selectionTree = <SkillSourceTree packageMode={packageMode} onPreview={(skill, filePath) => setPreview({ skill, filePath })} candidates={candidates} selected={selected} excludedFolders={excludedFolders} onChange={(paths, folders) => { setSelected(paths); setExcludedFolders(folders); }} disabled={scan.isPending || save.isPending} />;
-  const eligibleCount = candidates.filter(candidate => selected.has(candidate.path) && !candidate.error).length;
-  const skippedCount = candidates.filter(candidate => selected.has(candidate.path) && candidate.error).length;
+  const selectedCount = candidates.filter(candidate => selected.has(candidate.path)).length;
   const busy = scan.isPending || save.isPending;
   const error = (scan.error?.name === 'AbortError' ? null : scan.error) ?? save.error;
   function stopScan() { scanController.current?.abort(); scanController.current = null; scan.reset(); setProgress(null); setFound([]); }
   function clearScan() { setDiscovery(null); scan.reset(); save.reset(); }
   function dismiss() { stopScan(); sessionStorage.removeItem(draftKey); onClose(); }
-  function changeMode(individual: boolean) {
-    const next = individual ? 'skills' : 'repository';
-    if (ready) scan.mutate(next);
-    else setPackageMode(next);
-  }
   return <Dialog open onOpenChange={open => { if (!open && !save.isPending) dismiss(); }}><DialogContent className="flex max-h-(--sz-calc-18) flex-col overflow-hidden p-4 sm:max-w-2xl sm:p-6" aria-describedby={source ? 'source-description' : undefined}>
     <DialogHeader className="shrink-0 flex-row items-start justify-between gap-3 pr-6">
       <div className="min-w-0"><DialogTitle>{source ? source.fullName : 'Import from GitHub'}</DialogTitle>{source && <DialogDescription id="source-description">Unchecked skills stay installed.</DialogDescription>}</div>
-      <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon-sm" disabled={busy} aria-label="More import options"><MoreVertical className="size-4" /></Button></DropdownMenuTrigger>
-        <DropdownMenuContent align="end"><DropdownMenuCheckboxItem checked={packageMode === 'skills'} onCheckedChange={changeMode}>Import individual skills</DropdownMenuCheckboxItem></DropdownMenuContent>
-      </DropdownMenu>
     </DialogHeader>
     <div className="min-h-0 space-y-4 overflow-y-auto">
       {!ready && !scan.isPending && <div className="flex flex-col gap-4">
@@ -225,23 +224,18 @@ function SourceDialog({ companyId, source, onClose, onSaved }: {
       {ready && !save.isPending && !scan.isPending && <div className="space-y-3">
         {packageMode === 'repository' ? <>
           {candidates[0] && <Button variant="outline" size="sm" onClick={() => setPreview({ skill: candidates[0]!, repository: true })}><FileText className="size-4" />View {repositoryPackage?.files.length ?? 0} {repositoryPackage?.files.length === 1 ? 'file' : 'files'}</Button>}
-          <details className="text-sm"><summary className="cursor-pointer font-medium">Choose skills · {selected.size} selected</summary><div className="mt-3">{selectionTree}</div></details>
-        </> : <>
-          {outsideCount > 0 && <p className="text-sm text-muted-foreground">{outsideCount} {outsideCount === 1 ? 'skill needs' : 'skills need'} shared files. <Button variant="link" size="sm" className="h-auto p-0" onClick={() => changeMode(false)}>Include repository files</Button></p>}
-          {selectionTree}
-        </>}
-        {packageMode === 'repository' && repositoryPackage?.error && <p role="alert" className="text-sm text-destructive">Can’t import this repository: {repositoryPackage.error}</p>}
+        </> : null}
+        {selectionTree}
+        <SkillImportWarnings warnings={warnings} />
       </div>}
-      {discovery?.warnings.map(warning => <p key={warning} className="text-xs text-muted-foreground">{warning}</p>)}
-      {skippedCount > 0 && !(packageMode === 'repository' && repositoryPackage?.error) && <div role="alert" className="space-y-2 text-sm text-destructive"><p>{skippedCount} selected {skippedCount === 1 ? 'skill cannot' : 'skills cannot'} be imported. Fix the source or deselect them.</p><ul>{candidates.filter(candidate => selected.has(candidate.path) && candidate.error).map(candidate => <li key={candidate.path}>{candidate.name}: {candidate.error}</li>)}</ul></div>}
       {error && <p role="alert" className="text-sm text-destructive">{error.message}{' '}<Link onClick={rememberReturn} to={connectHref} className="underline">Connect a GitHub account</Link></p>}
       {scan.isPending && <SkillImportProgress repository={parsedRepository?.fullName ?? repositoryUrl} progress={progress} found={found} />}
-      {save.isPending && <SkillImportProgress importing repository={source?.fullName ?? discovery!.fullName} count={eligibleCount}
+      {save.isPending && <SkillImportProgress importing repository={source?.fullName ?? discovery!.fullName} count={selectedCount}
         found={candidates.filter(candidate => selected.has(candidate.path) && !candidate.error).map(candidate => ({ ...candidate, fileCount: candidate.inspection?.files.length ?? 1 }))} />}
     </div>
       <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-border pt-4">
         <Button variant="ghost" disabled={save.isPending} onClick={() => { if (scan.isPending) stopScan(); else if (discovery && !source) clearScan(); else dismiss(); }}>{scan.isPending ? 'Cancel scan' : discovery && !source ? 'Back' : 'Cancel'}</Button>
-        {ready ? <Button disabled={busy || skippedCount > 0 || (packageMode === 'repository' && Boolean(repositoryPackage?.error)) || (!source && eligibleCount === 0)} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : source ? 'Save selection' : packageMode === 'repository' ? 'Import repository' : `Import ${eligibleCount} ${eligibleCount === 1 ? "skill" : "skills"}`}</Button>
+        {ready ? <Button disabled={busy || (!source && packageMode === 'skills' && selectedCount === 0)} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : source ? 'Save selection' : packageMode === 'repository' ? 'Import repository' : `Import ${selectedCount} ${selectedCount === 1 ? "skill" : "skills"}`}</Button>
           : <Button disabled={busy || repositories.isPending || !repositoryUrl.trim()} onClick={() => scan.mutate(packageMode)}>{scan.isPending ? 'Scanning…' : 'Find skills'}</Button>}
       </footer>
     {preview && <SkillPackagePreview key={`${packageMode}:${preview.repository}:${preview.skill.path}:${preview.filePath ?? ''}`} companyId={companyId}

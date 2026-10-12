@@ -85,7 +85,7 @@ export function skillSourceService(db: Db) {
     }
     const previous = await tx.select().from(entries).where(and(eq(entries.companyId, source.companyId), eq(entries.sourceId, source.id)));
     const imported: CompanySkill[] = [], updated: CompanySkill[] = [];
-    const warnings = [...scan.warnings];
+    const warnings = [...new Set([...scan.warnings, ...(scan.repositoryPackage?.warnings ?? [])])];
     let unchanged = 0;
     const selected = new Set(selectedPaths);
     const scanned = new Set(scan.skills.map(candidate => candidate.path));
@@ -136,6 +136,10 @@ export function skillSourceService(db: Db) {
           skillSourceState: selection !== 'selected' ? 'not_syncing' : 'update_failed' } }).where(and(eq(companySkills.companyId, source.companyId), eq(companySkills.id, current.id)));
       }
       if (candidate.error && selection === 'selected') warnings.push(`${candidate.path}: ${candidate.error}`);
+      if (selection === 'selected') {
+        warnings.push(...(candidate.inspection?.warnings.filter(warning => warning.includes('not included') || warning.includes('couldn’t be included')) ?? []));
+        warnings.push(...(candidate.inspection?.references.map(reference => `${reference.resolvedPath} — Referenced by ${candidate.path}; not included.`) ?? []));
+      }
       await tx.insert(entries).values({ companyId: source.companyId, sourceId: source.id, path: candidate.path, name: candidate.name,
         description: candidate.description, inspection: candidate.inspection ?? null, skillId, selection, present: true, error: candidate.error })
         .onConflictDoUpdate({ target: [entries.sourceId, entries.path], set: { name: candidate.name, description: candidate.description, inspection: candidate.inspection ?? null, skillId, selection, present: true, error: candidate.error } });
@@ -156,10 +160,10 @@ export function skillSourceService(db: Db) {
     )) : [];
     await tx.update(sources).set({ repositoryId: scan.repositoryId, repositoryUrl: scan.repositoryUrl, fullName: scan.fullName,
       packageMode: mode, repositoryPackage: scan.repositoryPackage ?? null,
-      trackingRef: existingBranch ? 'HEAD' : scan.trackingRef, excludedFolders, lastSuccessAt: new Date(), lastScanCommit: scan.commitSha, lastError: warnings.length ? `${warnings.length} warning(s). Review the source’s skills.` : null,
+      trackingRef: existingBranch ? 'HEAD' : scan.trackingRef, excludedFolders, lastSuccessAt: new Date(), lastScanCommit: scan.commitSha, lastError: null,
       revision: source.revision + 1, leaseToken: null, leaseExpiresAt: null }).where(scope(source.companyId, source.id));
     await context.audit(tx, source.id, 'company.skill_source_refreshed', { commit: scan.commitSha, importedCount: imported.length, updatedCount: updated.length, unchanged, warningCount: warnings.length });
-    return { imported, updated, unchanged, warnings };
+    return { imported, updated, unchanged, warnings: [...new Set(warnings)] };
   }
   async function create(companyId: string, input: SkillSourceCreateRequest, context: SkillSourceContext, staged?: ScannedSkillSource) {
     await context.authorize('skills.import', { sourceType: 'git', sourceLocator: input.repositoryUrl });

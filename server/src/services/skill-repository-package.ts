@@ -25,7 +25,7 @@ export function inspectRepositoryManifest(files: CompanySkillVersionFileInventor
 export function repositoryPackageInspection(files: CompanySkillVersionFileInventoryEntry[], skillPaths: string[], warnings: string[], error: string | null): SkillRepositoryPackage {
   let manifest: ReturnType<typeof inspectRepositoryManifest> = {};
   try { manifest = inspectRepositoryManifest(files, skillPaths); }
-  catch { error ??= 'Invalid paperclip.skills.json. Use version 1, existing SKILL.md paths in skills, and optional requirements text.'; }
+  catch { warnings = [...warnings, 'paperclip.skills.json — Invalid manifest; skills were discovered automatically.']; }
   return { files: files.map(file => ({ path: file.path, kind: file.kind, sizeBytes: skillFileBytes(file).length,
     encoding: file.encoding ?? 'utf8', executable: file.executable ?? false })), requirements: null, ...manifest, error, warnings };
 }

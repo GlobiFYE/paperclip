@@ -5,7 +5,7 @@ import { GitHubSkillsJourney } from '../github-skills-journey.stories';
 const meta = {
   title: 'Skills/Repository packages', component: GitHubSkillsJourney,
   tags: ['!autodocs'], parameters: { layout: 'fullscreen', docs: { description: { component:
-    'Production Skills UI in the app shell with repository fixtures. Repository files stay together by default. Use the import menu for individual skills. No GitHub access or runtime execution occurs in this preview.' } } },
+    'Production Skills UI in the app shell with repository fixtures. Repository files stay together. Select which skills appear in your library. No GitHub access or runtime execution occurs in this preview.' } } },
   args: { packageScenario: 'ready' },
 } satisfies Meta<typeof GitHubSkillsJourney>;
 export default meta;
@@ -15,9 +15,13 @@ export const ReviewRepository: Story = { name: '02 · Review repository package'
 export const InspectFiles: Story = { name: '03 · Inspect shared files', args: { step: 'selection' }, play: async ({ canvasElement }) => {
   await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('button', { name: /View \d+ files?/ }));
 } };
-export const IndividualSkills: Story = { name: '04 · Advanced individual skills', args: { step: 'selection' }, play: async ({ canvasElement }) => {
-  const body = within(canvasElement.ownerDocument.body);
-  await userEvent.click(await body.findByRole('button', { name: 'More import options' }));
+export const ImportWithWarnings: Story = { name: '04 · Import with omitted files', args: { step: 'selection', packageScenario: 'warnings' } };
+export const WarningDetails: Story = { name: '05 · See omitted files', args: { step: 'selection', packageScenario: 'warnings' }, play: async ({ canvasElement }) => {
+  await userEvent.click(await within(canvasElement.ownerDocument.body).findByText('2 import warnings'));
 } };
-export const BlockedPackage: Story = { name: '05 · Repair a blocked package', args: { step: 'selection', packageScenario: 'blocked' } };
-export const Mobile: Story = { name: '06 · Mobile review', args: { step: 'selection' }, globals: { viewport: { value: 'mobile1', isRotated: false } } };
+export const MissingFile: Story = { name: '06 · A referenced file is missing', args: { step: 'selection', packageScenario: 'missing' } };
+export const SkillNeedsSetup: Story = { name: '07 · Instructions need setup', args: { step: 'selection', packageScenario: 'setup' } };
+export const ImportedWithWarnings: Story = { name: '08 · Warnings stay with the source', args: { step: 'selection', packageScenario: 'warnings' }, play: async ({ canvasElement }) => {
+  await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('button', { name: 'Import repository' }));
+} };
+export const Mobile: Story = { name: '09 · Mobile review', args: { step: 'selection' }, globals: { viewport: { value: 'mobile1', isRotated: false } } };

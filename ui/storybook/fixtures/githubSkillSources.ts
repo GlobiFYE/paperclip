@@ -47,14 +47,16 @@ Object.assign(repositoryContents, {
   'NOTICE.md': 'Example upstream credits are preserved with this repository.',
   'paperclip.skills.json': JSON.stringify({ version: 1, skills: ['.agents/skills/review/SKILL.md', 'skills/research/SKILL.md'], requirements: 'Python 3.11 and Git. Configure GitHub access for agents that review pull requests.' }, null, 2),
 });
-export function repositoryFixture(blocked = false): SkillRepositoryPackage {
-  return { files: Object.entries(repositoryContents).map(([path, content]) => ({ path, kind: path.endsWith('SKILL.md') ? 'skill' : path.endsWith('.py') ? 'script' : content === null ? 'asset' : 'reference', encoding: content === null ? 'base64' : 'utf8', sizeBytes: content?.length ?? 2048, executable: path.endsWith('.py') })),
+export type PackageScenario = 'ready' | 'warnings' | 'missing' | 'setup';
+export function repositoryFixture(scenario: PackageScenario = 'ready'): SkillRepositoryPackage {
+  const contents = Object.entries(scenario === 'setup' ? { ...repositoryContents, 'experimental/deploy/SKILL.md': packageContents['experimental/deploy/SKILL.md']!['SKILL.md']!, 'experimental/deploy/README.md': '# Deployment notes' } : repositoryContents).filter(([path]) => scenario !== 'missing' || path !== '.agents/skills/review/security/references/threat-model.md');
+  return { files: contents.map(([path, content]) => ({ path, kind: path.endsWith('SKILL.md') ? 'skill' : path.endsWith('.py') ? 'script' : content === null ? 'asset' : 'reference', encoding: content === null ? 'base64' : 'utf8', sizeBytes: content?.length ?? 2048, executable: path.endsWith('.py') })),
     skillPaths: ['.agents/skills/review/SKILL.md', 'skills/research/SKILL.md'], requirements: 'Python 3.11 and Git. Configure GitHub access for agents that review pull requests.',
-    error: blocked ? 'Unsupported symlink or submodule: shared/tools' : null, warnings: [] };
+    error: null, warnings: scenario === 'warnings' ? ['shared/tools — Submodule couldn’t be included.', 'assets/demo.mov — Exceeds the 1 MB file limit; not included.'] : [] };
 }
-export function repositoryCandidates(blocked = false): SkillSourceCandidate[] {
-  return candidates.filter(candidate => !candidate.error).map(candidate => ({ ...candidate, error: repositoryFixture(blocked).error,
-    inspection: candidate.inspection ? { ...candidate.inspection, references: [] } : undefined }));
+export function repositoryCandidates(scenario: PackageScenario = 'ready'): SkillSourceCandidate[] {
+  return candidates.filter(candidate => scenario === 'setup' || !candidate.error).map(candidate => ({ ...candidate,
+    inspection: candidate.inspection ? { ...candidate.inspection, references: scenario === 'missing' && candidate.path.includes('/security/') ? candidate.inspection.references.filter(reference => reference.kind === 'missing') : [] } : undefined }));
 }
 
 export function sourceFixture(): SkillSource {
@@ -89,7 +91,7 @@ export function importedSkill(source: SkillSource, entry: SkillSourceEntry): Com
 export type RepositoryScenario = 'single' | 'multiple' | 'none' | 'empty' | 'partial-error' | 'error' | 'loading';
 
 /** Scoped API fixtures keep the production page interactive without contacting GitHub. */
-export function installFixtures(empty: boolean, needsConnection: boolean, options: { packageScenario?: 'ready' | 'blocked'; journey?: boolean; refreshed?: boolean; assigned?: boolean; repositories?: RepositoryScenario; scan?: "live" | "large" | "interrupted"; saving?: boolean } = {}) {
+export function installFixtures(empty: boolean, needsConnection: boolean, options: { packageScenario?: PackageScenario; journey?: boolean; refreshed?: boolean; assigned?: boolean; repositories?: RepositoryScenario; scan?: "live" | "large" | "interrupted"; saving?: boolean } = {}) {
   const fixtureController = new AbortController();
   const wait = (ms: number, signal = fixtureController.signal) => new Promise<void>((resolve, reject) => {
     signal.throwIfAborted();
@@ -163,7 +165,7 @@ export function installFixtures(empty: boolean, needsConnection: boolean, option
   if (needsConnection && sources[0]) sources[0].lastError = "GitHub access is no longer available. Reconnect GitHub or choose another connection.";
   function save(source: SkillSource, selectedPaths: string[], excludedFolders: string[]): SkillSourceRefreshResult {
     const imported: CompanySkill[] = [];
-    const warnings: string[] = [];
+    const warnings: string[] = [...(source.repositoryPackage?.warnings ?? [])];
     let unchanged = 0;
     source.entries = source.entries.map(entry => {
       const selected = selectedPaths.includes(entry.path);
@@ -208,8 +210,8 @@ export function installFixtures(empty: boolean, needsConnection: boolean, option
     if (!parsed) throw new Error('Enter an HTTPS GitHub repository or branch URL.');
     return {
       repositoryId: '123456', repositoryUrl: parsed.repositoryUrl, fullName: parsed.fullName,
-      trackingRef: input.trackingRef || parsed.trackingRef || 'main', commitSha: COMMIT, candidates: input.packageMode === 'repository' && options.packageScenario ? repositoryCandidates(options.packageScenario === 'blocked') : discoveryCandidates, warnings: [],
-      packageMode: input.packageMode, ...(input.packageMode === 'repository' ? { repositoryPackage: repositoryFixture(options.packageScenario === 'blocked') } : {}),
+      trackingRef: input.trackingRef || parsed.trackingRef || 'main', commitSha: COMMIT, candidates: input.packageMode === 'repository' && options.packageScenario ? repositoryCandidates(options.packageScenario) : discoveryCandidates, warnings: [],
+      packageMode: input.packageMode, ...(input.packageMode === 'repository' ? { repositoryPackage: repositoryFixture(options.packageScenario) } : {}),
     };
   };
   skillSourcesApi.discoverStream = async (companyId, input, onProgress, signal) => {
@@ -252,15 +254,15 @@ export function installFixtures(empty: boolean, needsConnection: boolean, option
     return result;
   };
   skillSourcesApi.preview = async (_companyId, input) => {
-    const file = (input.packageMode === 'repository' ? repositoryFixture().files : inspection(input.skillPath).files).find(file => file.path === input.filePath);
+    const file = (input.packageMode === 'repository' ? repositoryFixture(options.packageScenario).files : inspection(input.skillPath).files).find(file => file.path === input.filePath);
     if (!file) throw new Error('File is not included in this package.');
     return { file, content: input.packageMode === 'repository' ? repositoryContents[input.filePath]! : packageContents[input.skillPath]![input.filePath]!, truncated: false, commitSha: input.commitSha };
   };
   skillSourcesApi.create = async (_companyId, input) => {
     if (options.saving) await wait(3600000);
     const source = sourceFixture();
-    Object.assign(source, { id: `source-${sources.length + 1}`, packageMode: input.packageMode, repositoryPackage: input.packageMode === 'repository' ? repositoryFixture() : null, repositoryUrl: input.repositoryUrl, fullName: input.repositoryUrl.replace("https://github.com/", ""), trackingRef: input.trackingRef || "main", connectionId: input.connectionId ?? null });
-    source.entries = source.entries.filter(entry => discoveryCandidates.some(candidate => candidate.path === entry.path)).map(entry => ({ ...entry, sourceId: source.id, skillId: null }));
+    Object.assign(source, { id: `source-${sources.length + 1}`, packageMode: input.packageMode, repositoryPackage: input.packageMode === 'repository' ? repositoryFixture(options.packageScenario) : null, repositoryUrl: input.repositoryUrl, fullName: input.repositoryUrl.replace("https://github.com/", ""), trackingRef: input.trackingRef || "main", connectionId: input.connectionId ?? null });
+    source.entries = repositoryCandidates(options.packageScenario).filter(entry => discoveryCandidates.some(candidate => candidate.path === entry.path)).map((entry, index) => ({ ...entry, id: `entry-${index}`, sourceId: source.id, present: true, selection: 'new', skillId: null }));
     sources.push(source);
     return save(source, input.selectedPaths, input.excludedFolders ?? []);
   };
@@ -268,7 +270,7 @@ export function installFixtures(empty: boolean, needsConnection: boolean, option
     const source = sources.find(item => item.id === id)!;
     source.connectionId = input.connectionId ?? null;
     source.packageMode = input.packageMode ?? source.packageMode;
-    source.repositoryPackage = source.packageMode === 'repository' ? repositoryFixture() : null;
+    source.repositoryPackage = source.packageMode === 'repository' ? repositoryFixture(options.packageScenario) : null;
     return save(source, input.selectedPaths, input.excludedFolders);
   };
   skillSourcesApi.refresh = async (_companyId, id) => {
