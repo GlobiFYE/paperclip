@@ -39,7 +39,7 @@ import { issueRecoveryActionService } from "../../../services/issue-recovery-act
 import { readContinuationAttempt } from "../../../services/recovery/run-liveness-continuations.js";
 import { withRecoveryContext } from "../../../services/recovery/status-only-context.js";
 import { parseIssueExecutionState } from "../../../services/issue-execution-policy.js";
-import { readNativeReviewAssignmentContext } from "../../../services/native-runtime/native-review-participant.js";
+import { getNativeReviewAssignment } from "../../../services/native-runtime/native-review-participant.js";
 import {
   queuedCommentIdsFromWakePayload,
   withQueuedCommentIdsInWakePayload,
@@ -1142,10 +1142,10 @@ export function createPostgresWakeQueueAdapter(db: Db, deps: WakeQueuePostgresAd
         // A queued successor whose agent has handed the issue over is not one:
         // the queued-run staleness gate cancels it with issue_assignee_changed
         // before it starts, so it must not strand the new owner's deferred wake.
-        // A source-scoped recovery wake and a native completion review count
-        // as live here because confirming them needs separate reads (the review
-        // is assigned through its interaction, not the issue's participant);
-        // the dispatch gate decides them.
+        // Ownership is checked the way the dispatch gate checks it, including
+        // the live native completion review assignment (assigned through its
+        // interaction, not the issue's participant) and the live source-scoped
+        // recovery action, so saved ids alone never hold the issue.
         const successors = await tx.select({
           id: heartbeatRuns.id,
           status: heartbeatRuns.status,
@@ -1160,25 +1160,50 @@ export function createPostgresWakeQueueAdapter(db: Db, deps: WakeQueuePostgresAd
           inArray(heartbeatRuns.status, ["queued", "running", "scheduled_retry"]),
         ));
         const reviewParticipant = parseIssueExecutionState(issueRow.executionState)?.currentParticipant ?? null;
-        const successor = successors.find((candidate) => {
-          if (candidate.status !== "queued") return true;
+        let successor: (typeof successors)[number] | undefined;
+        for (const candidate of successors) {
+          if (candidate.status !== "queued") {
+            successor = candidate;
+            break;
+          }
           const context = candidate.contextSnapshot ?? {};
           const retryReason = typeof context.retryReason === "string" && context.retryReason.length > 0
             ? context.retryReason
             : candidate.scheduledRetryReason ?? null;
-          return queuedRunStillOwnsIssue({
+          const recoveryActionId = typeof context.recoveryActionId === "string" && context.recoveryActionId.length > 0
+            ? context.recoveryActionId
+            : null;
+          const isAuthorizedSourceScopedRecovery = context.wakeReason === "source_scoped_recovery_action" && recoveryActionId
+            ? (await tx.select({ id: issueRecoveryActions.id }).from(issueRecoveryActions).where(and(
+              eq(issueRecoveryActions.id, recoveryActionId),
+              eq(issueRecoveryActions.companyId, input.companyId),
+              eq(issueRecoveryActions.sourceIssueId, issueRow.id),
+              eq(issueRecoveryActions.ownerAgentId, run.agentId),
+              inArray(issueRecoveryActions.status, ["active", "escalated"]),
+            )).limit(1)).length > 0
+            : false;
+          const isCurrentReviewParticipant =
+            (issueRow.status === "in_review" &&
+              reviewParticipant?.type === "agent" &&
+              reviewParticipant.agentId === run.agentId) ||
+            (await getNativeReviewAssignment(tx as unknown as Db, {
+              companyId: input.companyId,
+              issueId: issueRow.id,
+              agentId: run.agentId,
+              contextSnapshot: context,
+            })) !== null;
+          if (queuedRunStillOwnsIssue({
             runAgentId: run.agentId,
             issueAssigneeAgentId: issueRow.assigneeAgentId ?? null,
             isNonAssigneeWorkspaceBusyRetry: isNonAssigneeWorkspaceBusyRetry(retryReason, context),
             isInteractionWake: allowsIssueInteractionWake(context, ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS),
-            isCurrentReviewParticipant:
-              (issueRow.status === "in_review" &&
-                reviewParticipant?.type === "agent" &&
-                reviewParticipant.agentId === run.agentId) ||
-              readNativeReviewAssignmentContext(context) !== null,
-            isAuthorizedSourceScopedRecovery: context.wakeReason === "source_scoped_recovery_action",
-          });
-        });
+            isCurrentReviewParticipant,
+            isAuthorizedSourceScopedRecovery,
+          })) {
+            successor = candidate;
+            break;
+          }
+        }
         if (successor) return { outcome: { kind: "released" }, postCommitEffects: [], run: runSnapshot };
 
         if (preDrain.kind === "blocked") {
