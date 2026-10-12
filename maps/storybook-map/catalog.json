@@ -732,7 +732,7 @@
         "activity/activity",
         "gateways-profiles/activity"
       ],
-      "purpose": "Apps/App detail · Activity (lifecycle)",
+      "purpose": "Apps/App detail \u00b7 Activity (lifecycle)",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -2275,7 +2275,7 @@
       "capabilities": [
         "skills/authoring"
       ],
-      "purpose": "Product/Skill Studio · FrontmatterPanel",
+      "purpose": "Product/Skill Studio \u00b7 FrontmatterPanel",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -3114,9 +3114,9 @@
       ],
       "purpose": "Primary Agent/00 Review guide",
       "status": "unreviewed",
-      "implementation": "production",
-      "boundary": "fixtures",
-      "notes": "Shared production primitives/components demonstrated with local fixture/layout wrappers; visual and interaction parity still require review.",
+      "implementation": "guide",
+      "boundary": "static",
+      "notes": "Review guide retained; explanatory content does not establish runtime or production coverage.",
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/agent-chat.md",
@@ -3385,9 +3385,9 @@
       ],
       "purpose": "Private tasks/00 Review guide",
       "status": "unreviewed",
-      "implementation": "production",
-      "boundary": "fixtures",
-      "notes": "Shared production primitives/components demonstrated with local fixture/layout wrappers; visual and interaction parity still require review.",
+      "implementation": "guide",
+      "boundary": "static",
+      "notes": "Review guide retained; explanatory content does not establish runtime or production coverage.",
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/access.md",
@@ -3691,9 +3691,9 @@
       ],
       "purpose": "AI Connections/Provider routing/00 Overview",
       "status": "unreviewed",
-      "implementation": "production",
-      "boundary": "fixtures",
-      "notes": "Shared production primitives/components demonstrated with local fixture/layout wrappers; visual and interaction parity still require review.",
+      "implementation": "guide",
+      "boundary": "static",
+      "notes": "Review guide retained; explanatory content does not establish runtime or production coverage.",
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/runs-adapters.md",
@@ -4110,7 +4110,7 @@
         "routines/definition",
         "routines/management"
       ],
-      "purpose": "Product/Routines · Detail (variation C)",
+      "purpose": "Product/Routines \u00b7 Detail (variation C)",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -4135,7 +4135,7 @@
         "routines/definition",
         "secrets/runtime-delivery"
       ],
-      "purpose": "Product/Routines · Secrets tab",
+      "purpose": "Product/Routines \u00b7 Secrets tab",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -4207,7 +4207,7 @@
         "routines/definition",
         "routines/management"
       ],
-      "purpose": "Product/Routines · List (grouped cards)",
+      "purpose": "Product/Routines \u00b7 List (grouped cards)",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -4903,9 +4903,9 @@
       ],
       "purpose": "Chat & Comments/Human identity/00 Review guide",
       "status": "unreviewed",
-      "implementation": "production",
-      "boundary": "fixtures",
-      "notes": "Shared production primitives/components demonstrated with local fixture/layout wrappers; visual and interaction parity still require review.",
+      "implementation": "guide",
+      "boundary": "static",
+      "notes": "Review guide retained; explanatory content does not establish runtime or production coverage.",
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/tasks.md",

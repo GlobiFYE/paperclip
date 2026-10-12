@@ -22,8 +22,8 @@ stable to preserve links and snapshot identity.
 | Dimension | Initial classification |
 | --- | --- |
 | Product alignment | 18 current subjects, 4 proposals, 5 historical suites, 8 mixed suites, 188 requiring deeper parity review |
-| Rendered subject | 203 production, 8 prototype, 11 mixed, 1 guide |
-| Data boundary | 221 fixture-based, 1 separate fixture server, 1 static guide |
+| Rendered subject | 199 production, 8 prototype, 11 mixed, 5 guides |
+| Data boundary | 217 fixture-based, 1 separate fixture server, 5 static guides |
 
 A production subject can have unreviewed state parity. A current subject can still
 have untested loading, error, permission, or backend behavior. The catalog's notes
@@ -96,9 +96,8 @@ repository suite pass is not established.
 Automated review found missing directly rendered subjects in the initial dependency
 list. Expanded the catalog across affected suites, including relative production
 imports, all direct non-primitive subjects in local wrappers, and the primitives
-that foundation stories demonstrate. Classified those foundation suites as
-production-component examples rather than explanatory guides. This records change
-detection, not new parity
+that foundation stories demonstrate. Explanatory review guides keep their separate
+guide classification. This records change detection, not new parity
 acceptance. Added a real CSF parser regression for nested discovery, include/exclude
 rules, stable explicit IDs, and play counts.
 
