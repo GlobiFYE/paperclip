@@ -13,6 +13,3 @@ jobs:
     # Master requires CODEOWNERS review for .github/**, including this workflow.
     # The AWS runner group permits pr-trusted.yml@refs/heads/master.
     uses: paperclipai/paperclip/.github/workflows/pr-trusted.yml@master
-  routing_probe:
-    if: github.head_ref == 'codex/reserve-ci-routing'
-    uses: paperclipai/paperclip/.github/workflows/ci-routing.yml@af977afd962875cbb05c581d05aa1f374aa2617e
