@@ -4,20 +4,25 @@ import { chatEndpoints, chatSlackManagerGrants, chatSlackRegistrations, companyS
 import { SLACK_MANAGER_SCOPES, type SlackSetupOptions as SetupChoices } from "@paperclipai/shared";
 import { conflict, forbidden } from "../../../../errors.js";
 import { getCloudRuntimeIdentity } from "../../../cloud-runtime-identity.js";
-import { createPaperclipCloudConnector, paperclipCloudConnectorConfigFromEnv, type PaperclipCloudConnector, type SealedConnectorCredentials } from "../../../paperclip-cloud-connector.js";
+import { createPaperclipCloudConnector, paperclipCloudConnectorConfigFromEnv, type SealedConnectorCredentials } from "../../../paperclip-cloud-connector.js";
 import { instanceSettingsService } from "../../../instance-settings.js";
 import { accessService } from "../../../access.js";
 import { secretService } from "../../../secrets.js";
 import { writeConnectionCredential } from "../../../connection-credentials.js";
 import { logActivity } from "../../../activity-log.js";
 import { object, providerFailure, type SlackRegistrationStore, type SlackSetupActor } from "./registration.js";
+import { developmentSlackManager, type SlackManagerClient } from "./development-manager.js";
 
 export const SLACK_MANAGER_STATE_PREFIX = "slack-manager.";
 export function createSlackManagerGrants(store: SlackRegistrationStore) {
   const { db, options, endpoint, origin, api } = store;
   type Database = Parameters<typeof secretService>[0];
-  function broker(): PaperclipCloudConnector | null {
+  function broker(): SlackManagerClient | null {
     if (options.managed) return options.managed.enabled ? options.managed.broker : null;
+    if (!getCloudRuntimeIdentity()) {
+      const development = developmentSlackManager(() => origin(options.publicOrigin()));
+      if (development) return development;
+    }
     // Open-source instances never contact a hosted service to discover this path.
     if (!getCloudRuntimeIdentity() || process.env.PAPERCLIP_SLACK_MANAGED_SETUP_ENABLED !== "true") return null;
     const config = paperclipCloudConnectorConfigFromEnv();
@@ -60,7 +65,7 @@ export function createSlackManagerGrants(store: SlackRegistrationStore) {
       const expiresAt = new Date(Date.now() + 10 * 60_000);
       await lease.assertOwned();
       await db.insert(toolOauthStates).values({ state, companyId: current.endpoint.companyId, connectionId: current.connection.id,
-        codeVerifier: JSON.stringify({ endpointId, revisions, requestId: row?.requestId ?? null, callbackUri: callbackUri(), webhookOrigin: origin(options.webhookOrigin()), runtimeGeneration: object(current.endpoint.setup).runtimeGeneration ?? 0 }),
+        codeVerifier: JSON.stringify({ endpointId, revisions, authorizationMode: client.authorizationMode ?? "claim", requestId: row?.requestId ?? null, callbackUri: callbackUri(), webhookOrigin: origin(options.webhookOrigin()), runtimeGeneration: object(current.endpoint.setup).runtimeGeneration ?? 0 }),
         createdByActorType: "user", createdByActorId: actor.userId, createdBySessionId: actor.sessionId, requestedScopes: [...SLACK_MANAGER_SCOPES], expiresAt });
       try { return await client.startAuthorization({ profile: "slack.manager", subject: actor.userId, companyId: current.endpoint.companyId, returnUri: callbackUri(), returnState: state }); }
       catch { await db.delete(toolOauthStates).where(eq(toolOauthStates.state, state)); throw providerFailure("slack_manager_reauthorize"); }
@@ -75,6 +80,7 @@ export function createSlackManagerGrants(store: SlackRegistrationStore) {
     const row = await store.registration(current.endpoint.id);
     if (current.endpoint.setup.slackSetupMethod !== "managed" || current.connection.id !== attempt.connectionId || current.endpoint.companyId !== attempt.companyId
       || ["paused", "revoked"].includes(current.endpoint.status) || row?.status === "removed"
+      || (binding.authorizationMode ?? "claim") !== (broker()?.authorizationMode ?? "claim")
       || (row?.requestId ?? null) !== binding.requestId || binding.callbackUri !== callbackUri() || binding.webhookOrigin !== origin(options.webhookOrigin())
       || binding.runtimeGeneration !== (object(current.endpoint.setup).runtimeGeneration ?? 0)) throw conflict("Slack setup changed. Resume authorization.");
     return { attempt, current, row, binding };
@@ -90,8 +96,9 @@ export function createSlackManagerGrants(store: SlackRegistrationStore) {
       return current.endpoint.id;
     });
   }
-  async function complete(state: string, claimId: string | null, error: string | null, actor: SlackSetupActor) {
+  async function complete(state: string, claimId: string | null, error: string | null, actor: SlackSetupActor, authorizationCode: string | null = null) {
     const client = await requiredBroker();
+    claimId = client.authorizationMode === "code" ? authorizationCode : claimId;
     const before = await pending(state, actor);
     return options.withLock(before.current.endpoint.id, async lease => {
       const { current, row, binding } = await pending(state, actor);

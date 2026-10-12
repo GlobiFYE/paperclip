@@ -1,14 +1,14 @@
 import type { ChatEndpoint } from "@/api/chatEndpoints";
 import { isProvisionedSlackSetup } from "@paperclipai/shared";
 export { isProvisionedSlackSetup };
-export function slackSetupNavigation(method: string | undefined) {
+export function slackSetupNavigation(method: string | undefined, availableStage = 1) {
   const managed = method === "managed";
   return {
-    labels: managed ? ["Choose agent", "Add to Slack", "Connect"] : isProvisionedSlackSetup(method)
+    labels: managed ? ["Choose agent", "Connect"] : isProvisionedSlackSetup(method)
       ? ["Choose agent", "App configuration access token", "Install Slack app", "Send a message"]
       : ["Choose agent", "Create Slack app", "Add credentials", "Verify Slack connection", "Connect your Slack account", "Try it"],
-    toVisible: (step: number) => managed ? step === 3 ? 2 : Math.min(step, 1) : step,
-    toStage: (step: number) => managed && step === 2 ? 3 : step,
+    toVisible: (step: number) => managed ? Math.min(step, 1) : step,
+    toStage: (step: number) => managed && step === 1 ? availableStage : step,
   };
 }
 
@@ -26,5 +26,5 @@ export function slackSetupState(input: { endpoint: ChatEndpoint | null; repairin
     : provisioned && endpoint.setup?.slackRegistration?.status === "credentials_saved" ? 2
     : endpoint.providerAccountId && !repairing ? 3
     : credentialsReady || repairing || method === "existing" || provisioned && endpoint.setup?.slackRegistration?.appId ? 2 : 1;
-  return { ...slackSetupNavigation(method), provisioned, complete, finalStage, availableStage };
+  return { ...slackSetupNavigation(method, availableStage), provisioned, complete, finalStage, availableStage };
 }

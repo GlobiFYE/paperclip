@@ -118,7 +118,7 @@ export function ChatConnectionPurpose({ provider, onChat, onTools, slackLabels }
   }, [setBreadcrumbs]);
   return (
       <div className="max-w-2xl space-y-6">
-        <ChatSetupNavigation labels={provider === "slack" ? slackLabels ?? ["Choose agent", "Add to Slack", "Connect"] : undefined} step={0} availableStep={0} onSelect={onChat} />
+        <ChatSetupNavigation labels={provider === "slack" ? slackLabels ?? ["Choose agent", "Connect"] : undefined} step={0} availableStep={0} onSelect={onChat} />
         <div>
           <h1 className="text-xl font-bold">Choose how to connect</h1>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -193,6 +193,7 @@ function ChatSdkEndpointSetup() {
   const [viewedStep, setViewedStep] = useState<number | null>(null);
   const [slackIdentityReady, setSlackIdentityReady] = useState(false);
   const [automaticBusy, setAutomaticBusy] = useState(false);
+  const [managedAutoStart, setManagedAutoStart] = useState(Boolean(resumeEndpointId));
   const [slackDraft, setSlackDraft] = useState<{ agentId: string; app: SlackAppConfiguration } | null>(null);
   const [endpoint, setEndpoint] = useState<ChatEndpoint | null>(null);
   const [credentials, setCredentials] = useState<Record<string, string>>({});
@@ -274,6 +275,7 @@ function ChatSdkEndpointSetup() {
     next: ChatEndpoint,
     onlyIfStillVisible = false,
   ) => {
+    if (next.setup?.slackSetupMethod === "managed" && endpoint && endpoint.setup?.slackSetupMethod !== "managed") setManagedAutoStart(true);
     if (isProvisionedSlackSetup(next.setup?.slackSetupMethod) && next.setup?.slackRegistration?.status === "configured"
       && endpoint?.setup?.slackRegistration?.status !== "configured") setViewedStep(null);
     setEndpoint((visible) =>
@@ -291,26 +293,28 @@ function ChatSdkEndpointSetup() {
   const slackChoices = useQuery({
     queryKey: ["slack-setup-options", selectedCompanyId],
     queryFn: () => chatEndpointsApi.slackSetupOptions(selectedCompanyId!),
-    enabled: provider === "slack" && Boolean(selectedCompanyId) && !endpoint,
+    enabled: provider === "slack" && Boolean(selectedCompanyId),
     retry: false,
   });
   const createEndpoint = useMutation({
-    mutationFn: () => {
+    mutationFn: ({ ownApp = false }: { ownApp?: boolean; exit?: boolean }) => {
       if (provider === "slack" && !slackChoices.data) throw new Error("Slack setup is still loading. Try again.");
       return chatEndpointsApi.create(selectedCompanyId!, {
         provider: provider!,
         assignedAgentId: agentId,
-        ...(provider === "slack" ? { slackSetupMethod: slackChoices.data!.defaultMethod, slackApp: slackDetailsValidation.success ? slackDetailsValidation.data : slackDetails } : {}),
+        ...(provider === "slack" ? { slackSetupMethod: ownApp ? "automatic" : slackChoices.data!.defaultMethod, slackApp: slackDetailsValidation.success ? slackDetailsValidation.data : slackDetails } : {}),
       });
     },
-    onSuccess: (next) => {
-      setViewedStep(null);
+    onSuccess: (next, { exit }) => {
+      setManagedAutoStart(!exit);
+      setViewedStep(exit ? 0 : null);
       syncEndpointSnapshot(next);
       if (next.provider === "imessage-photon" || next.provider === "slack") {
         const resumed = new URLSearchParams(params);
         resumed.set("resume", next.id);
         setParams(resumed, { replace: true });
       }
+      if (exit) navigate("/apps");
     },
     onError: (error) =>
       pushToast({
@@ -333,13 +337,22 @@ function ChatSdkEndpointSetup() {
     if (exit && provider !== "slack") { navigate("/apps"); return; }
     if (!endpoint) {
       if (!agentId) { if (exit) navigate("/apps"); return; }
-      createEndpoint.mutate(undefined, { onSuccess: () => { if (exit) navigate("/apps"); } });
+      createEndpoint.mutate({ exit });
       return;
     }
     try { if (provider === "slack") await persistSlackDetails(); }
     catch { return; }
-    if (exit) navigate("/apps"); else setViewedStep(1);
+    if (exit) navigate("/apps"); else { setManagedAutoStart(true); setViewedStep(null); }
   };
+  const useOwnSlackApp = useMutation({
+    mutationFn: async () => {
+      if (!endpoint) return createEndpoint.mutateAsync({ ownApp: true });
+      await persistSlackDetails();
+      return chatEndpointsApi.update(endpoint.id, { slackSetupMethod: "automatic" });
+    },
+    onSuccess: next => { setManagedAutoStart(false); syncEndpointSnapshot(next); setViewedStep(1); },
+    onError: () => pushToast({ title: "Couldn't switch Slack setup", body: "Try again.", tone: "error" }),
+  });
   const setupAction = useMutation({
     mutationFn: async ({
       action,
@@ -470,6 +483,7 @@ function ChatSdkEndpointSetup() {
   const availableStep = isSlack ? slackNavigation.availableStage : !endpoint ? 0
     : !repairing && (endpoint.setup?.step === "test" || endpoint.setup?.step === "complete") ? tryStep : 1;
   const step = Math.min(viewedStep ?? availableStep, availableStep);
+  const agentStepBusy = automaticBusy || createEndpoint.isPending || saveSlackDetails.isPending || useOwnSlackApp.isPending;
   const slackVerificationQuery = useQuery({
     queryKey: ["chat-endpoint-slack-webhook-verification", endpoint?.id],
     queryFn: () => chatEndpointsApi.get(endpoint!.id),
@@ -517,7 +531,7 @@ function ChatSdkEndpointSetup() {
         labels={isSlack ? slackNavigation.labels : undefined}
         step={isSlack ? slackNavigation.toVisible(step) : step}
         availableStep={isSlack ? slackNavigation.toVisible(availableStep) : availableStep}
-        disabled={automaticBusy || createEndpoint.isPending || saveSlackDetails.isPending || setupAction.isPending || generateSetupSecret.isPending || testConnection.isPending}
+        disabled={agentStepBusy || setupAction.isPending || generateSetupSecret.isPending || testConnection.isPending}
         onSelect={value => setViewedStep(isSlack ? slackNavigation.toStage(value) : value)}
       />
       <div className="min-w-0 space-y-6">
@@ -542,18 +556,23 @@ function ChatSdkEndpointSetup() {
               emptyMessage="No active agents are available."
             />}
             {isSlack && (selectedAgent || endpoint) && <SlackSetupAdvanced>
-              <SlackAppDetails value={slackDetails} readOnly={!slackDetailsEditable || createEndpoint.isPending}
+              <SlackAppDetails value={slackDetails} readOnly={!slackDetailsEditable || agentStepBusy}
                 onChange={app => setSlackDraft({ agentId, app })}
                 onBlur={() => void persistSlackDetails().catch(() => {})} />
               {saveSlackDetails.isError && <p role="alert" className="text-sm text-destructive">Couldn&apos;t save the Slack app details. Try again before continuing.</p>}
+              {slackChoices.data?.defaultMethod === "managed" && (!endpoint || endpoint.setup?.slackSetupMethod === "managed") && !endpoint?.setup?.slackRegistration && <Button
+                variant="link" className="h-auto p-0 text-muted-foreground"
+                disabled={agentStepBusy || !slackDetailsValidation.success}
+                onClick={() => useOwnSlackApp.mutate()}
+              >Use your own app</Button>}
             </SlackSetupAdvanced>}
             {isSlack && !endpoint && !slackChoices.data && (slackChoices.isError
               ? <div role="alert" className="text-sm text-destructive">Couldn&apos;t load Slack setup. <Button variant="link" disabled={slackChoices.isFetching} onClick={() => void slackChoices.refetch()}>Retry</Button></div>
               : <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="size-4 animate-spin" />Loading Slack…</p>)}
             {provider === "github" && <GitHubAgentTrustWarning agent={selectedAgent} />}
-            <SetupWizardFooter disabled={createEndpoint.isPending || saveSlackDetails.isPending || isSlack && !endpoint && Boolean(agentId) && !slackChoices.data} onSaveExit={() => void continueFromAgent(true)}>
+            <SetupWizardFooter disabled={agentStepBusy || isSlack && !endpoint && Boolean(agentId) && !slackChoices.data} onSaveExit={() => void continueFromAgent(true)}>
               <Button
-                disabled={!agentId || createEndpoint.isPending || saveSlackDetails.isPending || isSlack && (!slackDetailsValidation.success || !endpoint && !slackChoices.data)}
+                disabled={!agentId || agentStepBusy || isSlack && (!slackDetailsValidation.success || !endpoint && !slackChoices.data)}
                 onClick={() => void continueFromAgent(false)}
               >
                 {createEndpoint.isPending && (
@@ -578,6 +597,7 @@ function ChatSdkEndpointSetup() {
             <ProviderConnectStep
               key={`${provider}:${endpoint.id}`}
               provider={provider}
+              managedAutoStart={managedAutoStart && step !== 0}
               slackStage={step === 1 ? "app" : step === 3 ? "finish" : "credentials"}
               onSlackCredentialsContinue={() => setViewedStep(3)}
               onSlackVerificationContinue={() => setViewedStep(4)}
@@ -688,6 +708,7 @@ function ProviderConnectStep({
   repairing,
   pending,
   onAutomaticBusy,
+  managedAutoStart = false,
   onEndpointSaved,
   generatedWebhookSecret,
   generatingSetupSecret,
@@ -706,6 +727,7 @@ function ProviderConnectStep({
   setCredentials: Dispatch<SetStateAction<Record<string, string>>>;
   repairing: boolean;
   pending: boolean;
+  managedAutoStart?: boolean;
   onAutomaticBusy: (busy: boolean) => void;
   onEndpointSaved: (endpoint: ChatEndpoint) => void;
   generatedWebhookSecret: string;
@@ -1557,7 +1579,7 @@ function ProviderConnectStep({
         </div>
       )}
       <div>
-        <h1 className="text-xl font-bold">{endpoint.setup?.slackSetupMethod === "managed" ? "Add to Slack" : slackStage === "app" ? automaticSlack ? "App configuration access token" : "Create a Slack app" : automaticSlack ? "Install Slack app" : "Add Slack credentials"}</h1>
+        <h1 className="text-xl font-bold">{endpoint.setup?.slackSetupMethod === "managed" ? "Connect to Slack" : slackStage === "app" ? automaticSlack ? "App configuration access token" : "Create a Slack app" : automaticSlack ? "Install Slack app" : "Add Slack credentials"}</h1>
         {repairing && !automaticSlack && (
           <p className="mt-1 text-sm text-muted-foreground">
             Reconnect verifies or replaces credentials for this same Slack app. It does not reinstall the app or change its workspace or channel membership. Leave credentials blank to reuse the saved values.
@@ -1634,6 +1656,7 @@ function ProviderConnectStep({
       </div>
       {automaticSlack && <SlackSetup
         key={endpoint.id}
+        autoStart={managedAutoStart}
         endpoint={endpoint} stage={slackStage} disabled={!endpoint.setup?.webhookUrl || !endpoint.setup?.slackOAuthCallbackUri?.startsWith("https://") || !slackValidation.success}
         saveDetails={async () => {}}
         onBusy={onAutomaticBusy} onSaved={onEndpointSaved} onContinue={onSlackAppCreated}

@@ -12,11 +12,14 @@ conversation routing, people permissions, or channel access.
 | `existing` | User supplies credentials for an existing app. | Explicit selection |
 
 Existing drafts and active bots retain their method. Enabling managed setup never
-adopts existing apps. The managed Add to Slack screen offers **Use your own app**
-before creation. The own-app flow retains **Create manually** and **Use an existing
+adopts existing apps. Choose agent offers **Use your own app** under **Advanced**, below Slash command,
+when the instance supports managed setup and creation has not started. The own-app flow retains **Create manually** and **Use an existing
 app** under Advanced. After creation dispatch, a managed draft cannot switch paths.
 
-Managed setup has three visible stops: Choose agent, Add to Slack, Connect.
+Managed setup has two visible stops: Choose agent and Connect. **Continue** starts
+manager authorization or installation in the saved workspace automatically. Multiple
+workspaces still require a selection. Recovery actions remain explicit; opening
+a failed or uncertain registration never retries creation automatically.
 Creation, installation, message waiting, and success use the same production
 components and server evidence as the own-app flow. A click or OAuth return does
 not constitute successful configuration.
@@ -106,4 +109,33 @@ and same-thread replies. Record real approval behavior separately from fixtures.
 
 ### Managed setup during broker outages
 
-Cloud deployments configured for managed Slack keep the managed default when the broker profile is temporarily unavailable. New drafts remain on **Add to Slack** and offer **Retry**, with **Use your own app** as an explicit alternative. Discovery loading or failure never selects the configuration-token page. Self-hosted instances without managed configuration still use their independent own-app flow; saved draft methods do not change automatically. Provisioning continues to require current broker availability.
+Cloud deployments configured for managed Slack keep the managed default when the broker profile is temporarily unavailable. New drafts remain on **Connect** and offer **Retry**. **Use your own app** remains available under **Advanced** on Choose agent before creation. Discovery loading or failure never selects the configuration-token page. Self-hosted instances without managed configuration still use their independent own-app flow; saved draft methods do not change automatically. Provisioning continues to require current broker availability.
+
+### Local managed-bot qualification
+
+Maintainers with an approved Slack manager app can exercise the real managed
+journey from an authenticated local test drive exposed through HTTPS (including
+TryCloudflare). This development transport talks directly to Slack and reuses
+the production manager-grant vault, state claims, provisioning, completion, and
+runtime. It does not exercise the Cloud broker's sealed handoff; qualify that
+separately on staging afterward.
+
+Set `NODE_ENV=development`, `PAPERCLIP_SLACK_MANAGED_SETUP_ENABLED=true`, and
+`PAPERCLIP_SLACK_MANAGER_DEVELOPMENT_CONFIG` to an absolute path outside the
+checkout containing a mode-0600 JSON file with `appId`, `clientId`, and
+`clientSecret`. Use only an authorized qualification manager app. No credentials
+are shipped with Paperclip. Production ignores this development configuration,
+and Cloud runtime identity continues to select the Cloud broker.
+
+Configure the local instance for authenticated public access, with its public
+URL and chat webhook URL pointing to the HTTPS tunnel. Add the exact public URL
+plus `/api/chat-slack/managed/oauth/callback` to the manager app's OAuth redirect
+URLs, preserving any existing redirects. Start a **new** Slack setup: saved
+own-app drafts retain their selected method. Authorize the manager app normally;
+do not copy user grants from another instance. The second bot should reuse the
+same local user's vaulted grant. A changed tunnel requires updating public
+origins and the manager redirect before starting fresh authorization.
+
+Remove the temporary redirect when retiring the test drive and securely remove
+its development credential file. Removing a bot does not revoke a manager grant
+used by other bots.

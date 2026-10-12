@@ -208,7 +208,8 @@ export function chatChannelRoutes(db: Db, options: ChatChannelRouteOptions) {
     }
     const id = await service.slackRegistration.managerGrants.complete(state,
       typeof req.query.claim_id === "string" ? req.query.claim_id : null,
-      typeof req.query.error === "string" ? req.query.error : null, actor);
+      typeof req.query.error === "string" ? req.query.error : null, actor,
+      typeof req.query.code === "string" ? req.query.code : null);
     res.redirect(303, await service.slackRegistration.returnPath(id));
   });
   router.post("/chat-endpoints/:endpointId/slack/registration", validate(slackRegistrationSchema), async (req, res) => {

@@ -2498,8 +2498,8 @@ registry.registerPath({
 registry.registerPath({
   method: "get", path: "/api/chat-slack/managed/oauth/callback", tags: ["chat-channels"],
   summary: "Redeem a sealed manager authorization and return to Slack setup",
-  description: "Authenticated, same-origin continuation with company, actor, session, endpoint revision and configured-origin checks. The broker handoff is single use; credentials are never returned to the browser.",
-  request: { query: z.object({ state: z.string(), claim_id: z.string().optional(), error: z.string().optional() }) },
+  description: "Authenticated, same-origin continuation with company, actor, session, endpoint revision and configured-origin checks. The broker handoff is single use; credentials are never returned to the browser. Explicit local development qualification accepts a Slack code instead of a broker claim; production ignores code.",
+  request: { query: z.object({ state: z.string(), claim_id: z.string().optional(), code: z.string().optional(), error: z.string().optional() }) },
   responses: { 200: { description: "Same-origin continuation page" }, 303: { description: "Return to saved setup" }, 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 409: r.conflict },
 });
 
