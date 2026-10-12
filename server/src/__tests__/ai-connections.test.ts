@@ -1484,6 +1484,72 @@ console.log(JSON.stringify({ type: "result", subtype: "success", result: "hello"
     }
   });
 
+  it.each(["recovery", "removal"] as const)(
+    "#15947 preserves provider status through a delayed rename during %s",
+    async (transition) => {
+      const scope = randomUUID();
+      const owner = `rename-state-owner-${transition}`;
+      await db.insert(companies).values({ id: scope, name: `Provider rename (${transition})`, issuePrefix: transition === "recovery" ? "AIPRR" : "AIPRM" });
+      await db.insert(companyMemberships).values({ companyId: scope, principalId: owner, principalType: "user", status: "active", membershipRole: "member" });
+      const intent = { provider: "anthropic", method: "api_key", ownership: "personal", apiKey: "fixture", agentIds: [], allAgents: true } as const;
+      const first = await service.save(scope, owner, { ...intent, name: "First" }, "fixture-first");
+      const [connection] = await db.select().from(toolConnections).where(eq(toolConnections.id, first.connectionId));
+      const tools = toolAccessService(db);
+      if (transition === "recovery") await tools.archiveConnection(first.connectionId, scope);
+
+      const reached = deferredSignal();
+      const release = deferredSignal();
+      const originalUpdate = db.update.bind(db);
+      // Delay only the rename's real SQL, after its initial application read.
+      // Recovery/removal then commits before this stale metadata edit finishes.
+      const update = vi.spyOn(db, "update").mockImplementation((table) => {
+        const builder = originalUpdate(table);
+        const originalSet = builder.set.bind(builder);
+        builder.set = (values) => {
+          const query = originalSet(values);
+          if (table === toolApplications && values.name === "Delayed provider rename") {
+            const returning = query.returning.bind(query);
+            query.returning = (() => {
+              reached.resolve();
+              return release.promise.then(() => returning());
+            }) as typeof query.returning;
+          }
+          return query;
+        };
+        return builder;
+      });
+      const editing = tools.updateApplication(connection.applicationId, { name: "Delayed provider rename" });
+      try {
+        await reached.promise;
+        const recovered = transition === "recovery"
+          ? await service.save(scope, owner, { ...intent, name: "Recovered" }, "fixture-recovered")
+          : undefined;
+        if (transition === "removal") await tools.archiveConnection(first.connectionId, scope);
+        release.resolve();
+        await editing;
+
+        const [app] = await db.select().from(toolApplications).where(eq(toolApplications.id, connection.applicationId));
+        expect(app).toMatchObject({ name: "Delayed provider rename", status: transition === "recovery" ? "active" : "archived" });
+        const accounts = await service.list(scope, owner);
+        if (recovered) {
+          expect(app.archivedAt).toBeNull();
+          expect(accounts).toEqual([expect.objectContaining({ id: recovered.connectionId, status: "connected" })]);
+        } else {
+          expect(app.archivedAt).not.toBeNull();
+          expect(accounts).toEqual([]);
+        }
+        // Recovery must not become an apparent operator archive (409). A later
+        // save must also be able to recover the automatically archived provider.
+        const later = await service.save(scope, owner, { ...intent, name: "Later" }, "fixture-later");
+        expect(await service.list(scope, owner)).toContainEqual(expect.objectContaining({ id: later.connectionId, status: "connected" }));
+      } finally {
+        release.resolve();
+        await Promise.allSettled([editing]);
+        update.mockRestore();
+      }
+    },
+  );
+
   it.each(["removal first", "connect first"] as const)(
     "#15947 deterministically keeps the provider application active under contention (%s)",
     async (order) => {

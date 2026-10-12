@@ -17777,9 +17777,9 @@ export function toolAccessService(
         .set({
           name: input.name ?? existing.name,
           description: input.description ?? existing.description,
-          status: input.status ?? existing.status,
-          // Explicit status changes supersede automatic last-connection archival.
-          ...(input.status !== undefined ? { archivedAt: null } : {}),
+          // Metadata edits must not replay state read before concurrent recovery
+          // or removal. Only explicit status changes supersede automatic archival.
+          ...(input.status !== undefined ? { status: input.status, archivedAt: null } : {}),
           pluginId: input.pluginId ?? existing.pluginId,
           ownerAgentId: input.ownerAgentId ?? existing.ownerAgentId,
           ownerUserId: input.ownerUserId ?? existing.ownerUserId,
