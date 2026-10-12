@@ -21,8 +21,10 @@ import {
   issueDocuments,
   instanceSettings,
   issueRelations,
+  issueLabels,
   issueThreadInteractions,
   issues,
+  labels,
   projectWorkspaces,
   projects,
   workspaceOperations,
@@ -1388,6 +1390,93 @@ describeEmbeddedPostgres("issueThreadInteractionService", () => {
     const children = await issuesSvc.list(companyId, { parentId: issueId });
     expect(children).toHaveLength(1);
     expect(children[0]?.title).toBe("Create the root follow-up");
+  });
+
+  it("applies company labels by name and logs issue.created for each accepted suggested task", async () => {
+    const { companyId, goalId, issueId } = await seedConfirmationIssue("Label suggested tasks");
+    const otherCompanyId = randomUUID();
+    await db.insert(companies).values({
+      id: otherCompanyId,
+      name: "Other",
+      issuePrefix: `T${otherCompanyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    const laneLabelId = randomUUID();
+    const riskLabelId = randomUUID();
+    await db.insert(labels).values([
+      { id: laneLabelId, companyId, name: "lane:claude", color: "#2563eb" },
+      { id: riskLabelId, companyId, name: "complexity:standard", color: "#6b7280" },
+      { companyId: otherCompanyId, name: "foreign", color: "#6b7280" },
+    ]);
+
+    const created = await interactionsSvc.create({
+      id: issueId,
+      companyId,
+    }, {
+      kind: "suggest_tasks",
+      continuationPolicy: "wake_assignee",
+      payload: {
+        version: 1,
+        tasks: [
+          {
+            clientKey: "root",
+            title: "Create the labelled follow-up",
+            labels: ["lane:claude", "complexity:standard", "missing", "foreign"],
+          },
+          {
+            clientKey: "child",
+            parentClientKey: "root",
+            title: "Create the unlabelled follow-up",
+          },
+        ],
+      },
+    }, {
+      userId: "local-board",
+    });
+
+    const accepted = await interactionsSvc.acceptSuggestedTasks({
+      id: issueId,
+      companyId,
+      goalId,
+      projectId: null,
+    }, created.id, {}, {
+      userId: "local-board",
+    });
+
+    const [root, child] = accepted.createdIssues;
+    const appliedLabels = await db
+      .select({ issueId: issueLabels.issueId, labelId: issueLabels.labelId })
+      .from(issueLabels);
+    expect(appliedLabels).toEqual(expect.arrayContaining([
+      { issueId: root!.id, labelId: laneLabelId },
+      { issueId: root!.id, labelId: riskLabelId },
+    ]));
+    expect(appliedLabels).toHaveLength(2);
+
+    const createdActivity = await db
+      .select()
+      .from(activityLog)
+      .where(eq(activityLog.action, "issue.created"));
+    expect(createdActivity).toHaveLength(2);
+    expect(createdActivity).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        companyId,
+        actorType: "user",
+        actorId: "local-board",
+        entityType: "issue",
+        entityId: root!.id,
+        details: expect.objectContaining({
+          title: "Create the labelled follow-up",
+          parentId: issueId,
+          source: "suggest_tasks_accept",
+          interactionId: created.id,
+        }),
+      }),
+      expect.objectContaining({
+        entityId: child!.id,
+        details: expect.objectContaining({ parentId: root!.id }),
+      }),
+    ]));
   });
 
   it("rejects partial acceptance when a selected task omits its selected-tree parent", async () => {
