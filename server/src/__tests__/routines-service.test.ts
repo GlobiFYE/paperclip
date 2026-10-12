@@ -1274,6 +1274,112 @@ describeEmbeddedPostgres("routine service live-execution coalescing", () => {
     expect(revisions[0]?.snapshot.triggers).toHaveLength(0);
   });
 
+  it("CEN-715: deleting one trigger does not break a sibling trigger's secret binding", async () => {
+    const { routine, svc } = await seedFixture();
+    const { trigger: triggerA, secretMaterial: matA } = await svc.createTrigger(routine.id, {
+      kind: "webhook",
+      signingMode: "bearer",
+    }, {});
+    const { trigger: triggerB, secretMaterial: matB } = await svc.createTrigger(routine.id, {
+      kind: "webhook",
+      signingMode: "bearer",
+    }, {});
+    expect(triggerA.secretId).not.toBe(triggerB.secretId);
+
+    // Delete trigger A; trigger B must keep its binding and still fire.
+    await svc.deleteTrigger(triggerA.id, {});
+
+    const bindingsForB = await db
+      .select()
+      .from(companySecretBindings)
+      .where(eq(companySecretBindings.secretId, triggerB.secretId!));
+    expect(bindingsForB).toHaveLength(1);
+
+    const refreshedB = await svc.getTrigger(triggerB.id);
+    expect(refreshedB?.secretId).toBe(triggerB.secretId);
+
+    const fired = await svc.firePublicTrigger(triggerB.publicId!, {
+      authorizationHeader: `Bearer ${matB!.webhookSecret}`,
+      payload: {},
+    });
+    expect(fired.status).toBe("issue_created");
+  });
+
+  it("CEN-715: deleting a trigger that shares a secretId with a sibling preserves the sibling's secret and binding", async () => {
+    const { routine, svc } = await seedFixture();
+    const { trigger: triggerA } = await svc.createTrigger(routine.id, {
+      kind: "webhook",
+      signingMode: "bearer",
+    }, {});
+    const { trigger: triggerB, secretMaterial: matB } = await svc.createTrigger(routine.id, {
+      kind: "webhook",
+      signingMode: "bearer",
+    }, {});
+
+    // Simulate the production state where triggers share a secret (older data / migration artifact).
+    await db
+      .update(routineTriggers)
+      .set({ secretId: triggerB.secretId })
+      .where(eq(routineTriggers.id, triggerA.id));
+
+    // Delete trigger A; with the shared secretId, the old code would remove
+    // triggerB's secret + binding. The fixed code must leave them intact.
+    await svc.deleteTrigger(triggerA.id, {});
+
+    // The shared secret and its binding must survive.
+    await expect(
+      db.select().from(companySecrets).where(eq(companySecrets.id, triggerB.secretId!)),
+    ).resolves.toHaveLength(1);
+    await expect(
+      db.select().from(companySecretBindings).where(eq(companySecretBindings.secretId, triggerB.secretId!)),
+    ).resolves.toHaveLength(1);
+
+    const refreshedB = await svc.getTrigger(triggerB.id);
+    expect(refreshedB?.secretId).toBe(triggerB.secretId);
+
+    const fired = await svc.firePublicTrigger(triggerB.publicId!, {
+      authorizationHeader: `Bearer ${matB!.webhookSecret}`,
+      payload: {},
+    });
+    expect(fired.status).toBe("issue_created");
+  });
+
+  it("repairs a missing binding when rotating the secret and allows the webhook to fire", async () => {
+    const { routine, svc } = await seedFixture();
+    const created = await svc.createTrigger(routine.id, {
+      kind: "webhook",
+      signingMode: "bearer",
+    }, {});
+    expect(created.secretMaterial?.webhookSecret).toBeTruthy();
+    await expect(db.select().from(companySecretBindings).where(eq(companySecretBindings.secretId, created.trigger.secretId!))).resolves.toHaveLength(1);
+
+    // Simulate the binding loss caused by a cascade deletion bug (CEN-715).
+    await db.delete(companySecretBindings).where(eq(companySecretBindings.secretId, created.trigger.secretId!));
+    await expect(db.select().from(companySecretBindings).where(eq(companySecretBindings.secretId, created.trigger.secretId!))).resolves.toHaveLength(0);
+
+    // rotate-secret must repair the missing binding.
+    const rotated = await svc.rotateTriggerSecret(created.trigger.id, {});
+    expect(rotated.bindingRepaired).toBe(true);
+    expect(rotated.secretMaterial.webhookSecret).toBeTruthy();
+    expect(rotated.revision.changeSummary).toContain("repaired");
+    await expect(db.select().from(companySecretBindings).where(eq(companySecretBindings.secretId, created.trigger.secretId!))).resolves.toHaveLength(1);
+
+    // The webhook fires successfully with the rotated secret after the repair.
+    const fired = await svc.firePublicTrigger(created.trigger.publicId!, {
+      authorizationHeader: `Bearer ${rotated.secretMaterial.webhookSecret}`,
+      payload: {},
+    });
+    expect(fired.status).toBe("issue_created");
+  });
+
+  it("does not set bindingRepaired when the binding is healthy", async () => {
+    const { routine, svc } = await seedFixture();
+    const created = await svc.createTrigger(routine.id, { kind: "webhook", signingMode: "bearer" }, {});
+    const rotated = await svc.rotateTriggerSecret(created.trigger.id, {});
+    expect(rotated.bindingRepaired).toBe(false);
+    expect(rotated.revision.changeSummary).not.toContain("repaired");
+  });
+
   it("wakes the assignee when a routine creates a fresh execution issue", async () => {
     const { agentId, routine, svc, wakeups } = await seedFixture();
 

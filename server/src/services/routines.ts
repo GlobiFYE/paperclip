@@ -2616,7 +2616,16 @@ export function routineService(
       });
       if (result.deleted && existing.secretId) {
         try {
-          await secretsSvc.remove(existing.secretId);
+          // Only remove the secret when no other trigger still references it.
+          // Shared secretIds can exist in older data; removing a shared secret
+          // would cascade-delete its binding and null-out sibling triggers.
+          const remainingRefs = await db
+            .select({ id: routineTriggers.id })
+            .from(routineTriggers)
+            .where(eq(routineTriggers.secretId, existing.secretId));
+          if (remainingRefs.length === 0) {
+            await secretsSvc.remove(existing.secretId);
+          }
         } catch (err) {
           logger.warn(
             { err, routineId: existing.routineId, triggerId: existing.id, secretId: existing.secretId },
@@ -2630,7 +2639,7 @@ export function routineService(
     rotateTriggerSecret: async (
       id: string,
       actor: Actor,
-    ): Promise<{ trigger: RoutineTrigger; secretMaterial: RoutineTriggerSecretMaterial; revision: RoutineRevision }> => {
+    ): Promise<{ trigger: RoutineTrigger; secretMaterial: RoutineTriggerSecretMaterial; revision: RoutineRevision; bindingRepaired: boolean }> => {
       const existing = await getTriggerById(id);
       if (!existing) throw notFound("Routine trigger not found");
       if (existing.kind !== "webhook" || !existing.publicId || !existing.secretId) {
@@ -2639,7 +2648,7 @@ export function routineService(
 
       const secretValue = crypto.randomBytes(24).toString("hex");
       await secretsSvc.rotate(existing.secretId, { value: secretValue }, actor);
-      const { trigger, revision } = await db.transaction(async (tx) => {
+      const { trigger, revision, bindingRepaired } = await db.transaction(async (tx) => {
         const txDb = tx as unknown as Db;
         await tx.execute(sql`select id from ${routines} where ${routines.id} = ${existing.routineId} for update`);
         const [updated] = await txDb
@@ -2659,10 +2668,37 @@ export function routineService(
           .where(eq(routines.id, existing.routineId))
           .then((rows) => rows[0] ?? null);
         if (!routine) throw notFound("Routine not found");
+        // Repair a missing binding if it was lost (e.g. due to a cascade bug from
+        // a sibling trigger deletion). The unique constraint is on
+        // (companyId, targetType, targetId, configPath) so we check before inserting.
+        const bindingConfigPath = routineWebhookSecretConfigPath(existing.secretId);
+        const existingBinding = await txDb
+          .select({ id: companySecretBindings.id })
+          .from(companySecretBindings)
+          .where(and(
+            eq(companySecretBindings.companyId, routine.companyId),
+            eq(companySecretBindings.secretId, existing.secretId),
+            eq(companySecretBindings.targetType, "routine"),
+            eq(companySecretBindings.targetId, existing.routineId),
+            eq(companySecretBindings.configPath, bindingConfigPath),
+          ))
+          .then((rows) => rows[0] ?? null);
+        const bindingRepaired = !existingBinding;
+        if (bindingRepaired) {
+          await txDb.insert(companySecretBindings).values({
+            companyId: routine.companyId,
+            secretId: existing.secretId,
+            targetType: "routine",
+            targetId: existing.routineId,
+            configPath: bindingConfigPath,
+          });
+        }
         const appended = await appendRoutineRevision(txDb, routine, actor, {
-          changeSummary: "Rotated webhook trigger secret",
+          changeSummary: bindingRepaired
+            ? "Rotated webhook trigger secret and repaired missing binding"
+            : "Rotated webhook trigger secret",
         });
-        return { trigger: updated, revision: appended.revision };
+        return { trigger: updated, revision: appended.revision, bindingRepaired };
       });
 
       return {
@@ -2672,6 +2708,7 @@ export function routineService(
           webhookSecret: secretValue,
         },
         revision,
+        bindingRepaired,
       };
     },
 
