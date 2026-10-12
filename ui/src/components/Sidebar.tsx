@@ -22,6 +22,7 @@ import {
   GanttChartSquare,
   LayoutGrid,
   Users,
+  Building2,
 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -191,6 +192,7 @@ export function Sidebar({ children }: { children?: ReactNode }) {
           {conferenceRoomChatEnabled ? (
             <SidebarNavItem to="/board-chat" label="Conference Room" icon={MessagesSquare} />
           ) : null}
+          <SidebarNavItem to="/city" label="City" icon={Building2} />
         </div>
 
         <SidebarSection label="Work" collapsible={{ open: workOpen, onOpenChange: setWorkOpen }}>

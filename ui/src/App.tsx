@@ -57,6 +57,7 @@ import { Inbox } from "./pages/Inbox";
 import { WhatNeedsMe } from "./pages/WhatNeedsMe";
 import { DecisionQueuePage } from "./pages/DecisionQueuePage";
 import { BoardChat } from "./pages/BoardChat";
+import { City } from "./pages/City";
 import { CompanySettings } from "./pages/CompanySettings";
 import { CompanyEnvironments } from "./pages/CompanyEnvironments";
 import { BootstrapSetupUxLab } from "./pages/BootstrapSetupUxLab";
@@ -417,6 +418,9 @@ function boardRoutes(streamlinedUiEnabled: boolean) {
         <Route path="board-chat" element={<BoardChat />} />
         <Route path="artifacts" element={<Artifacts />} />
       </Route>
+      {/* City — embeds the locally installed City app (see pages/City.tsx for
+          origin configuration and the remaining remote wiring). */}
+      <Route path="city" element={<City />} />
       {/* Task chat dev harness — dev builds only. */}
       {import.meta.env.DEV ? (
         <Route path="dev/task-chat-lab" element={<TaskChatLab />} />
@@ -803,6 +807,7 @@ export function App() {
             </>
           ) : null}
           <Route path="decisions" element={<UnprefixedBoardRedirect />} />
+          <Route path="city" element={<UnprefixedBoardRedirect />} />
           <Route path="u/:userSlug" element={<UnprefixedBoardRedirect />} />
           <Route path="skills/studio" element={<UnprefixedBoardRedirect />} />
           <Route path="skills/studio/new" element={<UnprefixedBoardRedirect />} />
