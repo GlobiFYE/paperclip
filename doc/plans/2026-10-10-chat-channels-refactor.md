@@ -187,3 +187,19 @@ transaction locks, token consumption, membership checks and post-commit notice.
   body substitution moves the runtime lookup behind the supplied live callback.
   All remaining statements are unchanged. Local PostgreSQL remains unavailable;
   record this slice's complete CI and review in its PR before continuing.
+
+### 2026-10-12 channel-folder reassessment: slice 3
+
+Keep identity-token consumption, principal scope, membership checks, link locks
+and revocation in shared `identity-links.ts`. Move Slack receipt queries,
+self-service access requests and confirmation-notice staging into
+`slack/identity-links.ts`. GitHub identity fields live in `github/identity-links.ts`.
+The shared confirmation transaction still stages the Slack notice before commit
+and schedules it only after commit. The live runtime and public URL callbacks
+remain live. The Slack factory holds no cache or worker state.
+
+Four existing public-service cases passed before and after, including the full
+Slack connect journey: discovery, preview, outsider access request, duplicate
+request, member confirmation, provider notice, consumed-token rejection and
+endpoint isolation. Receipt queries, access-request transaction and notice
+payload retain their statements with explicit parameter substitutions.

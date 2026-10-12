@@ -1,33 +1,28 @@
+import { githubIdentityFields } from "./github/identity-links.js";
+import { createSlackIdentityLinks, type SlackIdentityEffectStager } from "./slack/identity-links.js";
 import { createHash, randomBytes } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, ne, sql } from "drizzle-orm";
 
 import type { Db } from "@paperclipai/db";
 
-import { authUsers, chatActions, chatEndpoints, chatExternalPrincipals, chatIdentityLinks, companies, companyMemberships, invites, joinRequests } from "@paperclipai/db";
+import { authUsers, chatEndpoints, chatExternalPrincipals, chatIdentityLinks, companies, companyMemberships } from "@paperclipai/db";
 
 import { conflict, forbidden, notFound, unprocessable } from "../../errors.js";
 
-import { logActivity } from "../activity-log.js";
-
 type EndpointRow = typeof chatEndpoints.$inferSelect;
-type DbOrTransaction = Db | Parameters<Parameters<Db["transaction"]>[0]>[0];
 type ConfirmationRuntime = { credentialFingerprint: string; generation: number };
 
 type ChatIdentityLinkOptions = {
   endpointRecord: (endpointId: string) => Promise<{ endpoint: EndpointRow } | null>;
   getPublicBaseUrl: () => string | null;
   confirmationRuntimeFor: (endpoint: EndpointRow) => Promise<ConfirmationRuntime | undefined>;
-  stageProviderEffect: (database: DbOrTransaction, input: {
-    endpoint: EndpointRow; principalId: string; providerActionId: string;
-    payload: { version: 1; effect: "ephemeral_message"; authorizationMode: "safe_notice"; threadId: string; userId: string; text: string; settleDelivery: false };
-    runtimeContext: ConfirmationRuntime;
-  }) => Promise<{ id: string } | null>;
+  stageProviderEffect: SlackIdentityEffectStager;
   scheduleProviderEffect: (actionId: string) => void;
 };
 
 export function createChatIdentityLinks(db: Db, options: ChatIdentityLinkOptions) {
   const { endpointRecord, getPublicBaseUrl, confirmationRuntimeFor, stageProviderEffect, scheduleProviderEffect } = options;
-
+  const slackIdentityLinks = createSlackIdentityLinks(db, { previewIdentityLink, stageProviderEffect });
 
   async function listPrincipals(endpointId: string) {
     const record = await endpointRecord(endpointId);
@@ -50,16 +45,7 @@ export function createChatIdentityLinks(db: Db, options: ChatIdentityLinkOptions
       .select()
       .from(chatIdentityLinks)
       .where(eq(chatIdentityLinks.endpointId, endpointId));
-    const connects = record.endpoint.provider === "slack" ? await db
-      .select({ principalId: chatActions.principalId, lastConnectAt: sql<string>`max(${chatActions.createdAt})::text` })
-      .from(chatActions)
-      .where(and(
-        eq(chatActions.companyId, record.endpoint.companyId),
-        eq(chatActions.endpointId, endpointId),
-        eq(chatActions.kind, "slack_connect"),
-        eq(chatActions.status, "processed"),
-      ))
-      .groupBy(chatActions.principalId) : [];
+    const connects = record.endpoint.provider === "slack" ? await slackIdentityLinks.listConnects(record.endpoint) : [];
     const connectByPrincipal = new Map(connects.map((row) => [row.principalId, new Date(row.lastConnectAt).toISOString()]));
     const userIds = links.flatMap((link) =>
       link.paperclipUserId ? [link.paperclipUserId] : [],
@@ -86,7 +72,7 @@ export function createChatIdentityLinks(db: Db, options: ChatIdentityLinkOptions
       return {
         id: link?.id ?? principal.id,
         principalId: principal.id,
-        ...(record.endpoint.provider === "github" ? { githubUserId: principal.externalId, githubLogin: principal.handle } : {}),
+        ...(record.endpoint.provider === "github" ? githubIdentityFields(principal) : {}),
         externalLabel:
           principal.displayName ?? principal.handle ?? principal.externalId,
         externalDetail: principal.handle
@@ -216,11 +202,7 @@ export function createChatIdentityLinks(db: Db, options: ChatIdentityLinkOptions
       throw unprocessable("This identity-link request is invalid or expired");
     }
     if (!["active", "verifying"].includes(row.endpoint.status)) throw unprocessable("This connection is not available");
-    const selfService = Boolean(await db.select({ id: chatActions.id }).from(chatActions).where(and(
-      eq(chatActions.companyId, row.link.companyId), eq(chatActions.endpointId, row.link.endpointId),
-      eq(chatActions.principalId, row.link.principalId), eq(chatActions.kind, "slack_connect"),
-      sql`${chatActions.payload}->>'identityLinkHash' = ${tokenHash}`,
-    )).limit(1).then((rows) => rows[0]));
+    const selfService = await slackIdentityLinks.isSelfService(row.link, tokenHash);
     const membership = userId ? await db.select({ status: companyMemberships.status }).from(companyMemberships).where(and(
       eq(companyMemberships.companyId, row.link.companyId), eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, userId),
     )).then((rows) => rows[0]) : null;
@@ -245,43 +227,6 @@ export function createChatIdentityLinks(db: Db, options: ChatIdentityLinkOptions
     };
   }
 
-  async function requestIdentityAccess(token: string, userId: string, requestIp: string) {
-    const preview = await previewIdentityLink(token, userId);
-    if (!preview.selfService) throw forbidden("This identity link cannot request access");
-    if (preview.canConfirm) return { status: "member" as const };
-    return db.transaction(async (tx) => {
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`chat-join:${preview.companyId}:${userId}`}, 0))`);
-      const tokenHash = createHash("sha256").update(token).digest("hex");
-      const validLink = await tx.select({ id: chatIdentityLinks.id }).from(chatIdentityLinks).where(and(
-        eq(chatIdentityLinks.companyId, preview.companyId), eq(chatIdentityLinks.endpointId, preview.endpointId),
-        eq(chatIdentityLinks.confirmationTokenHash, tokenHash), eq(chatIdentityLinks.status, "pending"), gt(chatIdentityLinks.expiresAt, new Date()),
-      )).for("update").then((rows) => rows[0]);
-      if (!validLink) throw unprocessable("This identity-link request is invalid or expired");
-      const user = await tx.select({ email: authUsers.email }).from(authUsers).where(eq(authUsers.id, userId)).then((rows) => rows[0]);
-      if (!user) throw forbidden("Sign in to request company access");
-      const existing = await tx.select({ id: joinRequests.id }).from(joinRequests).where(and(
-        eq(joinRequests.companyId, preview.companyId), eq(joinRequests.requestType, "human"), eq(joinRequests.status, "pending_approval"),
-        or(eq(joinRequests.requestingUserId, userId), sql`lower(${joinRequests.requestEmailSnapshot}) = ${user.email.toLowerCase()}`),
-      )).then((rows) => rows[0]);
-      if (existing) return { status: "pending_approval" as const };
-      const now = new Date();
-      const [invite] = await tx.insert(invites).values({
-        companyId: preview.companyId, tokenHash: createHash("sha256").update(randomBytes(32)).digest("hex"),
-        inviteType: "company_join", allowedJoinTypes: "human", acceptedAt: now, expiresAt: now,
-        defaultsPayload: { human: { role: "operator" }, source: "slack_identity_link" },
-      }).returning({ id: invites.id });
-      const [request] = await tx.insert(joinRequests).values({
-        inviteId: invite.id, companyId: preview.companyId, requestType: "human", status: "pending_approval",
-        requestIp, requestingUserId: userId, requestEmailSnapshot: user.email,
-      }).returning({ id: joinRequests.id });
-      await logActivity(tx as unknown as Db, {
-        companyId: preview.companyId, actorType: "user", actorId: userId, action: "join.requested",
-        entityType: "join_request", entityId: request.id, details: { requestType: "human", source: "slack_identity_link", endpointId: preview.endpointId },
-      });
-      return { status: "pending_approval" as const };
-    });
-  }
-
   async function confirmIdentityLink(token: string, paperclipUserId: string) {
     const tokenHash = createHash("sha256").update(token).digest("hex");
     const link = await db
@@ -298,9 +243,7 @@ export function createChatIdentityLinks(db: Db, options: ChatIdentityLinkOptions
       throw unprocessable("This identity-link request is invalid or expired");
     const endpointRecordForLink = await endpointRecord(link.endpointId);
     if (!endpointRecordForLink || !["active", "verifying"].includes(endpointRecordForLink.endpoint.status)) throw unprocessable("This connection is not available");
-    const connectReceipt = endpointRecordForLink.endpoint.provider === "slack" ? await db.select({ payload: chatActions.payload }).from(chatActions).where(and(
-      eq(chatActions.endpointId, link.endpointId), eq(chatActions.principalId, link.principalId), eq(chatActions.kind, "slack_connect"),
-    )).orderBy(desc(chatActions.createdAt)).limit(1).then((rows) => rows[0]) : null;
+    const connectReceipt = endpointRecordForLink.endpoint.provider === "slack" ? await slackIdentityLinks.latestConnect(link) : null;
     const confirmationRuntime = connectReceipt ? await confirmationRuntimeFor(endpointRecordForLink.endpoint) : null;
     let confirmationEffectId: string | null = null;
     const confirmed = await db.transaction(async (tx) => {
@@ -395,16 +338,11 @@ export function createChatIdentityLinks(db: Db, options: ChatIdentityLinkOptions
         .then((rows) => rows[0] ?? null);
       if (confirmedLink && connectReceipt && confirmationRuntime &&
           typeof connectReceipt.payload.channelId === "string" && typeof connectReceipt.payload.userId === "string") {
-        const effect = await stageProviderEffect(tx, {
-          endpoint: endpointRecordForLink.endpoint, principalId: link.principalId,
-          providerActionId: `provider_effect:identity_linked:${link.id}:${tokenHash}`,
-          payload: { version: 1, effect: "ephemeral_message", authorizationMode: "safe_notice",
-            threadId: connectReceipt.payload.channelId, userId: connectReceipt.payload.userId,
-            text: "Your Slack account is connected to Paperclip. Future messages use your Paperclip permissions.", settleDelivery: false },
-          runtimeContext: confirmationRuntime,
+        confirmationEffectId = await slackIdentityLinks.stageConfirmation(tx, {
+          endpoint: endpointRecordForLink.endpoint, link, tokenHash,
+          channelId: connectReceipt.payload.channelId, userId: connectReceipt.payload.userId,
+          confirmationRuntime,
         });
-        if (!effect) throw conflict("The Slack connection changed; try confirming again");
-        confirmationEffectId = effect.id;
       }
       return confirmedLink;
     });
@@ -455,5 +393,5 @@ export function createChatIdentityLinks(db: Db, options: ChatIdentityLinkOptions
     if (!revoked) throw notFound("Identity link not found");
   }
 
-  return { listPrincipals, createLinkIntent, previewIdentityLink, requestIdentityAccess, confirmIdentityLink, revokeLink };
+  return { listPrincipals, createLinkIntent, previewIdentityLink, requestIdentityAccess: slackIdentityLinks.requestIdentityAccess, confirmIdentityLink, revokeLink };
 }
