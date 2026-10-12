@@ -10,7 +10,12 @@ const jobs = workflow.split(/^jobs:\n/m)[1];
 
 test("routing uses reserved capacity and runs no PR code or actions", () => {
   assert.deepEqual([...jobs.matchAll(/^ {2}([a-z_]+):$/gm)].map((match) => match[1]), ["gate"]);
-  assert.match(jobs, /^ {4}runs-on: runs-on\/fleet=paperclip-ci-routing-x64\/env=public-ci$/m);
+  const placement = jobs.match(/^ {4}runs-on: (.+)$/m)?.[1];
+  assert.ok(placement, "routing placement must be defined");
+  assert.ok(placement.includes("vars.AWS_CI_ENABLED == 'true' && github.repository == 'paperclipai/paperclip' && github.repository_id == '1170821064'"));
+  assert.ok(placement.includes("github.event_name == 'pull_request' && contains(fromJSON(vars.AWS_CI_TRUSTED_USER_IDS || '[]'), github.event.pull_request.user.id) && contains(fromJSON(vars.AWS_CI_TRUSTED_USER_IDS || '[]'), github.event.sender.id)"));
+  assert.ok(placement.includes("github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/master' && contains(fromJSON(vars.AWS_CI_TRUSTED_USER_IDS || '[]'), fromJSON(github.actor_id))"));
+  assert.ok(placement.endsWith("&& 'runs-on/fleet=paperclip-ci-routing-x64/env=public-ci' || 'ubuntu-latest' }}"));
   assert.doesNotMatch(jobs, /uses:|actions\/checkout|secrets\./);
   assert.doesNotMatch(workflow, /^ {2}(?:actions|contents|pull-requests): write$/m);
 });

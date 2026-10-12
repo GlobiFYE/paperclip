@@ -212,7 +212,7 @@ test("runner selection has reserved AWS capacity and executes metadata checks on
   const workflow = readFileSync(routingWorkflow, "utf8");
   const jobs = readWorkflowJobs(workflow.split(/^jobs:\n/m)[1]);
   assert.deepEqual([...jobs.keys()], ["gate"]);
-  assert.match(jobs.get("gate"), /^ {4}runs-on: runs-on\/fleet=paperclip-ci-routing-x64\/env=public-ci$/m);
+  assert.match(jobs.get("gate"), /^ {4}runs-on: \$\{\{ vars\.AWS_CI_ENABLED[\s\S]*paperclip-ci-routing-x64/m);
   assert.doesNotMatch(jobs.get("gate"), /uses:|actions\/checkout|secrets\./);
   assert.match(workflow, /^ {6}runner:\n {8}value: \$\{\{ jobs\.gate\.outputs\.runner \}\}$/m);
   assert.match(workflow, /^ {6}full_ci:\n {8}value: \$\{\{ jobs\.gate\.outputs\.full_ci \}\}$/m);

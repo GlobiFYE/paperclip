@@ -38,8 +38,10 @@ master.
 Runner selection calls `ci-routing.yml@master` on the dedicated
 `paperclip-ci-routing-x64` AWS Fleet. The `paperclip-ci-routing` runner group
 admits only `paperclipai/paperclip/.github/workflows/ci-routing.yml@refs/heads/master`
-and repository ID `1170821064`. The routing workflow reads GitHub metadata
-without checking out or executing PR code. Its author, sender, rerun actor,
+and repository ID `1170821064`. GitHub evaluates the canonical repository, author, and sender checks before
+allocating reserved capacity. Unapproved PRs use hosted metadata routing;
+approved manual canaries on master can use the reserved pool. The routing
+workflow reads GitHub metadata without checking out or executing PR code. Its author, sender, rerun actor,
 repository, head, and merge validation still decide whether tests can use AWS.
 Unapproved test workloads continue to use GitHub-hosted runners.
 
