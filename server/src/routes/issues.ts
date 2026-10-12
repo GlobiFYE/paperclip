@@ -13549,10 +13549,38 @@ export function issueRoutes(
     if (active) throw conflict("An agent currently owns execution. Wait for it to finish, or manage execution in Paperclip.", { code: "MCP_ACTIVE_EXECUTION" });
   }
 
+  type ReassignmentQueueFence = {
+    agentId: string | null;
+    issueId: string | null;
+    effects: Parameters<typeof heartbeat.resumeAfterDeferredCancellation>[1];
+  };
+
+  /** Holds the previous assignee's queue while a reassignment is in flight and
+   * resumes it after the handler has finished, including its failure paths. The
+   * release does not depend on the response: a client that disconnects early
+   * must not restart the queue before the reassignment has committed. */
+  const withReassignmentQueueFence = (
+    handler: (req: Request, res: Response, fence: ReassignmentQueueFence) => Promise<void>,
+  ) => async (req: Request, res: Response) => {
+    const fence: ReassignmentQueueFence = { agentId: null, issueId: null, effects: [] };
+    try {
+      await handler(req, res, fence);
+    } finally {
+      const { agentId, issueId } = fence;
+      if (agentId) {
+        void Promise.resolve()
+          .then(() => heartbeat.resumeAfterDeferredCancellation(agentId, fence.effects.splice(0)))
+          .catch((err) => {
+            logger.warn({ err, agentId, issueId }, "failed to resume agent queue after reassignment");
+          });
+      }
+    }
+  };
+
   router.patch(
     "/issues/:id",
     validateIssueMutationBody(updateIssueRouteSchema),
-    async (req, res) => {
+    withReassignmentQueueFence(async (req, res, reassignmentQueue) => {
       // Snapshot-guarded writes are policy-only. Do not admit task-control
       // actions that can stop execution before the service takes its row lock.
       if (req.body.expectedExecutionPolicy !== undefined && (
@@ -14275,19 +14303,12 @@ export function issueRoutes(
       let cancelledReassignmentRuns: Awaited<ReturnType<typeof heartbeat.cancelQueuedRunsInTx>> = [];
       // While the reassignment is in flight, stopping the previous assignee's
       // run must not start that agent's queue: a selected queued run would be
-      // claimed under the old assignment. Starts resume once the response ends.
-      const reassignmentQueueFence: Parameters<typeof heartbeat.resumeAfterDeferredCancellation>[1] = [];
-      let fencedQueueAgentId: string | null = null;
-      const holdAgentQueueUntilResponseEnds = (agentId: string) => {
-        if (fencedQueueAgentId) return;
-        fencedQueueAgentId = agentId;
-        res.once("close", () => {
-          void heartbeat
-            .resumeAfterDeferredCancellation(agentId, reassignmentQueueFence.splice(0))
-            .catch((err) => {
-              logger.warn({ err, agentId, issueId: existing.id }, "failed to resume agent queue after reassignment");
-            });
-        });
+      // claimed under the old assignment. Starts resume when this handler has
+      // finished, on success and on failure (see withReassignmentQueueFence).
+      const reassignmentQueueFence = reassignmentQueue.effects;
+      const holdAgentQueueUntilHandlerEnds = (agentId: string) => {
+        reassignmentQueue.agentId ??= agentId;
+        reassignmentQueue.issueId = existing.id;
       };
       if (req.actor.source !== "mcp_oauth" && assigneeWillChange && existing.assigneeAgentId) {
         await stopRunnerGoalForOwnershipChange({
@@ -14337,7 +14358,7 @@ export function issueRoutes(
         }
         const runToStopForReassignment = await resolveActiveIssueRun(existing);
         if (runToStopForReassignment) {
-          holdAgentQueueUntilResponseEnds(existing.assigneeAgentId);
+          holdAgentQueueUntilHandlerEnds(existing.assigneeAgentId);
           const cancelled = await heartbeat.cancelRun(
             runToStopForReassignment.id,
             "Cancelled before issue reassignment",
@@ -14710,7 +14731,7 @@ export function issueRoutes(
       // The queued runs were cancelled with the reassignment; finish their
       // event, wake and release side effects now that it has committed.
       if (cancelledReassignmentRuns.length > 0) {
-        holdAgentQueueUntilResponseEnds(cancelledReassignmentRuns[0]!.updated.agentId);
+        holdAgentQueueUntilHandlerEnds(cancelledReassignmentRuns[0]!.updated.agentId);
         await heartbeat.settleCancelledQueuedRuns(cancelledReassignmentRuns, {
           reason: "Cancelled by issue reassignment",
           eventMessage: "queued run cancelled by issue reassignment",
@@ -15904,7 +15925,7 @@ export function issueRoutes(
         return;
       }
       res.json({ ...issueResponse, changes, comment });
-    },
+    }),
   );
 
   router.delete("/issues/:id", async (req, res) => {
