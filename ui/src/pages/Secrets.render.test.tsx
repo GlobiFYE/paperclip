@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { createRoot } from "react-dom/client";
+import { createRoot as createReactRoot, type Root } from "react-dom/client";
 import { flushSync } from "react-dom";
 import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -16,6 +16,7 @@ import type {
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderVaultsTab, Secrets } from "./Secrets";
 import { ApiError } from "../api/client";
+import { queryKeys } from "../lib/queryKeys";
 
 const mockSecretsApi = vi.hoisted(() => ({
   list: vi.fn(),
@@ -50,6 +51,9 @@ const mockSecretsApi = vi.hoisted(() => ({
   updateMyUserSecret: vi.fn(),
   rotateMyUserSecret: vi.fn(),
   removeMyUserSecret: vi.fn(),
+  listProposals: vi.fn(),
+  approveProposal: vi.fn(),
+  rejectProposal: vi.fn(),
 }));
 
 const mockAgentsApi = vi.hoisted(() => ({
@@ -114,6 +118,7 @@ const providers: SecretProviderDescriptor[] = [
     requiresExternalRef: false,
     supportsManagedValues: true,
     supportsExternalReferences: true,
+    supportsExternalValueWrites: true,
     configured: true,
   },
   {
@@ -159,12 +164,29 @@ const providerConfigs = [
   },
 ] satisfies Partial<CompanySecretProviderConfig>[];
 
+const activeRoots = new Set<Root>();
+
 async function act(callback: () => void | Promise<void>) {
-  let result: void | Promise<void> = undefined;
+  let result: void | Promise<void>;
   flushSync(() => {
     result = callback();
   });
-  await result;
+  await result!;
+}
+
+function createRoot(container: Element | DocumentFragment) {
+  const root = createReactRoot(container);
+  const unmount = root.unmount.bind(root);
+  root.unmount = () => {
+    if (!activeRoots.delete(root)) return;
+    unmount();
+  };
+  activeRoots.add(root);
+  return root;
+}
+
+function unmountActiveRoots() {
+  for (const root of [...activeRoots]) root.unmount();
 }
 
 async function flushReact() {
@@ -339,6 +361,28 @@ async function openAwsVaultDialog() {
   await flushReact();
 }
 
+async function renderSecrets(
+  container: HTMLDivElement,
+  {
+    path = "/",
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+  }: { path?: string; queryClient?: QueryClient } = {},
+) {
+  const root = createRoot(container);
+  await act(async () => {
+    root.render(
+      <MemoryRouter initialEntries={[path]}>
+        <QueryClientProvider client={queryClient}>
+          <Secrets />
+        </QueryClientProvider>
+      </MemoryRouter>,
+    );
+  });
+  await flushReact();
+  await flushReact();
+  return root;
+}
+
 describe("Secrets page layout", () => {
   let container: HTMLDivElement;
 
@@ -364,32 +408,19 @@ describe("Secrets page layout", () => {
     mockSecretsApi.listUserSecretDefinitions.mockResolvedValue([]);
     mockSecretsApi.userSecretDefinitionCoverage.mockResolvedValue(userSecretCoverage);
     mockSecretsApi.listMyUserSecrets.mockResolvedValue([]);
+    mockSecretsApi.listProposals.mockResolvedValue([]);
     mockAgentsApi.list.mockResolvedValue([]);
   });
 
   afterEach(() => {
+    unmountActiveRoots();
     container.remove();
     document.body.innerHTML = "";
     vi.clearAllMocks();
   });
 
   it("uses the shared search/filter/tab affordances and keeps vault sections quiet", async () => {
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
 
     expect(container.querySelector('input[data-page-search-target="true"][aria-label="Search secrets"]')).not.toBeNull();
     expect(container.textContent).toContain("Use secrets by binding them to runtime environment variables.");
@@ -435,22 +466,7 @@ describe("Secrets page layout", () => {
   });
 
   it("refreshes existing AWS secrets from a provider vault card", async () => {
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
 
     const vaultTabButton = [...document.querySelectorAll("button")].find(
       (button) => button.textContent?.includes("Provider vaults"),
@@ -488,22 +504,7 @@ describe("Secrets page layout", () => {
 
   it("warns that removing a provider vault only removes Paperclip config", async () => {
     mockSecretsApi.removeProviderConfig.mockResolvedValueOnce(providerConfigs[1]);
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
 
     const vaultTabButton = [...document.querySelectorAll("button")].find(
       (button) => button.textContent?.includes("Provider vaults"),
@@ -572,22 +573,7 @@ describe("Secrets page layout", () => {
       ],
     });
 
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
 
     const referencesButton = container.querySelector(
       'button[aria-label="Actions for OPENAI_API_KEY"]',
@@ -602,13 +588,14 @@ describe("Secrets page layout", () => {
     });
     await flushReact();
 
+    await waitForReact(() => document.body.textContent?.includes("View in Usage") ?? false);
     const viewUsageButton = Array.from(document.body.querySelectorAll("button")).find(
       (button) => button.textContent?.includes("View in Usage"),
     ) as HTMLButtonElement | undefined;
     await act(async () => {
       viewUsageButton?.click();
     });
-    await flushReact();
+    await waitForReact(() => mockSecretsApi.usage.mock.calls.length > 0);
 
     expect(mockSecretsApi.usage).toHaveBeenCalledWith("secret-openai");
     expect(document.body.textContent).toContain("CodexCoder");
@@ -619,35 +606,97 @@ describe("Secrets page layout", () => {
     });
   });
 
-  it("merges company secrets and each-user definitions into the Secrets list", async () => {
+  it("opens the secret detail sheet from a ?secret= deep link", async () => {
     mockSecretsApi.list.mockResolvedValue([makeCompanySecret()]);
-    mockSecretsApi.listUserSecretDefinitions.mockResolvedValue([makeUserSecretDefinition()]);
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
+    mockSecretsApi.usage.mockResolvedValue({ secretId: "secret-openai", bindings: [] });
+    mockSecretsApi.accessEvents.mockResolvedValue([]);
+
+    const root = await renderSecrets(container, { path: "/company/settings/secrets?secret=secret-openai" });
+
+    // The detail sheet is open without any clicks: the deep link drives selection.
+    const copyLinkButton = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.includes("Copy link"),
+    );
+    expect(copyLinkButton).not.toBeUndefined();
+    const sheet = copyLinkButton?.closest("[role='dialog']");
+    expect(sheet?.textContent).toContain("OPENAI_API_KEY");
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("writes a new value through the provider for external reference secrets", async () => {
+    const externalSecret = makeCompanySecret({
+      id: "secret-neon",
+      key: "neon_admin_api_key",
+      name: "paperclip-cloud/prod/provider/neon/admin-api-key",
+      provider: "aws_secrets_manager",
+      managedMode: "external_reference",
+      externalRef: "arn:aws:secretsmanager:us-east-1:123456789012:secret:paperclip-cloud/prod/provider/neon/admin-api-key",
+      providerConfigId: "vault-aws",
+    });
+    mockSecretsApi.list.mockResolvedValue([externalSecret]);
+    mockSecretsApi.usage.mockResolvedValue({ secretId: "secret-neon", bindings: [] });
+    mockSecretsApi.accessEvents.mockResolvedValue([]);
+    mockSecretsApi.rotate.mockResolvedValue({ ...externalSecret, latestVersion: 2 });
+
+    const root = await renderSecrets(container, { path: "/company/settings/secrets?secret=secret-neon" });
+
+    // AWS supports write-through, so the primary action is a value update.
+    const updateValueButton = Array.from(document.body.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Update value",
+    ) as HTMLButtonElement | undefined;
+    expect(updateValueButton).not.toBeUndefined();
+    await act(async () => {
+      updateValueButton?.click();
+    });
+    await flushReact();
+
+    // Both modes are offered; "Write new value" is the default.
+    expect(document.body.textContent).toContain("Write new value");
+    expect(document.body.textContent).toContain("Change reference");
+
+    const valueTextarea = document.getElementById("rotate-value") as HTMLTextAreaElement | null;
+    expect(valueTextarea).not.toBeNull();
+    setTextareaValue(valueTextarea!, "rotated-neon-admin-key");
+    await flushReact();
+
+    const dialog = valueTextarea!.closest("[role='dialog']") as HTMLElement;
+    const submitButton = Array.from(dialog.querySelectorAll("button")).find(
+      (button) => button.textContent?.trim() === "Update value",
+    ) as HTMLButtonElement | undefined;
+    expect(submitButton?.disabled).toBe(false);
+    await act(async () => {
+      submitButton?.click();
+    });
+    await flushReact();
+
+    expect(mockSecretsApi.rotate).toHaveBeenCalledWith("secret-neon", {
+      value: "rotated-neon-admin-key",
+      providerConfigId: "vault-aws",
     });
 
     await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
+      root.unmount();
     });
-    await flushReact();
-    await flushReact();
+  });
+
+  it("merges company secrets and each-user definitions into the Secrets list", async () => {
+    mockSecretsApi.list.mockResolvedValue([makeCompanySecret()]);
+    mockSecretsApi.listUserSecretDefinitions.mockResolvedValue([makeUserSecretDefinition()]);
+    const root = await renderSecrets(container);
 
     expect(container.textContent).toContain("OPENAI_API_KEY");
     expect(container.textContent).toContain("Personal GitHub token");
-    expect(container.textContent).toContain("Company");
+    expect(container.textContent).toContain("Organization");
     expect(container.textContent).toContain("Each user");
     expect(container.textContent).toContain("3/5 set");
     expect(container.textContent).not.toContain("User secret definitions");
 
     const listContainer = container.querySelector('[data-testid="secrets-list-container"]');
     const tableView = container.querySelector('[data-testid="secrets-table-view"]');
+    expect(listContainer?.parentElement?.className).not.toContain("overflow-y-auto");
     const cardView = container.querySelector('[data-testid="secrets-card-view"]');
     expect(listContainer?.className).toContain("@container");
     expect(tableView?.className).toContain("@min-[40rem]:block");
@@ -669,22 +718,7 @@ describe("Secrets page layout", () => {
   it("creates an each-user secret from the unified New secret dialog", async () => {
     const definition = makeUserSecretDefinition({ name: "Personal GitHub token" });
     mockSecretsApi.createUserSecretDefinition.mockResolvedValueOnce(definition);
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
 
     const newSecretButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.includes("New secret"),
@@ -762,22 +796,7 @@ describe("Secrets page layout", () => {
   it("opens the New secret dialog when provider queries fail", async () => {
     mockSecretsApi.providers.mockRejectedValueOnce(new ApiError("Providers unavailable", 403, null));
     mockSecretsApi.providerConfigs.mockRejectedValueOnce(new ApiError("Provider vaults unavailable", 403, null));
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
 
     const newSecretButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.includes("New secret"),
@@ -799,22 +818,7 @@ describe("Secrets page layout", () => {
     const definition = makeUserSecretDefinition();
     mockSecretsApi.listUserSecretDefinitions.mockResolvedValue([definition]);
     mockSecretsApi.listMyUserSecrets.mockResolvedValue([{ definition, secret: null }]);
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
 
     const definitionRow = Array.from(container.querySelectorAll("[role='row']")).find(
       (row) => row.textContent?.includes("Personal GitHub token"),
@@ -822,7 +826,7 @@ describe("Secrets page layout", () => {
     await act(async () => {
       definitionRow?.click();
     });
-    await flushReact();
+    await waitForReact(() => document.body.textContent?.includes("Details") ?? false);
 
     expect(document.body.textContent).toContain("Personal GitHub token");
     expect(document.body.textContent).toContain("Details");
@@ -858,22 +862,7 @@ describe("Secrets page layout", () => {
   });
 
   it("keeps the new secret value textarea width-constrained for long tokens", async () => {
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
 
     const newSecretButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.includes("New secret"),
@@ -902,6 +891,7 @@ describe("Secrets page layout", () => {
     mockSecretsApi.create.mockRejectedValueOnce(
       new ApiError("AWS Secrets Manager denied the request. Check IAM permissions for this provider vault.", 403, {
         details: {
+          rawProviderMessage,
           code: "access_denied",
           provider: "aws_secrets_manager",
           operation: "secret.create",
@@ -916,22 +906,7 @@ describe("Secrets page layout", () => {
         },
       }),
     );
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
 
     const newSecretButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.includes("New secret"),
@@ -973,22 +948,7 @@ describe("Secrets page layout", () => {
 
   it("renders generic secret creation failures with a stable selector", async () => {
     mockSecretsApi.create.mockRejectedValueOnce(new ApiError("Secret creation failed", 500, null));
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
 
     const newSecretButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.includes("New secret"),
@@ -1023,22 +983,7 @@ describe("Secrets page layout", () => {
 
   it("discovers AWS provider vault candidates and applies selected values as prefill", async () => {
     mockSecretsApi.providerConfigDiscoveryPreview.mockResolvedValueOnce(makeDiscoveryPreview());
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
     await openAwsVaultDialog();
 
     const discoveryButton = document.querySelector(
@@ -1105,6 +1050,7 @@ describe("Secrets page layout", () => {
     mockSecretsApi.providerConfigDiscoveryPreview.mockRejectedValueOnce(
       new ApiError("AWS Secrets Manager denied the request. Check IAM permissions for this provider vault.", 403, {
         details: {
+          rawProviderMessage,
           code: "access_denied",
           provider: "aws_secrets_manager",
           operation: "secret_provider_config.discovery.preview",
@@ -1120,22 +1066,7 @@ describe("Secrets page layout", () => {
         },
       }),
     );
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
     await openAwsVaultDialog();
 
     const regionInput = document.getElementById("provider-vault-aws-region") as HTMLInputElement;
@@ -1188,22 +1119,7 @@ describe("Secrets page layout", () => {
         },
       }),
     );
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
     await openAwsVaultDialog();
 
     const regionInput = document.getElementById("provider-vault-aws-region") as HTMLInputElement;
@@ -1231,22 +1147,7 @@ describe("Secrets page layout", () => {
   });
 
   it("auto-generates the key from the name and keeps it read-only until Edit", async () => {
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
 
     const newSecretButton = Array.from(container.querySelectorAll("button")).find(
       (button) => button.textContent?.includes("New secret"),
@@ -1327,22 +1228,7 @@ describe("Secrets page layout", () => {
       id === "agent-coder" ? coder : reviewer,
     );
 
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
 
     const companyRow = Array.from(container.querySelectorAll("[role='row']")).find(
       (row) => row.textContent?.includes("OPENAI_API_KEY"),
@@ -1350,8 +1236,7 @@ describe("Secrets page layout", () => {
     await act(async () => {
       companyRow?.click();
     });
-    await flushReact();
-    await flushReact();
+    await waitForReact(() => document.body.textContent?.includes("Reviewer") ?? false);
 
     // Existing access is listed right in the Details tab.
     expect(document.body.textContent).toContain("Agent access");
@@ -1420,22 +1305,7 @@ describe("Secrets page layout", () => {
     mockSecretsApi.providerConfigDiscoveryPreview.mockResolvedValueOnce(
       makeDiscoveryPreview({ candidates: [], sampledSecretCount: 0 }),
     );
-    const root = createRoot(container);
-    const queryClient = new QueryClient({
-      defaultOptions: { queries: { retry: false } },
-    });
-
-    await act(async () => {
-      root.render(
-        <MemoryRouter>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
+    const root = await renderSecrets(container);
     await openAwsVaultDialog();
 
     const regionInput = document.getElementById("provider-vault-aws-region") as HTMLInputElement;
@@ -1477,21 +1347,8 @@ describe("Secrets folder view (PAP-14698)", () => {
     mockAgentsApi.list.mockResolvedValue([]);
   }
 
-  async function renderAt(path: string) {
-    const root = createRoot(container);
-    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    await act(async () => {
-      root.render(
-        <MemoryRouter initialEntries={[path]}>
-          <QueryClientProvider client={queryClient}>
-            <Secrets />
-          </QueryClientProvider>
-        </MemoryRouter>,
-      );
-    });
-    await flushReact();
-    await flushReact();
-    return root;
+  function renderAt(path: string) {
+    return renderSecrets(container, { path });
   }
 
   beforeEach(() => {
@@ -1506,6 +1363,7 @@ describe("Secrets folder view (PAP-14698)", () => {
   });
 
   afterEach(() => {
+    unmountActiveRoots();
     container.remove();
     document.body.innerHTML = "";
     vi.clearAllMocks();
@@ -1699,122 +1557,6 @@ describe("Secrets folder view (PAP-14698)", () => {
     await act(async () => root.unmount());
   });
 
-  it("creates a company secret from a folder prefix and derives the key from the full name", async () => {
-    mockSecretsApi.create.mockResolvedValue(
-      makeCompanySecret({ id: "created", name: "dev/github/oauth/clientsecret/deeper" }),
-    );
-    const root = await renderAt("/?path=dev/github/oauth");
-
-    const newSecretButton = [...document.querySelectorAll("button")].find(
-      (button) => button.textContent?.trim() === "New secret",
-    ) as HTMLButtonElement;
-    await act(async () => newSecretButton.click());
-    await flushReact();
-
-    expect(document.body.textContent).toContain("dev/github/oauth/");
-    const nameInput = document.getElementById("new-secret-name") as HTMLInputElement;
-    expect(nameInput.placeholder).toBe("clientsecret");
-    expect(nameInput.value).toBe("");
-    await act(async () => setInputValue(nameInput, "clientsecret/deeper"));
-    await flushReact();
-
-    expect((document.getElementById("new-secret-key") as HTMLInputElement).value).toBe(
-      "dev-github-oauth-clientsecret-deeper",
-    );
-    await act(async () =>
-      setTextareaValue(document.getElementById("new-secret-value") as HTMLTextAreaElement, "secret-value"),
-    );
-    const createButton = [...document.querySelectorAll("button")].find(
-      (button) => button.textContent?.trim() === "Create secret",
-    ) as HTMLButtonElement;
-    await act(async () => createButton.click());
-    await flushReact();
-
-    expect(mockSecretsApi.create).toHaveBeenCalledWith(
-      "company-1",
-      expect.objectContaining({ name: "dev/github/oauth/clientsecret/deeper" }),
-    );
-
-    await act(async () => root.unmount());
-  });
-
-  it("keeps the folder prefix for Each user and exposes the full name when the chip is removed", async () => {
-    const root = await renderAt("/?path=dev/github/oauth");
-    const newSecretButton = [...document.querySelectorAll("button")].find(
-      (button) => button.textContent?.trim() === "New secret",
-    ) as HTMLButtonElement;
-    await act(async () => newSecretButton.click());
-    await flushReact();
-
-    const eachUserTab = [...document.querySelectorAll("button")].find(
-      (button) => button.textContent?.trim() === "Each user",
-    ) as HTMLButtonElement;
-    await act(async () => {
-      eachUserTab.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
-      eachUserTab.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, key: "Enter" }));
-      eachUserTab.click();
-    });
-    await flushReact();
-
-    const nameInput = document.getElementById("new-secret-name") as HTMLInputElement;
-    await act(async () => setInputValue(nameInput, "personal-token"));
-    await flushReact();
-    expect((document.getElementById("new-secret-key") as HTMLInputElement).value).toBe(
-      "DEV_GITHUB_OAUTH_PERSONAL_TOKEN",
-    );
-
-    const removePrefix = document.querySelector(
-      'button[aria-label="Remove folder prefix"]',
-    ) as HTMLButtonElement;
-    await act(async () => removePrefix.click());
-    await flushReact();
-    expect((document.getElementById("new-secret-name") as HTMLInputElement).value).toBe(
-      "dev/github/oauth/personal-token",
-    );
-    expect(document.querySelector('button[aria-label="Remove folder prefix"]')).toBeNull();
-
-    await act(async () => root.unmount());
-  });
-
-  it("validates New folder inline and stages the trimmed segment in the URL-backed folder view", async () => {
-    const root = await renderAt("/?path=dev/github/oauth");
-    const newFolderButton = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent?.trim() === "New folder",
-    ) as HTMLButtonElement;
-    await act(async () => newFolderButton.click());
-    await flushReact();
-
-    const folderInput = container.querySelector('input[aria-label="Folder name"]') as HTMLInputElement;
-    await act(async () => setInputValue(folderInput, "bad/name"));
-    const createFolderButton = [...container.querySelectorAll("button")].find(
-      (button) => button.textContent?.trim() === "Create folder",
-    ) as HTMLButtonElement;
-    await act(async () => createFolderButton.click());
-    await flushReact();
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-      "Folder name cannot contain slashes.",
-    );
-
-    await act(async () => setInputValue(folderInput, "  staged  "));
-    await flushReact();
-    await act(async () => createFolderButton.click());
-    await waitForReact(() =>
-      [...container.querySelectorAll('[aria-current="page"]')].some((node) =>
-        node.textContent?.includes("staged"),
-      ),
-    );
-
-    expect(
-      [...container.querySelectorAll('[aria-current="page"]')].some((node) =>
-        node.textContent?.includes("staged"),
-      ),
-    ).toBe(true);
-    expect(container.textContent).toContain("No secrets in this folder yet.");
-    expect(container.querySelector('input[aria-label="Folder name"]')).toBeNull();
-
-    await act(async () => root.unmount());
-  });
-
   it("Flat toggle reproduces the raw, ungrouped list", async () => {
     const root = await renderAt("/");
 
@@ -1847,6 +1589,68 @@ describe("Secrets folder view (PAP-14698)", () => {
     // prod/api/token lives outside the current folder yet still matches.
     expect(table.textContent).toContain("prod/api/");
     expect(table.textContent).toContain("token");
+
+    await act(async () => root.unmount());
+  });
+});
+
+describe("Secrets operator-hidden tabs", () => {
+  let container: HTMLDivElement;
+
+  function seedSecrets() {
+    mockSecretsApi.list.mockResolvedValue([makeCompanySecret({ id: "s1", key: "api_key", name: "api_key" })]);
+    mockSecretsApi.providers.mockResolvedValue(providers);
+    mockSecretsApi.providerHealth.mockResolvedValue({ providers: [] });
+    mockSecretsApi.providerConfigs.mockResolvedValue(providerConfigs);
+    mockSecretsApi.listUserSecretDefinitions.mockResolvedValue([]);
+    mockSecretsApi.userSecretDefinitionCoverage.mockResolvedValue(userSecretCoverage);
+    mockSecretsApi.listMyUserSecrets.mockResolvedValue([]);
+    mockSecretsApi.listProposals.mockResolvedValue([]);
+    mockAgentsApi.list.mockResolvedValue([]);
+  }
+
+  function renderWithHiddenSettings(hiddenSettings: string[]) {
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    queryClient.setQueryData(queryKeys.health, { hiddenSettings } as never);
+    return renderSecrets(container, { queryClient });
+  }
+
+  beforeEach(() => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    seedSecrets();
+  });
+
+  afterEach(() => {
+    unmountActiveRoots();
+    container.remove();
+    document.body.innerHTML = "";
+    vi.clearAllMocks();
+  });
+
+  it("hides the Provider vaults and Proposals tabs and skips the proposals poll", async () => {
+    const root = await renderWithHiddenSettings([
+      "company.secrets.vaults",
+      "company.secrets.proposals",
+    ]);
+
+    const tabLabels = [...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent);
+    expect(tabLabels.join(" ")).toContain("Secrets");
+    expect(tabLabels.join(" ")).toContain("My secrets");
+    expect(tabLabels.join(" ")).not.toContain("Provider vaults");
+    expect(tabLabels.join(" ")).not.toContain("Proposals");
+    expect(mockSecretsApi.listProposals).not.toHaveBeenCalled();
+
+    await act(async () => root.unmount());
+  });
+
+  it("keeps both tabs when nothing is hidden", async () => {
+    const root = await renderWithHiddenSettings([]);
+
+    const tabLabels = [...container.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent);
+    expect(tabLabels.join(" ")).toContain("Provider vaults");
+    expect(tabLabels.join(" ")).toContain("Proposals");
+    expect(mockSecretsApi.listProposals).toHaveBeenCalled();
 
     await act(async () => root.unmount());
   });
