@@ -30,6 +30,9 @@ affected entries, grouped alphabetically by agent with links to
 each run. Unknown billing types use their own label rather than counting as
 unavailable costs. Estimates remain labeled on spend cards and tables.
 Select an agent's name to open its configuration.
+Provider and biller cards also label estimates and unavailable prices. A total
+with only unpriced entries shows a dash instead of $0.00. Successful recording
+shows a confirmation even when it resolves the last gap.
 
 - **Billing category unknown:** select an AI connection in the agent's
   configuration for future runs. Recorded charges remain in the inference ledger.
@@ -50,6 +53,8 @@ Changing an agent's configuration does not reprice historical entries. Normal
 credits and fixed billing are listed as other billing usage, without an unknown
 billing warning. OpenCode API billing can be identified from a nonempty API key
 for its selected provider; the provider name alone is insufficient evidence.
+Remote OpenCode runs use only keys forwarded to the remote process. Keys present
+on the Paperclip server do not establish a remote run's billing category.
 
 Board cost readers can inspect bounded details at
 `GET /api/companies/{companyId}/costs/data-quality`, with the same date bounds as

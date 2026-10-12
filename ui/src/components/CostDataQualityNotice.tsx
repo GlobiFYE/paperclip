@@ -8,6 +8,7 @@ import { formatDateTime } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { AgentAvatar } from "./AgentAvatar";
+import { useToastActions } from "../context/ToastContext";
 
 const explanations: Record<CostDataQualityReason, { label: string; description: string }> = {
   unknown_billing: {
@@ -45,6 +46,7 @@ export function CostDataQualityNotice({ companyId, from, to, reportKey, unpriced
   const hasCostGaps = unavailableCount > 0 || unknownBillingCount > 0;
   const detailsId = useId();
   const client = useQueryClient();
+  const { pushToast } = useToastActions();
   const key = [...reportKey, "data-quality"];
   const { data, error, isPending, refetch } = useQuery({
     queryKey: key,
@@ -54,7 +56,12 @@ export function CostDataQualityNotice({ companyId, from, to, reportKey, unpriced
   });
   const retry = useMutation({
     mutationFn: (runId: string) => costsApi.retryAccounting(companyId, runId),
-    onSuccess: () => {
+    onSuccess: result => {
+      pushToast({
+        title: result.accounted ? "Costs recorded." : "No new cost data is available.",
+        body: "The agent was not rerun.",
+        tone: result.accounted ? "success" : "info",
+      });
       client.invalidateQueries({ queryKey: ["costs", companyId] });
       client.invalidateQueries({ queryKey: key });
       client.invalidateQueries({ queryKey: ["cost-subscriptions", companyId] });
@@ -100,7 +107,6 @@ export function CostDataQualityNotice({ companyId, from, to, reportKey, unpriced
       <p>{explanation.description}</p>
       {retry.variables === item.runId && retry.isPending && <p role="status">Recording saved costs…</p>}
       {retry.variables === item.runId && retry.error && <p role="status">Cost recording failed. Try again shortly.</p>}
-      {retry.variables === item.runId && retry.data && <p role="status">{retry.data.accounted ? "Costs recorded." : "No new cost data is available. The agent was not rerun."}</p>}
     </li>;
   }
 

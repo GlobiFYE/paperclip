@@ -4,6 +4,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, within } from "storybook/test";
 import { monthlySubscriptionCents, type SubscriptionCostReport, type CostDataQualityReport } from "@paperclipai/shared";
 import { Costs } from "@/pages/Costs";
+import { ToastViewport } from "@/components/ToastViewport";
 
 function fixture(): SubscriptionCostReport {
   const zero = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0, costCents: "0", eventCount: 0, estimatedEventCount: 0, unpricedEventCount: 0 };
@@ -96,7 +97,7 @@ function SubscriptionCostsStory({ unknownPrice = false, stale = false, costGaps 
     client.removeQueries({ queryKey: ["cost-subscriptions"] }); client.removeQueries({ queryKey: ["costs"] }); setReady(true);
     return () => { window.fetch = original; client.removeQueries({ queryKey: ["cost-subscriptions"] }); client.removeQueries({ queryKey: ["costs"] }); };
   }, [client, unknownPrice, stale, costGaps]);
-  return ready ? <Costs embedded hideBudgetsTab /> : null;
+  return ready ? <><Costs embedded hideBudgetsTab /><ToastViewport /></> : null;
 }
 
 const meta = { title: "Costs/Subscriptions", component: SubscriptionCostsStory, parameters: {

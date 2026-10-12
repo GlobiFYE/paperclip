@@ -136,6 +136,9 @@ export interface CostByProviderModel {
   model: string;
   costCents: number;
   costCentsExact?: string;
+  eventCount?: number;
+  estimatedEventCount?: number;
+  unpricedEventCount?: number;
   inputTokens: number;
   cachedInputTokens: number;
   outputTokens: number;
@@ -150,6 +153,9 @@ export interface CostByBiller {
   biller: string;
   costCents: number;
   costCentsExact?: string;
+  eventCount?: number;
+  estimatedEventCount?: number;
+  unpricedEventCount?: number;
   inputTokens: number;
   cachedInputTokens: number;
   outputTokens: number;

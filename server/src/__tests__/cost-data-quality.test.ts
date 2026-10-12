@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { appearanceForPalette } from "@paperclipai/shared";
 import { agents, companies, costEvents, createDb, heartbeatRuns, issues, nativeRunFinalizations } from "@paperclipai/db";
 import { costDataQualityReport, RECEIPT_WAIT_MS } from "../services/cost-data-quality.js";
@@ -54,6 +54,55 @@ describe("actionable cost data quality", () => {
     expect(summary.unknownBillingEventCount).toBe(1);
     expect(summary.spendCents).toBe(24); // Unknown billing retains its reported dollars.
     expect(summary.unpricedEventCount).toBe(2); // Included subscription usage is not a price gap.
+    const providerRows = await costService(db).byProvider(owner.companyId, { allTime: true });
+    expect(providerRows.reduce((count, row) => count + row.eventCount!, 0)).toBe(7);
+    expect(providerRows.reduce((count, row) => count + row.estimatedEventCount!, 0)).toBe(1);
+    expect(providerRows.reduce((count, row) => count + row.unpricedEventCount!, 0)).toBe(2);
+    expect(await costService(db).byBiller(owner.companyId, { allTime: true })).toEqual([
+      expect.objectContaining({ eventCount: 7, estimatedEventCount: 1, unpricedEventCount: 2, costCents: 24 }),
+    ]);
+  });
+
+  it("uses sparse ordered indexes for old gaps behind thousands of healthy records", async () => {
+    const owner = await company();
+    await db.execute(sql`insert into cost_events (company_id,agent_id,provider,model,billing_type,cost_status,cost_cents,occurred_at)
+      select ${owner.companyId}::uuid,${owner.agentId}::uuid,'openai','gpt-6-astra','metered_api','reported',1,
+        ${now.toISOString()}::timestamptz - n * interval '1 second' from generate_series(1,5000) n`);
+    await db.execute(sql`insert into heartbeat_runs (company_id,agent_id,status,created_at,finished_at,cost_accounting_pending)
+      select ${owner.companyId}::uuid,${owner.agentId}::uuid,'succeeded',${now.toISOString()}::timestamptz,
+        ${now.toISOString()}::timestamptz - n * interval '1 second',false from generate_series(1,5000) n`);
+    const old = new Date(now.getTime() - 10_000_000);
+    await event(owner, { occurredAt: old });
+    await event(owner, { occurredAt: old, billingType: "unknown", costStatus: "reported" });
+    await run(owner, { finishedAt: old });
+    await db.execute(sql`analyze cost_events`);
+    await db.execute(sql`analyze heartbeat_runs`);
+    const plans: string[] = [];
+    // Explain the actual production statements, with the normal planner enabled.
+    const explainingDb = new Proxy(db, {
+      get(target, key) {
+        if (key === "transaction") return (work: (tx: typeof db) => Promise<unknown>, options: Parameters<typeof db.transaction>[1]) =>
+          target.transaction(tx => work(new Proxy(tx, {
+            get(transaction, property) {
+              if (property === "execute") return async (query: Parameters<typeof tx.execute>[0]) => {
+                plans.push(JSON.stringify(await transaction.execute(sql`explain (analyze, buffers, format json) ${query}`)));
+                return transaction.execute(query);
+              };
+              const value = Reflect.get(transaction, property);
+              return typeof value === "function" ? value.bind(transaction) : value;
+            },
+          }) as unknown as typeof db), options);
+        const value = Reflect.get(target, key);
+        return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const report = await costDataQualityReport(explainingDb, owner.companyId, false, { allTime: true }, now);
+    expect(report.events).toHaveLength(2);
+    expect(report.runs).toHaveLength(1);
+    expect(plans).toHaveLength(2);
+    expect(plans[0]).toContain("cost_events_data_quality_idx");
+    expect(plans[1]).toContain("heartbeat_runs_cost_data_quality_idx");
+    expect(plans.join(" ")).not.toContain("Rows Removed by Filter\":5000");
   });
 
   it("enforces company and period boundaries, including month-to-date and inclusive endpoints", async () => {

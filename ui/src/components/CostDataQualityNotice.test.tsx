@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appearanceForPalette, agentAvatarUrl, type CostDataQualityItem, type CostDataQualityReason, type CostDataQualityReport } from "@paperclipai/shared";
+import { ToastProvider, useToastState } from "../context/ToastContext";
 import { CostDataQualityNotice } from "./CostDataQualityNotice";
 
 const mocks = vi.hoisted(() => ({ dataQuality: vi.fn(), retryAccounting: vi.fn() }));
@@ -19,6 +20,10 @@ function report(canRetry = true): CostDataQualityReport {
   return { canRetry, events: [item("unknown_billing"), item("missing_model"), item("missing_price")],
     runs: [item("waiting_for_receipt"), item("receipt_unavailable"), item("retryable")], hasMoreEvents: false, hasMoreRuns: false };
 }
+function ToastStatus() {
+  const toasts = useToastState();
+  return <div aria-label="Notifications">{toasts.map(toast => <p role="status" key={toast.id}>{toast.title} {toast.body}</p>)}</div>;
+}
 describe("actionable cost notices", () => {
   let container: HTMLDivElement, root: ReturnType<typeof createRoot>, client: QueryClient;
   beforeEach(() => {
@@ -28,9 +33,9 @@ describe("actionable cost notices", () => {
   });
   afterEach(() => { act(() => root.unmount()); client.clear(); container.remove(); });
   async function render(counts: { unpricedCount?: number; pendingCount?: number; unknownBillingCount?: number } = {}) {
-    await act(async () => root.render(<MemoryRouter initialEntries={["/PAP/activity/costs"]}><QueryClientProvider client={client}>
+    await act(async () => root.render(<MemoryRouter initialEntries={["/PAP/activity/costs"]}><QueryClientProvider client={client}><ToastProvider><ToastStatus />
       <CostDataQualityNotice companyId="company" from="2026-10-01" to="2026-10-09" reportKey={key} unpricedCount={12} pendingCount={4} unknownBillingCount={9} {...counts} />
-    </QueryClientProvider></MemoryRouter>));
+    </ToastProvider></QueryClientProvider></MemoryRouter>));
   }
   function button(text: string) { return [...container.querySelectorAll("button")].find(button => button.textContent === text)!; }
   async function click(text: string) { await act(async () => button(text).click()); }
@@ -132,6 +137,20 @@ describe("actionable cost notices", () => {
     expect(mocks.retryAccounting).toHaveBeenCalledExactlyOnceWith("company", "retryable-run");
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["costs", "company"] });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ["cost-subscriptions", "company"] });
+  });
+
+  it("keeps retry confirmation after the refreshed report removes the run and the notice unmounts", async () => {
+    mocks.dataQuality.mockResolvedValueOnce({ ...report(), events: [], runs: [item("retryable")] })
+      .mockResolvedValue({ ...report(), events: [], runs: [] });
+    await render({ unpricedCount: 0, pendingCount: 1, unknownBillingCount: 0 });
+    await click("1 run cost unavailable"); await loaded();
+    await click("Retry cost recording");
+    await act(async () => vi.waitFor(() => expect(container.textContent).toContain("No cost gaps remain")));
+    expect(container.textContent).not.toContain("Retry cost recording");
+    await act(async () => root.render(<MemoryRouter><QueryClientProvider client={client}>
+      <ToastProvider><ToastStatus /></ToastProvider>
+    </QueryClientProvider></MemoryRouter>));
+    expect(container.textContent).toContain("Costs recorded. The agent was not rerun.");
   });
 
   it("makes stale retry results understandable and never renders raw provider errors", async () => {
