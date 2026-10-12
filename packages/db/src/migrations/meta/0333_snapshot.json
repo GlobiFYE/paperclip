@@ -1,5 +1,5 @@
 {
-  "id": "7195c5e8-2ec8-4fd5-b35d-e0498d39c6ed",
+  "id": "fb1a65b0-7eff-4e5a-a023-fecec51f938c",
   "prevId": "8dadd21e-8c02-4ada-b99a-55ba133e7f70",
   "version": "7",
   "dialect": "postgresql",
@@ -19625,6 +19625,34 @@
           "method": "btree",
           "with": {}
         },
+        "cost_events_data_quality_idx": {
+          "name": "cost_events_data_quality_idx",
+          "columns": [
+            {
+              "expression": "company_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "occurred_at",
+              "isExpression": false,
+              "asc": false,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"cost_events\".\"billing_type\" = 'unknown' or (\"cost_events\".\"cost_status\" = 'unpriced' and \"cost_events\".\"billing_type\" <> 'subscription_included')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "cost_events_company_occurred_idx": {
           "name": "cost_events_company_occurred_idx",
           "columns": [
@@ -30359,6 +30387,34 @@
           "method": "btree",
           "with": {}
         },
+        "heartbeat_runs_cost_data_quality_idx": {
+          "name": "heartbeat_runs_cost_data_quality_idx",
+          "columns": [
+            {
+              "expression": "company_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "coalesce(\"finished_at\", \"created_at\") desc",
+              "asc": true,
+              "isExpression": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"heartbeat_runs\".\"cost_accounting_pending\" = true and \"heartbeat_runs\".\"status\" in ('succeeded','failed','timed_out','cancelled','interrupted')",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "heartbeat_runs_execution_status_delivery_idx": {
           "name": "heartbeat_runs_execution_status_delivery_idx",
           "columns": [
@@ -32773,12 +32829,6 @@
         },
         "author_type": {
           "name": "author_type",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "auth_source": {
-          "name": "auth_source",
           "type": "text",
           "primaryKey": false,
           "notNull": false
