@@ -1394,6 +1394,15 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
                     )
                     .returning();
                   if (!cancelled) return { kind: "stale" as const, run: null };
+                  await requeueAdoptedCommentsForAssignee(tx as unknown as Db, {
+                    companyId: run.companyId,
+                    issueId,
+                    runId: run.id,
+                    source: run.invocationSource,
+                    triggerDetail: run.triggerDetail,
+                    adoptedCommentIds:
+                      queuedCommentIdsFromWakePayload(wake.payload),
+                  });
                   await tx
                     .update(agentWakeupRequests)
                     .set({
@@ -1472,15 +1481,6 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
                     )
                     .returning();
                   if (!cancelled) return { kind: "stale" as const, run: null };
-                  await requeueAdoptedCommentsForAssignee(tx as unknown as Db, {
-                    companyId: run.companyId,
-                    issueId,
-                    runId: run.id,
-                    source: run.invocationSource,
-                    triggerDetail: run.triggerDetail,
-                    adoptedCommentIds:
-                      queuedCommentIdsFromWakePayload(wake.payload),
-                  });
                   await tx
                     .update(agentWakeupRequests)
                     .set({
