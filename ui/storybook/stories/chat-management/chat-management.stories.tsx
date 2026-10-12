@@ -37,6 +37,8 @@ function ChatManagementPage({ tab = "settings", scenario = "populated" }: { tab?
       { id: "grace", principalId: "grace", externalLabel: "Grace Hopper", status: "pending" },
     ];
     let resourceReads = 0;
+    let invitationSent = false;
+    let invitationConfirmed = false;
     window.fetch = async (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.origin);
       const path = url.pathname;
@@ -62,10 +64,18 @@ function ChatManagementPage({ tab = "settings", scenario = "populated" }: { tab?
         }
         return json(resources);
       }
-      if (route === "slack/test-message") return json(scenario === "unlinked" && !JSON.parse(String(init?.body)).slackUserId
-        ? { status: "connection_required", accounts: [{ id: "UADA", name: "Ada Lovelace" }] }
-        : { status: "sent", slackUrl: "https://app.slack.com/client/TSTORY/DADA" });
-      if (route === "principals") return json(principals);
+      if (route === "slack/test-message") {
+        if (scenario === "unlinked" && !invitationConfirmed) {
+          if (!JSON.parse(String(init?.body)).slackUserId) return json({ status: "connection_required", accounts: [{ id: "UADA", name: "Ada Lovelace" }], nextCursor: null });
+          invitationSent = true;
+          return json({ status: "connection_pending", principalId: "ada", expiresAt: new Date(Date.now() + 600_000).toISOString() });
+        }
+        return json({ status: "sent", slackUrl: "https://app.slack.com/client/TSTORY/DADA" });
+      }
+      if (route === "principals") {
+        if (invitationSent) invitationConfirmed = true;
+        return json(principals);
+      }
       if (route.endsWith("/link-intent")) return json({ confirmationUrl: "https://example.test/chat-identity/confirm?token=storybook-only" });
       if (route.endsWith("/link") && init?.method === "DELETE") {
         principals = principals.map(person => route.includes(person.id) ? { ...person, status: "revoked", paperclipUserId: null } : person);
@@ -132,7 +142,7 @@ export const ConnectAndTest: Story = {
     await userEvent.click(await canvas.findByRole("button", { name: "Send me a test message" }));
     const page = within(canvasElement.ownerDocument.body);
     await userEvent.click(await page.findByRole("radio", { name: "Ada Lovelace (UADA)" }));
-    await userEvent.click(page.getByRole("button", { name: "This is my account — send message" }));
+    await userEvent.click(page.getByRole("button", { name: "Send connection invitation" }));
     await expect(await canvas.findByRole("button", { name: "Test message sent" })).toBeVisible();
   },
 };

@@ -146,8 +146,9 @@ used by other bots.
 using their linked identity in this workspace. If this bot is not linked yet,
 Paperclip can reuse that user's verified manager grant or another bot's linked
 identity in the same company and workspace. Otherwise, the user selects their
-Slack account and explicitly confirms ownership before Paperclip links it and
-sends the DM. Existing revoked or conflicting identity links are not overwritten.
+Slack account and receives a private connection invitation in Slack. They must
+open that invitation, sign in, and confirm before Paperclip links the account and
+sends the test DM. The account picker loads further workspace pages on request. Existing revoked or conflicting identity links are not overwritten.
 Direct messages must be enabled, and the user must be an active company operator.
 
 The action records a durable request before sending. Repeating the same request

@@ -102,6 +102,11 @@ API responses and MCP transports keep their existing compression behavior.
 
 The board UI Storybook keeps stories and Storybook config under `ui/storybook/` so component review files stay out of the app source routes.
 
+**Chat & Comments → Human identity** covers other-human names and avatars on
+left-aligned task messages alongside agents; only the viewer’s own messages are blue/right-aligned. Its review guide explains the data flow; the task journey uses representative
+fixtures in the production shell and thread with an agent and two humans, both
+human viewer perspectives, light mode, and mobile.
+
 ```sh
 pnpm storybook
 pnpm build-storybook
@@ -526,6 +531,70 @@ verifying Vite/HMR behavior.
 
 For normal issue work, start with the smallest targeted check that proves the change. Reserve repo-wide typecheck/build/test runs for PR-ready handoff or changes broad enough that narrow checks do not cover the risk.
 
+#### Embedded Postgres template cache
+
+Suites that call `startEmbeddedPostgresTestDatabase` (from `@paperclipai/db`)
+get their own embedded Postgres cluster. The first such suite on a host builds
+one fully migrated cluster and publishes its data directory under
+`$TMPDIR/paperclip-embedded-postgres-templates-<uid>/<key>`. Every later suite
+copies that template and starts Postgres on the copy instead of running
+`initdb` and all migrations again, and the `getEmbeddedPostgresTestSupport`
+probe reuses it instead of starting a throwaway cluster. The key hashes the
+embedded-postgres version, the initdb flags, and every migration file, so a
+changed migration builds a new template. Each suite still runs
+`applyPendingMigrations` on its copy, which is a no-op when the template is
+current. Templates for other keys are removed after seven days without use.
+
+A template is a Postgres data directory, and starting it executes its
+configuration, so the cache is private to the current OS user: the root is
+created with mode `0700` and is only used when it is a real directory (not a
+symlink) owned by the current user with no group or world write bit, and each
+template is checked the same way before it is copied. A root that fails those
+checks (for example one pre-created by another user in a shared `/tmp`) is left
+alone and every suite in that process uses a fresh cluster.
+
+Set `PAPERCLIP_TEST_POSTGRES_TEMPLATE=0` to bypass the cache and give every
+suite a fresh `initdb`, for example when debugging cluster startup itself. A
+failure on the template path (root checks, build, copy, start, or publish)
+falls back to the fresh path automatically, so the cache can make a suite
+slower but never fail it or skip it: a migration that cannot apply still fails
+the suite on the fresh path.
+
+#### Reused Runner build in the server build
+
+The server build vendors `packages/paperclip-runner/dist`, so its
+`prepare:runner-vendor` step has to make sure that directory is a current
+build. It used to run the Runner's full `build` every time. Now the Runner's
+`build` brackets itself with `scripts/record-build-inputs.mjs`: `--begin`, its
+first step, forgets the previous stamp and records a digest of the build's
+inputs (every file under `packages/paperclip-runner` except `dist`,
+`dist-browser`, `runner/target`, `node_modules` and dot-directories; every
+file under `packages/paperclip-eval-kernel` except `dist` and `node_modules`;
+every file under the root `patches` directory, which the acpx profile check
+hashes and the provider entrypoint bundler copies into `dist`; and the root
+`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml` and
+`tsconfig.base.json`). `--finish`, its last step, recomputes the digest and
+writes the stamp
+`packages/paperclip-runner/node_modules/.cache/paperclip-runner-build-inputs.json`
+only if the inputs are still the ones the build began with, together with the
+path and size of every file under `dist`. An edit that lands while the build
+runs leaves no stamp, so the next consumer rebuilds.
+`node server/scripts/prepare-runner-vendor.mjs` reuses the build when the
+stamp is for this platform, every recorded output is still there at its
+recorded size, and the current digest matches. Anything else (no stamp, a
+changed input, a deleted or truncated output, a stamp from another platform)
+runs `pnpm --filter @paperclipai/paperclip-runner build` exactly as before, so
+a standalone `pnpm --filter @paperclipai/server build` on a fresh checkout
+still builds the Runner itself. Inside `pnpm build` the Runner has just been
+built by the same command, and the step skips a 12-16s rebuild. The step
+prints one `paperclip.runner-vendor.timing.v1` line saying which it did.
+
+Set `PAPERCLIP_RUNNER_VENDOR_REBUILD=1` to rebuild regardless of the stamp. A
+stamp is only written after a Runner build that passed every step, and both
+the Runner's first build step and the prepare step remove any existing stamp
+before a rebuild starts, so a build that stops partway never leaves a stamp
+that vouches for it.
+
 ### Task search evaluation
 
 The task search relevance rubric and regression corpus are documented in
@@ -547,6 +616,27 @@ state. Older detail responses cannot move the stored activity time backward.
 Activity-only reorderings wait for one second without further activity changes;
 new and removed tasks appear immediately. Titles, status, and live indicators stay
 current during that delay.
+
+### OpenCode native runtime
+
+Paperclip Runner resolves the pinned OpenCode platform package installed with
+Paperclip. On Apple Silicon and Intel Macs it runs the matching macOS binary;
+on Linux x64 it runs the qualified baseline binary. No global OpenCode command
+or dependency postinstall script is required. This also works when installation
+scripts are disabled. The published server declares the same pinned dependency
+as the source Runner package.
+
+For native OpenCode and Cursor on Daytona, a complete installed Paperclip release
+also selects its packaged Linux daemon and provider-pack identity automatically.
+Use the matching Paperclip Daytona image: the controller verifies the image's
+pack manifest, executable hashes, bridge tree, and pinned versions before launch.
+The controller's operating system does not determine the remote daemon target.
+
+A plain Daytona sandbox image does not contain this provider pack. Custom images
+and source-development launchers must supply a verified Linux provider pack and
+daemon through the existing remote artifact overrides; see
+[the remote E2E setup](../tests/runner-e2e/README.md#match-the-local-controller-package-to-the-daytona-image).
+An explicit override remains authoritative and fails closed if invalid.
 
 ## One-Command Local Run
 
@@ -688,6 +778,11 @@ thread. Select the bot from Slack's @mention suggestions so the message includes
 a real mention. **Done** finishes setup once webhook verification and required
 account linking are complete, whether or not a test message was sent. The
 separate strict connection-test API retains its conversation and delivery checks.
+
+New Slack conversations receive default communication guidance that requires a
+clickable link to each task the agent creates. Agents use the public task URL
+from Paperclip tools or task context and report when a link is unavailable.
+Existing conversations keep their original communication guidance snapshot.
 
 ### Chat activity pagination and callback diagnostics
 
@@ -1218,14 +1313,57 @@ When a workspace service runs Paperclip for browser OAuth QA, configure its `exp
 
 Keep relevant heartbeat extractions and their focused tests in `server/src/services/heartbeat/`.
 
+Runtime-service coordination is in `server/src/services/heartbeat/runtime-services.ts`.
+It validates service intents, starts configured services, records adapter-managed
+services and primary URLs, and posts workspace-ready notices. Process registries
+and leases stay in `workspace-runtime.ts`; the executor keeps release ordering in
+its existing cleanup path. Public-path tests use real local service processes.
+
+Instruction working-copy coordination is in
+`server/src/services/heartbeat/instruction-working-copy.ts`. Its per-run controller
+prepares copies, tracks save receipts, and coordinates warm-directory handoffs.
+Live getters preserve updated copies and expose acquired reservations even if
+preparation fails. The executor keeps release and environment-cleanup ordering;
+a separate release closure defers cleanup failures without replacing run results.
+See `tests/e2e/instruction-working-copy/README.md` for isolated browser acceptance.
+
 Task assignment Markdown is rendered by `server/src/services/heartbeat/task-markdown.ts`.
-`heartbeat.ts` calls the renderer and re-exports it for existing callers. Keep prompt
+`heartbeat.ts` re-exports it for existing callers. Keep prompt
 formatting changes in the renderer and its tests, separate from run orchestration.
+
+Task context assembly is in `server/src/services/heartbeat/task-context.ts`.
+`prepareHeartbeatTaskContext` rebuilds prompt fields on the current run context:
+continuation summaries, wake comments, task plans, communication guidance, and
+full/compact assignment Markdown. It preserves quarantine and secret redaction
+before computing turn-context revisions. The executor supplies the already-loaded
+issue, session, and trust policy, and retains admission, resource ownership, and
+cleanup. Public-path characterization tests are in
+`server/src/__tests__/heartbeat-task-context.test.ts`; the workspace-bootstrap
+browser fixture also checks the persisted prompt variants and description revision
+from a real process adapter before completing its task.
+
+Execution configuration is assembled in
+`server/src/services/heartbeat/execution-configuration.ts`: workspace and issue
+overrides, scoped credentials, managed AI identity, and runtime skill delivery.
+The executor receives credential ownership and failure-redaction updates as soon
+as they are available, so later setup failures still clean up acquired resources.
+Busy-account deferral returns explicitly before session/workspace preparation.
+Public-path tests are in `server/src/__tests__/heartbeat-execution-configuration.test.ts`.
+
+Session preparation is in `server/src/services/heartbeat/session-preparation.ts`.
+It selects fresh or resumable sessions from effective config and managed-account
+identity, then resolves adapter session identity and compaction after workspace
+preparation. Both phases keep their original ordering in `heartbeat.ts`; they
+acquire no runtime resources. Public-path characterization tests live in
+`server/src/__tests__/heartbeat-session-preparation.test.ts`.
 
 Run-log formatting is in `server/src/services/heartbeat/run-log.ts`. It bounds
 stored event payloads, redacts and shortens log chunks, and caps stdout/stderr
-excerpts. `heartbeat.ts` keeps event writes, current-user redaction, and live
-event delivery. Existing public helpers remain available from `heartbeat.ts`.
+excerpts. `run-output.ts` owns per-attempt log handles, current-user redaction,
+output progress writes, live log delivery, and adapter event callbacks. The log
+store remains service-scoped. Completion reads live excerpt getters so output
+that arrives during finalization is retained. Existing public helpers and flush
+interval constants remain available from `heartbeat.ts`.
 
 Workspace preparation is in `server/src/services/heartbeat/workspaces.ts`. It
 owns managed checkout materialization, workspace validation and reuse, referenced
@@ -1250,7 +1388,7 @@ It owns bounded run projections, database encoding checks, task session reads an
 writes, explicit resumes, session compaction, and usage/billing helpers.
 `createHeartbeatRunState(db)` binds these operations without doing database work
 during construction. The encoding-check cache belongs to each factory instance.
-`heartbeat.ts` keeps run execution and session-goal recovery, and re-exports the
+`heartbeat.ts` keeps run execution and re-exports the
 existing public helpers. Keep session policy changes separate from run
 orchestration changes.
 
@@ -1300,6 +1438,60 @@ Forwarding callbacks preserve construction order for budget, retry, recovery,
 and queue services. Existing public helpers remain re-exported by `heartbeat.ts`.
 Keep cancellation policy changes separate from this extraction and execution.
 
+Scheduling is in `server/src/services/heartbeat/scheduling.ts`. It owns timer
+ticks, issue-monitor claims and dispatch, exhausted-monitor recovery, and
+session-goal recovery. `createHeartbeatScheduling` binds explicit dependencies
+without querying or starting timers. Queue admission, heartbeat policy parsing,
+and atomic timer claims stay in `queue.ts`; the service supplies those operations
+and the current scheduling-suppression and worktree-cutoff callbacks. Monitor
+claims remain database-scoped so separate scheduler instances cannot dispatch
+the same claim. The public heartbeat methods keep their existing signatures.
+Keep scheduling policy changes separate from this extraction and execution.
+
+Run completion is in `server/src/services/heartbeat/run-completion.ts`.
+`createHeartbeatRunCompletion` binds terminal result persistence, accounting,
+response presentation, task-session updates, and execution/setup failure handling.
+The executor calls these handlers from the original try/catch boundaries. It
+retains native recovery exceptions, dispatch ownership, and the outer cleanup.
+Completion reads the shared Stop barriers, uses live output getters, and reports
+trace finalization immediately so a later error cannot lose cleanup state.
+Existing public failure helpers remain re-exported by `heartbeat.ts`.
+Keep completion policy changes separate from this extraction and dispatch.
+
+Runtime selection is in `server/src/services/heartbeat/runtime-selection.ts`.
+`selectHeartbeatRuntime` constructs or restores native execution inputs, selects
+completion contracts and sessions, and persists native or legacy runtime choices.
+Native selection retains the row lock that serializes it with cancellation and
+controller lease renewal. The executor receives an explicit selection result;
+lifecycle and ownership callbacks update its teardown state immediately, including
+when preparation later throws. Public sandbox lifecycle and model fallback helpers
+remain re-exported by `heartbeat.ts`.
+
+Environment selection is in `server/src/services/heartbeat/environment-selection.ts`.
+`selectHeartbeatEnvironment` resolves environment policy and workspace reuse,
+including immutable native recovery bindings, managed sandbox enforcement, and
+Kubernetes provisioning. It validates native chat isolation and checks shared
+workspace contention before acquisition. It can defer a sandbox run or add a
+concurrency note to the task context. The executor retains lease ownership,
+dispatch gates, and terminal cleanup.
+
+Workspace preparation is in `server/src/services/heartbeat/workspace-preparation.ts`.
+`prepareHeartbeatWorkspace` resolves and provisions the workspace, persists its
+metadata and issue binding, then acquires and realizes the execution environment.
+It preserves the immutable workspace binding used by native recovery and records
+preparation spans even when acquisition or realization fails. The executor retains
+dispatch gates and terminal lease cleanup. Persistence
+failures still clean newly created workspace artifacts before propagating.
+
+Runtime execution is in `server/src/services/heartbeat/runtime-execution.ts`.
+`executeHeartbeatRuntime` dispatches a prepared native session or legacy adapter,
+captures usage, finalizes workspace operations, and releases gateway tokens and
+instruction copies. The executor supplies the atomic dispatch gate and retains
+admission, terminal run status, retry handling, and outer lease cleanup. An explicit
+dispatch result preserves early cancellation returns; ownership callbacks update
+teardown state before errors propagate. Instruction getters retain updates made
+during provider execution. Keep policy changes separate from this extraction.
+
 ## Wake Context Delivery
 
 Built-in adapters deliver wake context through the run prompt, including structured
@@ -1342,6 +1534,19 @@ normal Claude catalog and accepts custom model IDs; the exact ID is sent to
 Claude, which can reject unavailable models. Package/version verification is
 independent of model selection. Environment tests verify runtime installation;
 a successful provider run additionally verifies credentials and model access.
+
+The server must install and bundle `@agentclientprotocol/claude-agent-acp`
+at the qualified version, including the patched bridge and pinned SDK. The
+vendor dependency check covers this dynamic lookup as well as ordinary imports.
+Source builds bind the vendored runner to the workspace's pnpm store while
+keeping the server manifest as its provider authority. Published npm bundles
+retain the pinned SDK JavaScript and declare its native packages as server
+optional dependencies, so npm installs the executable for the consumer's
+platform. Runtime admission still checks the exact version and executable digest.
+A missing provider package is reported as **Runtime missing**, with automatic
+retries stopped. Reinstall or rebuild Paperclip with its provider dependencies,
+restart the server, and run the agent's runtime test before retrying the task.
+Changing the model or signing in again cannot repair a missing runtime package.
 
 ACPX Claude supports Linux x64 and macOS ARM64/x64 with pinned SDK executables.
 On macOS the launcher uses private verified module/executable snapshots instead

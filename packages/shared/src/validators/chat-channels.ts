@@ -93,6 +93,7 @@ export const updateChatEndpointSchema = z
     slackApp: slackAppConfigurationSchema.optional(),
     slackSetupMethod: z.enum(["managed", "automatic", "manual", "existing"]).optional(),
     allowDirectMessages: z.boolean().optional(),
+    requireAtMention: z.boolean().optional(),
     allowGroupChats: z.boolean().optional(),
     allowUnlinkedPeople: z.boolean().optional(),
   })
@@ -154,6 +155,16 @@ export const replaceChatEndpointResourcesSchema = z
       .max(500),
   })
   .strict();
+
+export const gitHubRepositoryPageQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  offset: z.coerce.number().int().min(0).max(2_147_483_647).default(0),
+  search: z.string().trim().max(200).default(""),
+}).strict();
+
+export const toggleAllGitHubRepositoriesSchema = z.object({
+  enabled: z.boolean(),
+}).strict();
 
 export const publishChatCommentSchema = z
   .object({

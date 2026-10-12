@@ -1,3 +1,4 @@
+import { notifyChatVerificationWork } from "../../../chat-work-notifications.js";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { chatEndpoints, chatSlackRegistrations } from "@paperclipai/db";
 import { SLACK_CHAT_BOT_SCOPES, SLACK_BOT_TOOL_SCOPES, type SlackAccountState } from "@paperclipai/shared";
@@ -16,6 +17,7 @@ export function createSlackCompletion(store: SlackRegistrationStore) {
       const saved = (await tx.select().from(chatEndpoints).where(and(eq(chatEndpoints.id, row.endpointId), eq(chatEndpoints.companyId, row.companyId))).for("update"))[0];
       const registrationNow = (await tx.select().from(chatSlackRegistrations).where(eq(chatSlackRegistrations.endpointId, row.endpointId)))[0];
       if (!saved || saved.status === "archived" || registrationNow?.status === "removed" || registrationNow?.requestId !== row.requestId) throw conflict("Slack setup changed");
+      await notifyChatVerificationWork(tx);
       await tx.update(chatEndpoints).set({ setup: { ...saved.setup, slackAccount: account }, updatedAt: new Date() }).where(eq(chatEndpoints.id, row.endpointId));
       await lease.assertOwned(tx);
     });
@@ -79,12 +81,20 @@ export function createSlackCompletion(store: SlackRegistrationStore) {
       await sendSetupMessage(row, { userId: account.paperclipUserId, sessionId: null, bypassPermissionCheck: false }, lease, "verification");
     });
   }
-  async function processPendingVerificationMessages(limit = 25) {
-    const pending = await db.select({ endpointId: chatEndpoints.id }).from(chatEndpoints)
+  function pendingVerificationMessages(limit: number) {
+    return db.select({ endpointId: chatEndpoints.id }).from(chatEndpoints)
       .innerJoin(chatSlackRegistrations, and(eq(chatSlackRegistrations.endpointId, chatEndpoints.id), eq(chatSlackRegistrations.companyId, chatEndpoints.companyId)))
       .where(and(eq(chatSlackRegistrations.status, "configured"), inArray(chatEndpoints.status, ["verifying", "active"]),
+        sql`${chatEndpoints.setup}->'slackAccount'->>'status' = 'linked'`,
+        sql`${chatEndpoints.setup}->>'webhookVerifiedAt' is not null`,
+        sql`coalesce(${chatEndpoints.setup}->'slackAccount'->>'welcomeStatus', '') not in ('pending', 'sending')`,
         sql`${chatEndpoints.setup}->'slackAccount'->>'verificationStatus' in ('pending', 'sending')`)).limit(limit);
-    for (const row of pending) {
+  }
+  async function nextVerificationMessageAt(): Promise<number | null> {
+    return (await pendingVerificationMessages(1)).length ? Date.now() : null;
+  }
+  async function processPendingVerificationMessages(limit = 25) {
+    for (const row of await pendingVerificationMessages(limit)) {
       try { await notifyVerified(row.endpointId); }
       catch { logger.warn({ endpointId: row.endpointId }, "Slack verification message could not be processed"); }
     }
@@ -129,7 +139,10 @@ export function createSlackCompletion(store: SlackRegistrationStore) {
       return;
     }
     await lease.assertOwned();
-    await db.update(chatSlackRegistrations).set({ status: "configured", errorCode: null, updatedAt: new Date() }).where(eq(chatSlackRegistrations.endpointId, endpointId));
+    await db.transaction(async tx => {
+      await notifyChatVerificationWork(tx);
+      await tx.update(chatSlackRegistrations).set({ status: "configured", errorCode: null, updatedAt: new Date() }).where(eq(chatSlackRegistrations.endpointId, endpointId));
+    });
     // Runtime now owns a separate vaulted copy. Keep the registration IDs until
     // deletion succeeds so cleanup itself is retryable.
     await cleanupStaged(endpointId, lease);
@@ -147,5 +160,5 @@ export function createSlackCompletion(store: SlackRegistrationStore) {
     await lease.assertOwned();
     await db.update(chatSlackRegistrations).set({ secretIds: ids }).where(eq(chatSlackRegistrations.endpointId, endpointId));
   }
-  return { resumeLocked, notifyVerified, processPendingVerificationMessages };
+  return { resumeLocked, notifyVerified, processPendingVerificationMessages, nextVerificationMessageAt };
 }

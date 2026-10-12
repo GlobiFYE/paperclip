@@ -17,7 +17,7 @@ export function slackChatRegistrationService(db: Db, options: SlackSetupOptions)
   const provisioner = createCustomerOwnedSetup(store);
   const { create } = provisioner;
   const completion = createSlackCompletion(store);
-  const { resumeLocked, notifyVerified, processPendingVerificationMessages } = completion;
+  const { resumeLocked, notifyVerified, processPendingVerificationMessages, nextVerificationMessageAt } = completion;
   const managerGrants = createSlackManagerGrants(store);
   const managed = createManagedSlackSetup(store, managerGrants, provisioner, completion, install);
   async function install(endpointId: string, actor: SlackSetupActor) {
@@ -141,7 +141,7 @@ export function slackChatRegistrationService(db: Db, options: SlackSetupOptions)
     if (!row) throw notFound("Slack connection not found");
     return `/${encodeURIComponent(row.prefix)}/apps/chat/connect?provider=slack&resume=${encodeURIComponent(endpointId)}`;
   }
-  return { create, managerGrants, managed, install, pending, expiredReturn, complete, cleanup, returnPath, registration, notifyVerified, processPendingVerificationMessages,
+  return { create, managerGrants, managed, install, pending, expiredReturn, complete, cleanup, returnPath, registration, notifyVerified, processPendingVerificationMessages, nextVerificationMessageAt,
     close: store.close,
     resume: (endpointId: string, actor: SlackSetupActor) => options.withLock(endpointId, async lease => {
       const row = await registration(endpointId);

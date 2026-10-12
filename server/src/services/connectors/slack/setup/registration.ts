@@ -1,3 +1,4 @@
+import { notifyChatVerificationWork } from "../../../chat-work-notifications.js";
 import { createAgentAvatarPool } from "../../../agent-avatar-pool.js";
 import type { AgentAvatarRequest } from "../../../agent-avatars.js";
 import { and, eq } from "drizzle-orm";
@@ -93,6 +94,7 @@ export function createSlackRegistrationStore(db: Db, options: SlackSetupOptions)
           ...(ids[key] ? { existingRef: { secretId: ids[key], configPath: `slack_registration.${key}` } } : {}) });
         ids[key] = result.secret.id;
       }
+      await notifyChatVerificationWork(tx);
       await tx.update(chatSlackRegistrations).set({ ...patch, secretIds: ids, updatedAt: new Date() }).where(eq(chatSlackRegistrations.endpointId, row.endpointId));
       if (account) {
         const saved = (await tx.select().from(chatEndpoints).where(and(eq(chatEndpoints.id, row.endpointId), eq(chatEndpoints.companyId, row.companyId))).for("update"))[0];

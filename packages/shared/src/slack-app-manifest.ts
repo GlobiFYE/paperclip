@@ -87,15 +87,16 @@ export const slackSetupActionSchema = z.object({}).strict();
 
 export const slackTestMessageSchema = z.object({
   requestId: z.string().uuid(),
-  // Supplying an account is an explicit ownership confirmation by the board user.
   slackUserId: z.string().regex(/^[UW][A-Z0-9]+$/).optional(),
+  accountCursor: z.string().min(1).max(512).optional(),
 }).strict();
 export type SlackTestMessageInput = z.infer<typeof slackTestMessageSchema>;
 export const slackTestMessageResultSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("sent"), slackUrl: z.string().url() }).strict(),
   z.object({ status: z.literal("connection_required"), accounts: z.array(z.object({
     id: z.string(), name: z.string(),
-  }).strict()) }).strict(),
+  }).strict()), nextCursor: z.string().nullable() }).strict(),
+  z.object({ status: z.literal("connection_pending"), principalId: z.string().uuid(), expiresAt: z.string().datetime() }).strict(),
 ]);
 export type SlackTestMessageResult = z.infer<typeof slackTestMessageResultSchema>;
 
