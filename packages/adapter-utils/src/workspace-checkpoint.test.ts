@@ -31,6 +31,66 @@ async function fixture() {
   return { temp, root, baseline, capture };
 }
 describe("workspace sparse checkpoint", () => {
+  it.each((["file", "symlink", "missing"] as const).flatMap(attack =>
+    (["a/kept", "a/nested/kept"] as const).flatMap(child =>
+      (["manifest", "memory"] as const).map(storage => ({ attack, child, storage })))))(
+    "rejects a returned $attack ancestor of $child ($storage) before any host mutation", async ({ attack, child, storage }) => {
+    const f = await fixture(); await disposeDirectorySnapshot(f.baseline);
+    await fs.mkdir(path.dirname(path.join(f.root, child)), { recursive: true });
+    await fs.writeFile(path.join(f.root, child), "retained child");
+    const baseline = await captureDirectorySnapshot(f.root, { diskBacked: true, exclude: ["cache"] });
+    const payload = path.join(f.temp, "forged-payload"); await fs.mkdir(payload);
+    await fs.writeFile(path.join(payload, "unchanged"), "otherwise valid edit");
+    if (attack === "file") await fs.writeFile(path.join(payload, "a"), "replace directory");
+    if (attack === "symlink") await fs.symlink("unchanged", path.join(payload, "a"));
+    const captured = await captureDirectorySnapshot(payload);
+    const entries = new Map(baseline.entries);
+    entries.delete("deleted"); entries.delete("a");
+    for (const [relative, entry] of captured.entries) entries.set(relative, entry);
+    const manifest = path.join(f.temp, "forged.sqlite");
+    await writeCheckpointBaseline({ ...baseline, entries }, manifest);
+    const evidence = await fs.readFile(manifest);
+    const snapshot = storage === "manifest" ? readCheckpointSnapshot(manifest, baseline)
+      : { ...baseline, entries: new Map([...entries].reverse()) };
+    let failure: unknown;
+    try {
+      await validateCheckpointPayload({ baseline, snapshot, payload });
+      await mergeDirectoryWithBaseline({ baseline, sourceDir: payload, targetDir: f.root, snapshots: { source: snapshot } });
+    } catch (error) { failure = error; }
+    expect(await fs.readFile(path.join(f.root, child), "utf8")).toBe("retained child");
+    expect(await fs.readFile(path.join(f.root, "unchanged"), "utf8")).toBe("retained");
+    expect(await fs.readFile(path.join(f.root, "deleted"), "utf8")).toBe("delete me");
+    expect(failure).toBeInstanceOf(Error);
+    expect(String(failure)).toContain("Invalid workspace checkpoint parent");
+    expect(await fs.readFile(manifest)).toEqual(evidence);
+    const replay = readCheckpointSnapshot(manifest, baseline);
+    await expect(validateCheckpointPayload({ baseline, snapshot: replay, payload })).rejects.toThrow("Invalid workspace checkpoint parent");
+    await disposeDirectorySnapshot(replay); await disposeDirectorySnapshot(snapshot); await disposeDirectorySnapshot(baseline);
+  });
+  it.each(["file_to_directory", "directory_to_file"] as const)("restores a coherent %s checkpoint", async transition => {
+    const f = await fixture(); await disposeDirectorySnapshot(f.baseline);
+    if (transition === "file_to_directory") await fs.writeFile(path.join(f.root, "a"), "old file");
+    else {
+      await fs.mkdir(path.join(f.root, "a")); await fs.writeFile(path.join(f.root, "a", "old"), "old child");
+    }
+    const baseline = await captureDirectorySnapshot(f.root, { diskBacked: true, exclude: ["cache"] });
+    const host = path.join(f.temp, "host"); await fs.cp(f.root, host, { recursive: true });
+    await fs.rm(path.join(f.root, "a"), { recursive: true });
+    if (transition === "file_to_directory") {
+      await fs.mkdir(path.join(f.root, "a", "nested"), { recursive: true });
+      await fs.writeFile(path.join(f.root, "a", "nested", "new"), "new child");
+    } else await fs.writeFile(path.join(f.root, "a"), "new file");
+    const manifest = path.join(f.temp, "transition-baseline.sqlite"); await writeCheckpointBaseline(baseline, manifest);
+    const output = path.join(f.temp, "transition-output");
+    await execute(process.execPath, [path.join(f.temp, "checkpoint.mjs"), f.root, manifest, output, JSON.stringify(baseline.exclude)]);
+    const snapshot = readCheckpointSnapshot(path.join(output, "manifest.sqlite"), baseline), payload = path.join(output, "payload");
+    await validateCheckpointPayload({ baseline, snapshot, payload });
+    await mergeDirectoryWithBaseline({ baseline, sourceDir: payload, targetDir: host, snapshots: { source: snapshot } });
+    expect(await fs.readFile(path.join(host, transition === "file_to_directory" ? "a/nested/new" : "a"), "utf8"))
+      .toBe(transition === "file_to_directory" ? "new child" : "new file");
+    expect(await fs.readFile(path.join(host, "unchanged"), "utf8")).toBe("retained");
+    await disposeDirectorySnapshot(snapshot); await disposeDirectorySnapshot(baseline);
+  });
   it("enumerates unchanged files but transfers zero workspace payload", async () => {
     const f = await fixture(); const result = await f.capture();
     expect(result.receipt).toMatchObject({ files: 0, bytes: 0, scanned: 2 });

@@ -1,4 +1,3 @@
--- Reapplication preserves root reservations from earlier development migration numbers.
 CREATE TABLE IF NOT EXISTS "execution_workspace_repository_roots" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"company_id" uuid NOT NULL,

@@ -126,6 +126,10 @@ export async function validateCheckpointPayload(input: { baseline: DirectorySnap
     actual = await captureDirectorySnapshot(input.payload, { diskBacked: true });
     for (const [relative, entry] of input.snapshot.entries) {
       assertIncluded(relative);
+      const separator = relative.lastIndexOf("/");
+      if (separator >= 0 && input.snapshot.entries.get(relative.slice(0, separator))?.kind !== "dir") {
+        throw new Error("Invalid workspace checkpoint parent");
+      }
       if (entry.kind === "symlink") {
         const target = path.resolve(input.payload, path.dirname(relative), entry.target);
         if (path.isAbsolute(entry.target) || (target !== path.resolve(input.payload) && !target.startsWith(`${path.resolve(input.payload)}/`))) {

@@ -171,6 +171,8 @@ ends before outer workspace persistence. The heartbeat-owned local run-log
 every other native span carries a real OpenTelemetry parent context rather than
 only a descriptive `parentName` field.
 
+The run link in Honeycomb matches both `task.provider_session` for native runs and `task.run` for legacy adapters. It retains the exact hashed run-ID and service filters and groups by trace ID. The URL builder uses Honeycomb’s supported `in` operator for the two root names; see the [query specification](https://github.com/honeycombio/honeycomb-mcp#query-specification-for-run_query). This changes only the query link. The operator endpoint gate and span attribute allowlist remain unchanged.
+
 The canonical lifecycle is:
 
 ```text

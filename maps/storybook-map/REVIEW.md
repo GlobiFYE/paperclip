@@ -200,3 +200,7 @@ Not run in this pass: Storybook build, browser rendering or `play`, screenshot
 comparisons, provider calls and live production acceptance. No new visual
 baselines were accepted. Fixture tests are boundary simulations, not server
 persistence or permission tests.
+
+## Workspace safety recipe follow-up — 2026-10-12
+
+Reviewed the twelve entries that depend on the workspace feature recipe: browser-use activity/footer/page, the three HTML-artifact suites, project execution strategy and project workspace summaries, searchable selection, workspace files, runtime provisioning and service controls. Their production subjects, fixtures, feature folders, sidebar titles and stable IDs are unchanged. The recipe now requires prospective child boundary checks, safe low-trust reopening, and coherent returned checkpoint ancestry. These backend safety contracts are not exercised by those fixtures. Each entry remains unreviewed for full production parity. Only the reviewed recipe fingerprints were refreshed; no browser render, play, screenshot baseline or production acceptance was run for this follow-up.

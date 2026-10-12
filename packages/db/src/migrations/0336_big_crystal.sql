@@ -1,4 +1,3 @@
--- Reapplication is safe for instances that used the earlier development migration number.
 CREATE TABLE IF NOT EXISTS "execution_workspace_repositories" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"company_id" uuid NOT NULL,

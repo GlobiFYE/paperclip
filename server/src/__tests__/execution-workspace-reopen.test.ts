@@ -11,6 +11,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   activityLog,
+  agents,
   authUsers,
   companyMemberships,
   issueAccessGrants,
@@ -63,6 +64,7 @@ describeEmbeddedPostgres("reopen archived isolated execution workspace", () => {
     await db.delete(projectWorkspaces);
     await db.delete(projects);
     await db.delete(companyMemberships);
+    await db.delete(agents);
     await db.delete(companies);
     await db.delete(authUsers);
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -257,6 +259,57 @@ describeEmbeddedPostgres("reopen archived isolated execution workspace", () => {
       .where(eq(executionWorkspaces.id, id))
       .then((rows) => rows[0] ?? null);
   }
+
+  describe.each(["configured", "builtin"] as const)("reopen %s host provision containment", kind => {
+    it.each(["task", "agent", "organization", "source", "same-source", "trusted"] as const)("honors persisted %s policy before running repository scripts", async restriction => {
+      const { companyId, projectId, projectWorkspaceId } = await seedCompanyProject();
+      const directory = await makeExistingDir();
+      const base = join(directory, "source"), target = join(directory, "target"), marker = join(directory, "host-provision-ran");
+      initManagedGitRepo(base, "reopen-feature");
+      const command = `printf 'host execution\n' > '${marker}'`;
+      mkdirSync(join(base, "scripts"));
+      writeFileSync(join(base, "scripts", "provision-worktree.sh"), command + "\n");
+      const git = (...args: string[]) => execFileSync("git", args, { cwd: base, stdio: "ignore",
+        env: { ...process.env, GIT_AUTHOR_NAME: "Test", GIT_AUTHOR_EMAIL: "test@example.com", GIT_COMMITTER_NAME: "Test", GIT_COMMITTER_EMAIL: "test@example.com" } });
+      git("add", "scripts"); git("commit", "-m", "Host provision fixture"); git("branch", "-f", "reopen-feature", "HEAD");
+      await db.update(projectWorkspaces).set({ cwd: base }).where(eq(projectWorkspaces.id, projectWorkspaceId));
+      const workspaceId = await seedClosedGitWorktreeWorkspace({ companyId, projectId, projectWorkspaceId,
+        cwd: target, repoUrl: pathToFileURL(base).href, branchName: "reopen-feature" });
+      if (kind === "configured") await db.update(executionWorkspaces).set({ metadata: {
+        [EXECUTION_WORKSPACE_LIFECYCLE_GENERATION_METADATA_KEY]: 1, config: { provisionCommand: command },
+      } }).where(eq(executionWorkspaces.id, workspaceId));
+      const issueId = await seedIssue({ companyId, projectId, workspaceId, issueNumber: 4199 });
+      let organizationId: string | null = restriction === "same-source" ? projectId : null;
+      if (restriction === "organization") {
+        organizationId = randomUUID();
+        await db.insert(projects).values({ id: organizationId, companyId, name: "Organizational policy" });
+      }
+      const policy = { trustPreset: "low_trust_review", authorizationPolicy: { trustPreset: "low_trust_review",
+        trustBoundary: { mode: "low_trust_review", companyId, rootIssueId: issueId,
+          projectIds: [...new Set([projectId, ...(organizationId ? [organizationId] : [])])] } } };
+      const agentId = randomUUID();
+      await db.insert(agents).values({ id: agentId, companyId, name: "Reopen assignee",
+        permissions: restriction === "agent" ? policy : {} });
+      await db.update(issues).set({ projectId: organizationId, assigneeAgentId: agentId,
+        executionPolicy: restriction === "task" ? policy : null }).where(eq(issues.id, issueId));
+      if (["source", "same-source", "organization"].includes(restriction)) {
+        await db.update(projects).set({ executionWorkspacePolicy: policy })
+          .where(eq(projects.id, restriction === "organization" ? organizationId! : projectId));
+      }
+      const result = await executionWorkspaceService(db).reopenClosedIsolatedExecutionWorkspaceForIssue({
+        workspaceId, issue: { id: issueId, companyId, projectId: organizationId },
+        actor: { agentId: null, actorType: "user" },
+        authorizationActor: { type: "board", source: "local_implicit", isInstanceAdmin: true },
+      });
+      expect(result).toMatchObject({ ok: true, reopened: true });
+      await expect(readFile(join(target, "README.md"), "utf8")).resolves.toBe("seed\n");
+      if (restriction === "trusted") await expect(readFile(marker, "utf8")).resolves.toBe("host execution\n");
+      else await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readWorkspace(workspaceId)).toMatchObject({ status: "active", projectId, projectWorkspaceId });
+      expect((await db.select().from(issues).where(eq(issues.id, issueId)))[0])
+        .toMatchObject({ projectId: organizationId, executionWorkspaceId: workspaceId, assigneeAgentId: agentId });
+    });
+  });
 
   it("reopens the archived row in place, keeps the issue link, and raises the generation", async () => {
     const { companyId, projectId, projectWorkspaceId } = await seedCompanyProject();

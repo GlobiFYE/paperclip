@@ -52,6 +52,7 @@ For a registered low-trust worktree running in a sandbox, a configured or built-
 provision script must not run on the host during fresh creation, reuse, or rebuild.
 Verify the adapter still selects the sandbox and ordinary trusted provisioning
 continues to work.
+Low-trust closed-worktree reopening, including a board-comment reopen of a projectless task, must also suppress both kinds of host provision script. Returned checkpoints must reject file, symlink or missing parents before host writes, even if a nested file is marked unchanged. The retained host file and recovery evidence must survive rejection. These are automated safety contracts, not new live runtime acceptance.
 
 For a child created by an admitted agent with an explicit existing workspace, verify that a matching sandbox boundary permits creation before the child has an ID. A changed child policy, unrelated parent, or forged creator run must fail. See the [child workspace trust regression](../../server/src/__tests__/task-workspace-child-trust.test.ts). This automated contract does not add live acceptance evidence.
 

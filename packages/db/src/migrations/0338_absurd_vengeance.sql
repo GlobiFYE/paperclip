@@ -1,4 +1,3 @@
--- Reapplication preserves provenance from earlier development migration numbers.
 CREATE TABLE IF NOT EXISTS "execution_workspace_repository_access" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"company_id" uuid NOT NULL,

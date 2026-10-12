@@ -3323,7 +3323,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       }
       const result = await db.transaction(async (tx): Promise<ReopenClosedIsolatedExecutionWorkspaceResult> => {
         await acquireExecutionWorkspaceLifecycleLock(tx, input.workspaceId);
-        const [boundTask] = await tx.select({ id: issues.id }).from(issues).where(and(
+        const [boundTask] = await tx.select().from(issues).where(and(
           eq(issues.id, issue.id), eq(issues.companyId, issue.companyId),
           eq(issues.executionWorkspaceId, input.workspaceId),
           await issueReadSqlCondition(tx, input.authorizationActor),
@@ -3395,8 +3395,31 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
 
         let rebuildError: string | null = null;
         try {
+          const [assignee, organization, sourceProject] = await Promise.all([
+            boundTask.assigneeAgentId ? tx.select({ companyId: agents.companyId, permissions: agents.permissions }).from(agents)
+              .where(and(eq(agents.id, boundTask.assigneeAgentId), eq(agents.companyId, row.companyId)))
+              .then(rows => rows[0] ?? null) : null,
+            boundTask.projectId ? tx.select({ companyId: projects.companyId, executionWorkspacePolicy: projects.executionWorkspacePolicy }).from(projects)
+              .where(and(eq(projects.id, boundTask.projectId), eq(projects.companyId, row.companyId)))
+              .then(rows => rows[0] ?? null) : null,
+            row.projectId ? tx.select({ companyId: projects.companyId, executionWorkspacePolicy: projects.executionWorkspacePolicy }).from(projects)
+              .where(and(eq(projects.id, row.projectId), eq(projects.companyId, row.companyId)))
+              .then(rows => rows[0] ?? null) : row.projectWorkspaceId
+                ? tx.select({ companyId: projects.companyId, executionWorkspacePolicy: projects.executionWorkspacePolicy })
+                  .from(projectWorkspaces).innerJoin(projects, eq(projects.id, projectWorkspaces.projectId))
+                  .where(and(eq(projectWorkspaces.id, row.projectWorkspaceId), eq(projectWorkspaces.companyId, row.companyId), eq(projects.companyId, row.companyId)))
+                  .then(rows => rows[0] ?? null) : null,
+          ]);
+          if ((boundTask.assigneeAgentId && !assignee) || (boundTask.projectId && !organization)
+            || ((row.projectId || row.projectWorkspaceId) && !sourceProject)) {
+            throw forbidden("Execution workspace trust policy is unavailable");
+          }
+          const trust = resolveCoreTrustPreset({ companyId: row.companyId, agent: assignee, issue: boundTask,
+            project: organization, workspaceSourceProject: sourceProject });
+          if (trust.kind === "denied") throw forbidden(trust.detail);
           const realized = await ensurePersistedExecutionWorkspaceAvailable({
             db: tx as unknown as Db,
+            skipHostProvision: trust.kind === "low_trust_review",
             beforeSourceCopy: verifyCopyIdentity,
             afterSourceCopy: verifyCopyIdentity,
             base: {
