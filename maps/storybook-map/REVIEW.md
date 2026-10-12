@@ -158,3 +158,19 @@ reasons below. The owned static preview was left running for the requested test-
 Use `maintain-storybook` to correct drift and `review-storybook` to record separate
 source, render, interaction, visual-comparison, and production evidence. Both skills
 consume the feature map; neither changes its upstream contract.
+
+## Task pagination source review — 2026-10-12
+
+Source baseline: `44367f4fb8ade6b515176d949d1ced2df97ead8c`.
+Scope: the task issue-management suite and the sub-issue workflow suite that
+shares `IssuesList`. Reviewed the pagination component changes, the three added
+stories, their query hydration, paging props and no-op callbacks. The added
+examples display load-more, loading-empty and failed-page states; they do not
+verify page requests or retry interactions. The sub-issue fixture supplies no
+server paging flags or callback, so it does not exercise those new states.
+
+Retained both suites' `unreviewed` full-parity classification and existing stable
+IDs. Updated the two reviewed fingerprints and regenerated the index, which now
+includes all eleven issue-management stories. Catalog checks and checker tests
+validate inventory and fingerprints only. No new browser render, interaction,
+visual baseline or production acceptance result is claimed by this review.

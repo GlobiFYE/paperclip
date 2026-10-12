@@ -2822,7 +2822,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Source-reviewed pagination fixtures display load-more, loading-empty, and failed-page states; no-op callbacks do not establish paging or retry interactions.",
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/tasks.md",
@@ -2843,7 +2843,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/tasks/issue-management.stories.tsx"
       ],
-      "fingerprint": "0692ea26dbbe757bb070183a445b72c08d0431cd3f008d77b57682ee099a7cc2",
+      "fingerprint": "e4f1e4f242438821b9668b3d497d2852cb05ac07a77aa57d99fcb2d6936c21cd",
       "stableId": "product-issue-management",
       "sidebarTitle": "Tasks and conversations/Task creation and lifecycle/Product/Issue Management"
     },
@@ -5003,7 +5003,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Reviewed the shared IssuesList pagination change: this local sub-issue fixture has no server paging flags or callbacks, so the new server-page states are not exercised.",
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/task-coordination.md",
@@ -5011,7 +5011,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/task-coordination/sub-issues-workflow.stories.tsx"
       ],
-      "fingerprint": "f9ebab21b19cd4aed698c7f1b060c8c6e39788f8224b567d86bf0b4841d038b2",
+      "fingerprint": "44fefc4c491aa7eab46ca21b46bdaca5ea71d392808a2604c93172b166769938",
       "stableId": "ux-labs-sub-issues-workflow-checklist",
       "sidebarTitle": "Tasks and conversations/Delegation, dependencies, and signoff/UX Labs/Sub-issues Workflow Checklist"
     },
