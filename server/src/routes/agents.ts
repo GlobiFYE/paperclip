@@ -250,6 +250,7 @@ import type { AdapterAuthSessionOwnerResponse } from "@paperclipai/shared";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { DEFAULT_GEMINI_LOCAL_MODEL } from "@paperclipai/adapter-gemini-local";
 import { DEFAULT_KIMI_LOCAL_MODEL } from "@paperclipai/adapter-kimi-local";
+import { DEFAULT_COPILOT_LOCAL_MODEL } from "@paperclipai/adapter-copilot-local";
 import { DEFAULT_OPENCODE_LOCAL_MODEL } from "@paperclipai/adapter-opencode-local";
 import { requireOpenCodeModelId } from "@paperclipai/adapter-opencode-local/server";
 import {
@@ -535,6 +536,7 @@ export function agentRoutes(
     codex_local: "instructionsFilePath",
     droid_local: "instructionsFilePath",
     gemini_local: "instructionsFilePath",
+    copilot_local: "instructionsFilePath",
     kimi_local: "instructionsFilePath",
     opencode_local: "instructionsFilePath",
     cursor: "instructionsFilePath",
@@ -2305,6 +2307,10 @@ export function agentRoutes(
       next.model = DEFAULT_GEMINI_LOCAL_MODEL;
       return ensureGatewayDeviceKey(adapterType, next);
     }
+    if (adapterType === "copilot_local" && !asNonEmptyString(next.model)) {
+      next.model = DEFAULT_COPILOT_LOCAL_MODEL;
+      return ensureGatewayDeviceKey(adapterType, next);
+    }
     if (adapterType === "kimi_local" && !asNonEmptyString(next.model)) {
       next.model = DEFAULT_KIMI_LOCAL_MODEL;
       return ensureGatewayDeviceKey(adapterType, next);
@@ -2585,6 +2591,7 @@ export function agentRoutes(
   const LOCAL_ADAPTER_CREDENTIAL_ENV_KEYS: Record<string, readonly string[]> = {
     ...INHERITABLE_AGENT_CREDENTIAL_ENV_KEYS,
     gemini_local: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+    copilot_local: ["COPILOT_GITHUB_TOKEN"],
     kimi_local: ["KIMI_MODEL_API_KEY"],
     opencode_local: ["PAPERCLIP_OPENCODE_PROVIDERS", "OPENCODE_AUTH_JSON"],
   };

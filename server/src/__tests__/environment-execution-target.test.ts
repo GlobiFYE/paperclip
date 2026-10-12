@@ -262,6 +262,7 @@ describe("resolveEnvironmentExecutionTarget", () => {
     for (const adapterType of [
       "claude_local",
       "codex_local",
+      "copilot_local",
       "cursor",
       "gemini_local",
       "grok_local",

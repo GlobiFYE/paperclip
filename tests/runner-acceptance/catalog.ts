@@ -25,6 +25,7 @@ const directBuiltInAdapterTypes = [
   "grok_local",
   "hermes_gateway",
   "hermes_local",
+  "copilot_local",
   "kimi_local",
   "openclaw_gateway",
   "opencode_local",

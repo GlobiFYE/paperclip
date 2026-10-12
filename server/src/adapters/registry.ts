@@ -96,6 +96,17 @@ import {
   models as kimiModels,
 } from "@paperclipai/adapter-kimi-local";
 import {
+  execute as copilotExecute,
+  listCopilotSkills,
+  syncCopilotSkills,
+  testEnvironment as copilotTestEnvironment,
+  sessionCodec as copilotSessionCodec,
+} from "@paperclipai/adapter-copilot-local/server";
+import {
+  agentConfigurationDoc as copilotAgentConfigurationDoc,
+  models as copilotModels,
+} from "@paperclipai/adapter-copilot-local";
+import {
   createHermesGatewayServerAdapter,
   createHermesLocalServerAdapter,
 } from "@paperclipai/hermes-paperclip-adapter";
@@ -815,6 +826,26 @@ const kimiLocalAdapter: ServerAdapterModule = {
   agentConfigurationDoc: kimiAgentConfigurationDoc,
 };
 
+const copilotLocalAdapter: ServerAdapterModule = {
+  type: "copilot_local",
+  runtimeToolDelivery: "environment",
+  execute: copilotExecute,
+  testEnvironment: copilotTestEnvironment,
+  listSkills: listCopilotSkills,
+  syncSkills: syncCopilotSkills,
+  sessionCodec: copilotSessionCodec,
+  sessionManagement: getAdapterSessionManagement("copilot_local") ?? undefined,
+  supportsToolRefreshOnResume: true,
+  models: copilotModels,
+  supportsLocalAgentJwt: true,
+  supportsInstructionsBundle: true,
+  instructionsPathKey: "instructionsFilePath",
+  requiresMaterializedRuntimeSkills: true,
+  getRuntimeCommandSpec: (config) =>
+    buildNpmRuntimeCommandSpec(config, "copilot", "@github/copilot"),
+  agentConfigurationDoc: copilotAgentConfigurationDoc,
+};
+
 const hermesGatewayAdapter: ServerAdapterModule = {
   ...createHermesGatewayServerAdapter(),
   runtimeToolDelivery: "invocation_context",
@@ -902,6 +933,7 @@ function registerBuiltInAdapters() {
     geminiLocalAdapter,
     grokLocalAdapter,
     kimiLocalAdapter,
+    copilotLocalAdapter,
     hermesGatewayAdapter,
     hermesLocalAdapter,
     openclawGatewayAdapter,

@@ -38,6 +38,8 @@ describe("composer run settings", () => {
     expect(composerEfforts({ ...agent("kimi_local"), adapterConfig: { engine: "cli" } }, "kimi-code/k3", ["kimi-code/k3"])).toEqual(["low", "high", "max"]);
     expect(composerEfforts({ ...agent("kimi_local"), adapterConfig: { engine: " CLI " } }, "", ["kimi-code/kimi-for-coding"])).toEqual(["low", "high", "max"]);
     expect(composerEfforts(agent("kimi_local"), "kimi-code/kimi-for-coding-highspeed", ["kimi-code/kimi-for-coding-highspeed"])).toEqual([]);
+    expect(composerEfforts(agent("copilot_local"), "", ["auto"])).toEqual(["none", "minimal", "low", "medium", "high", "xhigh", "max"]);
+    expect(composerEfforts(agent("copilot_local"), "unlisted", ["auto"])).toEqual([]);
     expect(composerFastAvailable(agent("codex_local"), "gpt-6-astra")).toBe(true);
     expect(composerFastAvailable(agent("codex_local"), "custom-private-model")).toBe(false);
     expect(supportsComposerModel(agent("process"))).toBe(false);

@@ -2,6 +2,7 @@ import { codexLocalReasoningEffortsForModel, isCodexLocalFastModeSupported, isCo
 import { claudeLocalReasoningEffortsForModel } from "@paperclipai/adapter-claude-local";
 import { resolvePaperclipRunnerModel } from "@paperclipai/adapter-utils";
 import { DEFAULT_GROK_LOCAL_MODEL, grokLocalReasoningEffortsForModel } from "@paperclipai/adapter-grok-local";
+import { DEFAULT_COPILOT_LOCAL_MODEL, COPILOT_REASONING_EFFORTS } from "@paperclipai/adapter-copilot-local";
 import { DEFAULT_KIMI_LOCAL_MODEL, modelSupportsEffort, KIMI_SUPPORTED_EFFORTS } from "@paperclipai/adapter-kimi-local";
 import { aiConnectionBindingSchema, aiRuntimeConnectionBindingSchema, type Agent, type IssueAssigneeAdapterOverrides } from "@paperclipai/shared";
 
@@ -18,7 +19,7 @@ export const EFFORT_LABELS: Record<string, string> = {
 };
 
 const MODEL_ADAPTERS = new Set([
-  "claude_local", "codex_local", "opencode_local", "pi_local", "kimi_local",
+  "claude_local", "codex_local", "opencode_local", "pi_local", "kimi_local", "copilot_local",
   "gemini_local", "cursor", "cursor_cloud", "grok_local", "hermes_local", "paperclip_runner",
 ]);
 
@@ -41,6 +42,7 @@ export function composerDefaultModel(agent: Agent | undefined): string {
   }
   if (agent.adapterType === "grok_local") return DEFAULT_GROK_LOCAL_MODEL;
   if (agent.adapterType === "kimi_local") return DEFAULT_KIMI_LOCAL_MODEL;
+  if (agent.adapterType === "copilot_local") return DEFAULT_COPILOT_LOCAL_MODEL;
   if (agent.adapterType === "paperclip_runner") {
     const provider = composerCatalogProvider(agent);
     if (provider === "codex" || provider === "opencode") return resolvePaperclipRunnerModel(provider, config.model);
@@ -62,7 +64,8 @@ export function composerCatalogProvider(agent: Agent | undefined): string | unde
 export function composerEfforts(agent: Agent | undefined, model: string, catalogIds: readonly string[]): readonly string[] {
   if (!agent) return [];
   const effectiveModel = model.trim() || (agent.adapterType === "grok_local" ? DEFAULT_GROK_LOCAL_MODEL
-    : agent.adapterType === "kimi_local" ? DEFAULT_KIMI_LOCAL_MODEL : "");
+    : agent.adapterType === "kimi_local" ? DEFAULT_KIMI_LOCAL_MODEL
+    : agent.adapterType === "copilot_local" ? DEFAULT_COPILOT_LOCAL_MODEL : "");
   if (!effectiveModel) return [];
   const pool = aiRuntimeConnectionBindingSchema.safeParse(agent.runtimeConfig?.aiConnection).data?.mode === "router";
   if (pool && agent.adapterType === "paperclip_runner") return isCodexLocalKnownModel(effectiveModel) ? codexLocalReasoningEffortsForModel(effectiveModel) : [];
@@ -72,6 +75,7 @@ export function composerEfforts(agent: Agent | undefined, model: string, catalog
   if (!catalogIds.includes(effectiveModel)) return [];
   if (agent.adapterType === "claude_local") return claudeLocalReasoningEffortsForModel(effectiveModel);
   if (agent.adapterType === "grok_local") return grokLocalReasoningEffortsForModel(effectiveModel);
+  if (agent.adapterType === "copilot_local") return COPILOT_REASONING_EFFORTS;
   if (agent.adapterType === "pi_local") return ["off", "minimal", "low", "medium", "high", "xhigh"];
   if (agent.adapterType === "kimi_local" && typeof agent.adapterConfig.engine === "string"
     && agent.adapterConfig.engine.trim().toLowerCase() === "cli" && modelSupportsEffort(effectiveModel)) return KIMI_SUPPORTED_EFFORTS;
@@ -96,7 +100,7 @@ export function readComposerRunSettings(overrides: IssueAssigneeAdapterOverrides
 
 function composerEffortKey(adapterType: string | undefined): string | null {
   if (adapterType === "codex_local" || adapterType === "paperclip_runner") return "modelReasoningEffort";
-  if (adapterType === "claude_local" || adapterType === "kimi_local") return "effort";
+  if (adapterType === "claude_local" || adapterType === "kimi_local" || adapterType === "copilot_local") return "effort";
   if (adapterType === "grok_local") return "reasoningEffort";
   if (adapterType === "pi_local") return "thinking";
   if (adapterType === "opencode_local") return "variant";
