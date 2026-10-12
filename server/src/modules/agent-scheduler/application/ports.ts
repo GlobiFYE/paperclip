@@ -14,17 +14,20 @@ export type RunnableWakeRow = {
   requestedAt: Date;
 };
 
+export type AgentSchedulerEnqueueActivity = {
+  companyId: string;
+  agentId: string;
+  wakeRequestId: string;
+  issueId: string | null;
+  reason: string;
+  queueDepth: number;
+  effectiveCapacity: number;
+};
+
 export type AgentSchedulerHost = {
   countRunningRunsForAgent(agentId: string): Promise<number>;
-  appendSchedulerEvent(input: {
-    companyId: string;
-    agentId: string;
-    wakeRequestId: string;
-    issueId: string | null;
+  appendSchedulerEvent(input: AgentSchedulerEnqueueActivity & {
     kind: "enqueue" | "dequeue";
-    reason: string;
-    queueDepth: number;
-    effectiveCapacity: number;
   }): Promise<void>;
 };
 
@@ -39,6 +42,7 @@ export type AgentSchedulerWriter = {
     schedulerMeta: Record<string, unknown>;
   }): Promise<boolean>;
   tryClaimRunnableWake(wakeId: string): Promise<boolean>;
+  recoverStaleMaterializingClaims(agentId: string): Promise<number>;
   releaseClaimedRunnableWake(input: {
     wakeId: string;
     companyId: string;
