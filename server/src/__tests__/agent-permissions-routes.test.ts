@@ -2212,7 +2212,138 @@ describe("agent permission routes", () => {
       expect(res.status).toBe(403);
       expect(mockAccessService.decide).toHaveBeenCalledWith(expect.objectContaining({
         action: "agent_config:read",
-        resource: { type: "company", companyId },
+        resource: { type: "agent", companyId, agentId: peerAgentId },
+      }));
+    });
+
+    it("allows a grant-less agent actor to read its own configuration", async () => {
+      // The allow_self branch in the authorization service only fires when
+      // the resource carries the target agent id. Reusing assertCanReadAgent
+      // (already correct for /agents/:id/skills, #15145/#15147) puts the
+      // target agent into the resource so a self read is allowed with no
+      // agents:configure/agents:suggest-changes grant at all.
+      mockAgentService.getById.mockImplementation(async (id: string) => {
+        if (id === agentId) return { ...baseAgent, permissions: { canCreateAgents: false } };
+        return null;
+      });
+      mockAccessService.decide.mockResolvedValue({
+        allowed: true,
+        reason: "allow_self",
+        explanation: "Allowed because the actor is reading its own agent configuration.",
+      });
+
+      const app = await createApp({
+        type: "agent",
+        agentId,
+        companyId,
+        runId: "run-1",
+        source: "agent_key",
+      });
+
+      const res = await request(app).get(`/api/agents/${agentId}/configuration`);
+
+      expect(res.status).toBe(200);
+      expect(mockAccessService.decide).toHaveBeenCalledWith(expect.objectContaining({
+        action: "agent_config:read",
+        resource: { type: "agent", companyId, agentId },
+      }));
+    });
+
+    it("allows a grant-less agent actor to read its own config-revisions", async () => {
+      mockAgentService.getById.mockImplementation(async (id: string) => {
+        if (id === agentId) return { ...baseAgent, permissions: { canCreateAgents: false } };
+        return null;
+      });
+      mockAgentService.listConfigRevisions.mockResolvedValue([]);
+      mockAccessService.decide.mockResolvedValue({
+        allowed: true,
+        reason: "allow_self",
+        explanation: "Allowed because the actor is reading its own agent configuration.",
+      });
+
+      const app = await createApp({
+        type: "agent",
+        agentId,
+        companyId,
+        runId: "run-1",
+        source: "agent_key",
+      });
+
+      const res = await request(app).get(`/api/agents/${agentId}/config-revisions`);
+
+      expect(res.status).toBe(200);
+      expect(mockAccessService.decide).toHaveBeenCalledWith(expect.objectContaining({
+        action: "agent_config:read",
+        resource: { type: "agent", companyId, agentId },
+      }));
+    });
+
+    it("allows a grant-less agent actor to read its own config-revisions/:revisionId", async () => {
+      const revisionId = "33333333-3333-4333-8333-333333333333";
+      mockAgentService.getById.mockImplementation(async (id: string) => {
+        if (id === agentId) return { ...baseAgent, permissions: { canCreateAgents: false } };
+        return null;
+      });
+      mockAgentService.getConfigRevision.mockResolvedValue({
+        id: revisionId,
+        beforeConfig: { adapterType: "process", adapterConfig: {} },
+        afterConfig: { adapterType: "process", adapterConfig: {} },
+      });
+      mockAccessService.decide.mockResolvedValue({
+        allowed: true,
+        reason: "allow_self",
+        explanation: "Allowed because the actor is reading its own agent configuration.",
+      });
+
+      const app = await createApp({
+        type: "agent",
+        agentId,
+        companyId,
+        runId: "run-1",
+        source: "agent_key",
+      });
+
+      const res = await request(app).get(`/api/agents/${agentId}/config-revisions/${revisionId}`);
+
+      expect(res.status).toBe(200);
+      expect(mockAccessService.decide).toHaveBeenCalledWith(expect.objectContaining({
+        action: "agent_config:read",
+        resource: { type: "agent", companyId, agentId },
+      }));
+    });
+
+    it("denies an agent actor without configure or suggest grants when reading peer config-revisions/:revisionId", async () => {
+      const peerAgentId = "33333333-3333-4333-8333-333333333333";
+      const revisionId = "44444444-4444-4444-8444-444444444444";
+      const peerAgent = { ...baseAgent, id: peerAgentId };
+      mockAgentService.getById.mockImplementation(async (id: string) => {
+        if (id === peerAgentId) return peerAgent;
+        if (id === agentId) {
+          return { ...baseAgent, permissions: { canCreateAgents: false } };
+        }
+        return null;
+      });
+      mockAccessService.decide.mockResolvedValue({
+        allowed: false,
+        reason: "deny_no_grant",
+        explanation: "Missing permission: agents:configure or agents:suggest-changes.",
+      });
+
+      const app = await createApp({
+        type: "agent",
+        agentId,
+        companyId,
+        runId: "run-1",
+        source: "agent_key",
+      });
+
+      const res = await request(app).get(`/api/agents/${peerAgentId}/config-revisions/${revisionId}`);
+
+      expect(res.status).toBe(403);
+      expect(mockAgentService.getConfigRevision).not.toHaveBeenCalled();
+      expect(mockAccessService.decide).toHaveBeenCalledWith(expect.objectContaining({
+        action: "agent_config:read",
+        resource: { type: "agent", companyId, agentId: peerAgentId },
       }));
     });
 
@@ -2253,7 +2384,7 @@ describe("agent permission routes", () => {
       expect(res.status).toBe(200);
       expect(mockAccessService.decide).toHaveBeenCalledWith(expect.objectContaining({
         action: "agent_config:read",
-        resource: { type: "company", companyId },
+        resource: { type: "agent", companyId, agentId: peerAgentId },
       }));
     });
   });
