@@ -41,3 +41,6 @@ export function decideAgentRunMaterialization(
 
 export const AGENT_SCHEDULER_ENQUEUE_REASON = "agent_scheduler_enqueued";
 export const AGENT_SCHEDULER_DEQUEUE_REASON = "agent_scheduler_promoted";
+export const AGENT_SCHEDULER_MATERIALIZING_REASON = "agent.scheduler.materializing";
+/** Claims older than this are treated as stale and may be reclaimed or recovered. */
+export const AGENT_SCHEDULER_MATERIALIZING_CLAIM_TTL_MS = 5 * 60 * 1000;

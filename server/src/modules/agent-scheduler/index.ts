@@ -31,6 +31,8 @@ export function createAgentScheduler(db: Db, host: AgentSchedulerHost, deps: Age
     evaluateAdmission: evaluateAdmissionForDb(db),
     evaluateAdmissionForDb,
     promoteRunnableWork: createPromoteAgentRunnableWork({ host, writer }),
+    recordSchedulerEnqueueActivity: async (input) =>
+      host.appendSchedulerEvent({ ...input, kind: "enqueue" }),
     readAgentParallelExecutionAllowed,
   };
 }
