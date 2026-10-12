@@ -13,20 +13,21 @@ function fixture(t) {
     mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     writeFileSync(path.join(root, file), text);
   }
+  write("maps/feature-map/README.md", "# Features\n\n### Tasks and conversations\n\n| [Tasks](./tasks.md) | Tasks |\n");
   write("maps/feature-map/tasks.md", "# Tasks\n\n## Sub-features\n\n- `create`: create\n- `discussion`: discuss\n\n## How to get to it\n");
   write("ui/storybook/.storybook/preview.tsx", "// shared fixtures\n");
-  const file = "ui/storybook/stories/task.stories.tsx";
+  const file = "ui/storybook/stories/tasks/task.stories.tsx";
   write(file, "// a story\n");
   write("ui/src/Task.tsx", "// production subject\n");
   const sharedSources = ["ui/storybook/.storybook/preview.tsx"];
   const sources = [file, "ui/src/Task.tsx"];
   const catalog = {
     version: 1, sharedReview: { sources: sharedSources, fingerprint: fingerprint(root, sharedSources) },
-    entries: [{ file, capabilities: ["tasks/create", "tasks/discussion"], purpose: "Create a task", status: "current",
+    entries: [{ file, stableId: "tasks-create", sidebarTitle: "Tasks and conversations/Tasks/Create", capabilities: ["tasks/create", "tasks/discussion"], purpose: "Create a task", status: "current",
       implementation: "production", boundary: "fixtures", notes: "Production subject; callbacks simulated.",
       reviewedAt: "2026-10-12", sources, fingerprint: fingerprint(root, sources) }],
   };
-  const stories = [{ file, title: "Tasks/Create", ids: ["tasks-create--empty"], plays: 0 }];
+  const stories = [{ file, title: "Tasks and conversations/Tasks/Create", metaId: "tasks-create", ids: ["tasks-create--empty"], plays: 0 }];
   return { root, write, file, catalog, stories };
 }
 
@@ -50,7 +51,34 @@ test("capability renames and unjustified unmapped stories fail", t => {
   f.catalog.entries[0].capabilities = [];
   assert.match(validateCatalog(f.root, f.catalog, f.stories).join("\n"), /explicit reason/);
   f.catalog.entries[0].exception = "Shared foundation";
+  const file = "ui/storybook/stories/foundations/task.stories.tsx";
+  f.write(file, "export default {};");
+  const entry = f.catalog.entries[0];
+  entry.file = file;
+  entry.sources = [file, "ui/src/Task.tsx"];
+  entry.fingerprint = fingerprint(f.root, entry.sources);
+  entry.sidebarTitle = "Foundations/Task";
+  f.stories[0].file = file;
+  f.stories[0].title = entry.sidebarTitle;
   assert.deepEqual(validateCatalog(f.root, f.catalog, f.stories), []);
+});
+
+test("feature organization rejects wrong folders, sidebar homes and unstable meta IDs", t => {
+  const f = fixture(t);
+  f.catalog.entries[0].capabilities = ["tasks/discussion"];
+  assert.deepEqual(validateCatalog(f.root, f.catalog, f.stories), []);
+  f.stories[0].metaId = "renamed-task";
+  assert.match(validateCatalog(f.root, f.catalog, f.stories).join("\n"), /explicit meta ID/);
+  f.stories[0].metaId = "tasks-create";
+  f.stories[0].title = "Unrelated/Task";
+  assert.match(validateCatalog(f.root, f.catalog, f.stories).join("\n"), /sidebar title/);
+  f.stories[0].title = f.catalog.entries[0].sidebarTitle;
+  const originalFile = f.catalog.entries[0].file;
+  f.catalog.entries[0].file = "ui/storybook/stories/foundations/task.stories.tsx";
+  assert.match(validateCatalog(f.root, f.catalog, f.stories).join("\n"), /primary feature folder tasks/);
+  f.catalog.entries[0].file = originalFile;
+  f.write("maps/feature-map/README.md", "### Conversations\n| [Tasks](./tasks.md) | Tasks |\n");
+  assert.match(validateCatalog(f.root, f.catalog, f.stories).join("\n"), /sidebar title/);
 });
 
 test("production and shared fixture drift invalidate review fingerprints", t => {
@@ -106,9 +134,9 @@ test("Storybook parser discovers nested files, filters helpers, preserves explic
   const stories = scanStories(f.root);
   assert.equal(stories.length, 2);
   assert.deepEqual(stories.find(story => story.file === f.file), {
-    file: f.file, title: "Tasks/Create", ids: ["stable-task--empty", "stable-task--filled"], plays: 1,
+    file: f.file, title: "Tasks/Create", metaId: "stable-task", ids: ["stable-task--empty", "stable-task--filled"], plays: 1,
   });
   assert.deepEqual(stories.find(story => story.file.endsWith("other.stories.ts")), {
-    file: "ui/storybook/stories/nested/other.stories.ts", title: "Other/Subject", ids: ["other-subject--included"], plays: 0,
+    file: "ui/storybook/stories/nested/other.stories.ts", title: "Other/Subject", metaId: undefined, ids: ["other-subject--included"], plays: 0,
   });
 });

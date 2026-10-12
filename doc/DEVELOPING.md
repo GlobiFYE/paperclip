@@ -124,6 +124,11 @@ API responses and MCP transports keep their existing compression behavior.
 
 The board UI Storybook keeps stories and Storybook config under `ui/storybook/` so component review files stay out of the app source routes.
 
+Stories are grouped in `ui/storybook/stories/<feature-area>/` and the sidebar follows
+the feature map's sections and feature names. Shared fixtures live in
+`ui/storybook/support/`. Keep each suite's explicit meta `id` and catalog `stableId`
+when changing titles or locations so existing review links remain valid.
+
 Start from the downstream [Storybook feature index](../maps/storybook-map/INDEX.md)
 to find existing stories by capability. Its [contract](../maps/storybook-map/README.md)
 separates production subjects, prototype implementations, simulated data, and
