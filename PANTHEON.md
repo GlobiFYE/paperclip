@@ -8,8 +8,8 @@ forked from `github.com/paperclipai/paperclip` at commit `467125f`
 
 The fork keeps every upstream identifier (package names, `paperclipai` CLI,
 `PAPERCLIP_*` env vars, `/api/*` routes, DB schema/identifiers) byte-compatible
-with the existing live data. Only the product name shown in the UI and the
-Hermes adapter defaults are ours (see "Our change list").
+with the existing live data. Our changes include the product name, Hermes adapter fixes and embedded City
+views (see "Our change list").
 
 - Upstream remote: `upstream` = https://github.com/paperclipai/paperclip.git
   with pushing disabled (`git remote set-url --push upstream DISABLED`).
@@ -87,7 +87,7 @@ be under the test home. `NODE_OPTIONS=--conditions=pantheon-dist` is required
 on `run` (without it the CLI resolves the server's source entry instead of the
 built runtime and fails on a missing module).
 
-Verified checks (2026-10-11, isolated instance at commit `b440cd4`):
+Historical smoke checks (2026-10-11, isolated instance at commit `b440cd4`):
 `/api/health` -> `{"status":"ok","commit":"b440cd4..."}`
 `/api/adapters` -> `hermes_local`, `modelsCount: 8`
 `/api/companies/:id/adapters/hermes_local/models` -> the 8 Pantheon models
@@ -126,6 +126,12 @@ all MIT copyright notices intact when merging.
 | `6a68f91` | `launch.py` passes `NODE_OPTIONS=--conditions=pantheon-dist`. |
 | `6d67009` | Idempotent skill symlink sync: `ensurePaperclipSkillSymlink` treats `EEXIST` on the symlink as success when the occupying link already points at the expected source (still fails on genuine conflicts), and tolerates `ENOENT` on the repair unlink. Fixes crashes when concurrent runs share one Hermes profile. Unit tests included. |
 
+| `b440cd4`, `713c8de` | Initial runbook and isolated-instance evidence. |
+| `9561bbe`, `0576e74`, `822eacb`, `95206be` | Embedded City navigation, availability, titles and mobile viewport. |
+| `8309779` | Read-only skill-cache publication fix on macOS and fork export verification. |
+| `3a594fd`, `239027b`, `3ce5518` | Guarded cutover, complete build toolchain and verified rehearsal counts. |
+| `d6cb4a4` | Optional Dragon World with deep links and browser Back support. |
+
 Note: the model list above is the 8-model list from the work order, a superset
 of the 6 models in the live dist patch (the live patch never contained the
 "Gemini 3 Flash preview" and "Gemini 3.1 Flash-Lite" entries).
@@ -138,18 +144,24 @@ change, not a public deployment. Do not push, add remotes, buy anything, delete
 state, or expand the workforce as part of the cutover.
 
 Release evidence is in `/Volumes/AI-Models/pantheon-release/2026-10-12/`.
-Read `RELEASE-VERIFICATION.md` for the final verdict and source commits; an
-unfinished or failed gate stops this procedure.
+Read `RELEASE-VERIFICATION.md` for the original full acceptance, then
+`/Volumes/AI-Models/pantheon-release/final-readiness-20261012/READINESS.md`
+and its manifest for the current source, Dragon World delta and service checks.
+The older commits and hashes below are historical; an unfinished or failed
+current gate stops this procedure.
 
 ### Preconditions and dynamic baseline
 
 - Build, type checks, relevant regression tests, desktop/phone UAT and visual
   verification must pass. Confirm the desired source commit and clean tracked
   tree. Generated test homes, caches, raw exports and secrets stay untracked.
-- Port 3200 uses an isolated test database, with scheduling disabled. Its
-  rehearsal copy has 43 paused agents with inert process adapters, 562 skills,
-  169 issues and 5 projects after the bounded rehearsal delta. This proves portable
-  content survives import, not that runtime secrets/history were cloned.
+- Port 3200 uses an isolated test database, with scheduling disabled. The current
+  rehearsal copy has 43 paused agents, 562 skills, 169 issues and 6 projects; timer
+  heartbeats are disabled and no runs are active. Most adapters are inert process
+  stubs; the Chief of Staff was explicitly configured for Hermes/MiMo but remains
+  paused. Verify these gates again rather than assuming every adapter is a stub.
+  This proves portable content survives import, not that runtime secrets/history
+  were cloned.
 - The real cutover uses the EXISTING live data directory. There is no export,
   import, migration, new company, agent recreation or data replacement.
 - Re-read live company `57cfaea0-c864-4bff-9433-2fad7be3d4c5` through the API.
@@ -222,7 +234,10 @@ only the isolated test instance and smoke-test its City and task pages.
 6. Verify health, actual served UI assets and Pantheon title; compare all
    baseline IDs/counts. Open dashboard, inbox, agent, skills, task and City.
    Confirm the fork Hermes model list and project cwd behaviour. Check the
-   local City on 5180 and its connection to 3100, including zoom persistence.
+   local City on 5180 and its connection to 3100, including zoom persistence. Also check Dragon World 5182, its sanitized
+   `/city/state` feed, and `com.pantheon.dragon-city`. That separate RunAtLoad /
+   KeepAlive service remains installed during cutover and rollback; temporary
+   upstream unavailability must display Offline and recover after 3100 returns.
 7. Verify the existing Tailscale endpoint
    `https://brain.tail3625db.ts.net:3443` still serves Pantheon and the allowed
    hostname remains unchanged. Local-trusted mode still trusts devices with
@@ -240,7 +255,8 @@ only the isolated test instance and smoke-test its City and task pages.
 If post-switch checks fail, stop the fork job, restore the preserved plist
 argument to `/Volumes/AI-Models/paperclip/launch.py`, validate the plist, and
 bootstrap the original job. Compare against the fresh baseline and confirm
-Paperclip, City, Tailscale and the bridge are healthy. Keep the same live data
+Paperclip, City 5180, Dragon World 5182 (`com.pantheon.dragon-city`),
+Tailscale and the bridge are healthy. Keep the same live data
 and restore any temporary admission settings.
 
 This binary rollback is possible because this release has no schema changes.
@@ -248,3 +264,27 @@ Do not automatically restore a database dump: restoration overwrites data and
 requires a separate explicit owner yes. Preserve diagnostics privately and
 report any failed checks without exposing secrets. No rollback step deletes
 worktrees, branches, backups, artifacts, accounts or issues.
+
+## Current private readiness delta — October 12, 2026
+
+- Application code d6cb4a4 adds optional Dragon World; prior full release evidence
+  remains the base, with 15 actual Chrome City/embed checks repeated against the
+  current preview after service installation. 19 workflow regressions and final
+  independent static visual verification cover the city feature; no claim that
+  screenshots certify all animation or autonomous product workflow behavior.
+- Dragon source c263a1c adds scripts/launch-dragon.py after scene ae44dce.
+  The launchd job binds 127.0.0.1:5182, uses existing installed dependencies and
+  reads sanitized data from 3100. Vite is deliberately retained as the private
+  local runtime so the existing middleware is preserved; this is not a public
+  production hosting claim. RunAtLoad is configured; process recovery is tested,
+  not an actual host reboot. Both 5180 and 5182 raw /api access remain denied.
+- The Chief of Staff uses Hermes/xiaomi/mimo-v2.6-pro in live and rehearsal;
+  rehearsal remains paused. Other worker routing and admission policies unchanged.
+- A concrete proposed plist and private backups live in
+  `/Volumes/AI-Models/pantheon-release/final-readiness-20261012/`. The only
+  proposed live plist change is ProgramArguments[1], paperclip/launch.py to
+  pantheon-app/launch.py. It has not been applied.
+- Readiness snapshot is not a drained baseline. Capture fresh IDs/settings and
+  a new database backup after approval and drain, immediately before switching.
+- A real owner Telegram message remains a separate acceptance gate. The local
+  launch test and mocked transport checks must not be described as that test.
