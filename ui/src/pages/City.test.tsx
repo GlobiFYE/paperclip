@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
+import { BreadcrumbProvider } from "../context/BreadcrumbContext";
 import {
   City,
   CITY_DEFAULT_ORIGIN,
@@ -31,7 +32,7 @@ describe("City connection state", () => {
   });
 
   it("renders the page with controls and a concise local-M4 caveat only", () => {
-    const markup = renderToStaticMarkup(<City />);
+    const markup = renderToStaticMarkup(<BreadcrumbProvider><City /></BreadcrumbProvider>);
     expect(markup).toContain("data-testid=\"city-connection-state\"");
     expect(markup).toContain("data-testid=\"city-fullscreen-control\"");
     expect(markup).toContain("data-testid=\"city-open-control\"");

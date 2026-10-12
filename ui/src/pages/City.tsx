@@ -39,6 +39,7 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { useBreadcrumbs } from "../context/BreadcrumbContext";
 
 /** Default City origin: the M4 host's localhost. Overridable via VITE_CITY_URL. */
 export const CITY_DEFAULT_ORIGIN = "http://127.0.0.1:5180";
@@ -122,6 +123,8 @@ export function CityUnavailableFallback({
 }
 
 export function City() {
+  const { setBreadcrumbs } = useBreadcrumbs();
+  useEffect(() => { setBreadcrumbs([{ label: "City" }]); }, [setBreadcrumbs]);
   const [connection, setConnection] = useState<CityConnectionState>("checking");
   const [probeNonce, setProbeNonce] = useState(0);
   const [fullscreenActive, setFullscreenActive] = useState(false);
