@@ -10,8 +10,8 @@ separate work.
 | 1. Slack session status | `chat-channels/slack/session-status.ts` | 342 / 330 | Endpoint lookup, credential lease, runtime fence, publication run identity, credentials and fetch; return processed count | Claim and settle existing durable status actions. Keep selected revision, attempt ownership and live test barrier. No worker or new state. | Existing public-service status, restart, rate-limit, concurrent selection, stop and Idle cases before/after. |
 | 2. Slack accepted-file receipts | `chat-channels/slack/file-receipts.ts` | 900 / 840 | Runtime/credential authorization, publication eligibility and endpoint lookup; record/recover accepted upload receipts | Preserve same-attempt leases, exact receipt identities, publication links and transaction boundaries. Keep generic publication transport shared. | Existing upload recovery, competing retry deadline, revoked reach and no-duplicate-upload cases before/after. |
 | 3. Telegram publication drafts | `chat-channels/telegram/publication-drafts.ts` | 394 / 370 | Current runtime and callback fence, source publication authority; reserve draft or handle stopped generation | Preserve runtime map identity, stop scope, draft revision and transactional invalidation. Keep maintenance and shared publication admission in their existing owners. | Existing durable private draft Stop, stale generation and publication recovery cases before/after. |
-| 4. Photon incoming events and responses | `chat-channels/imessage-photon/events.ts` | 870 / 820 | Endpoint/runtime callbacks, principal authorization, question delivery and shared inbound admission | Preserve receiver sequence/lease checks, native interaction binding, transaction ordering and deferred publication. No receiver/startup ownership move. | Existing Photon public-service integration suite before/after. |
-| 5. Teams file-transfer workflow | `chat-channels/microsoft-teams/file-transfers.ts` | 1,400 / 1,250 | Source proof, runtime/credential fence, principal authorization, publication hydration; consent and transfer protocol | Keep authority proof and transfer protocol together. Preserve map lifetimes, scheduling cooldowns, no-wait locks and cleanup ownership. | Existing Teams current file authority, consent, composed Board transfer and stale-runtime cases before/after. |
+| 4. Photon incoming events and responses | `chat-channels/imessage-photon/events.ts` | 820 / 780 | Runtime callbacks, principal authorization, question delivery and shared inbound admission | Preserve receiver sequence/lease checks, native interaction binding, transaction ordering and deferred publication. No receiver/startup or credential-inspection ownership move. | Existing Photon public-service integration suite before/after. |
+| 5. Teams file-transfer authority | `chat-channels/microsoft-teams/file-transfer-authority.ts` | 940 / 900 | Source proof, runtime/credential fence, principal authorization; return current recipient and immutable file authority | Keep source, recipient, Board intent and byte identity proofs together. Preserve map lifetimes and no-wait locks. Transport, maintenance cooldowns and cleanup stay with the publication worker. | Existing Teams current file authority, consent, composed Board transfer and stale-runtime cases before/after. |
 
 Use named, typed contracts and channel folders. Keep shared message admission,
 provider startup/shutdown, generic publication transport and shared authorization
@@ -56,3 +56,18 @@ Remap these measurements after the fifth extraction and stop at five PRs.
   worker is added. Credential lease identity and all transactions are unchanged.
 - Next: Telegram private draft reservation and stopped-generation callbacks,
   retaining shared runtime-map identity and source-publication authorization.
+
+## Slice 3: Telegram publication drafts
+
+- Service: 28,620 lines / 1,122,992 bytes → 28,219 lines / 1,108,711 bytes.
+- Destination: 461 lines / 16,860 bytes. Both functions preserve their original
+  bodies. Runtime maps remain the same per-service objects; the source authority
+  callback and credential guard are unchanged.
+- All 34 durable private-draft Stop cases passed before and after, including
+  restart, bot-global identity allocation, concurrent Stop, transaction failure,
+  uncertain final delivery and retained stale callbacks. Server typecheck,
+  boundaries, whitespace and normalized syntax parity passed.
+- Reassessment: Photon event handling can move without moving its receiver or
+  setup inspection. For Teams, extract source/recipient/file authority as a
+  coherent transaction-level API; keep transport protocol and scheduler lifetime
+  in the service to avoid passing unrelated runtime/worker dependencies.
