@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   activityLog,
@@ -87,7 +87,6 @@ describePg("decisionService", () => {
     options: [{ id: "yes", label: "Yes", effects: [{ type: "comment_on_issue", targetIssueId, staleness, bodyMarkdown: "hello" }] }],
     ...extra,
   });
-
   // Make an existing decision TTL-expired for the next sweep. Creating a
   // decision that is already expired is impossible (create rejects a past
   // expiresAt), and creating one that expires a few milliseconds later races
@@ -122,10 +121,15 @@ describePg("decisionService", () => {
   });
 
   it("allows one double-decide winner and rejects the loser", async () => {
-    const created = await createCommentDecision();
+    // Repeating the same option is a valid replay if the first request already
+    // won. Distinct choices exercise contention regardless of query scheduling.
+    const created = await createCommentDecision("lenient", { options: [
+      { id: "yes", label: "Yes", effects: [{ type: "comment_on_issue", targetIssueId, staleness: "lenient", bodyMarkdown: "hello" }] },
+      { id: "alternative", label: "Alternative", effects: [{ type: "comment_on_issue", targetIssueId, staleness: "lenient", bodyMarkdown: "alternative" }] },
+    ] });
     const outcomes = await Promise.allSettled([
       service().decide({ id: created.id, optionId: "yes", idempotencyKey: "race-a", decidedByUserId, userActor: boardActor() }),
-      service().decide({ id: created.id, optionId: "yes", idempotencyKey: "race-b", decidedByUserId, userActor: boardActor() }),
+      service().decide({ id: created.id, optionId: "alternative", idempotencyKey: "race-b", decidedByUserId, userActor: boardActor() }),
     ]);
     expect(outcomes.filter((item) => item.status === "fulfilled")).toHaveLength(1);
     expect(outcomes.filter((item) => item.status === "rejected")).toHaveLength(1);
@@ -532,6 +536,7 @@ describePg("decisionService", () => {
   it("expires TTL and target-gone decisions and wakes the origin agent", async () => {
     const ttl = await createCommentDecision("lenient", { expiresAt: nearFutureExpiry() });
     const gone = await createCommentDecision("strict", { idempotencyKey: "gone" });
+    await db.update(decisions).set({ expiresAt: new Date(0) }).where(eq(decisions.id, ttl.id));
     await db.update(issues).set({ status: "cancelled" }).where(eq(issues.id, targetIssueId));
     await expireDecisionNow(ttl.id);
     expect((await service().sweepExpired()).expired).toBe(2);
@@ -539,6 +544,61 @@ describePg("decisionService", () => {
     expect(rows.find((row) => row.id === ttl.id)?.metadata).toMatchObject({ expiredReason: "ttl" });
     expect(rows.find((row) => row.id === gone.id)?.metadata).toMatchObject({ expiredReason: "target_gone" });
     expect(wakes).toHaveLength(2);
+  });
+
+  it("expires strict decisions whose targets completed after they were proposed", async () => {
+    const completed = await createCommentDecision("strict", { idempotencyKey: "target-completed" });
+    const lenient = await createCommentDecision("lenient", { idempotencyKey: "lenient-survives" });
+    await db.update(issues).set({ status: "done" }).where(eq(issues.id, targetIssueId));
+
+    expect((await service().sweepExpired()).expired).toBe(1);
+
+    expect((await service().get(completed.id))?.metadata).toMatchObject({ expiredReason: "target_completed" });
+    expect((await service().get(lenient.id))?.status).toBe("open");
+    expect(wakes).toEqual([{ companyId, agentId, issueId: originIssueId, decisionId: completed.id, outcome: "expired" }]);
+  });
+
+  it("keeps strict decisions that intentionally target an already-done issue", async () => {
+    await db.update(issues).set({ status: "done" }).where(eq(issues.id, targetIssueId));
+    const reopen = await createCommentDecision("strict", { idempotencyKey: "already-done" });
+
+    expect((await service().sweepExpired()).expired).toBe(0);
+    expect((await service().get(reopen.id))?.status).toBe("open");
+  });
+
+  it("expires when a strict secondary target completes after proposal", async () => {
+    const blockerId = randomUUID();
+    await db.update(issues).set({ status: "done" }).where(eq(issues.id, targetIssueId));
+    await db.insert(issues).values({
+      id: blockerId,
+      companyId,
+      title: "Secondary blocker",
+      status: "todo",
+      priority: "medium",
+      responsibleUserId: decidedByUserId,
+    });
+    const created = await service().create({
+      companyId,
+      actor: agentActor(),
+      agentId,
+      runId,
+      title: "Create follow-up?",
+      body: "Body",
+      options: [{
+        id: "yes",
+        label: "Yes",
+        effects: [{
+          type: "create_issue",
+          targetIssueId,
+          staleness: "strict",
+          draft: { title: "Follow-up", blockedByIssueIds: [blockerId] },
+        }],
+      }],
+    });
+    await db.update(issues).set({ status: "done" }).where(eq(issues.id, blockerId));
+
+    expect((await service().sweepExpired()).expired).toBe(1);
+    expect((await service().get(created.id))?.metadata).toMatchObject({ expiredReason: "target_completed" });
   });
 
   it("groups rule-key stats and separates explicit dismissals from expiry", async () => {

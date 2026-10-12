@@ -2,13 +2,16 @@ import { randomUUID } from "node:crypto";
 import { and, asc, count, desc, eq, gt, gte, inArray, lte, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { companyMemberships, decisionBundles, decisionEffectExecutions, decisionRetention, decisions, decisionTargetIssues, heartbeatRuns, issueRelations, issues } from "@paperclipai/db";
-import { ATTENTION_SOURCE_KINDS } from "@paperclipai/shared";
+import { ATTENTION_SOURCE_KINDS, decisionEffectTargetIssueIds } from "@paperclipai/shared";
 import type { AttentionArchiveManifestEntry, DecisionEffect, DecisionInput, DecisionOption, DecisionStatsCounts, DecisionStatsResponse } from "@paperclipai/shared";
 import { conflict, forbidden, notFound, tooManyRequests, unprocessable } from "../errors.js";
 import { authorizationService, type AuthorizationActor } from "./authorization.js";
 import { logActivity, publishActivity, type ActivityPublication } from "./activity-log.js";
 import { signDecisionSpec, verifyDecisionSpec } from "./decision-signing.js";
-import { issueService } from "./issues.js";
+import {
+  issueService,
+  type IssuePostCommitAction,
+} from "./issues.js";
 import { decisionRetentionService, hashAttentionArchiveManifest } from "./decision-retention.js";
 
 type Snapshot = { status: string; assigneeAgentId: string | null; assigneeUserId: string | null; updatedAt: string;
@@ -17,19 +20,9 @@ type Wake = (input: { companyId: string; agentId: string; issueId: string; decis
 export type DecisionServiceOptions = { wakeOriginAgent: Wake };
 const DAY = 86_400_000;
 
-function effectTargetIds(effect: DecisionEffect) {
-  const result = new Set([effect.targetIssueId]);
-  if (effect.type === "create_issue") {
-    if (effect.draft.parentId) result.add(effect.draft.parentId);
-    for (const id of effect.draft.blockedByIssueIds ?? []) result.add(id);
-  }
-  if (effect.type === "resolve_blocker") for (const id of effect.removeBlockedByIssueIds) result.add(id);
-  return [...result];
-}
-
 function targetIds(options: DecisionOption[]) {
   const result = new Set<string>();
-  for (const option of options) for (const effect of option.effects) for (const id of effectTargetIds(effect)) result.add(id);
+  for (const option of options) for (const effect of option.effects) for (const id of decisionEffectTargetIssueIds(effect)) result.add(id);
   return [...result];
 }
 
@@ -37,7 +30,7 @@ function targetActions(options: DecisionOption[]) {
   const result = new Map<string, Set<"issue:comment" | "issue:mutate">>();
   for (const option of options) for (const effect of option.effects) {
     const action = effect.type === "comment_on_issue" ? "issue:comment" as const : "issue:mutate" as const;
-    for (const id of effectTargetIds(effect)) {
+    for (const id of decisionEffectTargetIssueIds(effect)) {
       const actions = result.get(id) ?? new Set();
       actions.add(action);
       result.set(id, actions);
@@ -416,6 +409,7 @@ export function decisionService(db: Db, options: DecisionServiceOptions) {
 
     try {
       const postCommitActivityPublications: ActivityPublication[] = [];
+      const postCommitIssueActions: IssuePostCommitAction[] = [];
       const executionResult = await db.transaction(async (tx) => {
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
         let execution = await tx.select().from(decisionEffectExecutions).where(and(eq(decisionEffectExecutions.decisionId, decision.id), eq(decisionEffectExecutions.effectIndex, effectIndex)))
@@ -431,7 +425,7 @@ export function decisionService(db: Db, options: DecisionServiceOptions) {
           const [row] = await tx.update(decisionEffectExecutions).set({ status, error: reason, result: details, activityLogId: activity?.id ?? null, executedAt: new Date() }).where(eq(decisionEffectExecutions.id, execution!.id)).returning();
           return row;
         };
-        const directReferencedIds = new Set(effectTargetIds(effect));
+        const directReferencedIds = new Set(decisionEffectTargetIssueIds(effect));
         const snapshots = decision.targetSnapshots as Record<string, Snapshot>;
         const cancellationDescendantIds = effect.type === "cancel_issue_tree"
           ? snapshots[effect.targetIssueId]?.descendantIds
@@ -482,6 +476,7 @@ export function decisionService(db: Db, options: DecisionServiceOptions) {
             { status: effect.status, actorUserId: decidedByUserId },
             tx,
             postCommitActivityPublications,
+            postCommitIssueActions,
           );
           if (effect.comment) await svc.addComment(target.id, interpolate(effect.comment, values), { userId: decidedByUserId }, undefined, tx);
           result = { issueId: updated?.id, status: updated?.status };
@@ -495,6 +490,7 @@ export function decisionService(db: Db, options: DecisionServiceOptions) {
             },
             tx,
             postCommitActivityPublications,
+            postCommitIssueActions,
           );
           if (effect.comment) await svc.addComment(target.id, interpolate(effect.comment, values), { userId: decidedByUserId }, undefined, tx);
           result = { issueId: updated?.id };
@@ -508,6 +504,7 @@ export function decisionService(db: Db, options: DecisionServiceOptions) {
             },
             tx,
             postCommitActivityPublications,
+            postCommitIssueActions,
           );
           result = { removedBlockedByIssueIds: effect.removeBlockedByIssueIds };
         } else if (effect.type === "create_issue") {
@@ -525,6 +522,7 @@ export function decisionService(db: Db, options: DecisionServiceOptions) {
               { status: "cancelled", actorUserId: decidedByUserId },
               tx,
               postCommitActivityPublications,
+              postCommitIssueActions,
             );
           }
           await svc.addComment(target.id, interpolate(effect.reasonComment, values), { userId: decidedByUserId }, undefined, tx);
@@ -535,6 +533,10 @@ export function decisionService(db: Db, options: DecisionServiceOptions) {
         return row;
       });
       for (const publication of postCommitActivityPublications) publishActivity(publication);
+      if (postCommitIssueActions.length > 0) {
+        const { executeIssuePostCommitActions } = await import("./issues.js");
+        await executeIssuePostCommitActions(db, postCommitIssueActions);
+      }
       return executionResult;
     } catch (error) {
       const message = error instanceof Error ? error.message : "Decision effect execution failed";
@@ -757,13 +759,21 @@ export function decisionService(db: Db, options: DecisionServiceOptions) {
       : [];
     targetSweepCursor = targetRows.length === remaining && targetRows.length > 0 ? targetRows[targetRows.length - 1]!.id : null;
     const rows = [...new Map([...ttlRows, ...targetRows].map((row) => [row.id, row])).values()]; let expired = 0;
-    for (const decision of rows) { const strictTargetIds = new Set(decision.options.flatMap((option) => option.effects.filter((effect) => effect.staleness === "strict").map((effect) => effect.targetIssueId)));
+    for (const decision of rows) { const strictTargetIds = new Set(decision.options.flatMap((option) => option.effects.filter((effect) => effect.staleness === "strict").flatMap(decisionEffectTargetIssueIds)));
       const targets = strictTargetIds.size > 0
         ? await db.select({ id: issues.id, status: issues.status }).from(issues).where(and(eq(issues.companyId, decision.companyId), inArray(issues.id, [...strictTargetIds])))
         : [];
       const targetGone = targets.length !== strictTargetIds.size || targets.some((target) => target.status === "cancelled");
-      if (!targetGone && decision.expiresAt >= now) continue;
-      const reason = targetGone ? "target_gone" : "ttl";
+      // A decision whose strict targets all completed after it was proposed is moot:
+      // the strict guard would skip its effects anyway, so retire it instead of
+      // leaving it pending until TTL. Targets that were already done at proposal
+      // time don't count — those decisions intentionally act on a done issue.
+      const snapshots = decision.targetSnapshots as Record<string, Snapshot>;
+      const targetsCompleted = !targetGone && strictTargetIds.size > 0 &&
+        targets.every((target) => target.status === "done") &&
+        targets.some((target) => snapshots[target.id]?.status !== "done");
+      if (!targetGone && !targetsCompleted && decision.expiresAt >= now) continue;
+      const reason = targetGone ? "target_gone" : targetsCompleted ? "target_completed" : "ttl";
       const [updated] = await db.update(decisions).set({ status: "expired", updatedAt: now, metadata: { ...decision.metadata, expiredReason: reason,
         ...(decision.continuationPolicy === "wake_origin_agent" ? { continuationPending: true } : {}) } }).where(and(eq(decisions.id, decision.id), eq(decisions.status, "open"))).returning();
       if (!updated) continue; expired += 1;
