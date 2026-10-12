@@ -831,6 +831,7 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
       interactionStatus?: string;
       wakeInteractionId?: string;
       withQueuedComments?: boolean;
+      invocationSource?: "assignment" | "automation";
       asReviewParticipant?: boolean;
     } = {}) {
       const { companyId, agentId: assigneeAgentId } = await seedCompanyAndAgent();
@@ -910,7 +911,7 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
         agentId: addresseeAgentId,
         issueId,
         wakeReason: "interaction_pending",
-        invocationSource: "automation",
+        invocationSource: input.invocationSource ?? "automation",
         contextExtras: {
           taskId: issueId,
           interactionId: input.wakeInteractionId ?? interactionId,
@@ -1100,6 +1101,97 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
       );
       expect(deliveries).toHaveLength(1);
       expect(countExecuteCallsForRun(runId)).toBe(0);
+    });
+
+    it("consumes the redelivery receipt when comments coalesce into a queued assignee run", async () => {
+      const { companyId, runId, issueId, assigneeAgentId, queuedCommentId } =
+        await seedAddressedInteractionFixture({ withQueuedComments: true, interactionStatus: "accepted" });
+      const busyId = randomUUID();
+      await db.insert(heartbeatRuns).values({
+        id: busyId, companyId, agentId: assigneeAgentId,
+        invocationSource: "assignment", triggerDetail: "system", status: "running", startedAt: new Date(),
+        contextSnapshot: { issueId: randomUUID() },
+      });
+      const queued = await seedQueuedRun({ companyId, agentId: assigneeAgentId, issueId, wakeReason: "issue_assigned" });
+      try {
+        for (let pass = 0; pass < 3; pass++) await heartbeat.resumeQueuedRuns();
+        expect((await heartbeat.getRun(runId))?.status).toBe("cancelled");
+        expect((await heartbeat.getRun(queued.runId))?.contextSnapshot?.wakeCommentIds).toContain(queuedCommentId);
+      } finally {
+        await db.update(heartbeatRuns).set({ status: "succeeded", finishedAt: new Date() }).where(eq(heartbeatRuns.id, busyId));
+      }
+      await heartbeat.resumeQueuedRuns();
+      await drainHeartbeatRunsToQuiescence(db, heartbeat);
+      await heartbeat.resumeQueuedRuns();
+      await drainHeartbeatRunsToQuiescence(db, heartbeat);
+      const deliveries = mockAdapterExecute.mock.calls.filter(([context]) =>
+        context?.agent.id === assigneeAgentId && context.context.wakeCommentIds?.includes(queuedCommentId),
+      );
+      expect(deliveries).toHaveLength(1);
+      const [receipt] = await db.select().from(agentWakeupRequests)
+        .where(eq(agentWakeupRequests.idempotencyKey, `stale-addressee-requeue:${runId}`));
+      expect(receipt).toMatchObject({ status: "coalesced", runId: queued.runId });
+    });
+
+    it.each([
+      { withQueuedComments: false, invocationSource: "automation" },
+      { withQueuedComments: true, invocationSource: "automation" },
+      { withQueuedComments: false, invocationSource: "assignment" },
+    ] as const)("defers a claim while verdict-style interaction locking is active ($invocationSource, comments=$withQueuedComments)", async ({ withQueuedComments, invocationSource }) => {
+      const { runId, issueId, interactionId, wakeupRequestId, queuedCommentId } =
+        await seedAddressedInteractionFixture({ withQueuedComments, invocationSource });
+      let locked!: () => void, release!: () => void;
+      const acquired = new Promise<void>(resolve => { locked = resolve; });
+      const released = new Promise<void>(resolve => { release = resolve; });
+      // submitItemVerdicts takes interaction then issue. Keep that order here
+      // while exercising the real scheduler's issue-then-interaction claim.
+      const verdict = db.transaction(async tx => {
+        await tx.select().from(issueThreadInteractions)
+          .where(eq(issueThreadInteractions.id, interactionId)).for("update");
+        locked();
+        await released;
+        await tx.update(issues).set({ updatedAt: new Date() }).where(eq(issues.id, issueId));
+      });
+      await acquired;
+      let settled = false;
+      const claiming = heartbeat.resumeQueuedRuns().then(() => { settled = true; }, error => { settled = true; throw error; });
+      // Observe the actual lock waiter on the broken implementation, not a
+      // guessed sleep. The repaired claim must finish without waiting for us.
+      let deferredWithoutBlocking = false;
+      let queuedWhileLocked = false;
+      let outcomes: PromiseSettledResult<unknown>[] = [];
+      try {
+        expect(await waitForCondition(async () => {
+          if (settled) return true;
+          const rows = await db.execute(sql`select 1 from pg_stat_activity where pid <> pg_backend_pid()
+            and wait_event_type = 'Lock' and query ilike '%issue_thread_interactions%'`);
+          return rows.length > 0;
+        })).toBe(true);
+        deferredWithoutBlocking = settled;
+        queuedWhileLocked = (await heartbeat.getRun(runId))?.status === "queued";
+        expect(countExecuteCallsForRun(runId)).toBe(0);
+      } finally {
+        release();
+        outcomes = await Promise.allSettled([verdict, claiming]);
+      }
+      expect(outcomes).toEqual([
+        { status: "fulfilled", value: undefined },
+        { status: "fulfilled", value: undefined },
+      ]);
+      expect(deferredWithoutBlocking).toBe(true);
+      expect(queuedWhileLocked).toBe(true);
+      expect((await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeupRequestId)))[0]?.status).toBe("queued");
+      await heartbeat.resumeQueuedRuns();
+      expect(await waitForCondition(async () => countExecuteCallsForRun(runId) === 1)).toBe(true);
+      await heartbeat.waitForRunExecutionDrain(runId);
+      await heartbeat.resumeQueuedRuns();
+      await drainHeartbeatRunsToQuiescence(db, heartbeat);
+      expect(countExecuteCallsForRun(runId)).toBe(1);
+      if (queuedCommentId) {
+        expect(mockAdapterExecute.mock.calls.filter(([context]) =>
+          context?.context.wakeCommentIds?.includes(queuedCommentId),
+        )).toHaveLength(1);
+      }
     });
 
     it("requeues adopted comments for the assignee when the queued-comment claim cancels a stale addressee wake", async () => {

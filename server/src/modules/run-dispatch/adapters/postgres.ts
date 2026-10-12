@@ -249,9 +249,11 @@ export type AddresseeInteractionWakeInput = {
  * Callers pass the transaction that owns the decision so the check stays
  * current through a queued-to-running claim. When the caller holds the
  * transaction open across the whole claim, pass `lockInteraction: true` so
- * the read takes a `FOR UPDATE` row lock and a concurrent resolution blocks
- * instead of landing between this read and the run-status write
- * (review-flagged race on paperclipai/paperclip#13211).
+ * the read takes a `FOR UPDATE NOWAIT` row lock. Some verdict writes lock the
+ * interaction before the issue; blocking here while holding the issue would
+ * invert that order. Callers defer on 55P03, releasing the claim transaction.
+ * A successful lock prevents resolution between this read and the run-status
+ * write (review-flagged race on paperclipai/paperclip#13211).
  */
 export async function verifyAddresseeInteractionWake(
   dbOrTx: Db,
@@ -273,7 +275,7 @@ export async function verifyAddresseeInteractionWake(
       ),
     )
     .limit(1);
-  const rows = await (input.lockInteraction ? query.for("update") : query);
+  const rows = await (input.lockInteraction ? query.for("update", { noWait: true }) : query);
   return Boolean(rows[0]);
 }
 

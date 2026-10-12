@@ -1266,11 +1266,11 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
               // carries `wakeCommentIds` and claims through this
               // queued-comment path instead of the ordinary claim below. It
               // must pass the same locked addressee verification: re-read
-              // the stored interaction under a `FOR UPDATE` row lock so a
-              // concurrent resolution blocks instead of landing between this
-              // read and the run-status writes below. Lock order stays
-              // issues-before-interaction, matching the resolution path, so
-              // this adds serialization without a lock-order inversion. A
+              // the stored interaction under a `FOR UPDATE NOWAIT` row lock.
+              // Verdict submission can lock interaction-before-issue, so a
+              // contended claim must roll back and defer rather than wait while
+              // holding the issue. A successful lock prevents resolution from
+              // landing between this read and the run-status writes below. A
               // wake that no longer verifies is cancelled here: other
               // ownership bypasses (review participant, workspace/AI-connection
               // busy retry) can keep the ordinary staleness gate passing after
@@ -1658,7 +1658,8 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
             const issueClaim = await lockIssueExecutionClaim(claimTx as unknown as Db);
             if (issueClaim.blocked) return null;
             // Recheck stored interaction authority under the claim transaction.
-            // Keep the issue-before-interaction lock order used by resolution.
+            // NOWAIT avoids waiting under the issue lock when verdict submission
+            // already holds the interaction lock. Contention leaves this run queued.
             if (
               issueId &&
               readNonEmptyString(context.wakeReason) === "interaction_pending" &&
@@ -1763,6 +1764,9 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
             )).returning().then((rows) => rows[0] ?? null);
             await bindClaimedIssueExecution(claimTx as unknown as Db, issueClaim.ownsIssue, claimedRun);
             return claimedRun;
+          }).catch((error) => {
+            if (isExternalChatWaitAuthorizationContention(error)) return null;
+            throw error;
           });
         });
     const staleCancelledRun = addresseeStaleCancellation.run;
@@ -4010,6 +4014,20 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
             );
 
             if (admission.kind === "coalesced") {
+              if (executionWaitRequestId) {
+                // This receipt was revalidated under the issue lock above. Its
+                // comments now belong to the coalesced run; leaving it deferred
+                // would let that run's completion promote a duplicate delivery.
+                await tx.update(agentWakeupRequests).set({
+                  status: "coalesced", runId: String(admission.run.id),
+                  finishedAt: new Date(), updatedAt: new Date(),
+                }).where(and(
+                  eq(agentWakeupRequests.id, executionWaitRequestId),
+                  eq(agentWakeupRequests.companyId, agent.companyId),
+                  eq(agentWakeupRequests.agentId, agentId),
+                  eq(agentWakeupRequests.status, "deferred_issue_execution"),
+                ));
+              }
               return {
                 kind: "coalesced" as const,
                 run: admission.run as typeof heartbeatRuns.$inferSelect,
