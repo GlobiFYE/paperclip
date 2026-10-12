@@ -1,5 +1,6 @@
 import type { IssueDocument, IssueWorkProduct } from "@paperclipai/shared";
 import { queryKeys } from "@/lib/queryKeys";
+import { uploadedDocumentKey } from "@/lib/issue-artifact-upload";
 import { QueryClient } from "@tanstack/react-query";
 import { createIssue, storybookAgents } from "../../fixtures/paperclipData";
 
@@ -85,10 +86,7 @@ export async function addPreviewFile(client: QueryClient, file: File, id: string
     const body = await file.text();
     const current = client.getQueryData<IssueDocument[]>([...queryKeys.issues.documents(issue.id), "list"]) ?? [];
     const title = file.name.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ");
-    const baseKey = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "document";
-    let key = baseKey;
-    let suffix = 2;
-    while (current.some((document) => document.key === key)) key = `${baseKey}-${suffix++}`;
+    const key = uploadedDocumentKey(file.name, current.map(document => document.key));
     client.setQueryData([...queryKeys.issues.documents(issue.id), "list"], [makeDocument(key, title, body), ...current]);
     return;
   }

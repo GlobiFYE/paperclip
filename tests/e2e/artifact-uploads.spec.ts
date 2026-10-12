@@ -126,3 +126,24 @@ test("a failed upload stays local and retry preserves the successful files", asy
   await expect.poll(async () => (await json(await request.get(`/api/issues/${issue.id}/attachments`))).map((row: { originalFilename: string }) => row.originalFilename).sort()).toEqual(["failed-reference.txt", "saved-reference.txt"]);
   await assertStillPaused(request, issue.id);
 });
+
+test("reserved filenames create visible documents without replacing internal revisions", async ({ page, request }) => {
+  const { issue, panel } = await setup(page, request);
+  const reserved = ["artifact-review-notes", "continuation-summary", "pipeline-case-body"];
+  const originals = new Map<string, string>();
+  for (const key of reserved) {
+    const document = await json(await request.put(`/api/issues/${issue.id}/documents/${key}`, {
+      data: { title: "Internal context", format: "markdown", body: `Preserve the internal ${key} document.`, baseRevisionId: null },
+    }));
+    originals.set(key, document.latestRevisionId);
+  }
+  await chooseFiles(page, panel, reserved.map(key => ({ name: `${key}.md`, mimeType: "text/markdown", buffer: Buffer.from(`# Uploaded ${key}\n\nThis reference must stay visible.`) })));
+  await expect(panel.getByRole("button", { name: "Read document", exact: true })).toHaveCount(3);
+  const documents = await json(await request.get(`/api/issues/${issue.id}/documents`));
+  expect(documents.filter((row: { key: string }) => row.key.startsWith("upload-")).map((row: { key: string }) => row.key).sort()).toEqual(reserved.map(key => `upload-${key}`).sort());
+  for (const key of reserved) {
+    const document = await json(await request.get(`/api/issues/${issue.id}/documents/${key}`));
+    expect(document.latestRevisionId).toBe(originals.get(key));
+  }
+  await assertStillPaused(request, issue.id);
+});

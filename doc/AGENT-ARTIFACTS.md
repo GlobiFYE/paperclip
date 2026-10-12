@@ -13,7 +13,9 @@ save directly to the task. They do not send a message, assign an agent, or
 release a pause hold. Files from people and agents appear together in Artifacts.
 
 Markdown imports create task documents. Repeated filenames get a new document
-key instead of replacing an existing revision. Other supported file types use
+key instead of replacing an existing revision.
+Hidden system keys and artifact-review prefixes are reserved; imports with
+those filenames receive a visible upload document key. Other supported files use
 the existing attachment API and its type and size limits. Failed uploads show
 an inline Retry action while successful files remain available.
 

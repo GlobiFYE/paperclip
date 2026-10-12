@@ -3,6 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import type { Issue, IssueAttachment, IssueDocument } from "@paperclipai/shared";
 import { issuesApi } from "@/api/issues";
 import { queryKeys } from "@/lib/queryKeys";
+import { uploadedDocumentKey } from "@/lib/issue-artifact-upload";
 import type { ArtifactUploadEntry } from "@/components/artifacts/ArtifactUploadControls";
 
 export function useIssueArtifactUploads(issue: Pick<Issue, "id" | "companyId">) {
@@ -27,11 +28,7 @@ export function useIssueArtifactUploads(issue: Pick<Issue, "id" | "companyId">) 
             const body = await file.text();
             const documents = await issuesApi.listDocuments(issue.id);
             const basename = file.name.replace(/\.[^.]+$/, "");
-            const baseKey = basename.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 54) || "document";
-            const keys = new Set(documents.map(document => document.key));
-            let key = baseKey;
-            let suffix = 2;
-            while (keys.has(key)) key = `${baseKey}-${suffix++}`;
+            const key = uploadedDocumentKey(file.name, documents.map(document => document.key));
             const document = await issuesApi.upsertDocument(issue.id, key, {
               title: basename.replace(/[-_]+/g, " ").slice(0, 200), format: "markdown", body, baseRevisionId: null,
             });
