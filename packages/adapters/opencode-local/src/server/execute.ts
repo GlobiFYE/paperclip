@@ -61,6 +61,7 @@ import {
   requireOpenCodeModelId,
 } from "./models.js";
 import { removeMaintainerOnlySkillSymlinks } from "@paperclipai/adapter-utils/server-utils";
+import { apiKeyBillingType } from "@paperclipai/adapter-utils/api-billing-type";
 import { prepareOpenCodeRuntimeConfig, prepareManagedOpenCodeRemoteHomes } from "./runtime-config.js";
 import { SANDBOX_INSTALL_COMMAND } from "../index.js";
 import { resolveOpenCodeSkillsHome } from "./skills.js";
@@ -662,7 +663,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         const provider = parseModelProvider(model || null);
         return { usage: parsed.usageReported ? parsed.usage : undefined, costUsd: parsed.costUsd,
           costStatus: parsed.usageComplete || parsed.costUsd != null ? undefined : "unpriced",
-          usageBasis: "per_run", provider, biller: resolveOpenCodeBiller(runtimeEnv, provider), billingType: "unknown", model, complete: false };
+          usageBasis: "per_run", provider, biller: resolveOpenCodeBiller(runtimeEnv, provider), billingType: apiKeyBillingType(provider, runtimeEnv), model, complete: false };
       });
       const proc = await runAdapterExecutionTargetProcess(runId, runtimeExecutionTarget, command, args, {
         onProcessStopped: providerStop.beginInvocation(),
@@ -719,7 +720,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           provider: parseModelProvider(model || null),
           biller: resolveOpenCodeBiller(runtimeEnv, parseModelProvider(model || null)),
           model,
-          billingType: "unknown",
+          billingType: apiKeyBillingType(parseModelProvider(model || null), runtimeEnv),
           costUsd: attempt.parsed.costUsd,
           costStatus: attempt.parsed.usageComplete || attempt.parsed.costUsd != null ? undefined : "unpriced",
           // A provider or output-observation timeout can arrive before the
@@ -778,7 +779,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         provider: parseModelProvider(modelId),
         biller: resolveOpenCodeBiller(runtimeEnv, parseModelProvider(modelId)),
         model: modelId,
-        billingType: "unknown",
+        billingType: apiKeyBillingType(parseModelProvider(modelId), runtimeEnv),
         costUsd: attempt.parsed.costUsd,
         costStatus: attempt.parsed.usageComplete || attempt.parsed.costUsd != null ? undefined : "unpriced",
         resultJson: {
