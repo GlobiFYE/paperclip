@@ -11,10 +11,9 @@ import { skillSourcesApi } from '@/api/skillSources';
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from '@/components/ui/command';
 import { appSourceConnectHref } from './apps/app-connect-policy';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { SkillImportProgress, type FoundSkill } from './skills/SkillImportProgress';
 import { SkillPackagePreview } from './skills/SkillPackagePreview';
 import { SkillSourceTree, type SkillTreeCandidate } from './skills/SkillSourceTree';
@@ -108,7 +107,7 @@ function SourceDialog({ companyId, source, onClose, onSaved }: {
   const [showRepositoryUrl, setShowRepositoryUrl] = useState<boolean>(draft.showRepositoryUrl ?? Boolean(draft.repositoryUrl));
   const [connectionId, setConnectionId] = useState<string | null>('connectionId' in draft ? draft.connectionId : source?.connectionId ?? null);
   const [preview, setPreview] = useState<{ skill: SkillTreeCandidate; filePath?: string; repository?: boolean } | null>(null);
-  const [packageMode, setPackageMode] = useState<'skills' | 'repository'>(draft.packageMode ?? source?.packageMode ?? 'skills');
+  const [packageMode, setPackageMode] = useState<'skills' | 'repository'>(draft.packageMode ?? source?.packageMode ?? 'repository');
   const [discovery, setDiscovery] = useState<SkillSourceDiscovery | null>(draft.discovery ?? null);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(draft.selectedPaths ?? (source ? source.entries.filter(entry => entry.selection !== 'excluded').map(entry => entry.path) : [])));
   const [excludedFolders, setExcludedFolders] = useState<string[]>(draft.excludedFolders ?? source?.excludedFolders ?? []);
@@ -142,7 +141,7 @@ function SourceDialog({ companyId, source, onClose, onSaved }: {
     return { discovery: result, connectionId: result.connectionId === undefined ? availableConnectionId : result.connectionId, controller };
   }, onSuccess: result => {
     if (result.controller.signal.aborted || scanController.current !== result.controller) return;
-    setDiscovery(result.discovery); setPackageMode(result.discovery.packageMode ?? 'skills'); setConnectionId(result.connectionId);
+    setDiscovery(result.discovery); setPackageMode(result.discovery.packageMode ?? packageMode); setConnectionId(result.connectionId);
     if (!source) { setSelected(new Set(result.discovery.candidates.filter(candidate => !candidate.error &&
       (!result.discovery.repositoryPackage?.skillPaths || result.discovery.repositoryPackage.skillPaths.includes(candidate.path))).map(candidate => candidate.path))); setExcludedFolders([]); }
   } });
@@ -165,8 +164,19 @@ function SourceDialog({ companyId, source, onClose, onSaved }: {
   function stopScan() { scanController.current?.abort(); scanController.current = null; scan.reset(); setProgress(null); setFound([]); }
   function clearScan() { setDiscovery(null); scan.reset(); save.reset(); }
   function dismiss() { stopScan(); sessionStorage.removeItem(draftKey); onClose(); }
-  return <Dialog open onOpenChange={open => { if (!open && !save.isPending) dismiss(); }}><DialogContent className="flex max-h-(--sz-calc-18) flex-col overflow-y-auto p-4 sm:max-w-2xl sm:p-6" aria-describedby={source ? 'source-description' : undefined}>
-    <DialogHeader><DialogTitle>{source ? source.fullName : 'Import from GitHub'}</DialogTitle>{source && <DialogDescription id="source-description">Choose the skills to keep synced. Unchecked skills stay installed.</DialogDescription>}</DialogHeader>
+  function changeMode(individual: boolean) {
+    const next = individual ? 'skills' : 'repository';
+    if (ready) scan.mutate(next);
+    else setPackageMode(next);
+  }
+  return <Dialog open onOpenChange={open => { if (!open && !save.isPending) dismiss(); }}><DialogContent className="flex max-h-(--sz-calc-18) flex-col overflow-hidden p-4 sm:max-w-2xl sm:p-6" aria-describedby={source ? 'source-description' : undefined}>
+    <DialogHeader className="shrink-0 flex-row items-start justify-between gap-3 pr-6">
+      <div className="min-w-0"><DialogTitle>{source ? source.fullName : 'Import from GitHub'}</DialogTitle>{source && <DialogDescription id="source-description">Unchecked skills stay installed.</DialogDescription>}</div>
+      <DropdownMenu><DropdownMenuTrigger asChild><Button variant="ghost" size="icon-sm" disabled={busy} aria-label="More import options"><MoreVertical className="size-4" /></Button></DropdownMenuTrigger>
+        <DropdownMenuContent align="end"><DropdownMenuCheckboxItem checked={packageMode === 'skills'} onCheckedChange={changeMode}>Import individual skills</DropdownMenuCheckboxItem></DropdownMenuContent>
+      </DropdownMenu>
+    </DialogHeader>
+    <div className="min-h-0 space-y-4 overflow-y-auto">
       {!ready && !scan.isPending && <div className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
           {availableRepositories.length > 0 && <div className="flex items-center justify-between gap-2">
@@ -213,18 +223,14 @@ function SourceDialog({ companyId, source, onClose, onSaved }: {
       </div>}
       {source?.lastError && <p role="alert" className="text-sm text-destructive">{source.lastError}{' '}<Link onClick={rememberReturn} to={source.connectionId ? `/apps/${source.connectionId}/permissions` : connectHref} className="underline">Manage GitHub connection</Link></p>}
       {ready && !save.isPending && !scan.isPending && <div className="space-y-3">
-        <label className="flex items-center gap-2 text-sm font-medium"><Checkbox checked={packageMode === 'repository'} disabled={busy} onCheckedChange={checked => scan.mutate(checked ? 'repository' : 'skills')} />Keep repository files together</label>
         {packageMode === 'repository' ? <>
-          <p className="text-sm text-muted-foreground">The full repository travels with each enabled skill. Selection controls which skills are added to the library; other skills remain readable as supporting files.</p>
-          {repositoryPackage?.requirements && <p className="whitespace-pre-wrap text-sm"><span className="font-medium">Setup requirements: </span>{repositoryPackage.requirements}</p>}
-          <p className="text-xs text-muted-foreground">Importing does not install dependencies or run setup scripts. Add the imported skills to an agent to use them.</p>
-          {candidates[0] && <Button variant="ghost" size="sm" onClick={() => setPreview({ skill: candidates[0]!, repository: true })}>Included repository files · {repositoryPackage?.files.length ?? 0}</Button>}
+          {candidates[0] && <Button variant="outline" size="sm" onClick={() => setPreview({ skill: candidates[0]!, repository: true })}><FileText className="size-4" />View {repositoryPackage?.files.length ?? 0} {repositoryPackage?.files.length === 1 ? 'file' : 'files'}</Button>}
           <details className="text-sm"><summary className="cursor-pointer font-medium">Choose skills · {selected.size} selected</summary><div className="mt-3">{selectionTree}</div></details>
         </> : <>
-          {outsideCount > 0 && <p className="text-sm text-muted-foreground">{outsideCount} {outsideCount === 1 ? 'skill references' : 'skills reference'} files outside their folders. Keep repository files together to include shared files and sibling skills.</p>}
+          {outsideCount > 0 && <p className="text-sm text-muted-foreground">{outsideCount} {outsideCount === 1 ? 'skill needs' : 'skills need'} shared files. <Button variant="link" size="sm" className="h-auto p-0" onClick={() => changeMode(false)}>Include repository files</Button></p>}
           {selectionTree}
         </>}
-        {packageMode === 'repository' && repositoryPackage?.error && <p role="alert" className="text-sm text-destructive">Repository package cannot be imported: {repositoryPackage.error}</p>}
+        {packageMode === 'repository' && repositoryPackage?.error && <p role="alert" className="text-sm text-destructive">Can’t import this repository: {repositoryPackage.error}</p>}
       </div>}
       {discovery?.warnings.map(warning => <p key={warning} className="text-xs text-muted-foreground">{warning}</p>)}
       {skippedCount > 0 && !(packageMode === 'repository' && repositoryPackage?.error) && <div role="alert" className="space-y-2 text-sm text-destructive"><p>{skippedCount} selected {skippedCount === 1 ? 'skill cannot' : 'skills cannot'} be imported. Fix the source or deselect them.</p><ul>{candidates.filter(candidate => selected.has(candidate.path) && candidate.error).map(candidate => <li key={candidate.path}>{candidate.name}: {candidate.error}</li>)}</ul></div>}
@@ -232,9 +238,10 @@ function SourceDialog({ companyId, source, onClose, onSaved }: {
       {scan.isPending && <SkillImportProgress repository={parsedRepository?.fullName ?? repositoryUrl} progress={progress} found={found} />}
       {save.isPending && <SkillImportProgress importing repository={source?.fullName ?? discovery!.fullName} count={eligibleCount}
         found={candidates.filter(candidate => selected.has(candidate.path) && !candidate.error).map(candidate => ({ ...candidate, fileCount: candidate.inspection?.files.length ?? 1 }))} />}
-      <footer className="flex items-center justify-between gap-3 border-t border-border pt-4">
+    </div>
+      <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-border pt-4">
         <Button variant="ghost" disabled={save.isPending} onClick={() => { if (scan.isPending) stopScan(); else if (discovery && !source) clearScan(); else dismiss(); }}>{scan.isPending ? 'Cancel scan' : discovery && !source ? 'Back' : 'Cancel'}</Button>
-        {ready ? <Button disabled={busy || skippedCount > 0 || (packageMode === 'repository' && Boolean(repositoryPackage?.error)) || (!source && eligibleCount === 0)} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : source ? 'Save selection' : `Import ${eligibleCount} ${eligibleCount === 1 ? "skill" : "skills"}`}</Button>
+        {ready ? <Button disabled={busy || skippedCount > 0 || (packageMode === 'repository' && Boolean(repositoryPackage?.error)) || (!source && eligibleCount === 0)} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : source ? 'Save selection' : packageMode === 'repository' ? 'Import repository' : `Import ${eligibleCount} ${eligibleCount === 1 ? "skill" : "skills"}`}</Button>
           : <Button disabled={busy || repositories.isPending || !repositoryUrl.trim()} onClick={() => scan.mutate(packageMode)}>{scan.isPending ? 'Scanning…' : 'Find skills'}</Button>}
       </footer>
     {preview && <SkillPackagePreview key={`${packageMode}:${preview.repository}:${preview.skill.path}:${preview.filePath ?? ''}`} companyId={companyId}

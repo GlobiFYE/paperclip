@@ -2586,6 +2586,7 @@ async function auditInstalledSkillBytes(skill: CompanySkill, requireEntrypoint =
   }
 
   const remoteExecPattern = /\b(?:curl|wget)\b[\s\S]{0,160}\|\s*(?:sh|bash)|\b(?:bash|sh)\s+-c\b|\beval(?:\s*\(|[ \t]+["'$`])|\bpython\s+-c\b|\bnode\s+-e\b/i;
+  const shellEvalPattern = /(?:^|[;&|(){}!\n]|\b(?:if|then|else|elif|while|until|do|time)\s+)\s*(?:(?:command|builtin)\s+)*["']?eval["']?(?:\s|;|$)/i;
   const secretExfilPattern = /\b(?:cat|printenv|env|grep)\b[\s\S]{0,160}(?:\.aws\/credentials|\.ssh\/|\.npmrc|id_rsa|OPENAI_API_KEY|ANTHROPIC_API_KEY|API_KEY|TOKEN|SECRET)[\s\S]{0,160}\b(?:curl|wget|nc|netcat|scp)\b/i;
   const networkPattern = /\b(?:curl|wget|fetch|httpie|nc|netcat|scp|ssh)\b|https?:\/\//i;
   const secretReferencePattern = /\b(?:process\.env|printenv|\$[A-Z][A-Z0-9_]{2,}|API_KEY|TOKEN|SECRET|PASSWORD|\.env)\b/i;
@@ -2606,7 +2607,7 @@ async function auditInstalledSkillBytes(skill: CompanySkill, requireEntrypoint =
     if (file.kind === "asset" && contentLooksBinary(file.bytes)) continue;
 
     const text = file.bytes.toString("utf8");
-    if (remoteExecPattern.test(text) || (file.kind === "script" && /(?:^|[;&|\n])\s*eval(?:\s|$)/.test(text))) {
+    if (remoteExecPattern.test(text) || (file.kind === "script" && shellEvalPattern.test(text))) {
       pushFinding(findings, "remote_fetch_exec", "error", "Remote-fetch or dynamic execution pattern is not allowed.", file.path);
     }
     if (secretExfilPattern.test(text)) {
@@ -3496,7 +3497,12 @@ export function companySkillService(db: Db) {
       const version = await getVersion(companyId, skill.id, skill.currentVersionId);
       if (!version) throw unprocessable("Installed skill version is unavailable.");
       const sourceLocator = await materializeVersionSnapshot(companyId, skill, version);
-      const audit = await auditInstalledSkillBytes({ ...skill, sourceType: "local_path", sourceLocator });
+      const audit = await auditInstalledSkillBytes({
+        ...skill,
+        sourceType: "local_path",
+        sourceLocator,
+        fileInventory: await runtimeVersionInventory(companyId, version),
+      });
       await persistAuditMetadata(skill, audit);
       return audit;
     }

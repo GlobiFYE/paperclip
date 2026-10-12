@@ -107,10 +107,11 @@ export function skillSourceService(db: Db) {
           owner: ownerRepo[0], repo: ownerRepo[1], ref: current?.metadata?.snapshotHash === hash && current.currentVersionId ? current.sourceRef : scan.commitSha, trackingRef: scan.trackingRef,
           repoSkillDir: path.posix.dirname(candidate.path) === '.' ? '' : path.posix.dirname(candidate.path),
           skillSourceId: source.id, skillSourcePath: candidate.path, skillSourceState: 'synced', snapshotHash: hash, packageMode: mode };
+        const trustFiles = mode === 'repository' ? scan.repositoryFiles! : candidate.files;
         const values = { name: candidate.name, description: candidate.description, markdown: candidate.files.find(file => file.path === 'SKILL.md')!.content,
           sourceType: 'github', sourceLocator: scan.repositoryUrl, sourceRef: current?.metadata?.snapshotHash === hash && current.currentVersionId ? current.sourceRef : scan.commitSha,
           fileInventory: candidate.files.map(({ path, kind }) => ({ path, kind })),
-          trustLevel: candidate.files.some(file => file.kind === 'script' || file.executable) ? 'scripts_executables' : candidate.files.some(file => file.kind === 'asset' || file.kind === 'other') ? 'assets' : 'markdown_only',
+          trustLevel: trustFiles.some(file => file.kind === 'script' || file.executable) ? 'scripts_executables' : trustFiles.some(file => file.kind === 'asset' || file.kind === 'other') ? 'assets' : 'markdown_only',
           metadata, updatedAt: new Date() };
         const changed = !current?.currentVersionId || current.metadata?.snapshotHash !== hash;
         if (current && changed) await tx.update(companySkills).set(values).where(and(eq(companySkills.companyId, source.companyId), eq(companySkills.id, current.id)));
@@ -118,8 +119,8 @@ export function skillSourceService(db: Db) {
           const [created] = await tx.insert(companySkills).values({ ...values, companyId: source.companyId, key, slug, installCount: 1 }).returning({ id: companySkills.id });
           skillId = created!.id;
         }
-        else if (current.metadata?.skillSourceState !== 'synced') {
-          await tx.update(companySkills).set({ metadata }).where(and(eq(companySkills.companyId, source.companyId), eq(companySkills.id, current.id)));
+        else if (current.metadata?.skillSourceState !== 'synced' || current.trustLevel !== values.trustLevel) {
+          await tx.update(companySkills).set({ metadata, trustLevel: values.trustLevel }).where(and(eq(companySkills.companyId, source.companyId), eq(companySkills.id, current.id)));
         }
         const installed = (await skills.getById(source.companyId, skillId!, tx))!;
         if (changed) {

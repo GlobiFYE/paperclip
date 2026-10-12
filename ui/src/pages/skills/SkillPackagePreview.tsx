@@ -40,18 +40,16 @@ export function SkillPackagePreview({ companyId, repository, commitSha, skill, i
       {inspection?.requirements && <section className="rounded-md border border-border bg-muted/30 p-3 text-sm">
         <h3 className="font-medium">Runtime requirements</h3>
         <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{inspection.requirements}</p>
-        <p className="mt-2 text-xs text-muted-foreground">Declared by the skill author. Importing does not install dependencies or run scripts.</p>
       </section>}
       {Boolean(inspection?.references.length) && <section className="rounded-md border border-border p-3 text-sm" aria-label="Package reference warnings">
         <h3 className="flex items-center gap-2 font-medium"><AlertTriangle className="size-4" />Check references</h3>
-        <p className="mt-1 text-xs text-muted-foreground">These paths are unavailable. For shared files in this repository, select “Keep repository files together” in the import dialog. Missing files need to be added to the source.</p>
+        <p className="mt-1 text-xs text-muted-foreground">Repository imports include shared files. Missing files need fixing in the source.</p>
         <ul className="mt-2 space-y-2">
           {inspection!.references.map(reference => <li key={`${reference.fromPath}:${reference.resolvedPath}`} className="break-all text-xs">
             <span className="font-mono">{reference.target}</span> · {reference.kind === 'outside_package' ? 'Outside this package' : 'Not found'}
             <span className="text-muted-foreground"> · referenced in {reference.fromPath}</span>
           </li>)}
         </ul>
-        <p className="mt-2 text-xs text-muted-foreground">Checks cover Markdown links and explicit relative resource paths. They cannot establish every runtime dependency.</p>
       </section>}
       {Boolean(inspection?.warnings.length) && <details className="text-xs text-muted-foreground">
         <summary className="cursor-pointer">Content audit · {inspection!.warnings.length} {inspection!.warnings.length === 1 ? 'notice' : 'notices'}</summary>

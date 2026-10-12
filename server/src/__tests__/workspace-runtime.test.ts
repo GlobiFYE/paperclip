@@ -50,6 +50,7 @@ import {
   resolveRuntimeProvisionCommand,
   resolveWorkspaceRuntimeReadinessTimeoutSec,
   resolveShell,
+  runWorkspaceJobForControl,
   sanitizeRuntimeServiceBaseEnv,
   setWorkspaceRuntimeExposureDepsForTests,
   startRuntimeServicesForWorkspaceControl,
@@ -80,6 +81,7 @@ import {
 import { resolvePaperclipConfigPath } from "../paths.ts";
 import type { WorkspaceOperation } from "@paperclipai/shared";
 import type { WorkspaceOperationRecorder } from "../services/workspace-operations.ts";
+import { HttpError } from "../errors.ts";
 import { deriveWorktreeInstanceId } from "../services/workspace-instance-cleanup.ts";
 import {
   getEmbeddedPostgresTestSupport,
@@ -631,6 +633,21 @@ describe("resolveRuntimeProvisionCommand", () => {
 });
 
 describe("refreshRemoteTrackingBaseRef git auth", () => {
+  it("does not diagnose a missing remote branch as a rejected credential", async () => {
+    const { repoRoot } = await createClonedRepoWithRemote();
+    const warnings = await refreshRemoteTrackingBaseRef(repoRoot, "origin/main", async () => ({
+      configArgs: [],
+      env: { GIT_TERMINAL_PROMPT: "0" },
+      source: "server_environment",
+      secretName: null,
+    }));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain("couldn't find remote ref refs/heads/main");
+    expect(warnings[0]).toContain("server-environment GitHub credential");
+    expect(warnings[0]).not.toContain("rejected");
+    expect(warnings[0]).not.toContain("authenticated with");
+  });
+
   it("offers the remote URL to the provider and keeps ambient behavior when it returns null", async () => {
     const { remotePath, repoRoot } = await createClonedRepoWithRemote();
     const offeredUrls: string[] = [];
@@ -1256,6 +1273,27 @@ describe("realizeExecutionWorkspace", () => {
     ).rejects.toThrow();
   });
 
+  it("rejects explicit main on a master-only remote and succeeds after correcting the base ref", async () => {
+    const { repoRoot } = await createClonedRepoWithRemote();
+    const error = await realizeWorktreeForTest(repoRoot, "main").catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(UnresolvedWorkspaceBaseRefError);
+    const unresolved = error as UnresolvedWorkspaceBaseRefError;
+    expect(unresolved.requestedRef).toBe("main");
+    expect(unresolved.defaultBranch).toBe("master");
+    expect(unresolved.attemptedRefs).toEqual(["origin/main"]);
+    expect(unresolved.fetchError).toContain("couldn't find remote ref refs/heads/main");
+    expect(unresolved.message).toContain("Check that the ref exists");
+    expect(unresolved.message).not.toContain("authenticated fetch");
+    await expect(
+      fs.stat(path.join(repoRoot, ".paperclip", "worktrees", "PAP-447-add-worktree-support")),
+    ).rejects.toThrow();
+
+    const workspace = await realizeWorktreeForTest(repoRoot, "master");
+    expect(workspace.created).toBe(true);
+    expect(workspace.baseRefSha).toBe(await readGit(repoRoot, ["rev-parse", "origin/master"]));
+    expect(await readGit(workspace.cwd, ["rev-parse", "HEAD"])).toBe(workspace.baseRefSha);
+  });
+
   it("gives equivalent spellings of one absent remote ref the same recovery identity", async () => {
     const { repoRoot } = await createClonedRepoWithRemote();
 
@@ -1329,7 +1367,9 @@ describe("realizeExecutionWorkspace", () => {
     } else {
       // Git returns the remote name when its URL is empty, then the fetch fails.
       expect(error.fetchError).toBeTruthy();
-      expect(authCalls).toBe(1);
+      // Fetch and the bounded default-branch suggestion each use the credential resolver.
+      expect(authCalls).toBe(2);
+      expect(error.defaultBranch).toBeNull();
       expect(readUnresolvedWorkspaceBaseRefDiagnostic(error)).toEqual({ schemaVersion: 1,
         remoteLookup: "resolved", authLookup: "unavailable", fetch: "failed", fetchExitCode: 128,
         fetchFailureKind: "unknown", refResolution: "failed", refExitCode: 128 });
@@ -1381,7 +1421,9 @@ process.stderr.write(${JSON.stringify(stderr)}, () => { process.exitCode = ${cod
     expect(JSON.stringify(diagnostic)).not.toContain("example.invalid");
     expect((await fs.readFile(calls, "utf8")).trim().split("\n").map(line => JSON.parse(line))).toEqual([
       ["fetch", "--prune", "origin", "+refs/heads/absent-fixture:refs/remotes/origin/absent-fixture"],
+      ["ls-remote", "--symref", "origin", "HEAD"],
     ]);
+    expect(error.defaultBranch).toBeNull();
   });
 
   it("rejects reusing an empty directory that only looks like a worktree because it sits inside the repo", async () => {
@@ -10152,5 +10194,57 @@ describe("realizeExecutionWorkspace with an exact existing branch", () => {
         }),
       },
     });
+  });
+});
+
+describe("runWorkspaceJobForControl", () => {
+  const actor = { id: null, name: "Board", companyId: "company-1" };
+
+  it("reports a failing operator job as an unprocessable job result, not a server error", async () => {
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-workspace-job-failure-"));
+    const { recorder, operations } = createWorkspaceOperationRecorderDouble();
+    const jobScript = "console.error('Restored patch differs from exact source'); process.exit(3);";
+
+    try {
+      const failure = await runWorkspaceJobForControl({
+        actor,
+        issue: null,
+        workspace: buildWorkspace(workspaceRoot),
+        command: {
+          name: "Recover retained files",
+          command: `${JSON.stringify(process.execPath)} -e ${JSON.stringify(jobScript)}`,
+        },
+        recorder,
+      }).then(() => null, (error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(HttpError);
+      expect(failure).toMatchObject({
+        status: 422,
+        message: 'Workspace job "Recover retained files" failed: Restored patch differs from exact source',
+        details: { code: "workspace_job_failed", exitCode: 3 },
+      });
+      expect(operations).toHaveLength(1);
+      expect(operations[0]?.result).toMatchObject({ status: "failed", exitCode: 3 });
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a job without a command as unprocessable", async () => {
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-workspace-job-missing-"));
+    const { recorder, operations } = createWorkspaceOperationRecorderDouble();
+
+    try {
+      await expect(runWorkspaceJobForControl({
+        actor,
+        issue: null,
+        workspace: buildWorkspace(workspaceRoot),
+        command: { name: "Empty job" },
+        recorder,
+      })).rejects.toMatchObject({ status: 422, message: 'Workspace job "Empty job" is missing command' });
+      expect(operations).toHaveLength(0);
+    } finally {
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+    }
   });
 });

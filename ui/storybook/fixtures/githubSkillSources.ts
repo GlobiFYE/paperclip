@@ -48,7 +48,7 @@ Object.assign(repositoryContents, {
   'paperclip.skills.json': JSON.stringify({ version: 1, skills: ['.agents/skills/review/SKILL.md', 'skills/research/SKILL.md'], requirements: 'Python 3.11 and Git. Configure GitHub access for agents that review pull requests.' }, null, 2),
 });
 export function repositoryFixture(blocked = false): SkillRepositoryPackage {
-  return { files: Object.entries(repositoryContents).map(([path, content]) => ({ path, kind: path.endsWith('SKILL.md') ? 'skill' : 'reference', encoding: content === null ? 'base64' : 'utf8', sizeBytes: content?.length ?? 2048, executable: path.endsWith('.py') })),
+  return { files: Object.entries(repositoryContents).map(([path, content]) => ({ path, kind: path.endsWith('SKILL.md') ? 'skill' : path.endsWith('.py') ? 'script' : content === null ? 'asset' : 'reference', encoding: content === null ? 'base64' : 'utf8', sizeBytes: content?.length ?? 2048, executable: path.endsWith('.py') })),
     skillPaths: ['.agents/skills/review/SKILL.md', 'skills/research/SKILL.md'], requirements: 'Python 3.11 and Git. Configure GitHub access for agents that review pull requests.',
     error: blocked ? 'Unsupported symlink or submodule: shared/tools' : null, warnings: [] };
 }
@@ -78,7 +78,7 @@ export function importedSkill(source: SkillSource, entry: SkillSourceEntry): Com
     id: entry.skillId!, companyId: COMPANY_ID, key: `github/${source.id}/${entry.path}`,
     slug: entry.name.toLowerCase().replaceAll(" ", "-"), name: entry.name, description: entry.description,
     markdown: `---\nname: ${entry.name}\ndescription: ${entry.description}\n---\n\n# ${entry.name}\n\n${entry.description}\n\n## Workflow\n\n1. Read the task and the relevant project context.\n2. Follow the checklist in references/checklist.md.\n3. Report findings with evidence and clear next steps.\n`, sourceType: "github", sourceLocator: source.repositoryUrl, sourceRef: COMMIT,
-    trustLevel: "assets", compatibility: "compatible", fileInventory: [{ path: "SKILL.md", kind: "skill" }, { path: "references/checklist.md", kind: "reference" }],
+    trustLevel: source.packageMode === "repository" || entry.inspection?.files.some(file => file.kind === "script" || file.executable) ? "scripts_executables" : "markdown_only", compatibility: "compatible", fileInventory: [{ path: "SKILL.md", kind: "skill" }, { path: "references/checklist.md", kind: "reference" }],
     iconUrl: null, color: null, tagline: null, authorName: null, homepageUrl: null,
     categories: [], sharingScope: "company", publicShareToken: null, forkedFromSkillId: null,
     forkedFromCompanyId: null, starCount: 0, installCount: 0, forkCount: 0,

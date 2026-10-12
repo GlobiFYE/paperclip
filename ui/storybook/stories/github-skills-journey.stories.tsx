@@ -11,7 +11,7 @@ import { SkillStudio } from "@/pages/SkillStudio";
 import { PluginLauncherProvider } from "@/plugins/launchers";
 import { Link, Route, Routes, useNavigate } from "@/lib/router";
 import { queryKeys } from "@/lib/queryKeys";
-import { candidates, COMPANY_ID, COMMIT, installFixtures, repositoryCandidates, repositoryFixture, SOURCE_ID } from "../fixtures/githubSkillSources";
+import { COMPANY_ID, COMMIT, installFixtures, repositoryCandidates, repositoryFixture, SOURCE_ID } from "../fixtures/githubSkillSources";
 
 type Step = "start" | "repository" | "selection" | "imported" | "library" | "detail" | "agents" | "assigned" | "refresh" | "new-skills" | "scanning" | "saving";
 const routes: Record<Step, string> = {
@@ -49,12 +49,12 @@ export function GitHubSkillsJourney({ step = "start", packageScenario }: { step?
     draftKeys.forEach(key => sessionStorage.removeItem(key));
     if (step === "scanning") sessionStorage.setItem(draftKeys[0]!, JSON.stringify({ repositoryUrl: "https://github.com/acme/team-skills" }));
     if (step === "selection" || step === "saving") {
-      const discovered = packageScenario ? repositoryCandidates(packageScenario === "blocked") : candidates.filter(candidate => !candidate.path.includes("/security/"));
+      const discovered = repositoryCandidates(packageScenario === "blocked").filter(candidate => packageScenario || !candidate.path.includes("/security/"));
       sessionStorage.setItem(draftKeys[0]!, JSON.stringify({
         repositoryUrl: "https://github.com/acme/team-skills", trackingRef: "main", connectionId: "github-storybook",
-        packageMode: packageScenario ? "repository" : "skills",
-        selectedPaths: packageScenario ? repositoryFixture().skillPaths : discovered.filter(candidate => !candidate.error).map(candidate => candidate.path), excludedFolders: [],
-        discovery: { repositoryId: "123456", repositoryUrl: "https://github.com/acme/team-skills", fullName: "acme/team-skills", trackingRef: "main", commitSha: COMMIT, candidates: discovered, warnings: [], ...(packageScenario ? { packageMode: "repository", repositoryPackage: repositoryFixture(packageScenario === "blocked") } : {}) },
+        packageMode: "repository",
+        selectedPaths: repositoryFixture().skillPaths, excludedFolders: [],
+        discovery: { repositoryId: "123456", repositoryUrl: "https://github.com/acme/team-skills", fullName: "acme/team-skills", trackingRef: "main", commitSha: COMMIT, candidates: discovered, warnings: [], packageMode: "repository", repositoryPackage: repositoryFixture(packageScenario === "blocked") },
       }));
     }
     client.setQueryData(queryKeys.apps.gallery(COMPANY_ID), {
@@ -107,14 +107,14 @@ export const ScanRepository: Story = { name: '02a · Watch skills arrive', args:
 };
 export const SelectSkills: Story = { name: "03 · Review and select skills", args: { step: "selection" } };
 export const InspectPackage: Story = {
-  name: '03a · Inspect a complete skill package', args: { step: 'selection' },
+  name: '03a · Inspect repository files', args: { step: 'selection' },
   play: async ({ canvasElement }) => {
     const page = within(canvasElement.ownerDocument.body);
-    await userEvent.click(await page.findByRole('button', { name: 'Inspect Code review' }));
+    await userEvent.click(await page.findByRole('button', { name: /View \d+ files?/ }));
   },
 };
-export const SaveSnapshots: Story = { name: '03b · Import complete packages', args: { step: 'saving' },
-  play: async ({ canvasElement }) => { await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('button', { name: 'Import 3 skills' })); },
+export const SaveSnapshots: Story = { name: '03b · Import repository', args: { step: 'saving' },
+  play: async ({ canvasElement }) => { await userEvent.click(await within(canvasElement.ownerDocument.body).findByRole('button', { name: 'Import repository' })); },
 };
 export const ImportedSource: Story = { name: "04 · Repository is now a source", args: { step: "imported" } };
 export const InstalledLibrary: Story = { name: "05 · Find imported skills in the library", args: { step: "library" } };

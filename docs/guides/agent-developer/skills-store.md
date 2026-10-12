@@ -135,6 +135,11 @@ opens the standard setup in Apps. Completing or cancelling setup returns you to
 the importer with your draft retained; the repository list refreshes automatically.
 Use the refresh button beside the repository count to reload accessible repositories.
 
+Imports keep repository files together by default. **View files** opens the complete
+repository inventory. **Choose skills** controls the library entrypoints.
+Use **Import individual skills** in the import dialog’s menu for separate packages.
+Existing sources retain their saved import mode.
+
 The searchable tree starts with every valid discovered skill package checked, including
 hidden and deeply nested directories. Each package shows its name and file count;
 expand it to see the files included with it. Folder checkboxes select descendant
@@ -154,7 +159,7 @@ content. Existing sources gain inspection metadata on their next successful refr
 resource paths that are missing or outside the package, including files belonging to
 nested skills. This is a best-effort check, not a complete dependency analysis;
 references do not cause external files to be imported automatically. Fix the source
-or choose **Keep repository files together** to include shared files and sibling skills. Missing files still need to be fixed in the source. Declared requirements are
+or use **Include repository files** to include shared files and sibling skills. Missing files still need to be fixed in the source. Declared requirements are
 shown separately from these warnings and from content-audit notices.
 
 Validation errors appear beside affected skills. Fix the source or deselect invalid skills before importing. A repository package with invalid content cannot be imported partially. These skills become available in the current company's
@@ -168,11 +173,12 @@ or builds.
 
 ### Keep repository files together
 
-Use this option for skills that share agents, scripts, policies, or sibling skills.
+This is the default for new imports, including skills that share agents, scripts,
+policies, or sibling skills.
 Paperclip saves the complete repository at the scanned commit. **Choose skills**
 controls which entrypoints appear in the company library; unselected helper skills
 remain available as supporting files. Add the imported skills to an agent to use
-that repository in its runtime. **Included repository files** shows exactly what
+that repository in its runtime. **View files** shows exactly what
 will be copied, including root license and credit files.
 
 Repository packages support regular files up to 1 MiB each, 9,990 files, and

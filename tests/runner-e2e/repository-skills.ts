@@ -50,13 +50,8 @@ export async function runRepositorySkillsFlow(input: {
   await dialog.getByRole("button", { name: "... or add public repo by URL", exact: true }).click();
   await dialog.getByRole("textbox", { name: "Repository URL", exact: true }).fill(POTETO_REPOSITORY);
   await dialog.getByRole("button", { name: "Find skills", exact: true }).click();
-  const together = dialog.getByRole("checkbox", { name: "Keep repository files together", exact: true });
-  await expect(together).toBeEnabled({ timeout: 120_000 });
-  // The controlled checkbox changes only after the repository rescan returns.
-  await together.click();
-  await expect(together).toBeChecked({ timeout: 120_000 });
-  await expect(dialog.getByText(/The full repository travels/)).toBeVisible({ timeout: 120_000 });
-  await expect(together).toBeEnabled({ timeout: 120_000 });
+  await expect(dialog.getByRole("button", { name: /View \d+ files?/ })).toBeVisible({ timeout: 120_000 });
+  await expect(dialog.getByRole("button", { name: "Import repository", exact: true })).toBeEnabled({ timeout: 120_000 });
   await dialog.locator("summary").filter({ hasText: "Choose skills" }).click();
   // Deselect every default; exactly two become discoverable, all siblings stay supporting files.
   const all = dialog.getByRole("checkbox", { name: "Import folder Repository", exact: true });
@@ -64,7 +59,7 @@ export async function runRepositorySkillsFlow(input: {
   else { await all.check(); await all.uncheck(); }
   for (const skill of SKILLS) await dialog.getByRole("checkbox", { name: `Import skills/${skill}/SKILL.md`, exact: true }).check();
   const importedResponse = page.waitForResponse(response => response.request().method() === "POST" && new URL(response.url()).pathname === `${company}/skill-sources`, { timeout: 120_000 });
-  await dialog.getByRole("button", { name: "Import 2 skills", exact: true }).click();
+  await dialog.getByRole("button", { name: "Import repository", exact: true }).click();
   const response = await importedResponse;
   expect(response.ok()).toBe(true);
   const imported = await response.json() as Row;

@@ -1580,6 +1580,34 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     } finally { realize.mockRestore(); await fs.rm(repoRoot, { recursive: true, force: true }); }
   });
 
+  it("keeps a repair notice on the latest run when an unresolved branch fails twice", async () => {
+    const { agentId, issueId, runId } = await seedQueuedIssueRunFixture();
+    const error = new workspaceRuntime.UnresolvedWorkspaceBaseRefError({
+      requestedRef: "main", recoveryIdentityRef: "origin/main", attemptedRefs: ["origin/main"], defaultBranch: "master",
+    });
+    const realize = vi.spyOn(workspaceRuntime, "realizeExecutionWorkspace").mockRejectedValue(error);
+    try {
+      const heartbeat = heartbeatService(db);
+      await heartbeat.resumeQueuedRuns();
+      await waitForRunToSettle(heartbeat, runId, 5_000);
+      await heartbeat.waitForRunExecutionDrain(runId);
+      const [firstAction] = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, issueId));
+      const next = await heartbeat.wakeup(agentId, { source: "on_demand", triggerDetail: "manual",
+        reason: "retry_failed_run", failedRunId: runId, payload: { issueId }, contextSnapshot: { issueId },
+        requestedByActorType: "user", requestedByActorId: "responsible-user" });
+      expect(next).toHaveProperty("id");
+      await waitForRunToSettle(heartbeat, next!.id, 5_000);
+      await heartbeat.waitForRunExecutionDrain(next!.id);
+      const actions = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, issueId));
+      expect(actions).toHaveLength(1);
+      expect(actions[0]).toMatchObject({ id: firstAction.id, status: "active", evidence: { latestRunId: next!.id } });
+      const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, issueId));
+      expect(comments.filter(c => c.authorType === "system" && c.metadata?.sourceRunId === next!.id)).toHaveLength(1);
+      expect(comments.filter(c => c.authorType === "system" && c.metadata?.sourceRunId === runId)).toHaveLength(1);
+      expect(mockAdapterExecute).not.toHaveBeenCalled();
+    } finally { realize.mockRestore(); }
+  });
+
   it.each(["missing_default", "credential_not_shared", "database_error", "unmarked_http_error", "unmarked_forbidden", "provider_error"] as const)(
     "preserves AI configuration recovery and reports only unexpected causes: %s", async (cause) => {
       const { companyId, agentId, issueId, runId, wakeupRequestId } = await seedQueuedIssueRunFixture();
@@ -8427,12 +8455,10 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
           .set({ status: "paused" })
           .where(eq(agents.id, agentId));
         release();
-        if (next!)
-          await vi.waitFor(async () =>
-            expect((await heartbeat.getRun(next!.id))?.status).not.toBe(
-              "running",
-            ),
-          );
+        // Wait for the released executor and its cleanup, not the default
+        // one-second polling window. The next case must not inherit live work.
+        await heartbeat.drainActiveRunExecutions();
+        if (next!) expect((await heartbeat.getRun(next!.id))?.status).not.toBe("running");
       }
     },
   );
@@ -12072,7 +12098,9 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     const legacyReviewBefore = withLegacyReview
       ? await db.select().from(issues).where(eq(issues.id, legacyReviewId))
       : [];
-    mockAdapterExecute.mockImplementationOnce(async () => {
+    let planOnlyRunId = "";
+    mockAdapterExecute.mockImplementationOnce(async (input?: unknown) => {
+      planOnlyRunId = (input as { runId: string }).runId;
       if (withLegacyReview) {
         // These pre-dispatch cancellations used to satisfy both the no-comment
         // and churn thresholds and suppress an otherwise valid continuation.
@@ -12096,17 +12124,23 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     await heartbeat.reconcileStrandedAssignedIssues();
     await heartbeat.promoteDueScheduledRetries(new Date(Date.now() + 31_000));
     await heartbeat.resumeQueuedRuns();
+    // The continuation is produced by completion; wait for that durable boundary.
+    await heartbeat.drainActiveRunExecutions();
 
-    const livenessWake = await waitForValue(async () => {
+    expect(planOnlyRunId).not.toBe("");
+    const livenessWakes = await waitForValue(async () => {
       const rows = await db
         .select()
         .from(agentWakeupRequests)
         .where(eq(agentWakeupRequests.agentId, agentId));
-      return (
-        rows.find((row) => row.reason === "issue_disposition_repair") ?? null
-      );
+      // Follow-up repairs can already exist. Match this plan-only result,
+      // rather than relying on the database's unordered row order.
+      const matching = rows.filter((row) => row.reason === "issue_disposition_repair"
+        && row.payload?.retryOfRunId === planOnlyRunId);
+      return matching.length > 0 ? matching : null;
     });
-    expect(livenessWake).toBeTruthy();
+    expect(livenessWakes).toHaveLength(1);
+    const livenessWake = livenessWakes![0]!;
     expect(livenessWake?.payload).toMatchObject({
       issueId,
       dispositionRepairAttempt: 1,
@@ -12115,7 +12149,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     const sourceRunId = (
       livenessWake?.payload as Record<string, unknown> | null
     )?.retryOfRunId;
-    expect(sourceRunId).toBeTruthy();
+    expect(sourceRunId).toBe(planOnlyRunId);
     const sourceRun = await db
       .select()
       .from(heartbeatRuns)

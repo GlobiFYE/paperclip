@@ -293,18 +293,27 @@ describe.skipIf(!support.supported)('skill source persistence', () => {
 
   it('versions repository dependencies together, retains pinned copies offline and rejects a broken shared update atomically', async () => {
     files = { 'skills/main/SKILL.md': md('main') + '\nRead ../helper/SKILL.md and ../../agents/worker.md.',
-      'skills/helper/SKILL.md': md('helper'), 'agents/worker.md': 'Worker v1', 'NOTICE.md': 'Credits' };
+      'skills/helper/SKILL.md': md('helper'), 'agents/worker.md': 'Worker v1', 'NOTICE.md': 'Credits',
+      'shared/check.sh': '#!/bin/sh\necho check' };
     commit = sha;
     const sources = skillSourceService(db), skills = companySkillService(db);
     const installed = await sources.create(companyId, { repositoryUrl: 'https://github.com/acme/skills', trackingRef: 'package-lifecycle', packageMode: 'repository',
       commitSha: sha, selectedPaths: ['skills/main/SKILL.md', 'skills/helper/SKILL.md'] }, context);
     expect(installed.source.packageMode).toBe('repository');
     const main = installed.imported.find(skill => skill.name === 'main')!;
+    expect(installed.imported.every(skill => skill.trustLevel === 'scripts_executables')).toBe(true);
+    const audit = await skills.auditSkill(companyId, main.id);
+    expect(audit?.verdict).not.toBe('fail');
+    expect(audit?.codes).not.toContain('inventory_mismatch');
+    expect(audit?.findings.some(finding => finding.path === '.paperclip-repository/shared/check.sh' && finding.code === 'script_trust')).toBe(true);
     const v1 = (await skills.getVersion(companyId, main.id, main.currentVersionId!))!;
     const helper = installed.imported.find(skill => skill.name === 'helper')!;
     expect((await skills.getVersion(companyId, helper.id, helper.currentVersionId!))?.repositorySnapshotId).toBe(v1.repositorySnapshotId);
     expect(await db.select().from(companySkillRepositorySnapshots).where(eq(companySkillRepositorySnapshots.companyId, companyId))).toHaveLength(1);
+    await db.update(companySkills).set({ trustLevel: 'markdown_only' }).where(eq(companySkills.id, main.id));
     expect((await sources.refresh(companyId, installed.source.id, context)).unchanged).toBe(2);
+    expect((await skills.getById(companyId, main.id))?.trustLevel).toBe('scripts_executables');
+    expect((await skills.getById(companyId, main.id))?.currentVersionId).toBe(v1.id);
     files = { ...files, 'agents/worker.md': 'Worker v2' }; commit = 'b'.repeat(40);
     const changed = await sources.refresh(companyId, installed.source.id, context);
     expect(changed.updated).toHaveLength(2);

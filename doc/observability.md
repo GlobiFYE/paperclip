@@ -48,8 +48,9 @@ There are no custom attributes, identifiers, content, or exception messages.
 The closed phase names in `server/src/services/issue-read-timing.ts` are:
 `lookup`, `authorization`, `project_goal`, `ancestors`, `mentions`, `documents`,
 `relations`, `blockers`, `review`, `references`, `handoff`, `retry`, `recovery`,
-`cases`, `inbox`, `channel`, `workspace`, `work_products`, `execution_blocker`,
-`relation_recovery`, `revalidate_recovery`, and `mentioned_projects`.
+`cases`, `inbox`, `channel`, `workspace`, `work_products`, `created_from`,
+`execution_blocker`, `relation_recovery`, `revalidate_recovery`, and
+`mentioned_projects`.
 Without an OTLP endpoint, spans remain no-ops. This adds no first-party
 Telemetry events or run-log events.
 
@@ -583,6 +584,37 @@ and native runs:
 - `run_exception_0` through `run_exception_3`: exception names, codes, HTTP
   statuses, and request IDs for a caught exception and up to three causes.
 
+When a Daytona acquisition fails with pending allocation cleanup, the immediate
+setup-failure report can include `environmentAcquisitionPhase`,
+`environmentAcquisitionElapsedMs`, and `environmentAcquisitionBudgetMs` in
+`run_execution`. The phase is one of `create`, `workspace`, `shell`, `expiry`,
+or `sentinel`. It records the first acquisition failure observation, before
+inline cleanup, not the cause of the failure. Elapsed time measures acquisition
+start to that observation; if cleanup later consumes the deadline, this time
+still describes the earlier failure. The overall error message is unchanged.
+Elapsed time is bounded to seven days, and the budget to one day. Unknown or
+malformed optional values are omitted without invalidating cleanup ownership.
+
+When the deadline expires while Daytona creation is still pending, the plugin
+makes one read-only lookup (bounded to five seconds, inside the host's 30-second
+RPC margin) of its provisional creation name and reports
+`environmentAcquisitionProviderState`. The value is one of `absent`, `creating`,
+`pending_build`, `building_snapshot`, `pulling_snapshot`, `starting`, `started`,
+`error`, `build_failed`, `other`, or `unavailable` (lookup failed, timed out, or
+ownership labels did not match). It records where the provider left the
+allocation, not why. The lookup does not delete, retry, or change the cleanup
+envelope.
+
+These fields cross the existing creation-cleanup RPC envelope only for lease
+acquisition. The host accepts them only from an actual RPC error with matching
+company, environment, and run ownership. A private receipt binds the report to
+that run; arbitrary error fields and saved result JSON do not supply evidence.
+Raw provider causes, output, paths, URLs, and cleanup ownership identifiers are
+not copied into these diagnostic fields. This does not change timeout budgets,
+commands, cleanup, retries, task status, or Sentry filtering. The receipt is
+process-local: post-restart reports without the original error cannot recover
+these observations. Existing saved runs and leases are not backfilled.
+
 The orphan reaper records a bounded `processLossDiagnostic` before status writes
 or cleanup. For `process_lost` failures, `run_execution` includes
 `processLossPidRecorded`, `processLossGroupRecorded`, and `processLossLocalCheck`
@@ -606,7 +638,7 @@ pending. Recent events do not prove useful progress. These fields contain only
 numbers and a boolean, never tool names, IDs, arguments, or event content, and
 do not change the execution timeout, cancellation, or recovery policy.
 
-ACP results retain the adapter's resolved wall-clock timeout as
+ACP and legacy OpenCode results retain the adapter's resolved wall-clock timeout as
 `adapterExecutionTimeout` in the instance run result. Finalization uses it for
 `effectiveTimeoutSec`, `timeoutSource`, and `timeoutConfigured`. Sources are
 `configured`, `sandbox_default`, or `unlimited`; `timeoutConfigured` identifies an
@@ -614,6 +646,25 @@ explicit override, including a negative value that disables the timer. An untouc
 sandbox value of zero reports the four-hour default, while a local zero reports
 unlimited. Older adapters without a valid resolution retain the config-based
 metadata fallback. This does not change timers, Stop acknowledgement, or recovery.
+Legacy OpenCode reports a generic timeout message because a provider or output
+observation timeout can occur before the configured execution deadline. The
+resolved policy describes the configured limit, not proof that its timer fired;
+`timeoutFired` retains the existing terminal timeout classification. Provider
+stderr remains in the instance run log and is not used as the timeout exception
+message. An earlier provider timeout does not establish its upstream cause.
+
+Legacy OpenCode requests Daytona's persistent process session for
+its main CLI command. Daytona targets with the effective persistent-session capability
+use asynchronous dispatch and log observation instead of holding one synchronous
+command HTTP request open for the whole run. The command's resolved timeout is
+forwarded separately from individual status/log observation timeouts. One timer
+bounds dispatch and observation, fences late log callbacks, and clears at settlement.
+A timeout does not prove command termination; the existing stop/lease cleanup
+path still owns that evidence. Existing session callers without this deadline
+keep their previous lifetime. Probes, preparation and other providers
+keep their existing paths. Local and SSH execution do not use this option.
+The resolved execution budget and lease cleanup remain unchanged; the session
+request does not prove that a previously observed gateway timeout had this cause.
 
 When settlement records a workspace restore failure, `run_execution` also
 includes `workspaceRestoreFailure` with one of the shared, path-free codes:

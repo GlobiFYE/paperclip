@@ -2331,7 +2331,7 @@ for (const execution of executions) {
       if (registeredArtifacts.length > 0) {
         await writeSanitizedJson(snapshotsDir, "downloaded-registered-artifacts.json", registeredArtifacts, secrets);
       }
-      matcherResults = await Promise.all(
+      matcherResults.push(...await Promise.all(
         taskMatchers.map((matcher) =>
           evaluateMatcher(matcher, {
             ...matcherObservation,
@@ -2345,7 +2345,7 @@ for (const execution of executions) {
               matcher.kind === "message_exact" ? finalRunMessage : message,
           }),
         ),
-      );
+      ));
       const failedMatchers = matcherResults.filter((result) => !result.passed);
       const exactMessageMatcher = taskMatchers.find(
         (matcher) => matcher.kind === "message_exact",
