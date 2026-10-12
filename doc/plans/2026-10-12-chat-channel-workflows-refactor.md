@@ -53,3 +53,18 @@ handoff. Record failures honestly; a retry does not erase the original failure.
   completion. Server typecheck passes. This factory owns no mutable state.
 - Reassessment: GitHub ingress/recovery has a coherent durable inbox and replay
   contract; preserve its shutdown getter and persistence compare-and-set lease.
+
+## Slice 3: GitHub webhook ingress and recovery
+
+- Service: 32,928 lines / 1,279,554 bytes → 31,438 lines / 1,225,374 bytes.
+- `github/webhook-ingress.ts`: 1,579 lines / 58,233 bytes.
+- All 26 moved declarations and remaining statements preserve syntax after the
+  explicit shutdown getter substitution. The replay barrier remains a live
+  getter. Persistence and credential leases remain the same service instances.
+- The same 84 existing public-service cases passed before and after, including
+  authentication before retention, disabled-repository filtering, restart,
+  recovery epochs, concurrent scans, ambiguous redelivery, operator retries,
+  canonical-source changes and stale-runtime replay. Server typecheck passes.
+- Reassessment: Slack task starter confirmation, recovery and failure settlement
+  form one boundary. Keep normal message admission shared and pass its exact
+  existing call contract; do not duplicate provider-visible posts during recovery.
