@@ -41,6 +41,11 @@ import {
   sweepAbandonedImportTransferSpools,
 } from "./services/company-import-transfers.js";
 import { companyTransferRunService } from "./services/company-transfer-runs.js";
+import {
+  DELIVERABLE_SUMMARY_SWEEP_BATCH,
+  DELIVERABLE_SUMMARY_SWEEP_INTERVAL_MS,
+  processPendingDeliverableSummaries,
+} from "./services/deliverable-summary.js";
 import { healthRoutes } from "./routes/health.js";
 import { cloudRuntimeIdentityMiddleware } from "./middleware/cloud-runtime-identity.js";
 import { cloudControlMiddleware } from "./middleware/cloud-control.js";
@@ -1226,6 +1231,28 @@ export async function createApp(
       IMPORT_TRANSFER_SPOOL_SWEEP_INTERVAL_MS,
     );
   importTransferSweepTimer.unref?.();
+  // Deliverable summaries (TOP-193): when an issue moves to done, a cheap
+  // model writes its plain-English "what was done" summary exactly once.
+  // The sweep is the single write path so every status transition route is
+  // covered; the Deliverables page only reads stored text. Same
+  // setInterval + unref + shutdown-clear shape as the sweeps above.
+  const sweepDeliverableSummaries = () => {
+    processPendingDeliverableSummaries(db, {
+      limit: DELIVERABLE_SUMMARY_SWEEP_BATCH,
+    })
+      .then((result) => {
+        if (result.generated > 0 || result.failed > 0) {
+          logger.info(result, "deliverable summary sweep processed issues");
+        }
+      })
+      .catch((err) => {
+        logger.error({ err }, "deliverable summary sweep failed");
+      });
+  };
+  let deliverableSummarySweepTimer: ReturnType<typeof setInterval> | null =
+    setInterval(sweepDeliverableSummaries, DELIVERABLE_SUMMARY_SWEEP_INTERVAL_MS);
+  deliverableSummarySweepTimer.unref?.();
+  sweepDeliverableSummaries();
   // Startup only (never on the hourly interval — that would kill live
   // applies): apply jobs are in-memory in this single process, so any run
   // still "applying" now was interrupted by the previous shutdown and would
@@ -1332,6 +1359,10 @@ export async function createApp(
       if (importTransferSweepTimer) {
         clearInterval(importTransferSweepTimer);
         importTransferSweepTimer = null;
+      }
+      if (deliverableSummarySweepTimer) {
+        clearInterval(deliverableSummarySweepTimer);
+        deliverableSummarySweepTimer = null;
       }
       devWatcher?.close();
       viteHtmlRenderer?.dispose();

@@ -637,6 +637,16 @@ export type {
 } from "./artifact.js";
 
 export type {
+  CompanyDeliverable,
+  CompanyDeliverablesResponse,
+  DeliverableActor,
+  DeliverableGenerationStatus,
+  DeliverableIssueSummary,
+  DeliverableProduct,
+  DeliverableProjectSummary,
+} from "./deliverable.js";
+
+export type {
   ExternalObject,
   ExternalObjectMention,
   ExternalObjectMentionGroup,

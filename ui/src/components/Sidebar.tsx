@@ -14,6 +14,7 @@ import {
   Layers,
   GitBranch,
   Package,
+  PackageCheck,
   Settings,
   FolderOpen,
   Unplug,
@@ -205,6 +206,7 @@ export function Sidebar({ children }: { children?: ReactNode }) {
           ) : null}
           <SidebarNavItem to="/routines" label="Routines" icon={Repeat} />
           <SidebarNavItem to="/artifacts" label="Artifacts" icon={Package} />
+          <SidebarNavItem to="/deliverables" label="Deliverables" icon={PackageCheck} />
           {showCases ? (
             <SidebarNavItem to="/cases" label="Cases" icon={Layers} textBadge="beta" />
           ) : null}

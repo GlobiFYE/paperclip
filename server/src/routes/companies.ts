@@ -15,6 +15,7 @@ import {
   DEFAULT_FEEDBACK_DATA_SHARING_TERMS_VERSION,
   SETTINGS_OPERATOR_MANAGED_ERROR_CODE,
   companyArtifactsQuerySchema,
+  companyDeliverablesQuerySchema,
   companyPortabilityExportSchema,
   companyPortabilityImportSchema,
   companyPortabilityPreviewSchema,
@@ -60,6 +61,7 @@ import {
   companyArtifactsService,
   companyPortabilityService,
   companyService,
+  deliverablesService,
   feedbackService,
   logActivity,
   workTimelineService,
@@ -284,6 +286,7 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
   const access = accessService(db);
   const budgets = budgetService(db);
   const artifacts = companyArtifactsService(db, storage);
+  const deliverables = deliverablesService(db);
   const feedback = feedbackService(db);
   const importJobs = new Map<string, ImportJobRecord>();
   // Terminal jobs are retained in memory for an hour after they settle. A long
@@ -424,6 +427,16 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
     res.json(await artifacts.list(companyId, query, {
       userId: query.starred && req.actor.type === "board" ? req.actor.userId : undefined,
     }));
+  });
+
+  // Deliverables (TOP-193): one card per completed issue with the stored
+  // plain-English summary. Read-only projection; the summary itself is
+  // generated offline by the deliverable summary sweeper (see app.ts).
+  router.get("/:companyId/deliverables", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const query = companyDeliverablesQuerySchema.parse(req.query);
+    res.json(await deliverables.list(companyId, query));
   });
 
   router.get("/:companyId/timeline", async (req, res) => {

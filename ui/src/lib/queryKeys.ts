@@ -571,6 +571,10 @@ export const queryKeys = {
         groupIssueId ?? "",
       ] as const,
   },
+  deliverables: {
+    list: (companyId: string, projectId?: string, from?: string, to?: string) =>
+      ["deliverables", companyId, projectId ?? "", from ?? "", to ?? ""] as const,
+  },
   budgets: {
     overview: (companyId: string) =>
       ["budgets", "overview", companyId] as const,

@@ -14,6 +14,7 @@ import {
   Layers,
   GitBranch,
   Package,
+  PackageCheck,
   Settings,
   FolderOpen,
   Unplug,
@@ -198,6 +199,7 @@ export function Sidebar() {
             />
           ) : null}
           <SidebarNavItem to="/artifacts" label="Artifacts" icon={Package} />
+          <SidebarNavItem to="/deliverables" label="Deliverables" icon={PackageCheck} />
           <SidebarNavItem to="/skills" label="Skills" icon={Boxes} />
           {showWorkspacesLink ? (
             <SidebarNavItem to="/workspaces" label="Workspaces" icon={GitBranch} />

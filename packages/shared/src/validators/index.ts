@@ -581,6 +581,21 @@ export {
 } from "./artifact.js";
 
 export {
+  COMPANY_DELIVERABLES_DEFAULT_LIMIT,
+  COMPANY_DELIVERABLES_MAX_LIMIT,
+  companyDeliverableSchema,
+  companyDeliverablesQuerySchema,
+  companyDeliverablesResponseSchema,
+  deliverableActorSchema,
+  deliverableGenerationStatusSchema,
+  deliverableIssueSummarySchema,
+  deliverableProductKindSchema,
+  deliverableProductSchema,
+  deliverableProjectSummarySchema,
+  type CompanyDeliverablesQuery,
+} from "./deliverable.js";
+
+export {
   executionWorkspaceConfigSchema,
   reconcileExecutionWorkspaceBranchSchema,
   updateExecutionWorkspaceSchema,
