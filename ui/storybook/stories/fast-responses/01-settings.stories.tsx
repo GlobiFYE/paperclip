@@ -37,6 +37,7 @@ export const result: FastResponseTestResult = {
 };
 const meta = {
   title: "Fast responses/01 Settings",
+  excludeStories: ["empty", "configured", "result"],
   component: FastResponseSettingsView,
   decorators: [
     (Story) => (
@@ -52,6 +53,7 @@ const meta = {
     onSave: fn(),
     onTest: fn(),
     onAdd: fn(),
+    onConnectionChange: fn(),
   },
 } satisfies Meta<typeof FastResponseSettingsView>;
 export default meta;

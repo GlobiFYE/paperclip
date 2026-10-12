@@ -9,7 +9,7 @@ const meta = {
     docs: {
       description: {
         component:
-          "Uses the actual production Layout (Sidebar, BreadcrumbBar, PropertiesPanel), TaskChatThread (TaskChatComposer, harness activity, thinking/tool disclosures, responses), and TaskSidePanel (plans, artifacts, subtasks). Agent shortcuts compose the existing sidebar rows and sections: starred agents first, the first-created agent as a default, then recent conversations. The compose button opens a searchable picker for every agent, and the gear link opens agent configuration. The task surfaces differ only in breadcrumb/title and initially open panel tabs. All data is fixture data; sends append locally and unsupported mutations fail explicitly.",
+          "Production Layout, AgentChat, IssueDetail, transcript and side-panel components run against in-memory routes. The landing page is a local ChatEntryLanding composition; first-use/default-agent behavior is not production acceptance. Sends append locally. Some unhandled API paths return empty fixture data, so this suite does not verify API contracts or primary-agent preference behavior.",
       },
     },
   },
