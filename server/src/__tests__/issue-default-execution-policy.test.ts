@@ -663,4 +663,61 @@ describeEmbeddedPostgres("company/project default execution policy", () => {
 
     expect(put.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
   });
+
+  it("redacts the project default execution policy's monitor externalRef on the generic GET /projects/:id response", async () => {
+    const company = await seedCompany();
+    const project = await seedProject(company.id);
+
+    await request(app(boardActor))
+      .put(`/api/projects/${project.id}/default-execution-policy`)
+      .send({
+        defaultExecutionPolicy: {
+          ...approvalPolicy("project-reviewer"),
+          monitor: {
+            nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
+            kind: "external_service",
+            serviceName: "github",
+            externalRef: "https://example.com/webhook?token=super-secret",
+          },
+        },
+      })
+      .expect(200);
+
+    const get = await request(app(boardActor))
+      .get(`/api/projects/${project.id}`)
+      .expect(200);
+    expect(get.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
+    // The stage/participant content the dedicated endpoint also returns must
+    // still come through untouched -- this is a redaction, not a wipe.
+    expect(get.body.defaultExecutionPolicy.stages[0].participants[0]).toMatchObject({
+      type: "user",
+      userId: "project-reviewer",
+    });
+  });
+
+  it("redacts the project default execution policy's monitor externalRef on the generic GET /companies/:companyId/projects response", async () => {
+    const company = await seedCompany();
+    const project = await seedProject(company.id);
+
+    await request(app(boardActor))
+      .put(`/api/projects/${project.id}/default-execution-policy`)
+      .send({
+        defaultExecutionPolicy: {
+          ...approvalPolicy("project-reviewer"),
+          monitor: {
+            nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
+            kind: "external_service",
+            serviceName: "github",
+            externalRef: "https://example.com/webhook?token=super-secret",
+          },
+        },
+      })
+      .expect(200);
+
+    const list = await request(app(boardActor))
+      .get(`/api/companies/${company.id}/projects`)
+      .expect(200);
+    const found = list.body.find((p: { id: string }) => p.id === project.id);
+    expect(found.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
+  });
 });

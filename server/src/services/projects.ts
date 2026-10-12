@@ -36,6 +36,7 @@ import { parseProjectExecutionWorkspacePolicy } from "./execution-workspace-poli
 import { mergeProjectWorkspaceRuntimeConfig, readProjectWorkspaceRuntimeConfig } from "./project-workspace-runtime-config.js";
 import { resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import { recordProjectLifecycleEvent, recordResourceCreationEvent } from "./resource-lifecycle-events.js";
+import { redactIssueMonitorExternalRef } from "./issue-execution-policy.js";
 
 type ProjectRow = typeof projects.$inferSelect;
 type ProjectWorkspaceRow = typeof projectWorkspaces.$inferSelect;
@@ -297,6 +298,26 @@ function pickPrimaryWorkspace(
   return toWorkspace(primary, runtimeServicesByWorkspaceId?.get(primary.id) ?? []);
 }
 
+// Every row this touches carries the real stored defaultExecutionPolicy,
+// monitor.externalRef included. attachWorkspaces is the one step every
+// get/list/create/update path runs through last, so redact here too --
+// same defensive, never-throws-on-a-malformed-stored-value shape as
+// companies.ts's redactCompanyDefaultExecutionPolicy, so a generic project
+// read can't leak a token embedded in a saved default monitor's externalRef.
+function redactProjectDefaultExecutionPolicy(
+  policy: ProjectRow["defaultExecutionPolicy"],
+): ProjectRow["defaultExecutionPolicy"] {
+  if (!policy || typeof policy !== "object") return policy ?? null;
+  const monitor = (policy as { monitor?: unknown }).monitor;
+  if (!monitor || typeof monitor !== "object") return policy;
+  const externalRef = (monitor as { externalRef?: unknown }).externalRef;
+  if (typeof externalRef !== "string" || externalRef.length === 0) return policy;
+  return {
+    ...policy,
+    monitor: { ...monitor, externalRef: redactIssueMonitorExternalRef(externalRef) },
+  } as ProjectRow["defaultExecutionPolicy"];
+}
+
 /** Batch-load workspace refs for a set of projects. */
 async function attachWorkspaces(db: Db, rows: ProjectWithGoals[]): Promise<ProjectWithGoals[]> {
   if (rows.length === 0) return [];
@@ -374,6 +395,9 @@ async function attachWorkspaces(db: Db, rows: ProjectWithGoals[]): Promise<Proje
     const primaryWorkspace = pickPrimaryWorkspace(projectWorkspaceRows, sharedRuntimeServicesByWorkspaceId);
     return {
       ...row,
+      ...("defaultExecutionPolicy" in row
+        ? { defaultExecutionPolicy: redactProjectDefaultExecutionPolicy(row.defaultExecutionPolicy) }
+        : {}),
       codebase: deriveProjectCodebase({
         companyId: row.companyId,
         projectId: row.id,
