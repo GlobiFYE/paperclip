@@ -759,7 +759,7 @@ transaction boundary.
 
 ### Task workspace records (2026-10-09)
 
-Migration [0336_big_crystal.sql](../packages/db/src/migrations/0336_big_crystal.sql) makes `execution_workspaces.project_id` nullable and changes its project reference to `ON DELETE RESTRICT`: source-project policy cannot disappear while a workspace still depends on it. `issues.execution_workspace_id` remains the sole active task binding. Versioned selection/pending-selection JSON and a binding revision record intent and protect transitions; they are not additional active bindings.
+Migration [0336_big_crystal.sql](../packages/db/src/migrations/0336_big_crystal.sql) makes `execution_workspaces.project_id` nullable and changes its project reference to `ON DELETE RESTRICT`: source-project policy cannot disappear while a workspace still depends on it. `issues.execution_workspace_id` remains the sole active task binding. Versioned selection/pending-selection JSON and a binding revision record intent and protect transitions; they are not additional active bindings. Accepting a new pending choice advances the revision without changing the active folder. Its receipt retains the original request revision, so current-choice retries are idempotent and superseded retries fail the revision check.
 
 `execution_workspace_repositories` is company-scoped inventory beneath an execution workspace. It records repository identity, contained relative path, requested ref, pinned commit, preparation state and idempotency receipts. Credentials are resolved at use and are never stored in this inventory. Connection/destination `execution_defaults` JSON contains optional typed project/workspace choices, never arbitrary host paths or commands.
 
@@ -769,9 +769,28 @@ Migration [0338_absurd_vengeance.sql](../packages/db/src/migrations/0338_absurd_
 
 Git-source capture checks the actual common Git storage directory and verified
 checkout owners. Separately stored metadata does not make its parent a checkout.
-When Git cannot identify the primary checkout, the service verifies company-known
-configured, execution, and retained roots against that metadata identity. Ordinary
-repositories and registered worktrees avoid this fallback scan.
+When a linked worktree cannot identify its primary checkout, the service verifies
+company-known configured, execution, and retained roots against that metadata
+identity. A primary checkout identifies itself when its Git directory equals its
+common directory, including separate metadata layouts. Verified primary sources
+and linked worktrees with a verified registered primary avoid the fallback scan.
+
+Writable selection, source-copy preparation, admission, and publication check the trust policy of
+current and retained physical source projects. A projectless alias cannot bypass
+a source's sandbox requirement. An incompatible preset or boundary is rejected;
+the check never silently changes the selected execution environment. Admitted
+and retained readers use their persisted effective run policy; absence of a
+retained low-trust policy counts as standard. Live policy edits cannot relabel
+a standard local run as sandboxed. Read-only file access
+keeps its existing authorization rules.
+
+Source-copy checks retain deny-only ownership on failure but create a new
+isolated-copy proof only after physical identity, access, and trust checks pass.
+For low-trust sandbox runs, the harness also disables host worktree provisioning
+on fresh realization, reuse, and rebuild. This covers configured commands and
+the repository's built-in provision script; an empty configured command alone
+would still allow that fallback. The capability comes from the server's selected
+trust policy and environment, never repository configuration.
 
 After source authorization and retained-reader checks pass, the existing
 `source` and `project_source` kinds retain ownership on shared Git storage.

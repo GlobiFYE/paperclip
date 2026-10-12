@@ -281,7 +281,7 @@ const support = await getEmbeddedPostgresTestSupport();
         expectedBindingRevision: 0, requestKey: "superseded-before-raw-binding" });
       const updated = await issueService(db).update(task.id, { executionWorkspaceId: f.workspaceId });
       expect(updated).toMatchObject({ projectId: project.id, executionWorkspaceId: f.workspaceId, projectWorkspaceId: null,
-        workspaceBindingRevision: 1, workspacePendingSelection: null });
+        workspaceBindingRevision: 2, workspacePendingSelection: null });
       expect(await svc.applyPendingTaskWorkspaceSelection({ ...f, issueId: task.id, runId: randomUUID() })).toBe(false);
       expect((await svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).workspace)
         .toMatchObject({ id: f.workspaceId, projectId: null, projectWorkspaceId: null, cwd: `/tmp/task-${f.issueId}` });
@@ -304,11 +304,62 @@ const support = await getEmbeddedPostgresTestSupport();
     const view = await svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor);
     expect(view.workspace).toBeNull();
     expect(view.selection).toMatchObject({ selection: { kind: "task_directory" } });
-    expect(view.bindingRevision).toBe(2);
-    expect(await svc.selectTaskWorkspace(request)).toMatchObject({ kind: "applied", bindingRevision: 2 });
+    expect(view.bindingRevision).toBe(3);
+    expect(await svc.selectTaskWorkspace(request)).toMatchObject({ kind: "applied", bindingRevision: 3 });
     expect((await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, f.workspaceId)))[0]?.metadata)
       .toMatchObject({ _issuePrivacySources: { [f.issueId]: true } });
     await expect(svc.selectTaskWorkspace({ ...request, requestKey: "stale" })).rejects.toThrow("binding changed");
+  });
+
+  it.each(["before admission", "after admission"] as const)("rejects a superseded selection retry %s without replacing the newer choice", async phase => {
+    const f = await fixture(), svc = executionWorkspaceService(db);
+    await svc.bindTaskWorkspace(f.companyId, f.issueId, f.workspaceId);
+    const [nextWorkspace] = await db.insert(executionWorkspaces).values({ companyId: f.companyId,
+      mode: "shared_workspace", strategyType: "project_primary", name: "Newer choice", cwd: `/tmp/newer-${f.issueId}` }).returning();
+    const [agent] = await db.insert(agents).values({ companyId: f.companyId, name: "Running worker" }).returning();
+    const immutableInput = { cwd: `/tmp/task-${f.issueId}`, binding: { executionWorkspaceId: f.workspaceId } };
+    const [run] = await db.insert(heartbeatRuns).values({ companyId: f.companyId, agentId: agent.id,
+      status: "running", contextSnapshot: { issueId: f.issueId, persistedNativeExecutionInput: immutableInput } }).returning();
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => { req.actor = f.actor; next(); });
+    app.use("/api", taskWorkspaceRoutes(db));
+    app.use(errorHandler);
+    const select = (body: object) => request(app).put(`/api/issues/${f.issueId}/workspace`).send(body);
+    const first = { selection: { kind: "task_directory" }, expectedBindingRevision: 1, requestKey: "choice-A" };
+    const acceptedA = await select(first);
+    expect(acceptedA.status).toBe(200);
+    const second = { selection: { kind: "existing", workspaceId: nextWorkspace.id },
+      expectedBindingRevision: acceptedA.body.bindingRevision, requestKey: "choice-B" };
+    const acceptedB = await select(second);
+    expect(acceptedB.status).toBe(200);
+    const admission = { ...f, runId: randomUUID() };
+    await expect(svc.applyPendingTaskWorkspaceSelection(admission)).rejects.toThrow("Previous task run must finish");
+    expect(await svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).toMatchObject({
+      workspace: { id: f.workspaceId }, pendingSelection: { requestKey: second.requestKey },
+    });
+    expect((await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id)))[0]).toMatchObject({
+      status: "running", contextSnapshot: { persistedNativeExecutionInput: immutableInput },
+    });
+    if (phase === "after admission") {
+      await db.update(heartbeatRuns).set({ status: "succeeded" }).where(eq(heartbeatRuns.id, run.id));
+      expect(await svc.applyPendingTaskWorkspaceSelection(admission)).toBe(true);
+    }
+    const beforeRetry = await svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor);
+    const retryA = await select(first);
+    expect(retryA.status).toBe(409);
+    expect(retryA.body.error).toContain("binding changed");
+    expect(await svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).toEqual(beforeRetry);
+    const retryB = await select(second);
+    expect(retryB.status).toBe(200);
+    expect(retryB.body.kind).toBe(phase === "before admission" ? "scheduled" : "applied");
+    if (phase === "before admission") {
+      await db.update(heartbeatRuns).set({ status: "succeeded" }).where(eq(heartbeatRuns.id, run.id));
+      expect(await svc.applyPendingTaskWorkspaceSelection(admission)).toBe(true);
+    }
+    expect(await svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).toMatchObject({
+      workspace: { id: nextWorkspace.id }, selection: { request: { key: second.requestKey } }, pendingSelection: null,
+    });
   });
 
   describe.each(["pending selection", "legacy update"] as const)("native settlement before %s", (entryPoint) => {
@@ -350,7 +401,7 @@ const support = await getEmbeddedPostgresTestSupport();
     it.each(["native_retry_cancelled", "native_permission_declined"])("allows a settled %s without deleting its historical failure", async (failureCode) => {
       const f = await settledNativeTask(failureCode);
       await f.change();
-      expect(await f.svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).toMatchObject({ workspace: null, bindingRevision: 2, pendingSelection: null });
+      expect(await f.svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).toMatchObject({ workspace: null, bindingRevision: entryPoint === "pending selection" ? 3 : 2, pendingSelection: null });
       expect((await db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, f.run.id)))[0])
         .toMatchObject({ phase: "terminal_failure", failureCode });
     });
@@ -367,13 +418,13 @@ const support = await getEmbeddedPostgresTestSupport();
       if (obligation === "failed output") await db.insert(workspaceOperations).values({ companyId: f.companyId, issueId: f.issueId,
         heartbeatRunId: f.run.id, executionWorkspaceId: f.workspaceId, phase: "workspace_finalize", status: "failed" });
       await expect(f.change()).rejects.toThrow(/workspace|Previous task run/);
-      expect(await f.svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).toMatchObject({ workspace: { id: f.workspaceId }, bindingRevision: 1 });
+      expect(await f.svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).toMatchObject({ workspace: { id: f.workspaceId }, bindingRevision: entryPoint === "pending selection" ? 2 : 1 });
       if (obligation === "failed output" || obligation === "accepted output") {
         await db.update(workspaceOperations).set({ createdAt: new Date(0) }).where(eq(workspaceOperations.heartbeatRunId, f.run.id));
         await db.insert(workspaceOperations).values({ companyId: f.companyId, issueId: f.issueId,
           heartbeatRunId: f.run.id, executionWorkspaceId: f.workspaceId, phase: "workspace_finalize", status: "succeeded", finishedAt: new Date() });
         await f.change();
-        expect(await f.svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).toMatchObject({ workspace: null, bindingRevision: 2 });
+        expect(await f.svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).toMatchObject({ workspace: null, bindingRevision: entryPoint === "pending selection" ? 3 : 2 });
       }
     });
 
@@ -384,7 +435,7 @@ const support = await getEmbeddedPostgresTestSupport();
         heartbeatRunId: f.run.id, executionWorkspaceId: f.workspaceId, phase: "workspace_finalize", status: "succeeded",
         metadata: { workspaceSync: { omitted: true } }, finishedAt: new Date() });
       await f.change();
-      expect(await f.svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).toMatchObject({ workspace: null, bindingRevision: 2 });
+      expect(await f.svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).toMatchObject({ workspace: null, bindingRevision: entryPoint === "pending selection" ? 3 : 2 });
     });
   });
 
@@ -400,23 +451,23 @@ const support = await getEmbeddedPostgresTestSupport();
     await svc.selectTaskWorkspace(selectionRequest);
     await svc.bindTaskWorkspace(f.companyId, f.issueId, f.workspaceId);
     expect(await svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).toMatchObject({
-      workspace: { id: f.workspaceId }, bindingRevision: 1,
-      pendingSelection: { expectedBindingRevision: 1, intent: { request: { expectedBindingRevision: 0 } } },
+      workspace: { id: f.workspaceId }, bindingRevision: 2,
+      pendingSelection: { expectedBindingRevision: 2, intent: { request: { expectedBindingRevision: 0 } } },
     });
-    expect(await svc.selectTaskWorkspace(selectionRequest)).toMatchObject({ kind: "scheduled", bindingRevision: 1 });
+    expect(await svc.selectTaskWorkspace(selectionRequest)).toMatchObject({ kind: "scheduled", bindingRevision: 2 });
     await expect(svc.selectTaskWorkspace({ ...selectionRequest, expectedBindingRevision: 1 })).rejects.toThrow("different intent");
     const admission = { ...f, runId: randomUUID() };
     await expect(svc.applyPendingTaskWorkspaceSelection(admission)).rejects.toThrow("Previous task run must finish");
     await db.update(heartbeatRuns).set({ status: "succeeded" }).where(eq(heartbeatRuns.id, run.id));
     expect(await svc.applyPendingTaskWorkspaceSelection(admission)).toBe(true);
     expect(await svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).toMatchObject({
-      workspace: { id: nextWorkspace.id }, bindingRevision: 2, pendingSelection: null,
+      workspace: { id: nextWorkspace.id }, bindingRevision: 3, pendingSelection: null,
     });
-    expect(await svc.selectTaskWorkspace(selectionRequest)).toMatchObject({ kind: "applied", bindingRevision: 2 });
+    expect(await svc.selectTaskWorkspace(selectionRequest)).toMatchObject({ kind: "applied", bindingRevision: 3 });
 
     // A later, unrelated replacement still invalidates the revision fence.
     await svc.selectTaskWorkspace({ ...f, selection: { kind: "task_directory" },
-      expectedBindingRevision: 2, requestKey: "later-choice" });
+      expectedBindingRevision: 3, requestKey: "later-choice" });
     await svc.bindTaskWorkspace(f.companyId, f.issueId, f.workspaceId);
     await expect(svc.applyPendingTaskWorkspaceSelection({ ...f, runId: randomUUID() })).rejects.toThrow("Pending workspace selection is stale");
   });
@@ -676,13 +727,13 @@ const support = await getEmbeddedPostgresTestSupport();
       await tasks.update(f.issueId, patch);
       expect(await svc.applyPendingTaskWorkspaceSelection({ ...f, runId: randomUUID() })).toBe(false);
       const view = await svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor);
-      expect(view).toMatchObject({ bindingRevision: 2, pendingSelection: null, selection: null });
+      expect(view).toMatchObject({ bindingRevision: 3, pendingSelection: null, selection: null });
       expect(view.workspace?.id ?? null).toBe(kind === "binding" ? workspace.id : null);
       const [task] = await db.select().from(issues).where(eq(issues.id, f.issueId));
       expect(task.projectWorkspaceId).toBe(kind === "configured_source" ? source.id : null);
       await expect(svc.selectTaskWorkspace(request)).rejects.toThrow("binding changed");
       await tasks.update(f.issueId, { projectId: project.id, ...patch });
-      expect((await svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).bindingRevision).toBe(2);
+      expect((await svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor)).bindingRevision).toBe(3);
     } finally { await settings.updateExperimental({ enableIsolatedWorkspaces: previous.enableIsolatedWorkspaces }); }
   });
 

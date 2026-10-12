@@ -1742,6 +1742,49 @@ process.stderr.write(${JSON.stringify(stderr)}, () => { process.exitCode = ${cod
     expect(path.basename(realized.cwd)).toBe("PAP-992.hotfix-april-1");
   });
 
+  it.each(["configured", "builtin"] as const)("skips %s host provisioning for fresh, reused and restored sandbox worktrees", async kind => {
+    const repoRoot = await createTempRepo();
+    const marker = path.join(repoRoot, "host-provision-ran");
+    await fs.mkdir(path.join(repoRoot, "scripts"));
+    const script = kind === "configured" ? "custom.sh" : "provision-worktree.sh";
+    await fs.writeFile(path.join(repoRoot, "scripts", script),
+      `#!/bin/sh\nprintf 'host execution\n' > '${marker}'\n`);
+    await runGit(repoRoot, ["add", "scripts"]);
+    await runGit(repoRoot, ["commit", "-m", "Repository-controlled provision script"]);
+    const command = kind === "configured" ? `bash ./scripts/${script}` : undefined;
+    const input = {
+      base: { baseCwd: repoRoot, source: "project_primary" as const, projectId: "project-1",
+        workspaceId: "source-1", repoUrl: null, repoRef: "HEAD" },
+      config: { workspaceStrategy: { type: "git_worktree", baseRef: "main", provisionCommand: command } },
+      issue: { id: "issue-sandbox", identifier: "PAP-449", title: "Sandbox files" },
+      agent: { id: "agent-1", name: "Sandbox worker", companyId: "company-1" },
+      skipHostProvision: true,
+    };
+    const fresh = await realizeExecutionWorkspace(input);
+    expect(fresh.created).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+    const reused = await realizeExecutionWorkspace(input);
+    expect(reused.cwd).toBe(fresh.cwd);
+    expect(reused.created).toBe(false);
+    expect(existsSync(marker)).toBe(false);
+    const restoreInput = { base: input.base, issue: input.issue, agent: input.agent, skipHostProvision: true,
+      workspace: { mode: "isolated_workspace", strategyType: "git_worktree", cwd: fresh.cwd,
+        providerRef: fresh.cwd, projectId: "project-1", projectWorkspaceId: "source-1", repoUrl: null,
+        baseRef: "main", branchName: fresh.branchName, config: { provisionCommand: command },
+        metadata: RUNTIME_OWNED_GIT_BRANCH_METADATA } };
+    expect((await ensurePersistedExecutionWorkspaceAvailable(restoreInput))?.cwd).toBe(fresh.cwd);
+    expect(existsSync(marker)).toBe(false);
+    await fs.rm(fresh.cwd, { recursive: true, force: true });
+    expect(existsSync(fresh.cwd)).toBe(false);
+    expect((await ensurePersistedExecutionWorkspaceAvailable(restoreInput))?.cwd).toBe(fresh.cwd);
+    expect(existsSync(marker)).toBe(false);
+    await expect(fs.readFile(path.join(fresh.cwd, "README.md"), "utf8")).resolves.toBe("hello\n");
+    // The capability is per admission. Trusted default behavior still runs the
+    // exact same repository script, including automatic builtin discovery.
+    await ensurePersistedExecutionWorkspaceAvailable({ ...restoreInput, skipHostProvision: undefined });
+    await expect(fs.readFile(marker, "utf8")).resolves.toBe("host execution\n");
+  });
+
   it("runs a configured provision command inside the derived worktree", async () => {
     const repoRoot = await createTempRepo();
     await fs.mkdir(path.join(repoRoot, "scripts"), { recursive: true });

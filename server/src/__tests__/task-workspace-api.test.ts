@@ -97,8 +97,8 @@ const support = await getEmbeddedPostgresTestSupport();
     const listed = await call("list_workspaces", {}) as Array<{ id: string }>;
     const candidates = new Set(rows.slice(0, 3).map(row => row.id));
     expect(listed.filter(row => rows.some(candidate => candidate.id === row.id)).map(row => row.id).sort()).toEqual([...candidates].sort());
-    const view = await call("get_workspace", {}) as { bindingRevision: number };
     for (const row of rows) {
+      const view = await call("get_workspace", {}) as { bindingRevision: number };
       const selection = call("select_workspace", { selection: { kind: "existing", workspaceId: row.id },
         expectedBindingRevision: view.bindingRevision, requestKey: `select-${row.id}` });
       if (candidates.has(row.id)) await expect(selection).resolves.toMatchObject({ kind: "scheduled" });

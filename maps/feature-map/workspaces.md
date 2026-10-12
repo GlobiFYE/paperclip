@@ -36,12 +36,22 @@ Manual: Run a task that writes a small file, follow the bound workspace, and ins
 
 For task workspace selection, use the authorized task workspace API to choose a
 task directory, project source, or existing workspace. Verify that a change
-made during a run stays pending until the next normal admission. A projectless
+made during a run stays pending until the next normal admission. Submit another
+choice using the returned revision, then retry the superseded request; it must
+fail without replacing the newer pending choice. A projectless
 task must retain its files across resume and reassignment. Use the repository
 preparation API to add an authorized repository beneath that workspace;
 repeat the request and verify that it reuses the checkout and pinned revision.
 See [task binding tests](../../server/src/__tests__/task-workspace-binding.test.ts)
 and [repository access tests](../../server/src/__tests__/task-workspace-repositories-trust.test.ts).
+An existing projectless folder alias of a sandbox-restricted project must be
+rejected for a standard local task before its adapter executes. Repeat after
+relocating the configured source; retained ownership must still enforce the
+boundary. This is separate from ordinary authorized file preview/download.
+For a registered low-trust worktree running in a sandbox, a configured or built-in
+provision script must not run on the host during fresh creation, reuse, or rebuild.
+Verify the adapter still selects the sandbox and ordinary trusted provisioning
+continues to work.
 
 ### `workspace-management`
 

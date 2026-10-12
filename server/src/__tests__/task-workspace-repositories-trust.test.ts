@@ -74,6 +74,75 @@ const support = await getEmbeddedPostgresTestSupport();
     return { companyId, agentId, issueId, runId, userId, workspace, policy, service, actor, request, admission };
   }
 
+  it.each(["current", "retained", "standard_run", "absent_run_policy", "narrower_boundary"] as const)("rejects incompatible physical project trust (%s) without changing file read authority", async scenario => {
+    const f = await fixture();
+    const projectId = randomUUID();
+    const policy = { ...f.policy, authorizationPolicy: { ...f.policy.authorizationPolicy, trustBoundary: { ...f.policy.authorizationPolicy.trustBoundary, projectIds: [projectId] } } };
+    const [owner] = await db.insert(projects).values({ id: projectId, companyId: f.companyId, name: "Low-trust physical owner", executionWorkspacePolicy: policy }).returning();
+    const [source] = await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId: owner.id, name: "Physical source", cwd: f.admission.cwd, isPrimary: true }).returning();
+    if (scenario === "retained") await projectService(db).updateWorkspace(owner.id, source.id, { cwd: path.join(root, randomUUID()) });
+    if (scenario === "standard_run" || scenario === "absent_run_policy") {
+      await db.update(issues).set({ executionPolicy: policy }).where(eq(issues.id, f.issueId));
+      if (scenario === "standard_run") await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: f.issueId, executionPolicy: { trustPreset: "standard" } } }).where(eq(heartbeatRuns.id, f.runId));
+    }
+    if (scenario === "narrower_boundary") {
+      const policy = { ...f.policy, authorizationPolicy: { ...f.policy.authorizationPolicy, trustBoundary: {
+        mode: "low_trust_review", companyId: f.companyId, issueIds: [f.issueId], projectIds: [owner.id],
+      } } };
+      await db.update(issues).set({ executionPolicy: policy }).where(eq(issues.id, f.issueId));
+      await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: f.issueId, executionPolicy: policy } }).where(eq(heartbeatRuns.id, f.runId));
+    }
+    await expect(assertExecutionWorkspaceRootReadAccess(db, { ...f.admission, actor: f.actor, sourceWorkspaceId: f.workspace.id })).resolves.toBeUndefined();
+    await expect(assertExecutionWorkspaceRootWriteAccess(db, { ...f.admission, actor: f.actor, sourceWorkspaceId: f.workspace.id })).rejects.toThrow("Physical workspace source trust is incompatible");
+    await expect(f.service.prepareForAdmission(f.admission)).rejects.toThrow("Physical workspace source trust is incompatible");
+    expect(acquisition.materialize).not.toHaveBeenCalled();
+  });
+
+  it("keeps a declared low-trust source compatible with its retained effective policy", async () => {
+    const f = await fixture();
+    const projectId = randomUUID();
+    const policy = { ...f.policy, authorizationPolicy: { ...f.policy.authorizationPolicy, trustBoundary: { ...f.policy.authorizationPolicy.trustBoundary, projectIds: [projectId] } } };
+    const [owner] = await db.insert(projects).values({ id: projectId, companyId: f.companyId, name: "Declared low-trust source", executionWorkspacePolicy: policy }).returning();
+    await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId: owner.id, name: "Source", cwd: f.admission.cwd, isPrimary: true });
+    await db.update(executionWorkspaces).set({ projectId: owner.id }).where(eq(executionWorkspaces.id, f.workspace.id));
+    await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: f.issueId, executionPolicy: policy } }).where(eq(heartbeatRuns.id, f.runId));
+    await expect(f.service.prepareForAdmission(f.admission)).resolves.toEqual([]);
+    expect(acquisition.materialize).not.toHaveBeenCalled();
+  });
+
+  it.each(["writer", "retained_reader"] as const)("rejects incompatible %s trust before copy provisioning without minting copy proof", async principal => {
+    const f = await fixture(), exec = promisify(execFileCallback);
+    if (principal === "retained_reader") await f.service.prepareForAdmission(f.admission);
+    const sourceCwd = path.join(root, `${f.issueId}-low-trust-source`);
+    await mkdir(sourceCwd);
+    await exec("git", ["init", "--initial-branch=main", sourceCwd]);
+    await writeFile(path.join(sourceCwd, "source.txt"), "Low-trust source\n");
+    await exec("git", ["-C", sourceCwd, "add", "."]);
+    await exec("git", ["-C", sourceCwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "source"]);
+    await rm(f.admission.cwd, { recursive: true });
+    await exec("git", ["-C", sourceCwd, "worktree", "add", "-b", "target", f.admission.cwd]);
+    const projectId = randomUUID();
+    const policy = { ...f.policy, authorizationPolicy: { ...f.policy.authorizationPolicy,
+      trustBoundary: { ...f.policy.authorizationPolicy.trustBoundary, projectIds: [projectId] } } };
+    await db.insert(projects).values({ id: projectId, companyId: f.companyId, name: "Low-trust copied source", executionWorkspacePolicy: policy });
+    await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId, name: "Source", cwd: sourceCwd });
+    let actor = f.actor;
+    if (principal === "retained_reader") {
+      const runId = randomUUID();
+      await db.update(issues).set({ executionPolicy: policy }).where(eq(issues.id, f.issueId));
+      await db.insert(heartbeatRuns).values({ id: runId, companyId: f.companyId, agentId: f.agentId, responsibleUserId: f.userId,
+        status: "running", contextSnapshot: { issueId: f.issueId, executionPolicy: policy } });
+      actor = { ...f.actor, runId };
+    }
+    const captured = await assertIsolatedWorkspaceSourceReadAccess(db, { companyId: f.companyId, sourceCwd, actor });
+    await expect(retainIsolatedWorkspaceSourceAccess(db, { companyId: f.companyId, sourceCwd, targetCwd: f.admission.cwd,
+      actor, issueId: f.issueId, captured, phase: "verified" })).rejects.toThrow("Physical workspace source trust is incompatible");
+    const entries = await db.select().from(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.companyId, f.companyId));
+    expect(entries.some(entry => entry.kind === "isolated_project_source" && entry.scopeId === projectId)).toBe(true);
+    expect(entries.some(entry => entry.kind === "isolated_copy")).toBe(false);
+    expect(await readFile(path.join(f.admission.cwd, "source.txt"), "utf8")).toBe("Low-trust source\n");
+  });
+
   async function lowTrustPeer(f: Awaited<ReturnType<typeof fixture>>, cwd = f.admission.cwd) {
     const [workspace] = await db.insert(executionWorkspaces).values({ companyId: f.companyId, name: "Low-trust alias",
       cwd, mode: "isolated_workspace", strategyType: "task_directory" }).returning();
@@ -423,9 +492,10 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(entries.filter(entry => entry.kind === "reader")).toHaveLength(peer ? 1 : 0);
   });
 
-  it.each(["primary", "linked"] as const)("does not probe unrelated company Git paths when the normal %s source is identified", async kind => {
+  it.each(["primary", "linked", "separate primary"] as const)("does not probe unrelated company Git paths when the %s source is identified", async kind => {
     const f = await fixture(), exec = promisify(execFileCallback);
-    await exec("git", ["init", "--initial-branch=main", f.admission.cwd]);
+    await exec("git", ["init", "--initial-branch=main",
+      ...(kind === "separate primary" ? ["--separate-git-dir", path.join(root, `${f.issueId}-metadata`)] : []), f.admission.cwd]);
     const privateCwd = path.join(f.admission.cwd, "private"); await mkdir(privateCwd);
     await writeFile(path.join(privateCwd, "secret.txt"), "Private tracked bytes\n");
     await exec("git", ["-C", f.admission.cwd, "add", "."]);
@@ -1145,8 +1215,12 @@ exec "$PROBE_REAL_GIT" "$@"
         const [project] = await db.insert(projects).values({ companyId: f.companyId, name: "Restricted", executionWorkspacePolicy: f.policy }).returning();
         if (source === "project") await db.update(issues).set({ projectId: project.id }).where(eq(issues.id, f.issueId));
         else {
-          await db.update(projects).set({ executionWorkspacePolicy: { ...f.policy, authorizationPolicy: { ...f.policy.authorizationPolicy,
-            trustBoundary: { ...f.policy.authorizationPolicy.trustBoundary, projectIds: [project.id] } } } }).where(eq(projects.id, project.id));
+          const admittedPolicy = { ...f.policy, authorizationPolicy: { ...f.policy.authorizationPolicy,
+            trustBoundary: { ...f.policy.authorizationPolicy.trustBoundary, projectIds: [project.id] } } };
+          await db.update(projects).set({ executionWorkspacePolicy: admittedPolicy }).where(eq(projects.id, project.id));
+          // This case models an admitted sandbox run, not a standard run whose
+          // source changed after dispatch (covered independently above).
+          await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: f.issueId, executionPolicy: admittedPolicy } }).where(eq(heartbeatRuns.id, f.runId));
           await db.update(executionWorkspaces).set({ projectId: project.id, strategyType: "git_worktree" }).where(eq(executionWorkspaces.id, f.workspace.id));
         }
       }

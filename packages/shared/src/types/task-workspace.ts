@@ -12,6 +12,7 @@ export type TaskWorkspaceIntent = {
 export type TaskWorkspacePendingSelection = {
   version: 1;
   requestKey: string;
+  /** Current task CAS revision; first-folder realization may advance it. */
   expectedBindingRevision: number;
   intent: TaskWorkspaceIntent;
 };

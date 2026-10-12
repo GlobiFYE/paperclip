@@ -326,6 +326,8 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
         : workspace;
     },
   });
+  const skipHostProvision = trustPreset.kind === "low_trust_review"
+    && lowTrustPreflightEnvironmentDriver === "sandbox";
   const hostExecutionWorkspaceConfig = isDotRun ? {} :
     stripHostWorkspaceProvisionForLowTrustSandbox({
       config: mergedConfig,
@@ -509,6 +511,7 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
       restoreExistingWorkspace: reusableExistingExecutionWorkspace
         ? () =>
             ensurePersistedExecutionWorkspaceAvailable({
+              skipHostProvision,
               db,
               base: executionWorkspaceBase,
               workspace: {
@@ -567,6 +570,7 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
         : null,
       realizeWorkspace: () =>
         realizeExecutionWorkspace({
+          skipHostProvision,
           db,
           base: executionWorkspaceBase,
           config: hostExecutionWorkspaceConfig,

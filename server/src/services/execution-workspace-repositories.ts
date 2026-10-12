@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 import fs from "node:fs/promises";
 import { constants as fsConstants } from "node:fs";
 import path from "node:path";
@@ -393,10 +393,10 @@ async function isolatedWorkspaceSourceRoots(db: Db | DbTransaction, companyId: s
   const checkoutRoot = await fs.realpath(path.resolve(await git(sourceCwd, "rev-parse", "--show-toplevel")));
   const commonRoot = await fs.realpath(path.resolve(checkoutRoot, await git(checkoutRoot, "rev-parse", "--git-common-dir")));
   const roots = new Set(copyKind === "repository" ? [localRoot, checkoutRoot, commonRoot] : [checkoutRoot, commonRoot]);
-  // An ordinary primary checkout identifies its own metadata directly. Linked
-  // worktrees can identify that primary through Git's registered checkout list.
-  let primaryIdentified = commonRoot === path.join(checkoutRoot, ".git")
-    && await fs.realpath(await git(checkoutRoot, "rev-parse", "--absolute-git-dir")) === commonRoot;
+  // A primary checkout uses the common Git directory itself, including when
+  // --separate-git-dir stores it outside the checkout. Only linked worktrees
+  // need another primary owner resolved through registration or known paths.
+  let primaryIdentified = await fs.realpath(await git(checkoutRoot, "rev-parse", "--absolute-git-dir")) === commonRoot;
   const considerPrimary = async (candidatePath: string): Promise<boolean> => {
     const candidate = await fs.realpath(candidatePath).catch(() => null);
     if (!candidate || candidate === checkoutRoot || candidate === commonRoot) return false;
@@ -540,6 +540,7 @@ export async function retainIsolatedWorkspaceSourceAccess(db: Db, input: {
     // A failed Git operation in an existing ordinary folder cannot mint it.
     const phase = input.phase ?? "preparing";
     let preparingCopyProjectIds: Set<string> | undefined;
+    let verifiedCopyProjectIds: Set<string> | undefined;
     try {
       const targetEntry = await fs.lstat(input.targetCwd).catch((error: NodeJS.ErrnoException) => {
         if (error.code === "ENOENT") return null;
@@ -553,9 +554,10 @@ export async function retainIsolatedWorkspaceSourceAccess(db: Db, input: {
       const verifiedTarget = linkedWorktree && await verifiedIsolatedWorktree(canonicalCwd, roots);
       if (linkedWorktree && (phase === "verified" || verifiedTarget)) {
         if (!verifiedTarget) throw forbidden("Isolated copy target is not a verified Git worktree");
-        for (const scopeId of projectIds) if (!existing.some(entry => entry.kind === "isolated_copy" && entry.scopeId === scopeId)) {
-          await tx.insert(executionWorkspaceRepositoryAccess).values({ companyId: input.companyId, rootKey, canonicalCwd, kind: "isolated_copy", scopeId });
-        }
+        // Physical verification permits this check's ancestor exemption, but
+        // persist no new copy proof unless all target policies/readers allow it.
+        preparingCopyProjectIds = projectIds;
+        verifiedCopyProjectIds = projectIds;
       } else if (linkedWorktree && await unusedIsolatedCopyTarget(input.targetCwd)) {
         // This allowance exists only for this pre-copy check. No proof row is
         // written until the harness confirms Git's completed registration.
@@ -566,18 +568,71 @@ export async function retainIsolatedWorkspaceSourceAccess(db: Db, input: {
     // READ authority never grants permission to provision/write that target.
     try {
       const target = await resolveRepositoryRootSources(tx, { companyId: input.companyId, cwd: canonicalCwd, preparingCopyProjectIds });
+      await assertRootProjectTrust(tx, { companyId: input.companyId, actor: input.actor, issueId: input.issueId, projectIds: target.sourceProjectIds });
       for (const id of target.sourceIds) await assertTaskWorkspaceAccess(tx, input.actor, input.companyId, id);
       await assertRootProjectAccess(tx, input.actor, input.companyId, target.sourceProjectIds,
         { sharedProjectIds: target.sharedProjectIds, issueId: input.issueId });
       for (const reader of target.overlappingEntries.filter(entry => entry.kind === "reader")) {
-        const { actor } = await retainedRootReader(tx, input.companyId, reader);
+        const { actor, issue } = await retainedRootReader(tx, input.companyId, reader);
+        await assertRootProjectTrust(tx, { companyId: input.companyId, actor, issueId: issue.id, projectIds: target.sourceProjectIds });
         for (const id of target.sourceIds) await assertTaskWorkspaceAccess(tx, actor, input.companyId, id);
         await assertRootProjectAccess(tx, actor, input.companyId, target.sourceProjectIds);
       }
     } catch (error) { failure ??= error; }
+    if (!failure && verifiedCopyProjectIds) {
+      for (const scopeId of verifiedCopyProjectIds) if (!existing.some(entry => entry.kind === "isolated_copy" && entry.scopeId === scopeId)) {
+        await tx.insert(executionWorkspaceRepositoryAccess).values({ companyId: input.companyId, rootKey, canonicalCwd, kind: "isolated_copy", scopeId });
+      }
+    }
     return failure;
   });
   if (denied) throw denied;
+}
+
+/** Physical ownership cannot silently change a run's already selected containment. */
+async function assertRootProjectTrust(db: Db | DbTransaction, input: {
+  companyId: string; projectIds: Set<string>; actor: AuthorizationActor;
+  issueId?: string | null; sourceWorkspaceId?: string; assigneeAgentId?: string | null;
+}) {
+  if (!input.projectIds.size) return;
+  const owners = await db.select().from(projects).where(and(eq(projects.companyId, input.companyId),
+    or(...[...input.projectIds].map(id => eq(projects.id, id)))));
+  const restricted = owners.filter(owner => resolveCoreTrustPreset({ companyId: input.companyId, workspaceSourceProject: owner }).kind !== "standard");
+  if (!restricted.length) return;
+  const incompatible = () => forbidden("Physical workspace source trust is incompatible with the task's execution policy");
+  const [issue] = input.issueId ? await db.select().from(issues).where(and(eq(issues.id, input.issueId), eq(issues.companyId, input.companyId))) : [];
+  const agentId = input.actor.type === "agent" ? input.actor.agentId : issue?.assigneeAgentId ?? input.assigneeAgentId;
+  const [agent] = agentId ? await db.select().from(agents).where(and(eq(agents.id, agentId), eq(agents.companyId, input.companyId))) : [];
+  const [project] = issue?.projectId ? await db.select().from(projects).where(and(eq(projects.id, issue.projectId), eq(projects.companyId, input.companyId))) : [];
+  const workspaceId = input.sourceWorkspaceId ?? issue?.executionWorkspaceId;
+  const [workspace] = workspaceId ? await db.select().from(executionWorkspaces).where(and(eq(executionWorkspaces.id, workspaceId), eq(executionWorkspaces.companyId, input.companyId))) : [];
+  const [source] = workspace?.projectId ? await db.select().from(projects).where(and(eq(projects.id, workspace.projectId), eq(projects.companyId, input.companyId))) : [];
+  const runId = input.actor.runId;
+  const [run] = runId ? await db.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.id, runId), eq(heartbeatRuns.companyId, input.companyId))) : [];
+  if ((agentId && !agent) || (runId && (!run || run.agentId !== agentId || !issue
+    || (run.nativeIssueId ?? run.contextSnapshot?.issueId ?? run.contextSnapshot?.taskId ?? run.issueId) !== issue.id))) throw incompatible();
+  // The stored effective policy is the containment the harness actually chose.
+  // Live policy edits must not relabel an already admitted local run as sandboxed.
+  const retainedPolicy = run?.contextSnapshot?.executionPolicy;
+  const current = resolveCoreTrustPreset({ companyId: input.companyId, agent, project, workspaceSourceProject: source, issue,
+    run: run ? { companyId: input.companyId, executionPolicy: retainedPolicy } : null });
+  // Standard admitted runs intentionally omit executionPolicy; absence on an
+  // existing run is still standard, not permission to adopt live policy edits.
+  const selected = run
+    ? resolveCoreTrustPreset({ companyId: input.companyId, run: { companyId: input.companyId, executionPolicy: retainedPolicy } })
+    : current;
+  if (selected.kind !== "low_trust_review" || current.kind !== "low_trust_review"
+    || !isDeepStrictEqual(selected.boundary, current.boundary)) throw incompatible();
+  const selectedPolicy = { trustPreset: selected.preset, authorizationPolicy: {
+    trustPreset: selected.preset, trustBoundary: selected.boundary,
+  } };
+  for (const owner of restricted) {
+    const combined = resolveCoreTrustPreset({ companyId: input.companyId, workspaceSourceProject: owner,
+      run: { companyId: input.companyId, executionPolicy: selectedPolicy } });
+    // Narrower boundaries need a new admission too; do not silently change the
+    // capabilities of an existing provider session or a retained reader.
+    if (combined.kind !== "low_trust_review" || !isDeepStrictEqual(combined.boundary, selected.boundary)) throw incompatible();
+  }
 }
 
 /** Selection validates writable source scope without registering a reader or changing policy. */
@@ -587,6 +642,7 @@ export async function assertExecutionWorkspaceRootWriteAccess(db: Db | DbTransac
   const { sourceIds, sourceProjectIds, sharedProjectIds } = await resolveRepositoryRootSources(db, { ...input, inspectCurrentAliases: true });
   for (const sourceId of sourceIds) await assertTaskWorkspaceAccess(db, input.actor, input.companyId, sourceId);
   await assertRootProjectAccess(db, input.actor, input.companyId, sourceProjectIds, { ...input, sharedProjectIds });
+  await assertRootProjectTrust(db, { ...input, projectIds: sourceProjectIds });
 }
 
 /** Workspace aggregate child. It owns acquisition receipts, never task binding or provider sessions. */
@@ -688,6 +744,8 @@ export function executionWorkspaceRepositoryService(db: Db) {
       && readers.every(reader => reader.issueId === input.reader!.issueId);
     for (const reader of readers) {
       const { actor, issue } = await retainedRootReader(tx, input.companyId, reader);
+      await assertRootProjectTrust(tx, { companyId: input.companyId, projectIds: sourceProjectIds, actor, issueId: issue.id,
+        sourceWorkspaceId: input.reader?.runId === reader.scopeId ? input.sourceWorkspaceId : undefined });
       await assertRootProjectAccess(tx, actor, input.companyId, sourceProjectIds,
         input.reader?.runId === reader.scopeId ? { sharedProjectIds, issueId: issue.id } : undefined);
       if (ownAdmissionOnly) {
@@ -713,6 +771,7 @@ export function executionWorkspaceRepositoryService(db: Db) {
     }
     if (input.actor) {
       if (!input.issueId) throw forbidden("Workspace write authorization requires a task");
+      await assertRootProjectTrust(tx, { ...input, projectIds: sourceProjectIds, actor: input.actor });
       await assertRootProjectAccess(tx, input.actor, input.companyId, sourceProjectIds, { sharedProjectIds, issueId: input.issueId });
       for (const sourceId of sourceIds) await assertTaskWorkspaceAccess(tx, input.actor, input.companyId, sourceId);
     }

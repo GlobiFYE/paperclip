@@ -1482,9 +1482,15 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       const intent: TaskWorkspaceIntent = { version: 1, request: { key: input.requestKey, expectedBindingRevision: input.expectedBindingRevision }, selection: input.selection, source: "explicit" };
       // Root changes always wait for a new admission. The current provider and
       // any export-only recovery retain their immutable roots and input evidence.
-      await tx.update(issues).set({ workspacePendingSelection: { version: 1, requestKey: input.requestKey,
-        expectedBindingRevision: task.workspaceBindingRevision, intent }, updatedAt: new Date() }).where(eq(issues.id, task.id));
-      return { kind: "scheduled" as const, applies: "next_normal_admission" as const, bindingRevision: task.workspaceBindingRevision };
+      // Acceptance advances the task's CAS revision even though its active folder
+      // stays unchanged. Otherwise a superseded request can be retried against
+      // the same revision and overwrite a newer pending choice. The intent keeps
+      // the original request revision so current-choice retries remain idempotent.
+      const nextRevision = task.workspaceBindingRevision + 1;
+      await tx.update(issues).set({ workspaceBindingRevision: nextRevision,
+        workspacePendingSelection: { version: 1, requestKey: input.requestKey,
+          expectedBindingRevision: nextRevision, intent }, updatedAt: new Date() }).where(eq(issues.id, task.id));
+      return { kind: "scheduled" as const, applies: "next_normal_admission" as const, bindingRevision: nextRevision };
     });
   }
 

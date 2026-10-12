@@ -3239,8 +3239,10 @@ async function provisionExecutionWorktree(input: {
   issue: ExecutionWorkspaceIssueRef | null;
   agent: ExecutionWorkspaceAgentRef;
   created: boolean;
+  skipHostProvision?: boolean;
   recorder?: WorkspaceOperationRecorder | null;
 }) {
+  if (input.skipHostProvision) return;
   const provisionCommand = resolveWorkspaceProvisionCommand(input.strategy, input.repoRoot);
   if (!provisionCommand) return;
   const resolvedProvisionCommand = resolveRepoManagedWorkspaceCommand(provisionCommand, input.repoRoot);
@@ -3335,6 +3337,8 @@ export async function realizeExecutionWorkspace(input: {
   enableWorkspaceDirtyQuarantineRepair?: boolean;
   recorder?: WorkspaceOperationRecorder | null;
   resolveGitAuth?: GitRemoteAuthProvider | null;
+  /** Server-selected containment capability; never derived from repository configuration. */
+  skipHostProvision?: boolean;
   beforeSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
   afterSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
 }): Promise<RealizedExecutionWorkspace> {
@@ -3485,6 +3489,7 @@ export async function realizeExecutionWorkspace(input: {
     }
     await input.afterSourceCopy?.(repoRoot, reusablePath);
     await provisionExecutionWorktree({
+      skipHostProvision: input.skipHostProvision,
       strategy: rawStrategy,
       base: input.base,
       repoRoot,
@@ -3644,6 +3649,7 @@ export async function realizeExecutionWorkspace(input: {
     }
     await input.afterSourceCopy?.(repoRoot, worktreePath);
     await provisionExecutionWorktree({
+      skipHostProvision: input.skipHostProvision,
       strategy: rawStrategy,
       base: input.base,
       repoRoot,
@@ -3740,6 +3746,7 @@ export async function realizeExecutionWorkspace(input: {
   }
   await input.afterSourceCopy?.(repoRoot, worktreePath);
   await provisionExecutionWorktree({
+    skipHostProvision: input.skipHostProvision,
     strategy: rawStrategy,
     base: input.base,
     repoRoot,
@@ -3792,6 +3799,8 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
   enableWorkspaceDirtyQuarantineRepair?: boolean;
   recorder?: WorkspaceOperationRecorder | null;
   resolveGitAuth?: GitRemoteAuthProvider | null;
+  /** Server-selected containment capability; never derived from repository configuration. */
+  skipHostProvision?: boolean;
   beforeSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
   afterSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
 }): Promise<RealizedExecutionWorkspace | null> {
@@ -3927,6 +3936,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     realized.baseRefSha = refresh.baseRefSha ?? recordedBaseRefSha ?? baseDrift.branchBaseRefSha ?? baseDrift.currentBaseRefSha;
     await input.afterSourceCopy?.(repoRoot, realized.worktreePath ?? cwd);
     await provisionExecutionWorktree({
+      skipHostProvision: input.skipHostProvision,
       strategy: {
         type: "git_worktree",
         ...(provisionCommand ? { provisionCommand } : {}),
@@ -4020,6 +4030,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
 
   await input.afterSourceCopy?.(repoRoot, worktreePath);
   await provisionExecutionWorktree({
+    skipHostProvision: input.skipHostProvision,
     strategy: {
       type: "git_worktree",
       ...(provisionCommand ? { provisionCommand } : {}),

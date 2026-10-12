@@ -112,7 +112,7 @@ await issues.create(companyId, {
 });
 ```
 
-A task can later select an authorized existing workspace with its current binding revision and an idempotency key. The response states that the selection applies on the next normal admission; it does not restart the current process. A repository request similarly records preparation intent when the active provider root cannot safely accept a new checkout. Project assignment alone never requests this transition.
+A task can later select an authorized existing workspace with its current binding revision and an idempotency key. Accepting a new pending selection atomically advances that revision, so retrying a superseded choice cannot replace a newer one. Retrying the current pending or applied request remains idempotent. The response states that the selection applies on the next normal admission; it does not restart the current process. A repository request similarly records preparation intent when the active provider root cannot safely accept a new checkout. Project assignment alone never requests this transition.
 
 Example channel defaults:
 

@@ -254,6 +254,6 @@ const support = await getEmbeddedPostgresTestSupport();
     const [issue] = await db.select().from(issues).where(and(eq(issues.companyId, companyId), eq(issues.id, issueId)));
     expect(issue.executionWorkspaceId).toBe(workspaceId);
     expect(issue.workspacePendingSelection?.requestKey).toBe("move");
-    expect(issue.workspaceBindingRevision).toBe(0);
+    expect(issue.workspaceBindingRevision).toBe(1);
   });
 });

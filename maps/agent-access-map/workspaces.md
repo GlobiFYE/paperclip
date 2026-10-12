@@ -33,8 +33,15 @@ preset and task ownership where required.
 
 Task workspace writes require `issue:mutate`, an active owned task/run for agents,
 and current source visibility. Shared physical roots also require source-project
-workspace write authority. Binding revisions and request keys fence retries;
+workspace write authority. Accepting a new pending choice advances its binding
+revision; superseded retries fail while current-choice retries remain idempotent.
+Binding revisions and request keys fence retries;
 selection applies at the next normal admission without interrupting a live run.
+Writable aliases must also be compatible with current and retained physical
+source projects' trust boundaries. Incompatible choices are rejected before
+dispatch; a projectless alias cannot bypass required sandbox containment.
+Source-copy checks apply the same trust boundary before provisioning. Low-trust
+sandbox runs skip host worktree provisioning, including built-in scripts.
 Source review for these additions: PR #15749 and
 [task workspace routes](../../server/src/routes/task-workspaces.ts),
 [native authority](../../server/src/services/native-runtime/paperclip-runner-tool-authority.ts),
