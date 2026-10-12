@@ -4649,6 +4649,69 @@ rl.on("line", (line) => {
     };
   }
 
+  it("keeps a remote MCP connection healthy and starts a fresh MCP session after a tool call timeout", async () => {
+    const company = await createCompany(db);
+    const agent = await createAgent(db, company.id);
+    const { run } = await createIssueAndRun(db, company.id, agent.id);
+    let initializeCount = 0;
+    let toolCallCount = 0;
+    const fake = await startFakeRemoteMcpServer((request) => {
+      if (request.body?.method === "initialize") {
+        initializeCount += 1;
+        return initializeFakeMcpSession(request, `session-${initializeCount}`);
+      }
+      if (request.body?.method === "notifications/initialized") return { status: 202, rawBody: "" };
+      toolCallCount += 1;
+      return { delayMs: toolCallCount === 1 ? 1_000 : 0 };
+    });
+    try {
+      const { connection } = await createRemoteMcpTool(db, company.id, {
+        applicationKey: "per-call-timeout",
+        toolName: "kv_get",
+        url: fake.url,
+        connectionConfig: { mcpSessionRequired: true },
+      });
+      await allowAllToolsForAgent(db, company.id, agent.id);
+      const gateway = createTestToolGatewayService(db);
+      const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id });
+      const connectedTool = (await gateway.listToolsForSession(session.token))
+        .find((tool) => tool.providerType === "mcp_remote_http");
+      expect(connectedTool).toBeTruthy();
+
+      await gateway.executeTool({
+        sessionToken: session.token,
+        tool: connectedTool!.name,
+        parameters: { key: "alpha" },
+        timeoutMs: 300,
+      }).then(
+        () => {
+          throw new Error("Expected the remote MCP call to time out");
+        },
+        (error) => expectGatewayError(error, 504, "tool_timeout"),
+      );
+      expect(await connectionHealth(connection.id)).toBe("ok");
+      expect(toolCallCount).toBe(1);
+      expect(initializeCount).toBe(1);
+      const [invocation] = await db.select().from(toolInvocations);
+      expect(invocation).toMatchObject({ status: "timed_out", errorCode: "tool_timeout" });
+
+      await expect(gateway.executeTool({
+        sessionToken: session.token,
+        tool: connectedTool!.name,
+        parameters: { key: "beta" },
+      })).resolves.toMatchObject({ status: "completed" });
+      expect(initializeCount).toBe(2);
+      expect(toolCallCount).toBe(2);
+      expect(fake.requests.filter((request) => request.body?.method === "initialize")
+        .map((request) => request.headers["mcp-session-id"])).toEqual([undefined, undefined]);
+      expect(fake.requests.filter((request) => request.body?.method === "tools/call")
+        .map((request) => request.headers["mcp-session-id"])).toEqual(["session-1", "session-2"]);
+      expect(await connectionHealth(connection.id)).toBe("ok");
+    } finally {
+      await fake.close();
+    }
+  });
+
   const perCallResponseFailures = [
     {
       name: "an oversized response",

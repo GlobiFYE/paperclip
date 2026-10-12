@@ -6359,6 +6359,7 @@ export function createToolGatewayService(
         // other tools stay listed and callable; a server that is really
         // unreachable is still caught by the fetch-failure branch below and by
         // the periodic health sweep.
+        if (mcpSession) forgetMcpHttpSession(mcpSession);
         throw new ToolGatewayHttpError(
           504,
           "Remote MCP tool call timed out",
