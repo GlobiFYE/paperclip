@@ -532,8 +532,6 @@ describe("AgentMail durable email pipeline", () => {
     const f = await fixture();
     const [project] = await db.insert(projects).values({ companyId: f.companyId, name: "Protected email tasks",
       executionWorkspacePolicy: { authorizationPolicy: { assignmentPolicy: { mode: "protected" } } } }).returning();
-    // Change defaults after provider fetch has captured the endpoint, before the
-    // creation transaction locks it. Only the locked defaults are authoritative.
     const fetcher = vi.mocked(f.fetcher);
     const fetch = fetcher.getMockImplementation()!;
     let changedDefaults = false;

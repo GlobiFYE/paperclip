@@ -291,8 +291,6 @@ describe.skipIf(!support.supported)("heartbeat workspace preparation boundary", 
         spec: { host: "fixture.invalid", port: 22, username: "fixture", remoteWorkspacePath: remoteCwd,
           privateKey: null, knownHosts: null, strictHostKeyChecking: true, remoteCwd } }
       : { kind: "remote", transport: "sandbox", providerKey: "daytona", remoteCwd };
-    // Double the external transport boundary, while retaining real workspace,
-    // database, lease and descriptor handling. Driver hints alone cannot decide.
     const realize = input.services.envOrchestrator.realizeForRun;
     vi.spyOn(input.services.envOrchestrator, "realizeForRun").mockImplementation(async args => ({
       ...await realize(args), executionTarget: target,
@@ -329,7 +327,6 @@ describe.skipIf(!support.supported)("heartbeat workspace preparation boundary", 
       await expect(prepareHeartbeatWorkspace(db, input)).rejects.toThrow(descriptor === "absent"
         ? "native_workspace_sync_descriptor_binding_missing" : "native_workspace_sync_descriptor_digest_mismatch");
       expect(reserve).not.toHaveBeenCalled();
-      // The outer run owner retains its normal terminalization/lease cleanup path.
       expect(await leases(input.run.id)).toMatchObject([{ status: "active" }]);
     }
     expect(prepare).not.toHaveBeenCalled();

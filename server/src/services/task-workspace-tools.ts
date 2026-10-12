@@ -6,7 +6,6 @@ function repositoryView(repo: Record<string, unknown>) {
     state: repo.state, pinnedCommit: repo.pinnedCommit, branchName: repo.branchName };
 }
 
-/** Transport only: authorization, receipts, and workspace decisions remain in ordinary APIs. */
 export async function callTaskWorkspaceTool(input: { name: string; arguments: Record<string, unknown>; apiUrl: string; token: string; companyId: string; issueId: string; workspaceRoot?: string }) {
   let route = `/issues/${input.issueId}/workspace`;
   let method = "GET";
@@ -23,7 +22,6 @@ export async function callTaskWorkspaceTool(input: { name: string; arguments: Re
   if (!response.ok) throw new Error(typeof result.error === "string" ? result.error : `Workspace tool failed (${response.status})`);
   if (input.name === "prepare_repository") {
     const { operationId, ...rest } = result;
-    // PRP reserves operationId for the semantic operation name.
     return { ...rest, ...(result.repository ? { repository: repositoryView(result.repository) } : {}), preparationId: operationId };
   }
   if (input.name === "get_workspace") {

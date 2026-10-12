@@ -4891,7 +4891,6 @@ export function issueRoutes(
     executionWorkspacePreference?: string | null;
     executionWorkspaceSettings?: unknown;
   }) {
-    // Organizational project inheritance never comes from filesystem sources.
     if (input.projectId) return input.projectId;
     const sourceId = input.inheritExecutionWorkspaceFromIssueId ?? input.parentId;
     const source = sourceId ? await svc.getById(sourceId) : null;
@@ -7730,7 +7729,6 @@ export function issueRoutes(
   //                   must not install the guard, or it can clear the flag that
   //                   the other request still owns.
   //   null          - this function sent an error response, so the caller stops.
-  // The reopen checks the persisted task binding and source access inside the service, and
   // it runs only after the route already authorized the request on the issue.
   async function reopenClosedIssueExecutionWorkspaceOrRespond(
     req: Request,

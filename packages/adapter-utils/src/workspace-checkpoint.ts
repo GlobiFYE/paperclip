@@ -5,8 +5,6 @@ import { WorkspaceManifestWriter, WorkspaceManifestMap, workspacePaths, workspac
 import { shouldExcludePath, excludePatternMatches, isRelativePathOrDescendant } from "./exclude-patterns.js";
 import { openDirectorySnapshot, type DirectorySnapshot } from "./workspace-restore-merge.js";
 
-/** Transfer metadata is disk-backed on both sides. No file list or payload is
- * buffered in a command argument, JSON array or controller heap. */
 export async function writeCheckpointBaseline(snapshot: DirectorySnapshot, filePath: string): Promise<void> {
   const writer = new WorkspaceManifestWriter(filePath);
   try {
@@ -16,8 +14,6 @@ export async function writeCheckpointBaseline(snapshot: DirectorySnapshot, fileP
   } catch (error) { writer.close(false); throw error; }
 }
 
-// This function is serialized as the provider helper. Keep dependencies explicit
-// in workspaceCheckpointScript: the same path policy functions run on both ends.
 async function checkpointMain(
   fs: typeof import("node:fs/promises"), path: typeof import("node:path"),
   DatabaseSync: typeof import("node:sqlite").DatabaseSync,
@@ -69,8 +65,6 @@ async function checkpointMain(
       else if (before.isSymbolicLink()) {
         const target = await fs.readlink(source);
         const resolved = path.resolve(path.dirname(source), target);
-        // Match confined full exports: omit the unsafe entry without losing
-        // unrelated changed files. Never follow the link or copy its target.
         if (path.isAbsolute(target) || (resolved !== root && !resolved.startsWith(`${root}/`))) continue;
         entry = { kind: "symlink", target };
       } else continue;
@@ -100,13 +94,9 @@ async function checkpointMain(
 }
 
 export function workspaceCheckpointScript(): string {
-  // Keep wildcard policy in one source. The private segment predicate is the
-  // only dependency not exported by exclude-patterns.
   return `import fs from 'node:fs/promises';\nimport path from 'node:path';\nimport { DatabaseSync } from 'node:sqlite';\nimport { createHash } from 'node:crypto';\nimport { createReadStream } from 'node:fs';\nconst __name = (fn) => fn;\n${isRelativePathOrDescendant.toString()}\nfunction pathContainsSegmentOrDescendant(relative, segment) { return relative === segment || relative.startsWith(segment + '/') || relative.endsWith('/' + segment) || relative.includes('/' + segment + '/'); }\n${excludePatternMatches.toString()}\n${shouldExcludePath.toString()}\nawait (${checkpointMain.toString()})(fs, path, DatabaseSync, createHash, createReadStream, shouldExcludePath);\n`;
 }
 
-/** Validate every manifest record before allowing a sparse source to authorize
- * deletions. SQLite is read-only, extensions and trusted schema are disabled. */
 export function readCheckpointSnapshot(filePath: string, baseline: DirectorySnapshot): DirectorySnapshot {
   const db = new DatabaseSync(filePath, { readOnly: true, allowExtension: false });
   let count: number;
@@ -116,13 +106,11 @@ export function readCheckpointSnapshot(filePath: string, baseline: DirectorySnap
   } finally { db.close(); }
   const snapshot = openDirectorySnapshot({ version: 2, exclude: baseline.exclude, ignoredPaths: baseline.ignoredPaths,
     entries: { kind: "path_manifest", version: 1, filePath, category: "baseline", count } });
-  try { for (const _entry of snapshot.entries) { /* bounded record validation */ } }
+  try { for (const _entry of snapshot.entries) {   } }
   catch (error) { (snapshot.entries as WorkspaceManifestMap<unknown>).close(); throw error; }
   return snapshot;
 }
 
-/** The manifest is provider data, not proof that the downloaded payload matches
- * it. Verify changed entries before the existing merge engine sees the source. */
 export async function validateCheckpointPayload(input: { baseline: DirectorySnapshot; snapshot: DirectorySnapshot; payload: string }): Promise<WorkspaceCheckpointMetrics> {
   const { captureDirectorySnapshot, disposeDirectorySnapshot } = await import("./workspace-restore-merge.js");
   const ignored = workspacePathMatcher(input.baseline.ignoredPaths);
@@ -151,10 +139,6 @@ export async function validateCheckpointPayload(input: { baseline: DirectorySnap
       if (!equal(entry, input.snapshot.entries.get(relative))) throw new Error("Unexpected workspace checkpoint payload");
       if (entry.kind === "file") { changedFiles++; payloadBytes += (await fs.stat(path.join(input.payload, relative))).size; }
     }
-    // Replacing an ancestor directory with a file/link recursively removes its
-    // host-only ignored children. Directory entries and ordinary tombstones
-    // remain valid: the merge removes empty directories without deleting those
-    // retained children. Stream the trusted ignore manifest, never buffer it.
     if (input.baseline.ignoredPaths) for (const relative of workspacePaths(input.baseline.ignoredPaths)) {
       for (let slash = relative.lastIndexOf("/"); slash >= 0; slash = relative.lastIndexOf("/", slash - 1)) {
         const ancestor = relative.slice(0, slash);

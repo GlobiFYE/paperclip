@@ -30,7 +30,6 @@ export async function findNativeChatWorkspaceScope(
     agentId: string;
     issueId: string | null;
     instanceRoot?: string;
-    /** Immutable admitted input only; never a wake or prompt path. */
     admittedCwd?: string | null;
   },
 ): Promise<NativeChatWorkspaceScope | null> {

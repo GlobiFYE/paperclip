@@ -15,7 +15,6 @@ export interface GitCommandResult {
 export interface GitWorkspaceSnapshot {
   headCommit: string;
   branchName: string | null;
-  /** Selected remote captured with the Git generation; omitted on legacy descriptors. */
   originUrl?: string | null;
   overlayPaths: WorkspacePaths;
   deletedPaths: WorkspacePaths;

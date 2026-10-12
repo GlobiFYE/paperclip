@@ -220,8 +220,6 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
   });
 
   async function grantFixtureWorkspaceAccess(companyId: string, userIds: string[]) {
-    // Later admissions reauthorize the retained workspace for the responsible
-    // user, so synthetic human commenters need a real identity and membership.
     await db.insert(authUsers).values(userIds.map(id => ({
       id, name: "Fixture commenter", email: `${id}@example.test`, createdAt: new Date(), updatedAt: new Date(),
     }))).onConflictDoNothing();

@@ -368,8 +368,6 @@ function isWorkspaceGitScanSaturatedError(error: unknown): boolean {
   );
 }
 
-// Remote command transports may preserve only stderr, not the original error
-// code. This is used only for capture-command failures, never returned data.
 function isCheckpointCaptureCapacityError(error: unknown): boolean {
   if (!error || typeof error !== "object") return false;
   const failure = error as { code?: unknown; message?: unknown; stderr?: unknown };
@@ -714,8 +712,6 @@ function buildWorkspaceTarExtractCommand(input: {
 // already-confined relative paths from the git snapshot.
 function buildRemoveDeletedPathsCommand(input: { remoteDir: string; manifestPath: string }): string {
   // NUL input plus bounded xargs batches preserve whitespace and never create
-  // one argument list for the full snapshot. Validate the whole batch before
-  // removing anything, then avoid starting a separate rm process per path.
   const remove = `for entry do
     parent=$entry
     while [ "\${parent#*/}" != "$parent" ]; do
@@ -919,8 +915,6 @@ async function* walkDirectory(root: string, relative = "", childrenFirst = false
   }
 }
 
-// Native providers validate their own transfers, but full-export confinement
-// must also hold for the returned host tree before baseline merge can write.
 async function confineFullWorkspaceExport(root: string): Promise<void> {
   const unsafe = () => Object.assign(new Error("Unsafe workspace export directory"), { code: "WORKSPACE_RESTORE_UNSAFE_ARCHIVE" });
   if (!(await fs.lstat(root)).isDirectory()) throw unsafe();
@@ -934,7 +928,6 @@ async function confineFullWorkspaceExport(root: string): Promise<void> {
       else if (stats.isSymbolicLink()) {
         const target = await fs.readlink(entryPath);
         const resolved = path.resolve(directory, target);
-        // Match sparse capture: omit unsafe links, preserving unrelated bytes.
         if (path.isAbsolute(target) || (resolved !== canonicalRoot && !resolved.startsWith(`${canonicalRoot}${path.sep}`))) {
           await fs.unlink(entryPath);
         }
@@ -1181,7 +1174,6 @@ export async function prepareSandboxManagedRuntime(input: {
   /** Selects authoritative host staging, exact durable-seed replay, or no-overwrite adoption. */
   workspaceInboundMode?: WorkspaceInboundMode;
   workspaceDurableSeed?: WorkspaceDurableSeedPaths;
-  /** Probe bounded remote manifest capture; unsupported hosts keep full transfer. */
   workspaceCheckpoint?: boolean;
   onWorkspaceCheckpoint?: (metrics: WorkspaceCheckpointMetrics) => Promise<void>;
   workspaceSeedCacheDirectory?: string;
@@ -1189,10 +1181,8 @@ export async function prepareSandboxManagedRuntime(input: {
   /** Durable snapshots supplied when reconstructing an interrupted restore. */
   workspaceBaseline?: DirectorySnapshot;
   workspaceGitSnapshot?: GitWorkspaceSnapshot | null;
-  /** Without a Git snapshot, undefined discovers managed task repositories; [] keeps plain directories uninterpreted. */
   workspaceRepositories?: NonNullable<GitWorkspaceSnapshot["repositories"]>;
   workspaceExclude?: string[];
-  /** Includes ordinary ignored/cache files; plain directories also set workspaceGitSnapshot: null and workspaceRepositories: []. */
   workspaceFileMode?: "all";
   preserveAbsentOnRestore?: string[];
   assets?: SandboxManagedRuntimeAsset[];
@@ -1366,8 +1356,6 @@ export async function prepareSandboxManagedRuntime(input: {
   }
   if (input.workspaceFileMode === "all" && baselineSnapshot
     && (isPathManifest(deletedPaths) ? deletedPaths.count : deletedPaths.length) > 0) {
-    // The filesystem is authoritative in all-files mode. Git can report a
-    // staged untracking as deleted while its file remains in the admitted tree.
     filesystemDeleted = await createWorkspaceManifest();
     try {
       for (const relative of workspacePaths(deletedPaths)) {
@@ -1650,11 +1638,6 @@ export async function prepareSandboxManagedRuntime(input: {
 
           if (seedGeneration && !cachedSeed && input.workspaceDurableSeed) {
             const seed = input.workspaceDurableSeed;
-            // A digest proves archive integrity, not that a live source stayed
-            // equal to the baseline while tar was reading it. Reconstruct the
-            // exact seed and verify its selected contents before labeling it a
-            // reusable generation. A mismatch leaves ordinary per-run recovery
-            // intact, but never publishes a mislabeled reusable seed.
             await publishWorkspaceSeedGeneration(input.workspaceSeedCacheDirectory!, seedGeneration,
               { ...seed, gitArchivePath: gitSnapshot || repositories.length ? seed.gitArchivePath : null }, {
                 companyDirectory: input.workspaceSeedCacheCompanyDirectory,
@@ -1668,7 +1651,7 @@ export async function prepareSandboxManagedRuntime(input: {
                       for (const segment of relative.split("/").slice(0, -1)) {
                         parent = path.join(parent, segment);
                         const stat = await fs.lstat(parent).catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT") return null; throw error; });
-                        if (stat && !stat.isDirectory()) return false; // Never follow archive links.
+                        if (stat && !stat.isDirectory()) return false;
                       }
                       await fs.rm(path.join(verifiedRoot, relative), { recursive: true, force: true });
                     }
@@ -2071,9 +2054,6 @@ export async function prepareSandboxManagedRuntime(input: {
                         await input.client.run(["node", remoteHelper, workspaceRemoteDir, remoteManifest, remoteOutput, JSON.stringify(workspaceRestoreExclude)].map(shellQuote).join(" "), { timeoutMs: input.spec.timeoutMs });
                         captured = true;
                       } catch (error) {
-                        // A sparse capture needs extra remote disk for its manifest
-                        // and payload. Full transfer needs neither; it still passes
-                        // the normal confinement and baseline-merge validation.
                         if (!isCheckpointCaptureCapacityError(error)) throw error;
                       }
                       if (captured) {

@@ -148,7 +148,6 @@ exit 128
     const task = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-remote-sibling-"));
     try {
       const remote = "https://example.test/remote.git";
-      // Exercise the real clone without contacting a network provider.
       const resolveGitAuth = vi.fn(async () => ({
         configArgs: ["-c", `url.${pathToFileURL(source).href}.insteadOf=${remote}`],
         env: {}, source: "company_secret" as const, secretName: "fixture",

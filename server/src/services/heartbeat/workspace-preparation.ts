@@ -476,8 +476,6 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
   );
   const isolatedWorkspaceSourceActor = { type: "agent" as const, source: "agent_jwt" as const, companyId: agent.companyId,
     agentId: agent.id, runId: run.id, onBehalfOfUserId: responsibleUserId === "local-board" ? null : responsibleUserId };
-  // Capture the source's ownership before Git can copy tracked bytes. Keep the
-  // server-owned snapshot so a concurrent deletion cannot erase copied privacy.
   const isolatedWorkspaceSourceAccess = !isDotRun && issueId && !persistedNativeExecutionInput && !nativeRecoveryExecutionWorkspaceId
     && (latestWorkspaceStrategyType === "git_worktree"
       || (workspaceReuseProvisioningPolicy.shouldRestoreExistingWorkspace && reusableExistingExecutionWorkspace?.strategyType === "git_worktree"))
@@ -937,8 +935,6 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
     const paths = new Map(repositories.map((repo) => [repo.workspaceId, repo.cwd]));
     projectRepositoryPaths.push(...repositories.map((repo) => path.relative(executionWorkspace.cwd, repo.cwd)));
     if (resolvedWorkspace.workspaceId) paths.set(resolvedWorkspace.workspaceId, executionWorkspace.cwd);
-    // Reused roots may have no transient hints. Rebuild from the currently
-    // authorized source rows and the paths actually prepared for this admission.
     resolvedWorkspace.workspaceHints = repositoryRows.map((source) => ({
       workspaceId: source.id,
       cwd: paths.get(source.id) ?? readNonEmptyString(source.cwd),
@@ -1108,8 +1104,6 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
   await bindIssueToPersistedExecutionWorkspace(persistedExecutionWorkspace);
   const workspaceRealization = realizationResult.workspaceRealization;
   const executionTarget = realizationResult.executionTarget;
-  // SSH uses its remote filesystem directly; only local and sandbox runs
-  // expose or transfer the host root protected by repository reservations.
   if (!isDotRun && issueId && (persistedNativeExecutionInput || nativeRecoveryExecutionWorkspaceId)
       && !(executionTarget?.kind === "remote" && executionTarget.transport === "ssh")) {
     const workspaceId = persistedNativeExecutionInput?.binding.executionWorkspaceId ?? nativeRecoveryExecutionWorkspaceId!;
@@ -1117,8 +1111,6 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
     if (!reference && executionTarget?.kind === "remote" && executionTarget.transport === "sandbox") {
       throw new Error("native_workspace_sync_descriptor_binding_missing");
     }
-    // Recovery keeps admitted files and trust even when the task now selects
-    // another workspace. Reserve only; never acquire newly requested repositories.
     const cwd = reference
       ? await readNativeWorkspaceSyncLocalCwd({ companyId: agent.companyId, runId: run.id, workspaceId, reference })
       : persistedNativeExecutionInput && persistedNativeExecutionInput.schema !== "paperclip.native-execution-input.v6"

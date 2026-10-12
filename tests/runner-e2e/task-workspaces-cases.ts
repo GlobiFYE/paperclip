@@ -10,7 +10,6 @@ export function taskWorkspaceFiles(nonce: string) {
     noteBytes: (turn: number) => `task-files-turn-${turn}-${nonce}\n`, repositoryBytes: `repository-dirty-${nonce}\n` };
 }
 
-/** Remove the legacy operator cwd so this suite actually exercises default admission. */
 export function taskWorkspaceProfile(profile: RunnerProfileFixture): RunnerProfileFixture {
   return { ...profile, buildAgent(input) {
     const agent = profile.buildAgent(input);

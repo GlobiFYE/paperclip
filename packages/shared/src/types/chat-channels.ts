@@ -1,6 +1,5 @@
 import type { TaskWorkspaceSelection } from "./task-workspace.js";
 
-/** Omitted fields inherit endpoint defaults; null explicitly clears them. */
 export interface ChatExecutionDefaults {
   projectId?: string | null;
   workspace?: TaskWorkspaceSelection | null;

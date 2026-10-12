@@ -15,7 +15,6 @@ function selectionKey(value: TaskWorkspaceSelection | null | undefined): string 
   return `source:${value.projectWorkspaceId}:${value.mode}`;
 }
 
-/** The same optional editor is used by the connection and individual destinations. */
 export function ChatExecutionDefaults({ companyId, value, resource = false, onSave }: {
   companyId: string;
   value: Defaults | null | undefined;

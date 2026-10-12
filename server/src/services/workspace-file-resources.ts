@@ -1056,7 +1056,6 @@ export function workspaceFileResourceService(db: Db, actor?: AuthorizationActor)
       if (!rows.length) continue;
       if (candidate.rootPath && (!candidate.remote || candidate.provider === "local_fs" || LOCAL_PROJECT_WORKSPACE_SOURCE_TYPES.has(candidate.provider))) {
         try {
-          // Pin the physical root used by every subsequent file operation.
           const canonicalCwd = await fs.realpath(candidate.rootPath);
           await assertExecutionWorkspaceRootReadAccess(db, {
             companyId: candidate.companyId, cwd: canonicalCwd, actor,

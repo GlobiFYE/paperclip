@@ -10129,8 +10129,6 @@ export function issueService(db: Db) {
             projectWorkspaceId = workspaceSource.projectWorkspaceId;
             inheritedWorkspaceSelection = true;
           }
-          // Sharing an existing task binding preserves parent files even when
-          // the optional isolated-worktree controls are disabled.
           if (
             inheritsSourceProject &&
             !hasExplicitExecutionWorkspaceOverride &&
@@ -10179,8 +10177,6 @@ export function issueService(db: Db) {
           workspaceIntent = { version: 1, selection: workspaceSelection, source: workspaceSelectionSource };
         }
         if (executionWorkspaceId) {
-          // A durable binding owns its source, including a deliberately absent
-          // source. Organizational defaults and legacy hints cannot replace it.
           const workspace = await assertValidExecutionWorkspace(companyId, null, executionWorkspaceId, tx);
           projectWorkspaceId = workspace.projectWorkspaceId;
         }
@@ -10414,7 +10410,6 @@ export function issueService(db: Db) {
             projectGoalId,
             defaultGoalId: defaultCompanyGoal?.id ?? null,
           }),
-          // Nulls from canonical selection must clear conflicting legacy input.
           projectWorkspaceId,
           executionWorkspaceId,
           executionWorkspacePreference,
@@ -11284,9 +11279,6 @@ export function issueService(db: Db) {
           .then((rows: Array<typeof issues.$inferSelect>) => rows[0] ?? null);
         if (!updated) return null;
         if (workspaceSelectionActor && updated.workspaceBindingRevision !== receiptExisting.workspaceBindingRevision) {
-          // Authorize the persisted target inside this transaction so a combined
-          // assignment/workspace edit checks the actual new assignee. A denial
-          // rolls back the binding, revision and retained-privacy trigger too.
           await executionWorkspaceService(db).assertTaskWorkspaceUpdateAccess({
             task: updated, actor: workspaceSelectionActor,
           }, tx);

@@ -1440,17 +1440,14 @@ export async function prepareAdapterExecutionTargetRuntime(input: {
   syncWorkspace?: boolean;
   workspaceInboundMode?: WorkspaceInboundMode;
   workspaceDurableSeed?: WorkspaceDurableSeedPaths;
-  /** Probe bounded remote manifest capture; unsupported hosts keep full transfer. */
   workspaceCheckpoint?: boolean;
   onWorkspaceCheckpoint?: (metrics: WorkspaceCheckpointMetrics) => Promise<void>;
   workspaceSeedCacheDirectory?: string;
   workspaceSeedCacheCompanyDirectory?: string;
   workspaceBaseline?: DirectorySnapshot;
   workspaceGitSnapshot?: GitWorkspaceSnapshot | null;
-  /** Without a Git snapshot, undefined discovers managed task repositories; [] keeps plain directories uninterpreted. */
   workspaceRepositories?: NonNullable<GitWorkspaceSnapshot["repositories"]>;
   workspaceExclude?: string[];
-  /** Includes ordinary ignored/cache files; plain directories also set workspaceGitSnapshot: null and workspaceRepositories: []. */
   workspaceFileMode?: "all";
   preserveAbsentOnRestore?: string[];
   assets?: AdapterManagedRuntimeAsset[];

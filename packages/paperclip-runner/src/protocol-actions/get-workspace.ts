@@ -1,4 +1,3 @@
-/** Canonical task workspace operation. */
 export const getWorkspaceAction = {
   "id": "get_workspace",
   "canonical": {

@@ -2235,8 +2235,6 @@ export function heartbeatService(
         experimentalInstanceSettings.enableIsolatedWorkspacesByDefault;
       const [taskWorkspaceIntentRow] = issueId ? await db.select({ intent: issues.workspaceSelection }).from(issues)
         .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId))) : [];
-      // Typed selections and durable bindings are authoritative even when the
-      // legacy isolated-workspace UI is disabled. Never downgrade isolation.
       const runtimeWorkspaceSelectionEnabled = taskWorkspaceRuntimeSelectionEnabled({ legacyUiEnabled: isolatedWorkspacesEnabled, hasTypedSelection: Boolean(taskWorkspaceIntentRow?.intent), hasBinding: Boolean(issueContext?.executionWorkspaceId) });
       const parsedIssueExecutionWorkspaceSettings =
         parseIssueExecutionWorkspaceSettings(
@@ -2285,8 +2283,6 @@ export function heartbeatService(
         : null;
       const taskProjectId = issueContext ? issueContext.projectId : contextProjectId;
       const taskProjectContext = await loadProjectContext(taskProjectId);
-      // Organizational placement supplies environment and trust, not an
-      // implicit filesystem source when that project has no configured files.
       const executionProjectId = boundSourceWorkspace ? boundSourceWorkspace.projectId
         : taskWorkspaceIntentRow?.intent?.selection.kind === "task_directory" ? null
           : selectedWorkspaceSource?.projectId ?? (taskProjectContext?.hasWorkspace ? taskProjectId : null);
@@ -2404,9 +2400,6 @@ export function heartbeatService(
           );
         issueContext = { ...issueContext, responsibleUserId };
       }
-      // Legacy unbound tasks still inherit explicit organizational workspace
-      // requirements even when that project has no files to use as a source.
-      // A typed choice or durable binding keeps its own source policy.
       const workspacePolicyContext = workspaceProjectContext ?? (
         !boundSourceWorkspace && !taskWorkspaceIntentRow?.intent && !issueContext?.projectWorkspaceId
           ? taskProjectContext : null
@@ -2437,7 +2430,6 @@ export function heartbeatService(
         project: taskProjectContext
           ? { companyId: agent.companyId, executionWorkspacePolicy: taskProjectContext.executionWorkspacePolicy }
           : null,
-        // Selecting files cannot erase the task's policy or relax the source's.
         workspaceSourceProject: workspaceProjectContext && workspaceProjectContext.id !== taskProjectContext?.id
           ? { companyId: agent.companyId, executionWorkspacePolicy: workspaceProjectContext.executionWorkspacePolicy }
           : null,
@@ -2757,8 +2749,6 @@ export function heartbeatService(
       }
       const remoteExecution = realizationResult.remoteExecution;
       if (nativeChatWorkspaceScope && materializeNativeChatWorktree) {
-        // The fresh plan is not filesystem authority. Validate the realized,
-        // durable task-owned worktree before exposing it to the native runner.
         nativeChatExpectedCwd = nativeChatWorkspaceCwd(nativeChatWorkspaceScope, persistedExecutionWorkspace, true);
       }
       if (

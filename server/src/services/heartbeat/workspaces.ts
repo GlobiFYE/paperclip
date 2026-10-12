@@ -494,7 +494,6 @@ export async function ensureManagedProjectWorkspace(input: {
   });
   managedCheckoutMaterializations.set(cwd, attempt);
   const result = await attempt;
-  // Covers the materializer's existing checkout and competing-publisher paths.
   await guardLocalSource?.(cwd);
   if (input.repoUrl) {
     // A different server process can publish a same-name checkout between the
@@ -516,8 +515,6 @@ export async function prepareProjectRepositoryWorkspaces(input: {
   workspaces: Array<Pick<typeof projectWorkspaces.$inferSelect, "id" | "repoUrl" | "repoRef"> & { cwd?: string | null }>;
   resolveGitAuth?: GitRemoteAuthProvider | null;
   beforePublish?: () => Promise<void>;
-  /** Authorize and retain the configured local source before cloning or reuse.
-   * The returned guard rechecks that same source envelope before publication. */
   prepareLocalSource?: (sourceCwd: string) => Promise<() => Promise<void>>;
 }): Promise<Array<{ workspaceId: string; cwd: string; repoUrl: string; repoRef: string | null }>> {
   const identity = (url: string) => url.trim().replace(/\.git\/?$/, "").replace(/\/$/, "");
@@ -546,11 +543,7 @@ export async function prepareProjectRepositoryWorkspaces(input: {
     const localSource = configuredLocalSource
       && await fs.stat(configuredLocalSource).then((entry) => entry.isDirectory()).catch(() => false)
       ? configuredLocalSource : null;
-    // A URL-only clone can still read this host. Keep its committed-only clone
-    // behavior, but authorize the physical file source before any Git read.
     const urlLocalSource = localRepositoryPath(repoUrl);
-    // Run before the materializer's existing-checkout shortcut too. A sibling
-    // added after the first admission still contributes private source bytes.
     const sourceToAuthorize = localSource ?? urlLocalSource;
     const recheckLocalSource = sourceToAuthorize
       ? await input.prepareLocalSource?.(sourceToAuthorize) : undefined;
@@ -560,8 +553,6 @@ export async function prepareProjectRepositoryWorkspaces(input: {
     };
     const result = await materializeManagedProjectWorkspace(cwd, { repoUrl, repoRef: workspace.repoRef, localSource, resolveGitAuth: input.resolveGitAuth, beforePublish });
     if (result.warning) throw new Error(result.warning);
-    // Existing clones and a competing publisher can return without invoking
-    // beforePublish. Reauthorize before exposing either result to the run.
     await beforePublish();
     results.push({ workspaceId: workspace.id, cwd, repoUrl, repoRef: workspace.repoRef });
   }
@@ -2809,10 +2800,6 @@ function buildSessionConfigCategoryValues(input: {
   // boundary; the reusable row and its evolving generation are state.
   delete workspaceConfig.existingExecutionWorkspace;
   delete workspaceConfig.reusableExecutionWorkspaceConfig;
-  // Binding the first realized workspace persists its already-effective mode
-  // on the issue. That receipt must not rotate the session on the next turn.
-  // requestedMode/effectiveMode still fingerprint mode changes, and all other
-  // issue settings remain part of the compatibility boundary.
   const issueSettings = { ...parseObject(workspaceConfig.issueSettings) };
   if (issueSettings.mode === workspaceConfig.requestedMode) delete issueSettings.mode;
   workspaceConfig.issueSettings = Object.keys(issueSettings).length ? issueSettings : null;
@@ -3464,8 +3451,6 @@ export function createHeartbeatWorkspaceResolver(db: Db) {
       unorderedProjectWorkspaceRows,
       preferredProjectWorkspaceId,
     );
-    // A durable source choice names the filesystem authority, not a preference
-    // among the project's repositories. Never label another checkout with it.
     const projectWorkspaceRows = configuredSourceId
       ? prioritizedWorkspaceRows.filter((workspace) => workspace.id === configuredSourceId)
       : prioritizedWorkspaceRows;

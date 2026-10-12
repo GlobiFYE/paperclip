@@ -158,3 +158,45 @@ reasons below. The owned static preview was left running for the requested test-
 Use `maintain-storybook` to correct drift and `review-storybook` to record separate
 source, render, interaction, visual-comparison, and production evidence. Both skills
 consume the feature map; neither changes its upstream contract.
+
+## Task workspace reconciliation — 2026-10-12
+
+Scope: the 26 declared-source entries affected by task-workspace work at
+`88b1d3a2`, compared with master `dabb8c5daf`, including subsequent comment-only
+cleanup and the fixture corrections below. This is a bounded source review,
+not a new review of all Storybook states. Reconciliation onto `b5046ec022`
+preserves its new feature folders, sidebar titles and explicit stable IDs, along
+with the existing exports, classification and simulation boundaries. Shared GitHub
+fixtures now live under `ui/storybook/support/github-bot-management/`.
+
+Twenty-one entries changed only through the expanded chat/workspace recipes.
+Their setup, identity, browser, artifact, picker and service examples are retained;
+the new recipe requirements do not become covered merely because they reference
+the same capability. Five entries also depend on changed production subjects:
+
+| Story file under `ui/storybook/stories/` | Source review and remaining scope |
+| --- | --- |
+| `chat-channels/chat-management/chat-management.stories.tsx` | Mounted endpoint includes connection/destination defaults. Added the missing selectable-workspace fixture response; existing endpoint PATCH and resource PUT retain defaults. No browser save, error, reload or inheritance proof in this pass. |
+| `chat-channels/github-bot-management/management.stories.tsx` | Mounted endpoint/repository editors include defaults. Fixed the endpoint mock to persist PATCH values instead of returning the original endpoint. Resource PUT already distinguishes omitted, null and concrete values. Project/workspace choices are intentionally empty fixtures. |
+| `chat-channels/imessage-photon.stories.tsx` | Existing scenarios mount setup/access and simulate task conversations. They do not exercise the newly added settings editor or its workspace-choice request. Kept unreviewed rather than claiming settings coverage. |
+| `projects/projects-goals-workspaces.stories.tsx` | Existing project-bound summaries still match the rendered components. New nullable project references and runtime invalidation branches have no projectless story scenario here. |
+| `workspaces/workspace-runtime-provisioning.stories.tsx` | The demonstrated status subcomponent is unchanged. Its local context row does not prove the full detail page's new projectless behavior. |
+
+The three endpoint-management entries now declare `ChatExecutionDefaults` and its
+API clients as review dependencies. AgentMail settings still demonstrates only
+the inbox subsection, not the surrounding endpoint defaults. Historical GitHub
+designs remain historical; existing unreviewed entries remain unreviewed. None of
+these fixture examples establishes source authorization, retained file privacy,
+pending workspace selection, sandbox admission or existing-conversation continuity.
+
+Executed: the GitHub fixture's two Vitest cases passed, including default save,
+subsequent GET, omitted-value preservation, explicit null clearing and fresh-mount
+reset. After the folder rebase, both fixture tests and all nine catalog checker
+tests passed again; token gates passed before the path-only reconciliation. After the final
+source freeze, only the 26 reviewed fingerprints were refreshed; catalog validation
+passed for all 223 files and all 2,210 source-parsed story IDs were unchanged.
+All 223 upstream file paths, explicit stable IDs and sidebar titles were preserved.
+Not run in this pass: Storybook build, browser rendering or `play`, screenshot
+comparisons, provider calls and live production acceptance. No new visual
+baselines were accepted. Fixture tests are boundary simulations, not server
+persistence or permission tests.

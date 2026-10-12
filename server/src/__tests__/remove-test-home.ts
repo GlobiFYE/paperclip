@@ -27,9 +27,6 @@ export function removeTestHome(home: string): void {
 
 function isReadOnlyDirectoryRemovalError(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException | null)?.code;
-  // Node can report the unremoved parent as ENOTEMPTY on macOS when a
-  // read-only descendant prevented unlinking. The second removal still fails
-  // loudly for a genuinely busy directory or an unsuccessful permission repair.
   return code === "EACCES" || code === "EPERM" || code === "ENOTEMPTY";
 }
 

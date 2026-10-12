@@ -122,9 +122,9 @@ describe("workspace sparse checkpoint", () => {
       if (attack === "ancestor_link") await fs.symlink("unchanged", path.join(payload, "config"));
       const captured = await captureDirectorySnapshot(payload);
       const entries = new Map(baseline.entries);
-      entries.delete("deleted"); // An otherwise valid deletion must not apply on rejection.
+      entries.delete("deleted");
       for (const [relative, entry] of captured.entries) if (!(attack === "payload_only" && relative === ".env")) entries.set(relative, entry);
-      if (attack === "matching_descendant") entries.delete("private"); // Reject the descendant itself, too.
+      if (attack === "matching_descendant") entries.delete("private");
       const manifestPath = path.join(f.temp, "forged.sqlite");
       await writeCheckpointBaseline({ ...baseline, entries }, manifestPath);
       const snapshot = readCheckpointSnapshot(manifestPath, baseline);
@@ -255,7 +255,6 @@ it("uses sparse native transfer end-to-end, including replay and unsupported-run
   expect(await fs.readFile(path.join(remote, "new"), "utf8")).toBe("verification recovery");
   await verificationRecovery.cleanupWorkspaceSnapshot();
   failVerification = false;
-  // A saturated optional cache must still admit and recover from its per-run seed.
   mutateDuringPack = false;
   for (let count = (await fs.readdir(cache)).length; count < 16; count++) {
     await fs.mkdir(path.join(cache, `.pending-retained-${count}`));
@@ -316,8 +315,6 @@ async function exportFailureFixture(failure: "low_disk" | "full_root" | "full_sp
         if (file.sourcePath === remote && failure === "full_special") await execute("mkfifo", [path.join(file.targetPath, "unsafe-pipe")]);
         if (["low_disk", "full_root", "full_special"].includes(failure) && file.targetPath.endsWith("/checkpoint.mjs")) {
           const script = await fs.readFile(file.targetPath, "utf8");
-          // Execute the real capture helper against a provider filesystem whose
-          // reported remaining space is below the optional SQLite reserve.
           await fs.writeFile(file.targetPath, script.replace("const __name", "fs.statfs = async () => ({ bavail: 128n * 1024n, bsize: 1024n });\nconst __name"));
         }
         if (file.sourcePath.endsWith("/output")) {

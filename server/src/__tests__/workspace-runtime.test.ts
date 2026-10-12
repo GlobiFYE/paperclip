@@ -1779,8 +1779,6 @@ process.stderr.write(${JSON.stringify(stderr)}, () => { process.exitCode = ${cod
     expect((await ensurePersistedExecutionWorkspaceAvailable(restoreInput))?.cwd).toBe(fresh.cwd);
     expect(existsSync(marker)).toBe(false);
     await expect(fs.readFile(path.join(fresh.cwd, "README.md"), "utf8")).resolves.toBe("hello\n");
-    // The capability is per admission. Trusted default behavior still runs the
-    // exact same repository script, including automatic builtin discovery.
     await ensurePersistedExecutionWorkspaceAvailable({ ...restoreInput, skipHostProvision: undefined });
     await expect(fs.readFile(marker, "utf8")).resolves.toBe("host execution\n");
   });

@@ -437,8 +437,6 @@ describeEmbeddedPostgres("heartbeat resolved dependency wake reconciliation", ()
     });
 
     const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, issueId));
-    // Both successful runs publish their final summary on behalf of the real
-    // responsible user. Recovery notices are additional system comments.
     const summaries = comments.filter((comment) => comment.authorType === "agent");
     expect(summaries).toHaveLength(2);
     expect(summaries).toEqual(expect.arrayContaining(

@@ -58,8 +58,6 @@ const support = await getEmbeddedPostgresTestSupport();
       await git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "source");
       const pin = await git("rev-parse", "HEAD");
       const cloneStarted = path.join(root, "clone-started"), cloneReleased = path.join(root, "clone-released");
-      // Exercise actual Git and atomic publication without external networking.
-      // Only this fixture's exact remote is redirected; persist the real API origin.
       await writeFile(path.join(bin, "git"), `#!${process.execPath}\n` +
         `const { spawnSync } = require('node:child_process'); const fs = require('node:fs'); const args = process.argv.slice(2);\n` +
         `const remote = args.includes('clone') ? args.at(-2) : null;\n` +
@@ -91,8 +89,6 @@ const support = await getEmbeddedPostgresTestSupport();
       await exec(realGit, ["-C", readyCheckout, "remote", "set-url", "origin", readyIntent.repository.repoUrl]);
       await db.update(executionWorkspaceRepositories).set({ state: "ready", pinnedCommit: pin })
         .where(eq(executionWorkspaceRepositories.id, readyIntent.operationId));
-      // New service instances emulate the controller restart between request
-      // and admission; concurrent admissions must publish one owned checkout.
       const pending = Promise.all([1, 2].map(() => prepareForAdmission(admission)));
       let results: Awaited<typeof pending>;
       let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -103,8 +99,6 @@ const support = await getEmbeddedPostgresTestSupport();
           new Promise<never>((_, reject) => { timeout = setTimeout(() => reject(new Error("Unrelated repository reuse waited for a blocked clone")), 2000); }),
         ]);
         expect(ready[0]).toMatchObject({ id: readyIntent.operationId, pinnedCommit: pin });
-        // These are the actual SSH and native/sandbox discovery paths while
-        // the unrelated clone is incomplete, not inventory-only assertions.
         expect(await listLocalProjectRepositories(taskRoot)).toEqual([readyIntent.repository.relativePath]);
         const snapshots = await readManagedWorkspaceRepositories(taskRoot);
         try { expect(snapshots.map(repo => repo.path)).toEqual([readyIntent.repository.relativePath]); }
@@ -199,8 +193,6 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(prepared).toHaveLength(1);
     expect(prepared[0].pinnedCommit).toBe(commit);
     expect(await readFile(path.join(checkout, "source.txt"), "utf8")).toBe("uncommitted work\n");
-    // A malicious/non-regular receipt cannot block admission. The durable DB
-    // pin remains authoritative, so this invalid receipt is ignored.
     if (process.platform !== "win32") {
       const receiptPath = path.join(checkout, ".git", "paperclip-workspace-owner.json");
       await promisify(execFileCallback)("mkfifo", [receiptPath]);
@@ -212,8 +204,6 @@ const support = await getEmbeddedPostgresTestSupport();
         ]);
       } finally {
         clearTimeout(deadline);
-        // Release a blocked reader if this regression ever returns, so a failed
-        // assertion cannot leave the test process stuck in its filesystem pool.
         const writer = await open(receiptPath, fsConstants.O_WRONLY | fsConstants.O_NONBLOCK).catch(() => null);
         await writer?.close();
         await rm(receiptPath, { force: true });
@@ -231,7 +221,6 @@ const support = await getEmbeddedPostgresTestSupport();
     const prepared = await prepareForAdmission(admission);
     expect(prepared[0]).toMatchObject({ id: intent.operationId, cwd: path.join(await realpath(cwd), original.relativePath), pinnedCommit: original.pinnedCommit });
     expect(await readFile(path.join(prepared[0].cwd, "source.txt"), "utf8")).toBe("uncommitted work\n");
-    // There is still one physical checkout and neither its files nor Git metadata were rewritten.
     expect(await readFile(path.join(prepared[0].cwd, ".git", "paperclip-workspace-owner.json"), "utf8").catch(() => null)).toBeNull();
     const [differentRefWorkspace] = await db.insert(executionWorkspaces).values({ companyId, name: "Conflicting ref", cwd, mode: "shared_workspace", strategyType: "operator_directory" }).returning();
     const [differentRefIssue] = await db.insert(issues).values({ companyId, title: "Different ref", executionWorkspaceId: differentRefWorkspace.id }).returning();
@@ -244,7 +233,6 @@ const support = await getEmbeddedPostgresTestSupport();
     await owner.bindTaskWorkspace(companyId, privateSource.id, movedWorkspace.id);
     const [retainedWorkspace] = await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, workspaceId));
     expect(retainedWorkspace.metadata?._issuePrivacySources).toMatchObject({ [privateSource.id]: true });
-    // Reauthorization also applies after the second inventory has a durable pin.
     await expect(prepareForAdmission(admission)).rejects.toThrow(/Task workspace access is no longer available/);
     expect(await readFile(path.join(prepared[0].cwd, "source.txt"), "utf8")).toBe("uncommitted work\n");
   });

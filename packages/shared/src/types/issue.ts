@@ -892,7 +892,6 @@ export interface Issue {
   monitorAttemptCount?: number;
   monitorNotes?: string | null;
   monitorScheduledBy?: IssueMonitorScheduledBy | null;
-  /** CAS revision of the active binding and accepted next-admission selection. */
   workspaceBindingRevision?: number;
   workspaceSelection?: TaskWorkspaceIntent | null;
   workspacePendingSelection?: TaskWorkspacePendingSelection | null;

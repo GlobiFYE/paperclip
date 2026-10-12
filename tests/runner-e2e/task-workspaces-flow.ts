@@ -40,7 +40,6 @@ export async function runTaskWorkspacesFlow(input: {
     issue = await api.get<Row>(`/api/issues/${issue.id}`);
     const listed = await api.get<Row[]>(`${companyPath}/heartbeat-runs?limit=100`);
     runs = await Promise.all(listed.map(run => api.get<Row>(`/api/heartbeat-runs/${run.id}`)));
-    // A synthetic company contains only this task. Extra/background work is counted, never hidden.
     runs.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)) || a.id.localeCompare(b.id));
     evidence.runCount = runs.length;
   }
@@ -150,7 +149,6 @@ export async function runTaskWorkspacesFlow(input: {
     evidence.initial = { workspaceId: before.workspace.id, cwd: await realpath(before.workspace.cwd), repositories: before.repositories.length };
     await save("initial-admission");
     await settled(1); await checkpoint(1);
-    // Controller lifecycle only: the original provider turn is already settled.
     const issueUrl = page.url();
     await restartChatServer(page, async () => { await input.restart(); });
     evidence.restarted = true;

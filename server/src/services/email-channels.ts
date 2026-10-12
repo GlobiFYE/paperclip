@@ -1322,7 +1322,6 @@ export function emailChannelService(db: Db, options: EmailChannelOptions) {
             current.assignedAgentId,
           );
           const defaults = resolveChatExecutionDefaults(current.executionDefaults, null);
-          // A channel default cannot widen the receiving agent's trust boundary.
           if ("projectId" in placement && defaults.projectId !== undefined && defaults.projectId !== placement.projectId) {
             throw forbidden("Default project conflicts with the assigned agent's trust boundary");
           }

@@ -70,7 +70,6 @@ const support = await getEmbeddedPostgresTestSupport();
         { companyId: f.companyId, title: "Earlier private source" },
         { companyId: f.companyId, title: "Replacement task" },
       ]).returning();
-      // This legacy source has never been bound through bindTaskWorkspace.
       await db.update(executionWorkspaces).set({ sourceIssueId: ancestor.id })
         .where(eq(executionWorkspaces.id, f.workspaceId));
       await db.update(executionWorkspaces).set({ cwd: oldCwd, projectId: project.id, sourceIssueId: f.issueId })
@@ -246,8 +245,6 @@ const support = await getEmbeddedPostgresTestSupport();
       expect(original).toMatchObject({ projectId: null, projectWorkspaceId: null, executionWorkspaceId: f.workspaceId });
       const { workspace } = await svc.inspectTaskWorkspace(f.companyId, f.issueId, f.actor);
       expect(workspace).toMatchObject({ projectId: null, projectWorkspaceId: null, cwd: `/tmp/task-${f.issueId}` });
-      // Both tasks remain eligible for the same local adapter launch; the
-      // organization did not turn the shared task folder into a Git source.
       for (const task of [created, original]) {
         await expect(assertGitSensitiveAdapterWorkspaceValid({
           adapterType: "codex_local", agentId: randomUUID(), issue: task,
@@ -465,7 +462,6 @@ const support = await getEmbeddedPostgresTestSupport();
     });
     expect(await svc.selectTaskWorkspace(selectionRequest)).toMatchObject({ kind: "applied", bindingRevision: 3 });
 
-    // A later, unrelated replacement still invalidates the revision fence.
     await svc.selectTaskWorkspace({ ...f, selection: { kind: "task_directory" },
       expectedBindingRevision: 3, requestKey: "later-choice" });
     await svc.bindTaskWorkspace(f.companyId, f.issueId, f.workspaceId);
@@ -483,8 +479,6 @@ const support = await getEmbeddedPostgresTestSupport();
       companyIds: [f.companyId], isInstanceAdmin: false };
     const app = express();
     app.use(express.json());
-    // Authentication middleware establishes this session actor; all company,
-    // issue and workspace authorization below uses the real database service.
     app.use((req, _res, next) => { req.actor = actor; next(); });
     app.use("/api", taskWorkspaceRoutes(db));
     app.use(errorHandler);
@@ -563,7 +557,6 @@ const support = await getEmbeddedPostgresTestSupport();
       expect(await readTask()).toMatchObject({ executionWorkspaceId: null, projectWorkspaceId: null, workspaceBindingRevision: 0 });
       expect((await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, f.workspaceId)))[0].metadata).toEqual(beforeMetadata);
       const [grant] = await db.insert(principalPermissionGrants).values({ companyId: f.companyId, principalType: "user", principalId: userId, permissionKey: "tasks:assign_scope", scope: { projectId: project.id, assigneeAgentId: assignee.id } }).returning();
-      // The same transaction must check the final assignee, not the old row.
       await expect(issueService(db).update(f.issueId, { ...patch, assigneeAgentId: nextAssignee.id, workspaceSelectionActor: actor })).rejects.toThrow(/protected/);
       expect(await readTask()).toMatchObject({ assigneeAgentId: assignee.id, workspaceBindingRevision: 0 });
       const allowed = await request(app).patch(`/api/issues/${f.issueId}`).send(patch);
@@ -677,8 +670,6 @@ const support = await getEmbeddedPostgresTestSupport();
       const [grant] = await db.insert(principalPermissionGrants).values({ companyId: f.companyId, principalType: "agent",
         principalId: agent.id, permissionKey: "tasks:assign_scope", scope: { projectId: organization.id, assigneeAgentId: agent.id } }).returning();
       const selectionRequest = { ...f, actor, selection: sharedSelection, expectedBindingRevision: 0, requestKey: "authorized-shared" };
-      // Task lineage and organizational-project authority cannot grant writes
-      // to an independently protected source project's folder.
       await expect(svc.selectTaskWorkspace(selectionRequest)).rejects.toThrow(/protected/);
       const [otherAgent] = await db.insert(agents).values({ companyId: f.companyId, name: "Another assignee", status: "idle" }).returning();
       await db.update(issues).set({ assigneeAgentId: otherAgent.id }).where(eq(issues.id, f.issueId));
@@ -806,7 +797,6 @@ const support = await getEmbeddedPostgresTestSupport();
         { id: sourceId, companyId: f.companyId, projectId, name: "Selected", isPrimary: true,
           sourceType: failure === "clone_failure" ? "git_repo" : "local_path",
           cwd: failure === "clone_failure" ? null : path.join(root, "missing-source"),
-          // A nonexistent local remote exercises clone failure without network access.
           repoUrl: failure === "clone_failure" ? path.join(root, "missing-remote.git") : null },
         { id: siblingId, companyId: f.companyId, projectId, name: "Other", sourceType: "local_path", cwd: siblingCwd },
       ]);
@@ -858,8 +848,6 @@ const support = await getEmbeddedPostgresTestSupport();
       }
       const installed = await svc.inspectTaskWorkspace(f.companyId, writer.id, f.actor);
       expect(installed.workspace?.id).toBe(f.workspaceId);
-      // No bindTaskWorkspace call or heartbeat is needed: the migration's issue
-      // binding trigger retains provenance in the same installation transaction.
       expect(installed.workspace?.metadata?._issuePrivacySources).toMatchObject({ [writer.id]: true });
       await svc.selectTaskWorkspace({ ...f, issueId: writer.id, selection: { kind: "task_directory" },
         expectedBindingRevision: installed.bindingRevision, requestKey: "detach-private-writer" });

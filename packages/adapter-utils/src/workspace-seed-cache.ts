@@ -20,8 +20,6 @@ async function digest(file: string): Promise<string> {
   return hash.digest("hex");
 }
 
-/** Cache is durable but never authority: every archive is checked before reuse.
- * Admitted runs retain independent per-run archives; cache entries are never evicted. */
 export async function readWorkspaceSeedGeneration(root: string, generation: string): Promise<WorkspaceDurableSeedPaths | null> {
   const directory = path.join(root, generation);
   try {
@@ -52,8 +50,6 @@ export const WORKSPACE_SEED_CACHE_LIMITS = Object.freeze({
 });
 type SeedCacheLimits = { [Key in keyof typeof WORKSPACE_SEED_CACHE_LIMITS]: number };
 
-/** Count even abandoned pending entries and corrupt archives against capacity.
- * Never follow links or recurse into an unexpected cache layout. */
 async function cacheUsage(root: string, limits: SeedCacheLimits): Promise<{ generations: number; bytes: number } | null> {
   let generations = 0, bytes = 0;
   for await (const entry of await fs.opendir(root)) {
@@ -73,8 +69,6 @@ async function cacheUsage(root: string, limits: SeedCacheLimits): Promise<{ gene
   return { generations, bytes };
 }
 
-/** Optional optimization: saturation or cache failure leaves per-run recovery
- * untouched. No eviction: readers may still be using a returned cache path. */
 export async function publishWorkspaceSeedGeneration(
   root: string, generation: string, seed: WorkspaceDurableSeedPaths,
   options: { companyDirectory?: string; limits?: Partial<SeedCacheLimits>; verify?: () => Promise<boolean> } = {},
@@ -105,9 +99,8 @@ export async function publishWorkspaceSeedGeneration(
         if (totalGenerations > limits.companyGenerations || totalBytes > limits.companyBytes) return false;
         if (directory === root) { workspace = usage; workspaceExists = true; }
       }
-      // An existing immutable entry adds no storage, including when saturated.
       if (workspaceExists && await fs.lstat(path.join(root, generation)).then(() => true, () => false)) return true;
-      let incomingBytes = 4096; // conservative receipt allowance
+      let incomingBytes = 4096;
       for (const archive of [seed.workspaceArchivePath, seed.gitArchivePath]) {
         if (!archive) continue;
         const stat = await fs.lstat(archive);
@@ -117,7 +110,6 @@ export async function publishWorkspaceSeedGeneration(
       if (workspace.generations + 1 > limits.workspaceGenerations || workspace.bytes + incomingBytes > limits.workspaceBytes
         || totalGenerations + 1 > limits.companyGenerations || totalBytes + incomingBytes > limits.companyBytes
         || workspaces + (workspaceExists ? 0 : 1) > limits.companyWorkspaces) return false;
-      // Reserve enough for a full copy even when hard links are unavailable.
       assertWorkspaceManifestDiskSpace(company, incomingBytes);
       if (options.verify && !await options.verify()) return false;
       await fs.mkdir(root, { recursive: true, mode: 0o700 });

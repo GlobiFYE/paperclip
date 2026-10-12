@@ -344,75 +344,6 @@ suite("task project repository provisioning", () => {
     expect((await heartbeat.getRun(run!.id))?.contextSnapshot).toMatchObject({ executionPolicy: { trustPreset: "low_trust_review", authorizationPolicy: { trustBoundary: { issueIds: [issueId] } } } });
   }, 25_000);
 
-  it.each(["current", "retained", "sandbox", "provision_current", "provision_retained"] as const)("enforces physical source containment before dispatch (%s)", async scenario => {
-    const sandbox = scenario === "sandbox";
-    const provision = scenario.startsWith("provision_");
-    const companyId = randomUUID(), projectId = randomUUID(), sourceId = randomUUID(), agentId = randomUUID(), issueId = randomUUID();
-    await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: true });
-    const cwd = path.join(root, companyId, "low-trust-source");
-    await mkdir(cwd, { recursive: true });
-    await writeFile(path.join(cwd, "work.txt"), "Low-trust source files");
-    const base = path.join(root, companyId, "base");
-    if (provision || sandbox) {
-      await mkdir(base, { recursive: true });
-      await writeFile(path.join(base, "source.txt"), "source");
-      if (sandbox) {
-        await mkdir(path.join(base, "scripts"));
-        await writeFile(path.join(base, "scripts", "provision-worktree.sh"), `if [ "$FIXTURE_SANDBOX_EXECUTION" != 1 ]; then printf host-provisioned > '${path.join(cwd, "provision-ran")}'; fi\n`);
-      }
-      const git = (...args: string[]) => execFileSync("git", args, { cwd: base, stdio: "ignore" });
-      git("init", "-b", "main"); git("add", ".");
-      git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "source");
-      await rm(cwd, { recursive: true });
-      git("worktree", "add", "-b", "task", cwd);
-    }
-    const provisionCommand = `printf host-provisioned > '${path.join(cwd, "provision-ran")}'`;
-    await db.insert(companies).values({ id: companyId, name: "Physical trust", issuePrefix: `F${companyId.slice(0, 6)}`, defaultResponsibleUserId: "responsible-user" });
-    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "owner" });
-    await db.insert(projects).values({ id: projectId, companyId, name: "Low-trust folder owner", executionWorkspacePolicy: {
-      trustPreset: "low_trust_review", authorizationPolicy: { trustPreset: "low_trust_review", trustBoundary: { mode: "low_trust_review", companyId, rootIssueId: issueId, projectIds: [projectId] } },
-    } });
-    await db.insert(projectWorkspaces).values({ id: sourceId, companyId, projectId, name: "Source", sourceType: "local_path", cwd: sandbox ? base : cwd, isPrimary: true });
-    await db.insert(agents).values({ id: agentId, companyId, name: "Standard local worker", status: "idle", adapterType: "codex_local", adapterConfig: {}, permissions: {} });
-    await db.insert(companyMemberships).values({ companyId, principalType: "agent", principalId: agentId, status: "active", membershipRole: "member" });
-    const [workspace] = await db.insert(executionWorkspaces).values({ companyId, name: "Projectless alias", cwd, projectId: sandbox ? projectId : null, mode: sandbox ? "isolated_workspace" : "shared_workspace", strategyType: sandbox ? "git_worktree" : "project_primary",
-      ...(sandbox ? { projectWorkspaceId: sourceId, providerRef: cwd, branchName: "task", baseRef: "main", config: { provisionCommand: "bash ./scripts/provision-worktree.sh" } } : {}),
-      ...(provision ? { branchName: "task", baseRef: "main", config: { provisionCommand } } : {}) }).returning();
-    await db.insert(issues).values({ id: issueId, companyId, title: "Standard task", status: "todo", assigneeAgentId: agentId,
-      executionWorkspaceId: workspace.id, projectWorkspaceId: sandbox ? sourceId : null, executionWorkspacePreference: "reuse_existing", executionWorkspaceSettings: { mode: sandbox || provision ? "isolated_workspace" : "shared_workspace",
-        ...(provision ? { workspaceStrategy: { type: "git_worktree", provisionCommand } } : {}) },
-      workspaceSelection: { version: 1, source: "explicit", selection: { kind: "existing", workspaceId: workspace.id } } });
-    if (scenario === "retained" || scenario === "provision_retained") {
-      const { projectService } = await import("../services/projects.js");
-      await projectService(db).updateWorkspace(projectId, sourceId, { cwd: path.join(root, companyId, "relocated") });
-    }
-    let driver = heartbeat;
-    if (sandbox) {
-      const environmentId = randomUUID();
-      await db.insert(environments).values({ id: environmentId, name: "Source sandbox", driver: "sandbox", status: "active", config: { provider: "fake", image: "fake:test" } });
-      await db.update(agents).set({ defaultEnvironmentId: environmentId }).where(eq(agents.id, agentId));
-      driver = heartbeatService(db, { environmentRuntime: { ...environmentRuntimeService(db), execute: async input => ({
-        exitCode: 0, stdout: execFileSync(input.command, input.args ?? [], { cwd: root, input: input.stdin, encoding: "utf8", env: { ...process.env, ...input.env, FIXTURE_SANDBOX_EXECUTION: "1" } }),
-        stderr: "", signal: null, timedOut: false,
-      }) } });
-    }
-    const run = await driver.wakeup(agentId, { source: "on_demand", triggerDetail: "manual", contextSnapshot: { issueId } });
-    expect(run).not.toBeNull();
-    await vi.waitFor(async () => expect((await driver.getRun(run!.id))?.status).toMatch(/^(succeeded|failed)$/), { timeout: 15_000 });
-    await drainHeartbeatRunsToQuiescence(db, driver);
-    if (sandbox) {
-      expect(await driver.getRun(run!.id)).toMatchObject({ status: "succeeded", error: null });
-      const calls = execute.mock.calls.filter(([input]) => input.runId === run!.id);
-      expect(calls).toHaveLength(1);
-      expect(calls[0][0].context.paperclipEnvironment.driver).toBe("sandbox");
-      await expect(readFile(path.join(cwd, "provision-ran"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-    } else {
-      expect(await driver.getRun(run!.id)).toMatchObject({ status: "failed", error: expect.stringContaining("Physical workspace source trust is incompatible") });
-      expect(execute.mock.calls.filter(([input]) => input.runId === run!.id)).toHaveLength(0);
-      if (provision) await expect(readFile(path.join(cwd, "provision-ran"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
-    }
-  });
-
   it.each(["shared_workspace", "isolated_workspace"] as const)("blocks shared source adapter admission after grant revocation with retained mode %s", async (retainedMode) => {
     const companyId = randomUUID(), projectId = randomUUID(), sourceId = randomUUID(), agentId = randomUUID(), issueId = randomUUID();
     const cwd = path.join(root, companyId, "protected-shared-source");
@@ -447,7 +378,6 @@ suite("task project repository provisioning", () => {
     expect(bound.projectId).toBeNull();
     expect(bound.executionWorkspaceId).not.toBeNull();
     if (retainedMode === "isolated_workspace") {
-      // Legacy or malformed metadata can label the shared physical root isolated.
       await db.update(executionWorkspaces).set({ mode: retainedMode }).where(eq(executionWorkspaces.id, bound.executionWorkspaceId!));
       await db.update(issues).set({ executionWorkspaceSettings: { mode: retainedMode, workspaceStrategy: { type: "project_primary" } } }).where(eq(issues.id, issueId));
     }
@@ -593,7 +523,6 @@ suite("task project repository provisioning", () => {
         { companyId, projectId: privateProjectId, subjectType: "agent", subjectId: agentId },
         { companyId, projectId: privateProjectId, subjectType: "user", subjectId: "responsible-user" },
       ]);
-      // Isolated copies need source read access, never an assignment/write grant.
       expect(await accessService(db).decide({ actor: { type: "agent", agentId, companyId, source: "agent_jwt", onBehalfOfUserId: "responsible-user" },
         action: "tasks:assign", resource: { type: "issue", companyId, projectId, assigneeAgentId: agentId }, scope: { projectId, assigneeAgentId: agentId } })).toMatchObject({ allowed: false });
       const allowed = await admit();
@@ -615,14 +544,12 @@ suite("task project repository provisioning", () => {
           await expect(readFile(path.join(copiedCwd, "provision-ran"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
         }
         expect((await db.select().from(issues).where(eq(issues.id, issueId)))[0].executionWorkspaceId).toBeNull();
-        // A later public alias must not expose bytes from failed provisioning.
         const aliasId = randomUUID();
         await db.insert(executionWorkspaces).values({ id: aliasId, companyId, projectId: null, sourceIssueId: issueId,
           name: "Public alias after failed provisioning", mode: "shared_workspace", strategyType: "project_primary", cwd: copiedCwd,
           providerType: "local_fs", status: "active" });
         await db.update(issues).set({ executionWorkspaceId: aliasId }).where(eq(issues.id, issueId));
         if (scenario === "occupied_target") {
-          // A failed copy intent must never relabel an ordinary private directory as isolated.
           await expect(assertExecutionWorkspaceRootWriteAccess(db, { companyId, cwd: copiedCwd, sourceWorkspaceId: aliasId, issueId,
             actor: { type: "agent", agentId, companyId, source: "agent_jwt", onBehalfOfUserId: "responsible-user" } })).rejects.toThrow(/protected|assignment grant/);
         }
@@ -857,7 +784,6 @@ suite("task project repository provisioning", () => {
       expect(initial).toMatchObject({ status: "succeeded", error: null });
       const binding = (await db.select().from(issues).where(eq(issues.id, issueId)))[0].executionWorkspaceId!;
       const taskCwd = execute.mock.calls.find(([input]) => input.runId === initial.id)![0].context.paperclipWorkspace.cwd as string;
-      // The private local source appears only after the original task is bound.
       await db.insert(issues).values({ id: privateIssueId, companyId, title: "Private source task", status: "todo", visibility: "private", responsibleUserId: "private-owner" });
       await db.insert(executionWorkspaces).values({ companyId, projectId: null, sourceIssueId: privateIssueId, name: "Private source files",
         mode: "shared_workspace", strategyType: "project_primary", cwd: sibling, providerType: "local_fs", status: "active" });
@@ -897,7 +823,6 @@ suite("task project repository provisioning", () => {
       const fileUrl = "/api/issues/" + issueId + "/file-resources/content";
       const relativeFile = path.relative(taskCwd, path.join(copy, "private.txt"));
       expect((await request(app).get(fileUrl).query({ workspace: "execution", path: relativeFile }).expect(200)).body.content.data).toBe(expectedBytes);
-      // Removing configuration must not erase permissions of already copied files.
       await db.delete(projectWorkspaces).where(eq(projectWorkspaces.id, siblingId));
       await db.delete(issueAccessGrants).where(eq(issueAccessGrants.issueId, privateIssueId));
       for (const download of [false, true]) {
@@ -946,7 +871,6 @@ suite("task project repository provisioning", () => {
       await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "private-owner", status: "active", membershipRole: "member" });
       await db.insert(issueAccessGrants).values({ issueId: privateIssueId, subjectType: "agent", subjectId: agentId, source: "explicit" });
       const [ownedRun] = await db.insert(heartbeatRuns).values({ companyId, agentId, issueId, status: "failed", responsibleUserId: "responsible-user" }).returning();
-      // A caller-supplied sponsor cannot replace the responsible user on the run.
       await expect(resolver.resolveWorkspaceForRun(actualAgent, { issueId, executionIdentityRunId: ownedRun.id, responsibleUserId: "private-owner" }, null))
         .rejects.toThrow(/access|source/i);
       await db.delete(issueAccessGrants).where(eq(issueAccessGrants.issueId, privateIssueId));

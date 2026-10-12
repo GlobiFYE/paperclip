@@ -134,7 +134,6 @@ export async function selectHeartbeatEnvironment(db: Db, input: HeartbeatEnviron
     if (workspaceRequiringAccess) {
       await assertTaskWorkspaceAccess(db, workspaceAuthorizationActor, agent.companyId, workspaceRequiringAccess.id, { write: true, issueId });
     } else if (!isDotRun && executionProjectId && (hasSelectedWorkspaceSource || workspaceProjectContext?.hasWorkspace)) {
-      // Check source authority before resolution can clone or expose files.
       await assertTaskWorkspaceSourceProjectAccess(db, workspaceAuthorizationActor, agent.companyId, executionProjectId, { write: resolveEffectiveWorkspaceStrategyType(requestedExecutionWorkspaceMode, sourceWorkspaceConfig) !== "git_worktree", issueId });
     }
   }
@@ -412,8 +411,6 @@ export async function selectHeartbeatEnvironment(db: Db, input: HeartbeatEnviron
       );
     }
   }
-  // Once bound, retained workspace authorization above is authoritative.
-  // The original source selection may outlive its configuration row.
   if (taskWorkspaceIntent && !boundSourceWorkspace && !nativeRecoveryExecutionWorkspaceId) {
     await executionWorkspacesSvc.validateSelection({ companyId: agent.companyId,
       actor: { type: "agent", agentId: agent.id, companyId: agent.companyId, runId: run.id, source: "agent_jwt", onBehalfOfUserId: responsibleUserId === "local-board" ? null : responsibleUserId },

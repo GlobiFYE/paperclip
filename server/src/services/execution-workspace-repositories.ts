@@ -17,69 +17,21 @@ import { taskWorkspaceSelectableCondition } from "./task-workspace-selection.js"
 import { captureRunIdentity } from "./run-identity.js";
 import { toolAccessService } from "./tool-access.js";
 import { normalizeProjectRepositoryUrl } from "./project-repositories.js";
-import { localRepositoryPath } from "./local-repository-path.js";
 import { buildGitAuthInvocation, createGitRemoteAuthProvider } from "./git-credentials.js";
 import { materializeManagedProjectWorkspace, ensureManagedRepositoriesIgnored } from "./managed-repository-checkout.js";
+
+import { canonicalRepositoryRoot, repositoryRootsOverlap, legacyRepositoryRootMayMatch, configuredWorkspaceRoot, verifiedIsolatedWorktree, unusedIsolatedCopyTarget, isolatedWorkspaceSourceRoots, type WorkspaceSourceCopyKind } from "./execution-workspace-source-roots.js";
+export { canonicalRepositoryRoot } from "./execution-workspace-source-roots.js";
 
 const execFile = promisify(execFileCallback);
 type RepositoryRow = typeof executionWorkspaceRepositories.$inferSelect;
 type DbTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
-
-/** Match physical aliases, including task directories not materialized yet. */
-export async function canonicalRepositoryRoot(cwd: string): Promise<string> {
-  const absolute = path.resolve(cwd);
-  try { return await fs.realpath(absolute); }
-  catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    const parent = path.dirname(absolute);
-    if (parent === absolute) throw error;
-    return path.join(await canonicalRepositoryRoot(parent), path.basename(absolute));
-  }
-}
-
-/** Physical folder authority is symmetric: a parent captures its descendants,
- * while a child remains inside its ancestor's retained file ownership. */
-function repositoryRootsOverlap(left: string, right: string): boolean {
-  const contains = (parent: string, child: string) => {
-    const relative = path.relative(parent, child);
-    return relative === "" || (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-  };
-  return contains(left, right) || contains(right, left);
-}
-
-/** An unavailable legacy path must not block unrelated roots. Preserve the
- * unresolved suffix and reject roots inside an inaccessible prefix, since a
- * hidden symlink may still point at the candidate's admitted directory. */
-async function legacyRepositoryRootMayMatch(cwd: string, candidate: string): Promise<boolean> {
-  const absolute = path.resolve(cwd);
-  let probe = absolute;
-  let suffix = "";
-  let inaccessiblePrefix: string | null = null;
-  for (;;) {
-    try {
-      const canonical = await fs.realpath(probe);
-      if (repositoryRootsOverlap(path.join(canonical, suffix), candidate)) return true;
-      if (!inaccessiblePrefix) return false;
-      const unresolved = path.join(canonical, path.relative(probe, inaccessiblePrefix));
-      return repositoryRootsOverlap(candidate, unresolved);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (!["ENOENT", "ENOTDIR", "EACCES", "EPERM", "ELOOP", "ENAMETOOLONG"].includes(code ?? "")) throw error;
-      if (code === "EACCES" || code === "EPERM") inaccessiblePrefix = probe;
-      const parent = path.dirname(probe);
-      if (parent === probe) return true;
-      suffix = path.join(path.basename(probe), suffix);
-      probe = parent;
-    }
-  }
-}
 
 const controllerAcquisitionMessage = "New controller repository acquisition requires a trusted task. Existing verified public checkouts remain available.";
 const lowTrustRepositoryMessage = "Low-trust repository reuse permits anonymous public URLs only; new acquisition is unavailable. Use an authorized configured source for private repositories.";
 
 function resolveAcquisitionSource(request: PrepareWorkspaceRepository["repository"], available: ProjectRepository[], anonymousOnly: boolean) {
   if (anonymousOnly && request.kind === "catalog") throw forbidden(lowTrustRepositoryMessage);
-  // A sponsor's catalog is credential discovery, not authority for untrusted work.
   return resolveTaskRepository(request, anonymousOnly ? [] : available);
 }
 
@@ -87,7 +39,6 @@ function assertAcquisitionReceipt(row: Pick<RepositoryRow, "catalogRepositoryId"
   if (anonymousOnly && row.catalogRepositoryId) throw forbidden(lowTrustRepositoryMessage);
 }
 
-/** The catalog is refreshed on request and admission; saved IDs are not grants. */
 export function resolveTaskRepository(request: PrepareWorkspaceRepository["repository"], available: ProjectRepository[]) {
   const selected = request.kind === "catalog" ? available.find(repo => repo.id === request.id) : null;
   if (request.kind === "catalog" && !selected) throw forbidden("Repository access is no longer available; refresh the repository catalog");
@@ -106,35 +57,6 @@ export function assertRepositoryRetryMatches(row: Pick<RepositoryRow, "repositor
   }
 }
 
-/** A configured source can be an existing checkout or a local repository URL
- * before its checkout exists. Use the same physical owner for reads and detach
- * preservation; unrelated unavailable paths cannot block company-wide scans. */
-async function configuredWorkspaceRoot(input: { cwd: string | null; repoUrl?: string | null }, scan: boolean): Promise<string | null> {
-  const resolveDirectory = async (cwd: string): Promise<string | null> => {
-    try {
-      const entry = await fs.stat(cwd);
-      if (!entry.isDirectory()) {
-        if (scan) return null;
-        throw forbidden("Workspace files cannot be detached from unverifiable provenance");
-      }
-      return await fs.realpath(cwd);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT" || (scan && ["ENOTDIR", "EACCES", "EPERM", "ELOOP", "ENAMETOOLONG"].includes(code ?? ""))) return null;
-      throw error;
-    }
-  };
-  if (input.cwd) {
-    const cwd = await resolveDirectory(input.cwd);
-    if (cwd) return cwd;
-  }
-  let repositoryPath: string | null;
-  try { repositoryPath = input.repoUrl ? localRepositoryPath(input.repoUrl) : null; }
-  catch (error) { if (scan) return null; throw error; }
-  return repositoryPath ? resolveDirectory(repositoryPath) : null;
-}
-
-/** Resolve persisted and physical file provenance without registering readers or policies. */
 async function resolveRepositoryRootSources(tx: Db | DbTransaction, input: {
   companyId: string; cwd: string; sourceWorkspaceId?: string; inspectCurrentAliases?: boolean; preparingCopyProjectIds?: Set<string>;
 }) {
@@ -148,9 +70,6 @@ async function resolveRepositoryRootSources(tx: Db | DbTransaction, input: {
     || overlappingEntries.some(entry => createHash("sha256").update(entry.canonicalCwd).digest("hex") !== entry.rootKey)) {
     throw forbidden("Repository root identity conflicts with its retained access record");
   }
-  // Only an exact target copy record proves that ancestral source owners were
-  // copied here. A copied child must never relax its parent or a new owner
-  // configured directly at/inside the target.
   const proofs = entries.filter(entry => entry.kind === "isolated_copy");
   const copiedProjectIds = new Set(input.preparingCopyProjectIds ?? []);
   if (proofs.length && await verifiedIsolatedWorktree(canonicalCwd)) {
@@ -170,8 +89,6 @@ async function resolveRepositoryRootSources(tx: Db | DbTransaction, input: {
   const isolatedSourceIds = new Set(overlappingEntries.filter(entry => entry.kind === "isolated_source").map(entry => entry.scopeId));
   const sourceIds = new Set([...sharedSourceIds, ...isolatedSourceIds]);
   if (input.sourceWorkspaceId) { sourceIds.add(input.sourceWorkspaceId); sharedSourceIds.add(input.sourceWorkspaceId); addSharedSource(input.sourceWorkspaceId, canonicalCwd); }
-  // Recheck current roots on every admission/publication. A later nested owner
-  // can introduce private files even after this root has retained readers.
   const workspaces = await tx.select({ id: executionWorkspaces.id, cwd: executionWorkspaces.cwd }).from(executionWorkspaces)
     .where(eq(executionWorkspaces.companyId, input.companyId));
   for (const workspace of workspaces) {
@@ -198,12 +115,8 @@ async function resolveRepositoryRootSources(tx: Db | DbTransaction, input: {
     if (!namespaceEntry.isDirectory() || namespaceEntry.isSymbolicLink() || await fs.realpath(namespace) !== namespace) {
       throw forbidden("Repository namespace has no verifiable contained ownership");
     }
-    // Configured project siblings have a separate source owner. This child
-    // aggregate owns only task-repo-* publications and their retained provenance.
     for (const name of await fs.readdir(namespace)) if (name.startsWith("task-repo-")) publishedNames.add(name);
   }
-  // Birth records distinguish new, fenced acquisitions from legacy receipts.
-  // Never infer origin for an old receipt merely because it is encountered now.
   const repositoryOrigins = await tx.select({ id: executionWorkspaceRepositoryAccess.scopeId }).from(executionWorkspaceRepositoryAccess)
     .where(and(eq(executionWorkspaceRepositoryAccess.companyId, input.companyId), eq(executionWorkspaceRepositoryAccess.kind, "repository")));
   const knownOrigins = new Set(repositoryOrigins.map(origin => origin.id));
@@ -215,10 +128,6 @@ async function resolveRepositoryRootSources(tx: Db | DbTransaction, input: {
       if (["ENOENT", "ENOTDIR", "EACCES", "EPERM", "ELOOP", "ENAMETOOLONG"].includes(error.code ?? "")) return null;
       throw error;
     }) : null;
-    // A basename identifies a repository, not its publisher. Independent
-    // copies in available unrelated roots do not contribute files here.
-    // Retained sources survive cwd changes; unavailable legacy aliases with
-    // matching publications remain ambiguous and therefore fail closed.
     const matches = sourceIds.has(peer.workspaceId) || (peerRoot !== null && repositoryRootsOverlap(peerRoot, canonicalCwd))
       || (published && peerRoot === null && !knownOrigins.has(peer.id))
       || (peerRoot === null && !entries.some(entry => entry.kind === "reader") && peer.cwd && await legacyRepositoryRootMayMatch(peer.cwd, canonicalCwd));
@@ -231,12 +140,8 @@ async function resolveRepositoryRootSources(tx: Db | DbTransaction, input: {
     }
   }
   if ([...publishedNames].some(name => !recognizedNames.has(name))) throw forbidden("Published repository has no retained workspace provenance");
-  // Configured folders can contain project files before any task has an
-  // execution workspace. Read access must include their current aliases too.
   const configured = await tx.select({ projectId: projectWorkspaces.projectId, cwd: projectWorkspaces.cwd, repoUrl: projectWorkspaces.repoUrl })
     .from(projectWorkspaces).where(eq(projectWorkspaces.companyId, input.companyId));
-  // Retain the privacy owner, not its disposable workspace configuration.
-  // Execution sources may later lose their project FK; retained files must not.
   const sourceProjectIds = new Set(overlappingEntries.filter(entry => (entry.kind === "project_source" || entry.kind === "isolated_project_source")).map(entry => entry.scopeId));
   const sharedProjectIds = new Set(overlappingEntries.filter(entry => entry.kind === "shared_project_source" && !isCopiedAncestor(entry.scopeId, entry.canonicalCwd)).map(entry => entry.scopeId));
   const isolatedProjectIds = new Set(overlappingEntries.filter(entry => entry.kind === "isolated_project_source").map(entry => entry.scopeId));
@@ -257,8 +162,6 @@ async function resolveRepositoryRootSources(tx: Db | DbTransaction, input: {
     sourceProjectIds.add(source.projectId);
     if (!isCopiedAncestor(source.projectId, sourceRoot)) sharedProjectIds.add(source.projectId);
   }
-  // Older retained owners have no sharing classification. Require writes
-  // unless an authoritative retained workspace proves an isolated copy.
   for (const entry of overlappingEntries) if (entry.kind === "project_source" && !isolatedProjectIds.has(entry.scopeId)) {
     sharedProjectIds.add(entry.scopeId);
   }
@@ -291,14 +194,9 @@ async function retainedRootReader(tx: DbTransaction, companyId: string, reader: 
 }
 
 export async function lockExecutionWorkspaceRootProvenance(tx: DbTransaction, companyId: string) {
-  // Acquire before task/workspace row locks. Hold only for policy and receipt
-  // transactions, never Git, provider execution, or snapshot capture.
   await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`task-repository-roots:${companyId}`}, 0))`);
 }
 
-/** A configured folder owns project files before its first task admission.
- * Preserve that ownership before its configuration can move or disappear.
- * Caller holds the company root fence and the fresh configured-workspace lock. */
 export async function preserveConfiguredProjectWorkspaceRootProvenance(tx: DbTransaction, input: {
   companyId: string; projectId: string; cwd: string | null; repoUrl?: string | null;
 }): Promise<void> {
@@ -315,8 +213,6 @@ export async function preserveConfiguredProjectWorkspaceRootProvenance(tx: DbTra
   }
 }
 
-/** Preserve deny-only owners before a workspace can detach from existing files.
- * Caller holds the company root fence, followed by the workspace row lock. */
 export async function preserveExecutionWorkspaceRootProvenance(tx: DbTransaction, input: {
   companyId: string; workspaceId: string; cwd: string | null;
 }): Promise<void> {
@@ -339,7 +235,6 @@ export async function preserveExecutionWorkspaceRootProvenance(tx: DbTransaction
   }
 }
 
-/** File readers share admission's source closure, without changing root policy. */
 export async function assertExecutionWorkspaceRootReadAccess(db: Db | DbTransaction, input: {
   companyId: string; cwd: string; actor: AuthorizationActor; sourceWorkspaceId?: string;
 }): Promise<void> {
@@ -348,104 +243,6 @@ export async function assertExecutionWorkspaceRootReadAccess(db: Db | DbTransact
   await assertRootProjectAccess(db, input.actor, input.companyId, sourceProjectIds);
 }
 
-/** A retained copy intent protects privacy but proves no physical isolation.
- * Only a real, registered linked worktree can activate completed-copy records. */
-async function verifiedIsolatedWorktree(cwd: string, allowedOwnerRoots?: Set<string>): Promise<boolean> {
-  try {
-    const directory = await fs.lstat(cwd), marker = await fs.lstat(path.join(cwd, ".git"));
-    if (!directory.isDirectory() || directory.isSymbolicLink() || !marker.isFile() || marker.isSymbolicLink() || marker.size > 4096) return false;
-    const git = async (args: string[]) => (await execFile("git", ["-C", cwd, ...args], {
-      timeout: 30_000, env: { ...process.env, GIT_NO_LAZY_FETCH: "1" },
-    })).stdout.trim();
-    const checkoutRoot = await fs.realpath(await git(["rev-parse", "--show-toplevel"]));
-    if (checkoutRoot !== cwd) return false;
-    const commonRoot = await fs.realpath(path.resolve(checkoutRoot, await git(["rev-parse", "--git-common-dir"])));
-    const gitRoot = await fs.realpath(await git(["rev-parse", "--absolute-git-dir"]));
-    // An ordinary --separate-git-dir checkout also has a .git file. Only a
-    // linked worktree has distinct per-worktree and common metadata directories.
-    if (gitRoot === commonRoot || (allowedOwnerRoots && !allowedOwnerRoots.has(commonRoot))) return false;
-    const registrations = (await git(["worktree", "list", "--porcelain", "-z"])).split("\0");
-    return registrations.includes(`worktree ${checkoutRoot}`);
-  } catch { return false; }
-}
-
-async function unusedIsolatedCopyTarget(cwd: string): Promise<boolean> {
-  const entry = await fs.lstat(cwd).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  });
-  if (!entry) return true;
-  return entry.isDirectory() && !entry.isSymbolicLink() && (await fs.readdir(cwd)).length === 0;
-}
-
-/** Match realization's checkout and common repository roots. A configured cwd
- * may be a subdirectory or linked worktree while Git copies a broader tree. */
-type WorkspaceSourceCopyKind = "linked_worktree" | "repository";
-async function isolatedWorkspaceSourceRoots(db: Db | DbTransaction, companyId: string, sourceCwd: string, copyKind: WorkspaceSourceCopyKind = "linked_worktree"): Promise<{ roots: string[]; commonRoot: string }> {
-  const git = async (cwd: string, ...args: string[]) => (await execFile("git", ["-C", cwd, ...args], {
-    timeout: 30_000, env: { ...process.env, GIT_NO_LAZY_FETCH: "1" },
-  })).stdout.trim();
-  const localRoot = await fs.realpath(sourceCwd);
-  if (copyKind === "repository" && await git(sourceCwd, "rev-parse", "--is-bare-repository") === "true") {
-    const gitRoot = await fs.realpath(path.resolve(sourceCwd, await git(sourceCwd, "rev-parse", "--absolute-git-dir")));
-    return { roots: [...new Set([localRoot, gitRoot])], commonRoot: gitRoot };
-  }
-  const checkoutRoot = await fs.realpath(path.resolve(await git(sourceCwd, "rev-parse", "--show-toplevel")));
-  const commonRoot = await fs.realpath(path.resolve(checkoutRoot, await git(checkoutRoot, "rev-parse", "--git-common-dir")));
-  const roots = new Set(copyKind === "repository" ? [localRoot, checkoutRoot, commonRoot] : [checkoutRoot, commonRoot]);
-  // A primary checkout uses the common Git directory itself, including when
-  // --separate-git-dir stores it outside the checkout. Only linked worktrees
-  // need another primary owner resolved through registration or known paths.
-  let primaryIdentified = await fs.realpath(await git(checkoutRoot, "rev-parse", "--absolute-git-dir")) === commonRoot;
-  const considerPrimary = async (candidatePath: string): Promise<boolean> => {
-    const candidate = await fs.realpath(candidatePath).catch(() => null);
-    if (!candidate || candidate === checkoutRoot || candidate === commonRoot) return false;
-    try {
-      const candidateGitRoot = await fs.realpath(await git(candidate, "rev-parse", "--absolute-git-dir"));
-      if (candidateGitRoot !== commonRoot) return false;
-      const candidateCheckout = await fs.realpath(await git(candidate, "rev-parse", "--show-toplevel"));
-      const candidateCommon = await fs.realpath(path.resolve(candidate, await git(candidate, "rev-parse", "--git-common-dir")));
-      const relative = path.relative(candidateCheckout, candidate);
-      if (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
-        && candidateCommon === commonRoot) {
-        roots.add(candidateCheckout);
-        return true;
-      }
-    } catch { /* Unverified candidates cannot identify another checkout owner. */ }
-    return false;
-  };
-  if (!primaryIdentified) {
-    const registrations = (await git(checkoutRoot, "worktree", "list", "--porcelain", "-z")).split("\0");
-    for (const registration of registrations) {
-      if (registration.startsWith("worktree ") && await considerPrimary(registration.slice("worktree ".length))) {
-        primaryIdentified = true;
-        break;
-      }
-    }
-  }
-  if (!primaryIdentified) {
-    // Separate Git metadata has no backlink to its main checkout. Only this
-    // layout needs company-owned current/retained candidates; never infer an
-    // owner from the metadata directory's parent or probe unrelated history for
-    // already-identified ordinary repositories.
-    const candidates = new Set<string>();
-    const configured = await db.select({ cwd: projectWorkspaces.cwd, repoUrl: projectWorkspaces.repoUrl }).from(projectWorkspaces)
-      .where(eq(projectWorkspaces.companyId, companyId));
-    for (const workspace of configured) {
-      const cwd = await configuredWorkspaceRoot(workspace, true);
-      if (cwd) candidates.add(cwd);
-    }
-    const workspaces = await db.select({ cwd: executionWorkspaces.cwd }).from(executionWorkspaces).where(eq(executionWorkspaces.companyId, companyId));
-    for (const workspace of workspaces) if (workspace.cwd) candidates.add(workspace.cwd);
-    const retained = await db.select({ cwd: executionWorkspaceRepositoryAccess.canonicalCwd }).from(executionWorkspaceRepositoryAccess)
-      .where(eq(executionWorkspaceRepositoryAccess.companyId, companyId));
-    for (const entry of retained) candidates.add(entry.cwd);
-    for (const candidate of candidates) await considerPrimary(candidate);
-  }
-  return { roots: [...roots], commonRoot };
-}
-
-/** Internal, deny-only snapshot captured before copying; never accepted from a model or API payload. */
 export type IsolatedWorkspaceSourceAccess = {
   companyId: string;
   roots: string[];
@@ -453,8 +250,6 @@ export type IsolatedWorkspaceSourceAccess = {
   projectIds: string[];
 };
 
-/** Shared Git objects outlive checkout pointers. Associate their verified
- * storage with authorized owners before copying, without granting write access. */
 async function retainGitMetadataOwners(tx: DbTransaction, input: {
   companyId: string; commonRoot: string; workspaceIds: Set<string>; projectIds: Set<string>;
 }): Promise<void> {
@@ -495,9 +290,6 @@ export async function assertIsolatedWorkspaceSourceReadAccess(db: Db, input: {
   });
 }
 
-/** Retain source privacy before copying and after realization, including a failed copy admission.
- * Commit deny-only ownership before reporting a revoked/missing source, so
- * already-copied private bytes never become an unowned readable target. */
 export async function retainIsolatedWorkspaceSourceAccess(db: Db, input: {
   companyId: string; sourceCwd: string; targetCwd: string; actor: AuthorizationActor;
   captured: IsolatedWorkspaceSourceAccess; issueId?: string; phase?: "preparing" | "verified"; copyKind?: WorkspaceSourceCopyKind;
@@ -536,8 +328,6 @@ export async function retainIsolatedWorkspaceSourceAccess(db: Db, input: {
         await tx.insert(executionWorkspaceRepositoryAccess).values({ companyId: input.companyId, rootKey, canonicalCwd, kind, scopeId });
       }
     }
-    // Completed-copy authority is separate from the deny-only intent above.
-    // A failed Git operation in an existing ordinary folder cannot mint it.
     const phase = input.phase ?? "preparing";
     let preparingCopyProjectIds: Set<string> | undefined;
     let verifiedCopyProjectIds: Set<string> | undefined;
@@ -547,25 +337,16 @@ export async function retainIsolatedWorkspaceSourceAccess(db: Db, input: {
         throw error;
       });
       if (targetEntry?.isSymbolicLink()) throw forbidden("Isolated copy target cannot be a symbolic link");
-      // Upgrades and interrupted admissions can already have a registered
-      // worktree without the newer proof row. Verify the same physical evidence
-      // during preparation before adopting it; never infer isolation from files.
       const linkedWorktree = input.copyKind !== "repository";
       const verifiedTarget = linkedWorktree && await verifiedIsolatedWorktree(canonicalCwd, roots);
       if (linkedWorktree && (phase === "verified" || verifiedTarget)) {
         if (!verifiedTarget) throw forbidden("Isolated copy target is not a verified Git worktree");
-        // Physical verification permits this check's ancestor exemption, but
-        // persist no new copy proof unless all target policies/readers allow it.
         preparingCopyProjectIds = projectIds;
         verifiedCopyProjectIds = projectIds;
       } else if (linkedWorktree && await unusedIsolatedCopyTarget(input.targetCwd)) {
-        // This allowance exists only for this pre-copy check. No proof row is
-        // written until the harness confirms Git's completed registration.
         preparingCopyProjectIds = projectIds;
       }
     } catch (error) { failure ??= error; }
-    // The target may already contain independently owned files. Copy source
-    // READ authority never grants permission to provision/write that target.
     try {
       const target = await resolveRepositoryRootSources(tx, { companyId: input.companyId, cwd: canonicalCwd, preparingCopyProjectIds });
       await assertRootProjectTrust(tx, { companyId: input.companyId, actor: input.actor, issueId: input.issueId, projectIds: target.sourceProjectIds });
@@ -589,7 +370,6 @@ export async function retainIsolatedWorkspaceSourceAccess(db: Db, input: {
   if (denied) throw denied;
 }
 
-/** Physical ownership cannot silently change a run's already selected containment. */
 async function assertRootProjectTrust(db: Db | DbTransaction, input: {
   companyId: string; projectIds: Set<string>; actor: AuthorizationActor;
   issueId?: string | null; sourceWorkspaceId?: string; assigneeAgentId?: string | null;
@@ -611,13 +391,9 @@ async function assertRootProjectTrust(db: Db | DbTransaction, input: {
   const [run] = runId ? await db.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.id, runId), eq(heartbeatRuns.companyId, input.companyId))) : [];
   if ((agentId && !agent) || (runId && (!run || run.agentId !== agentId || !issue
     || (run.nativeIssueId ?? run.contextSnapshot?.issueId ?? run.contextSnapshot?.taskId ?? run.issueId) !== issue.id))) throw incompatible();
-  // The stored effective policy is the containment the harness actually chose.
-  // Live policy edits must not relabel an already admitted local run as sandboxed.
   const retainedPolicy = run?.contextSnapshot?.executionPolicy;
   const current = resolveCoreTrustPreset({ companyId: input.companyId, agent, project, workspaceSourceProject: source, issue,
     run: run ? { companyId: input.companyId, executionPolicy: retainedPolicy } : null });
-  // Standard admitted runs intentionally omit executionPolicy; absence on an
-  // existing run is still standard, not permission to adopt live policy edits.
   const selected = run
     ? resolveCoreTrustPreset({ companyId: input.companyId, run: { companyId: input.companyId, executionPolicy: retainedPolicy } })
     : current;
@@ -629,13 +405,10 @@ async function assertRootProjectTrust(db: Db | DbTransaction, input: {
   for (const owner of restricted) {
     const combined = resolveCoreTrustPreset({ companyId: input.companyId, workspaceSourceProject: owner,
       run: { companyId: input.companyId, executionPolicy: selectedPolicy } });
-    // Narrower boundaries need a new admission too; do not silently change the
-    // capabilities of an existing provider session or a retained reader.
     if (combined.kind !== "low_trust_review" || !isDeepStrictEqual(combined.boundary, selected.boundary)) throw incompatible();
   }
 }
 
-/** Selection validates writable source scope without registering a reader or changing policy. */
 export async function assertExecutionWorkspaceRootWriteAccess(db: Db | DbTransaction, input: {
   companyId: string; cwd: string; actor: AuthorizationActor; sourceWorkspaceId?: string;
 } & Omit<NonNullable<Parameters<typeof assertTaskWorkspaceSourceProjectAccess>[4]>, "write">): Promise<void> {
@@ -645,7 +418,6 @@ export async function assertExecutionWorkspaceRootWriteAccess(db: Db | DbTransac
   await assertRootProjectTrust(db, { ...input, projectIds: sourceProjectIds });
 }
 
-/** Workspace aggregate child. It owns acquisition receipts, never task binding or provider sessions. */
 export function executionWorkspaceRepositoryService(db: Db) {
   async function catalog(companyId: string, userId: string | null, localTrusted: boolean) {
     return (await toolAccessService(db).listProjectRepositories(companyId, userId, localTrusted)).repositories;
@@ -688,8 +460,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
       throw forbidden(lowTrustRepositoryMessage);
     }
     if (mode === "anonymous_only") {
-      // Legacy receipts predate root reservations. Even pending/staging work
-      // can publish after admission, so no managed intent in this root is safe.
       const managed = await tx.select({ cwd: executionWorkspaces.cwd, repositoryIdentity: executionWorkspaceRepositories.repositoryIdentity }).from(executionWorkspaceRepositories)
         .innerJoin(executionWorkspaces, eq(executionWorkspaces.id, executionWorkspaceRepositories.executionWorkspaceId))
         .where(and(eq(executionWorkspaceRepositories.companyId, companyId), eq(executionWorkspaces.companyId, companyId),
@@ -704,11 +474,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
           if (!namespaceEntry.isDirectory() || namespaceEntry.isSymbolicLink() || await fs.realpath(namespace) !== namespace) {
             throw forbidden(lowTrustRepositoryMessage);
           }
-          // An unreadable/moved legacy alias cannot disprove published private
-          // bytes in this readable root. Markers are agent-writable, so none can
-          // authorize this collision: choose a fresh root even if these bytes
-          // were acquired anonymously. Check existing reservations too, since
-          // older versions may have admitted this root before fencing it.
           for (const identity of new Set(managed.map(peer => peer.repositoryIdentity))) {
             const entry = await fs.lstat(path.join(canonicalCwd, taskRepositoryRelativePath(identity))).catch((error: NodeJS.ErrnoException) => {
               if (error.code === "ENOENT") return null;
@@ -736,9 +501,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
       readers.push({ id: randomUUID(), companyId: input.companyId, rootKey, canonicalCwd, kind: "reader", scopeId: input.reader.runId,
         issueId: input.reader.issueId, agentId: input.reader.agentId, responsibleUserId: run?.responsibleUserId ?? null, createdAt: new Date(), updatedAt: new Date() });
     }
-    // Heartbeat owns ordinary admission to this task's already-authorized
-    // folder. Avoid adding acquisition permissions when it is the only task
-    // and has no acquisition. Any other task/source requires the full closure.
     const ownAdmissionOnly = input.preserveOwnAdmission && input.reader && input.sourceWorkspaceId
       && sourceIds.size === 1 && sourceIds.has(input.sourceWorkspaceId)
       && readers.every(reader => reader.issueId === input.reader!.issueId);
@@ -751,8 +513,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
       if (ownAdmissionOnly) {
         const [ownSource] = await tx.select({ id: executionWorkspaces.id }).from(executionWorkspaces).where(and(
           eq(executionWorkspaces.companyId, input.companyId), eq(executionWorkspaces.id, input.sourceWorkspaceId!),
-          // Check both privacy principals without repeating the membership
-          // admission gate that heartbeat already owns for this exact task.
           await executionWorkspaceReadSqlCondition(tx, { ...actor, onBehalfOfUserId: null }),
           actor.onBehalfOfUserId ? await executionWorkspaceReadSqlCondition(tx, {
             type: "board", userId: actor.onBehalfOfUserId, ignoreInstanceAdmin: true,
@@ -763,8 +523,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
         eq(executionWorkspaces.companyId, input.companyId), or(...[...sourceIds].map(id => eq(executionWorkspaces.id, id))))) : [];
       for (const sourceWorkspace of sourceWorkspaces.length ? sourceWorkspaces : [null]) {
         if (await requiresAnonymousAcquisition(tx, { issue, workspace: sourceWorkspace, agentId: reader.agentId!, runId: reader.scopeId })) {
-          // Retained readers cannot gain managed bytes after their task, agent,
-          // run, or any retained physical source becomes anonymous-only.
           await reserveRootPolicy(tx, input.companyId, canonicalCwd, "anonymous_only");
         }
       }
@@ -831,7 +589,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
       if (input.actor.type === "agent" && !["standard", "skill_test"].includes(issue.workMode)) throw forbidden("Repository preparation is unavailable in Ask or Plan mode");
       if (!issue.executionWorkspaceId) throw conflict("The task has no admitted workspace yet. Start it once before preparing a repository.");
       if (!(await canActorReadExecutionWorkspace(db, input.actor, issue.executionWorkspaceId))) throw notFound("Execution workspace not found");
-      // Serialize receipts across tasks without blocking unchanged-ID foreign-key reads.
       const [workspace] = await tx.select().from(executionWorkspaces).where(and(eq(executionWorkspaces.id, issue.executionWorkspaceId), eq(executionWorkspaces.companyId, input.companyId), taskWorkspaceSelectableCondition())).for("no key update");
       if (!workspace) throw conflict("Execution workspace is unavailable");
       await assertTaskWorkspaceAccess(tx, input.actor, input.companyId, workspace.id, { write: true, issueId: input.issueId });
@@ -865,7 +622,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
       await tx.insert(activityLog).values({ companyId: input.companyId, actorType: input.actor.type === "agent" ? "agent" : "user", actorId: input.actor.agentId ?? input.actor.userId ?? "local-board", action: "workspace.repository.requested", entityType: "execution_workspace", entityId: workspace.id, runId: input.actor.runId ?? null, responsibleUserId: userId, details: { repositoryId: row.id, issueId: input.issueId, applies: "next_normal_admission" } });
       return row;
     });
-    // No host-only checkout is represented as ready in an already admitted remote session.
     return { kind: "requires_next_admission" as const, applies: "next_normal_admission" as const, operationId: receipt.id, repository: receipt, reason: "immutable_admitted_workspace" };
   }
   async function list(companyId: string, workspaceId: string) {
@@ -886,7 +642,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
     });
     return { workspace, actor };
   }
-  /** Configured-source publication shares this root, but does not acquire a repository. */
   async function guardForPublication(input: PublicationInput) {
     await db.transaction(async tx => {
       await lockExecutionWorkspaceRootProvenance(tx, input.companyId);
@@ -894,10 +649,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
       await authorizeRootAccess(tx, { companyId: input.companyId, cwd: input.cwd, sourceWorkspaceId: workspace.id, reader: input });
     });
   }
-  /** Ordinary sibling clones inherit source privacy on their admitted task root.
-   * These records never prove worktree isolation or confer source WRITE rights.
-   * The callback rechecks before publication/reuse and keeps captured owners
-   * even if their configuration disappears while files are being copied. */
   async function prepareConfiguredRepositorySource(input: PublicationInput & { sourceCwd: string }): Promise<() => Promise<void>> {
     const roots = new Set<string>(), workspaceIds = new Set<string>(), projectIds = new Set<string>();
     const retain = async () => {
@@ -953,17 +704,14 @@ export function executionWorkspaceRepositoryService(db: Db) {
     await retain();
     return retain;
   }
-  /** Recovery keeps its admitted identity and folder; only fence future publication. */
   async function reserveForRecovery(input: { companyId: string; issueId: string; workspaceId: string; cwd: string; agentId: string; runId: string }) {
     const [issue] = await db.select().from(issues).where(and(eq(issues.id, input.issueId), eq(issues.companyId, input.companyId)));
     const [workspace] = await db.select().from(executionWorkspaces).where(and(eq(executionWorkspaces.id, input.workspaceId), eq(executionWorkspaces.companyId, input.companyId)));
     if (!issue) throw forbidden("Task repository recovery identity is unavailable");
     if (!workspace) {
-      // Older projectless native admissions used the run ID as a transient
-      // workspace binding. Only the persisted exact native binding grants this exception.
       const [run] = await db.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.id, input.runId), eq(heartbeatRuns.companyId, input.companyId)));
       let execution;
-      try { execution = parseNativeExecutionInput(run?.runnerProfileJson?.nativeExecutionInput); } catch { /* Fail closed below. */ }
+      try { execution = parseNativeExecutionInput(run?.runnerProfileJson?.nativeExecutionInput); } catch {   }
       const binding = execution?.binding;
       if (input.workspaceId !== input.runId || run?.runtimeMode !== "native" || !binding
         || binding.companyId !== input.companyId || binding.runId !== input.runId
@@ -981,8 +729,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
       ...(workspace ? { sourceWorkspaceId: workspace.id } : {}),
       preserveOwnAdmission: !(await list(input.companyId, input.workspaceId)).length });
   }
-  /** Logical rows may deliberately name one physical folder. Reuse bytes only
-   * after validating every published owner's retained privacy and source intent. */
   async function sharedPublicationPin(input: { issueId: string; row: RepositoryRow; root: string; actor: AuthorizationActor; anonymousOnly: boolean; ownership: { repositoryId?: string; pinnedCommit?: string } | null }) {
     const candidates = await db.select({ repository: executionWorkspaceRepositories, workspace: executionWorkspaces })
       .from(executionWorkspaceRepositories).innerJoin(executionWorkspaces, eq(executionWorkspaces.id, executionWorkspaceRepositories.executionWorkspaceId))
@@ -992,7 +738,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
     for (const { repository, workspace } of candidates) {
       if (repository.id === input.row.id || !workspace.cwd) continue;
       const candidatePin = repository.pinnedCommit ?? (input.ownership?.repositoryId === repository.id ? input.ownership.pinnedCommit : null);
-      // An intent that has not published anything cannot claim another task's checkout.
       if (!candidatePin || !/^[a-f0-9]{40,64}$/.test(candidatePin)) continue;
       if (await fs.realpath(workspace.cwd).catch(() => null) !== input.root) continue;
       assertAcquisitionReceipt(repository, input.anonymousOnly);
@@ -1008,14 +753,11 @@ export function executionWorkspaceRepositoryService(db: Db) {
     const rows = await list(input.companyId, input.workspaceId);
     const actor: AuthorizationActor = { type: "agent", source: "agent_jwt", companyId: input.companyId,
       agentId: input.agentId, runId: input.runId,
-      // local-board is a server identity, not a membership record. Preserve the
-      // agent's own authority rather than promoting it to a board actor.
       onBehalfOfUserId: input.responsibleUserId === "local-board" ? null : input.responsibleUserId };
     const [issue] = await db.select().from(issues).where(and(eq(issues.id, input.issueId), eq(issues.companyId, input.companyId)));
     const [workspace] = await db.select().from(executionWorkspaces).where(and(eq(executionWorkspaces.id, input.workspaceId), eq(executionWorkspaces.companyId, input.companyId)));
     if (!issue || !workspace || issue.executionWorkspaceId !== workspace.id) throw forbidden("Task repository workspace binding is unavailable");
     const anonymousOnly = await requiresAnonymousAcquisition(db, { issue, workspace: workspace ?? null, agentId: input.agentId, runId: input.runId });
-    // Ordinary admission without acquisitions is owned by heartbeat, not this mutation service.
     if (!rows.length) {
       if (anonymousOnly) await reserveAdmissionRoot(input.companyId, input.cwd, "anonymous_only");
       await reserveRootAccess({ companyId: input.companyId, cwd: input.cwd, reader: input,
@@ -1030,7 +772,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
     const root = await fs.realpath(input.cwd);
     const available = acquisitionRestricted ? [] : await catalog(input.companyId, input.responsibleUserId, input.responsibleUserId === "local-board");
     const resolveAuth = createGitRemoteAuthProvider(db, input.companyId, { issueId: input.issueId, heartbeatRunId: input.runId, agentId: input.agentId, responsibleUserId: input.responsibleUserId });
-    // Validate every receipt before reading or transferring any prepared bytes.
     const sources = rows.map(row => {
       assertAcquisitionReceipt(row, anonymousOnly);
       return resolveAcquisitionSource(row.catalogRepositoryId ? { kind: "catalog", id: row.catalogRepositoryId } : { kind: "url", url: row.repoUrl }, available, anonymousOnly);
@@ -1043,8 +784,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
     const repositoryRoot = path.join(root, ".paperclip-repositories");
     if (!acquisitionRestricted) await fs.mkdir(repositoryRoot, { recursive: true });
     if ((await fs.lstat(repositoryRoot)).isSymbolicLink() || await fs.realpath(repositoryRoot) !== repositoryRoot) throw conflict("Repository directory escapes the task workspace");
-    // Incomplete clones belong to the runtime tree, which is excluded from
-    // transfer and recovery. The published namespace contains checkouts only.
     let stagingParent = root;
     if (!acquisitionRestricted) {
       for (const name of [".paperclip-runtime", "repository-staging"]) {
@@ -1057,8 +796,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
           throw conflict("Repository staging directory escapes the task workspace");
         }
       }
-      // Self-ignore before any clone writes, including when the task directory
-      // is a subfolder of another checkout. Never follow a supplied ignore file.
       const ignorePath = path.join(stagingParent, ".gitignore");
       const ignoreEntry = await fs.lstat(ignorePath).catch((error: NodeJS.ErrnoException) => {
         if (error.code === "ENOENT") return null;
@@ -1088,7 +825,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
           if (!metadata?.isDirectory() || metadata.isSymbolicLink() || await fs.realpath(gitDir) !== gitDir) throw conflict("Repository Git metadata escapes the managed checkout");
         }
         if (acquisitionRestricted && !existing) throw forbidden(controllerAcquisitionMessage);
-        // Uncataloged URLs may use anonymous public Git only. Never borrow a user's/company's credential for an arbitrary URL.
         const anonymous = buildGitAuthInvocation({ token: "", source: "managed_connection", secretName: null });
         anonymous.env = { ...anonymous.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null" };
         if (!acquisitionRestricted) await db.update(executionWorkspaceRepositories).set({ state: "preparing", catalogRepositoryId: source.catalogRepositoryId, failureCode: null, updatedAt: new Date() }).where(eq(executionWorkspaceRepositories.id, row.id));
@@ -1131,7 +867,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
           if (origin.url.toLowerCase() !== row.repositoryIdentity) throw conflict("Repository checkout belongs to a different origin");
           const ownership = await readOwnership();
           if (!authorizedPin && (ownership?.repositoryId !== row.id || !/^[a-f0-9]{40,64}$/.test(ownership.pinnedCommit))) throw conflict("Repository publication has no valid preparation receipt");
-          // The pre-publication commit survives a crash before the database update.
           const pinnedCommit: string = authorizedPin ?? ownership.pinnedCommit;
           if (acquisitionRestricted) await git("cat-file", "-e", `${pinnedCommit}^{commit}`);
           const branchName = await git("symbolic-ref", "--quiet", "--short", "HEAD").catch(() => null);

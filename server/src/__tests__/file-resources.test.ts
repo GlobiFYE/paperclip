@@ -320,8 +320,6 @@ describeEmbeddedPostgres("workspace file resources", () => {
     const { root, projectRoot, executionRoot, targetProjectRoot } = await makeWorkspace();
     try {
       const graph = await seedGraph(db, { projectRoot, executionRoot, targetProjectRoot });
-      // Current task files have their own source; the task's organizational
-      // project still contributes a configured alternative to auto lookup.
       await db.update(executionWorkspaces).set({ projectId: null, projectWorkspaceId: null, providerType: "local_fs" }).where(eq(executionWorkspaces.sourceIssueId, graph.issueId));
       await fs.writeFile(path.join(executionRoot, "report.txt"), "CURRENT_TASK_REPORT");
       if (alternative === "missing" || alternative === "symlink loop") {
@@ -415,8 +413,6 @@ describeEmbeddedPostgres("workspace file resources", () => {
         }
       };
       await deny();
-      // A closed local workspace exposes no bytes, but its resource metadata
-      // still must not bypass the same physical source boundary.
       await db.update(executionWorkspaces).set({ status: "archived" }).where(eq(executionWorkspaces.sourceIssueId, graph.issueId));
       await deny();
       await db.update(executionWorkspaces).set({ status: "active" }).where(eq(executionWorkspaces.sourceIssueId, graph.issueId));
@@ -426,7 +422,6 @@ describeEmbeddedPostgres("workspace file resources", () => {
       for (const pending of reads()) expect((await pending).status).toBe(200);
       const content = await request(app).get(`/api/issues/${graph.issueId}/file-resources/content`).query({ workspace: "execution", path: "secret.txt" }).expect(200);
       expect(content.body.content.data).toBe("PRIVATE_ROOT_BYTES");
-      // A previous admission retains the source even if its logical cwd moves.
       await db.insert(executionWorkspaceRepositoryAccess).values({ companyId: graph.companyId, rootKey, canonicalCwd, kind: "source", scopeId: source.id });
       const provenance = await db.select().from(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.companyId, graph.companyId));
       await db.update(executionWorkspaces).set({ cwd: targetProjectRoot }).where(eq(executionWorkspaces.id, source.id));
@@ -519,8 +514,6 @@ describeEmbeddedPostgres("workspace file resources", () => {
         expect(response.body.content.data).toBe("PRIVATE_OVERLAPPING_ROOT_BYTES");
       }
       expect(await readState()).toEqual(beforeAllowedReads);
-      // A prior admission's deny-only owner remains attached to the physical
-      // tree after the logical owner selects a different folder.
       const canonicalCwd = await fs.realpath(privateRoot);
       await db.insert(executionWorkspaceRepositoryAccess).values({ companyId: graph.companyId,
         rootKey: createHash("sha256").update(canonicalCwd).digest("hex"), canonicalCwd,

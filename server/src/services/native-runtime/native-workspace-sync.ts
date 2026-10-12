@@ -1091,7 +1091,6 @@ export async function prepareNativeWorkspaceSync(input: {
   }
 }
 
-/** Read the admitted host root without reacquiring or transferring workspace files. */
 export async function readNativeWorkspaceSyncLocalCwd(input: {
   companyId: string;
   runId: string;

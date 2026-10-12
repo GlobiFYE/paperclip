@@ -25,7 +25,6 @@ export interface TaskWorkspaceObservation {
   remoteLeaseRunIds: string[];
 }
 
-/** Every check uses independent persisted/API/filesystem evidence, never model assertions. */
 export function gradeTaskWorkspaces(value: TaskWorkspaceObservation) {
   const checks: Array<{ id: string; passed: boolean; detail: string }> = [];
   const check = (id: string, passed: boolean, detail: string) => checks.push({ id, passed, detail });
@@ -37,8 +36,6 @@ export function gradeTaskWorkspaces(value: TaskWorkspaceObservation) {
   check("projectless-task-owned-root", complete && value.projectCount === 0 && value.checkpoints.every(p =>
     p.issue.projectId === null && p.workspace.projectId === null && p.confinedTaskRoot && p.issue.executionWorkspaceId === p.workspace.id),
   "Task and execution workspace remain projectless, with a confined company/task directory rather than agent home.");
-  // The provider may enqueue its receipt before the first browser observation.
-  // Deferred acquisition is checked at the settled first-turn checkpoint below.
   check("immutable-root-and-binding", complete && value.initial !== null &&
     value.checkpoints.every(p => p.workspace.id === value.initial!.workspaceId && p.workspace.cwd === value.initial!.cwd),
   "The independently observed initial root and binding survive all three admissions.");
@@ -75,7 +72,6 @@ export function gradeTaskWorkspaces(value: TaskWorkspaceObservation) {
   return checks;
 }
 
-/** Count durable runner receipts, including the provider's normalized tool name. */
 export function isRepositoryPreparationReceipt(event: {
   eventType?: string;
   payload?: { prpEvent?: { sourceKind?: string; runId?: string; payload?: { name?: string; status?: string } } };

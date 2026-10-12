@@ -1,4 +1,3 @@
-/** Canonical task workspace operation. */
 export const prepareRepositoryAction = {
   "id": "prepare_repository",
   "canonical": {

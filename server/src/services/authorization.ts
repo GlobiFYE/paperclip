@@ -1642,8 +1642,6 @@ export function authorizationService(db: Db | DbTransaction) {
     }
     const taskAssignmentAction = input.action === "tasks:assign" || input.action === "project:write_workspace";
     const requestedAssignmentPolicy = () => input.action === "project:write_workspace" && input.resource.type === "issue"
-      // Continuing work does not reassign the task or its agent. Its lineage is
-      // retained for containment, while only the source project's write policy applies.
       ? loadProjectAuthorizationPolicy(companyId, input.resource.projectId!).then(policy => evaluateAuthorizationPolicyForAssignment(policy, "Target project"))
       : assignmentPolicyEffect(input.resource);
 

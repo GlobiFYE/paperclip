@@ -8154,7 +8154,6 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     const [project] = await db.insert(projects).values({ companyId: fixture.companyId, name: "Protected task project",
       executionWorkspacePolicy: { authorizationPolicy: { assignmentPolicy: { mode: "protected" } } } }).returning();
     const defaults = { projectId: project.id, workspace: { kind: "task_directory" as const } };
-    // Saving readable defaults does not grant future senders assignment authority.
     await service.update(endpoint.id, { executionDefaults: defaults }, "owner-user");
     await db.insert(companyMemberships).values({ companyId: fixture.companyId, principalType: "agent",
       principalId: fixture.assignedAgentId, status: "active", membershipRole: "member" });
@@ -65215,8 +65214,6 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     ]);
     expect(wakeup).toHaveBeenCalledTimes(2);
 
-    // A new topic must snapshot the migrated destination's defaults, while the
-    // existing topic above keeps its original task and workspace selection.
     const newTopic = makeThread({ channelId: `telegram:${migratedChatId}`,
       id: `telegram:${migratedChatId}:${topicId + 1}`, name: "New migrated topic" });
     await deliverMessage({ callbacks, endpointId: endpoint.id, provider: "telegram", thread: newTopic.thread,

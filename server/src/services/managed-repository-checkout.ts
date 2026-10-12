@@ -12,7 +12,6 @@ import { isWorkspaceGitScanError, WorkspaceGitScanError } from "./workspace-git-
 const execFile = promisify(execFileCallback);
 const MANAGED_WORKSPACE_GIT_CLONE_TIMEOUT_MS = 10 * 60 * 1000;
 
-/** Atomically publish a complete managed checkout; never delete a competing checkout. */
 export async function materializeManagedProjectWorkspace(
   cwd: string,
   input: {
@@ -20,11 +19,8 @@ export async function materializeManagedProjectWorkspace(
     repoRef?: string | null;
     localSource?: string | null;
     resolveGitAuth?: GitRemoteAuthProvider | null;
-    /** Protect the fresh staging directory before Git reads any local source bytes. */
     beforeCopy?: (cloneCwd: string) => Promise<void>;
-    /** Internal preparation receipt is committed inside the clone before atomic publication. */
     beforePublish?: (cloneCwd: string) => Promise<void>;
-    /** Existing, validated private staging parent outside published repositories. */
     stagingParent?: string;
   },
 ): Promise<{ cwd: string; warning: string | null }> {
@@ -58,10 +54,6 @@ export async function materializeManagedProjectWorkspace(
     await fs.rm(cwd, { recursive: true, force: true });
   }
 
-  // Clone into a private temp directory (a sibling by default), then publish atomically. The target
-  // is never created in a partial state and never removed on failure, so a concurrent
-  // materialization (another process, or a run racing this one) can neither adopt a broken
-  // checkout nor lose its own completed one.
   const auth = input.resolveGitAuth && !input.localSource
     ? await input.resolveGitAuth(input.repoUrl)
     : null;
@@ -76,10 +68,6 @@ export async function materializeManagedProjectWorkspace(
         [...(auth?.configArgs ?? []), "clone", "--no-hardlinks", "--", input.localSource ?? input.repoUrl, cloneTmpDir],
         {
           env: {
-            // Spread order matters: the sanitizer strips PAPERCLIP_*, which would remove the
-            // credential-helper token env if it came first. GIT_TERMINAL_PROMPT=0 fails a
-            // credential-less private clone immediately instead of hanging on a prompt until
-            // the clone timeout.
             ...sanitizeRuntimeServiceBaseEnv(process.env),
             GIT_TERMINAL_PROMPT: "0",
             ...(auth?.env ?? {}),
@@ -122,8 +110,6 @@ export async function materializeManagedProjectWorkspace(
     const message = scrubGitCredentialText(
       `Failed to prepare managed checkout for "${input.repoUrl}" at "${cwd}": ${reason}${authNote ? ` ${authNote}` : ""}`,
     );
-    // Preserve the closed failure code without copying subprocess output or
-    // credentials into the durable run. Setup recovery needs the actual cause.
     if (isWorkspaceGitScanError(error)) throw new WorkspaceGitScanError(error.code, message);
     const connectionFailure = readGitConnectionFailure(error);
     if (connectionFailure) throw new GitConnectionFailureError(message, connectionFailure);
@@ -136,8 +122,6 @@ export async function materializeManagedProjectWorkspace(
     await fs
       .rm(cloneTmpDir, { recursive: true, force: true })
       .catch(() => undefined);
-    // The target appearing between the emptiness check and the rename means another
-    // materialization won the race; adopt its checkout instead of failing the run.
     if (await hasAdoptableGitDir()) {
       return { cwd, warning: null };
     }
@@ -151,8 +135,6 @@ export async function materializeManagedProjectWorkspace(
 }
 
 
-/** The container is independently captured, never an accidental Git submodule.
- * A plain task root must not discover and mutate an ancestor repository. */
 export async function ensureManagedRepositoriesIgnored(cwd: string): Promise<void> {
   const gitEntry = await fs.lstat(path.join(cwd, ".git")).catch(() => null);
   if (!gitEntry) return;

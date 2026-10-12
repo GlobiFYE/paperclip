@@ -67,9 +67,8 @@ const support = await getEmbeddedPostgresTestSupport();
       expect(retained.some(row => row.kind === "reader")).toBe(false);
       await expect(assertExecutionWorkspaceRootReadAccess(db, access)).rejects.toThrow(/source project/);
       await expect(assertExecutionWorkspaceRootWriteAccess(db, { ...access, issueId })).rejects.toThrow(/source project/);
-      // The common-prefix sibling is physically independent of the old root.
       if (mutation !== "move") await expect(assertExecutionWorkspaceRootReadAccess(db, { companyId, cwd: unrelatedCwd, actor })).resolves.toBeUndefined();
-      if (mutation === "remove_project") return; // Missing sticky owner must remain denied.
+      if (mutation === "remove_project") return;
       const [readGrant] = await db.insert(projectAccessMembers).values({ companyId, projectId: source.id, subjectType: "user", subjectId: userId }).returning();
       await expect(assertExecutionWorkspaceRootReadAccess(db, access)).resolves.toBeUndefined();
       await expect(assertExecutionWorkspaceRootWriteAccess(db, { ...access, issueId })).rejects.toThrow(/protected|not authorized/);

@@ -7,7 +7,6 @@ import { executionWorkspaceReadSqlCondition, type AuthorizationActor } from "./a
 type DbTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type WorkspaceAccessContext = { write?: boolean; issueId?: string | null; parentIssueId?: string | null; assigneeAgentId?: string | null; assigneeUserId?: string | null };
 
-/** Filesystem source scope is independent of a task's organizational project. */
 export async function assertTaskWorkspaceSourceProjectAccess(
   db: Db | DbTransaction, actor: AuthorizationActor, companyId: string, projectId: string | null, options: WorkspaceAccessContext = {},
 ) {
@@ -17,8 +16,6 @@ export async function assertTaskWorkspaceSourceProjectAccess(
   });
   if (!decision.allowed) throw forbidden(decision.explanation);
   if (options.write) {
-    // Sharing a configured root gives the task write access to project files.
-    // Reuse project-scoped grants without reassigning this task or its agent.
     const [task] = actor.type === "board" && options.issueId
       ? await db.select({ assigneeAgentId: issues.assigneeAgentId, assigneeUserId: issues.assigneeUserId }).from(issues)
         .where(and(eq(issues.id, options.issueId), eq(issues.companyId, companyId)))
@@ -29,15 +26,12 @@ export async function assertTaskWorkspaceSourceProjectAccess(
       actor, action: "project:write_workspace",
       resource: { type: "issue", companyId, projectId, assigneeAgentId, assigneeUserId,
         issueId: options.issueId, parentIssueId: options.parentIssueId },
-      // Lineage proves low-trust containment; grants must still cover the source
-      // project independently of the task's organizational project.
       scope: { projectId, assigneeAgentId, assigneeUserId },
     });
     if (!assignment.allowed) throw forbidden(assignment.explanation);
   }
 }
 
-/** Retained files keep every task's authorization boundary after rebinding. */
 export async function assertTaskWorkspaceAccess(
   db: Db | DbTransaction, actor: AuthorizationActor, companyId: string, workspaceId: string, options: WorkspaceAccessContext = {},
 ) {

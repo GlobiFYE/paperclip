@@ -3,7 +3,6 @@ import { companies } from "./companies.js";
 import { executionWorkspaces } from "./execution_workspaces.js";
 import { issues } from "./issues.js";
 
-/** Durable acquisition receipt and inventory. Credentials never belong in this table. */
 export const executionWorkspaceRepositories = pgTable("execution_workspace_repositories", {
   id: uuid("id").primaryKey().defaultRandom(),
   companyId: uuid("company_id").notNull().references(() => companies.id, { onDelete: "cascade" }),

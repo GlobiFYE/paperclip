@@ -1049,7 +1049,6 @@ describeEmbeddedPostgres("heartbeat workspace branch containment", () => {
       const run = await waitForRunToFinish(heartbeat, seeded.runId);
       await heartbeat.waitForRunExecutionDrain(seeded.runId);
       if (kind === "foreign_company") {
-        // Company access is checked before inspecting any retained source.
         expect(run).toMatchObject({ status: "failed", errorCode: "setup_failed", error: "Task workspace access is no longer available" });
       } else {
         expect(run).toMatchObject({ status: "failed", errorCode: "workspace_validation_failed" });
@@ -1062,9 +1061,6 @@ describeEmbeddedPostgres("heartbeat workspace branch containment", () => {
       const [issue] = await db.select().from(issues).where(eq(issues.id, seeded.issueId));
       expect(issue).toMatchObject({ executionWorkspaceId: seeded.executionWorkspaceId,
         projectWorkspaceId: kind === "explicit_conflict" ? seeded.newWorkspaceId : null });
-      // A different organizational project alone is legal; an unproven source
-      // registration or a cross-company binding must still fail before dispatch
-      // without silently replacing the retained files or binding.
       if (kind === "explicit_conflict" || kind === "unproven") expect(issue.status).toBe("blocked");
       expect(await readFile(path.join(seeded.worktree, "retained.txt"), "utf8")).toBe("unexported original task edits\n");
       expect(await readFile(path.join(seeded.replacement, "replacement.txt"), "utf8")).toBe("replacement source must stay untouched\n");

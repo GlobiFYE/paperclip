@@ -1,4 +1,3 @@
-/** Filesystem intent is independent of a task's organizational project. */
 export type TaskWorkspaceSelection =
   | { kind: "task_directory" }
   | { kind: "existing"; workspaceId: string }
@@ -12,7 +11,6 @@ export type TaskWorkspaceIntent = {
 export type TaskWorkspacePendingSelection = {
   version: 1;
   requestKey: string;
-  /** Current task CAS revision; first-folder realization may advance it. */
   expectedBindingRevision: number;
   intent: TaskWorkspaceIntent;
 };

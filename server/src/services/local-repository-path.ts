@@ -1,7 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Resolve only Git transports that read the local host filesystem. */
 export function localRepositoryPath(repoUrl: string): string | null {
   if (/^file:/i.test(repoUrl.trim())) {
     const localUrl = new URL(repoUrl);

@@ -53,6 +53,9 @@ export function FixtureApi({
   const [ready, setReady] = useState(false);
   useLayoutEffect(() => {
     const original = window.fetch;
+    let currentEndpoint = state === "setup"
+      ? { ...endpoint, status: "draft", setup: { github: { stage: "setup" } } }
+      : structuredClone(endpoint);
     let saved = { revision: 2, configuration: structuredClone(configuration) };
     if (state === "skills") saved.configuration.defaults = {
       ...saved.configuration.defaults,
@@ -92,6 +95,9 @@ export function FixtureApi({
         );
       }
       const body = init?.body ? JSON.parse(String(init.body)) : {};
+      if (path === `/api/chat-endpoints/${endpoint.id}` && init?.method === "PATCH") {
+        currentEndpoint = { ...currentEndpoint, ...body };
+      }
       if (path.endsWith("/github/setup")) return Response.json({ endpointId: endpoint.id, state: state === "setup" ? "create" : "connected" });
       if (path.endsWith("/repositories/access")) {
         repos = repos.map((r) => (!body.enabled || r.availability === "available") ? { ...r, enabled: body.enabled } : r);
@@ -172,7 +178,7 @@ export function FixtureApi({
       }
       if (path.endsWith("/people/lookup"))
         return Response.json({ githubUserId: "44", login: body.login });
-      return Response.json(state === "setup" ? { ...endpoint, status: "draft", setup: { github: { stage: "setup" } } } : endpoint);
+      return Response.json(currentEndpoint);
     };
     setReady(true);
     return () => {

@@ -14,7 +14,6 @@ type DefaultsAccessInput = {
   defaults: ChatExecutionDefaults | null | undefined;
 };
 
-/** Configuration selects resources; it never grants their access to future senders. */
 export async function assertChatExecutionDefaultsAccess(
   db: Db,
   input: DefaultsAccessInput,
@@ -33,7 +32,6 @@ export async function assertChatExecutionDefaultsAccess(
   }, reader);
 }
 
-/** Apply defaults and assignment authority together in the task creation transaction. */
 export async function assertChatTaskCreationAccess(
   db: Db,
   input: DefaultsAccessInput & { assigneeAgentId: string; parentIssueId?: string | null },
@@ -56,7 +54,6 @@ export async function assertChatTaskCreationAccess(
   if (!decision.allowed) throw forbidden(decision.explanation);
 }
 
-/** Resolve once when a conversation creates its task. Later endpoint edits are irrelevant. */
 export function resolveChatExecutionDefaults(
   endpoint: ChatExecutionDefaults | null | undefined,
   resource: ChatExecutionDefaults | null | undefined,

@@ -48,7 +48,6 @@ it.each([undefined, "all"] as const)("keeps nested Git metadata sanitized in col
       for (const file of operation.files) {
         await fs.mkdir(path.dirname(file.targetPath), { recursive: true });
         await fs.cp(file.sourcePath, file.targetPath, { recursive: true, verbatimSymlinks: true });
-        // Optional verification scratch must be gone before required upload.
         if (file.sourcePath.endsWith("/workspace.tar")) {
           await expect(fs.stat(path.join(path.dirname(file.sourcePath), "verify-seed"))).rejects.toMatchObject({ code: "ENOENT" });
         }
@@ -88,7 +87,6 @@ it.each([undefined, "all"] as const)("keeps nested Git metadata sanitized in col
   await cold.cleanupWorkspaceSnapshot();
   await fs.writeFile(path.join(repository, ".git/hooks/post-commit"), "changed private hook");
   const cached = await prepare(); await assertSanitized(); expect(verifications).toBe(1);
-  // Older descriptors may include raw metadata in their immutable overlay/baseline.
   const oldBaseline = await captureDirectorySnapshot(host, { diskBacked: true });
   await createTarballFromDirectory({ localDir: host, archivePath: seed.workspaceArchivePath });
   const recovered = await prepare({ workspaceInboundMode: "durable_seed", workspaceBaseline: oldBaseline,

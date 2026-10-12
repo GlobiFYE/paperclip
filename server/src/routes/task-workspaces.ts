@@ -11,7 +11,6 @@ import { forbidden, notFound } from "../errors.js";
 import { assertCompanyAccess, getActorInfo, hasCompanyAccess } from "./authz.js";
 import { validate } from "../middleware/validate.js";
 
-/** App and agent transports share task/workspace authorization and the aggregate owner. */
 export function taskWorkspaceRoutes(db: Db) {
   const router = Router();
   const workspaces = executionWorkspaceService(db);

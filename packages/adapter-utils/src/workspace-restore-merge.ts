@@ -507,8 +507,6 @@ export async function withDirectoryMergeLock<T>(
   return withCanonicalDirectoryMergeLock(canonicalTargetDir, fn, env, diagnosticOperation, waitMs);
 }
 
-/** Lock an atomic directory publication before its target exists. The parent
- * must already exist; existing leaf symlinks and non-directories are refused. */
 export async function withDirectoryPublicationLock<T>(
   targetDir: string,
   fn: (canonicalTargetDir: string) => Promise<T>,

@@ -2706,16 +2706,11 @@ async function resolveGitOwnerRepoRoot(cwd: string): Promise<string> {
   try {
     const commonDir = await fs.realpath(path.resolve(checkoutRoot, await runGit(["rev-parse", "--git-common-dir"], checkoutRoot)));
     const candidate = path.dirname(commonDir);
-    // A conventional .git directory belongs to its parent checkout. Separate
-    // Git storage can live inside an unrelated repository, so verify both the
-    // checkout boundary and metadata identity before using that parent.
     const candidateRoot = await fs.realpath(path.resolve(await runGit(["rev-parse", "--show-toplevel"], candidate)));
     const candidateGitDir = await fs.realpath(path.resolve(candidate, await runGit(["rev-parse", "--absolute-git-dir"], candidate)));
     const candidateCommonDir = await fs.realpath(path.resolve(candidate, await runGit(["rev-parse", "--git-common-dir"], candidate)));
     if (candidateRoot === candidate && candidateGitDir === commonDir && candidateCommonDir === commonDir) return candidateRoot;
   } catch {
-    // A main or linked checkout is itself a valid Git command anchor, even
-    // when separate metadata does not identify a primary checkout directory.
   }
   return checkoutRoot;
 }
@@ -3337,7 +3332,6 @@ export async function realizeExecutionWorkspace(input: {
   enableWorkspaceDirtyQuarantineRepair?: boolean;
   recorder?: WorkspaceOperationRecorder | null;
   resolveGitAuth?: GitRemoteAuthProvider | null;
-  /** Server-selected containment capability; never derived from repository configuration. */
   skipHostProvision?: boolean;
   beforeSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
   afterSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
@@ -3799,7 +3793,6 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
   enableWorkspaceDirtyQuarantineRepair?: boolean;
   recorder?: WorkspaceOperationRecorder | null;
   resolveGitAuth?: GitRemoteAuthProvider | null;
-  /** Server-selected containment capability; never derived from repository configuration. */
   skipHostProvision?: boolean;
   beforeSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
   afterSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;

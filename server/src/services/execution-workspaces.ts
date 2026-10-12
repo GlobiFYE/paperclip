@@ -236,7 +236,6 @@ async function acquireExecutionWorkspaceLifecycleLock(
 
 const workspaceSourceKeys = ["cwd", "projectId", "projectWorkspaceId", "sourceIssueId"] as const;
 
-/** Caller holds the company root fence and the current workspace row lock. */
 async function preserveWorkspaceOwnershipForPatch(
   tx: DbTransaction, current: typeof executionWorkspaces.$inferSelect, patch: Partial<typeof executionWorkspaces.$inferInsert>,
 ) {
@@ -1320,8 +1319,6 @@ type WorkspaceOverviewIssueRow = WorkspaceOverviewLinkedIssue & {
 
 const inspectGitForDisplay = createWorkspaceGitInspectionCache(inspectGitCloseReadiness);
 
-/** A failed response can be settled without a committed task result. Its durable
- * output and resource obligations still fence root changes, including after Stop. */
 async function hasPendingTaskWorkspaceRecovery(tx: DbTransaction, input: {
   companyId: string; issueId: string; excludeRunId?: string;
 }) {
@@ -1338,7 +1335,6 @@ async function hasPendingTaskWorkspaceRecovery(tx: DbTransaction, input: {
   const [pendingLease] = await tx.select({ id: environmentLeases.id }).from(environmentLeases).where(and(
     eq(environmentLeases.companyId, input.companyId), inArray(environmentLeases.heartbeatRunId, runIds),
     or(and(isNull(environmentLeases.releasedAt),
-        // A successful warm release settles the old run while keeping its resource.
         sql`not coalesce(${environmentLeases.status} = 'retained'
           and ${environmentLeases.leasePolicy} = 'reuse_by_environment'
           and ${environmentLeases.cleanupStatus} = 'success', false)`),
@@ -1350,7 +1346,6 @@ async function hasPendingTaskWorkspaceRecovery(tx: DbTransaction, input: {
     .from(workspaceOperations).where(and(eq(workspaceOperations.companyId, input.companyId),
       inArray(workspaceOperations.heartbeatRunId, runIds), eq(workspaceOperations.phase, "workspace_finalize")))
     .orderBy(desc(workspaceOperations.createdAt),
-      // Equal timestamps cannot prove that success settled another attempt.
       asc(sql`case when ${workspaceOperations.status} = 'succeeded' then 1 else 0 end`));
   const latest = new Map<string, string>();
   for (const operation of operations) {
@@ -1359,14 +1354,11 @@ async function hasPendingTaskWorkspaceRecovery(tx: DbTransaction, input: {
   return rows.some(({ finalization, run }) => {
     const status = latest.get(run.id);
     if (status !== undefined) return status !== "succeeded";
-    // Accepted output needs its persistence receipt, including terminal export
-    // repair. A successful unsafe-export omission is also a settled receipt.
     return finalization.phase === "terminal_failure" && finalization.resultId !== null;
   });
 }
 
 export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServiceOptions = {}) {
-  /** Resolve prospective source use from the same deterministic inputs as admission. */
   async function resolveSourceWorkspaceStrategy(input: {
     companyId: string; issueId?: string | null; assigneeAgentId?: string | null;
     assigneeAdapterOverrides?: unknown; executionWorkspaceSettings?: unknown;
@@ -1401,7 +1393,6 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
     return resolveEffectiveWorkspaceStrategyType(mode, config);
   }
 
-  /** Validate intent without allocating files or changing a task binding. */
   async function validateSelection(input: { companyId: string; actor: AuthorizationActor; selection: TaskWorkspaceSelection; issueId?: string | null; parentIssueId?: string | null; assigneeAgentId?: string | null; assigneeUserId?: string | null; assigneeAdapterOverrides?: unknown; projectId?: string | null; executionPolicy?: unknown }, reader: Db | DbTransaction = db) {
     const selection = taskWorkspaceSelectionSchema.parse(input.selection);
     if (selection.kind === "existing") {
@@ -1480,12 +1471,6 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       if (task.workspaceBindingRevision !== input.expectedBindingRevision) throw conflict("Task workspace binding changed; inspect it before selecting again");
       await validateSelection(input, tx);
       const intent: TaskWorkspaceIntent = { version: 1, request: { key: input.requestKey, expectedBindingRevision: input.expectedBindingRevision }, selection: input.selection, source: "explicit" };
-      // Root changes always wait for a new admission. The current provider and
-      // any export-only recovery retain their immutable roots and input evidence.
-      // Acceptance advances the task's CAS revision even though its active folder
-      // stays unchanged. Otherwise a superseded request can be retried against
-      // the same revision and overwrite a newer pending choice. The intent keeps
-      // the original request revision so current-choice retries remain idempotent.
       const nextRevision = task.workspaceBindingRevision + 1;
       await tx.update(issues).set({ workspaceBindingRevision: nextRevision,
         workspacePendingSelection: { version: 1, requestKey: input.requestKey,
@@ -1518,16 +1503,12 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
 
   async function bindTaskWorkspace(companyId: string, issueId: string, workspaceId: string, patch: TaskWorkspaceBindingPatch = {}) {
     return db.transaction(async tx => {
-      // Serialize binding and metadata writes without blocking unchanged-ID foreign-key reads.
       const [task] = await tx.select().from(issues).where(and(eq(issues.id, issueId), eq(issues.companyId, companyId))).for("no key update");
       const [workspace] = await tx.select().from(executionWorkspaces).where(and(eq(executionWorkspaces.id, workspaceId), eq(executionWorkspaces.companyId, companyId))).for("no key update");
       if (!task || !workspace) throw notFound("Task workspace unavailable");
-      // Retain confidentiality even after a task is moved to another root.
       await tx.update(executionWorkspaces).set({ metadata: { ...workspace.metadata,
         _issuePrivacySources: { ...(workspace.metadata?._issuePrivacySources as Record<string, unknown> ?? {}), [task.id]: true } } }).where(eq(executionWorkspaces.id, workspaceId));
       const nextRevision = task.workspaceBindingRevision + (task.executionWorkspaceId === workspaceId ? 0 : 1);
-      // Realizing the current run's first folder must not invalidate an already
-      // accepted choice for its next run. Keep the original request receipt for retries.
       const pending = task.workspacePendingSelection;
       const pendingAfterFirstBinding = !task.executionWorkspaceId && pending?.expectedBindingRevision === task.workspaceBindingRevision
         ? { ...pending, expectedBindingRevision: nextRevision }
@@ -1539,7 +1520,6 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
     });
   }
 
-  /** Ordinary issue edits participate in the same binding revision transaction. */
   async function assertTaskWorkspaceUpdateAccess(input: {
     task: typeof issues.$inferSelect; actor: AuthorizationActor;
   }, tx: DbTransaction) {
@@ -3237,8 +3217,6 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         .where(eq(executionWorkspaces.id, id));
       if (!identity) return null;
       return db.transaction(async tx => {
-        // Repository publication takes the company fence before task/workspace
-        // row locks. Keep that order while retaining the old physical owner.
         await lockExecutionWorkspaceRootProvenance(tx, identity.companyId);
         const [current] = await tx.select().from(executionWorkspaces).where(and(
           eq(executionWorkspaces.id, id), eq(executionWorkspaces.companyId, identity.companyId),
@@ -3253,10 +3231,6 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
 
     // Reopen one closed isolated execution workspace so an authorized issue can
     // use it again. The caller must first authorize the request on the issue.
-    // Source privacy is retained before the lifecycle transaction, which rechecks
-    // the binding and rebuilds under its per-workspace fence. Read-only copy
-    // checks avoid taking the root fence in reverse order. Final provenance is
-    // committed after lifecycle release, including failed provisioning.
     reopenClosedIsolatedExecutionWorkspaceForIssue: async (input: {
       workspaceId: string;
       issue: { id: string; companyId: string; projectId: string | null };
@@ -3283,8 +3257,6 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       ] = await Promise.all([
         import("./workspace-runtime.js"),
         import("./workspace-operations.js"),
-        // heartbeat.js imports this module, so a static import creates a
-        // cycle. Load ensureManagedProjectWorkspace dynamically instead.
         import("./heartbeat.js"),
       ]);
       const [projectWorkspace, projectPolicy] = await Promise.all([
@@ -3304,13 +3276,6 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           .where(and(eq(projects.companyId, snapshot.companyId), snapshot.projectId ? eq(projects.id, snapshot.projectId) : sql`false`))
           .then((rows) => parseProjectExecutionWorkspacePolicy(rows[0]?.executionWorkspacePolicy)),
       ]);
-      // Resolve the base checkout that the rebuild spawns git in. A
-      // local-folder project stores its base path in projectWorkspaces.cwd.
-      // A managed_checkout project stores null there, so resolve its live
-      // managed checkout instead. Never use snapshot.cwd for a git_worktree
-      // rebuild: snapshot.cwd is the archived worktree path, which the reaper
-      // already removed from disk. A spawn in that missing directory fails
-      // with "spawn git ENOENT" and hides the real cause.
       let resolvedBaseCwd = projectWorkspace?.cwd ?? null;
       if (isClosedExecutionWorkspaceStatus(snapshot.status) && resolvedBaseCwd == null && snapshot.strategyType === "git_worktree" && snapshot.projectId) {
         try {
@@ -3336,9 +3301,6 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           return { ok: false, code: "rebuild_failed", message: "Failed to rebuild the execution workspace" };
         }
       }
-      // This transaction commits deny-only ownership before any copy. Holding
-      // the lifecycle fence while acquiring the company root fence would invert
-      // archive's lock order and roll ownership back after failed Git writes.
       let capturedSource: IsolatedWorkspaceSourceAccess | null = null;
       let authorizedTarget: string | null = null;
       if (isClosedExecutionWorkspaceStatus(snapshot.status) && snapshot.strategyType === "git_worktree") {
@@ -3361,8 +3323,6 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       }
       const result = await db.transaction(async (tx): Promise<ReopenClosedIsolatedExecutionWorkspaceResult> => {
         await acquireExecutionWorkspaceLifecycleLock(tx, input.workspaceId);
-        // Organizational project assignment does not identify the source of files.
-        // Reopen only the task's persisted binding, with current source access.
         const [boundTask] = await tx.select({ id: issues.id }).from(issues).where(and(
           eq(issues.id, issue.id), eq(issues.companyId, issue.companyId),
           eq(issues.executionWorkspaceId, input.workspaceId),
@@ -3380,7 +3340,6 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           ))
           .then((rows) => rows[0] ?? null);
         if (!row) {
-          // Wrong company, inaccessible source, wrong mode, or missing. Fail closed and
           // disclose no workspace detail.
           return { ok: false, code: "not_reopenable", message: "Execution workspace is not reopenable" };
         }
@@ -3417,8 +3376,6 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
             || await canonicalRepositoryRoot(targetCwd) !== authorizedTarget) {
             throw forbidden("Execution workspace copy identity changed during reopen");
           }
-          // Read-only checks under the lifecycle fence cannot acquire the
-          // root mutation fence. The target already retains the captured owners.
           for (const cwd of [...capturedSource!.roots, authorizedTarget!]) await assertExecutionWorkspaceRootReadAccess(tx, {
             companyId: row.companyId, cwd, actor: input.authorizationActor,
           });
@@ -3598,8 +3555,6 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
             actor: input.authorizationActor, captured: capturedSource, issueId: issue.id, phase: "verified",
           });
         } catch {
-          // The route cannot consume a denied reopen. Release only the fence
-          // published by this attempt; a newer reopen keeps its own generation.
           if (result.ok && result.reopened) {
             await executionWorkspaceService(db).clearReopenPendingConsumptionForUnconsumedReopen({
               workspaceId: snapshot.id, issue, actor, expectedGeneration: result.generation,

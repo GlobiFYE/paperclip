@@ -3600,8 +3600,6 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
     ].join(" ");
     const command = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(serverScript)}`;
 
-    // This case proves the DB reservation/start race, not host-wide lsof latency.
-    // Keep the real process and HTTP readiness; its freshly allocated port has no prior owner.
     const portOwner = vi.spyOn(localServiceSupervisor, "readLocalServicePortOwner").mockResolvedValue(null);
     const adoption = vi.spyOn(localServiceSupervisor, "findAdoptableLocalService").mockResolvedValue(null);
     const runtimeOutput: string[] = [];
