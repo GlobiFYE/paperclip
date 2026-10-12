@@ -18,8 +18,16 @@
  *   M4 host) and build the UI with `VITE_CITY_URL` set to that origin.
  * - The page probes the configured origin from the browser and reports the
  *   actual connection state (checking / connected / unreachable); when
- *   unreachable it offers a usable fallback (retry, open-in-new-tab, wiring
- *   notes) instead of a blank frame.
+ *   unreachable it offers a usable fallback (retry, open-in-new-tab) instead
+ *   of a blank frame.
+ *
+ * The product page intentionally keeps copy minimal (City, connection state,
+ * Open City, Full screen, retry fallback) — the launch-service/configuration/
+ * wiring details above stay here in source comments. A successful opaque
+ * probe is labeled "Service reachable": it proves the origin answers, not a
+ * verified agent feed. A loopback origin requires a browser on the M4 host;
+ * a non-loopback page hostname does not prove a different physical device
+ * (the M4 can open its own Tailscale name), so the UI never claims that.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -29,7 +37,6 @@ import {
   Maximize2,
   Minimize2,
   RefreshCw,
-  TriangleAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -51,18 +58,12 @@ export function isLoopbackOrigin(origin: string): boolean {
   }
 }
 
-function isLoopbackPage(): boolean {
-  if (typeof window === "undefined") return true;
-  const host = window.location.hostname;
-  return host === "localhost" || host === "127.0.0.1" || host === "[::1]" || host === "";
-}
-
 /**
  * Reachability probe from the browser: an opaque no-cors request succeeds
  * (resolves) whenever the origin answers at all, and rejects on network-level
- * failure (service down, or localhost resolving to the wrong machine). This
- * distinguishes "City is up" from "this browser cannot reach City" without
- * needing any server/API changes.
+ * failure (service down, or loopback resolving on a machine without City).
+ * A successful probe means only "Service reachable" — the origin answered.
+ * It is not a verified agent feed and must not be presented as one.
  */
 async function probeCityOrigin(origin: string): Promise<boolean> {
   const controller = new AbortController();
@@ -83,7 +84,7 @@ async function probeCityOrigin(origin: string): Promise<boolean> {
 
 export const STATE_LABEL: Record<CityConnectionState, string> = {
   checking: "Checking connection…",
-  connected: "Connected — City running on the local M4 host",
+  connected: "Service reachable",
   unreachable: "Not reachable from this browser",
 };
 
@@ -101,15 +102,8 @@ export function CityUnavailableFallback({
         City is not reachable at {origin}
       </h2>
       <p className="text-sm text-muted-foreground">
-        The embedded view needs the City app running on the M4 host (launch service{" "}
-        <span className="font-mono">com.pantheon.city</span>) and reachable from this browser.
-        Either the service is not answering on this origin, or this browser is on another device
-        where <span className="font-mono">localhost</span> resolves to the wrong machine.
-      </p>
-      <p className="text-sm text-muted-foreground">
-        Remaining remote wiring: expose the City port (5180) on an origin reachable from this device
-        (reverse proxy, VPN, or tunnel to the M4 host), then build the UI with{" "}
-        <span className="font-mono">VITE_CITY_URL</span> set to that origin.
+        The City app did not answer at this origin. If the origin is a loopback
+        address, the browser must be on the M4 host.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <Button type="button" variant="outline" size="sm" onClick={onRetry}>
@@ -134,7 +128,6 @@ export function City() {
   const frameAreaRef = useRef<HTMLDivElement | null>(null);
 
   const originIsLoopback = isLoopbackOrigin(CITY_ORIGIN);
-  const browserIsRemote = originIsLoopback && !isLoopbackPage();
 
   useEffect(() => {
     let cancelled = false;
@@ -218,25 +211,11 @@ export function City() {
         </div>
       </header>
 
-      <p className="text-xs text-muted-foreground">
-        City is served by the local M4 host at{" "}
-        <span className="font-mono break-all">{CITY_ORIGIN}</span>. A localhost origin only works in
-        a browser running on that host — it does not work from another device. For remote access,
-        build the UI with <span className="font-mono">VITE_CITY_URL</span> pointing at an origin
-        reachable from your network (remaining remote wiring is documented in the header comment of{" "}
-        <span className="font-mono">ui/src/pages/City.tsx</span>).
+      <p data-testid="city-local-m4-caveat" className="text-xs text-muted-foreground">
+        {originIsLoopback ? "Loopback origin — this page requires a browser on the M4 host. " : null}
+        &quot;Service reachable&quot; means the City app answered at this origin, not a verified
+        agent feed.
       </p>
-
-      {browserIsRemote ? (
-        <p
-          data-testid="city-remote-browser-warning"
-          className="flex items-center gap-2 rounded-lg border border-border bg-muted px-3 py-2 text-xs text-foreground"
-        >
-          <TriangleAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
-          This browser is on a different device than the M4 host, and the configured City origin is
-          that host&apos;s localhost — the embedded view cannot reach City from here.
-        </p>
-      ) : null}
 
       {connection === "connected" ? (
         <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border">
@@ -258,7 +237,7 @@ export function City() {
       )}
 
       <p className="text-xs text-muted-foreground">
-        If the embedded view stays blank while the state shows connected, the City app may disallow
+        If the embedded view stays blank while the service is reachable, the City app may disallow
         framing — use Open City above. Press Escape to leave full screen.
       </p>
     </div>

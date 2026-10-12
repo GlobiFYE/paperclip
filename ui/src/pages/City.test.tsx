@@ -23,26 +23,37 @@ describe("City origin handling", () => {
 });
 
 describe("City connection state", () => {
-  it("labels every state, naming the local M4 host when connected", () => {
+  it("labels a successful probe as service reachability, not live-feed proof", () => {
     expect(STATE_LABEL.checking).toBeTruthy();
-    expect(STATE_LABEL.connected).toContain("local M4 host");
+    expect(STATE_LABEL.connected).toBe("Service reachable");
+    expect(STATE_LABEL.connected).not.toMatch(/agent feed|verified/i);
     expect(STATE_LABEL.unreachable).toBeTruthy();
   });
 
-  it("renders the page with navigation controls and the localhost caveat", () => {
+  it("renders the page with controls and a concise local-M4 caveat only", () => {
     const markup = renderToStaticMarkup(<City />);
     expect(markup).toContain("data-testid=\"city-connection-state\"");
     expect(markup).toContain("data-testid=\"city-fullscreen-control\"");
     expect(markup).toContain("data-testid=\"city-open-control\"");
     expect(markup).toContain("Checking connection…");
     expect(markup).toContain(CITY_DEFAULT_ORIGIN);
-    expect(markup).toContain("does not work from another device");
-    expect(markup).toContain("VITE_CITY_URL");
+    expect(markup).toContain("requires a browser on the M4 host");
+    expect(markup.replace(/\s+/g, " ")).toContain(
+      "not a verified agent feed",
+    );
+    // Developer setup/filepath/launchd prose stays in source comments, not the UI.
+    expect(markup).not.toContain("VITE_CITY_URL");
+    expect(markup).not.toContain("com.pantheon.city");
+    expect(markup).not.toContain("launch service");
+    expect(markup).not.toContain("City.tsx");
+    // No physical-device inference from the page hostname.
+    expect(markup).not.toContain("different device");
+    expect(markup).not.toContain("city-remote-browser-warning");
   });
 });
 
 describe("City unavailable fallback", () => {
-  it("stays usable: retry, open-in-new-tab, and remote wiring notes", () => {
+  it("stays usable: retry and open-in-new-tab, without setup prose", () => {
     const onRetry = vi.fn();
     const markup = renderToStaticMarkup(
       <CityUnavailableFallback origin={CITY_DEFAULT_ORIGIN} onRetry={onRetry} />,
@@ -52,6 +63,9 @@ describe("City unavailable fallback", () => {
     expect(markup).toContain(`href="${CITY_DEFAULT_ORIGIN}"`);
     expect(markup).toContain("target=\"_blank\"");
     expect(markup).toContain("rel=\"noopener noreferrer\"");
-    expect(markup).toContain("VITE_CITY_URL");
+    expect(markup).toContain("browser must be on the M4 host");
+    expect(markup).not.toContain("VITE_CITY_URL");
+    expect(markup).not.toContain("com.pantheon.city");
+    expect(markup).not.toContain("reverse proxy");
   });
 });
