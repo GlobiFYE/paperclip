@@ -3323,6 +3323,7 @@ export async function realizeExecutionWorkspace(input: {
   enableWorkspaceDirtyQuarantineRepair?: boolean;
   recorder?: WorkspaceOperationRecorder | null;
   resolveGitAuth?: GitRemoteAuthProvider | null;
+  beforeSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
 }): Promise<RealizedExecutionWorkspace> {
   const rawStrategy = parseObject(input.config.workspaceStrategy);
   const strategyType = asString(rawStrategy.type, "project_primary");
@@ -3404,6 +3405,7 @@ export async function realizeExecutionWorkspace(input: {
       },
     );
   }
+  await input.beforeSourceCopy?.(repoRoot, worktreePath);
   let pendingForwardBranchReconcile: PendingForwardBranchReconcile | null = null;
   const configuredBaseRef = typeof rawStrategy.baseRef === "string" && rawStrategy.baseRef.length > 0
     ? rawStrategy.baseRef
@@ -3426,6 +3428,7 @@ export async function realizeExecutionWorkspace(input: {
   await fs.mkdir(worktreeParentDir, { recursive: true });
 
   async function reuseExistingWorktree(reusablePath: string, effectiveBranchName = branchName, extraWarnings: string[] = []) {
+    if (reusablePath !== worktreePath) await input.beforeSourceCopy?.(repoRoot, reusablePath);
     // An exact-branch attach must never move the requested branch, so skip
     // the unstarted-worktree fast-forward that template-derived reuse gets.
     const refresh = currentBaseRefSha && !requestedExistingBranch
@@ -3773,6 +3776,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
   enableWorkspaceDirtyQuarantineRepair?: boolean;
   recorder?: WorkspaceOperationRecorder | null;
   resolveGitAuth?: GitRemoteAuthProvider | null;
+  beforeSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
 }): Promise<RealizedExecutionWorkspace | null> {
   const cwd = asString(input.workspace.cwd ?? input.workspace.providerRef, "").trim();
   if (!cwd) return null;
@@ -3825,6 +3829,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     );
   }
   const repoRoot = await runGit(["rev-parse", "--show-toplevel"], baseCwd);
+  await input.beforeSourceCopy?.(repoRoot, realized.worktreePath ?? cwd);
   const recordedBaseRefSha = readRecordedBaseRefSha(input.workspace.metadata);
   if (await directoryExists(cwd)) {
     const reuseBaseRef = input.workspace.baseRef ?? input.base.repoRef ?? null;

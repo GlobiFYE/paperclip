@@ -1,3 +1,7 @@
+import express from "express";
+import request from "supertest";
+import { fileResourceRoutes } from "../routes/file-resources.js";
+import { errorHandler } from "../middleware/index.js";
 import { EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
@@ -7,7 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { agents, authUsers, companies, companyMemberships, createDb, environments, executionWorkspaces, heartbeatRuns, issues, principalPermissionGrants, projects, projectWorkspaces } from "@paperclipai/db";
+import { agents, authUsers, companies, companyMemberships, createDb, environments, executionWorkspaces, heartbeatRuns, issues, principalPermissionGrants, projects, projectAccessMembers, projectWorkspaces } from "@paperclipai/db";
 import { setExpensiveWorkspaceGitExecutor } from "@paperclipai/adapter-utils/git-workspace-sync";
 import { buildProjectMentionHref } from "@paperclipai/shared";
 import { createWorkspaceGitOperationScheduler, WorkspaceGitScanError } from "../services/workspace-git-operation-scheduler.js";
@@ -463,6 +467,101 @@ suite("task project repository provisioning", () => {
     }
     expect(await readFile(path.join(cwd, "work.txt"), "utf8")).toBe("Protected source content");
   }, 30_000);
+
+  it.each([false, true])("checks nested private source access before worktree copy and retains it after read-grant revocation (provision fails: %s)", async (provisionFails) => {
+    const previousPrivacyMode = process.env.PAPERCLIP_ISSUE_PRIVACY_MODE;
+    vi.stubEnv("PAPERCLIP_ISSUE_PRIVACY_MODE", "enforce");
+    try {
+      const companyId = randomUUID(), projectId = randomUUID(), privateProjectId = randomUUID();
+      const sourceId = randomUUID(), agentId = randomUUID(), issueId = randomUUID();
+      const cwd = path.join(root, companyId, "public-source");
+      const privateCwd = path.join(cwd, "private");
+      await mkdir(privateCwd, { recursive: true });
+      const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+      git("init", "-b", "main");
+      await writeFile(path.join(privateCwd, "secret.txt"), "NESTED_PRIVATE_TRACKED_BYTES");
+      git("add", ".");
+      git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "seed");
+      const initialWorktrees = git("worktree", "list", "--porcelain");
+      await db.insert(companies).values({ id: companyId, name: "Private copy", issuePrefix: `C${companyId.slice(0, 6)}`, defaultResponsibleUserId: "responsible-user" });
+      await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "owner" });
+      await db.insert(projects).values([
+        { id: projectId, companyId, name: "Public Git source", executionWorkspacePolicy: { authorizationPolicy: { assignmentPolicy: { mode: "protected" } } } },
+        { id: privateProjectId, companyId, name: "Private nested source", visibility: "private" },
+      ]);
+      await db.insert(projectWorkspaces).values([
+        { id: sourceId, companyId, projectId, name: "Git source", sourceType: "local_path", cwd, isPrimary: true },
+        { id: randomUUID(), companyId, projectId: privateProjectId, name: "Nested private source", sourceType: "local_path", cwd: privateCwd, isPrimary: true },
+      ]);
+      await db.insert(agents).values({ id: agentId, companyId, name: "Isolated reader", status: "idle", adapterType: "codex_local", adapterConfig: {}, permissions: {} });
+      await db.insert(issues).values({ id: issueId, companyId, title: "Read isolated source", status: "todo", assigneeAgentId: agentId,
+        projectWorkspaceId: sourceId, executionWorkspaceSettings: { mode: "isolated_workspace", workspaceStrategy: { type: "git_worktree", ...(provisionFails ? { provisionCommand: "exit 42" } : {}) } },
+        workspaceSelection: { version: 1, source: "explicit", selection: { kind: "configured_source", projectWorkspaceId: sourceId, mode: "managed_isolated" } } });
+      const admit = async () => {
+        const run = await heartbeat.wakeup(agentId, { source: "on_demand", triggerDetail: "manual", contextSnapshot: { issueId } });
+        expect(run).not.toBeNull();
+        await vi.waitFor(async () => expect((await heartbeat.getRun(run!.id))?.status).toMatch(/^(succeeded|failed)$/), { timeout: 15_000 });
+        await drainHeartbeatRunsToQuiescence(db, heartbeat);
+        return (await heartbeat.getRun(run!.id))!;
+      };
+      const denied = await admit();
+      expect(denied.status).toBe("failed");
+      expect(execute.mock.calls.filter(([input]) => input.runId === denied.id)).toHaveLength(0);
+      expect(git("worktree", "list", "--porcelain")).toBe(initialWorktrees);
+      expect((await db.select().from(issues).where(eq(issues.id, issueId)))[0].executionWorkspaceId).toBeNull();
+      await db.insert(projectAccessMembers).values([
+        { companyId, projectId: privateProjectId, subjectType: "agent", subjectId: agentId },
+        { companyId, projectId: privateProjectId, subjectType: "user", subjectId: "responsible-user" },
+      ]);
+      // Isolated copies need source read access, never an assignment/write grant.
+      expect(await accessService(db).decide({ actor: { type: "agent", agentId, companyId, source: "agent_jwt", onBehalfOfUserId: "responsible-user" },
+        action: "tasks:assign", resource: { type: "issue", companyId, projectId, assigneeAgentId: agentId }, scope: { projectId, assigneeAgentId: agentId } })).toMatchObject({ allowed: false });
+      const allowed = await admit();
+      const calls = execute.mock.calls.filter(([input]) => input.runId === allowed.id);
+      let copiedCwd: string;
+      if (provisionFails) {
+        expect(allowed.status).toBe("failed");
+        expect(allowed.error).toContain("provision");
+        expect(calls).toHaveLength(0);
+        const paths = git("worktree", "list", "--porcelain").split("\n").filter(line => line.startsWith("worktree ")).map(line => line.slice(9));
+        expect(paths).toHaveLength(2);
+        copiedCwd = paths.find(entry => entry !== paths[0])!;
+        expect((await db.select().from(issues).where(eq(issues.id, issueId)))[0].executionWorkspaceId).toBeNull();
+        // A later public alias must not expose bytes from failed provisioning.
+        const aliasId = randomUUID();
+        await db.insert(executionWorkspaces).values({ id: aliasId, companyId, projectId: null, sourceIssueId: issueId,
+          name: "Public alias after failed provisioning", mode: "shared_workspace", strategyType: "project_primary", cwd: copiedCwd,
+          providerType: "local_fs", status: "active" });
+        await db.update(issues).set({ executionWorkspaceId: aliasId }).where(eq(issues.id, issueId));
+      } else {
+        expect(allowed).toMatchObject({ status: "succeeded", error: null });
+        expect(calls).toHaveLength(1);
+        expect(calls[0]![0].context.paperclipWorkspace.strategy).toBe("git_worktree");
+        copiedCwd = calls[0]![0].context.paperclipWorkspace.cwd;
+      }
+      const workspace = { cwd: copiedCwd };
+      expect(await realpath(workspace.cwd)).not.toBe(await realpath(cwd));
+      expect(await readFile(path.join(workspace.cwd, "private/secret.txt"), "utf8")).toBe("NESTED_PRIVATE_TRACKED_BYTES");
+      const app = express();
+      app.use(express.json());
+      app.use((req, _res, next) => {
+        req.actor = { type: "board", userId: "responsible-user", companyIds: [companyId], source: "session", isInstanceAdmin: false };
+        next();
+      });
+      app.use("/api", fileResourceRoutes(db));
+      app.use(errorHandler);
+      const fileUrl = `/api/issues/${issueId}/file-resources/content`;
+      expect((await request(app).get(fileUrl).query({ workspace: "execution", path: "private/secret.txt" }).expect(200)).body.content.data).toBe("NESTED_PRIVATE_TRACKED_BYTES");
+      await db.delete(projectAccessMembers).where(and(eq(projectAccessMembers.projectId, privateProjectId), eq(projectAccessMembers.subjectId, "responsible-user")));
+      for (const download of [false, true]) {
+        const response = await request(app).get(fileUrl).query({ workspace: "execution", path: "private/secret.txt", download }).expect(404);
+        expect(JSON.stringify(response.body)).not.toContain("NESTED_PRIVATE_TRACKED_BYTES");
+      }
+      expect(await readFile(path.join(workspace.cwd, "private/secret.txt"), "utf8")).toBe("NESTED_PRIVATE_TRACKED_BYTES");
+    } finally {
+      vi.stubEnv("PAPERCLIP_ISSUE_PRIVACY_MODE", previousPrivacyMode);
+    }
+  }, 40_000);
 
   it.each([true, false])("handles a deleted configured source with a retained workspace: %s", async (bound) => {
     const companyId = randomUUID(), projectId = randomUUID(), sourceId = randomUUID(), agentId = randomUUID(), issueId = randomUUID();

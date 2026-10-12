@@ -29,6 +29,10 @@ import { parseObject } from "../../adapters/utils.js";
 import { materializeNativeChatTaskRoot } from "../native-runtime/native-chat-workspace.js";
 import { materializeIsolatedTaskDirectory } from "../isolated-task-directory.js";
 import {
+  assertIsolatedWorkspaceSourceReadAccess,
+  retainIsolatedWorkspaceSourceAccess,
+} from "../execution-workspace-repositories.js";
+import {
   cleanupExecutionWorkspaceArtifacts,
   ensurePersistedExecutionWorkspaceAvailable,
   realizeExecutionWorkspace,
@@ -468,6 +472,21 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
       agentId: agent.id,
     },
   );
+  const isolatedWorkspaceSourceActor = { type: "agent" as const, source: "agent_jwt" as const, companyId: agent.companyId,
+    agentId: agent.id, runId: run.id, onBehalfOfUserId: responsibleUserId === "local-board" ? null : responsibleUserId };
+  // Capture the source's ownership before Git can copy tracked bytes. Keep the
+  // server-owned snapshot so a concurrent deletion cannot erase copied privacy.
+  const isolatedWorkspaceSourceAccess = !isDotRun && issueId && !persistedNativeExecutionInput && !nativeRecoveryExecutionWorkspaceId
+    && (latestWorkspaceStrategyType === "git_worktree"
+      || (workspaceReuseProvisioningPolicy.shouldRestoreExistingWorkspace && reusableExistingExecutionWorkspace?.strategyType === "git_worktree"))
+    ? await assertIsolatedWorkspaceSourceReadAccess(db, {
+        companyId: agent.companyId, sourceCwd: executionWorkspaceBase.baseCwd, actor: isolatedWorkspaceSourceActor,
+      }) : null;
+  const beforeIsolatedSourceCopy = isolatedWorkspaceSourceAccess
+    ? (sourceCwd: string, targetCwd: string) => retainIsolatedWorkspaceSourceAccess(db, {
+        companyId: agent.companyId, sourceCwd, targetCwd,
+        actor: isolatedWorkspaceSourceActor, captured: isolatedWorkspaceSourceAccess, issueId: issueId ?? undefined,
+      }) : undefined;
   const {
     executionWorkspace,
     reusedExecutionWorkspace,
@@ -535,6 +554,7 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
                   .enableWorkspaceDirtyQuarantineRepair,
               recorder: workspaceOperationRecorder,
               resolveGitAuth: workspaceGitAuthProvider,
+              beforeSourceCopy: beforeIsolatedSourceCopy,
             })
         : null,
       realizeWorkspace: () =>
@@ -567,9 +587,20 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
               .enableWorkspaceDirtyQuarantineRepair,
           recorder: workspaceOperationRecorder,
           resolveGitAuth: workspaceGitAuthProvider,
+          beforeSourceCopy: beforeIsolatedSourceCopy,
         }),
     },
   );
+  if (isolatedWorkspaceSourceAccess && executionWorkspace.strategy === "git_worktree") {
+    await retainIsolatedWorkspaceSourceAccess(db, {
+      companyId: agent.companyId,
+      sourceCwd: executionWorkspaceBase.baseCwd,
+      targetCwd: executionWorkspace.cwd,
+      actor: isolatedWorkspaceSourceActor,
+      captured: isolatedWorkspaceSourceAccess,
+      issueId: issueId ?? undefined,
+    });
+  }
   const resolvedProjectId =
     reusableExistingExecutionWorkspace
       ? reusableExistingExecutionWorkspace.projectId

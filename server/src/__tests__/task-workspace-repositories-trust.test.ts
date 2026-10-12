@@ -9,7 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { eq } from "drizzle-orm";
 import { agents, authUsers, companies, companyMemberships, createDb, executionWorkspaceRepositoryRoots, executionWorkspaceRepositoryAccess, executionWorkspaceRepositories, executionWorkspaces,
   heartbeatRuns, issueAccessGrants, issues, projects, projectWorkspaces, projectAccessMembers, principalPermissionGrants, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
-import { assertExecutionWorkspaceRootReadAccess, executionWorkspaceRepositoryService } from "../services/execution-workspace-repositories.js";
+import { assertExecutionWorkspaceRootReadAccess, assertIsolatedWorkspaceSourceReadAccess, retainIsolatedWorkspaceSourceAccess, executionWorkspaceRepositoryService } from "../services/execution-workspace-repositories.js";
 import { executionWorkspaceService } from "../services/execution-workspaces.js";
 import { buildNativeExecutionInput } from "../services/native-runtime/native-execution-input.js";
 import { nativeRuntimeContextFixture } from "../services/native-runtime/runtime-context.test-fixture.js";
@@ -123,6 +123,234 @@ const support = await getEmbeddedPostgresTestSupport();
     acquisition.materialize.mockImplementationOnce((cwd, input) => actual.materializeManagedProjectWorkspace(cwd, { ...input, localSource: source,
       beforePublish: async cloneCwd => { await beforePublish?.(); await input.beforePublish(cloneCwd); } }));
   }
+
+  it.each([
+    { owner: "configured", direction: "descendant" }, { owner: "configured", direction: "ancestor" },
+    { owner: "execution", direction: "descendant" }, { owner: "execution", direction: "ancestor" },
+  ])("authorizes newly overlapping private $owner $direction owners before selection, admission and publication", async ({ owner, direction }) => {
+    const f = await fixture();
+    const child = path.join(f.admission.cwd, "private");
+    await mkdir(child);
+    const privateCwd = direction === "descendant" ? child : f.admission.cwd;
+    if (direction === "ancestor") {
+      f.admission.cwd = child;
+      await db.update(executionWorkspaces).set({ cwd: child }).where(eq(executionWorkspaces.id, f.workspace.id));
+    }
+    await f.service.prepareForAdmission(f.admission); // A retained reader cannot hide later nested owners.
+    let grant: () => Promise<unknown>;
+    let detach: () => Promise<unknown>;
+    if (owner === "configured") {
+      const [project] = await db.insert(projects).values({ companyId: f.companyId, name: "Nested private source", visibility: "private" }).returning();
+      const [source] = await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId: project.id, name: "Private files", cwd: privateCwd }).returning();
+      grant = () => db.insert(projectAccessMembers).values([
+        { companyId: f.companyId, projectId: project.id, subjectType: "agent", subjectId: f.agentId },
+        { companyId: f.companyId, projectId: project.id, subjectType: "user", subjectId: f.userId },
+      ]);
+      detach = async () => {
+        await db.delete(projectWorkspaces).where(eq(projectWorkspaces.id, source.id));
+        await db.delete(projectAccessMembers).where(eq(projectAccessMembers.projectId, project.id));
+      };
+    } else {
+      const peer = await standardPeer(f);
+      await db.update(executionWorkspaces).set({ cwd: privateCwd }).where(eq(executionWorkspaces.id, peer.workspace.id));
+      await db.update(issues).set({ visibility: "private", privacyRootIssueId: peer.issueId, responsibleUserId: peer.userId }).where(eq(issues.id, peer.issueId));
+      grant = () => db.insert(issueAccessGrants).values([
+        { issueId: peer.issueId, subjectType: "agent", subjectId: f.agentId, source: "explicit", grantedByUserId: peer.userId },
+        { issueId: peer.issueId, subjectType: "user", subjectId: f.userId, source: "explicit", grantedByUserId: peer.userId },
+      ]);
+      detach = async () => {
+        const moved = path.join(root, `${peer.issueId}-moved`); await mkdir(moved);
+        await executionWorkspaceService(db).update(peer.workspace.id, { cwd: moved });
+        await db.delete(issueAccessGrants).where(eq(issueAccessGrants.issueId, peer.issueId));
+      };
+    }
+    await writeFile(path.join(privateCwd, "private.txt"), "Nested private files\n");
+    const read = () => assertExecutionWorkspaceRootReadAccess(db, { companyId: f.companyId, cwd: f.admission.cwd, actor: f.actor, sourceWorkspaceId: f.workspace.id });
+    const select = () => executionWorkspaceService(db).selectTaskWorkspace({ companyId: f.companyId, issueId: f.issueId, actor: f.actor,
+      selection: { kind: "existing", workspaceId: f.workspace.id }, expectedBindingRevision: 0, requestKey: randomUUID() });
+    await expect(read()).rejects.toThrow(/source project|workspace access|authorization boundary/);
+    await expect(select()).rejects.toThrow(/source project|workspace access|authorization boundary/);
+    await expect(f.service.prepareForAdmission(f.admission)).rejects.toThrow(/source project|workspace access|authorization boundary/);
+    await expect(f.service.guardForPublication(f.admission)).rejects.toThrow(/source project|workspace access|authorization boundary/);
+    await grant();
+    await expect(f.service.prepareForAdmission(f.admission)).resolves.toEqual([]);
+    await expect(read()).resolves.toBeUndefined();
+    await detach();
+    await expect(f.service.prepareForAdmission(f.admission)).rejects.toThrow(/source project|workspace access|authorization boundary/);
+    await expect(read()).rejects.toThrow(/source project|workspace access|authorization boundary/);
+  });
+
+  it("does not confuse sibling component prefixes with overlapping roots", async () => {
+    const f = await fixture();
+    const sibling = `${f.admission.cwd}er`; await mkdir(sibling);
+    const [project] = await db.insert(projects).values({ companyId: f.companyId, name: "Unrelated private source", visibility: "private" }).returning();
+    await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId: project.id, name: "Sibling", cwd: sibling });
+    await db.insert(executionWorkspaceRepositoryAccess).values({ companyId: f.companyId, rootKey: createHash("sha256").update(await realpath(sibling)).digest("hex"),
+      canonicalCwd: await realpath(sibling), kind: "project_source", scopeId: project.id });
+    await db.insert(executionWorkspaceRepositoryRoots).values({ companyId: f.companyId, rootKey: createHash("sha256").update(await realpath(sibling)).digest("hex"),
+      canonicalCwd: await realpath(sibling), mode: "anonymous_only" });
+    await expect(f.service.prepareForAdmission(f.admission)).resolves.toEqual([]);
+    await expect(f.request({ kind: "catalog", id: "private-repo" })).resolves.toMatchObject({ kind: "requires_next_admission" });
+  });
+
+  it.each([
+    { mode: "managed", direction: "ancestor" }, { mode: "managed", direction: "descendant" },
+    { mode: "anonymous_only", direction: "ancestor" }, { mode: "anonymous_only", direction: "descendant" },
+  ] as const)("fences $mode root policy against opposite-mode $direction acquisition", async ({ mode, direction }) => {
+    const f = await fixture();
+    const child = path.join(f.admission.cwd, "nested"); await mkdir(child);
+    const existingRoot = direction === "ancestor" ? child : f.admission.cwd;
+    if (direction === "descendant") {
+      f.admission.cwd = child;
+      await db.update(executionWorkspaces).set({ cwd: child }).where(eq(executionWorkspaces.id, f.workspace.id));
+    }
+    const canonicalCwd = await realpath(existingRoot);
+    await db.insert(executionWorkspaceRepositoryRoots).values({ companyId: f.companyId, canonicalCwd,
+      rootKey: createHash("sha256").update(canonicalCwd).digest("hex"), mode });
+    if (mode === "managed") {
+      await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: f.issueId, executionPolicy: f.policy } }).where(eq(heartbeatRuns.id, f.runId));
+      await expect(f.service.prepareForAdmission(f.admission)).rejects.toThrow(/anonymous public URLs only/);
+    } else await expect(f.request({ kind: "catalog", id: "private-repo" })).rejects.toThrow(/anonymous public URLs only/);
+    expect(await f.service.list(f.companyId, f.workspace.id)).toEqual([]);
+    expect(acquisition.materialize).not.toHaveBeenCalled();
+  });
+
+  it("reauthorizes a nested private publication against an already-admitted parent reader", async () => {
+    const f = await fixture();
+    await f.service.prepareForAdmission(f.admission);
+    const peer = await standardPeer(f), child = path.join(f.admission.cwd, "private"); await mkdir(child);
+    peer.admission.cwd = child;
+    await db.update(executionWorkspaces).set({ cwd: child }).where(eq(executionWorkspaces.id, peer.workspace.id));
+    await db.update(issues).set({ visibility: "private", privacyRootIssueId: peer.issueId, responsibleUserId: peer.userId }).where(eq(issues.id, peer.issueId));
+    const request = () => f.service.request({ companyId: f.companyId, issueId: peer.issueId, actor: peer.actor,
+      request: { repository: { kind: "url", url: "https://github.com/public/nested" }, requestKey: randomUUID() } });
+    await expect(request()).rejects.toThrow(/workspace access|authorization boundary/);
+    await db.insert(issueAccessGrants).values([
+      { issueId: peer.issueId, subjectType: "agent", subjectId: f.agentId, source: "explicit", grantedByUserId: peer.userId },
+      { issueId: peer.issueId, subjectType: "user", subjectId: f.userId, source: "explicit", grantedByUserId: peer.userId },
+    ]);
+    const receipt = await request();
+    await localPrivateClone({ ...f, issueId: peer.issueId }, async () => {
+      await db.delete(issueAccessGrants).where(eq(issueAccessGrants.issueId, peer.issueId));
+    });
+    await expect(f.service.prepareForAdmission(peer.admission)).rejects.toThrow(/workspace access|authorization boundary/);
+    await expect(fs.lstat(path.join(child, receipt.repository.relativePath))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(acquisition.materialize).toHaveBeenCalledOnce();
+  });
+
+  it.each(["subdirectory", "linked_worktree", "nested_target"] as const)("retains private Git owner provenance copied through a %s without requiring source write grants", async sourceKind => {
+    const f = await fixture(), exec = promisify(execFileCallback);
+    const privateCwd = path.join(f.admission.cwd, "private"), publicCwd = path.join(f.admission.cwd, "public");
+    await mkdir(privateCwd); await mkdir(publicCwd);
+    await writeFile(path.join(privateCwd, "secret.txt"), "Copied private Git bytes\n");
+    await writeFile(path.join(publicCwd, "readme.txt"), "Public nested configuration\n");
+    await exec("git", ["init", "--initial-branch=main", f.admission.cwd]);
+    await exec("git", ["-C", f.admission.cwd, "add", "."]);
+    await exec("git", ["-C", f.admission.cwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "source"]);
+    const [project] = await db.insert(projects).values({ companyId: f.companyId, name: "Private copied source", visibility: "private",
+      executionWorkspacePolicy: { authorizationPolicy: { assignmentPolicy: { mode: "protected" } } } }).returning();
+    await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId: project.id, name: "Private nested files", cwd: privateCwd });
+    if (sourceKind === "nested_target") {
+      const [outer] = await db.insert(projects).values({ companyId: f.companyId, name: "Protected ancestor source",
+        executionWorkspacePolicy: { authorizationPolicy: { assignmentPolicy: { mode: "protected" } } } }).returning();
+      await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId: outer.id, name: "Ancestor source", cwd: f.admission.cwd });
+    }
+    let sourceCwd = publicCwd;
+    if (sourceKind === "linked_worktree") {
+      sourceCwd = path.join(root, `${f.issueId}-linked`);
+      await exec("git", ["-C", f.admission.cwd, "worktree", "add", "-b", "linked", sourceCwd]);
+    }
+    await expect(assertIsolatedWorkspaceSourceReadAccess(db, { companyId: f.companyId, sourceCwd, actor: f.actor })).rejects.toThrow(/source project/);
+    await db.insert(projectAccessMembers).values([
+      { companyId: f.companyId, projectId: project.id, subjectType: "agent", subjectId: f.agentId },
+      { companyId: f.companyId, projectId: project.id, subjectType: "user", subjectId: f.userId },
+    ]);
+    const captured = await assertIsolatedWorkspaceSourceReadAccess(db, { companyId: f.companyId, sourceCwd, actor: f.actor });
+    expect(captured.projectIds).toContain(project.id);
+    const targetCwd = sourceKind === "nested_target" ? path.join(f.admission.cwd, ".paperclip", "worktrees", "copy") : path.join(root, `${f.issueId}-copy`);
+    await retainIsolatedWorkspaceSourceAccess(db, { companyId: f.companyId, sourceCwd, targetCwd, actor: f.actor, captured });
+    await expect(fs.lstat(targetCwd)).rejects.toMatchObject({ code: "ENOENT" });
+    await exec("git", ["-C", f.admission.cwd, "worktree", "add", "-b", "copy", targetCwd]);
+    await retainIsolatedWorkspaceSourceAccess(db, { companyId: f.companyId, sourceCwd, targetCwd, actor: f.actor, captured });
+    const [target] = await db.insert(executionWorkspaces).values({ companyId: f.companyId, name: "Isolated copy", cwd: targetCwd,
+      mode: "isolated_workspace", strategyType: "git_worktree" }).returning();
+    await db.update(issues).set({ executionWorkspaceId: target.id }).where(eq(issues.id, f.issueId));
+    await expect(f.service.prepareForAdmission({ ...f.admission, workspaceId: target.id, cwd: targetCwd })).resolves.toEqual([]);
+    expect(await readFile(path.join(targetCwd, "private", "secret.txt"), "utf8")).toBe("Copied private Git bytes\n");
+    await db.delete(projectAccessMembers).where(eq(projectAccessMembers.projectId, project.id));
+    await expect(assertExecutionWorkspaceRootReadAccess(db, { companyId: f.companyId, cwd: targetCwd, actor: f.actor, sourceWorkspaceId: target.id })).rejects.toThrow(/source project/);
+  });
+
+  it.each(["exact", "descendant"] as const)("requires write authority for a protected %s target before copying", async relation => {
+    const f = await fixture(), exec = promisify(execFileCallback);
+    await exec("git", ["init", "--initial-branch=main", f.admission.cwd]);
+    await writeFile(path.join(f.admission.cwd, "source.txt"), "Source bytes\n");
+    await exec("git", ["-C", f.admission.cwd, "add", "."]);
+    await exec("git", ["-C", f.admission.cwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "source"]);
+    const targetCwd = path.join(root, `${f.issueId}-protected-target`);
+    const protectedCwd = relation === "exact" ? targetCwd : path.join(targetCwd, "private");
+    await mkdir(protectedCwd, { recursive: true });
+    const [project] = await db.insert(projects).values({ companyId: f.companyId, name: "Protected target",
+      executionWorkspacePolicy: { authorizationPolicy: { assignmentPolicy: { mode: "protected" } } } }).returning();
+    await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId: project.id, name: "Target owner", cwd: protectedCwd });
+    const captured = await assertIsolatedWorkspaceSourceReadAccess(db, { companyId: f.companyId, sourceCwd: f.admission.cwd, actor: f.actor });
+    await expect(retainIsolatedWorkspaceSourceAccess(db, { companyId: f.companyId, sourceCwd: f.admission.cwd, targetCwd,
+      actor: f.actor, issueId: f.issueId, captured })).rejects.toThrow(/protected|assignment grant/);
+    await expect(fs.lstat(path.join(targetCwd, "source.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+    const owners = await db.select().from(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.companyId, f.companyId));
+    expect(owners).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "isolated_source", scopeId: f.workspace.id })]));
+  });
+
+  it("excludes available lexical descendants whose canonical roots are unrelated", async () => {
+    const f = await fixture();
+    const unrelated = path.join(root, `${f.issueId}-unrelated`); await mkdir(unrelated);
+    const alias = path.join(f.admission.cwd, "link"); await symlink(unrelated, alias);
+    const [project] = await db.insert(projects).values({ companyId: f.companyId, name: "Unrelated private owner", visibility: "private" }).returning();
+    await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId: project.id, name: "Unrelated alias", cwd: alias });
+    const [workspace] = await db.insert(executionWorkspaces).values({ companyId: f.companyId, projectId: project.id, name: "Unrelated alias", cwd: alias,
+      mode: "shared_workspace", strategyType: "project_primary" }).returning();
+    await db.insert(executionWorkspaceRepositories).values({ companyId: f.companyId, requestedByIssueId: f.issueId, executionWorkspaceId: workspace.id,
+      repositoryIdentity: "https://github.com/private/unrelated", repoUrl: "https://github.com/private/unrelated", relativePath: "unused",
+      requestedRef: "HEAD", requestKey: randomUUID() });
+    await expect(f.service.prepareForAdmission(f.admission)).resolves.toEqual([]);
+  });
+
+  it.each(["revoked", "deleted_source", "deleted_owner", "retained_reader"] as const)("protects already-copied bytes when post-copy authorization fails (%s)", async failure => {
+    const f = await fixture(), exec = promisify(execFileCallback);
+    await exec("git", ["init", "--initial-branch=main", f.admission.cwd]);
+    await writeFile(path.join(f.admission.cwd, "secret.txt"), "Failed copy still private\n");
+    await exec("git", ["-C", f.admission.cwd, "add", "."]);
+    await exec("git", ["-C", f.admission.cwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "source"]);
+    const [project] = await db.insert(projects).values({ companyId: f.companyId, name: "Failed private copy", visibility: "private" }).returning();
+    await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId: project.id, name: "Private source", cwd: f.admission.cwd });
+    await db.insert(projectAccessMembers).values([
+      { companyId: f.companyId, projectId: project.id, subjectType: "agent", subjectId: f.agentId },
+      { companyId: f.companyId, projectId: project.id, subjectType: "user", subjectId: f.userId },
+    ]);
+    const captured = await assertIsolatedWorkspaceSourceReadAccess(db, { companyId: f.companyId, sourceCwd: f.admission.cwd, actor: f.actor });
+    const targetCwd = path.join(root, `${f.issueId}-failed-copy`);
+    if (failure === "retained_reader") {
+      await mkdir(targetCwd);
+      const peer = await standardPeer(f);
+      await db.update(executionWorkspaces).set({ cwd: targetCwd }).where(eq(executionWorkspaces.id, peer.workspace.id));
+      await f.service.prepareForAdmission({ ...peer.admission, cwd: targetCwd });
+      await expect(retainIsolatedWorkspaceSourceAccess(db, { companyId: f.companyId, sourceCwd: f.admission.cwd, targetCwd,
+        actor: f.actor, captured })).rejects.toThrow(/source project/);
+      await expect(fs.lstat(path.join(targetCwd, "secret.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+      return;
+    }
+    await exec("git", ["-C", f.admission.cwd, "worktree", "add", "-b", "failed-copy", targetCwd]);
+    if (failure === "revoked") await db.delete(projectAccessMembers).where(eq(projectAccessMembers.projectId, project.id));
+    if (failure === "deleted_owner") await db.delete(projects).where(eq(projects.id, project.id));
+    if (failure === "deleted_source") await rm(f.admission.cwd, { recursive: true });
+    await expect(retainIsolatedWorkspaceSourceAccess(db, { companyId: f.companyId, sourceCwd: f.admission.cwd, targetCwd, actor: f.actor, captured })).rejects.toThrow();
+    const canonicalCwd = await realpath(targetCwd);
+    const owners = await db.select().from(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.rootKey, createHash("sha256").update(canonicalCwd).digest("hex")));
+    expect(owners).toEqual(expect.arrayContaining([expect.objectContaining({ kind: "isolated_project_source", scopeId: project.id })]));
+    const peer = await standardPeer(f);
+    await expect(assertExecutionWorkspaceRootReadAccess(db, { companyId: f.companyId, cwd: targetCwd, actor: peer.actor })).rejects.toThrow(/source project/);
+    expect(await readFile(path.join(targetCwd, "secret.txt"), "utf8")).toBe("Failed copy still private\n");
+  });
 
   it.each(["empty", "different_identity", "unreadable_alias", "loop_alias", "anonymous_private_edits", "authorized_peer"] as const)(
     "authorizes every physical repository source for a standard reader with %s", async scenario => {
@@ -771,11 +999,11 @@ const support = await getEmbeddedPostgresTestSupport();
       });
     }
     await expect(f.service.prepareForAdmission(peer.admission)).resolves.toEqual([]);
-    // Once fenced, unrelated historical paths need no further filesystem reads.
+    // Rechecking current owners must still tolerate an unrelated unavailable path.
     vi.restoreAllMocks();
     const actual = fs.realpath.bind(fs);
     vi.spyOn(fs, "realpath").mockImplementation(async pathname => {
-      if (String(pathname) === unavailableCwd) throw new Error("Historical path must not be revisited");
+      if (String(pathname) === unavailableCwd) throw Object.assign(new Error("Historical path remains unavailable"), { code: "EACCES" });
       return actual(pathname);
     });
     await expect(executionWorkspaceRepositoryService(db).prepareForAdmission(peer.admission)).resolves.toEqual([]);

@@ -458,6 +458,110 @@ describeEmbeddedPostgres("workspace file resources", () => {
     } finally { await fs.rm(root, { recursive: true, force: true }); }
   });
 
+  it.each([
+    ["configured", "ancestor"], ["configured", "descendant"],
+    ["execution", "ancestor"], ["execution", "descendant"],
+  ] as const)("protects %s private roots from a public %s file browser, including retained moved ownership", async (ownerKind, relation) => {
+    const { root, projectRoot, targetProjectRoot } = await makeWorkspace();
+    try {
+      const ancestor = path.join(root, "work"), descendant = path.join(ancestor, "private");
+      await fs.mkdir(descendant, { recursive: true });
+      const publicRoot = relation === "ancestor" ? ancestor : descendant;
+      const privateRoot = relation === "ancestor" ? descendant : ancestor;
+      const relativeFile = relation === "ancestor" ? "private/secret.txt" : "secret.txt";
+      await fs.writeFile(path.join(publicRoot, relativeFile), "PRIVATE_OVERLAPPING_ROOT_BYTES");
+      const graph = await seedGraph(db, { projectRoot, targetProjectRoot, executionRoot: publicRoot });
+      await db.update(issues).set({ projectId: null, projectWorkspaceId: null }).where(eq(issues.id, graph.issueId));
+      await db.update(executionWorkspaces).set({ projectId: null, projectWorkspaceId: null, providerType: "local_fs" }).where(eq(executionWorkspaces.sourceIssueId, graph.issueId));
+      await db.update(projectWorkspaces).set({ cwd: publicRoot }).where(eq(projectWorkspaces.id, graph.projectWorkspaceId));
+      let ownerId: string;
+      let privateIssueId: string | null = null;
+      if (ownerKind === "configured") {
+        ownerId = graph.targetProjectId;
+        await db.update(projects).set({ visibility: "private" }).where(eq(projects.id, ownerId));
+        await db.update(projectWorkspaces).set({ cwd: privateRoot }).where(eq(projectWorkspaces.id, graph.targetProjectWorkspaceId));
+        expect(await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.projectId, ownerId))).toEqual([]);
+      } else {
+        const [task] = await db.insert(issues).values({ companyId: graph.companyId, title: "Private overlapping task", visibility: "private", responsibleUserId: "private-owner" }).returning();
+        privateIssueId = task.id;
+        const [workspace] = await db.insert(executionWorkspaces).values({ companyId: graph.companyId, sourceIssueId: task.id,
+          name: "Private overlapping workspace", cwd: privateRoot, mode: "shared_workspace", strategyType: "task_directory", providerType: "local_fs" }).returning();
+        ownerId = workspace.id;
+      }
+      const app = createApp(db, { type: "board", userId: "board-user", companyIds: [graph.companyId], source: "session", isInstanceAdmin: false });
+      const targets = [{ workspace: "execution" }, { projectId: graph.projectId, workspaceId: graph.projectWorkspaceId }];
+      const readState = async () => ({
+        access: await db.select().from(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.companyId, graph.companyId)),
+        policies: await db.select().from(executionWorkspaceRepositoryRoots).where(eq(executionWorkspaceRepositoryRoots.companyId, graph.companyId)),
+      });
+      const deny = async () => {
+        const before = await readState();
+        for (const target of targets) {
+          for (const [endpoint, query] of [
+            ["list", {}], ["resolve", { path: relativeFile }], ["content", { path: relativeFile }], ["content", { path: relativeFile, download: true }],
+          ] as const) {
+            const response = await request(app).get(`/api/issues/${graph.issueId}/file-resources/${endpoint}`).query({ ...target, ...query }).expect(404);
+            for (const hidden of ["PRIVATE_OVERLAPPING_ROOT_BYTES", ownerId, privateRoot, "Private overlapping"]) expect(JSON.stringify(response.body)).not.toContain(hidden);
+          }
+          const availability = await request(app).post(`/api/issues/${graph.issueId}/file-resources/availability`)
+            .send({ queries: [{ ...target, path: relativeFile }] }).expect(200);
+          expect(availability.body.results).toEqual([expect.objectContaining({ openable: false, unavailableReason: "not_found", resource: null })]);
+        }
+        expect(await readState()).toEqual(before);
+      };
+      await deny();
+      const grant = ownerKind === "configured"
+        ? (await db.insert(projectAccessMembers).values({ companyId: graph.companyId, projectId: ownerId, subjectType: "user", subjectId: "board-user" }).returning())[0]!
+        : (await db.insert(issueAccessGrants).values({ issueId: privateIssueId!, subjectType: "user", subjectId: "board-user", source: "explicit" }).returning())[0]!;
+      const beforeAllowedReads = await readState();
+      for (const target of targets) {
+        const response = await request(app).get(`/api/issues/${graph.issueId}/file-resources/content`).query({ ...target, path: relativeFile }).expect(200);
+        expect(response.body.content.data).toBe("PRIVATE_OVERLAPPING_ROOT_BYTES");
+      }
+      expect(await readState()).toEqual(beforeAllowedReads);
+      // A prior admission's deny-only owner remains attached to the physical
+      // tree after the logical owner selects a different folder.
+      const canonicalCwd = await fs.realpath(privateRoot);
+      await db.insert(executionWorkspaceRepositoryAccess).values({ companyId: graph.companyId,
+        rootKey: createHash("sha256").update(canonicalCwd).digest("hex"), canonicalCwd,
+        kind: ownerKind === "configured" ? "project_source" : "source", scopeId: ownerId });
+      if (ownerKind === "configured") {
+        await db.update(projectWorkspaces).set({ cwd: targetProjectRoot }).where(eq(projectWorkspaces.id, graph.targetProjectWorkspaceId));
+        await db.delete(projectAccessMembers).where(eq(projectAccessMembers.id, grant.id));
+      } else {
+        await db.update(executionWorkspaces).set({ cwd: targetProjectRoot }).where(eq(executionWorkspaces.id, ownerId));
+        await db.update(issueAccessGrants).set({ revokedAt: new Date() }).where(eq(issueAccessGrants.id, grant.id));
+      }
+      await deny();
+      expect(await fs.readFile(path.join(publicRoot, relativeFile), "utf8")).toBe("PRIVATE_OVERLAPPING_ROOT_BYTES");
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
+
+  it("keeps sibling string-prefix roots independent without registering file readers", async () => {
+    const { root, projectRoot, targetProjectRoot } = await makeWorkspace();
+    try {
+      const privateRoot = path.join(root, "work"), publicRoot = path.join(root, "worker");
+      await fs.mkdir(privateRoot); await fs.mkdir(publicRoot);
+      await fs.writeFile(path.join(publicRoot, "public.txt"), "PUBLIC_SIBLING_BYTES");
+      const graph = await seedGraph(db, { projectRoot, targetProjectRoot, executionRoot: publicRoot });
+      await db.update(projects).set({ visibility: "private" }).where(eq(projects.id, graph.targetProjectId));
+      await db.update(projectWorkspaces).set({ cwd: privateRoot }).where(eq(projectWorkspaces.id, graph.targetProjectWorkspaceId));
+      const [privateIssue] = await db.insert(issues).values({ companyId: graph.companyId, title: "Private sibling", visibility: "private", responsibleUserId: "private-owner" }).returning();
+      await db.insert(executionWorkspaces).values({ companyId: graph.companyId, sourceIssueId: privateIssue.id, cwd: privateRoot,
+        name: "Private sibling", mode: "shared_workspace", strategyType: "task_directory", providerType: "local_fs" });
+      const app = createApp(db, { type: "board", userId: "board-user", companyIds: [graph.companyId], source: "session", isInstanceAdmin: false });
+      const target = { workspace: "execution", path: "public.txt" };
+      const content = await request(app).get(`/api/issues/${graph.issueId}/file-resources/content`).query(target).expect(200);
+      expect(content.body.content.data).toBe("PUBLIC_SIBLING_BYTES");
+      await request(app).get(`/api/issues/${graph.issueId}/file-resources/list`).query({ workspace: "execution" }).expect(200);
+      await request(app).get(`/api/issues/${graph.issueId}/file-resources/content`).query({ ...target, download: true }).expect(200);
+      const availability = await request(app).post(`/api/issues/${graph.issueId}/file-resources/availability`).send({ queries: [target] }).expect(200);
+      expect(availability.body.results).toEqual([expect.objectContaining({ openable: true })]);
+      expect(await db.select().from(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.companyId, graph.companyId))).toEqual([]);
+      expect(await db.select().from(executionWorkspaceRepositoryRoots).where(eq(executionWorkspaceRepositoryRoots.companyId, graph.companyId))).toEqual([]);
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
+
   it("does not confuse identical repositories in unrelated available roots with private file provenance", async () => {
     const { root, projectRoot, executionRoot, targetProjectRoot } = await makeWorkspace();
     try {
