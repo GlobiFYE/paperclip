@@ -5,9 +5,12 @@
       "ui/storybook/.storybook/main.ts",
       "ui/storybook/.storybook/preview.tsx",
       "ui/storybook/fixtures/paperclipData.ts",
-      "maps/feature-map/README.md"
+      "maps/feature-map/README.md",
+      "scripts/storybook-feature-index.mjs",
+      "ui/storybook/generated/feature-index.json",
+      "ui/storybook/support/feature-map/FeatureOverview.tsx"
     ],
-    "fingerprint": "eb37e5c7110df7804ffabbd4784bd78cf1f5d31a858bdcb8db7080cfa02b7f0b"
+    "fingerprint": "f72a43d9a743956e6615eefe4368f25e2d959855c25b8abf438efd8acffb740b"
   },
   "entries": [
     {
@@ -3303,15 +3306,17 @@
       "status": "unreviewed",
       "implementation": "guide",
       "boundary": "static",
-      "notes": "Generated inventory counts replace stale hand-maintained Planned/Covered claims; no execution coverage is implied.",
+      "notes": "Matches the upstream feature index and order, including features with no cataloged examples. Related suite links and classifications do not imply execution coverage.",
       "reviewedAt": "2026-10-12",
       "sources": [
         "ui/src/components/ui/badge.tsx",
         "ui/src/components/ui/input.tsx",
-        "ui/storybook/stories/overview/overview.stories.tsx"
+        "ui/storybook/stories/overview/overview.stories.tsx",
+        "ui/storybook/support/feature-map/FeatureOverview.tsx",
+        "ui/storybook/generated/feature-index.json"
       ],
       "exception": "Shared foundations or contributor guide; no single business capability owns this suite.",
-      "fingerprint": "cc12edb19c1e75db6869f343a6d07b6f1d11faff9ecfbf18a38a7d710a01e6d3",
+      "fingerprint": "408861792a2e6d050d7c0dd97aaed718ccb39b9b2fca17179cfdfc83f664edf7",
       "stableId": "overview-storybook-guide",
       "sidebarTitle": "Overview/Storybook Guide"
     },

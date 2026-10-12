@@ -4,6 +4,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { featureIndex, reconcileFeatureArtifacts, sidebarLabel } from "./storybook-feature-index.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultRoot = path.resolve(path.dirname(scriptPath), "..");
@@ -41,14 +42,7 @@ export function capabilities(root) {
 }
 
 export function featureNavigation(root) {
-  const navigation = new Map();
-  let section;
-  for (const line of readFileSync(path.join(root, "maps/feature-map/README.md"), "utf8").split("\n")) {
-    if (line.startsWith("### ")) section = line.slice(4);
-    const match = line.match(/^\| \[([^\]]+)\]\(\.\/([^.)]+)\.md\)/);
-    if (match && section) navigation.set(match[2], `${section}/${match[1]}`);
-  }
-  return navigation;
+  return new Map(featureIndex(root).sections.flatMap(section => section.features.map(feature => [feature.id, `${sidebarLabel(section.title)}/${sidebarLabel(feature.title)}`])));
 }
 
 export function scanStories(root = defaultRoot) {
@@ -99,14 +93,14 @@ export function validateCatalog(root, catalog, stories) {
     review(label, entry.sources, entry.fingerprint);
   }
   for (const story of stories) if (!seen.has(story.file)) errors.push(`${story.file}: story missing from catalog`);
-  const ids = stories.flatMap(story => story.ids);
+  const ids = [...stories.flatMap(story => story.ids), ...featureIndex(root).sections.flatMap(section => section.features.map(feature => `feature-map-${feature.id}--overview`))];
   if (ids.length !== new Set(ids).size) errors.push("Duplicate story IDs");
   return errors;
 }
 
 function cell(value) { return String(value).replaceAll("|", "\\|").replaceAll("\n", " "); }
 
-export function renderIndex(catalog, stories, refs) {
+export function renderIndex(catalog, stories, index) {
   const byFile = new Map(stories.map(story => [story.file, story]));
   const groups = new Map();
   for (const entry of catalog.entries) {
@@ -118,8 +112,19 @@ export function renderIndex(catalog, stories, refs) {
     "[Contract and maintenance](README.md) · [Review findings](REVIEW.md)", "",
     `${stories.length} story files; ${stories.reduce((n, story) => n + story.ids.length, 0)} indexed stories. Counts describe inventory, not passed tests or complete feature coverage.`, "",
     "Status describes product alignment; implementation describes the rendered subject; boundary describes simulated data. Sources and limitations are in catalog.json. Related capabilities cross-list one canonical story file.", ""];
-  for (const [area, entries] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
-    lines.push(`## ${area}`, "", ...(area !== "foundations-and-guides" ? [`[Feature recipe](../feature-map/${area}.md)`, ""] : []),
+  const homes = index.sections.flatMap(section => section.features.map(feature => ({ ...feature, section: section.title })));
+  homes.push({ id: "foundations-and-guides", title: "Shared foundations and guides", section: "Foundations", description: "Shared components and contributor guidance outside the product feature index." });
+  let currentSection;
+  for (const feature of homes) {
+    const area = feature.id;
+    const entries = groups.get(area) ?? [];
+    if (feature.section !== currentSection) {
+      lines.push(`## ${feature.section}`, "");
+      currentSection = feature.section;
+    }
+    lines.push(`### ${feature.title}`, "", feature.description, "", ...(area !== "foundations-and-guides" ? [`[Feature recipe](../feature-map/${area}.md)`, ""] : []));
+    if (!entries.length) lines.push("No primary story suite. Check capability lookup below for related examples; this does not imply a missing product feature.", "");
+    else lines.push(
       "| Story suite | Capabilities | Product / implementation / data | Stories / play functions | Review note |",
       "| --- | --- | --- | --- | --- |");
     for (const entry of entries.sort((a, b) => a.file.localeCompare(b.file))) {
@@ -129,7 +134,7 @@ export function renderIndex(catalog, stories, refs) {
     lines.push("");
   }
   lines.push("## Capability lookup", "", "References are navigation links, not proof of parity. An absent link means no cataloged story, not a missing product feature. CLI/operator capabilities may need no Storybook example.", "");
-  for (const ref of refs.keys()) {
+  for (const ref of index.sections.flatMap(section => section.features.flatMap(feature => feature.capabilities.map(capability => capability.id)))) {
     const entries = catalog.entries.filter(entry => entry.capabilities.includes(ref));
     lines.push(`- \`${ref}\`: ${entries.length ? entries.map(entry => `[${cell(byFile.get(entry.file).title)}](../../${entry.file}) (${entry.status})`).join(", ") : "No cataloged story."}`);
   }
@@ -143,7 +148,9 @@ if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
   const stories = scanStories();
   const errors = validateCatalog(defaultRoot, catalog, stories);
   if (!errors.length) {
-    const generated = renderIndex(catalog, stories, capabilities(defaultRoot));
+    const index = featureIndex(defaultRoot);
+    errors.push(...reconcileFeatureArtifacts(defaultRoot, index, args.includes("--write")));
+    const generated = renderIndex(catalog, stories, index);
     if (args.includes("--write")) writeFileSync(path.join(defaultRoot, indexPath), generated);
     else if (!existsSync(path.join(defaultRoot, indexPath)) || readFileSync(path.join(defaultRoot, indexPath), "utf8") !== generated) errors.push("Generated INDEX.md is stale; run with --write after reviewing catalog changes");
   }
