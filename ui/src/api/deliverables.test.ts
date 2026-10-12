@@ -14,7 +14,10 @@ function sampleDeliverable(overrides: Partial<CompanyDeliverable> = {}): Company
   return {
     id: "d-1",
     summary: "Done.",
-    generationStatus: "generated",
+    generationState: "generated",
+    nextAttemptAt: null,
+    fallback: "Ship the thing",
+    summaryFromTaskDetails: false,
     issue: { id: "issue-1", identifier: "T-1", title: "Ship the thing" },
     project: null,
     product: null,
@@ -59,11 +62,13 @@ describe("deliverablesApi.list", () => {
 
   it("keeps the envelope shape when the server returns one", async () => {
     mockApi.get.mockResolvedValue({
+      summariesEnabled: false,
       deliverables: [sampleDeliverable()],
       nextCursor: "cursor-2",
     });
     const result = await deliverablesApi.list("company-1");
     expect(result.deliverables).toHaveLength(1);
     expect(result.nextCursor).toBe("cursor-2");
+    expect(result.summariesEnabled).toBe(false);
   });
 });

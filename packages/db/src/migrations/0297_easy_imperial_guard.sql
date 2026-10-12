@@ -1,0 +1,1 @@
+ALTER TABLE "issue_deliverables" DROP COLUMN "completion_version";

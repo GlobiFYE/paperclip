@@ -18,6 +18,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import type { CompanyDeliverablesResponse } from "@paperclipai/shared";
+import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
 const DELIVERABLES_PAGE_SIZE = 30;
@@ -58,6 +60,12 @@ export function deliverableRangeFrom(value: DeliverableRange, now = Date.now()):
   return new Date(now - RANGE_DAYS[value] * 24 * 60 * 60 * 1000).toISOString();
 }
 
+export function deliverablesPollingInterval(data?: { pages: CompanyDeliverablesResponse[] }) {
+  if (data?.pages.some(page => !page.summariesEnabled)) return 300_000;
+  return data?.pages.some(page => page.deliverables.some(card =>
+    ["pending", "generating", "retry_scheduled", "stale"].includes(card.generationState))) ? 30_000 : false;
+}
+
 export function Deliverables() {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -96,6 +104,8 @@ export function Deliverables() {
   const selectRange = useCallback(
     (value: DeliverableRange) => {
       updateParams((next) => {
+        next.delete("from");
+        next.delete("to");
         if (value === "all") next.delete("range");
         else next.set("range", value);
       });
@@ -109,7 +119,17 @@ export function Deliverables() {
     enabled: !!selectedCompanyId,
   });
 
-  const from = useMemo(() => deliverableRangeFrom(range), [range]);
+  const presetFrom = useMemo(() => deliverableRangeFrom(range), [range]);
+  const dateParam = (name: string) => {
+    const value = searchParams.get(name) ?? "";
+    return /^\d{4}-\d{2}-\d{2}$/.test(value) && Number.isFinite(Date.parse(value)) ? value : "";
+  };
+  const fromDate = dateParam("from");
+  const toDate = dateParam("to");
+  const customRange = Boolean(fromDate || toDate);
+  const rangeLabel = customRange ? "Custom" : deliverableRangeLabel(range);
+  const from = fromDate ? new Date(`${fromDate}T00:00:00Z`).toISOString() : presetFrom;
+  const to = toDate ? new Date(Date.parse(`${toDate}T00:00:00Z`) + 86400000).toISOString() : undefined;
 
   const {
     data,
@@ -120,16 +140,18 @@ export function Deliverables() {
     fetchNextPage,
     error,
   } = useInfiniteQuery({
-    queryKey: queryKeys.deliverables.list(selectedCompanyId!, projectId, from ?? undefined),
+    queryKey: queryKeys.deliverables.list(selectedCompanyId!, projectId, from ?? undefined, to),
     queryFn: ({ pageParam }) =>
       deliverablesApi.list(selectedCompanyId!, {
         projectId,
         from: from ?? undefined,
+        to,
         limit: DELIVERABLES_PAGE_SIZE,
         cursor: pageParam,
       }),
     enabled: !!selectedCompanyId,
     initialPageParam: undefined as string | undefined,
+    refetchInterval: (query) => deliverablesPollingInterval(query.state.data),
     getNextPageParam: (lastPage) => lastPage.nextCursor ?? undefined,
   });
 
@@ -213,13 +235,13 @@ export function Deliverables() {
                 type="button"
                 variant="outline"
                 size="sm"
-                aria-label={`Filter deliverables by date (currently ${deliverableRangeLabel(range)})`}
+                aria-label={`Filter deliverables by date (currently ${rangeLabel})`}
                 data-testid="deliverable-range-filter"
-                data-range={range}
-                className={cn("h-8", range !== "all" && "bg-accent")}
+                data-range={customRange ? "custom" : range}
+                className={cn("h-8", (customRange || range !== "all") && "bg-accent")}
               >
                 <CalendarRange className="h-3.5 w-3.5" aria-hidden="true" />
-                <span>{deliverableRangeLabel(range)}</span>
+                <span>{rangeLabel}</span>
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-44">
@@ -228,12 +250,12 @@ export function Deliverables() {
                 <DropdownMenuItem
                   key={option.value}
                   data-testid={`deliverable-range-option-${option.value}`}
-                  aria-selected={range === option.value}
+                  aria-selected={!customRange && range === option.value}
                   onSelect={() => selectRange(option.value)}
                   className="justify-between"
                 >
                   {option.label}
-                  {range === option.value ? <Check className="h-3.5 w-3.5" /> : null}
+                  {!customRange && range === option.value ? <Check className="h-3.5 w-3.5" /> : null}
                 </DropdownMenuItem>
               ))}
             </DropdownMenuContent>
@@ -241,6 +263,23 @@ export function Deliverables() {
         </div>
       </div>
 
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="flex min-w-0 flex-col gap-1 text-sm text-muted-foreground">
+          From (UTC)
+          <Input aria-label="Completed from" type="date" value={fromDate} onChange={event => updateParams(next => {
+            next.delete("range");
+            if (event.target.value) next.set("from", event.target.value); else next.delete("from");
+          })} />
+        </label>
+        <label className="flex min-w-0 flex-col gap-1 text-sm text-muted-foreground">
+          Through (UTC)
+          <Input aria-label="Completed through" type="date" value={toDate} onChange={event => updateParams(next => {
+            next.delete("range");
+            if (event.target.value) next.set("to", event.target.value); else next.delete("to");
+          })} />
+        </label>
+      </div>
+      {projectsQuery.error && <p className="text-sm text-destructive">Could not load projects: {projectsQuery.error.message}</p>}
       {error && <p className="text-sm text-destructive">{error.message}</p>}
 
       {isLoading ? (
@@ -249,7 +288,7 @@ export function Deliverables() {
         <EmptyState
           icon={PackageCheck}
           message={
-            projectId || range !== "all"
+            projectId || customRange || range !== "all"
               ? "No finished work matches these filters."
               : "Nothing finished yet. Completed tasks will appear here with a plain-English summary."
           }

@@ -797,6 +797,7 @@ export function App() {
           <Route path="pipelines/:pipelineId/items/:caseId" element={<UnprefixedBoardRedirect />} />
           <Route path="pipelines/:pipelineId/cases/:caseId" element={<UnprefixedBoardRedirect />} />
           <Route path="artifacts" element={<UnprefixedBoardRedirect />} />
+          <Route path="deliverables" element={<UnprefixedBoardRedirect />} />
           <Route path="audit" element={<UnprefixedBoardRedirect />} />
           {streamlinedUiEnabled ? (
             <>

@@ -13,12 +13,12 @@ interface DeliverableCardProps {
  * The card renders stored text only — it never triggers model calls.
  */
 export function DeliverableCard({ deliverable }: DeliverableCardProps) {
-  const { issue, project, product, doneBy, verifiedBy, summary, generationStatus } = deliverable;
+  const { issue, project, product, doneBy, verifiedBy, summary, generationState } = deliverable;
   return (
     <div
       data-testid="deliverable-card"
-      data-generation-status={generationStatus}
-      className="flex flex-col gap-2 rounded-lg border border-border bg-card p-4 transition-colors hover:border-foreground/20 hover:shadow-md"
+      data-generation-status={generationState}
+      className="flex min-w-0 flex-col gap-2 rounded-lg border border-border bg-card p-4 transition-colors hover:border-foreground/20 hover:shadow-md"
     >
       <div className="flex items-start justify-between gap-2">
         <Link
@@ -42,28 +42,29 @@ export function DeliverableCard({ deliverable }: DeliverableCardProps) {
       ) : null}
 
       {summary ? (
-        <p className="text-sm leading-6 text-muted-foreground" data-testid="deliverable-summary">
+        <p className="break-words text-sm leading-6 text-muted-foreground" data-testid="deliverable-summary">
           {summary}
         </p>
       ) : (
-        <p className="text-sm leading-6 text-muted-foreground/60 italic" data-testid="deliverable-summary-placeholder">
-          {generationStatus === "failed"
-            ? "The plain-English summary could not be written for this task."
-            : "The plain-English summary for this task is being written."}
+        <p className="break-words text-sm leading-6 text-muted-foreground/60 italic" data-testid="deliverable-summary-placeholder">
+          {deliverable.fallback}
         </p>
       )}
 
+      {summary && deliverable.summaryFromTaskDetails && <p className="text-xs text-muted-foreground">Summary from task details</p>}
+      {generationState === "failed_final" && <p className="text-xs text-muted-foreground">Summary unavailable or out of date. See the task for the latest details.</p>}
+      {(generationState === "stale" || (summary && ["pending", "generating", "retry_scheduled"].includes(generationState))) && <p className="text-xs text-muted-foreground">Updating summary…</p>}
       {product ? (
         <div className="flex flex-col gap-0.5 rounded-md bg-accent/20 px-2.5 py-2">
           <div className="text-(length:--text-micro) font-medium uppercase tracking-wide text-muted-foreground/60">
-            Where it is
+            {product.unavailable ? "Output unavailable" : "Where it is"}
           </div>
           {product.href ? (
             <a
               href={product.href}
               target="_blank"
               rel="noreferrer"
-              className="inline-flex items-center gap-1 text-sm font-medium text-foreground/85 hover:underline"
+              className="inline-flex break-words items-center gap-1 text-sm font-medium text-foreground/85 hover:underline"
             >
               {product.title}
               <ExternalLink className="h-3 w-3 shrink-0" aria-hidden="true" />
@@ -87,7 +88,7 @@ export function DeliverableCard({ deliverable }: DeliverableCardProps) {
       <div className="mt-auto flex flex-wrap items-center gap-x-2 gap-y-0.5 pt-1 text-(length:--text-micro) text-muted-foreground/65">
         <span>Done by {doneBy?.name ?? "unknown"}</span>
         <span className="text-muted-foreground/50">·</span>
-        <span>Verified by {verifiedBy?.name ?? "not yet verified"}</span>
+        <span>{verifiedBy ? `Verified by ${verifiedBy.name}` : "Not yet verified"}</span>
       </div>
     </div>
   );

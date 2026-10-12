@@ -7,6 +7,11 @@ import {
 } from "./company-routes";
 
 describe("company routes", () => {
+  it("prefixes Deliverables and recognizes its unprefixed redirect", () => {
+    expect(isBoardPathWithoutPrefix("/deliverables")).toBe(true);
+    expect(extractCompanyPrefixFromPath("/deliverables")).toBeNull();
+    expect(applyCompanyPrefix("/deliverables", "TOP")).toBe("/TOP/deliverables");
+  });
   it("treats the task-list alias as an unprefixed board route", () => {
     expect(isBoardPathWithoutPrefix("/tasks")).toBe(true);
     expect(extractCompanyPrefixFromPath("/tasks")).toBeNull();

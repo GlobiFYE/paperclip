@@ -40,9 +40,10 @@ function normalizeDeliverablesResponse(
   raw: CompanyDeliverablesResponse | CompanyDeliverable[],
 ): CompanyDeliverablesResponse {
   if (Array.isArray(raw)) {
-    return { deliverables: raw, nextCursor: null };
+    return { summariesEnabled: false, deliverables: raw, nextCursor: null };
   }
   return {
+    summariesEnabled: raw.summariesEnabled === true,
     deliverables: raw.deliverables ?? [],
     nextCursor: raw.nextCursor ?? null,
   };

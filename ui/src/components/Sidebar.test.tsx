@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 
+import { MemoryRouter } from "react-router-dom";
 import { type ReactNode } from "react";
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
@@ -20,21 +21,27 @@ const mockInstanceSettingsApi = vi.hoisted(() => ({
   getExperimental: vi.fn(),
 }));
 
-vi.mock("@/lib/router", () => ({
-  NavLink: ({ to, children, className, ...props }: {
-    to: string;
-    children: ReactNode;
-    className?: string | ((state: { isActive: boolean }) => string);
-  }) => (
-    <a
-      href={to}
-      className={typeof className === "function" ? className({ isActive: false }) : className}
-      {...props}
-    >
-      {children}
-    </a>
-  ),
-}));
+const routerMode = vi.hoisted(() => ({ real: false }));
+vi.mock("@/lib/router", async importOriginal => {
+  const actual = await importOriginal<typeof import("@/lib/router")>();
+  return {
+    NavLink: ({ to, children, className, ...props }: {
+      to: string;
+      children: ReactNode;
+      className?: string | ((state: { isActive: boolean }) => string);
+    }) => routerMode.real ? (
+      <actual.NavLink to={to} className={className} {...props}>{children}</actual.NavLink>
+    ) : (
+      <a
+        href={to}
+        className={typeof className === "function" ? className({ isActive: false }) : className}
+        {...props}
+      >
+        {children}
+      </a>
+    ),
+  };
+});
 
 vi.mock("../context/DialogContext", () => ({
   useDialog: () => ({
@@ -48,7 +55,7 @@ vi.mock("../context/DialogContext", () => ({
 vi.mock("../context/CompanyContext", () => ({
   useCompany: () => ({
     selectedCompanyId: "company-1",
-    selectedCompany: { id: "company-1", issuePrefix: "PAP", name: "Paperclip" },
+    selectedCompany: { id: "company-1", issuePrefix: "TOP", name: "Paperclip" },
   }),
 }));
 
@@ -138,9 +145,9 @@ describe("Sidebar", () => {
     flushSync(() => {
       root.render(
         <QueryClientProvider client={queryClient}>
-          <TooltipProvider>
+          <MemoryRouter initialEntries={["/TOP/issues"]}><TooltipProvider>
             <Sidebar />
-          </TooltipProvider>
+          </TooltipProvider></MemoryRouter>
         </QueryClientProvider>,
       );
     });
@@ -150,6 +157,7 @@ describe("Sidebar", () => {
   }
 
   beforeEach(() => {
+    routerMode.real = false;
     container = document.createElement("div");
     document.body.appendChild(container);
     mockHeartbeatsApi.liveRunsForCompany.mockResolvedValue([]);
@@ -164,6 +172,14 @@ describe("Sidebar", () => {
     container.remove();
     document.body.innerHTML = "";
     vi.clearAllMocks();
+  });
+
+  it("links Deliverables to the selected company's prefixed route", async () => {
+    routerMode.real = true;
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableIsolatedWorkspaces: false });
+    const root = await renderSidebar();
+    expect(container.querySelector('a[href="/TOP/deliverables"]')?.textContent).toContain("Deliverables");
+    flushSync(() => root.unmount());
   });
 
   it("keeps the default sidebar edge borderless", async () => {

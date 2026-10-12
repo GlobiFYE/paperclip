@@ -163,15 +163,15 @@ function toIssueWorkProduct(row: IssueWorkProductRow): IssueWorkProduct {
  * row is gone keeps its recorded URL and is reported closed rather than silently
  * blanked, so the history of what was published survives.
  */
-export function reconcileRuntimeServiceWorkProducts(
-  products: IssueWorkProduct[],
+export function reconcileRuntimeServiceWorkProducts<T extends Pick<IssueWorkProduct, "type" | "runtimeServiceId" | "url" | "status" | "healthStatus">>(
+  products: T[],
   liveRuntimeServices: Array<{
     id: string;
     url: string | null;
     status: string;
     healthStatus: string;
   }>,
-): IssueWorkProduct[] {
+): T[] {
   if (products.length === 0) return products;
   const liveById = new Map(liveRuntimeServices.map((service) => [service.id, service]));
   return products.map((product) => {

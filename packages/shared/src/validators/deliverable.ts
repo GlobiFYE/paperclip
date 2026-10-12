@@ -3,7 +3,7 @@ import { z } from "zod";
 export const COMPANY_DELIVERABLES_DEFAULT_LIMIT = 30;
 export const COMPANY_DELIVERABLES_MAX_LIMIT = 100;
 
-export const deliverableGenerationStatusSchema = z.enum(["pending", "generated", "failed"]);
+export const deliverableGenerationStatusSchema = z.enum(["pending", "generating", "retry_scheduled", "generated", "stale", "failed_final"]);
 
 export const deliverableProductKindSchema = z.enum([
   "preview_url",
@@ -55,12 +55,16 @@ export const deliverableProductSchema = z.object({
   title: z.string(),
   target: z.string().nullable(),
   href: z.string().nullable(),
+  unavailable: z.boolean(),
 });
 
 export const companyDeliverableSchema = z.object({
   id: z.string().guid(),
   summary: z.string().nullable(),
-  generationStatus: deliverableGenerationStatusSchema,
+  generationState: deliverableGenerationStatusSchema,
+  nextAttemptAt: z.string().datetime().nullable(),
+  fallback: z.string(),
+  summaryFromTaskDetails: z.boolean(),
   issue: deliverableIssueSummarySchema,
   project: deliverableProjectSummarySchema.nullable(),
   product: deliverableProductSchema.nullable(),
@@ -70,6 +74,7 @@ export const companyDeliverableSchema = z.object({
 });
 
 export const companyDeliverablesResponseSchema = z.object({
+  summariesEnabled: z.boolean(),
   deliverables: z.array(companyDeliverableSchema),
   nextCursor: z.string().nullable(),
 });

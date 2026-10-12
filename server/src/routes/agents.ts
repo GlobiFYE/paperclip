@@ -727,7 +727,8 @@ export function agentRoutes(
     pluginWorkerManager: options.pluginWorkerManager,
   });
   const providerTraces = providerTraceStore(db);
-  const traceExpiryCleanup = providerTraces.cleanupExpired?.();
+  const traceExpiryCleanup = process.env.PAPERCLIP_ONLY_DELIVERABLE_SWEEP === "1"
+    ? undefined : providerTraces.cleanupExpired?.();
   void traceExpiryCleanup?.catch((error) => {
     logger.warn({ error }, "provider trace expiry cleanup failed");
   });

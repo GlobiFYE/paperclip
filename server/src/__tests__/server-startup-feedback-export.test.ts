@@ -522,6 +522,19 @@ describe("startServer feedback export wiring", () => {
     expect(loadConfigMock).not.toHaveBeenCalled();
   });
 
+  it("skips index background timers and startup deliveries in deliverable-only mode", async () => {
+    vi.stubEnv("PAPERCLIP_ONLY_DELIVERABLE_SWEEP", "1");
+    loadConfigMock.mockReturnValue(buildTestConfig({ heartbeatSchedulerEnabled: true, databaseBackupEnabled: true }));
+    const intervals = vi.spyOn(globalThis, "setInterval");
+    try {
+      await startServer();
+      expect(intervals).not.toHaveBeenCalled();
+      expect(completionSweepMock).not.toHaveBeenCalled();
+      expect(heartbeatServiceMock.sweepPendingCleanupLeases).not.toHaveBeenCalled();
+      expect(heartbeatServiceMock.tickTimers).not.toHaveBeenCalled();
+    } finally { intervals.mockRestore(); vi.unstubAllEnvs(); }
+  });
+
   it("passes the feedback export service into createApp so pending traces flush in runtime", async () => {
     const started = await startServer();
 

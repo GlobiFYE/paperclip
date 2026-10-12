@@ -509,6 +509,8 @@ export async function createApp(
     bundledPluginCatalogRoot?: string;
   },
 ) {
+  const onlyDeliverableSweep = process.env.PAPERCLIP_ONLY_DELIVERABLE_SWEEP === "1";
+  if (onlyDeliverableSweep) logger.info("Deliverable-only mode: other background startup jobs disabled");
   const app = express();
   app.locals.paperclipDb = db;
   const captureRawBody = (
@@ -1130,8 +1132,10 @@ export async function createApp(
 
   app.use(errorHandler);
 
-  jobCoordinator.start();
-  scheduler.start();
+  if (!onlyDeliverableSweep) {
+    jobCoordinator.start();
+    scheduler.start();
+  }
   let feedbackExportShuttingDown = false;
   let feedbackExportTimer: ReturnType<typeof setInterval> | null = null;
   const disableFeedbackExportFlushes = () => {
@@ -1158,16 +1162,16 @@ export async function createApp(
     }
   };
 
-  feedbackExportTimer = opts.feedbackExportService
+  feedbackExportTimer = !onlyDeliverableSweep && opts.feedbackExportService
     ? setInterval(() => {
         void flushPendingFeedbackExports();
       }, FEEDBACK_EXPORT_FLUSH_INTERVAL_MS)
     : null;
   feedbackExportTimer?.unref?.();
-  if (opts.feedbackExportService) {
+  if (!onlyDeliverableSweep && opts.feedbackExportService) {
     void flushPendingFeedbackExports();
   }
-  emailChannels.start();
+  if (!onlyDeliverableSweep) emailChannels.start();
   const flushChatPublications = async () => {
     await chatChannels.schedulePendingPublications();
   };
@@ -1189,20 +1193,20 @@ export async function createApp(
       logger.error({ err, lane }, `Failed to reconcile chat ${lane}`);
     },
   });
-  const unsubscribeChatPublicationSignals = subscribeAllCompanyLiveEvents(
+  const unsubscribeChatPublicationSignals = onlyDeliverableSweep ? () => {} : subscribeAllCompanyLiveEvents(
     (event) => {
       if (isChatPublicationCommitSignal(event))
         chatReconciliation.notifyPublications();
     },
   );
-  let chatPublicationTimer: ReturnType<typeof setInterval> | null = setInterval(
+  let chatPublicationTimer: ReturnType<typeof setInterval> | null = onlyDeliverableSweep ? null : setInterval(
     () => {
       chatReconciliation.reconcile();
     },
     CHAT_PUBLICATION_FLUSH_INTERVAL_MS,
   );
-  chatPublicationTimer.unref?.();
-  chatReconciliation.reconcile();
+  chatPublicationTimer?.unref?.();
+  if (!onlyDeliverableSweep) chatReconciliation.reconcile();
   // Abandoned chunked-import spool sweep: hourly (plus once at startup),
   // deleting spool dirs whose transfer saw no activity for 24h and cancelling
   // their still-open ledger runs. Same setInterval + unref + shutdown-clear
@@ -1222,17 +1226,17 @@ export async function createApp(
         );
       });
   };
-  const browserUseTimer = setInterval(() => { void browserUse.sweep().catch(() => logger.warn("Browser Use reconciliation failed; retrying.")); }, 3000);
-  browserUseTimer.unref?.();
-  void browserUse.sweep().catch(() => logger.warn("Browser Use startup reconciliation failed; retrying."));
-  let importTransferSweepTimer: ReturnType<typeof setInterval> | null =
+  const browserUseTimer = onlyDeliverableSweep ? null : setInterval(() => { void browserUse.sweep().catch(() => logger.warn("Browser Use reconciliation failed; retrying.")); }, 3000);
+  browserUseTimer?.unref?.();
+  if (!onlyDeliverableSweep) void browserUse.sweep().catch(() => logger.warn("Browser Use startup reconciliation failed; retrying."));
+  let importTransferSweepTimer: ReturnType<typeof setInterval> | null = onlyDeliverableSweep ? null :
     setInterval(
       sweepImportTransferSpools,
       IMPORT_TRANSFER_SPOOL_SWEEP_INTERVAL_MS,
     );
-  importTransferSweepTimer.unref?.();
+  importTransferSweepTimer?.unref?.();
   // Deliverable summaries (TOP-193): when an issue moves to done, a cheap
-  // model writes its plain-English "what was done" summary exactly once.
+  // model stores a plain-English summary after the settle delay, with bounded repairs.
   // The sweep is the single write path so every status transition route is
   // covered; the Deliverables page only reads stored text. Same
   // setInterval + unref + shutdown-clear shape as the sweeps above.
@@ -1258,7 +1262,7 @@ export async function createApp(
   // still "applying" now was interrupted by the previous shutdown and would
   // otherwise 409 every retry forever. Fail those stranded runs — their
   // spooled parts stay reusable — then run the normal sweep once.
-  void companyTransferRunService
+  if (!onlyDeliverableSweep) void companyTransferRunService
     .recoverStrandedApplyingRuns(db)
     .then((recovered) => {
       if (recovered.length > 0) {
@@ -1274,10 +1278,10 @@ export async function createApp(
     .finally(() => {
       sweepImportTransferSpools();
     });
-  void toolDispatcher.initialize().catch((err) => {
+  if (!onlyDeliverableSweep) void toolDispatcher.initialize().catch((err) => {
     logger.error({ err }, "Failed to initialize plugin tool dispatcher");
   });
-  const devWatcher = createPluginDevWatcher(
+  const devWatcher = onlyDeliverableSweep ? null : createPluginDevWatcher(
     lifecycle,
     async (pluginId) =>
       (await pluginRegistry.getById(pluginId))?.packagePath ?? null,
@@ -1314,7 +1318,7 @@ export async function createApp(
   // that must not outrun plugin availability — managed sandbox environments
   // (`applyManagedEnvironments`) run before the heartbeat resumes queued
   // runs — can sequence on it. It never rejects.
-  const bundledPluginsStartup = ensureBundledPlugins(
+  const bundledPluginsStartup = onlyDeliverableSweep ? Promise.resolve() : ensureBundledPlugins(
     bundledPluginInstalls,
     { registry: pluginRegistry, loader, lifecycle, logger },
     // Managed mode reinstalls soft-uninstalled bundles (the control plane
@@ -1355,7 +1359,7 @@ export async function createApp(
         chatPublicationTimer = null;
       }
       await chatReconciliation.drain();
-      clearInterval(browserUseTimer);
+      if (browserUseTimer) clearInterval(browserUseTimer);
       if (importTransferSweepTimer) {
         clearInterval(importTransferSweepTimer);
         importTransferSweepTimer = null;

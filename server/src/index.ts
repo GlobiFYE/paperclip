@@ -872,8 +872,9 @@ async function startServerWithDatabaseTeardown(
       databaseBackupInFlight = false;
     }
   };
+  const onlyDeliverableSweep = process.env.PAPERCLIP_ONLY_DELIVERABLE_SWEEP === "1";
   const pluginWorkerManager = createPluginWorkerManager();
-  const heartbeat = config.heartbeatSchedulerEnabled
+  const heartbeat = !onlyDeliverableSweep && config.heartbeatSchedulerEnabled
     ? heartbeatService(db as any, { pluginWorkerManager })
     : null;
   const decisionServiceOptions = {
@@ -1176,9 +1177,9 @@ async function startServerWithDatabaseTeardown(
         .finally(() => { executionControlSweepsInFlight.delete(queue); }));
     }
   };
-  const executionControlInterval = setInterval(sweepExecutionControl, EXECUTION_RECONCILIATION_INTERVAL_MS);
-  executionControlInterval.unref?.();
-  sweepExecutionControl();
+  const executionControlInterval = onlyDeliverableSweep ? null : setInterval(sweepExecutionControl, EXECUTION_RECONCILIATION_INTERVAL_MS);
+  executionControlInterval?.unref?.();
+  if (!onlyDeliverableSweep) sweepExecutionControl();
   const startHeartbeatSchedulerInterval = (callback: () => void) => {
     heartbeatSchedulerInterval = setInterval(callback, config.heartbeatSchedulerIntervalMs);
     heartbeatSchedulerInterval?.unref?.();
@@ -1228,7 +1229,7 @@ async function startServerWithDatabaseTeardown(
   const chatCompletionDeliveries = chatCompletionDeliveryService(db as any, environmentLeaseCleanupHeartbeat);
   // Activity publication happens after the status transaction commits. This is
   // a best-effort fast path; the durable outbox and sweeps remain authoritative.
-  const unsubscribeChatCompletions = subscribeAllCompanyLiveEvents(event => {
+  const unsubscribeChatCompletions = onlyDeliverableSweep ? () => {} : subscribeAllCompanyLiveEvents(event => {
     if (heartbeatSchedulerStopped || event.type !== "activity.logged" ||
       event.payload.action !== "issue.updated" || typeof event.payload.entityId !== "string") return;
     trackHeartbeatSchedulerWork(chatCompletionDeliveries.sweepPending({ companyId: event.companyId, taskId: event.payload.entityId })
@@ -1290,19 +1291,21 @@ async function startServerWithDatabaseTeardown(
       }));
   };
 
-  await chatCompletionDeliveries.sweepPending().catch((err) => logger.error({ err }, "startup chat completion delivery recovery failed"));
-  await connectionDeliveries.sweepPending();
-  await app.locals.toolGateway.sweepActionReviews().catch((err: unknown) => logger.error({ err }, "startup tool review recovery failed"));
-  await app.locals.toolActionDeliveries.sweepPending().catch((err: unknown) => logger.error({ err }, "startup tool review delivery sweep failed"));
-  await questionResponseDeliveries.sweepPending().then((result) => {
-    if (result.scanned > 0) {
-      logger.info(result, "startup question-response delivery sweep completed");
-    }
-  }).catch((err) => {
-    logger.error({ err }, "startup question-response delivery sweep failed");
-  });
-  scheduleGitHubConnectionEventPoll();
-  scheduleGitHubConnectionContinuitySweep();
+  if (!onlyDeliverableSweep) {
+    await chatCompletionDeliveries.sweepPending().catch((err) => logger.error({ err }, "startup chat completion delivery recovery failed"));
+    await connectionDeliveries.sweepPending();
+    await app.locals.toolGateway.sweepActionReviews().catch((err: unknown) => logger.error({ err }, "startup tool review recovery failed"));
+    await app.locals.toolActionDeliveries.sweepPending().catch((err: unknown) => logger.error({ err }, "startup tool review delivery sweep failed"));
+    await questionResponseDeliveries.sweepPending().then((result) => {
+      if (result.scanned > 0) {
+        logger.info(result, "startup question-response delivery sweep completed");
+      }
+    }).catch((err) => {
+      logger.error({ err }, "startup question-response delivery sweep failed");
+    });
+    scheduleGitHubConnectionEventPoll();
+    scheduleGitHubConnectionContinuitySweep();
+  }
 
   if (heartbeat) {
     const secretProposals = createSecretProposalsService(db as any);
@@ -1825,7 +1828,7 @@ async function startServerWithDatabaseTeardown(
         logger.error({ err }, "heartbeat scheduler tick failed");
       }));
     });
-  } else {
+  } else if (!onlyDeliverableSweep) {
     // The heartbeat scheduler is disabled, but the orphan-sandbox cleanup sweep
     // is still required. A failed acquire can leak a paid provider sandbox, so
     // this path retries the teardown at startup and on the interval, exactly as
@@ -1839,7 +1842,7 @@ async function startServerWithDatabaseTeardown(
     });
   }
   
-  if (config.databaseBackupEnabled) {
+  if (!onlyDeliverableSweep && config.databaseBackupEnabled) {
     const backupIntervalMs = config.databaseBackupIntervalMinutes * 60 * 1000;
 
     logger.info(
@@ -1933,7 +1936,7 @@ async function startServerWithDatabaseTeardown(
     await systemdNotify(["--stopping", `--status=Stopping after ${signal}`]);
     heartbeatSchedulerStopped = true;
     unsubscribeChatCompletions();
-    clearInterval(executionControlInterval);
+    if (executionControlInterval) clearInterval(executionControlInterval);
     if (heartbeatSchedulerInterval) {
       clearInterval(heartbeatSchedulerInterval);
       heartbeatSchedulerInterval = null;

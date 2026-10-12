@@ -1,247 +1,83 @@
-import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, or, type SQL } from "drizzle-orm";
-import {
-  agents,
-  approvals,
-  authUsers,
-  issueApprovals,
-  issueDeliverables,
-  issueWorkProducts,
-  issues,
-  projects,
-  type Db,
-} from "@paperclipai/db";
-import {
-  COMPANY_DELIVERABLES_MAX_LIMIT,
-  type CompanyDeliverable,
-  type CompanyDeliverablesQuery,
-  type CompanyDeliverablesResponse,
-  type DeliverableActor,
-  type DeliverableProduct,
-} from "@paperclipai/shared";
+import { and, desc, eq, gte, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import { agents, authUsers, issueDeliverables, issues, projects, type Db } from "@paperclipai/db";
+import { COMPANY_DELIVERABLES_MAX_LIMIT, type CompanyDeliverable, type CompanyDeliverablesQuery, type CompanyDeliverablesResponse } from "@paperclipai/shared";
 import { badRequest } from "../errors.js";
+import { deliverableGenerationState, resolveDeliverableSummaryModelConfig } from "./deliverable-summary.js";
+import { deliverableDoneBy, deliverableVerifier, readDeliverableSources, resolveDeliverableProducts } from "./deliverable-source.js";
 
-type DeliverableCursor = {
-  completedAt: string;
-  id: string;
-};
-
-function encodeCursor(cursor: DeliverableCursor) {
-  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
-}
-
-function decodeCursor(cursor: string | undefined): DeliverableCursor | null {
+function decodeCursor(cursor?: string): { id: string; completedAt: string } | null {
   if (!cursor) return null;
   try {
-    const parsed = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Partial<DeliverableCursor>;
-    if (typeof parsed.id !== "string" || typeof parsed.completedAt !== "string") {
-      throw new Error("Invalid cursor");
-    }
-    const date = new Date(parsed.completedAt);
-    if (Number.isNaN(date.getTime())) throw new Error("Invalid cursor");
-    return { id: parsed.id, completedAt: date.toISOString() };
-  } catch {
-    throw badRequest("Invalid deliverables cursor");
-  }
+    const value = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8"));
+    if (!/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(value.id) || !Number.isFinite(Date.parse(value.completedAt))) throw new Error();
+    return value;
+  } catch { throw badRequest("Invalid deliverables cursor"); }
 }
-
-function parseDateBound(value: string | undefined, name: string): Date | null {
+function dateBound(value?: string) {
   if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) throw badRequest(`Invalid ${name} date`);
-  return date;
-}
-
-function resolveProduct(row: {
-  type: string;
-  title: string;
-  url: string | null;
-  externalId: string | null;
-  metadata: Record<string, unknown> | null;
-}): DeliverableProduct {
-  const metadata = (row.metadata ?? {}) as {
-    openPath?: unknown;
-    originalFilename?: unknown;
-    resourceRef?: { path?: unknown };
-  };
-  const openPath = typeof metadata.openPath === "string" ? metadata.openPath : null;
-  const resourcePath =
-    typeof metadata.resourceRef?.path === "string" ? metadata.resourceRef.path : null;
-  const target =
-    row.url ??
-    resourcePath ??
-    openPath ??
-    (typeof metadata.originalFilename === "string" ? metadata.originalFilename : null) ??
-    row.externalId;
-  const href = row.url ?? openPath;
-  return {
-    kind: row.type as DeliverableProduct["kind"],
-    title: row.title,
-    target: target ?? null,
-    href: href ?? null,
-  };
+  if (!/^\d{4}-\d{2}-\d{2}(?:T.*)?$/.test(value) || !Number.isFinite(Date.parse(value))) throw badRequest("Invalid completion date");
+  return new Date(value);
 }
 
 export function deliverablesService(db: Db) {
-  async function list(
-    companyId: string,
-    query: CompanyDeliverablesQuery,
-  ): Promise<CompanyDeliverablesResponse> {
+  return { async list(companyId: string, query: CompanyDeliverablesQuery): Promise<CompanyDeliverablesResponse> {
     const cursor = decodeCursor(query.cursor);
-    const from = parseDateBound(query.from, "from");
-    const to = parseDateBound(query.to, "to");
-    const limit = Math.min(Math.max(query.limit ?? COMPANY_DELIVERABLES_MAX_LIMIT, 1), COMPANY_DELIVERABLES_MAX_LIMIT);
-
-    const conditions: (SQL | undefined)[] = [
-      eq(issues.companyId, companyId),
-      eq(issues.status, "done"),
-      isNull(issues.hiddenAt),
-      isNotNull(issues.completedAt),
-    ];
+    const from = dateBound(query.from), to = dateBound(query.to);
+    if (from && to && from >= to) throw badRequest("Completion date range must end after it starts");
+    const limit = Math.min(Math.max(query.limit ?? 30, 1), COMPANY_DELIVERABLES_MAX_LIMIT);
+    // Old imported completions may not have completedAt.
+    const completion = sql<Date>`date_trunc('milliseconds', coalesce(${issues.completedAt}, ${issues.updatedAt}))`.mapWith(issues.updatedAt);
+    const conditions: (SQL | undefined)[] = [eq(issues.companyId, companyId), eq(issues.status, "done"), isNull(issues.hiddenAt)];
     if (query.projectId) conditions.push(eq(issues.projectId, query.projectId));
-    // Date bounds on the completion date: from inclusive, to exclusive.
-    if (from) conditions.push(gte(issues.completedAt, from));
-    if (to) conditions.push(lt(issues.completedAt, to));
-    if (cursor) {
-      conditions.push(
-        or(
-          lt(issues.completedAt, new Date(cursor.completedAt)),
-          and(
-            eq(issues.completedAt, new Date(cursor.completedAt)),
-            lt(issues.id, cursor.id),
-          ),
-        ),
-      );
-    }
-
-    const rows = await db
-      .select({
-        deliverableId: issueDeliverables.id,
-        summary: issueDeliverables.summary,
-        generationStatus: issueDeliverables.generationStatus,
-        issueId: issues.id,
-        identifier: issues.identifier,
-        title: issues.title,
-        completedAt: issues.completedAt,
-        assigneeAgentId: issues.assigneeAgentId,
-        assigneeUserId: issues.assigneeUserId,
-        projectId: projects.id,
-        projectName: projects.name,
-      })
-      .from(issues)
-      .leftJoin(issueDeliverables, eq(issueDeliverables.issueId, issues.id))
-      .leftJoin(projects, eq(projects.id, issues.projectId))
-      .where(and(...conditions))
-      .orderBy(desc(issues.completedAt), desc(issues.id))
-      .limit(limit + 1);
-
+    if (from) conditions.push(gte(completion, from.toISOString()));
+    if (to) conditions.push(lt(completion, to.toISOString()));
+    if (cursor) conditions.push(or(lt(completion, cursor.completedAt), and(eq(completion, cursor.completedAt), lt(issues.id, cursor.id))));
+    const rows = await db.select({ issue: issues, deliverable: issueDeliverables, projectName: projects.name, completedAt: completion })
+      .from(issues).leftJoin(issueDeliverables, and(eq(issueDeliverables.issueId, issues.id), eq(issueDeliverables.companyId, companyId)))
+      .leftJoin(projects, and(eq(projects.id, issues.projectId), eq(projects.companyId, companyId)))
+      .where(and(...conditions)).orderBy(desc(completion), desc(issues.id)).limit(limit + 1);
     const page = rows.slice(0, limit);
-    const nextCursor =
-      rows.length > limit && page.length > 0
-        ? encodeCursor({
-            completedAt: (page[page.length - 1].completedAt as Date).toISOString(),
-            id: page[page.length - 1].issueId,
-          })
-        : null;
-
-    const issueIds = page.map((row) => row.issueId);
-    const productsByIssue = new Map<string, DeliverableProduct>();
-    const doneByAgent = new Map<string, string>();
-    const doneByUser = new Map<string, string>();
-    const verifiedBy = new Map<string, DeliverableActor>();
-
-    if (issueIds.length > 0) {
-      const productRows = await db
-        .select({
-          issueId: issueWorkProducts.issueId,
-          type: issueWorkProducts.type,
-          title: issueWorkProducts.title,
-          url: issueWorkProducts.url,
-          externalId: issueWorkProducts.externalId,
-          metadata: issueWorkProducts.metadata,
-          isPrimary: issueWorkProducts.isPrimary,
-          createdAt: issueWorkProducts.createdAt,
-        })
-        .from(issueWorkProducts)
-        .where(and(eq(issueWorkProducts.companyId, companyId), inArray(issueWorkProducts.issueId, issueIds)))
-        .orderBy(desc(issueWorkProducts.isPrimary), desc(issueWorkProducts.createdAt));
-      for (const row of productRows) {
-        if (productsByIssue.has(row.issueId)) continue;
-        productsByIssue.set(row.issueId, resolveProduct(row));
-      }
-
-      const agentIds = page
-        .map((row) => row.assigneeAgentId)
-        .filter((id): id is string => !!id);
-      if (agentIds.length > 0) {
-        const agentRows = await db
-          .select({ id: agents.id, name: agents.name })
-          .from(agents)
-          .where(and(eq(agents.companyId, companyId), inArray(agents.id, agentIds)));
-        for (const row of agentRows) doneByAgent.set(row.id, row.name);
-      }
-
-      const userIds = page.map((row) => row.assigneeUserId).filter((id): id is string => !!id);
-      const userRows = userIds.length
-        ? await db.select({ id: authUsers.id, name: authUsers.name }).from(authUsers).where(inArray(authUsers.id, userIds))
-        : [];
-      const userNames = new Map(userRows.map((row) => [row.id, row.name]));
-
-      const approvalRows = await db
-        .select({
-          issueId: issueApprovals.issueId,
-          decidedByUserId: approvals.decidedByUserId,
-          decidedAt: approvals.decidedAt,
-          name: authUsers.name,
-        })
-        .from(issueApprovals)
-        .innerJoin(approvals, eq(approvals.id, issueApprovals.approvalId))
-        .leftJoin(authUsers, eq(authUsers.id, approvals.decidedByUserId))
-        .where(
-          and(
-            eq(issueApprovals.companyId, companyId),
-            inArray(issueApprovals.issueId, issueIds),
-            eq(approvals.status, "approved"),
-          ),
-        )
-        .orderBy(desc(approvals.decidedAt));
-      for (const row of approvalRows) {
-        if (verifiedBy.has(row.issueId) || !row.decidedByUserId) continue;
-        verifiedBy.set(row.issueId, {
-          kind: "user",
-          id: row.decidedByUserId,
-          name: row.name ?? row.decidedByUserId,
-        });
-      }
-
-      for (const row of page) {
-        if (row.assigneeUserId && userNames.has(row.assigneeUserId)) {
-          doneByUser.set(row.assigneeUserId, userNames.get(row.assigneeUserId)!);
-        }
-      }
+    const sources = await readDeliverableSources(db, companyId, page.map(r => r.issue.id));
+    const agentIds = new Set<string>(), userIds = new Set<string>();
+    for (const { issue } of page) {
+      const source = sources.get(issue.id);
+      if (!source) continue;
+      const doneBy = deliverableDoneBy(source);
+      if (doneBy?.kind === "agent") agentIds.add(doneBy.id);
+      if (doneBy?.kind === "user") userIds.add(doneBy.id);
+      const verifier = deliverableVerifier(source);
+      if (verifier) agentIds.add(verifier);
     }
-
-    const deliverables: CompanyDeliverable[] = page.map((row) => ({
-      id: row.deliverableId ?? row.issueId,
-      summary: row.summary ?? null,
-      generationStatus: (row.generationStatus as CompanyDeliverable["generationStatus"] | null) ?? "pending",
-      issue: {
-        id: row.issueId,
-        identifier: row.identifier ?? "",
-        title: row.title,
-      },
-      project: row.projectId ? { id: row.projectId, name: row.projectName ?? "" } : null,
-      product: productsByIssue.get(row.issueId) ?? null,
-      doneBy: row.assigneeAgentId
-        ? { kind: "agent", id: row.assigneeAgentId, name: doneByAgent.get(row.assigneeAgentId) ?? "Agent" }
-        : row.assigneeUserId
-          ? { kind: "user", id: row.assigneeUserId, name: doneByUser.get(row.assigneeUserId) ?? row.assigneeUserId }
-          : null,
-      verifiedBy: verifiedBy.get(row.issueId) ?? null,
-      completedAt: (row.completedAt as Date).toISOString(),
-    }));
-
-    return { deliverables, nextCursor };
-  }
-
-  return { list };
+    const [agentRows, userRows] = await Promise.all([
+      agentIds.size ? db.select({ id: agents.id, name: agents.name }).from(agents).where(and(eq(agents.companyId, companyId), inArray(agents.id, [...agentIds]))) : [],
+      userIds.size ? db.select({ id: authUsers.id, name: authUsers.name }).from(authUsers).where(inArray(authUsers.id, [...userIds])) : [],
+    ]);
+    const agentNames = new Map(agentRows.map(a => [a.id, a.name]));
+    const userNames = new Map(userRows.map(a => [a.id, a.name]));
+    const deliverables: CompanyDeliverable[] = page.flatMap(row => {
+      const source = sources.get(row.issue.id);
+      if (!source || source.issue.status !== "done" || source.issue.hiddenAt) return [];
+      const verifier = deliverableVerifier(source);
+      const doneBy = deliverableDoneBy(source);
+      const generationState = deliverableGenerationState(row.deliverable, source);
+      return [{
+        id: row.deliverable?.id ?? row.issue.id,
+        summary: row.deliverable?.summary ?? null,
+        generationState,
+        nextAttemptAt: row.deliverable?.nextAttemptAt?.toISOString() ?? null,
+        fallback: `${source.issue.title}${source.comments[0] ? `. ${source.comments[0].body.slice(0, 400)}` : ""}`,
+        summaryFromTaskDetails: row.deliverable?.summaryFromTaskDetails ?? source.comments.length === 0,
+        issue: { id: source.issue.id, identifier: source.issue.identifier ?? "", title: source.issue.title },
+        project: source.issue.projectId ? { id: source.issue.projectId, name: row.projectName ?? "Project" } : null,
+        product: resolveDeliverableProducts(source)[0] ?? null,
+        doneBy: doneBy ? { ...doneBy, name: doneBy.kind === "agent"
+          ? agentNames.get(doneBy.id) ?? "Agent" : userNames.get(doneBy.id) ?? "User" } : null,
+        verifiedBy: verifier ? { kind: "agent", id: verifier, name: agentNames.get(verifier) ?? "Agent" } : null,
+        completedAt: row.completedAt.toISOString(),
+      }];
+    });
+    const last = page.at(-1);
+    return { summariesEnabled: Boolean(await resolveDeliverableSummaryModelConfig()), deliverables, nextCursor: rows.length > limit && last
+      ? Buffer.from(JSON.stringify({ id: last.issue.id, completedAt: last.completedAt.toISOString() })).toString("base64url") : null };
+  } };
 }

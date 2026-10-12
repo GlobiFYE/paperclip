@@ -99,7 +99,11 @@ const embeddedPostgresRoot = dirname(requireFromDb.resolve("embedded-postgres"))
 const embeddedPostgresPackage = JSON.parse(
   readFileSync(resolve(embeddedPostgresRoot, "..", "package.json"), "utf8"),
 );
+const nativePostgresPackage = `@embedded-postgres/${process.platform === "win32" ? "windows" : process.platform}-${process.arch}`;
 for (const name of Object.keys(embeddedPostgresPackage.optionalDependencies ?? {})) {
+  // pnpm installs only this host's native optional binary. Other platforms are
+  // deliberately absent and must not make a valid checkout fail its run setup.
+  if (name.startsWith("@embedded-postgres/") && name !== nativePostgresPackage) continue;
   if (!externals.has(name)) externals.set(name, resolve(embeddedPostgresRoot, ".."));
 }
 

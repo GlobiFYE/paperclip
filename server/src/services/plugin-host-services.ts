@@ -471,14 +471,14 @@ export async function flushPluginLogBuffer(): Promise<void> {
 }
 
 /** Interval handle for the periodic log flush. */
-const _logFlushInterval = setInterval(() => {
+const _logFlushInterval = process.env.PAPERCLIP_ONLY_DELIVERABLE_SWEEP === "1" ? null : setInterval(() => {
   flushPluginLogBuffer().catch((err) => {
     console.error("[plugin-host-services] Periodic log flush error:", err);
   });
 }, LOG_BUFFER_FLUSH_INTERVAL_MS);
 
 // Allow the interval to be unref'd so it doesn't keep the process alive in tests.
-if (_logFlushInterval.unref) _logFlushInterval.unref();
+_logFlushInterval?.unref?.();
 
 /**
  * buildHostServices — creates a concrete implementation of the `HostServices`

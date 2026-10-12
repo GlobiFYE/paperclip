@@ -435,6 +435,19 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
   router.get("/:companyId/deliverables", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
+    if (req.actor.type === "agent" && req.actor.source === "agent_key" && req.actor.keyScope?.kind === "task_bridge") {
+      res.status(403).json({ error: "Task bridge keys cannot use company-wide deliverables APIs" });
+      return;
+    }
+    const companyScopeDecision = await access.decide({
+      actor: req.actor,
+      action: "company_scope:read",
+      resource: { type: "company", companyId },
+    });
+    if (!companyScopeDecision.allowed) {
+      res.status(403).json({ error: "Deliverables are outside this actor's authorization boundary" });
+      return;
+    }
     const query = companyDeliverablesQuerySchema.parse(req.query);
     res.json(await deliverables.list(companyId, query));
   });

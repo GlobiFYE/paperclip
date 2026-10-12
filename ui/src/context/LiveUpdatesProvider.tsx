@@ -1289,6 +1289,7 @@ function invalidateActivityQueries(
   }
 
   if (entityType === "issue") {
+    queryClient.invalidateQueries({ queryKey: ["deliverables", companyId] });
     const chatListKey = queryKeys.agentChats.list(companyId, currentActor.userId);
     const knownChat = entityId && queryClient.getQueryData<Issue[]>(chatListKey)?.some(chat => chat.id === entityId);
     if (knownChat || action === "issue.conversation_opened" && ownActorActivity) {

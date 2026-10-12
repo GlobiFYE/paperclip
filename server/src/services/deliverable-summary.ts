@@ -1,44 +1,29 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { and, asc, desc, eq, isNotNull, isNull, or, sql, type SQL } from "drizzle-orm";
-import {
-  issueComments,
-  issueDeliverables,
-  issueWorkProducts,
-  issues,
-  type Db,
-} from "@paperclipai/db";
-import { logger } from "../middleware/logger.js";
+import { createHash, randomUUID } from "node:crypto";
+import { and, asc, eq, isNull, sql } from "drizzle-orm";
+import { issueDeliverables, issues, type Db } from "@paperclipai/db";
+import { buildDeliverableSummaryPrompt, deliverableCompletionKey, deliverableCompletionKeySql, deliverableSourceFingerprint, readDeliverableSources, type DeliverableSource } from "./deliverable-source.js";
 
-/**
- * Deliverable summary generation (TOP-193).
- *
- * When an issue moves to done, a cheap model (Gemini Flash-Lite by default)
- * writes one plain-English "what was done" summary, which is stored on the
- * issue's deliverable row and written exactly once. The Deliverables page
- * renders the stored text and never calls a model on load.
- *
- * Credentials: the operator's existing Gemini access. `GEMINI_API_KEY` from
- * the process environment, or from the operator env file
- * (`~/.hermes/profiles/<profile>/.env` by default, matching how the local
- * Hermes profiles store provider keys). The key is never logged or returned.
- */
-
-export const DELIVERABLE_SUMMARY_DEFAULT_MODEL = "gemini-3.1-flash-lite";
-export const DELIVERABLE_SUMMARY_MAX_ATTEMPTS = 3;
-export const DELIVERABLE_SUMMARY_MAX_TEXT_CHARS = 1_500;
-export const DELIVERABLE_SUMMARY_MODEL_TIMEOUT_MS = 45_000;
-/** How often the server sweeps for completed issues missing a summary. */
+export const DELIVERABLE_SUMMARY_DEFAULT_MODEL = "gemini-3.5-flash-lite";
+// One initial attempt plus three retries: 5 minutes, 30 minutes, then 2 hours.
+export const DELIVERABLE_SUMMARY_MAX_ATTEMPTS = 4;
+export const DELIVERABLE_SUMMARY_RETRY_DELAYS_MS = [5 * 60_000, 30 * 60_000, 2 * 60 * 60_000] as const;
+export const DELIVERABLE_SUMMARY_CHECK_BATCH = 10;
+const REPAIR_LIMIT_ERROR = "Evidence repair limit reached";
 export const DELIVERABLE_SUMMARY_SWEEP_INTERVAL_MS = 60_000;
-/** Max summaries generated per sweep tick, so the sweep stays cheap. */
 export const DELIVERABLE_SUMMARY_SWEEP_BATCH = 5;
+export const DELIVERABLE_SUMMARY_SETTLE_MS = 180_000;
+export const DELIVERABLE_SUMMARY_LEASE_MS = 120_000;
+export const DELIVERABLE_SUMMARY_MAX_REGENERATIONS = 2;
 
 type DeliverableSummaryModelConfig = {
   model: string;
   baseUrl: string;
   apiKey: string;
   keySource: "env" | "env_file" | null;
+  revision: string;
 };
 
 function readEnvFileValue(raw: string, key: string): string | null {
@@ -88,339 +73,200 @@ export async function resolveDeliverableSummaryModelConfig(): Promise<Deliverabl
     }
   }
   if (!apiKey) return null;
-  return { model, baseUrl, apiKey, keySource };
+  return { model, baseUrl, apiKey, keySource, revision: process.env.PAPERCLIP_DELIVERABLE_SUMMARY_CONFIG_VERSION?.trim() ?? "" };
 }
 
-function truncateForPrompt(value: string, max = DELIVERABLE_SUMMARY_MAX_TEXT_CHARS): string {
-  const trimmed = value.trim();
-  return trimmed.length > max ? `${trimmed.slice(0, max)}…` : trimmed;
+/** Exactly one HTTP attempt. Retries go through the durable claim and rate gate. */
+export async function callDeliverableSummaryModel(prompt: string, config: DeliverableSummaryModelConfig) {
+  try {
+    const response = await fetch(`${config.baseUrl.replace(/\/$/, "")}/models/${encodeURIComponent(config.model)}:generateContent`, {
+      method: "POST", headers: { "Content-Type": "application/json", "x-goog-api-key": config.apiKey },
+      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }], generationConfig: { temperature: 0.3, maxOutputTokens: 400 } }),
+      redirect: "error", signal: AbortSignal.timeout(45_000),
+    });
+    if (!response.ok) { await response.body?.cancel(); throw new Error("provider failure"); }
+    const payload = await response.json() as { candidates?: { content?: { parts?: { text?: string }[] } }[] };
+    const text = payload.candidates?.[0]?.content?.parts?.map(p => p.text ?? "").join("").trim();
+    if (!text || text.includes(config.apiKey)) throw new Error("invalid response");
+    return text.slice(0, 3000);
+  } catch {
+    // Neither provider bodies nor thrown errors are safe to persist or log.
+    throw new Error("Summary provider unavailable");
+  }
 }
 
-export type DeliverableSummaryContext = {
-  identifier: string | null;
-  title: string;
-  description: string | null;
-  finalComment: string | null;
-  products: { title: string; target: string | null }[];
-};
+type Row = typeof issueDeliverables.$inferSelect;
 
-/**
- * Prompt for the cheap model. The owner's design rules: 2-4 plain-English
- * sentences, no jargon, covering what was done, where the result is, and how
- * to open it.
- */
-export function buildDeliverableSummaryPrompt(context: DeliverableSummaryContext): string {
-  const lines: string[] = [
-    "You write plain-English summaries of finished work for a non-technical owner.",
-    "Write 2 to 4 short sentences. No jargon, no internal task identifiers, no bullet points, no preamble.",
-    "Cover three things: what was done, where the result lives (name the file path, page, screenshot, or commit), and how to open it.",
-    "Reply with only the summary text.",
-    "",
-    `Finished task: ${context.title.trim()}`,
-  ];
-  if (context.description) {
-    lines.push("", "Task background:", truncateForPrompt(context.description));
-  }
-  if (context.finalComment) {
-    lines.push("", "Final note from whoever did the work:", truncateForPrompt(context.finalComment));
-  }
-  if (context.products.length > 0) {
-    lines.push("", "Outputs produced:");
-    for (const product of context.products) {
-      lines.push(`- ${product.title.trim()}${product.target ? ` — ${product.target.trim()}` : ""}`);
-    }
-  }
-  return lines.join("\n");
+export function deliverableSummaryConfigFingerprint(config: DeliverableSummaryModelConfig) {
+  // Detect credential rotation without storing or returning the credential itself.
+  return createHash("sha256").update(JSON.stringify([config.model, config.baseUrl, config.apiKey, config.revision])).digest("hex");
 }
 
-export async function callDeliverableSummaryModel(
-  prompt: string,
-  config: DeliverableSummaryModelConfig,
-): Promise<string> {
-  const url = `${config.baseUrl.replace(/\/$/, "")}/models/${encodeURIComponent(config.model)}:generateContent`;
-  const body = JSON.stringify({
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    generationConfig: { temperature: 0.3, maxOutputTokens: 400 },
-  });
-  let lastError = "unknown error";
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": config.apiKey,
-        },
-        body,
-        redirect: "error",
-        signal: AbortSignal.timeout(DELIVERABLE_SUMMARY_MODEL_TIMEOUT_MS),
-      });
-      if (!response.ok) {
-        // Status only; response bodies may echo request details.
-        lastError = `model request failed with HTTP ${response.status}`;
-        await response.body?.cancel();
-        if (response.status >= 500) {
-          await new Promise((resolve) => setTimeout(resolve, 2_000));
-          continue;
-        }
-        throw new Error(lastError);
-      }
-      const payload = (await response.json()) as {
-        candidates?: { content?: { parts?: { text?: string }[] } }[];
-      };
-      const text = payload.candidates?.[0]?.content?.parts
-        ?.map((part) => part.text ?? "")
-        .join("")
-        .trim();
-      if (!text) throw new Error("model returned an empty summary");
-      return text;
-    } catch (err) {
-      lastError =
-        err instanceof Error && err.message
-          ? err.message.slice(0, 300)
-          : "model request failed";
-      if (attempt === 1) break;
-      await new Promise((resolve) => setTimeout(resolve, 2_000));
-    }
+export function deliverableGenerationState(row: Row | null, source: DeliverableSource) {
+  if (!row) return "pending" as const;
+  const changed = row.sourceFingerprint !== deliverableSourceFingerprint(source);
+  if (changed && row.completionKey !== deliverableCompletionKey(source)) return row.summary ? "stale" as const : "pending" as const;
+  if (row.generationStatus === "generated" && changed) {
+    return row.regenerationCount < DELIVERABLE_SUMMARY_MAX_REGENERATIONS ? "stale" as const : "failed_final" as const;
   }
-  throw new Error(lastError);
-}
-
-export async function readDeliverableSummaryContext(
-  db: Db,
-  companyId: string,
-  issueId: string,
-): Promise<{ issue: typeof issues.$inferSelect; context: DeliverableSummaryContext } | null> {
-  const [issue] = await db
-    .select()
-    .from(issues)
-    .where(and(eq(issues.id, issueId), eq(issues.companyId, companyId)));
-  if (!issue) return null;
-  const [finalCommentRow] = await db
-    .select({ body: issueComments.body })
-    .from(issueComments)
-    .where(
-      and(
-        eq(issueComments.companyId, companyId),
-        eq(issueComments.issueId, issueId),
-        isNull(issueComments.deletedAt),
-      ),
-    )
-    .orderBy(desc(issueComments.createdAt))
-    .limit(1);
-  const productRows = await db
-    .select({
-      title: issueWorkProducts.title,
-      url: issueWorkProducts.url,
-      externalId: issueWorkProducts.externalId,
-      metadata: issueWorkProducts.metadata,
-    })
-    .from(issueWorkProducts)
-    .where(and(eq(issueWorkProducts.companyId, companyId), eq(issueWorkProducts.issueId, issueId)))
-    .orderBy(desc(issueWorkProducts.isPrimary), desc(issueWorkProducts.createdAt))
-    .limit(6);
-  return {
-    issue,
-    context: {
-      identifier: issue.identifier,
-      title: issue.title,
-      description: issue.description,
-      finalComment: finalCommentRow?.body ?? null,
-      products: productRows.map((row) => {
-        const metadata = (row.metadata ?? {}) as {
-          openPath?: unknown;
-          resourceRef?: { path?: unknown };
-        };
-        const target =
-          (typeof row.url === "string" && row.url) ||
-          (typeof metadata.openPath === "string" && metadata.openPath) ||
-          (typeof metadata.resourceRef?.path === "string" && metadata.resourceRef.path) ||
-          (typeof row.externalId === "string" && row.externalId) ||
-          null;
-        return { title: row.title, target: target as string | null };
-      }),
-    },
-  };
+  // Compatibility with the original draft's persisted failures.
+  if ((row.generationStatus as string) === "failed") return "retry_scheduled" as const;
+  return row.generationStatus;
 }
 
 export type DeliverableSummaryResult = {
   issueId: string;
   outcome: "generated" | "skipped" | "failed";
-  error?: string;
+  attempted?: boolean;
+  reason?: "missing_credentials" | "rate_limited";
 };
 
-/**
- * Generate and store the plain-English summary for a completed issue.
- * Write-once: once a summary is stored, later calls are no-ops.
- */
 export async function generateIssueDeliverableSummary(
-  db: Db,
-  companyId: string,
-  issueId: string,
+  db: Db, companyId: string, issueId: string, resolvedConfig?: DeliverableSummaryModelConfig,
 ): Promise<DeliverableSummaryResult> {
-  const existing = await db
-    .select()
-    .from(issueDeliverables)
-    .where(eq(issueDeliverables.issueId, issueId))
-    .then((rows) => rows[0] ?? null);
-  if (existing && existing.generationStatus === "generated") {
-    return { issueId, outcome: "skipped" };
-  }
-  if (
-    existing &&
-    existing.generationStatus === "failed" &&
-    existing.generationAttempts >= DELIVERABLE_SUMMARY_MAX_ATTEMPTS
-  ) {
-    return { issueId, outcome: "skipped" };
-  }
-  const read = await readDeliverableSummaryContext(db, companyId, issueId);
-  if (!read) return { issueId, outcome: "skipped" };
-  if (read.issue.status !== "done") return { issueId, outcome: "skipped" };
-
-  const config = await resolveDeliverableSummaryModelConfig();
-  const attempts = (existing?.generationAttempts ?? 0) + 1;
-  if (!config) {
-    await upsertDeliverableRow(db, companyId, issueId, {
-      generationStatus: "failed",
-      generationAttempts: attempts,
-      generationError: "No cheap-model credentials available (GEMINI_API_KEY)",
-      summary: existing?.summary ?? null,
-      summaryModel: existing?.summaryModel ?? null,
-    });
-    return { issueId, outcome: "failed", error: "missing credentials" };
-  }
-
-  try {
-    const summary = await callDeliverableSummaryModel(
-      buildDeliverableSummaryPrompt(read.context),
-      config,
-    );
-    // Write once: never overwrite a generated summary, even after a race.
-    const written = await db.transaction(async (tx) => {
-      const [row] = await tx
-        .select()
-        .from(issueDeliverables)
-        .where(eq(issueDeliverables.issueId, issueId))
-        .for("update");
-      if (row?.generationStatus === "generated") return false;
-      const patch = {
-        summary,
-        generationStatus: "generated" as const,
-        generationAttempts: attempts,
-        generationError: null,
-        summaryModel: config.model,
-        generatedAt: new Date(),
-        updatedAt: new Date(),
-      };
-      if (row) {
-        await tx.update(issueDeliverables).set(patch).where(eq(issueDeliverables.id, row.id));
-      } else {
-        await tx.insert(issueDeliverables).values({ companyId, issueId, ...patch });
-      }
-      return true;
-    });
-    return written
-      ? { issueId, outcome: "generated" }
-      : { issueId, outcome: "skipped" };
-  } catch (err) {
-    const message = err instanceof Error ? err.message.slice(0, 300) : "generation failed";
-    await upsertDeliverableRow(db, companyId, issueId, {
-      generationStatus: "failed",
-      generationAttempts: attempts,
-      generationError: message,
-      summary: existing?.summary ?? null,
-      summaryModel: existing?.summaryModel ?? null,
-    });
-    logger.warn({ issueId, err }, "deliverable summary generation failed");
-    return { issueId, outcome: "failed", error: message };
-  }
-}
-
-async function upsertDeliverableRow(
-  db: Db,
-  companyId: string,
-  issueId: string,
-  patch: {
-    summary: string | null;
-    generationStatus: "pending" | "generated" | "failed";
-    generationAttempts: number;
-    generationError: string | null;
-    summaryModel: string | null;
-  },
-): Promise<void> {
-  await db.transaction(async (tx) => {
-    const [row] = await tx
-      .select()
-      .from(issueDeliverables)
-      .where(eq(issueDeliverables.issueId, issueId))
-      .for("update");
-    if (row?.generationStatus === "generated") return;
-    if (row) {
-      await tx
-        .update(issueDeliverables)
-        .set({ ...patch, updatedAt: new Date() })
-        .where(eq(issueDeliverables.id, row.id));
-    } else {
-      await tx.insert(issueDeliverables).values({ companyId, issueId, ...patch });
+  const skipped: DeliverableSummaryResult = { issueId, outcome: "skipped" };
+  const config = resolvedConfig ?? await resolveDeliverableSummaryModelConfig();
+  if (!config) return { ...skipped, reason: "missing_credentials" };
+  const configFingerprint = deliverableSummaryConfigFingerprint(config);
+  const claim = await db.transaction(async tx => {
+    // Serialize global admission across workers without holding a lock during HTTP.
+    await tx.execute(sql`select pg_advisory_xact_lock(1930294)`);
+    const source = (await readDeliverableSources(tx, companyId, [issueId])).get(issueId);
+    const now = new Date();
+    if (!source || source.issue.status !== "done" || source.issue.hiddenAt
+      || (source.issue.completedAt ?? source.issue.updatedAt).getTime() > now.getTime() - DELIVERABLE_SUMMARY_SETTLE_MS) return null;
+    await tx.insert(issueDeliverables).values({ companyId, issueId }).onConflictDoNothing();
+    const [row] = await tx.select().from(issueDeliverables).where(and(eq(issueDeliverables.companyId, companyId), eq(issueDeliverables.issueId, issueId))).for("update");
+    if (!row) return null;
+    if (row.generationStatus === "generating" && row.claimedAt && row.claimedAt.getTime() > now.getTime() - DELIVERABLE_SUMMARY_LEASE_MS) return null;
+    const newCompletion = row.completionKey !== deliverableCompletionKey(source)
+      && row.sourceFingerprint !== deliverableSourceFingerprint(source);
+    const state = deliverableGenerationState(row, source);
+    if (!newCompletion && row.completionKey !== deliverableCompletionKey(source)) {
+      // A redundant done PATCH changed the timestamp, not the summarized evidence.
+      await tx.update(issueDeliverables).set({ completionKey: deliverableCompletionKey(source) }).where(eq(issueDeliverables.id, row.id));
     }
+    if (state === "generated") {
+      await tx.update(issueDeliverables).set({ checkedAt: now }).where(eq(issueDeliverables.id, row.id));
+      return null;
+    }
+    const configChanged = row.configFingerprint !== configFingerprint;
+    const recoverFailure = row.generationStatus === "failed_final" && row.generationError !== REPAIR_LIMIT_ERROR
+      && configChanged;
+    if (state === "failed_final" && !recoverFailure) {
+      if (row.generationStatus === "generated") {
+        await tx.update(issueDeliverables).set({ generationStatus: "failed_final", generationError: REPAIR_LIMIT_ERROR, nextAttemptAt: null, checkedAt: now, updatedAt: now })
+          .where(eq(issueDeliverables.id, row.id));
+      }
+      return null;
+    }
+    if (!newCompletion && !recoverFailure && !configChanged && row.nextAttemptAt && row.nextAttemptAt > now) return null;
+    const repair = !newCompletion && state === "stale" && row.generationStatus === "generated";
+    const attempts = newCompletion || repair || recoverFailure || configChanged ? 0 : row.generationAttempts;
+    if (attempts >= DELIVERABLE_SUMMARY_MAX_ATTEMPTS) {
+      await tx.update(issueDeliverables).set({ generationStatus: "failed_final", claimToken: null, claimedAt: null,
+        nextAttemptAt: null, checkedAt: now, updatedAt: now }).where(eq(issueDeliverables.id, row.id));
+      return null;
+    }
+    const [rate] = await tx.select({ count: sql<number>`(select count(*)::int from issue_deliverables d,
+      jsonb_array_elements_text(d.attempt_times) t where t.value::timestamptz > ${now.toISOString()}::timestamptz - interval '1 minute')` }).from(issueDeliverables).limit(1);
+    if ((rate?.count ?? 0) >= DELIVERABLE_SUMMARY_SWEEP_BATCH) return "rate_limited" as const;
+    const token = randomUUID();
+    const [claimed] = await tx.update(issueDeliverables).set({
+      checkedAt: now, generationStatus: "generating", generationAttempts: attempts + 1,
+      regenerationCount: row.regenerationCount + (repair ? 1 : 0),
+      completionKey: deliverableCompletionKey(source), configFingerprint,
+      sourceFingerprint: deliverableSourceFingerprint(source),
+      summary: row.summary,
+      summaryFromTaskDetails: row.summary ? row.summaryFromTaskDetails : source.comments.length === 0,
+      claimedAt: now, claimToken: token, nextAttemptAt: null, updatedAt: now,
+      attemptTimes: [...row.attemptTimes.filter(t => new Date(t).getTime() > now.getTime() - 60_000), now.toISOString()],
+    }).where(eq(issueDeliverables.id, row.id)).returning();
+    return { row: claimed, source, token };
   });
+  if (claim === "rate_limited") return { ...skipped, reason: "rate_limited" };
+  if (!claim) return skipped;
+  try {
+    const summary = await callDeliverableSummaryModel(buildDeliverableSummaryPrompt(claim.source), config);
+    return await db.transaction(async tx => {
+      const current = (await readDeliverableSources(tx, companyId, [issueId])).get(issueId);
+      if (!current) return { ...skipped, attempted: true };
+      const changed = current.issue.status !== "done" || deliverableSourceFingerprint(current) !== claim.row.sourceFingerprint;
+      const repairCount = claim.row.regenerationCount + (changed ? 1 : 0);
+      const [written] = await tx.update(issueDeliverables).set(changed ? {
+        generationStatus: repairCount > DELIVERABLE_SUMMARY_MAX_REGENERATIONS ? "failed_final" : "stale",
+        generationError: repairCount > DELIVERABLE_SUMMARY_MAX_REGENERATIONS ? REPAIR_LIMIT_ERROR : null,
+        regenerationCount: Math.min(repairCount, DELIVERABLE_SUMMARY_MAX_REGENERATIONS),
+        generationAttempts: 0, claimToken: null, claimedAt: null, updatedAt: new Date(),
+      } : {
+        summary, summaryFromTaskDetails: claim.source.comments.length === 0, generationStatus: "generated", generatedAt: new Date(), summaryModel: config.model,
+        generationError: null, claimToken: null, claimedAt: null, updatedAt: new Date(),
+      }).where(and(eq(issueDeliverables.id, claim.row.id), eq(issueDeliverables.claimToken, claim.token))).returning();
+      return { issueId, outcome: written && !changed ? "generated" : "skipped", attempted: true } as DeliverableSummaryResult;
+    });
+  } catch {
+    const final = claim.row.generationAttempts >= DELIVERABLE_SUMMARY_MAX_ATTEMPTS;
+    const delay = DELIVERABLE_SUMMARY_RETRY_DELAYS_MS[Math.min(claim.row.generationAttempts - 1, DELIVERABLE_SUMMARY_RETRY_DELAYS_MS.length - 1)];
+    await db.update(issueDeliverables).set({
+      generationStatus: final ? "failed_final" : "retry_scheduled",
+      generationError: "Summary unavailable; check provider configuration.",
+      nextAttemptAt: final ? null : new Date(Date.now() + delay),
+      claimToken: null, claimedAt: null, updatedAt: new Date(),
+    }).where(and(eq(issueDeliverables.id, claim.row.id), eq(issueDeliverables.claimToken, claim.token)));
+    return { issueId, outcome: "failed", attempted: true };
+  }
 }
 
-export type DeliverableSweepResult = {
-  candidates: number;
-  generated: number;
-  failed: number;
-  skipped: number;
-};
-
-/**
- * Sweeper: backfill summaries for completed issues that do not have one yet,
- * and retry failures below the attempt cap. This is the single write path for
- * "the summary is written when an issue moves to done", so every status
- * transition route is covered without per-route hooks.
- */
-export async function processPendingDeliverableSummaries(
-  db: Db,
-  options: { limit?: number } = {},
-): Promise<DeliverableSweepResult> {
-  const limit = Math.min(Math.max(options.limit ?? 5, 1), 25);
-  const missingOrRetry: SQL | undefined = or(
-    sql`${issueDeliverables.id} is null`,
-    and(
-      sql`${issueDeliverables.generationStatus} != 'generated'`,
-      sql`${issueDeliverables.generationAttempts} < ${DELIVERABLE_SUMMARY_MAX_ATTEMPTS}`,
-    ),
-  );
-  const candidates = await db
-    .select({ issueId: issues.id, companyId: issues.companyId })
-    .from(issues)
-    .leftJoin(issueDeliverables, eq(issueDeliverables.issueId, issues.id))
-    .where(
-      and(
-        eq(issues.status, "done"),
-        isNull(issues.hiddenAt),
-        isNotNull(issues.completedAt),
-        missingOrRetry,
-      ),
-    )
-    .orderBy(asc(issues.completedAt), asc(issues.id))
-    .limit(limit);
-
-  const result: DeliverableSweepResult = {
-    candidates: candidates.length,
-    generated: 0,
-    failed: 0,
-    skipped: 0,
-  };
-  for (const candidate of candidates) {
-    const outcome = await generateIssueDeliverableSummary(
-      db,
-      candidate.companyId,
-      candidate.issueId,
-    );
-    if (outcome.outcome === "generated") result.generated += 1;
-    else if (outcome.outcome === "failed") result.failed += 1;
-    else result.skipped += 1;
-  }
-  return result;
+const sweeping = new WeakSet<Db>();
+export async function processPendingDeliverableSummaries(db: Db, options: { limit?: number } = {}) {
+  const result = { candidates: 0, generated: 0, failed: 0, skipped: 0 };
+  if (sweeping.has(db)) return result;
+  sweeping.add(db);
+  try {
+    const config = await resolveDeliverableSummaryModelConfig();
+    if (!config) return result;
+    const configFingerprint = deliverableSummaryConfigFingerprint(config);
+    // Prioritize new completions and due work over background evidence checks.
+    // Timestamp probes avoid loading evidence for unchanged completed history.
+    const newCompletion = sql`(${issueDeliverables.id} is null
+      or ${issueDeliverables.completionKey} is distinct from ${deliverableCompletionKeySql})`;
+    const evidenceChanged = sql`(${issueDeliverables.checkedAt} is null
+      or ${issues.updatedAt} > ${issueDeliverables.checkedAt}
+      or exists (select 1 from issue_comments ec where ec.issue_id = "issues"."id"
+        and ec.company_id = "issues"."company_id" and ec.updated_at > ${issueDeliverables.checkedAt})
+      or exists (select 1 from issue_work_products ep where ep.issue_id = "issues"."id"
+        and ep.company_id = "issues"."company_id" and ep.updated_at > ${issueDeliverables.checkedAt})
+      or exists (select 1 from issue_attachments ea where ea.issue_id = "issues"."id"
+        and ea.company_id = "issues"."company_id" and ea.updated_at > ${issueDeliverables.checkedAt}))`;
+    const candidates = await db.select({ issueId: issues.id, companyId: issues.companyId }).from(issues)
+      .leftJoin(issueDeliverables, eq(issueDeliverables.issueId, issues.id))
+      .where(and(eq(issues.status, "done"), isNull(issues.hiddenAt),
+        sql`coalesce(${issues.completedAt}, ${issues.updatedAt}) <= now() - interval '3 minutes'`,
+        sql`(${newCompletion}
+          or (${issueDeliverables.generationStatus} = 'generated'
+            and (${evidenceChanged} or ${issueDeliverables.checkedAt} <= now() - interval '24 hours'))
+          or (${issueDeliverables.generationStatus} = 'generating'
+            and (${issueDeliverables.claimedAt} is null or ${issueDeliverables.claimedAt} <= now() - interval '2 minutes'))
+          or (${issueDeliverables.generationStatus} in ('pending', 'stale', 'retry_scheduled', 'failed')
+            and (${issueDeliverables.nextAttemptAt} is null or ${issueDeliverables.nextAttemptAt} <= now()
+              or ${issueDeliverables.configFingerprint} is distinct from ${configFingerprint}))
+          or (${issueDeliverables.generationStatus} = 'failed_final'
+            and ${issueDeliverables.generationError} is distinct from ${REPAIR_LIMIT_ERROR}
+            and ${issueDeliverables.configFingerprint} is distinct from ${configFingerprint}))`))
+      .orderBy(sql`case when ${newCompletion} then 0
+        when ${issueDeliverables.generationStatus} <> 'generated' then 1
+        when ${evidenceChanged} then 2 else 3 end`,
+        sql`${issueDeliverables.checkedAt} asc nulls first`, asc(issues.id)).limit(DELIVERABLE_SUMMARY_CHECK_BATCH);
+    const limit = Math.min(Math.max(options.limit ?? 5, 1), 5);
+    let attempted = 0;
+    for (const candidate of candidates) {
+      if (attempted >= limit) break;
+      result.candidates++;
+      const outcome = await generateIssueDeliverableSummary(db, candidate.companyId, candidate.issueId, config);
+      result[outcome.outcome]++;
+      if (outcome.reason === "rate_limited") break;
+      if (outcome.attempted) attempted++;
+    }
+    return result;
+  } finally { sweeping.delete(db); }
 }
