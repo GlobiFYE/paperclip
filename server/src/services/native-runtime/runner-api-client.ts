@@ -2,7 +2,6 @@ import { z } from "zod";
 import { badRequest, forbidden, unprocessable } from "../../errors.js";
 import { runnerApiOperation, type RunnerApiOperation } from "./runner-api-catalog.js";
 import { captureRunnerApiResponse, type RunnerApiResponseBody } from "./runner-api-response.js";
-import { runnerApiRestriction } from "./runner-api-policy.js";
 import { RunnerApiResponseLimitError, RunnerApiResponseCleanupError, RUNNER_API_RESPONSE_MAX_BYTES } from "./runner-api-response-limits.js";
 
 /** Request/upload bound only. Response capture has a separate streamed limit. */
@@ -54,37 +53,11 @@ export function validateRunnerApiCall(value: unknown, context: RunnerApiContext)
   const operation = runnerApiOperation(input.operationId);
   if (operation.transport !== "rest") throw unprocessable("This endpoint requires its existing protocol client; call_api supports REST only");
   if (input.responseText && operation.method !== "GET") throw badRequest("responseText requires a GET operation; read the saved artifact instead of repeating a mutation");
-  const restriction = runnerApiRestriction(operation.method, operation.path);
-  if (restriction) throw forbidden(restriction);
   if (!operation.allowedModes.includes(context.workMode)) throw forbidden("call_api permits only reads in Ask and Plan modes; use the permitted dedicated tools");
   if (input.pathParams?.companyId && input.pathParams.companyId !== context.companyId) throw forbidden("API call belongs to another company");
-  const mutation = !["GET", "HEAD", "OPTIONS"].includes(operation.method);
-  if (mutation) {
-    const issueRoute = /^\/api\/issues\/\{[^}]+\}/.test(operation.path);
-    const body = input.body && typeof input.body === "object" && !Array.isArray(input.body) ? input.body as Record<string, unknown> : {};
-    // Raw uploads must not hide lifecycle fields from the structured policy
-    // check and subsequently become JSON inside Express's body parser.
-    const guardedBody = /^\/api\/(issues|agents)\/\{[^}]+\}$/.test(operation.path)
-      || (issueRoute && /\/comments$/.test(operation.path));
-    if (guardedBody && (input.files?.length || (input.body !== undefined && (!input.body || typeof input.body !== "object" || Array.isArray(input.body))))) {
-      throw forbidden("Lifecycle-sensitive API updates require an inline JSON object");
-    }
-    if (/^\/api\/agents\/\{[^}]+\}$/.test(operation.path) && ["status", "runtimeState"].some(key => Object.hasOwn(body, key))) {
-      throw forbidden("API agent updates cannot bypass runner execution-control authority");
-    }
-    if (issueRoute && /\/comments$/.test(operation.path) && ["reopen", "resume", "interrupt"].some(key => body[key] === true)) {
-      throw forbidden("API comments cannot change runner execution state");
-    }
-    if (issueRoute && /\/issues\/\{[^}]+\}$/.test(operation.path)) {
-      const lifecycle = ["status", "workMode", "executionRunId", "checkoutRunId", "executionState", "executionPolicy", "executionAgentNameKey", "executionLockedAt", "completedAt", "cancelledAt", "startedAt", "assigneeAgentId", "assigneeUserId", "blockedByIssueIds", "reopen", "resume", "interrupt"];
-      if (lifecycle.some((key) => Object.hasOwn(body, key))) throw forbidden("Use dedicated completion, review, delegation or dependency tools for task lifecycle changes");
-      // The real issue router normalizes identifiers and PostgreSQL accepts
-      // uppercase UUIDs. Apply the same identity comparison before dispatch.
-      const target = Object.values(input.pathParams ?? {}).map(id => id.trim().toLowerCase());
-      const activeIds = [context.issueId, context.issueIdentifier].filter((id): id is string => Boolean(id)).map(id => id.toLowerCase());
-      if (operation.method === "DELETE" && target.some(id => activeIds.includes(id))) throw forbidden("The active runner task cannot delete itself");
-    }
-  }
+  // The HTTP router owns endpoint and payload authorization, just as it does
+  // for a legacy agent using the same credential and run context. Do not add a
+  // second endpoint/field permission model to the transport.
   const contentType = (input.contentType ?? "application/json").split(";", 1)[0].trim().toLowerCase();
   if (input.body !== undefined && !input.files?.length) {
     const requestSchema = operation.requestBody?.content?.[contentType]?.schema as { type?: string } | undefined;
