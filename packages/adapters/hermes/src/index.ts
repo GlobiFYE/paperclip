@@ -53,15 +53,6 @@ export const models: { id: string; label: string }[] = [
   { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
   { id: "MiniMax-M2.7", label: "MiniMax M2.7" },
   { id: "nvidia/nemotron-3-ultra-550b-a55b", label: "Nemotron 3 Ultra (NVIDIA)" },
-  // Ollama Cloud free pool (second Nemotron pool; https://ollama.com/v1).
-  // Only these six models are free — everything else needs paid credits and
-  // must not be enabled. Tested free Oct 12.
-  { id: "nemotron-3-ultra", label: "Nemotron 3 Ultra (Ollama Cloud)" },
-  { id: "nemotron-3-super", label: "Nemotron 3 Super (Ollama Cloud)" },
-  { id: "nemotron-3-nano:30b", label: "Nemotron 3 Nano 30B (Ollama Cloud)" },
-  { id: "gemma4:31b", label: "Gemma 4 31B (Ollama Cloud)" },
-  { id: "gpt-oss:20b", label: "GPT-OSS 20B (Ollama Cloud)" },
-  { id: "gpt-oss:120b", label: "GPT-OSS 120B (Ollama Cloud)" },
 ];
 
 const sessionManagement: AdapterSessionManagement = {
@@ -103,7 +94,7 @@ tools, persistent memory, session persistence, skills, and MCP support.
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | model | string | (Hermes configured default) | Optional explicit model in provider/model format. Leave blank to use Hermes's configured default model. |
-| provider | string | (auto) | API provider: xiaomi, gemini, nvidia, ollama, openrouter, nous, openai-codex, copilot, copilot-acp, anthropic, huggingface, zai, kimi-coding, minimax, minimax-cn, kilocode. Usually not needed — Hermes auto-detects from model name. The \`ollama\` provider is the Ollama Cloud pool (base_url https://ollama.com/v1). |
+| provider | string | (auto) | API provider: auto, openrouter, nous, openai-codex, zai, kimi-coding, minimax, minimax-cn. Usually not needed — Hermes auto-detects from model name. |
 | timeoutSec | number | 300 | Execution timeout in seconds |
 | graceSec | number | 10 | Grace period after SIGTERM before SIGKILL |
 
