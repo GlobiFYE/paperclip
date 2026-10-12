@@ -152,15 +152,14 @@ export async function resolveResponsibleUserIdForActivity(db: Db, input: LogActi
 // underscore map. Now that the specific events exist, keep emitting the legacy
 // approval.decided alongside them so existing subscribers continue to receive
 // approval decisions.
-const LEGACY_COMPANION_EVENT: Readonly<Partial<Record<PluginEventType, PluginEventType>>> = {
-  "approval.approved": "approval.decided",
-  "approval.rejected": "approval.decided",
-};
-
 function legacyCompanionEvent(event: PluginEvent): PluginEvent | null {
-  const legacyType = LEGACY_COMPANION_EVENT[event.eventType];
-  if (!legacyType) return null;
-  return { ...event, eventId: randomUUID(), eventType: legacyType };
+  switch (event.eventType) {
+    case "approval.approved":
+    case "approval.rejected":
+      return { ...event, eventId: randomUUID(), eventType: "approval.decided" };
+    default:
+      return null;
+  }
 }
 
 export function publishActivity(publication: ActivityPublication) {
