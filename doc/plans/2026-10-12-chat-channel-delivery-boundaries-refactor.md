@@ -30,8 +30,11 @@ hooks, runtime-map identity, partial-failure cleanup, and initialization order.
 
 Run relevant existing public-service tests before and after each mechanical move.
 Compare moved declarations and remaining statements with normalized syntax, then
-run server types, module boundaries and whitespace checks. Finish CI and a fresh
-5/5 review before opening the next PR. Run cumulative repository gates at handoff.
+run server types, module boundaries and whitespace checks. Finish local verification and a fresh
+5/5 review before opening the next draft PR. GitHub runner-selection jobs remained
+queued without steps for over 25 minutes in this batch. To continue the authorized
+stack, publish drafts in review order while tracking CI as pending; CI remains a
+merge gate. Run cumulative repository gates at handoff.
 Retain failures and skipped/unrun coverage even when an isolated retry passes.
 Use fixture-backed assembled service/database tests; do not claim live provider
 execution. Remap LOC/bytes and the remaining orchestration after the batch.
@@ -50,3 +53,48 @@ execution. Remap LOC/bytes and the remaining orchestration after the batch.
   workspace rejection, callback surfaces, TLS termination and Cloud host evidence.
 - Next: Discord Gateway event sequencing and health transitions. Keep shared
   receiver lease ownership and runtime-map lifetime in the service.
+
+## Batch outcome
+
+All ten candidates produced cohesive boundaries. Shared receiver ownership, queue
+management and worker scheduling remain in the service. The only intentional
+control-wiring change is deferred access to `stageProviderEffect` from identity
+link construction; typecheck and integration tests caught the initial early read.
+
+| Slice | Service lines after | Primary module lines | Before/after cases |
+| --- | ---: | ---: | ---: |
+| 1. Slack signature, workspace and callback url verification | 26,233 | 300 | 9 |
+| 2. Discord gateway event sequencing and endpoint health transitions | 26,029 | 253 | 7 |
+| 3. Discord root-thread admission, provider creation and durable recovery | 25,527 | 570 | 4 |
+| 4. Durable receipt reaction claims, transport, retries and settlement | 24,975 | 586 | 7 |
+| 5. Inbound reaction conversation lookup, admission and deferred replay | 24,160 | 891 | 21 |
+| 6. Inbound attachment authorization, bounded ingestion, registration and omissions | 23,565 | 674 | 39 |
+| 7. Outbound attachment metadata validation and bounded integrity-checked hydration | 23,298 | 294 | 22 |
+| 8. Durable provider reply staging, authorization, transport and recovery | 22,331 | 957 | 24 |
+| 9. Conversation summaries and paginated activity projections | 21,741 | 616 | 16 |
+| 10. Setup message detection and credential-fenced round-trip qualification | 21,460 | 353 | 7 |
+
+After rebasing on master `8e7b5db822`, the service shrank from
+**26,493 lines / 1,048,769 bytes** to **21,460 lines /
+862,284 bytes** (5,033 fewer lines, about 19%). Normalized syntax comparison
+checks all 69 moved declarations/types and every remaining original statement.
+Server types, targeted tests, module boundaries and whitespace checks are the
+per-slice gates. Cumulative repository gates and remote reviews are recorded in
+the PR descriptions as they complete.
+
+Orchestration measurement: the service function has 150 nested functions
+(19,399 lines) and 67 state/wiring statements (459 lines), versus 191 functions
+(23,829 lines) and 54 statements (425 lines) at the start. Imports take 400 lines.
+The remaining large paths are `processMessage` (2,166), `handleAction` (1,074),
+`configureWithCredentialLease` (868), `processSelectedPublication` (729),
+`handleModalSubmit` (708), `handleWebhook` (685), and lifecycle processing (657).
+
+A future pass should inspect publication admission/transport/settlement as one
+workflow, then inbound delivery authorization and drain ownership. Those cuts
+need explicit ownership contracts; avoid separating individual checks from their
+transactions merely to reduce the remaining line count.
+
+The rebase preserves the merged managed Slack setup flow, including its shared
+`isProvisionedSlackSetup` predicate in the extracted callback verification
+module. A fresh syntax audit compares all moved declarations and retained
+statement ordering with this updated master.
