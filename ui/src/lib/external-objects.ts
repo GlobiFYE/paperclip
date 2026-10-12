@@ -9,13 +9,13 @@ import {
   Clock,
   CloudOff,
   GitMerge,
-  Github,
   GitPullRequest,
   KeyRound,
   Loader2,
   XCircle,
   type LucideIcon,
 } from "lucide-react";
+import { GithubIcon } from "@/components/icons/github-icon";
 import type {
   ExternalObjectLivenessState,
   ExternalObjectStatusCategory,
@@ -55,7 +55,7 @@ const EXTERNAL_OBJECT_ICON_KEYS: Record<string, LucideIcon> = {
   circle: Circle,
   "circle-dot": CircleDot,
   clock: Clock,
-  github: Github,
+  github: GithubIcon,
   "git-merge": GitMerge,
   "git-pull-request": GitPullRequest,
   key: KeyRound,
@@ -102,6 +102,24 @@ const LIVENESS_LABELS: Record<string, string> = {
 
 export function externalObjectLivenessLabel(liveness: string): string {
   return LIVENESS_LABELS[liveness] ?? liveness.replace(/_/g, " ");
+}
+
+export function externalObjectDisplayStatusLabel(input: {
+  providerKey: string | null | undefined;
+  objectType: string | null | undefined;
+  statusCategory: string;
+  liveness: string;
+  statusLabel?: string | null;
+}): string {
+  const trimmedStatusLabel = input.statusLabel?.trim();
+  if (trimmedStatusLabel) return trimmedStatusLabel;
+  const isGenericUrl = input.providerKey === "url" && input.objectType === "link";
+  const hasKnownObjectType = Boolean(input.providerKey && input.objectType);
+  if (input.statusCategory === "unknown" && hasKnownObjectType && !isGenericUrl) {
+    if (input.liveness === "fresh") return "Status unavailable";
+    return externalObjectLivenessLabel(input.liveness);
+  }
+  return externalObjectCategoryLabel(input.statusCategory);
 }
 
 /**
@@ -170,11 +188,23 @@ const OBJECT_TYPE_LABELS: Record<string, string> = {
   workflow_run: "workflow run",
   ticket: "ticket",
   lead: "lead",
+  url_link: "URL",
 };
 
 export function externalObjectTypeLabel(objectType: string | null | undefined): string {
   if (!objectType) return "object";
   return OBJECT_TYPE_LABELS[objectType] ?? objectType.replace(/_/g, " ");
+}
+
+export function externalObjectDisplayLabel(
+  providerKey: string | null | undefined,
+  objectType: string | null | undefined,
+  displayKey?: string | null,
+): string {
+  const trimmedDisplayKey = displayKey?.trim();
+  if (trimmedDisplayKey) return trimmedDisplayKey;
+  if (providerKey === "url" && objectType === "link") return "URL";
+  return `${externalObjectProviderLabel(providerKey)} ${externalObjectTypeLabel(objectType)}`;
 }
 
 /**

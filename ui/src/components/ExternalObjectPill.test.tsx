@@ -91,6 +91,25 @@ describe("ExternalObjectPill", () => {
     expect(html).not.toContain("×");
   });
 
+  it("labels detected GitHub pull requests without fetched status as not refreshed", () => {
+    const html = renderToStaticMarkup(
+      <ExternalObjectPill
+        object={{
+          providerKey: "github",
+          objectType: "pull_request",
+          statusCategory: "unknown",
+          liveness: "unknown",
+          displayTitle: "acme/web#241",
+          url: "https://github.com/acme/web/pull/241",
+        }}
+      />,
+    );
+
+    expect(html).toContain("PR 241 - Not yet refreshed");
+    expect(html).toContain('aria-label="GitHub pull request — Not yet refreshed: acme/web#241"');
+    expect(html).not.toContain("Not yet resolved");
+  });
+
   it("uses the object link label, provider icon, and visible status when supplied", () => {
     const html = renderToStaticMarkup(
       <ExternalObjectPill
@@ -112,8 +131,26 @@ describe("ExternalObjectPill", () => {
     expect(html).toContain("PR 241 - Merged");
     expect(html).not.toContain("acme/web#241</span>");
     expect(html).toContain("text-violet-600");
-    expect(html).not.toContain("Github Pull Request");
-    expect(html).toContain('aria-label="GitHub pull request — Merged: acme/web#241: Add rich object presentation metadata"');
+    expect(html).not.toContain(">Github Pull Request</span>");
+    expect(html).toContain('aria-label="Github Pull Request — Merged: acme/web#241: Add rich object presentation metadata"');
+  });
+
+  it("labels generic URL link objects as URL instead of URL link", () => {
+    const html = renderToStaticMarkup(
+      <ExternalObjectPill
+        object={{
+          providerKey: "url",
+          objectType: "link",
+          statusCategory: "unknown",
+          liveness: "unknown",
+          displayTitle: null,
+          url: "https://example.com/",
+        }}
+      />,
+    );
+
+    expect(html).toContain('aria-label="URL — Not yet resolved"');
+    expect(html).not.toContain("URL link");
   });
 });
 
