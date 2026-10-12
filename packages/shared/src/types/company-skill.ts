@@ -29,6 +29,8 @@ export interface CompanySkillFileInventoryEntry {
 
 export interface CompanySkillVersionFileInventoryEntry extends CompanySkillFileInventoryEntry {
   content: string;
+  encoding?: "utf8" | "base64";
+  executable?: boolean;
 }
 
 export interface CompanySkill {
@@ -154,6 +156,8 @@ export interface CompanySkillCategoryCount {
 }
 
 export interface CompanySkillVersion {
+  repositorySnapshotId?: string | null;
+  repositorySkillPath?: string | null;
   id: string;
   companyId: string;
   companySkillId: string;
@@ -247,6 +251,19 @@ export interface CompanySkillForkPrecheckResult {
   existingForks: CompanySkillForkSummary[];
 }
 
+export interface CompanySkillRenameRequest {
+  name: string;
+  slug?: string | null;
+}
+
+export interface CompanySkillRenameResult {
+  skill: CompanySkill;
+  previousName: string;
+  previousSlug: string;
+  previousKey: string;
+  reassignments: CompanySkillForkReassignment[];
+}
+
 export interface CompanySkillUpdateRequest {
   description?: string | null;
   iconUrl?: string | null;
@@ -330,6 +347,29 @@ export interface CompanySkillProjectScanRequest {
   }>;
 }
 
+export interface CompanySkillProjectBrowseRequest {
+  projectId: string;
+  workspaceId: string;
+  path?: string | null;
+}
+
+export interface CompanySkillProjectBrowseEntry {
+  name: string;
+  path: string;
+  kind: "directory" | "file";
+  isSkill: boolean;
+}
+
+export interface CompanySkillProjectBrowseResult {
+  projectId: string;
+  workspaceId: string;
+  workspaceName: string;
+  path: string;
+  parentPath: string | null;
+  entries: CompanySkillProjectBrowseEntry[];
+  truncated: boolean;
+}
+
 export type CompanySkillProjectScanCandidateStatus = "new" | "already_imported" | "conflict" | "skipped";
 
 export interface CompanySkillProjectScanCandidate {
@@ -383,6 +423,7 @@ export interface CompanySkillProjectScanResult {
 }
 
 export interface CompanySkillCreateRequest {
+  idempotencyKey?: string;
   folderId?: string | null;
   name: string;
   slug?: string | null;
@@ -399,6 +440,8 @@ export interface CompanySkillCreateRequest {
 }
 
 export interface CompanySkillFileDetail {
+  encoding?: "utf8" | "base64";
+  executable?: boolean;
   skillId: string;
   path: string;
   kind: CompanySkillFileInventoryEntry["kind"];
@@ -409,6 +452,8 @@ export interface CompanySkillFileDetail {
 }
 
 export interface CompanySkillFileUpdateRequest {
+  encoding?: "utf8" | "base64";
+  executable?: boolean;
   path: string;
   content: string;
 }
