@@ -2702,10 +2702,22 @@ function parseGitWorktreeListPorcelain(raw: string): GitWorktreeListEntry[] {
 }
 
 async function resolveGitOwnerRepoRoot(cwd: string): Promise<string> {
-  const checkoutRoot = path.resolve(await runGit(["rev-parse", "--show-toplevel"], cwd));
-  const commonDir = await runGit(["rev-parse", "--git-common-dir"], checkoutRoot).catch(() => null);
-  if (!commonDir) return checkoutRoot;
-  return path.dirname(path.resolve(checkoutRoot, commonDir));
+  const checkoutRoot = await fs.realpath(path.resolve(await runGit(["rev-parse", "--show-toplevel"], cwd)));
+  try {
+    const commonDir = await fs.realpath(path.resolve(checkoutRoot, await runGit(["rev-parse", "--git-common-dir"], checkoutRoot)));
+    const candidate = path.dirname(commonDir);
+    // A conventional .git directory belongs to its parent checkout. Separate
+    // Git storage can live inside an unrelated repository, so verify both the
+    // checkout boundary and metadata identity before using that parent.
+    const candidateRoot = await fs.realpath(path.resolve(await runGit(["rev-parse", "--show-toplevel"], candidate)));
+    const candidateGitDir = await fs.realpath(path.resolve(candidate, await runGit(["rev-parse", "--absolute-git-dir"], candidate)));
+    const candidateCommonDir = await fs.realpath(path.resolve(candidate, await runGit(["rev-parse", "--git-common-dir"], candidate)));
+    if (candidateRoot === candidate && candidateGitDir === commonDir && candidateCommonDir === commonDir) return candidateRoot;
+  } catch {
+    // A main or linked checkout is itself a valid Git command anchor, even
+    // when separate metadata does not identify a primary checkout directory.
+  }
+  return checkoutRoot;
 }
 
 async function findRegisteredGitWorktreeByBranch(repoRoot: string, branchName: string): Promise<string | null> {

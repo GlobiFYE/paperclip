@@ -423,6 +423,171 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(entries.filter(entry => entry.kind === "reader")).toHaveLength(peer ? 1 : 0);
   });
 
+  it.each(["primary", "linked"] as const)("does not probe unrelated company Git paths when the normal %s source is identified", async kind => {
+    const f = await fixture(), exec = promisify(execFileCallback);
+    await exec("git", ["init", "--initial-branch=main", f.admission.cwd]);
+    const privateCwd = path.join(f.admission.cwd, "private"); await mkdir(privateCwd);
+    await writeFile(path.join(privateCwd, "secret.txt"), "Private tracked bytes\n");
+    await exec("git", ["-C", f.admission.cwd, "add", "."]);
+    await exec("git", ["-C", f.admission.cwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "source"]);
+    let sourceCwd = f.admission.cwd;
+    if (kind === "linked") {
+      sourceCwd = path.join(root, `${f.issueId}-linked-normal`);
+      await exec("git", ["-C", f.admission.cwd, "worktree", "add", "-b", "linked-normal", sourceCwd]);
+    }
+    const [project] = await db.insert(projects).values({ companyId: f.companyId, name: "Private nested owner", visibility: "private" }).returning();
+    await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId: project.id, name: "Nested source", cwd: privateCwd });
+    const unrelated = path.join(root, `${f.issueId}-unrelated-candidate`); await mkdir(unrelated);
+    await db.insert(executionWorkspaces).values({ companyId: f.companyId, name: "Unrelated task files", cwd: unrelated,
+      mode: "shared_workspace", strategyType: "operator_directory" });
+    const wrapper = path.join(root, `${f.issueId}-git-bin`); await mkdir(wrapper);
+    const probeLog = path.join(wrapper, "probed.txt");
+    await writeFile(probeLog, "");
+    const realGit = (await exec("sh", ["-c", "command -v git"])).stdout.trim();
+    await writeFile(path.join(wrapper, "git"), `#!/bin/sh
+if [ "$1" = "-C" ] && [ "$2" = "$PROBE_UNRELATED" ]; then
+  printf 'unexpected Git probe\\n' >> "$PROBE_LOG"
+  exit 78
+fi
+exec "$PROBE_REAL_GIT" "$@"
+`, { mode: 0o755 });
+    const previous = { PATH: process.env.PATH, PROBE_UNRELATED: process.env.PROBE_UNRELATED,
+      PROBE_LOG: process.env.PROBE_LOG, PROBE_REAL_GIT: process.env.PROBE_REAL_GIT };
+    try {
+      vi.stubEnv("PATH", `${wrapper}${path.delimiter}${process.env.PATH}`);
+      vi.stubEnv("PROBE_UNRELATED", await realpath(unrelated));
+      vi.stubEnv("PROBE_LOG", probeLog); vi.stubEnv("PROBE_REAL_GIT", realGit);
+      const input = { companyId: f.companyId, sourceCwd, actor: f.actor };
+      await expect(assertIsolatedWorkspaceSourceReadAccess(db, input)).rejects.toThrow(/source project/);
+      await db.insert(projectAccessMembers).values([
+        { companyId: f.companyId, projectId: project.id, subjectType: "agent", subjectId: f.agentId },
+        { companyId: f.companyId, projectId: project.id, subjectType: "user", subjectId: f.userId },
+      ]);
+      const captured = await assertIsolatedWorkspaceSourceReadAccess(db, input);
+      expect(captured.projectIds).toContain(project.id);
+      expect(await readFile(probeLog, "utf8")).toBe("");
+    } finally {
+      for (const [name, value] of Object.entries(previous)) vi.stubEnv(name, value);
+    }
+  });
+
+  it.each(["unrelated", "metadata", "checkout", "linked_main", "linked_retained"] as const)("authorizes actual separate Git storage without inferring its parent (%s)", async owner => {
+    const f = await fixture(), exec = promisify(execFileCallback);
+    const storageParent = path.join(root, `${f.issueId}-storage`);
+    const metadata = path.join(storageParent, "metadata"), unrelated = path.join(storageParent, "private-task");
+    await mkdir(unrelated, { recursive: true });
+    await exec("git", ["init", "--initial-branch=main", "--separate-git-dir", metadata, f.admission.cwd]);
+    await writeFile(path.join(f.admission.cwd, "source.txt"), "Source bytes\n");
+    await exec("git", ["-C", f.admission.cwd, "add", "."]);
+    await exec("git", ["-C", f.admission.cwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "source"]);
+    let sourceCwd = f.admission.cwd;
+    if (owner === "linked_main" || owner === "linked_retained") {
+      sourceCwd = path.join(root, `${f.issueId}-linked-source`);
+      await exec("git", ["-C", f.admission.cwd, "worktree", "add", "-b", "source-linked", sourceCwd]);
+    }
+    const [project] = await db.insert(projects).values({ companyId: f.companyId, name: "Private actual owner", visibility: "private" }).returning();
+    const [configuration] = await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId: project.id, name: "Private source",
+      cwd: owner === "metadata" ? metadata : owner === "unrelated" ? unrelated : f.admission.cwd }).returning();
+    if (owner === "linked_retained") {
+      const taskRoot = path.join(root, `${f.issueId}-different-task-root`);
+      await mkdir(taskRoot);
+      await db.update(executionWorkspaces).set({ cwd: taskRoot }).where(eq(executionWorkspaces.id, f.workspace.id));
+      await projectService(db).removeWorkspace(project.id, configuration.id);
+    }
+    const input = { companyId: f.companyId, sourceCwd, actor: f.actor, copyKind: "repository" as const };
+    if (owner !== "unrelated") {
+      await expect(assertIsolatedWorkspaceSourceReadAccess(db, input)).rejects.toThrow(/source project/);
+      await db.insert(projectAccessMembers).values([
+        { companyId: f.companyId, projectId: project.id, subjectType: "agent", subjectId: f.agentId },
+        { companyId: f.companyId, projectId: project.id, subjectType: "user", subjectId: f.userId },
+      ]);
+    }
+    const captured = await assertIsolatedWorkspaceSourceReadAccess(db, input);
+    expect(captured.roots).toContain(await realpath(metadata));
+    expect(captured.roots).toContain(await realpath(f.admission.cwd));
+    expect(captured.roots).not.toContain(await realpath(storageParent));
+    expect(captured.projectIds.includes(project.id)).toBe(owner !== "unrelated");
+  });
+
+  it.each(["deleted_primary", "retained_reader"] as const)("retains separate metadata privacy across %s", async scenario => {
+    const f = await fixture(), exec = promisify(execFileCallback);
+    const storageParent = path.join(root, `${f.issueId}-deleted-primary-storage`);
+    const metadata = path.join(storageParent, "metadata"), linked = path.join(root, `${f.issueId}-surviving-linked`);
+    await mkdir(storageParent);
+    await exec("git", ["init", "--initial-branch=main", "--separate-git-dir", metadata, f.admission.cwd]);
+    await writeFile(path.join(f.admission.cwd, "private.txt"), "PRIVATE_PRIMARY_BYTES");
+    await exec("git", ["-C", f.admission.cwd, "add", "."]);
+    await exec("git", ["-C", f.admission.cwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "private source"]);
+    await exec("git", ["-C", f.admission.cwd, "worktree", "add", "-b", "surviving-linked", linked]);
+    const [project] = await db.insert(projects).values({ companyId: f.companyId, name: "Deleted private primary", visibility: "private" }).returning();
+    const [configuration] = await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId: project.id, name: "Private source", cwd: f.admission.cwd }).returning();
+    const input = { companyId: f.companyId, sourceCwd: f.admission.cwd, actor: f.actor, copyKind: "repository" as const };
+    await expect(assertIsolatedWorkspaceSourceReadAccess(db, input)).rejects.toThrow(/source project/);
+    expect(await db.select().from(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.companyId, f.companyId))).toEqual([]);
+    const peer = scenario === "retained_reader" ? await standardPeer(f) : null;
+    if (peer) {
+      await db.update(executionWorkspaces).set({ cwd: metadata }).where(eq(executionWorkspaces.id, peer.workspace.id));
+      await f.service.prepareForAdmission({ ...peer.admission, cwd: metadata });
+    }
+    await db.insert(projectAccessMembers).values([
+      { companyId: f.companyId, projectId: project.id, subjectType: "agent", subjectId: f.agentId },
+      { companyId: f.companyId, projectId: project.id, subjectType: "user", subjectId: f.userId },
+    ]);
+    if (peer) {
+      await expect(assertIsolatedWorkspaceSourceReadAccess(db, input)).rejects.toThrow(/source project/);
+      const before = await db.select().from(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.companyId, f.companyId));
+      expect(before.some(entry => entry.kind === "project_source" && entry.scopeId === project.id)).toBe(false);
+      await db.insert(projectAccessMembers).values([
+        { companyId: f.companyId, projectId: project.id, subjectType: "agent", subjectId: peer.agentId },
+        { companyId: f.companyId, projectId: project.id, subjectType: "user", subjectId: peer.userId },
+      ]);
+    }
+    const captured = await assertIsolatedWorkspaceSourceReadAccess(db, input);
+    expect(captured.projectIds).toContain(project.id);
+    const metadataRows = await db.select().from(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.companyId, f.companyId));
+    expect(metadataRows).toContainEqual(expect.objectContaining({ canonicalCwd: await realpath(metadata), kind: "project_source", scopeId: project.id }));
+    expect(metadataRows.some(entry => entry.kind === "isolated_copy")).toBe(false);
+    if (peer) return;
+    const firstCopy = path.join(root, `${f.issueId}-authorized-copy`);
+    await retainIsolatedWorkspaceSourceAccess(db, { ...input, captured, targetCwd: firstCopy, issueId: f.issueId });
+    await exec("git", ["clone", "--no-hardlinks", f.admission.cwd, firstCopy]);
+    await projectService(db).removeWorkspace(project.id, configuration.id);
+    await rm(f.admission.cwd, { recursive: true, force: true });
+    await db.delete(projectAccessMembers).where(eq(projectAccessMembers.projectId, project.id));
+    expect(await readFile(path.join(linked, "private.txt"), "utf8")).toBe("PRIVATE_PRIMARY_BYTES");
+    await expect(assertIsolatedWorkspaceSourceReadAccess(db, { ...input, sourceCwd: linked })).rejects.toThrow(/source project/);
+  });
+
+  it.each(["ordinary", "linked"] as const)("requires real linked-worktree identity with separate Git metadata (%s)", async kind => {
+    const f = await fixture(), exec = promisify(execFileCallback);
+    const metadata = path.join(root, `${f.issueId}-metadata`);
+    await exec("git", ["init", "--initial-branch=main", "--separate-git-dir", metadata, f.admission.cwd]);
+    await writeFile(path.join(f.admission.cwd, "source.txt"), "Source bytes\n");
+    await exec("git", ["-C", f.admission.cwd, "add", "."]);
+    await exec("git", ["-C", f.admission.cwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "source"]);
+    const [project] = await db.insert(projects).values({ companyId: f.companyId, name: "Protected separate checkout", visibility: "private",
+      executionWorkspacePolicy: { authorizationPolicy: { assignmentPolicy: { mode: "protected" } } } }).returning();
+    await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId: project.id, name: "Source", cwd: f.admission.cwd });
+    await db.insert(projectAccessMembers).values([
+      { companyId: f.companyId, projectId: project.id, subjectType: "agent", subjectId: f.agentId },
+      { companyId: f.companyId, projectId: project.id, subjectType: "user", subjectId: f.userId },
+    ]);
+    const captured = await assertIsolatedWorkspaceSourceReadAccess(db, { companyId: f.companyId, sourceCwd: f.admission.cwd, actor: f.actor });
+    const targetCwd = kind === "ordinary" ? f.admission.cwd : path.join(f.admission.cwd, "linked");
+    if (kind === "linked") await exec("git", ["-C", f.admission.cwd, "worktree", "add", "-b", "linked", targetCwd]);
+    await writeFile(path.join(targetCwd, "source.txt"), "Preserved dirty edit\n");
+    const retain = () => retainIsolatedWorkspaceSourceAccess(db, { companyId: f.companyId, sourceCwd: f.admission.cwd,
+      targetCwd, actor: f.actor, issueId: f.issueId, captured, phase: "verified" });
+    if (kind === "ordinary") await expect(retain()).rejects.toThrow(/not a verified Git worktree|protected/);
+    else {
+      await expect(retain()).resolves.toBeUndefined();
+      await expect(assertExecutionWorkspaceRootWriteAccess(db, { companyId: f.companyId, cwd: targetCwd, actor: f.actor, issueId: f.issueId })).resolves.toBeUndefined();
+    }
+    const entries = await db.select().from(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.companyId, f.companyId));
+    expect(entries.some(entry => entry.kind === "isolated_copy")).toBe(kind === "linked");
+    expect(await readFile(path.join(targetCwd, "source.txt"), "utf8")).toBe("Preserved dirty edit\n");
+  });
+
   it.each(["upgrade", "interrupted_creation", "unrelated_owner"] as const)("validates a registered dirty worktree without completed copy proof after %s", async scenario => {
     const f = await fixture(), exec = promisify(execFileCallback);
     const git = async (...args: string[]) => (await exec("git", ["-C", f.admission.cwd, ...args])).stdout;

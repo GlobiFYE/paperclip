@@ -794,6 +794,41 @@ describe("ensureServerWorkspaceLinksCurrent", () => {
 });
 
 describe("realizeExecutionWorkspace", () => {
+  it.each(["primary", "linked"] as const)("realizes from a %s checkout with separate Git metadata without adopting its unrelated parent", async sourceKind => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-separate-owner-"));
+    try {
+      const wrongOwner = path.join(root, "wrong-owner"), primary = path.join(root, "source");
+      const common = path.join(wrongOwner, "separate-metadata");
+      await fs.mkdir(wrongOwner);
+      await runGit(wrongOwner, ["init", "-b", "main"]);
+      await runGit(wrongOwner, ["config", "user.email", "test@example.test"]);
+      await runGit(wrongOwner, ["config", "user.name", "Test"]);
+      await fs.writeFile(path.join(wrongOwner, "wrong.txt"), "UNRELATED_PARENT_BYTES");
+      await runGit(wrongOwner, ["add", "."]);
+      await runGit(wrongOwner, ["commit", "-m", "unrelated"]);
+      await execFileAsync("git", ["init", "-b", "main", "--separate-git-dir", common, primary]);
+      await runGit(primary, ["config", "user.email", "test@example.test"]);
+      await runGit(primary, ["config", "user.name", "Test"]);
+      await fs.writeFile(path.join(primary, "source.txt"), "AUTHORIZED_SOURCE_BYTES");
+      await runGit(primary, ["add", "."]);
+      await runGit(primary, ["commit", "-m", "source"]);
+      const source = sourceKind === "primary" ? primary : path.join(root, "linked-source");
+      if (sourceKind === "linked") await runGit(primary, ["worktree", "add", "-b", "linked-source", source]);
+      const wrongHead = await readGit(wrongOwner, ["rev-parse", "HEAD"]);
+      const expectedHead = await readGit(source, ["rev-parse", "HEAD"]);
+      const workspace = await realizeWorktreeForTest(source, "HEAD");
+      expect(await readGit(workspace.cwd, ["rev-parse", "HEAD"])).toBe(expectedHead);
+      expect(await fs.readFile(path.join(workspace.cwd, "source.txt"), "utf8")).toBe("AUTHORIZED_SOURCE_BYTES");
+      await expect(fs.stat(path.join(workspace.cwd, "wrong.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readGit(wrongOwner, ["rev-parse", "HEAD"])).toBe(wrongHead);
+      expect(await readGit(wrongOwner, ["branch", "--list", workspace.branchName!])).toBe("");
+      expect(await fs.realpath(path.resolve(workspace.cwd, await readGit(workspace.cwd, ["rev-parse", "--git-common-dir"])))).toBe(await fs.realpath(common));
+      const reused = await realizeWorktreeForTest(source, "HEAD");
+      expect(reused.cwd).toBe(workspace.cwd);
+      expect(reused.created).toBe(false);
+    } finally { await fs.rm(root, { recursive: true, force: true }); }
+  });
+
   it("defaults new git worktrees to freshly fetched origin/master", async () => {
     const sourceRepo = await createTempRepo("master");
     const remoteDir = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-worktree-remote-"));

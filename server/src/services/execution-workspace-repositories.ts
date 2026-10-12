@@ -359,9 +359,11 @@ async function verifiedIsolatedWorktree(cwd: string, allowedOwnerRoots?: Set<str
     })).stdout.trim();
     const checkoutRoot = await fs.realpath(await git(["rev-parse", "--show-toplevel"]));
     if (checkoutRoot !== cwd) return false;
-    const commonDir = await git(["rev-parse", "--git-common-dir"]);
-    const ownerRoot = await fs.realpath(path.dirname(path.resolve(checkoutRoot, commonDir)));
-    if (ownerRoot === checkoutRoot || (allowedOwnerRoots && !allowedOwnerRoots.has(ownerRoot))) return false;
+    const commonRoot = await fs.realpath(path.resolve(checkoutRoot, await git(["rev-parse", "--git-common-dir"])));
+    const gitRoot = await fs.realpath(await git(["rev-parse", "--absolute-git-dir"]));
+    // An ordinary --separate-git-dir checkout also has a .git file. Only a
+    // linked worktree has distinct per-worktree and common metadata directories.
+    if (gitRoot === commonRoot || (allowedOwnerRoots && !allowedOwnerRoots.has(commonRoot))) return false;
     const registrations = (await git(["worktree", "list", "--porcelain", "-z"])).split("\0");
     return registrations.includes(`worktree ${checkoutRoot}`);
   } catch { return false; }
@@ -379,19 +381,68 @@ async function unusedIsolatedCopyTarget(cwd: string): Promise<boolean> {
 /** Match realization's checkout and common repository roots. A configured cwd
  * may be a subdirectory or linked worktree while Git copies a broader tree. */
 type WorkspaceSourceCopyKind = "linked_worktree" | "repository";
-async function isolatedWorkspaceSourceRoots(sourceCwd: string, copyKind: WorkspaceSourceCopyKind = "linked_worktree"): Promise<string[]> {
-  const git = async (cwd: string, argument: string) => (await execFile("git", ["-C", cwd, "rev-parse", argument], {
+async function isolatedWorkspaceSourceRoots(db: Db | DbTransaction, companyId: string, sourceCwd: string, copyKind: WorkspaceSourceCopyKind = "linked_worktree"): Promise<{ roots: string[]; commonRoot: string }> {
+  const git = async (cwd: string, ...args: string[]) => (await execFile("git", ["-C", cwd, ...args], {
     timeout: 30_000, env: { ...process.env, GIT_NO_LAZY_FETCH: "1" },
   })).stdout.trim();
   const localRoot = await fs.realpath(sourceCwd);
-  if (copyKind === "repository" && await git(sourceCwd, "--is-bare-repository") === "true") {
-    const gitRoot = await fs.realpath(path.resolve(sourceCwd, await git(sourceCwd, "--absolute-git-dir")));
-    return [...new Set([localRoot, gitRoot])];
+  if (copyKind === "repository" && await git(sourceCwd, "rev-parse", "--is-bare-repository") === "true") {
+    const gitRoot = await fs.realpath(path.resolve(sourceCwd, await git(sourceCwd, "rev-parse", "--absolute-git-dir")));
+    return { roots: [...new Set([localRoot, gitRoot])], commonRoot: gitRoot };
   }
-  const checkoutRoot = await fs.realpath(path.resolve(await git(sourceCwd, "--show-toplevel")));
-  const commonDir = await git(checkoutRoot, "--git-common-dir");
-  const ownerRoot = await fs.realpath(path.dirname(path.resolve(checkoutRoot, commonDir)));
-  return [...new Set(copyKind === "repository" ? [localRoot, checkoutRoot, ownerRoot] : [checkoutRoot, ownerRoot])];
+  const checkoutRoot = await fs.realpath(path.resolve(await git(sourceCwd, "rev-parse", "--show-toplevel")));
+  const commonRoot = await fs.realpath(path.resolve(checkoutRoot, await git(checkoutRoot, "rev-parse", "--git-common-dir")));
+  const roots = new Set(copyKind === "repository" ? [localRoot, checkoutRoot, commonRoot] : [checkoutRoot, commonRoot]);
+  // An ordinary primary checkout identifies its own metadata directly. Linked
+  // worktrees can identify that primary through Git's registered checkout list.
+  let primaryIdentified = commonRoot === path.join(checkoutRoot, ".git")
+    && await fs.realpath(await git(checkoutRoot, "rev-parse", "--absolute-git-dir")) === commonRoot;
+  const considerPrimary = async (candidatePath: string): Promise<boolean> => {
+    const candidate = await fs.realpath(candidatePath).catch(() => null);
+    if (!candidate || candidate === checkoutRoot || candidate === commonRoot) return false;
+    try {
+      const candidateGitRoot = await fs.realpath(await git(candidate, "rev-parse", "--absolute-git-dir"));
+      if (candidateGitRoot !== commonRoot) return false;
+      const candidateCheckout = await fs.realpath(await git(candidate, "rev-parse", "--show-toplevel"));
+      const candidateCommon = await fs.realpath(path.resolve(candidate, await git(candidate, "rev-parse", "--git-common-dir")));
+      const relative = path.relative(candidateCheckout, candidate);
+      if (relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative)
+        && candidateCommon === commonRoot) {
+        roots.add(candidateCheckout);
+        return true;
+      }
+    } catch { /* Unverified candidates cannot identify another checkout owner. */ }
+    return false;
+  };
+  if (!primaryIdentified) {
+    const registrations = (await git(checkoutRoot, "worktree", "list", "--porcelain", "-z")).split("\0");
+    for (const registration of registrations) {
+      if (registration.startsWith("worktree ") && await considerPrimary(registration.slice("worktree ".length))) {
+        primaryIdentified = true;
+        break;
+      }
+    }
+  }
+  if (!primaryIdentified) {
+    // Separate Git metadata has no backlink to its main checkout. Only this
+    // layout needs company-owned current/retained candidates; never infer an
+    // owner from the metadata directory's parent or probe unrelated history for
+    // already-identified ordinary repositories.
+    const candidates = new Set<string>();
+    const configured = await db.select({ cwd: projectWorkspaces.cwd, repoUrl: projectWorkspaces.repoUrl }).from(projectWorkspaces)
+      .where(eq(projectWorkspaces.companyId, companyId));
+    for (const workspace of configured) {
+      const cwd = await configuredWorkspaceRoot(workspace, true);
+      if (cwd) candidates.add(cwd);
+    }
+    const workspaces = await db.select({ cwd: executionWorkspaces.cwd }).from(executionWorkspaces).where(eq(executionWorkspaces.companyId, companyId));
+    for (const workspace of workspaces) if (workspace.cwd) candidates.add(workspace.cwd);
+    const retained = await db.select({ cwd: executionWorkspaceRepositoryAccess.canonicalCwd }).from(executionWorkspaceRepositoryAccess)
+      .where(eq(executionWorkspaceRepositoryAccess.companyId, companyId));
+    for (const entry of retained) candidates.add(entry.cwd);
+    for (const candidate of candidates) await considerPrimary(candidate);
+  }
+  return { roots: [...roots], commonRoot };
 }
 
 /** Internal, deny-only snapshot captured before copying; never accepted from a model or API payload. */
@@ -402,10 +453,31 @@ export type IsolatedWorkspaceSourceAccess = {
   projectIds: string[];
 };
 
+/** Shared Git objects outlive checkout pointers. Associate their verified
+ * storage with authorized owners before copying, without granting write access. */
+async function retainGitMetadataOwners(tx: DbTransaction, input: {
+  companyId: string; commonRoot: string; workspaceIds: Set<string>; projectIds: Set<string>;
+}): Promise<void> {
+  const closure = await resolveRepositoryRootSources(tx, { companyId: input.companyId, cwd: input.commonRoot, inspectCurrentAliases: true });
+  const workspaceIds = new Set([...closure.sourceIds, ...input.workspaceIds]);
+  const projectIds = new Set([...closure.sourceProjectIds, ...input.projectIds]);
+  for (const reader of closure.overlappingEntries.filter(entry => entry.kind === "reader")) {
+    const { actor } = await retainedRootReader(tx, input.companyId, reader);
+    for (const id of workspaceIds) await assertTaskWorkspaceAccess(tx, actor, input.companyId, id);
+    await assertRootProjectAccess(tx, actor, input.companyId, projectIds);
+  }
+  for (const [kind, ids] of [["source", workspaceIds], ["project_source", projectIds]] as const) {
+    for (const scopeId of ids) if (!closure.entries.some(entry => entry.kind === kind && entry.scopeId === scopeId)) {
+      await tx.insert(executionWorkspaceRepositoryAccess).values({ companyId: input.companyId,
+        canonicalCwd: closure.canonicalCwd, rootKey: closure.rootKey, kind, scopeId });
+    }
+  }
+}
+
 export async function assertIsolatedWorkspaceSourceReadAccess(db: Db, input: {
   companyId: string; sourceCwd: string; actor: AuthorizationActor; copyKind?: WorkspaceSourceCopyKind;
 }): Promise<IsolatedWorkspaceSourceAccess> {
-  const roots = await isolatedWorkspaceSourceRoots(input.sourceCwd, input.copyKind);
+  const { roots, commonRoot } = await isolatedWorkspaceSourceRoots(db, input.companyId, input.sourceCwd, input.copyKind);
   return db.transaction(async tx => {
     await lockExecutionWorkspaceRootProvenance(tx, input.companyId);
     const workspaceIds = new Set<string>(), projectIds = new Set<string>();
@@ -418,6 +490,7 @@ export async function assertIsolatedWorkspaceSourceReadAccess(db: Db, input: {
       await assertRootProjectAccess(tx, input.actor, input.companyId, closure.sourceProjectIds);
       for (const id of closure.sourceProjectIds) projectIds.add(id);
     }
+    await retainGitMetadataOwners(tx, { companyId: input.companyId, commonRoot, workspaceIds, projectIds });
     return { companyId: input.companyId, roots, workspaceIds: [...workspaceIds], projectIds: [...projectIds] };
   });
 }
@@ -432,7 +505,7 @@ export async function retainIsolatedWorkspaceSourceAccess(db: Db, input: {
   if (input.captured.companyId !== input.companyId) throw forbidden("Isolated copy source identity changed");
   let sourceFailure: unknown;
   const roots = new Set(input.captured.roots);
-  try { for (const cwd of await isolatedWorkspaceSourceRoots(input.sourceCwd, input.copyKind)) roots.add(cwd); }
+  try { for (const cwd of (await isolatedWorkspaceSourceRoots(db, input.companyId, input.sourceCwd, input.copyKind)).roots) roots.add(cwd); }
   catch (error) { sourceFailure = error; }
   const canonicalCwd = await canonicalRepositoryRoot(input.targetCwd);
   const rootKey = createHash("sha256").update(canonicalCwd).digest("hex");
@@ -770,9 +843,12 @@ export function executionWorkspaceRepositoryService(db: Db) {
     const roots = new Set<string>(), workspaceIds = new Set<string>(), projectIds = new Set<string>();
     const retain = async () => {
       let sourceFailure: unknown;
+      let commonRoot: string | undefined;
       try {
         roots.add(await fs.realpath(input.sourceCwd));
-        for (const cwd of await isolatedWorkspaceSourceRoots(input.sourceCwd, "repository")) roots.add(cwd);
+        const source = await isolatedWorkspaceSourceRoots(db, input.companyId, input.sourceCwd, "repository");
+        commonRoot = source.commonRoot;
+        for (const cwd of source.roots) roots.add(cwd);
       } catch (error) { sourceFailure = error; }
       const denied = await db.transaction(async tx => {
         await lockExecutionWorkspaceRootProvenance(tx, input.companyId);
@@ -807,6 +883,10 @@ export function executionWorkspaceRepositoryService(db: Db) {
           await authorizeRootAccess(tx, { companyId: input.companyId, cwd: input.cwd, sourceWorkspaceId: workspace.id,
             actor, issueId: input.issueId });
         } catch (error) { failure ??= error; }
+        if (!failure && commonRoot) {
+          try { await retainGitMetadataOwners(tx, { companyId: input.companyId, commonRoot, workspaceIds, projectIds }); }
+          catch (error) { failure ??= error; }
+        }
         return failure;
       });
       if (denied) throw denied;

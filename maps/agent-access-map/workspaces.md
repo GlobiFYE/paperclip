@@ -147,6 +147,11 @@ File reads also enforce retained source privacy after local copy, configuration
 move/removal, reopen, and project deletion. A task assignment or repository
 receipt does not grant access to private files from another physical owner.
 
+Authorized Git-source capture also retains ownership on the actual shared Git
+storage. Source checks use verified checkout identities, including company-known
+owners when separate metadata has no primary-checkout registration. Removing that
+checkout does not release its private committed files in surviving worktrees.
+
 ## `closure`
 
 Review: `baseline`.

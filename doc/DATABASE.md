@@ -767,4 +767,17 @@ Migration [0337_exotic_proemial_gods.sql](../packages/db/src/migrations/0337_exo
 
 Migration [0338_absurd_vengeance.sql](../packages/db/src/migrations/0338_absurd_vengeance.sql) adds internal `execution_workspace_repository_access` provenance. Company/canonical-root source entries retain execution-workspace and source-project identities; reader entries retain the exact admitted run, task, agent and responsible user. New repository receipts also record their root at creation; legacy receipts receive no inferred origin. Shared project-source entries retain which physical owners require workspace write authority. Current admission, selection, requests and publication check the current task’s writer against those owners; retained past readers and file APIs still require only read authority. Genuine isolated copies retain source read access without requiring shared-folder write access. An existing linked worktree can recover a missing isolated-copy proof only after Git registration and its captured source owner are verified. Configured local sibling copies retain deny-only task/project source ownership on the bound task root before materialization; ordinary repository clones create no isolation proof. The shared root fence checks every reader against every source before admission and future publication, including tasks without repository requests. File APIs apply the same source privacy without writing provenance. These entries grant no authority and have no workspace or run deletion cascade; unavailable retained identity fails closed. Automatic provenance release is deferred, so a newly incompatible permission scope requires a separate physical root.
 
+Git-source capture checks the actual common Git storage directory and verified
+checkout owners. Separately stored metadata does not make its parent a checkout.
+When Git cannot identify the primary checkout, the service verifies company-known
+configured, execution, and retained roots against that metadata identity. Ordinary
+repositories and registered worktrees avoid this fallback scan.
+
+After source authorization and retained-reader checks pass, the existing
+`source` and `project_source` kinds retain ownership on shared Git storage.
+Removing the original checkout cannot release private committed files in surviving
+worktrees. These records grant no authority and create no isolation proof. Denied
+source captures leave no new records. Worktree realization uses a verified checkout
+as its Git command directory, including when metadata sits inside another repository.
+
 No migration scans or copies existing agent home directories. Keep admitted native descriptors and recovery references until compatible controllers finish their persistence obligations. See [the architecture rollout contract](plans/2026-10-09-task-workspaces.md).
