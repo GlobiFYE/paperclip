@@ -25,13 +25,10 @@ export function SlackTestMessageButton({ endpointId }: { endpointId: string }) {
   const sent = send.data?.status === "sent";
   const reset = () => { setRequestId(crypto.randomUUID()); send.reset(); };
   return <div className="space-y-2">
-    <div className="flex items-center gap-2">
       <Button variant="outline" disabled={send.isPending || sent} onClick={() => send.mutate(undefined)}>
         {send.isPending ? <Loader2 className="size-4 animate-spin" /> : sent ? <Check className="size-4" /> : <Send className="size-4" />}
         {send.isPending ? "Sending…" : sent ? "Test message sent" : "Send me a test message"}
       </Button>
-      {send.data?.status === "sent" && <a className="text-sm underline underline-offset-4" href={send.data.slackUrl} target="_blank" rel="noopener noreferrer">View message</a>}
-    </div>
     {send.isError && <div role="alert" className="max-w-sm text-sm text-destructive">
       {send.error.message} <button className="underline" onClick={reset}>Dismiss</button>
     </div>}

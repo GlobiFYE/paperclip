@@ -325,7 +325,6 @@ export function ChatEndpointDetail() {
         </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          {endpoint.provider === "slack" && <SlackTestMessageButton endpointId={endpoint.id} />}
           {slackUrl && <Button asChild variant="outline"><a href={slackUrl} target="_blank" rel="noopener noreferrer">Open Slack configuration <ExternalLink className="size-4" /></a></Button>}
           {setupIncomplete ? (
             <Button
@@ -342,6 +341,7 @@ export function ChatEndpointDetail() {
           {["paused", "attention", "revoked"].includes(endpoint.status) && <StatusBadge status={endpoint.status} />}
         </div>
       </header>
+      {endpoint.provider === "slack" && <SlackTestMessageButton key={endpoint.id} endpointId={endpoint.id} />}
       {activeTab === "settings" && (
         <>
 {endpoint.provider === "github" && <GitHubBotManagement endpoint={endpoint} view="settings" />}
@@ -473,7 +473,7 @@ function Settings({
             No destinations yet.
           </p>
         ) : (
-          <div className="divide-y divide-border border-y border-border">
+          <div className={endpoint.provider === "slack" ? "space-y-1" : "divide-y divide-border border-y border-border"}>
             {destinationResources.map((resource) => (
               <div key={resource.id} className="flex items-center gap-3 py-3">
                 <div className="min-w-0 flex-1">
@@ -564,7 +564,7 @@ function SettingToggle({
   onChange: (value: boolean) => void;
 }) {
   return (
-    <div className="flex items-center gap-3 border-y border-border py-3">
+    <div className="flex items-center gap-3 py-3">
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium">{label}</p>
         {detail && <p className="text-xs text-muted-foreground">{detail}</p>}
