@@ -6,6 +6,7 @@ import {
   projectGoals,
   goals,
   issues,
+  budgetIncidents,
   budgetPolicies,
   pluginManagedResources,
   plugins,
@@ -1054,8 +1055,27 @@ export function projectService(db: Db, options: { captureWorkspaceUpdates?: bool
       return cleared;
     },
 
-    remove: (id: string) =>
-      db
+    remove: async (id: string) => {
+      const existing = await db
+        .select({ companyId: projects.companyId })
+        .from(projects)
+        .where(eq(projects.id, id))
+        .then((rows) => rows[0] ?? null);
+      if (!existing) return null;
+      // Budget rows reference the project only by scope id; remove them
+      // with the project so they cannot orphan and break the budget
+      // overview. See #3060.
+      await db.delete(budgetIncidents).where(and(
+        eq(budgetIncidents.companyId, existing.companyId),
+        eq(budgetIncidents.scopeType, "project"),
+        eq(budgetIncidents.scopeId, id),
+      ));
+      await db.delete(budgetPolicies).where(and(
+        eq(budgetPolicies.companyId, existing.companyId),
+        eq(budgetPolicies.scopeType, "project"),
+        eq(budgetPolicies.scopeId, id),
+      ));
+      return db
         .delete(projects)
         .where(eq(projects.id, id))
         .returning()
@@ -1063,7 +1083,8 @@ export function projectService(db: Db, options: { captureWorkspaceUpdates?: bool
           const row = rows[0] ?? null;
           if (!row) return null;
           return { ...row, urlKey: deriveProjectUrlKey(row.name, row.id) };
-        }),
+        });
+    },
 
     listWorkspaces: async (projectId: string): Promise<ProjectWorkspace[]> => {
       const rows = await db

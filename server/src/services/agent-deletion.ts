@@ -1,6 +1,6 @@
 import { and, eq, or, sql } from "drizzle-orm";
 import { agents, agentApiKeys, agentRuntimeState, agentTaskSessions, agentWakeupRequests, activityLog,
-  budgetReservations, heartbeatRunEvents, heartbeatRuns, issueExecutionDecisions, issues, issueComments,
+  budgetIncidents, budgetPolicies, budgetReservations, heartbeatRunEvents, heartbeatRuns, issueExecutionDecisions, issues, issueComments,
   principalPermissionGrants, type Db } from "@paperclipai/db";
 import { conflict } from "../errors.js";
 import { issueThreadInteractionService } from "./issue-thread-interactions.js";
@@ -37,5 +37,18 @@ export async function deleteAgentDependencies(tx: Db, companyId: string, id: str
     eq(principalPermissionGrants.companyId, companyId),
     eq(principalPermissionGrants.principalType, "agent"),
     eq(principalPermissionGrants.principalId, id),
+  ));
+  // Budget policies and incidents carry the agent id as an unkeyed scope
+  // reference; leaving them behind orphans the rows and breaks the budget
+  // overview for the whole company. See #3060.
+  await tx.delete(budgetIncidents).where(and(
+    eq(budgetIncidents.companyId, companyId),
+    eq(budgetIncidents.scopeType, "agent"),
+    eq(budgetIncidents.scopeId, id),
+  ));
+  await tx.delete(budgetPolicies).where(and(
+    eq(budgetPolicies.companyId, companyId),
+    eq(budgetPolicies.scopeType, "agent"),
+    eq(budgetPolicies.scopeId, id),
   ));
 }

@@ -89,7 +89,23 @@ function normalizeScopeName(scopeType: BudgetScopeType, name: string) {
   return name.trim().length > 0 ? name : scopeType;
 }
 
+const SCOPE_NOT_FOUND_MESSAGES: Record<BudgetScopeType, string> = {
+  company: "Company not found",
+  agent: "Agent not found",
+  project: "Project not found",
+};
+
 async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: string): Promise<ScopeRecord> {
+  const record = await findScopeRecord(db, scopeType, scopeId);
+  if (!record) throw notFound(SCOPE_NOT_FOUND_MESSAGES[scopeType]);
+  return record;
+}
+
+// Nullable variant for read paths that aggregate many scopes (overviews,
+// incident lists). A policy or incident whose scope row was deleted must
+// not fail the whole read with a 404; callers skip or degrade those rows.
+// See #3060.
+async function findScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: string): Promise<ScopeRecord | null> {
   if (scopeType === "company") {
     const row = await db
       .select({
@@ -102,7 +118,7 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
       .from(companies)
       .where(eq(companies.id, scopeId))
       .then((rows) => rows[0] ?? null);
-    if (!row) throw notFound("Company not found");
+    if (!row) return null;
     return {
       companyId: row.companyId,
       name: row.name,
@@ -122,7 +138,7 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
       .from(agents)
       .where(eq(agents.id, scopeId))
       .then((rows) => rows[0] ?? null);
-    if (!row) throw notFound("Agent not found");
+    if (!row) return null;
     return {
       companyId: row.companyId,
       name: row.name,
@@ -141,7 +157,7 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
     .from(projects)
     .where(eq(projects.id, scopeId))
     .then((rows) => rows[0] ?? null);
-  if (!row) throw notFound("Project not found");
+  if (!row) return null;
   return {
     companyId: row.companyId,
     name: row.name,
@@ -366,8 +382,8 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
       .orderBy(desc(budgetPolicies.updatedAt));
   }
 
-  async function buildPolicySummary(policy: PolicyRow): Promise<BudgetPolicySummary> {
-    const scope = await resolveScopeRecord(db, policy.scopeType as BudgetScopeType, policy.scopeId);
+  async function buildPolicySummary(policy: PolicyRow, resolvedScope?: ScopeRecord): Promise<BudgetPolicySummary> {
+    const scope = resolvedScope ?? await resolveScopeRecord(db, policy.scopeType as BudgetScopeType, policy.scopeId);
     const observed = await computeObservedSpend(db, policy);
     const { total: observedAmount, totalExact: observedAmountExact, unpricedEventCount, pendingRunCount } = observed;
     const { windowStart: start, windowEnd: end } = observed;
@@ -531,14 +547,17 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
     const approvalStatusById = new Map(approvalRows.map((row) => [row.id, row.status]));
 
     return mapBudgetReads(rows, async (row) => {
-      const scope = await resolveScopeRecord(db, row.scopeType as BudgetScopeType, row.scopeId);
+      // An incident can outlive its scope (for example the agent was
+      // deleted before budget cleanup existed). Degrade to the scope-type
+      // label instead of failing the whole list. See #3060.
+      const scope = await findScopeRecord(db, row.scopeType as BudgetScopeType, row.scopeId);
       return {
         id: row.id,
         companyId: row.companyId,
         policyId: row.policyId,
         scopeType: row.scopeType as BudgetScopeType,
         scopeId: row.scopeId,
-        scopeName: normalizeScopeName(row.scopeType as BudgetScopeType, scope.name),
+        scopeName: normalizeScopeName(row.scopeType as BudgetScopeType, scope?.name ?? ""),
         metric: row.metric as BudgetMetric,
         windowKind: row.windowKind as BudgetWindowKind,
         windowStart: row.windowStart,
@@ -753,7 +772,15 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
 
     overview: async (companyId: string): Promise<BudgetOverview> => {
       const rows = await listPolicyRows(companyId);
-      const policies = await mapBudgetReads(rows, buildPolicySummary);
+      // Policies whose scope row no longer exists (orphans left by older
+      // deletions) are skipped instead of failing the whole overview with
+      // a 404. See #3060.
+      const summaries = await mapBudgetReads(rows, async (row) => {
+        const scope = await findScopeRecord(db, row.scopeType as BudgetScopeType, row.scopeId);
+        if (!scope) return null;
+        return buildPolicySummary(row, scope);
+      });
+      const policies = summaries.filter((summary): summary is BudgetPolicySummary => summary !== null);
       const activeIncidentRows = await db
         .select()
         .from(budgetIncidents)
