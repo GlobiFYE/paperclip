@@ -1,7 +1,7 @@
 import { EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm, stat, readFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -417,7 +417,9 @@ describeEmbeddedPostgres("reopen archived isolated execution workspace", () => {
     }
   });
 
-  it.each([false, true])("guards a private local managed reopen before Git and retains privacy after provisioning failure=%s", async provisionFails => {
+  it.each([false, true, "revoked_during_provision"] as const)("guards a private local managed reopen before Git and retains privacy after provisioning failure=%s", async scenario => {
+    const provisionFails = scenario === true;
+    const revokeDuringProvision = scenario === "revoked_during_provision";
     const previousHome = process.env.PAPERCLIP_HOME;
     const previousPrivacy = process.env.PAPERCLIP_ISSUE_PRIVACY_MODE;
     const home = await makeExistingDir();
@@ -441,19 +443,43 @@ describeEmbeddedPostgres("reopen archived isolated execution workspace", () => {
       await db.insert(issues).values({ id: privateIssueId, companyId, title: "Private source", visibility: "private", status: "todo", responsibleUserId: "another-owner" });
       await db.insert(executionWorkspaces).values({ companyId, projectId: null, sourceIssueId: privateIssueId, name: "Private owner", mode: "shared_workspace", strategyType: "project_primary", cwd: source, providerType: "local_fs", status: "active" });
       const workspaceId = await seedClosedGitWorktreeWorkspace({ companyId, projectId, projectWorkspaceId, cwd: target, repoUrl, branchName: "reopen-feature" });
-      if (provisionFails) await db.update(executionWorkspaces).set({ metadata: { [EXECUTION_WORKSPACE_LIFECYCLE_GENERATION_METADATA_KEY]: 1, config: { provisionCommand: "exit 42" } } }).where(eq(executionWorkspaces.id, workspaceId));
+      const waitingProvision = `node -e 'const fs = require("node:fs"); fs.writeFileSync("dirty.txt", "DIRTY_REOPEN_BYTES"); fs.writeFileSync("provision-started", "ready"); const deadline = Date.now() + 15000; const timer = setInterval(() => { if (fs.existsSync("provision-continue")) { clearInterval(timer); process.exit(0); } if (Date.now() > deadline) process.exit(2); }, 20);'`;
+      if (provisionFails || revokeDuringProvision) await db.update(executionWorkspaces).set({ metadata: { [EXECUTION_WORKSPACE_LIFECYCLE_GENERATION_METADATA_KEY]: 1, config: { provisionCommand: provisionFails ? "exit 42" : waitingProvision } } }).where(eq(executionWorkspaces.id, workspaceId));
       const issueId = await seedIssue({ companyId, projectId, workspaceId, issueNumber: 4901 });
+      if (revokeDuringProvision) await db.update(issues).set({ status: "done" }).where(eq(issues.id, issueId));
       const reopen = () => executionWorkspaceService(db).reopenClosedIsolatedExecutionWorkspaceForIssue({ workspaceId, issue: { id: issueId, companyId, projectId }, actor: { actorType: "user", agentId: null }, authorizationActor });
       expect(await reopen()).toMatchObject({ ok: false, code: "rebuild_failed" });
       await expect(stat(target)).rejects.toMatchObject({ code: "ENOENT" });
       const managed = resolveManagedProjectWorkspaceDir({ companyId, projectId, repoName: "private-source" });
       await expect(stat(managed)).rejects.toMatchObject({ code: "ENOENT" });
       await db.insert(issueAccessGrants).values({ issueId: privateIssueId, subjectType: "user", subjectId: readerId, source: "explicit" });
-      const results = provisionFails ? [await reopen()] : await Promise.all([reopen(), reopen()]);
-      expect(results.every(result => result.ok)).toBe(!provisionFails);
-      if (!provisionFails) expect(results.map(result => result.ok && result.reopened).sort()).toEqual([false, true]);
+      const attempt = revokeDuringProvision ? reopen() : null;
+      if (attempt) {
+        try {
+          await vi.waitFor(async () => expect(await readFile(join(target, "provision-started"), "utf8")).toBe("ready"), { timeout: 10_000 });
+          await db.delete(issueAccessGrants).where(eq(issueAccessGrants.issueId, privateIssueId));
+        } finally {
+          await writeFile(join(target, "provision-continue"), "resume");
+        }
+      }
+      const results = attempt ? [await attempt] : provisionFails ? [await reopen()] : await Promise.all([reopen(), reopen()]);
+      expect(results.every(result => result.ok)).toBe(!provisionFails && !revokeDuringProvision);
+      if (!provisionFails && !revokeDuringProvision) expect(results.map(result => result.ok && result.reopened).sort()).toEqual([false, true]);
       expect(await readFile(join(target, "private.txt"), "utf8")).toBe("PRIVATE_REOPEN_BYTES");
-      await expect(assertExecutionWorkspaceRootReadAccess(db, { companyId, cwd: target, actor: authorizationActor })).resolves.toBeUndefined();
+      if (revokeDuringProvision) {
+        expect(results[0]).toMatchObject({ ok: false, code: "rebuild_failed" });
+        const reopened = await readWorkspace(workspaceId);
+        expect(reopened?.status).toBe("active");
+        expect(metadataHasReopenPendingConsumption(reopened?.metadata)).toBe(false);
+        expect(await readFile(join(target, "dirty.txt"), "utf8")).toBe("DIRTY_REOPEN_BYTES");
+        const activity = await db.select().from(activityLog).where(eq(activityLog.entityId, workspaceId));
+        expect(activity.map(row => row.action)).toContain("execution_workspace.reopen_unconsumed");
+        const archive = await executionWorkspaceService(db).archiveWorkspaceUnderLifecycleLock({ id: workspaceId, patch: {}, closedAt: new Date() });
+        expect(archive?.outcome).toBe("archived");
+        expect(await readFile(join(target, "dirty.txt"), "utf8")).toBe("DIRTY_REOPEN_BYTES");
+      } else {
+        await expect(assertExecutionWorkspaceRootReadAccess(db, { companyId, cwd: target, actor: authorizationActor })).resolves.toBeUndefined();
+      }
       await db.delete(projectWorkspaces).where(eq(projectWorkspaces.id, projectWorkspaceId));
       await db.delete(issueAccessGrants).where(eq(issueAccessGrants.issueId, privateIssueId));
       await rm(source, { recursive: true, force: true });

@@ -543,17 +543,17 @@ export async function prepareProjectRepositoryWorkspaces(input: {
     const existing = await fs.lstat(cwd).catch(() => null);
     if (existing && (!existing.isDirectory() || existing.isSymbolicLink())) throw new Error("Invalid project repository checkout path");
     const configuredLocalSource = workspace.cwd && workspace.cwd !== REPO_ONLY_CWD_SENTINEL ? workspace.cwd : null;
+    const localSource = configuredLocalSource
+      && await fs.stat(configuredLocalSource).then((entry) => entry.isDirectory()).catch(() => false)
+      ? configuredLocalSource : null;
     // A URL-only clone can still read this host. Keep its committed-only clone
     // behavior, but authorize the physical file source before any Git read.
     const urlLocalSource = localRepositoryPath(repoUrl);
     // Run before the materializer's existing-checkout shortcut too. A sibling
     // added after the first admission still contributes private source bytes.
-    const sourceToAuthorize = configuredLocalSource ?? urlLocalSource;
+    const sourceToAuthorize = localSource ?? urlLocalSource;
     const recheckLocalSource = sourceToAuthorize
       ? await input.prepareLocalSource?.(sourceToAuthorize) : undefined;
-    const localSource = configuredLocalSource
-      && await fs.stat(configuredLocalSource).then((entry) => entry.isDirectory()).catch(() => false)
-      ? configuredLocalSource : null;
     const beforePublish = async () => {
       await recheckLocalSource?.();
       await input.beforePublish?.();

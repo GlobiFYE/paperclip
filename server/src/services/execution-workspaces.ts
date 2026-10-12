@@ -3592,6 +3592,13 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
             actor: input.authorizationActor, captured: capturedSource, issueId: issue.id, phase: "verified",
           });
         } catch {
+          // The route cannot consume a denied reopen. Release only the fence
+          // published by this attempt; a newer reopen keeps its own generation.
+          if (result.ok && result.reopened) {
+            await executionWorkspaceService(db).clearReopenPendingConsumptionForUnconsumedReopen({
+              workspaceId: snapshot.id, issue, actor, expectedGeneration: result.generation,
+            });
+          }
           return { ok: false, code: "rebuild_failed", message: "Failed to rebuild the execution workspace" };
         }
       }
