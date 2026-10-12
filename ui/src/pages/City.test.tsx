@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 import { BreadcrumbProvider } from "../context/BreadcrumbContext";
 import {
@@ -32,7 +33,13 @@ describe("City connection state", () => {
   });
 
   it("renders the page with controls and a concise local-M4 caveat only", () => {
-    const markup = renderToStaticMarkup(<BreadcrumbProvider><City /></BreadcrumbProvider>);
+    const markup = renderToStaticMarkup(
+      <MemoryRouter>
+        <BreadcrumbProvider>
+          <City />
+        </BreadcrumbProvider>
+      </MemoryRouter>,
+    );
     expect(markup).toContain("data-testid=\"city-connection-state\"");
     expect(markup).toContain("data-testid=\"city-fullscreen-control\"");
     expect(markup).toContain("data-testid=\"city-open-control\"");

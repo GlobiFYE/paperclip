@@ -28,9 +28,20 @@
  * verified agent feed. A loopback origin requires a browser on the M4 host;
  * a non-loopback page hostname does not prove a different physical device
  * (the M4 can open its own Tailscale name), so the UI never claims that.
+ *
+ * Dragon World (TOP-175):
+ * - An optional second City world served at `http://127.0.0.1:5182` (M4-only
+ *   private preview), configurable via `VITE_DRAGON_CITY_URL`.
+ * - The page header includes an accessible two-choice Town / Dragon World
+ *   toggle. Default is Town; `?world=dragon` selects Dragon World.
+ * - Both worlds share the same connection probe, retry, fullscreen, and
+ *   open-in-new-tab controls; the active origin reflects the selected world.
+ * - The page height (phone canvas `h-(--sz-calc-38)`), document title,
+ *   breadcrumb, and source role board remain unchanged.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import {
   Building2,
   ExternalLink,
@@ -39,14 +50,24 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 
 /** Default City origin: the M4 host's localhost. Overridable via VITE_CITY_URL. */
 export const CITY_DEFAULT_ORIGIN = "http://127.0.0.1:5180";
 
+/** Default Dragon World origin: the M4 host's localhost. Overridable via VITE_DRAGON_CITY_URL. */
+export const DRAGON_DEFAULT_ORIGIN = "http://127.0.0.1:5182";
+
 const CITY_ORIGIN = (
   import.meta.env.VITE_CITY_URL?.trim() || CITY_DEFAULT_ORIGIN
 ).replace(/\/+$/, "");
+
+const DRAGON_CITY_ORIGIN = (
+  import.meta.env.VITE_DRAGON_CITY_URL?.trim() || DRAGON_DEFAULT_ORIGIN
+).replace(/\/+$/, "");
+
+export type CityWorld = "town" | "dragon";
 
 export type CityConnectionState = "checking" | "connected" | "unreachable";
 
@@ -125,23 +146,30 @@ export function CityUnavailableFallback({
 export function City() {
   const { setBreadcrumbs } = useBreadcrumbs();
   useEffect(() => { setBreadcrumbs([{ label: "City" }]); }, [setBreadcrumbs]);
+  const [searchParams, setSearchParams] = useSearchParams();
   const [connection, setConnection] = useState<CityConnectionState>("checking");
   const [probeNonce, setProbeNonce] = useState(0);
   const [fullscreenActive, setFullscreenActive] = useState(false);
   const frameAreaRef = useRef<HTMLDivElement | null>(null);
 
-  const originIsLoopback = isLoopbackOrigin(CITY_ORIGIN);
+  // Default to Town; ?world=dragon selects Dragon World preview.
+  // URL is the single source of truth — no local useState that bypasses React Router.
+  const world: CityWorld = searchParams.get("world") === "dragon" ? "dragon" : "town";
 
+  const activeOrigin = world === "dragon" ? DRAGON_CITY_ORIGIN : CITY_ORIGIN;
+  const activeOriginIsLoopback = isLoopbackOrigin(activeOrigin);
+
+  // Probe the active origin whenever world or probeNonce changes.
   useEffect(() => {
     let cancelled = false;
     setConnection("checking");
-    probeCityOrigin(CITY_ORIGIN).then((reachable) => {
+    probeCityOrigin(activeOrigin).then((reachable) => {
       if (!cancelled) setConnection(reachable ? "connected" : "unreachable");
     });
     return () => {
       cancelled = true;
     };
-  }, [probeNonce]);
+  }, [activeOrigin, probeNonce]);
 
   useEffect(() => {
     const onChange = () => setFullscreenActive(Boolean(document.fullscreenElement));
@@ -161,11 +189,33 @@ export function City() {
         await el.requestFullscreen();
       }
     } catch {
-      // Fullscreen can be blocked by policy or embedding contexts; opening
-      // City directly keeps the control usable instead of failing silently.
-      window.open(CITY_ORIGIN, "_blank", "noopener,noreferrer");
+      window.open(activeOrigin, "_blank", "noopener,noreferrer");
     }
-  }, []);
+  }, [activeOrigin]);
+
+  const selectWorld = useCallback((next: CityWorld) => {
+    // Only exact world=dragon selects Dragon; no arbitrary URL allowed.
+    if (next === "dragon") {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set("world", "dragon");
+          return next;
+        },
+        { replace: false },
+      );
+    } else {
+      // Remove 'world' param so default stays Town, preserving other params.
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.delete("world");
+          return next;
+        },
+        { replace: false },
+      );
+    }
+  }, [setSearchParams]);
 
   return (
     <div
@@ -176,6 +226,43 @@ export function City() {
       <header className="flex flex-wrap items-center gap-2">
         <Building2 className="h-5 w-5 shrink-0 text-foreground" aria-hidden="true" />
         <h1 className="text-(length:--text-compact) font-semibold text-foreground">City</h1>
+
+        {/* Accessible two-choice Town / Dragon World selector */}
+        <div
+          role="group"
+          aria-label="Select City world"
+          className="flex items-center rounded-md border border-border bg-muted p-0.5"
+        >
+          <button
+            type="button"
+            aria-pressed={world === "town"}
+            data-testid="city-world-town"
+            onClick={() => selectWorld("town")}
+            className={cn(
+              "rounded-sm px-2 py-1 text-xs font-medium transition-colors",
+              world === "town"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Town
+          </button>
+          <button
+            type="button"
+            aria-pressed={world === "dragon"}
+            data-testid="city-world-dragon"
+            onClick={() => selectWorld("dragon")}
+            className={cn(
+              "rounded-sm px-2 py-1 text-xs font-medium transition-colors",
+              world === "dragon"
+                ? "bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            Dragon World
+          </button>
+        </div>
+
         <span
           data-testid="city-connection-state"
           className="rounded-lg border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground"
@@ -205,7 +292,7 @@ export function City() {
             asChild
             data-testid="city-open-control"
           >
-            <a href={CITY_ORIGIN} target="_blank" rel="noopener noreferrer">
+            <a href={activeOrigin} target="_blank" rel="noopener noreferrer">
               <ExternalLink className="h-4 w-4" aria-hidden="true" />
               Open City
             </a>
@@ -214,13 +301,13 @@ export function City() {
       </header>
 
       <p data-testid="city-local-m4-caveat" className="text-xs text-muted-foreground">
-        {originIsLoopback ? "City requires a browser on the M4 host." : "Explore your workforce in City."}
+        {activeOriginIsLoopback ? "City requires a browser on the M4 host." : "Explore your workforce in City."}
       </p>
 
       {connection === "connected" ? (
         <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border">
           <iframe
-            src={`${CITY_ORIGIN}/`}
+            src={`${activeOrigin}/`}
             title="City application"
             className="h-full w-full border-0 bg-background"
           />
@@ -229,11 +316,11 @@ export function City() {
         <div className="flex min-h-0 flex-1 flex-col items-start justify-center gap-3 rounded-lg border border-border bg-muted p-6">
           <p className="text-sm text-foreground" aria-live="polite">
             Contacting City at{" "}
-            <span className="font-mono break-all">{CITY_ORIGIN}</span>…
+            <span className="font-mono break-all">{activeOrigin}</span>…
           </p>
         </div>
       ) : (
-        <CityUnavailableFallback origin={CITY_ORIGIN} onRetry={retry} />
+        <CityUnavailableFallback origin={activeOrigin} onRetry={retry} />
       )}
 
       <p className="text-xs text-muted-foreground">
