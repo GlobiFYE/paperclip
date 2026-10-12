@@ -1,7 +1,11 @@
 import { agentWakeupRequests } from "@paperclipai/db";
-import { and, asc, count, eq, isNull, or, sql } from "drizzle-orm";
-import { AGENT_SCHEDULER_ENQUEUE_REASON } from "../domain/policy.js";
+import { and, asc, count, eq, isNull, lt, or, sql } from "drizzle-orm";
 import type { AgentSchedulerDb, AgentSchedulerWriter, RunnableWakeRow } from "../application/ports.js";
+import {
+  AGENT_SCHEDULER_ENQUEUE_REASON,
+  AGENT_SCHEDULER_MATERIALIZING_CLAIM_TTL_MS,
+  AGENT_SCHEDULER_MATERIALIZING_REASON,
+} from "../domain/policy.js";
 
 const AGENT_RUNNABLE_STATUS = "agent_runnable";
 
@@ -77,10 +81,12 @@ export function createPostgresAgentSchedulerAdapter(db: AgentSchedulerDb): Agent
     },
 
     async tryClaimRunnableWake(wakeId) {
+      const staleBefore = new Date(Date.now() - AGENT_SCHEDULER_MATERIALIZING_CLAIM_TTL_MS);
       const updated = await db
         .update(agentWakeupRequests)
         .set({
-          reason: "agent.scheduler.materializing",
+          reason: AGENT_SCHEDULER_MATERIALIZING_REASON,
+          claimedAt: new Date(),
           updatedAt: new Date(),
         })
         .where(
@@ -91,11 +97,37 @@ export function createPostgresAgentSchedulerAdapter(db: AgentSchedulerDb): Agent
             or(
               isNull(agentWakeupRequests.reason),
               eq(agentWakeupRequests.reason, AGENT_SCHEDULER_ENQUEUE_REASON),
+              and(
+                eq(agentWakeupRequests.reason, AGENT_SCHEDULER_MATERIALIZING_REASON),
+                lt(agentWakeupRequests.claimedAt, staleBefore),
+              ),
             ),
           ),
         )
         .returning({ id: agentWakeupRequests.id });
       return updated.length > 0;
+    },
+
+    async recoverStaleMaterializingClaims(agentId) {
+      const staleBefore = new Date(Date.now() - AGENT_SCHEDULER_MATERIALIZING_CLAIM_TTL_MS);
+      const updated = await db
+        .update(agentWakeupRequests)
+        .set({
+          reason: AGENT_SCHEDULER_ENQUEUE_REASON,
+          claimedAt: null,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(agentWakeupRequests.agentId, agentId),
+            eq(agentWakeupRequests.status, AGENT_RUNNABLE_STATUS),
+            eq(agentWakeupRequests.reason, AGENT_SCHEDULER_MATERIALIZING_REASON),
+            isNull(agentWakeupRequests.runId),
+            lt(agentWakeupRequests.claimedAt, staleBefore),
+          ),
+        )
+        .returning({ id: agentWakeupRequests.id });
+      return updated.length;
     },
 
     async releaseClaimedRunnableWake(input) {
@@ -104,6 +136,7 @@ export function createPostgresAgentSchedulerAdapter(db: AgentSchedulerDb): Agent
         .set({
           status: AGENT_RUNNABLE_STATUS,
           reason: input.enqueueReason,
+          claimedAt: null,
           updatedAt: new Date(),
         })
         .where(
@@ -111,7 +144,7 @@ export function createPostgresAgentSchedulerAdapter(db: AgentSchedulerDb): Agent
             eq(agentWakeupRequests.id, input.wakeId),
             eq(agentWakeupRequests.companyId, input.companyId),
             eq(agentWakeupRequests.agentId, input.agentId),
-            eq(agentWakeupRequests.reason, "agent.scheduler.materializing"),
+            eq(agentWakeupRequests.reason, AGENT_SCHEDULER_MATERIALIZING_REASON),
             isNull(agentWakeupRequests.runId),
           ),
         );
@@ -124,6 +157,7 @@ export function createPostgresAgentSchedulerAdapter(db: AgentSchedulerDb): Agent
           status: "queued",
           reason: input.dequeueReason,
           runId: input.runId,
+          claimedAt: null,
           updatedAt: new Date(),
         })
         .where(

@@ -5,13 +5,20 @@ import {
   resolveEffectiveAgentCapacity,
   type AgentSchedulerCapacityFacts,
 } from "../domain/policy.js";
-import type { AgentSchedulerHost, AgentSchedulerWriter, RunnableWakeRow } from "./ports.js";
+import type {
+  AgentSchedulerEnqueueActivity,
+  AgentSchedulerHost,
+  AgentSchedulerWriter,
+  RunnableWakeRow,
+} from "./ports.js";
 
 export type AgentSchedulerAdmissionInput = AgentSchedulerCapacityFacts & {
   companyId: string;
   agentId: string;
   wakeRequestId: string;
   issueId: string | null;
+  /** When true, enqueue activity is returned for logging after the host transaction commits. */
+  deferEnqueueActivity?: boolean;
 };
 
 export function createEvaluateAgentSchedulerAdmission(deps: {
@@ -20,7 +27,14 @@ export function createEvaluateAgentSchedulerAdmission(deps: {
 }) {
   return async function evaluateAgentSchedulerAdmission(
     input: AgentSchedulerAdmissionInput,
-  ): Promise<{ action: "materialize" } | { action: "park"; queueDepth: number }> {
+  ): Promise<
+    | { action: "materialize" }
+    | {
+        action: "park";
+        queueDepth: number;
+        deferredEnqueueActivity?: AgentSchedulerEnqueueActivity;
+      }
+  > {
     const decision = decideAgentRunMaterialization(input);
     if (decision.kind === "materialize") {
       return { action: "materialize" };
@@ -44,15 +58,21 @@ export function createEvaluateAgentSchedulerAdmission(deps: {
     if (!parked) {
       return { action: "materialize" };
     }
-    await deps.host.appendSchedulerEvent({
+    const enqueueActivity: AgentSchedulerEnqueueActivity = {
       companyId: input.companyId,
       agentId: input.agentId,
       wakeRequestId: input.wakeRequestId,
       issueId: input.issueId,
-      kind: "enqueue",
       reason: decision.reason,
       queueDepth,
       effectiveCapacity: decision.effectiveCapacity,
+    };
+    if (input.deferEnqueueActivity) {
+      return { action: "park", queueDepth, deferredEnqueueActivity: enqueueActivity };
+    }
+    await deps.host.appendSchedulerEvent({
+      ...enqueueActivity,
+      kind: "enqueue",
     });
     return { action: "park", queueDepth };
   };
@@ -90,6 +110,8 @@ export function createPromoteAgentRunnableWork(deps: {
       return { promoted: 0, runIds: [] };
     }
 
+    await deps.writer.recoverStaleMaterializingClaims(input.agentId);
+
     const runIds: string[] = [];
     let promoted = 0;
     let slotsRemaining = availableSlots;
@@ -104,7 +126,19 @@ export function createPromoteAgentRunnableWork(deps: {
         skippedWakeIds.add(wake.id);
         continue;
       }
-      const runId = await input.createRunForWake(wake);
+      let runId: string | null;
+      try {
+        runId = await input.createRunForWake(wake);
+      } catch {
+        await deps.writer.releaseClaimedRunnableWake({
+          wakeId: wake.id,
+          companyId: wake.companyId,
+          agentId: wake.agentId,
+          enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON,
+        });
+        skippedWakeIds.add(wake.id);
+        continue;
+      }
       if (!runId) {
         await deps.writer.releaseClaimedRunnableWake({
           wakeId: wake.id,
