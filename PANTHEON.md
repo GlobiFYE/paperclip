@@ -43,7 +43,7 @@ Build output lands in each package's `dist/` (`server/dist`, `ui/dist`,
 
 ## 2. Run
 
-The production entry point is the prepared (NOT INSTALLED) launcher:
+The production entry point, installed with owner approval on October 12, 2026, is:
 
     /Volumes/AI-Models/pantheon-app/launch.py
 
@@ -125,7 +125,6 @@ all MIT copyright notices intact when merging.
 | `ed31b1d` | Checkout runtime linker + prepared `launch.py` entry point. |
 | `6a68f91` | `launch.py` passes `NODE_OPTIONS=--conditions=pantheon-dist`. |
 | `6d67009` | Idempotent skill symlink sync: `ensurePaperclipSkillSymlink` treats `EEXIST` on the symlink as success when the occupying link already points at the expected source (still fails on genuine conflicts), and tolerates `ENOENT` on the repair unlink. Fixes crashes when concurrent runs share one Hermes profile. Unit tests included. |
-
 | `b440cd4`, `713c8de` | Initial runbook and isolated-instance evidence. |
 | `9561bbe`, `0576e74`, `822eacb`, `95206be` | Embedded City navigation, availability, titles and mobile viewport. |
 | `8309779` | Read-only skill-cache publication fix on macOS and fork export verification. |
@@ -136,10 +135,11 @@ Note: the model list above is the 8-model list from the work order, a superset
 of the 6 models in the live dist patch (the live patch never contained the
 "Gemini 3 Flash preview" and "Gemini 3.1 Flash-Lite" entries).
 
-## 5. CUTOVER — prepared, NOT authorized or executed
+## 5. CUTOVER — executed with owner approval on October 12, 2026
 
-The owner explicitly requires a fresh yes before the live cutover. Verification
-and preparation do not grant that permission. This is a private local service
+The owner explicitly authorized this cutover in chat on October 12, 2026.
+It has been executed; do not repeat the procedure for this release. Future live
+cutovers still need their own explicit authorization. This is a private local service
 change, not a public deployment. Do not push, add remotes, buy anything, delete
 state, or expand the workforce as part of the cutover.
 
@@ -280,11 +280,36 @@ worktrees, branches, backups, artifacts, accounts or issues.
   not an actual host reboot. Both 5180 and 5182 raw /api access remain denied.
 - The Chief of Staff uses Hermes/xiaomi/mimo-v2.6-pro in live and rehearsal;
   rehearsal remains paused. Other worker routing and admission policies unchanged.
-- A concrete proposed plist and private backups live in
+- The prepared plist and private readiness backups live in
   `/Volumes/AI-Models/pantheon-release/final-readiness-20261012/`. The only
   proposed live plist change is ProgramArguments[1], paperclip/launch.py to
-  pantheon-app/launch.py. It has not been applied.
+  pantheon-app/launch.py. Applied after owner authorization; actual execution evidence
+  is in `/Volumes/AI-Models/pantheon-release/live-cutover-20261012/`.
 - Readiness snapshot is not a drained baseline. Capture fresh IDs/settings and
   a new database backup after approval and drain, immediately before switching.
 - A real owner Telegram message remains a separate acceptance gate. The local
   launch test and mocked transport checks must not be described as that test.
+
+## October 12 live execution record
+
+Live service com.pantheon.paperclip now runs pantheon-app/launch.py on 3100 with
+the original PAPERCLIP_HOME. Fresh drained baseline preserved all IDs: 43 agents,
+562 skills, 187 issues and 6 projects. Fresh backup and gzip integrity passed;
+served UI hash matches the verified build. Scheduling restored. Existing City
+5180/5182 and Tailscale health passed; seven actual live desktop/phone embed
+checks passed. Owner's TOP-188 was preserved/interrupted for maintenance and
+resumed after the switch; no completed research was claimed at interruption.
+
+Cutover exposed old Hermes managed skill links in two homes. Exact old links
+were preserved under /Users/clawd/.hermes/pantheon-cutover-backup-20261012/ and
+retargeted to /Volumes/AI-Models/pantheon-app/skills/paperclip. Flight Director
+subsequently started successfully on MiMo. If rolling back to the old binary,
+restore these exact link targets too, keeping their backups; do not remove or
+replace unrelated user-installed skills. skill-link-migration.json records paths.
+
+Dragon World ab09531 adds explicit Motion System/On/Off with persisted preference.
+The owner's M4 Reduce Motion setting had correctly disabled animations; On now
+allows city animation without changing that OS preference. Browser checks cover
+ambient movement and synthetic workflow travel separately; do not label ambient
+animation as actual model work. RunAtLoad/recovery were tested as documented;
+host reboot and remote embedded city are separate scopes.
