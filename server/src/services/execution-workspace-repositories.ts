@@ -107,7 +107,7 @@ export function assertRepositoryRetryMatches(row: Pick<RepositoryRow, "repositor
 
 /** Resolve persisted and physical file provenance without registering readers or policies. */
 async function resolveRepositoryRootSources(tx: Db | DbTransaction, input: {
-  companyId: string; cwd: string; sourceWorkspaceId?: string; inspectCurrentAliases?: boolean;
+  companyId: string; cwd: string; sourceWorkspaceId?: string; inspectCurrentAliases?: boolean; preparingCopyProjectIds?: Set<string>;
 }) {
   const canonicalCwd = await canonicalRepositoryRoot(input.cwd);
   const rootKey = createHash("sha256").update(canonicalCwd).digest("hex");
@@ -122,7 +122,11 @@ async function resolveRepositoryRootSources(tx: Db | DbTransaction, input: {
   // Only an exact target copy record proves that ancestral source owners were
   // copied here. A copied child must never relax its parent or a new owner
   // configured directly at/inside the target.
-  const copiedProjectIds = new Set(entries.filter(entry => entry.kind === "isolated_project_source").map(entry => entry.scopeId));
+  const proofs = entries.filter(entry => entry.kind === "isolated_copy");
+  const copiedProjectIds = new Set(input.preparingCopyProjectIds ?? []);
+  if (proofs.length && await verifiedIsolatedWorktree(canonicalCwd)) {
+    for (const proof of proofs) copiedProjectIds.add(proof.scopeId);
+  }
   const isCopiedAncestor = (projectId: string, sourceRoot: string) => copiedProjectIds.has(projectId)
     && sourceRoot !== canonicalCwd && repositoryRootsOverlap(sourceRoot, canonicalCwd)
     && !path.relative(sourceRoot, canonicalCwd).startsWith(`..${path.sep}`)
@@ -324,6 +328,34 @@ export async function assertExecutionWorkspaceRootReadAccess(db: Db | DbTransact
   await assertRootProjectAccess(db, input.actor, input.companyId, sourceProjectIds);
 }
 
+/** A retained copy intent protects privacy but proves no physical isolation.
+ * Only a real, registered linked worktree can activate completed-copy records. */
+async function verifiedIsolatedWorktree(cwd: string, allowedOwnerRoots?: Set<string>): Promise<boolean> {
+  try {
+    const directory = await fs.lstat(cwd), marker = await fs.lstat(path.join(cwd, ".git"));
+    if (!directory.isDirectory() || directory.isSymbolicLink() || !marker.isFile() || marker.isSymbolicLink() || marker.size > 4096) return false;
+    const git = async (args: string[]) => (await execFile("git", ["-C", cwd, ...args], {
+      timeout: 30_000, env: { ...process.env, GIT_NO_LAZY_FETCH: "1" },
+    })).stdout.trim();
+    const checkoutRoot = await fs.realpath(await git(["rev-parse", "--show-toplevel"]));
+    if (checkoutRoot !== cwd) return false;
+    const commonDir = await git(["rev-parse", "--git-common-dir"]);
+    const ownerRoot = await fs.realpath(path.dirname(path.resolve(checkoutRoot, commonDir)));
+    if (ownerRoot === checkoutRoot || (allowedOwnerRoots && !allowedOwnerRoots.has(ownerRoot))) return false;
+    const registrations = (await git(["worktree", "list", "--porcelain", "-z"])).split("\0");
+    return registrations.includes(`worktree ${checkoutRoot}`);
+  } catch { return false; }
+}
+
+async function unusedIsolatedCopyTarget(cwd: string): Promise<boolean> {
+  const entry = await fs.lstat(cwd).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!entry) return true;
+  return entry.isDirectory() && !entry.isSymbolicLink() && (await fs.readdir(cwd)).length === 0;
+}
+
 /** Match realization's checkout and common repository roots. A configured cwd
  * may be a subdirectory or linked worktree while Git copies a broader tree. */
 async function isolatedWorkspaceSourceRoots(sourceCwd: string): Promise<string[]> {
@@ -369,7 +401,7 @@ export async function assertIsolatedWorkspaceSourceReadAccess(db: Db, input: {
  * already-copied private bytes never become an unowned readable target. */
 export async function retainIsolatedWorkspaceSourceAccess(db: Db, input: {
   companyId: string; sourceCwd: string; targetCwd: string; actor: AuthorizationActor;
-  captured: IsolatedWorkspaceSourceAccess; issueId?: string;
+  captured: IsolatedWorkspaceSourceAccess; issueId?: string; phase?: "preparing" | "verified";
 }): Promise<void> {
   if (input.captured.companyId !== input.companyId) throw forbidden("Isolated copy source identity changed");
   let sourceFailure: unknown;
@@ -405,13 +437,34 @@ export async function retainIsolatedWorkspaceSourceAccess(db: Db, input: {
         await tx.insert(executionWorkspaceRepositoryAccess).values({ companyId: input.companyId, rootKey, canonicalCwd, kind, scopeId });
       }
     }
+    // Completed-copy authority is separate from the deny-only intent above.
+    // A failed Git operation in an existing ordinary folder cannot mint it.
+    const phase = input.phase ?? "preparing";
+    let preparingCopyProjectIds: Set<string> | undefined;
+    try {
+      const targetEntry = await fs.lstat(input.targetCwd).catch((error: NodeJS.ErrnoException) => {
+        if (error.code === "ENOENT") return null;
+        throw error;
+      });
+      if (targetEntry?.isSymbolicLink()) throw forbidden("Isolated copy target cannot be a symbolic link");
+      if (phase === "verified") {
+        if (!await verifiedIsolatedWorktree(canonicalCwd, roots)) throw forbidden("Isolated copy target is not a verified Git worktree");
+        for (const scopeId of projectIds) if (!existing.some(entry => entry.kind === "isolated_copy" && entry.scopeId === scopeId)) {
+          await tx.insert(executionWorkspaceRepositoryAccess).values({ companyId: input.companyId, rootKey, canonicalCwd, kind: "isolated_copy", scopeId });
+        }
+      } else if (await unusedIsolatedCopyTarget(input.targetCwd)) {
+        // This allowance exists only for this pre-copy check. No proof row is
+        // written until the harness confirms Git's completed registration.
+        preparingCopyProjectIds = projectIds;
+      }
+    } catch (error) { failure ??= error; }
     // The target may already contain independently owned files. Copy source
     // READ authority never grants permission to provision/write that target.
     try {
-      await assertExecutionWorkspaceRootWriteAccess(tx, {
-        companyId: input.companyId, cwd: canonicalCwd, actor: input.actor, issueId: input.issueId,
-      });
-      const target = await resolveRepositoryRootSources(tx, { companyId: input.companyId, cwd: canonicalCwd });
+      const target = await resolveRepositoryRootSources(tx, { companyId: input.companyId, cwd: canonicalCwd, preparingCopyProjectIds });
+      for (const id of target.sourceIds) await assertTaskWorkspaceAccess(tx, input.actor, input.companyId, id);
+      await assertRootProjectAccess(tx, input.actor, input.companyId, target.sourceProjectIds,
+        { sharedProjectIds: target.sharedProjectIds, issueId: input.issueId });
       for (const reader of target.overlappingEntries.filter(entry => entry.kind === "reader")) {
         const { actor } = await retainedRootReader(tx, input.companyId, reader);
         for (const id of target.sourceIds) await assertTaskWorkspaceAccess(tx, actor, input.companyId, id);

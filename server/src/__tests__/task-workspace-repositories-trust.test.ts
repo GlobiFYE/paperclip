@@ -9,7 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import { eq } from "drizzle-orm";
 import { agents, authUsers, companies, companyMemberships, createDb, executionWorkspaceRepositoryRoots, executionWorkspaceRepositoryAccess, executionWorkspaceRepositories, executionWorkspaces,
   heartbeatRuns, issueAccessGrants, issues, projects, projectWorkspaces, projectAccessMembers, principalPermissionGrants, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
-import { assertExecutionWorkspaceRootReadAccess, assertIsolatedWorkspaceSourceReadAccess, retainIsolatedWorkspaceSourceAccess, executionWorkspaceRepositoryService } from "../services/execution-workspace-repositories.js";
+import { assertExecutionWorkspaceRootReadAccess, assertExecutionWorkspaceRootWriteAccess, assertIsolatedWorkspaceSourceReadAccess, retainIsolatedWorkspaceSourceAccess, executionWorkspaceRepositoryService } from "../services/execution-workspace-repositories.js";
 import { executionWorkspaceService } from "../services/execution-workspaces.js";
 import { buildNativeExecutionInput } from "../services/native-runtime/native-execution-input.js";
 import { nativeRuntimeContextFixture } from "../services/native-runtime/runtime-context.test-fixture.js";
@@ -270,15 +270,66 @@ const support = await getEmbeddedPostgresTestSupport();
     const targetCwd = sourceKind === "nested_target" ? path.join(f.admission.cwd, ".paperclip", "worktrees", "copy") : path.join(root, `${f.issueId}-copy`);
     await retainIsolatedWorkspaceSourceAccess(db, { companyId: f.companyId, sourceCwd, targetCwd, actor: f.actor, captured });
     await expect(fs.lstat(targetCwd)).rejects.toMatchObject({ code: "ENOENT" });
+    if (sourceKind === "nested_target") {
+      await expect(assertExecutionWorkspaceRootWriteAccess(db, { companyId: f.companyId, cwd: targetCwd,
+        actor: f.actor, issueId: f.issueId })).rejects.toThrow(/protected|assignment grant/);
+    }
     await exec("git", ["-C", f.admission.cwd, "worktree", "add", "-b", "copy", targetCwd]);
-    await retainIsolatedWorkspaceSourceAccess(db, { companyId: f.companyId, sourceCwd, targetCwd, actor: f.actor, captured });
+    await retainIsolatedWorkspaceSourceAccess(db, { companyId: f.companyId, sourceCwd, targetCwd, actor: f.actor, captured, phase: "verified" });
     const [target] = await db.insert(executionWorkspaces).values({ companyId: f.companyId, name: "Isolated copy", cwd: targetCwd,
       mode: "isolated_workspace", strategyType: "git_worktree" }).returning();
     await db.update(issues).set({ executionWorkspaceId: target.id }).where(eq(issues.id, f.issueId));
     await expect(f.service.prepareForAdmission({ ...f.admission, workspaceId: target.id, cwd: targetCwd })).resolves.toEqual([]);
     expect(await readFile(path.join(targetCwd, "private", "secret.txt"), "utf8")).toBe("Copied private Git bytes\n");
+    if (sourceKind === "nested_target") {
+      await fs.rename(path.join(targetCwd, ".git"), path.join(targetCwd, ".saved-git"));
+      await expect(assertExecutionWorkspaceRootWriteAccess(db, { companyId: f.companyId, cwd: targetCwd,
+        actor: f.actor, issueId: f.issueId })).rejects.toThrow(/protected|assignment grant/);
+      await fs.rename(path.join(targetCwd, ".saved-git"), path.join(targetCwd, ".git"));
+    }
     await db.delete(projectAccessMembers).where(eq(projectAccessMembers.projectId, project.id));
     await expect(assertExecutionWorkspaceRootReadAccess(db, { companyId: f.companyId, cwd: targetCwd, actor: f.actor, sourceWorkspaceId: target.id })).rejects.toThrow(/source project/);
+  });
+
+  it("does not let an unmaterialized copy intent authorize writes to an existing source folder", async () => {
+    const f = await fixture(), exec = promisify(execFileCallback);
+    const targetCwd = path.join(f.admission.cwd, "tracked-private-folder");
+    await mkdir(targetCwd);
+    await writeFile(path.join(targetCwd, "existing.txt"), "Protected original bytes\n");
+    await exec("git", ["init", "--initial-branch=main", f.admission.cwd]);
+    await exec("git", ["-C", f.admission.cwd, "add", "."]);
+    await exec("git", ["-C", f.admission.cwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "source"]);
+    const [project] = await db.insert(projects).values({ companyId: f.companyId, name: "Protected original source", visibility: "private",
+      executionWorkspacePolicy: { authorizationPolicy: { assignmentPolicy: { mode: "protected" } } } }).returning();
+    await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId: project.id, name: "Original files", cwd: f.admission.cwd });
+    await db.insert(projectAccessMembers).values([
+      { companyId: f.companyId, projectId: project.id, subjectType: "agent", subjectId: f.agentId },
+      { companyId: f.companyId, projectId: project.id, subjectType: "user", subjectId: f.userId },
+    ]);
+    const writeInput = { companyId: f.companyId, cwd: targetCwd, actor: f.actor, issueId: f.issueId };
+    await expect(assertExecutionWorkspaceRootWriteAccess(db, writeInput)).rejects.toThrow(/protected|assignment grant/);
+    const captured = await assertIsolatedWorkspaceSourceReadAccess(db, { companyId: f.companyId, sourceCwd: f.admission.cwd, actor: f.actor });
+    await expect(retainIsolatedWorkspaceSourceAccess(db, { companyId: f.companyId, sourceCwd: f.admission.cwd, targetCwd,
+      actor: f.actor, issueId: f.issueId, captured })).rejects.toThrow(/protected|assignment grant/);
+    await expect(fs.lstat(path.join(targetCwd, ".git"))).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await readFile(path.join(targetCwd, "existing.txt"), "utf8")).toBe("Protected original bytes\n");
+    await expect(assertExecutionWorkspaceRootWriteAccess(db, writeInput)).rejects.toThrow(/protected|assignment grant/);
+  });
+
+  it("does not verify a missing or ordinary empty directory as an isolated copy", async () => {
+    const f = await fixture(), exec = promisify(execFileCallback);
+    await exec("git", ["init", "--initial-branch=main", f.admission.cwd]);
+    await writeFile(path.join(f.admission.cwd, "source.txt"), "Source\n");
+    await exec("git", ["-C", f.admission.cwd, "add", "."]);
+    await exec("git", ["-C", f.admission.cwd, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "source"]);
+    const captured = await assertIsolatedWorkspaceSourceReadAccess(db, { companyId: f.companyId, sourceCwd: f.admission.cwd, actor: f.actor });
+    const targetCwd = path.join(root, `${f.issueId}-never-materialized`);
+    const input = { companyId: f.companyId, sourceCwd: f.admission.cwd, targetCwd, actor: f.actor, captured, phase: "verified" as const };
+    await expect(retainIsolatedWorkspaceSourceAccess(db, input)).rejects.toThrow(/not a verified Git worktree/);
+    await mkdir(targetCwd);
+    await expect(retainIsolatedWorkspaceSourceAccess(db, input)).rejects.toThrow(/not a verified Git worktree/);
+    const entries = await db.select().from(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.companyId, f.companyId));
+    expect(entries.some(entry => entry.kind === "isolated_copy")).toBe(false);
   });
 
   it.each(["exact", "descendant"] as const)("requires write authority for a protected %s target before copying", async relation => {

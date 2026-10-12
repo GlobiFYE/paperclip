@@ -486,6 +486,13 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
     ? (sourceCwd: string, targetCwd: string) => retainIsolatedWorkspaceSourceAccess(db, {
         companyId: agent.companyId, sourceCwd, targetCwd,
         actor: isolatedWorkspaceSourceActor, captured: isolatedWorkspaceSourceAccess, issueId: issueId ?? undefined,
+        phase: "preparing",
+      }) : undefined;
+  const afterIsolatedSourceCopy = isolatedWorkspaceSourceAccess
+    ? (sourceCwd: string, targetCwd: string) => retainIsolatedWorkspaceSourceAccess(db, {
+        companyId: agent.companyId, sourceCwd, targetCwd,
+        actor: isolatedWorkspaceSourceActor, captured: isolatedWorkspaceSourceAccess, issueId: issueId ?? undefined,
+        phase: "verified",
       }) : undefined;
   const {
     executionWorkspace,
@@ -555,6 +562,7 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
               recorder: workspaceOperationRecorder,
               resolveGitAuth: workspaceGitAuthProvider,
               beforeSourceCopy: beforeIsolatedSourceCopy,
+              afterSourceCopy: afterIsolatedSourceCopy,
             })
         : null,
       realizeWorkspace: () =>
@@ -588,6 +596,7 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
           recorder: workspaceOperationRecorder,
           resolveGitAuth: workspaceGitAuthProvider,
           beforeSourceCopy: beforeIsolatedSourceCopy,
+          afterSourceCopy: afterIsolatedSourceCopy,
         }),
     },
   );
@@ -599,6 +608,7 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
       actor: isolatedWorkspaceSourceActor,
       captured: isolatedWorkspaceSourceAccess,
       issueId: issueId ?? undefined,
+      phase: "verified",
     });
   }
   const resolvedProjectId =

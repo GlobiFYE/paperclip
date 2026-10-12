@@ -3324,6 +3324,7 @@ export async function realizeExecutionWorkspace(input: {
   recorder?: WorkspaceOperationRecorder | null;
   resolveGitAuth?: GitRemoteAuthProvider | null;
   beforeSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
+  afterSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
 }): Promise<RealizedExecutionWorkspace> {
   const rawStrategy = parseObject(input.config.workspaceStrategy);
   const strategyType = asString(rawStrategy.type, "project_primary");
@@ -3470,6 +3471,7 @@ export async function realizeExecutionWorkspace(input: {
         }),
       });
     }
+    await input.afterSourceCopy?.(repoRoot, reusablePath);
     await provisionExecutionWorktree({
       strategy: rawStrategy,
       base: input.base,
@@ -3628,6 +3630,7 @@ export async function realizeExecutionWorkspace(input: {
         },
       );
     }
+    await input.afterSourceCopy?.(repoRoot, worktreePath);
     await provisionExecutionWorktree({
       strategy: rawStrategy,
       base: input.base,
@@ -3723,6 +3726,7 @@ export async function realizeExecutionWorkspace(input: {
       return await reuseExistingWorktree(reusablePath);
     }
   }
+  await input.afterSourceCopy?.(repoRoot, worktreePath);
   await provisionExecutionWorktree({
     strategy: rawStrategy,
     base: input.base,
@@ -3777,6 +3781,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
   recorder?: WorkspaceOperationRecorder | null;
   resolveGitAuth?: GitRemoteAuthProvider | null;
   beforeSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
+  afterSourceCopy?: (sourceCwd: string, targetCwd: string) => Promise<void>;
 }): Promise<RealizedExecutionWorkspace | null> {
   const cwd = asString(input.workspace.cwd ?? input.workspace.providerRef, "").trim();
   if (!cwd) return null;
@@ -3908,6 +3913,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     });
     realized.warnings = [...repairWarnings, ...baseRefreshWarnings, ...baseDrift.warnings];
     realized.baseRefSha = refresh.baseRefSha ?? recordedBaseRefSha ?? baseDrift.branchBaseRefSha ?? baseDrift.currentBaseRefSha;
+    await input.afterSourceCopy?.(repoRoot, realized.worktreePath ?? cwd);
     await provisionExecutionWorktree({
       strategy: {
         type: "git_worktree",
@@ -4000,6 +4006,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     skipRefresh: true,
   });
 
+  await input.afterSourceCopy?.(repoRoot, worktreePath);
   await provisionExecutionWorktree({
     strategy: {
       type: "git_worktree",

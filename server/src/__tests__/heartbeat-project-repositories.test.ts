@@ -19,6 +19,7 @@ import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } fro
 import { heartbeatService } from "../services/heartbeat.ts";
 import { resolvePaperclipInstanceRoot } from "../home-paths.js";
 import { accessService } from "../services/access.js";
+import { assertExecutionWorkspaceRootWriteAccess } from "../services/execution-workspace-repositories.js";
 import { instanceSettingsService } from "../services/instance-settings.ts";
 import { environmentRuntimeService } from "../services/environment-runtime.js";
 import { findNativeChatWorkspaceScope } from "../services/native-runtime/native-chat-workspace.js";
@@ -468,7 +469,7 @@ suite("task project repository provisioning", () => {
     expect(await readFile(path.join(cwd, "work.txt"), "utf8")).toBe("Protected source content");
   }, 30_000);
 
-  it.each([false, true])("checks nested private source access before worktree copy and retains it after read-grant revocation (provision fails: %s)", async (provisionFails) => {
+  it.each(["success", "provision_failure", "occupied_target"] as const)("checks nested private source access before worktree copy and retains it after read-grant revocation (%s)", async (scenario) => {
     const previousPrivacyMode = process.env.PAPERCLIP_ISSUE_PRIVACY_MODE;
     vi.stubEnv("PAPERCLIP_ISSUE_PRIVACY_MODE", "enforce");
     try {
@@ -476,10 +477,15 @@ suite("task project repository provisioning", () => {
       const sourceId = randomUUID(), agentId = randomUUID(), issueId = randomUUID();
       const cwd = path.join(root, companyId, "public-source");
       const privateCwd = path.join(cwd, "private");
+      const occupiedTarget = path.join(cwd, ".paperclip", "worktrees", "occupied-private");
       await mkdir(privateCwd, { recursive: true });
       const git = (...args: string[]) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
       git("init", "-b", "main");
       await writeFile(path.join(privateCwd, "secret.txt"), "NESTED_PRIVATE_TRACKED_BYTES");
+      if (scenario === "occupied_target") {
+        await mkdir(path.join(occupiedTarget, "private"), { recursive: true });
+        await writeFile(path.join(occupiedTarget, "private/secret.txt"), "NESTED_PRIVATE_TRACKED_BYTES");
+      }
       git("add", ".");
       git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "seed");
       const initialWorktrees = git("worktree", "list", "--porcelain");
@@ -493,9 +499,13 @@ suite("task project repository provisioning", () => {
         { id: sourceId, companyId, projectId, name: "Git source", sourceType: "local_path", cwd, isPrimary: true },
         { id: randomUUID(), companyId, projectId: privateProjectId, name: "Nested private source", sourceType: "local_path", cwd: privateCwd, isPrimary: true },
       ]);
+      if (scenario === "occupied_target") await db.insert(projectWorkspaces).values({
+        id: randomUUID(), companyId, projectId: privateProjectId, name: "Private parent of occupied target",
+        sourceType: "local_path", cwd: path.dirname(occupiedTarget), isPrimary: false,
+      });
       await db.insert(agents).values({ id: agentId, companyId, name: "Isolated reader", status: "idle", adapterType: "codex_local", adapterConfig: {}, permissions: {} });
       await db.insert(issues).values({ id: issueId, companyId, title: "Read isolated source", status: "todo", assigneeAgentId: agentId,
-        projectWorkspaceId: sourceId, executionWorkspaceSettings: { mode: "isolated_workspace", workspaceStrategy: { type: "git_worktree", ...(provisionFails ? { provisionCommand: "exit 42" } : {}) } },
+        projectWorkspaceId: sourceId, executionWorkspaceSettings: { mode: "isolated_workspace", workspaceStrategy: { type: "git_worktree", ...(scenario === "provision_failure" ? { provisionCommand: "exit 42" } : {}), ...(scenario === "occupied_target" ? { branchTemplate: "occupied-private", provisionCommand: "touch provision-ran" } : {}) } },
         workspaceSelection: { version: 1, source: "explicit", selection: { kind: "configured_source", projectWorkspaceId: sourceId, mode: "managed_isolated" } } });
       const admit = async () => {
         const run = await heartbeat.wakeup(agentId, { source: "on_demand", triggerDetail: "manual", contextSnapshot: { issueId } });
@@ -519,13 +529,21 @@ suite("task project repository provisioning", () => {
       const allowed = await admit();
       const calls = execute.mock.calls.filter(([input]) => input.runId === allowed.id);
       let copiedCwd: string;
-      if (provisionFails) {
+      if (scenario !== "success") {
         expect(allowed.status).toBe("failed");
-        expect(allowed.error).toContain("provision");
         expect(calls).toHaveLength(0);
-        const paths = git("worktree", "list", "--porcelain").split("\n").filter(line => line.startsWith("worktree ")).map(line => line.slice(9));
-        expect(paths).toHaveLength(2);
-        copiedCwd = paths.find(entry => entry !== paths[0])!;
+        if (scenario === "provision_failure") {
+          expect(allowed.error).toContain("provision");
+          const paths = git("worktree", "list", "--porcelain").split("\n").filter(line => line.startsWith("worktree ")).map(line => line.slice(9));
+          expect(paths).toHaveLength(2);
+          copiedCwd = paths.find(entry => entry !== paths[0])!;
+        } else {
+          expect(allowed.error).toMatch(/protected|assignment grant/);
+          expect(git("worktree", "list", "--porcelain")).toBe(initialWorktrees);
+          copiedCwd = occupiedTarget;
+          await expect(readFile(path.join(copiedCwd, ".git"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+          await expect(readFile(path.join(copiedCwd, "provision-ran"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+        }
         expect((await db.select().from(issues).where(eq(issues.id, issueId)))[0].executionWorkspaceId).toBeNull();
         // A later public alias must not expose bytes from failed provisioning.
         const aliasId = randomUUID();
@@ -533,6 +551,11 @@ suite("task project repository provisioning", () => {
           name: "Public alias after failed provisioning", mode: "shared_workspace", strategyType: "project_primary", cwd: copiedCwd,
           providerType: "local_fs", status: "active" });
         await db.update(issues).set({ executionWorkspaceId: aliasId }).where(eq(issues.id, issueId));
+        if (scenario === "occupied_target") {
+          // A failed copy intent must never relabel an ordinary private directory as isolated.
+          await expect(assertExecutionWorkspaceRootWriteAccess(db, { companyId, cwd: copiedCwd, sourceWorkspaceId: aliasId, issueId,
+            actor: { type: "agent", agentId, companyId, source: "agent_jwt", onBehalfOfUserId: "responsible-user" } })).rejects.toThrow(/protected|assignment grant/);
+        }
       } else {
         expect(allowed).toMatchObject({ status: "succeeded", error: null });
         expect(calls).toHaveLength(1);
