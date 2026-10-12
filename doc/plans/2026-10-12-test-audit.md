@@ -4,13 +4,197 @@ Date: 2026-10-12
 Baseline: `fb21a3f30a`
 Reference: [OpenClaw test audit](https://github.com/openclaw/openclaw/blob/main/.agents/skills/test-audit/SKILL.md)
 
-The combined cleanup removes **6,678 net test/support lines, 41 unused
-production lines, and 1,003 registered cases**. Four obsolete ACPX
-characterization files are retired. Unique contracts remain in their current
-owners. Complete owner/sibling validation passes 2,817 cases, and the entire
-chat integration suite passes all 1,237 cases. Workspace typecheck, build, and
-token gates pass. This is a reviewed subset of the repository, not an
-exhaustive review or a complete default-suite run.
+The combined cleanup removes **11,976 net test/support lines, 41 unused
+production lines, and 1,073 registered cases**. Four obsolete ACPX
+characterization files and the old Codex driver monolith are retired. Unique
+contracts remain in their current owners. The latest round passes all 1,421
+affected/sibling cases, with caught mutations and restored passing controls.
+Workspace typecheck and build pass. The previous round's completed owner and
+chat proof is recorded separately below. This is a reviewed subset of the
+repository, not an exhaustive review or a complete default-suite run.
+
+## Second expansion
+
+Baseline: `8538e024d7`. Refreshed `origin/master` remains at `fb21a3f30a`.
+Three auditors nominated owner batches; original-source and proposal SHA-256
+guards were checked before cutover. This round changes tests, one test-gate
+file selector, documentation, and scoped test ownership guidance. It changes
+zero application source lines.
+
+| Owner batch | Net test/support lines removed | Net registered cases removed |
+| --- | ---: | ---: |
+| Codex monolith retirement and test-gate selector | 3,780 | 64 |
+| Sandbox/SSH execution target fixtures | 976 | 0 |
+| Tool request/audit and heartbeat recovery consolidation | 367 | 4 |
+| Issue workspace inheritance duplicates | 175 | 2 |
+| **New round** | **5,298** | **70** |
+| Earlier rounds | 6,678 | 1,003 |
+| **Combined** | **11,976** | **1,073** |
+
+These figures exclude Markdown. The Codex row contains 3,779 test lines and
+one removed prerequisite-selector line. The earlier 41 application lines
+were the unused WorkspaceRuntimeControls compatibility path; no additional
+application code was removed in this round. No measured speedup is claimed.
+
+### New retired proof and keepers
+
+- Codex: `06f8773097` (#12371) split the driver tests but retained the
+  4,153-line monolith. Its 70 declarations have 56 exact keepers, four
+  evolved stronger keepers, and ten unique migrations. All parameter rows
+  survive. Move tool refresh to recovery; continuation/effort/controls/goals
+  to context-control; direct-chat tools and unknown outcomes to
+  semantic-results. Preserve exact host-HOME equality as well as descendant
+  denial, the -32004 goal-policy denial and exact availability event, and
+  stronger diff/path and rejected/missing-result contracts. The monolith's
+  76 registered cases become 12 migrated rows; the nine-file baseline has
+  214 cases and the eight retained owners have 150.
+- Test-gate routing: remove only SH-1's stale monolith filename. Its
+  existing lifecycle keeper still proves additive instructions. Required
+  patterns, source-digest receipts, other prerequisites and grading stay.
+  Update four docs to reachable suite filters/owners. The runner package
+  has its own Vitest config and is not in the root project list.
+- Adapter fixtures: consolidate fresh roots/workspaces, repeated sandbox
+  targets, bridge defaults and SSH targets. Expand the actual new helpers
+  with their actual arguments/defaults and compare the entire executable
+  AST to the committed originals. Every case, all 523 expectation statements,
+  custom runner, body limit, timeout, callback, await and cleanup remains.
+  Helpers allocate fresh objects/runners; all 41 converted bridge calls
+  resolve target.remoteCwd to the original local remoteCwd expression.
+- Tool requests: combine two audit-only cases with their exact same
+  behavioral request/actor/policy owners. Move both complete activity and
+  dedicated-audit assertion blocks. Preserve the missing-ID HTTP 404 in
+  the existing live lifecycle. Repair the misleading non-test-origin
+  negative, whose random missing ID never reached the origin guard, using
+  the real persisted agent-owned request in the connected-MCP gateway case.
+  Its company/connection/agent/run/issue preconditions reach the intended guard.
+- Heartbeat: combine the weaker no-state accepted-plan recovery case with
+  the dropped-accept-time-wake keeper. Carry every full-context/retry
+  assertion. Consolidate only identical DB seed rows in five retained
+  siblings; retain historical-run, answered-question, board authority and
+  post-resolution timing scenarios.
+- Issues: remove the second exact inheritance and explicit-override
+  declarations. Both groups initialize the same real DB/service/schema and
+  per-case experimental inputs. Keep every unique generic-project,
+  cross-project, source-inheritance, update and runtime-config case.
+
+### Second expansion preservation and validation
+
+Independent reviews cover all four boundary groups. They found no remaining
+preservation blockers. Codex review independently compares all 70 mappings:
+66 callback/table/budget ASTs are identical under the one workspace alias,
+including the ten migrations; four evolved keepers preserve/strengthen the
+original contracts. Eight shared helpers match; the fake transport's existing
+optional providerIdentity is absent in these cases. The existing disposable,
+canonical workspace preserves cwd identity and containment tests.
+
+Adapter helper expansion, issue full-file comparison after the two exact
+deletions, server audit-block comparison and recovery helper expansion retain
+all surrounding executable statements. No generated expectation, fake owner
+receipt, broad skip or longer timeout replaces behavioral proof.
+
+- Baseline: **1,459 cases pass** across all nominated complete files and the
+  stock-harness gate test. The initial sandboxed attempt hit localhost
+  `listen EPERM` and consequent skips; unrestricted fixture runs pass every case.
+- Candidate: **1,211 server/adapter cases, 182 Codex/transport/console cases,
+  and 28 stock-harness cases pass**, zero failed/skipped cases. The 182 include
+  all 150 retained Codex/diff owners plus 32 transport/console siblings.
+- Mutation: bypass only getTestCallStatus's origin clause. The real persisted
+  request resolves and the new rejection assertion fails. Lookup/company/
+  connection preconditions remain valid. Restore source byte for byte; control
+  passes.
+- Mutation: misclassify Codex goal policy denial as unsupported. The retained
+  real availability-event assertion fails. Restore source byte for byte;
+  control passes.
+- Workspace `pnpm -r typecheck`, `pnpm build`, runner E2E-support typecheck,
+  and `git diff --check` pass. No UI source changed in this round.
+- The full default repository suite remains unverified; this is complete
+  affected-owner/sibling proof. A full default run is still required before
+  claiming a PR-ready handoff. All commits remain local.
+
+### Retained second-round nominees
+
+Keep native-session-runtime, runnerd transport, ACPX translation and browser
+model suites: they exercise distinct lifecycle, authentication, protocol or
+separate implementation owners. Keep sandbox queue versus real HTTP2 layers,
+credential/stream/order guards, and unrelated tool/company/security cases.
+No additional full-layer retirement was justified in those boundaries.
+
+### Codex declaration ledger
+
+Each exact case name identifies its protected contract; callback/table preservation was checked against the committed baseline. D deletes redundant old proof; C moves or consolidates it.
+
+| Old line / exact case | Mark | Keeper | Evidence |
+| --- | --- | --- | --- |
+| 330: refreshes authorized tools on resume without replacing the provider thread | C move | `codex-app-server-driver.recovery.test.ts:1305` | identical body/table under cwd alias |
+| 433: parses a complete Codex turn diff snapshot with bounded file statistics | D | `codex-turn-diff.test.ts:17` | identical body/table under cwd alias |
+| 466: bounds aggregate Codex diffs and rejects unsafe workspace paths | C stronger keeper | `codex-turn-diff.test.ts:50` | explicit superset/migration above |
+| 496: persists process ownership before sending provider requests | D | `codex-app-server-driver.lifecycle.test.ts:265` | identical body/table under cwd alias |
+| 533: sends direct chat as plain text and permits a follow-up turn | D | `codex-app-server-driver.lifecycle.test.ts:417` | identical body/table under cwd alias |
+| 579: forwards the persisted native model to the runner transport | D | `codex-app-server-driver.lifecycle.test.ts:463` | identical body/table under cwd alias |
+| 600: adds Paperclip developer instructions without replacing the Codex base and enables selected skills | D | `codex-app-server-driver.lifecycle.test.ts:486` | identical body/table under cwd alias |
+| 630: passes the common typed-event contract and reports one provider turn terminal | D | `codex-app-server-driver.lifecycle.test.ts:574` | identical body/table under cwd alias |
+| 845: admits a strictly bound semantic result from the durable runner | D | `codex-app-server-driver.events.test.ts:47` | identical body/table under cwd alias |
+| 879: correlates rehydrated notifications with the final canonical PRP event ids | D | `codex-app-server-driver.events.test.ts:81` | identical body/table under cwd alias |
+| 935: maps canonical workspace snapshots with monotonic revisions and one terminal diff | D | `codex-app-server-driver.events.test.ts:137` | identical body/table under cwd alias |
+| 1052: finalizes an authoritative empty workspace snapshot when a turn is interrupted | D | `codex-app-server-driver.events.test.ts:254` | identical body/table under cwd alias |
+| 1095: accepts a thread usage snapshot replayed before a resumed turn starts | D | `codex-app-server-driver.events.test.ts:319` | identical body/table under cwd alias |
+| 1129: normalizes provider message and reasoning phases onto every streamed item event | D | `codex-app-server-driver.events.test.ts:353` | identical body/table under cwd alias |
+| 1264: captures an exact skillless model/environment snapshot with credentials absent | D | `codex-app-server-driver.context-control.test.ts:82` | identical body/table under cwd alias |
+| 1356: pins approval policy %s for both thread start and resume | D | `codex-app-server-driver.context-control.test.ts:174` | identical body/table under cwd alias |
+| 1383: requires trusted continuation metadata before omitting task context (%s) | C move | `codex-app-server-driver.context-control.test.ts:692` | identical body/table under cwd alias |
+| 1402: allows eval fixtures to opt out of Codex collaboration instructions | D | `codex-app-server-driver.context-control.test.ts:201` | identical body/table under cwd alias |
+| 1423: negotiates genuine plan mode with collaboration instructions and read-only workspace access | D | `codex-app-server-driver.context-control.test.ts:222` | identical body/table under cwd alias |
+| 1466: sends the selected reasoning effort with the Codex turn | C move | `codex-app-server-driver.context-control.test.ts:711` | identical body/table under cwd alias |
+| 1478: fails closed when the installed app-server does not confirm plan mode | D | `codex-app-server-driver.context-control.test.ts:265` | identical body/table under cwd alias |
+| 1492: refuses to turn host credential roots into model-writable workspaces | C stronger keeper | `codex-app-server-driver.context-control.test.ts:279` | explicit superset/migration above |
+| 1528: uses negotiated ACP controls through the Codex transport facade | C move | `codex-app-server-driver.context-control.test.ts:723` | identical body/table under cwd alias |
+| 1549: keeps native follow-up disabled for the Codex app-server driver | C move | `codex-app-server-driver.context-control.test.ts:744` | identical body/table under cwd alias |
+| 1560: steers and interrupts an active turn without replacing the session | D | `codex-app-server-driver.context-control.test.ts:315` | identical body/table under cwd alias |
+| 1590: loads the deterministic Live console wire fixture | D | `codex-app-server-driver.context-control.test.ts:345` | identical body/table under cwd alias |
+| 1612: holds browser-resolved upstream requests and returns the exact fixture responses | D | `codex-app-server-driver.context-control.test.ts:367` | identical body/table under cwd alias |
+| 1673: acknowledges same-turn steering and rejects stale or child steering | D | `codex-app-server-driver.context-control.test.ts:428` | identical body/table under cwd alias |
+| 1792: queues an interrupt before turn identity and reports a terminal race precisely | D | `codex-app-server-driver.context-control.test.ts:547` | identical body/table under cwd alias |
+| 1827: maps all goal operations and advertises an exact unsupported state | C stronger keeper | `codex-app-server-driver.context-control.test.ts:582` | explicit superset/migration above |
+| 1907: keeps goal support advertised when the probe fails transiently | D | `codex-app-server-driver.context-control.test.ts:662` | identical body/table under cwd alias |
+| 1937: preserves an inactive goal status while editing its objective | C move | `codex-app-server-driver.context-control.test.ts:755` | identical body/table under cwd alias |
+| 1964: rolls back only a definitely rejected idle goal autostart | C move | `codex-app-server-driver.context-control.test.ts:782` | identical body/table under cwd alias |
+| 2014: preserves a provider-neutral goal action subset through the Codex transport facade | C move | `codex-app-server-driver.context-control.test.ts:832` | identical body/table under cwd alias |
+| 2059: validates runtime request resolutions against the kind of request they answer | D | `codex-app-server-driver.runtime-requests.test.ts:47` | identical body/table under cwd alias |
+| 2176: replays the DOT-185 requestUserInput shape as one canonical three-question request | D | `codex-app-server-driver.runtime-requests.test.ts:164` | identical body/table under cwd alias |
+| 2282: rejects an explicit malformed Codex form without falling back to v1 | D | `codex-app-server-driver.runtime-requests.test.ts:317` | identical body/table under cwd alias |
+| 2324: emits one canonical outcome payload for every terminal runtime request fact | D | `codex-app-server-driver.runtime-requests.test.ts:359` | identical body/table under cwd alias |
+| 2410: expires a canonical input with its full question set when the provider transport is lost | D | `codex-app-server-driver.runtime-requests.test.ts:445` | identical body/table under cwd alias |
+| 2469: hands a live canonical input off exactly once when the durable window expires | D | `codex-app-server-driver.runtime-requests.test.ts:504` | identical body/table under cwd alias |
+| 2551: exposes and dispatches only explicit chat tools across fresh and resumed direct chat | C move | `codex-app-server-driver.semantic-results.test.ts:866` | identical body/table under cwd alias |
+| 2683: lets an answer claimed before expiry win the terminal-event race | D | `codex-app-server-driver.runtime-requests.test.ts:644` | identical body/table under cwd alias |
+| 2758: redacts browser-visible request details and diagnostics from the fixture markers | D | `codex-app-server-driver.runtime-requests.test.ts:719` | identical body/table under cwd alias |
+| 2796: makes duplicate semantic completion idempotent and rejects changed payloads | D | `codex-app-server-driver.semantic-results.test.ts:151` | identical body/table under cwd alias |
+| 2873: accepts a normalized runnerd echo of a tool-committed semantic result | D | `codex-app-server-driver.semantic-results.test.ts:226` | identical body/table under cwd alias |
+| 2928: advertises and dispatches run-authorized control-plane tools | D | `codex-app-server-driver.semantic-results.test.ts:288` | identical body/table under cwd alias |
+| 2988: preserves the dynamic tool outcome boundary (%s) | C move | `codex-app-server-driver.semantic-results.test.ts:998` | identical body/table under cwd alias |
+| 3011: fails closed when an agent message changes a tool-committed result | D | `codex-app-server-driver.semantic-results.test.ts:348` | identical body/table under cwd alias |
+| 3058: rejects a tool result that changes an agent-message commitment | D | `codex-app-server-driver.semantic-results.test.ts:450` | identical body/table under cwd alias |
+| 3109: treats a canonically identical cross-channel result as a no-op | D | `codex-app-server-driver.semantic-results.test.ts:501` | identical body/table under cwd alias |
+| 3153: fails closed when a live terminal embeds a changed semantic result | D | `codex-app-server-driver.semantic-results.test.ts:545` | identical body/table under cwd alias |
+| 3205: rejects a semantic result for $label without committing it | D | `codex-app-server-driver.semantic-results.test.ts:597` | identical body/table under cwd alias |
+| 3244: rejects pre-turn, cross-thread, and post-terminal notifications | D | `codex-app-server-driver.semantic-results.test.ts:636` | identical body/table under cwd alias |
+| 3328: rejects duplicate and conflicting terminal facts | D | `codex-app-server-driver.semantic-results.test.ts:720` | identical body/table under cwd alias |
+| 3362: rejects oversized semantic results without retaining provider payloads | D | `codex-app-server-driver.semantic-results.test.ts:754` | identical body/table under cwd alias |
+| 3404: normalizes finish and block tools into one canonical result contract | D | `codex-app-server-driver.semantic-results.test.ts:796` | identical body/table under cwd alias |
+| 3475: resumes and reconciles the exact provider thread after transport loss | D | `codex-app-server-driver.recovery.test.ts:297` | identical body/table under cwd alias |
+| 3507: ignores an old terminal turn when the persisted active turn is still running | D | `codex-app-server-driver.recovery.test.ts:365` | identical body/table under cwd alias |
+| 3548: preserves proposal idempotency and rejects a changed result after transport loss | D | `codex-app-server-driver.recovery.test.ts:406` | identical body/table under cwd alias |
+| 3632: rejects changed terminal result content discovered during recovery | D | `codex-app-server-driver.recovery.test.ts:490` | identical body/table under cwd alias |
+| 3703: does not re-emit an already observed terminal after recovery | D | `codex-app-server-driver.recovery.test.ts:561` | identical body/table under cwd alias |
+| 3758: fails recovery explicitly when the persisted active turn is missing or replaced | D | `codex-app-server-driver.recovery.test.ts:1186` | identical body/table under cwd alias |
+| 3799: reconciles a turn completed during transport loss without replacing either session identity | D | `codex-app-server-driver.recovery.test.ts:1227` | identical body/table under cwd alias |
+| 3877: degrades unsupported operations with explicit redacted diagnostics | D | `codex-app-server-driver.conformance.test.ts:47` | identical body/table under cwd alias |
+| 3912: rejects proposals that do not match the exact task envelope | D | `codex-app-server-driver.conformance.test.ts:82` | identical body/table under cwd alias |
+| 3947: keeps a completed runtime successful for an accepted %s advisory proposal | D | `codex-app-server-driver.conformance.test.ts:117` | identical body/table under cwd alias |
+| 4001: records rejected and missing proposals as recovery evidence instead of review status | C stronger keeper | `codex-app-server-driver.conformance.test.ts:171` | explicit superset/migration above |
+| 4033: preserves four independent stable identities under controller ownership | D | `codex-app-server-driver.conformance.test.ts:210` | identical body/table under cwd alias |
+| 4054: validates persisted identity, uniqueness, terminals, and line bounds before replay | D | `codex-app-server-driver.conformance.test.ts:231` | identical body/table under cwd alias |
+| 4103: degrades declared unsupported capabilities without Codex-specific core branches | D | `codex-app-server-driver.conformance.test.ts:280` | identical body/table under cwd alias |
 
 ## Aggressive follow-up
 
