@@ -71,3 +71,17 @@ Remap these measurements after the fifth extraction and stop at five PRs.
   setup inspection. For Teams, extract source/recipient/file authority as a
   coherent transaction-level API; keep transport protocol and scheduler lifetime
   in the service to avoid passing unrelated runtime/worker dependencies.
+
+## Slice 4: Photon events
+
+- Service: 28,219 lines / 1,108,711 bytes → 27,398 lines / 1,079,439 bytes.
+- Destination: 903 lines / 33,080 bytes. Provider failure, incoming event and
+  native response handling preserve all three function bodies. The receiver,
+  lease ownership, checkpoint callbacks and setup inspection remain in the
+  service; question delivery uses the original service object.
+- All 18 Photon channel integration cases passed before and after. They use the
+  assembled Chat SDK runtime, provider fixture streams and a disposable database
+  to cover poll/confirmation responses, separate participant drafts, stale
+  controls, receiver lease fencing, groups, echoes, restart and continuation.
+  Server typecheck, boundaries, whitespace and syntax parity passed.
+- Next: Teams file-transfer authority, with no transport or timer ownership move.
