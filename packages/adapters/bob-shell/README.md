@@ -18,10 +18,10 @@ git clone https://github.com/ludovic-gasc/paperclip-adapter-bob-shell
 cd paperclip-adapter-bob-shell
 npm install && npm run build
 
-curl -X POST http://localhost:3100/api/adapters \
+curl -X POST http://localhost:3100/api/adapters/install \
   -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{"localPath": "/absolute/path/to/paperclip-adapter-bob-shell"}'
+  -d '{"packageName": "/absolute/path/to/paperclip-adapter-bob-shell", "isLocalPath": true}'
 ```
 
 The package root exports `createServerAdapter()`. This is the entry point
