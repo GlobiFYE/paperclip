@@ -33,7 +33,10 @@ import { accessService, projectService, logActivity, workspaceOperationService }
 import { conflict, forbidden, unprocessable } from "../errors.js";
 import { externalObjectService } from "../services/external-objects.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
-import { normalizeIssueExecutionPolicy } from "../services/issue-execution-policy.js";
+import {
+  normalizeIssueExecutionPolicy,
+  preserveRedactedDefaultExecutionPolicyMonitorExternalRef,
+} from "../services/issue-execution-policy.js";
 import { assertBoard, assertCompanyAccess, getAccessibleResource, getActorInfo } from "./authz.js";
 import { ensureProjectAccessMember } from "../services/projects.js";
 import {
@@ -529,7 +532,15 @@ export function projectRoutes(db: Db) {
         res.status(403).json({ error: "Only board users can set the project default execution policy" });
         return;
       }
-      const project = await svc.update(id, { defaultExecutionPolicy: req.body.defaultExecutionPolicy });
+      // The GET above returns monitor.externalRef redacted, so a client that
+      // round-trips that response back into this PUT submits the "[redacted]"
+      // marker literally. Preserve the real stored value in that case instead
+      // of overwriting it with the marker string.
+      const submittedDefaultExecutionPolicy = preserveRedactedDefaultExecutionPolicyMonitorExternalRef(
+        req.body.defaultExecutionPolicy,
+        existing.defaultExecutionPolicy ?? null,
+      );
+      const project = await svc.update(id, { defaultExecutionPolicy: submittedDefaultExecutionPolicy });
       if (!project) {
         res.status(404).json({ error: "Project not found" });
         return;

@@ -39,7 +39,10 @@ import { badRequest, conflict, forbidden, notFound, unprocessable } from "../err
 import { PORTABLE_ZIP_UPLOAD_LIMIT_BYTES } from "../http/body-limits.js";
 import { logger } from "../middleware/logger.js";
 import { validate } from "../middleware/validate.js";
-import { normalizeIssueExecutionPolicy } from "../services/issue-execution-policy.js";
+import {
+  normalizeIssueExecutionPolicy,
+  preserveRedactedDefaultExecutionPolicyMonitorExternalRef,
+} from "../services/issue-execution-policy.js";
 import {
   assembleImportTransferZip,
   importTransferPartName,
@@ -536,9 +539,22 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
         return;
       }
       const actor = getActorInfo(req);
+      const existingCompany = await svc.getById(companyId);
+      if (!existingCompany) {
+        res.status(404).json({ error: "Company not found" });
+        return;
+      }
+      // The GET above returns monitor.externalRef redacted, so a client that
+      // round-trips that response back into this PUT submits the "[redacted]"
+      // marker literally. Preserve the real stored value in that case instead
+      // of overwriting it with the marker string.
+      const submittedDefaultExecutionPolicy = preserveRedactedDefaultExecutionPolicyMonitorExternalRef(
+        req.body.defaultExecutionPolicy,
+        existingCompany.defaultExecutionPolicy ?? null,
+      );
       const company = await svc.update(
         companyId,
-        { defaultExecutionPolicy: req.body.defaultExecutionPolicy },
+        { defaultExecutionPolicy: submittedDefaultExecutionPolicy },
         actor,
       );
       if (!company) {

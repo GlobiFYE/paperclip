@@ -720,4 +720,86 @@ describeEmbeddedPostgres("company/project default execution policy", () => {
     const found = list.body.find((p: { id: string }) => p.id === project.id);
     expect(found.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
   });
+
+  it("does not overwrite the company default's real monitor externalRef when a PUT round-trips the redacted marker", async () => {
+    const company = await seedCompany();
+    const realExternalRef = "https://example.com/webhook?token=super-secret";
+
+    await request(app(boardActor))
+      .put(`/api/companies/${company.id}/default-execution-policy`)
+      .send({
+        defaultExecutionPolicy: {
+          ...approvalPolicy("company-reviewer"),
+          monitor: {
+            nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
+            kind: "external_service",
+            serviceName: "github",
+            externalRef: realExternalRef,
+          },
+        },
+      })
+      .expect(200);
+
+    // Simulate an editor that loaded the redacted GET response and PUT it
+    // straight back, including the literal "[redacted]" marker, while
+    // changing an unrelated field.
+    const put = await request(app(boardActor))
+      .put(`/api/companies/${company.id}/default-execution-policy`)
+      .send({
+        defaultExecutionPolicy: {
+          ...approvalPolicy("company-reviewer"),
+          monitor: {
+            nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
+            kind: "external_service",
+            serviceName: "github",
+            externalRef: "[redacted]",
+          },
+        },
+      })
+      .expect(200);
+    expect(put.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
+
+    const [row] = await db.select().from(companies).where(eq(companies.id, company.id));
+    expect(row!.defaultExecutionPolicy?.monitor?.externalRef).toBe(realExternalRef);
+  });
+
+  it("does not overwrite the project default's real monitor externalRef when a PUT round-trips the redacted marker", async () => {
+    const company = await seedCompany();
+    const project = await seedProject(company.id);
+    const realExternalRef = "https://example.com/webhook?token=super-secret";
+
+    await request(app(boardActor))
+      .put(`/api/projects/${project.id}/default-execution-policy`)
+      .send({
+        defaultExecutionPolicy: {
+          ...approvalPolicy("project-reviewer"),
+          monitor: {
+            nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
+            kind: "external_service",
+            serviceName: "github",
+            externalRef: realExternalRef,
+          },
+        },
+      })
+      .expect(200);
+
+    const put = await request(app(boardActor))
+      .put(`/api/projects/${project.id}/default-execution-policy`)
+      .send({
+        defaultExecutionPolicy: {
+          ...approvalPolicy("project-reviewer"),
+          monitor: {
+            nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
+            kind: "external_service",
+            serviceName: "github",
+            externalRef: "[redacted]",
+          },
+        },
+      })
+      .expect(200);
+    expect(put.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
+
+    const [row] = await db.select().from(projects).where(eq(projects.id, project.id));
+    expect(row!.defaultExecutionPolicy?.monitor?.externalRef).toBe(realExternalRef);
+  });
 });
