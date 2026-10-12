@@ -139,3 +139,18 @@ origins and the manager redirect before starting fresh authorization.
 Remove the temporary redirect when retiring the test drive and securely remove
 its development credential file. Removing a bot does not revoke a manager grant
 used by other bots.
+
+### Test messages from Settings
+
+**Send me a test message** sends a DM to the signed-in connection manager,
+using their linked identity in this workspace. If this bot is not linked yet,
+Paperclip can reuse that user's verified manager grant or another bot's linked
+identity in the same company and workspace. Otherwise, the user selects their
+Slack account and explicitly confirms ownership before Paperclip links it and
+sends the DM. Existing revoked or conflicting identity links are not overwritten.
+Direct messages must be enabled, and the user must be an active company operator.
+
+The action records a durable request before sending. Repeating the same request
+returns its saved result; an uncertain delivery is never automatically resent.
+**Open Slack configuration** opens the saved app's OAuth & Permissions page.
+Legacy connections without an app ID open Slack's app list instead.

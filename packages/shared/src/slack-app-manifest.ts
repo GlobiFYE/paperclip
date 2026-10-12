@@ -85,6 +85,20 @@ export type SlackManagerAuthorization = z.infer<typeof slackManagerAuthorization
 export type SlackInstallAuthorization = z.infer<typeof slackInstallAuthorizationSchema>;
 export const slackSetupActionSchema = z.object({}).strict();
 
+export const slackTestMessageSchema = z.object({
+  requestId: z.string().uuid(),
+  // Supplying an account is an explicit ownership confirmation by the board user.
+  slackUserId: z.string().regex(/^[UW][A-Z0-9]+$/).optional(),
+}).strict();
+export type SlackTestMessageInput = z.infer<typeof slackTestMessageSchema>;
+export const slackTestMessageResultSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("sent"), slackUrl: z.string().url() }).strict(),
+  z.object({ status: z.literal("connection_required"), accounts: z.array(z.object({
+    id: z.string(), name: z.string(),
+  }).strict()) }).strict(),
+]);
+export type SlackTestMessageResult = z.infer<typeof slackTestMessageResultSchema>;
+
 export function slackRegistrationErrorMessage(code: string): string {
   const messages: Record<string, string> = {
     slack_managed_unavailable: "Managed Slack setup is unavailable. Try again later or use your own app before creation starts.",

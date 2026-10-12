@@ -217,6 +217,8 @@ export const chatEndpointsApi = {
       photon?: PhotonChannelConfiguration;
     },
   ) => api.post<ChatEndpoint>(`/chat-endpoints/${endpointId}/setup`, input),
+  sendSlackTestMessage: (endpointId: string, input: import("@paperclipai/shared").SlackTestMessageInput) =>
+    api.post<import("@paperclipai/shared").SlackTestMessageResult>(`/chat-endpoints/${endpointId}/slack/test-message`, input),
   slackSetupOptions: (companyId: string) => api.get<SlackSetupOptions>(`/companies/${companyId}/chat-slack/setup-options`),
   authorizeSlackManager: (endpointId: string) => api.post<import("@paperclipai/shared").SlackManagerAuthorization>(`/chat-endpoints/${endpointId}/slack/managed/authorize`, {}),
   provisionManagedSlack: (endpointId: string, input: SlackManagedProvisionInput) => api.post<SlackManagedResult>(`/chat-endpoints/${endpointId}/slack/managed/provision`, input),

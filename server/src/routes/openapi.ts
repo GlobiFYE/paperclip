@@ -1,4 +1,4 @@
-import { slackManagerAuthorizationSchema, slackSetupOptionsSchema, slackManagedProvisionSchema, slackManagedResultSchema, slackRegistrationSchema, slackSetupActionSchema, slackInstallAuthorizationSchema, slackRegistrationStateSchema, slackAppConfigurationSchema, slackAvatarStateSchema, slackAccountStateSchema } from "@paperclipai/shared";
+import { slackTestMessageSchema, slackTestMessageResultSchema, slackManagerAuthorizationSchema, slackSetupOptionsSchema, slackManagedProvisionSchema, slackManagedResultSchema, slackRegistrationSchema, slackSetupActionSchema, slackInstallAuthorizationSchema, slackRegistrationStateSchema, slackAppConfigurationSchema, slackAvatarStateSchema, slackAccountStateSchema } from "@paperclipai/shared";
 import { experimentalApiMetadata } from "./experimental-api-metadata.js";
 import {
   experimentalApiPaths,
@@ -2501,6 +2501,14 @@ registry.registerPath({
   description: "Authenticated, same-origin continuation with company, actor, session, endpoint revision and configured-origin checks. The broker handoff is single use; credentials are never returned to the browser. Explicit local development qualification accepts a Slack code instead of a broker claim; production ignores code.",
   request: { query: z.object({ state: z.string(), claim_id: z.string().optional(), code: z.string().optional(), error: z.string().optional() }) },
   responses: { 200: { description: "Same-origin continuation page" }, 303: { description: "Return to saved setup" }, 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 409: r.conflict },
+});
+
+registry.registerPath({
+  method: "post", path: "/api/chat-endpoints/{endpointId}/slack/test-message", tags: ["chat-channels"],
+  summary: "Connect the current user's Slack identity and send a test DM",
+  description: "Requires a board connection manager and active company membership. Reuses only the actor's verified identity in the same workspace; otherwise returns personal account choices for explicit ownership confirmation. Revoked and conflicting links cannot be overwritten. The request ID prevents duplicate or ambiguous sends from being replayed.",
+  request: { params: z.object({ endpointId: z.string().uuid() }), body: jsonBody(slackTestMessageSchema) },
+  responses: { 200: r.ok(slackTestMessageResultSchema), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound, 409: r.conflict, 422: r.unprocessable, 429: { description: "Wait before sending another test message" } },
 });
 
 for (const action of ["registration", "install", "resume"] as const) {

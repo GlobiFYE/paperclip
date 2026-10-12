@@ -1,3 +1,5 @@
+import { slackTestMessageService } from "./connectors/slack/test-message.js";
+import type { SlackSetupOptions } from "./connectors/slack/setup/registration.js";
 import { isProvisionedSlackSetup } from "@paperclipai/shared";
 import { chatCredentialMutationLease, CREDENTIAL_MUTATION_LEASE_TTL_MS, type CredentialMutationLeaseGuard } from "./chat-credential-mutation-lease.js";
 import type { AgentAvatarRequest } from "./agent-avatars.js";
@@ -38136,6 +38138,30 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     return get(endpointId);
   }
 
+  const linkSlackAccount: SlackSetupOptions["linkInstaller"] = async (endpointId, user, actor, lease) => {
+    const record = await endpointRecord(endpointId);
+    if (!record || record.endpoint.provider !== "slack" || record.endpoint.providerAccountId !== user.team_id) throw conflict("Slack setup changed");
+    const { principal } = await ensurePrincipal(record.endpoint, {
+      userId: String(user.id), userName: typeof user.name === "string" ? user.name : String(user.id),
+      fullName: typeof user.real_name === "string" ? user.real_name : String(user.id), isBot: false, isMe: false,
+    });
+    await db.transaction(async tx => {
+      await lease.assertOwned(tx);
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`chat-identity:${record.endpoint.companyId}:${principal.id}`}, 0))`);
+      const membership = (await tx.select().from(companyMemberships).where(and(eq(companyMemberships.companyId, record.endpoint.companyId), eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, actor.userId))).for("update"))[0];
+      if (membership?.status !== "active" || membership.membershipRole === "viewer") throw forbidden("The signed-in Paperclip account cannot use this connection");
+      const links = await tx.select().from(chatIdentityLinks).where(and(eq(chatIdentityLinks.companyId, record.endpoint.companyId), eq(chatIdentityLinks.principalId, principal.id))).for("update");
+      if (links.some(link => link.status === "linked" && link.paperclipUserId !== actor.userId) || links.some(link => link.endpointId === endpointId && link.status === "revoked")) throw conflict("This Slack account has an existing link", { code: "chat_identity_link_conflict" });
+      if (links.some(link => link.endpointId === endpointId && link.status === "linked")) return;
+      await tx.insert(chatIdentityLinks).values({ companyId: record.endpoint.companyId, endpointId, principalId: principal.id,
+        paperclipUserId: actor.userId, status: "linked", confirmedAt: new Date() })
+        .onConflictDoUpdate({ target: [chatIdentityLinks.endpointId, chatIdentityLinks.principalId], set: {
+          paperclipUserId: actor.userId, status: "linked", confirmationTokenHash: null, expiresAt: null, confirmedAt: new Date(), revokedAt: null, updatedAt: new Date(),
+        } });
+      await lease.assertOwned(tx);
+    });
+  };
+
   const slackRegistration = slackChatRegistrationService(db, {
     publicOrigin: getPublicBaseUrl, webhookOrigin: getWebhookPublicBaseUrl, fetch: fetchImpl, renderAvatar: options.renderSlackAvatar, managed: options.slackManaged,
     withLock: async (endpointId, work) => {
@@ -38165,29 +38191,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         .where(and(eq(chatIdentityLinks.companyId, record.endpoint.companyId), eq(chatIdentityLinks.endpointId, endpointId), eq(chatIdentityLinks.status, "linked"), eq(chatIdentityLinks.paperclipUserId, account.paperclipUserId), eq(chatExternalPrincipals.externalId, account.externalUserId), eq(chatExternalPrincipals.providerAccountId, record.endpoint.providerAccountId!)));
       return Boolean(link);
     },
-    linkInstaller: async (endpointId, user, actor, lease) => {
-      const record = await endpointRecord(endpointId);
-      if (!record || record.endpoint.provider !== "slack" || record.endpoint.providerAccountId !== user.team_id) throw conflict("Slack setup changed");
-      const { principal } = await ensurePrincipal(record.endpoint, {
-        userId: String(user.id), userName: typeof user.name === "string" ? user.name : String(user.id),
-        fullName: typeof user.real_name === "string" ? user.real_name : String(user.id), isBot: false, isMe: false,
-      });
-      await db.transaction(async tx => {
-        await lease.assertOwned(tx);
-        await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`chat-identity:${record.endpoint.companyId}:${principal.id}`}, 0))`);
-        const membership = (await tx.select().from(companyMemberships).where(and(eq(companyMemberships.companyId, record.endpoint.companyId), eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, actor.userId))).for("update"))[0];
-        if (membership?.status !== "active" || membership.membershipRole === "viewer") throw forbidden("The signed-in Paperclip account cannot use this connection");
-        const links = await tx.select().from(chatIdentityLinks).where(and(eq(chatIdentityLinks.companyId, record.endpoint.companyId), eq(chatIdentityLinks.principalId, principal.id))).for("update");
-        if (links.some(link => link.status === "linked" && link.paperclipUserId !== actor.userId) || links.some(link => link.endpointId === endpointId && link.status === "revoked")) throw conflict("This Slack account has an existing link", { code: "chat_identity_link_conflict" });
-        if (links.some(link => link.endpointId === endpointId && link.status === "linked")) return;
-        await tx.insert(chatIdentityLinks).values({ companyId: record.endpoint.companyId, endpointId, principalId: principal.id,
-          paperclipUserId: actor.userId, status: "linked", confirmedAt: new Date() })
-          .onConflictDoUpdate({ target: [chatIdentityLinks.endpointId, chatIdentityLinks.principalId], set: {
-            paperclipUserId: actor.userId, status: "linked", confirmationTokenHash: null, expiresAt: null, confirmedAt: new Date(), revokedAt: null, updatedAt: new Date(),
-          } });
-        await lease.assertOwned(tx);
-      });
-    },
+    linkInstaller: linkSlackAccount,
     configure: async (endpointId, credentials, actor, lease) => {
       const record = await endpointRecord(endpointId);
       if (!record) throw notFound("Chat endpoint not found");
@@ -38195,6 +38199,21 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         action: record.endpoint.botExternalId ? "reconnect" : "configure", credentials,
       }, lease, actor.userId);
     },
+  });
+
+  const sendSlackTestMessage = slackTestMessageService(db, {
+    fetch: fetchImpl,
+    withLock: async (endpointId, work) => {
+      const record = await endpointRecord(endpointId);
+      if (!record) throw notFound("Chat endpoint not found");
+      return withCredentialMutationLease(record.endpoint, work);
+    },
+    runtimeBotToken: async endpointId => {
+      const record = await endpointRecord(endpointId);
+      if (!record) throw notFound("Chat endpoint not found");
+      return (await resolveCredentials(record.endpoint)).botToken;
+    },
+    linkInstaller: linkSlackAccount,
   });
 
   const githubRegistration = githubChatRegistrationService(db, {
@@ -38322,6 +38341,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
 
   return {
     slackRegistration,
+    sendSlackTestMessage,
     saveGitHubSetupProgress: async (endpointId: string, stage: NonNullable<ChatEndpointSetupState["github"]>["stage"]) => {
       const record = await endpointRecord(endpointId);
       if (!record || record.endpoint.provider !== "github") throw notFound("GitHub bot not found");

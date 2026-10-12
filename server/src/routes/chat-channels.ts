@@ -1,4 +1,4 @@
-import { slackRegistrationSchema, slackSetupActionSchema, slackManagedProvisionSchema } from "@paperclipai/shared";
+import { slackTestMessageSchema, slackRegistrationSchema, slackSetupActionSchema, slackManagedProvisionSchema } from "@paperclipai/shared";
 import { isCrossSiteOAuthCallbackNavigation, oauthCallbackInterstitialHtml } from "../lib/oauth-browser-return.js";
 import {
   Router,
@@ -211,6 +211,11 @@ export function chatChannelRoutes(db: Db, options: ChatChannelRouteOptions) {
       typeof req.query.error === "string" ? req.query.error : null, actor,
       typeof req.query.code === "string" ? req.query.code : null);
     res.redirect(303, await service.slackRegistration.returnPath(id));
+  });
+  router.post("/chat-endpoints/:endpointId/slack/test-message", validate(slackTestMessageSchema), async (req, res) => {
+    if (!(await assertEndpointManagementAccess(req, res))) return;
+    res.set("Cache-Control", "no-store");
+    res.json(await service.sendSlackTestMessage(endpointId(req), slackActor(req), req.body));
   });
   router.post("/chat-endpoints/:endpointId/slack/registration", validate(slackRegistrationSchema), async (req, res) => {
     if (!(await assertEndpointManagementAccess(req, res))) return;
