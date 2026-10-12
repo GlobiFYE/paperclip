@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { chmod, writeFile, symlink, mkdir, open } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { eq } from "drizzle-orm";
-import { assets, documents, heartbeatRuns, issues, projects, routineDocuments, routines, runnerApiResponseReservations } from "@paperclipai/db";
+import { agents, assets, documents, heartbeatRuns, issues, projects, routineDocuments, routines, runnerApiResponseReservations, companySkills, companyMemberships, principalPermissionGrants } from "@paperclipai/db";
 import { beforeAll, afterAll, beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { startRunnerApiTestServer } from "../../__tests__/helpers/runner-api-server.js";
 import { createRunnerdCodexTransport, defaultCapabilityRunnerdBinary } from "../../vendor/paperclip-runner/index.js";
@@ -121,6 +121,7 @@ else if(m.id!==undefined) send({id:m.id,result:{}});
 
   it("manages owned routines and triggers with durable replay, attribution and owner denials", async () => {
     const fixture = await server.fixture({ disableWakeOnDemand: true, conversation: true });
+    await server.db.update(issues).set({ responsibleUserId: fixture.responsibleUserId }).where(eq(issues.id, fixture.issueId));
     const args = { operationId: "POST /api/companies/{companyId}/routines", body: {
       title: "REST parity routine", assigneeAgentId: fixture.agentId, projectId: fixture.projectId, parentIssueId: fixture.issueId, status: "paused",
     } };
@@ -130,11 +131,11 @@ else if(m.id!==undefined) send({id:m.id,result:{}});
     expect(await call("routine-create", args)).toEqual(created);
     const routineId = created.data.id;
     const trigger = await call("routine-trigger", { operationId: "POST /api/routines/{id}/triggers", pathParams: { id: routineId }, body: { kind: "schedule", cronExpression: "0 9 * * *", timezone: "UTC", enabled: false } });
-    expect(trigger).toMatchObject({ ok: true, status: 201, data: { routineId, enabled: false } });
+    expect(trigger).toMatchObject({ ok: true, status: 201, data: { trigger: { routineId, enabled: false } } });
     expect(await call("routine-update", { operationId: "PATCH /api/routines/{id}", pathParams: { id: routineId }, body: { title: "Updated through fallback" } }))
       .toMatchObject({ ok: true, status: 200, data: { title: "Updated through fallback" } });
-    const other = await server.fixture();
-    expect(await call("routine-other-owner", { ...args, body: { ...args.body, assigneeAgentId: other.agentId } }))
+    const [other] = await server.db.insert(agents).values({ companyId: fixture.companyId, name: "Other routine owner", status: "active" }).returning();
+    expect(await call("routine-other-owner", { ...args, body: { ...args.body, assigneeAgentId: other.id } }))
       .toMatchObject({ ok: false, status: 403 });
     const snapshot = await fixture.snapshot();
     expect(snapshot.activity).toEqual(expect.arrayContaining([
@@ -142,6 +143,31 @@ else if(m.id!==undefined) send({id:m.id,result:{}});
       expect.objectContaining({ action: "runner.api_called", agentId: fixture.agentId, runId: fixture.runId, details: expect.objectContaining({ operationId: args.operationId, status: 201 }) }),
     ]));
     expect(await server.db.select().from(routines).where(eq(routines.companyId, fixture.companyId))).toHaveLength(1);
+  });
+
+  it("starts a permitted skill test through the fallback using the existing assignment grants", async () => {
+    const fixture = await server.fixture({ conversation: true, disableWakeOnDemand: true });
+    await server.db.insert(companyMemberships).values({ companyId: fixture.companyId, principalType: "agent", principalId: fixture.agentId, status: "active", membershipRole: "member" });
+    await server.db.insert(principalPermissionGrants).values([
+      { companyId: fixture.companyId, principalType: "agent", principalId: fixture.agentId, permissionKey: "tasks:assign" },
+      { companyId: fixture.companyId, principalType: "user", principalId: fixture.responsibleUserId!, permissionKey: "tasks:assign" },
+    ]);
+    const skillDir = join(server.root, `parity-skill-${randomUUID()}`);
+    await mkdir(skillDir);
+    await writeFile(join(skillDir, "SKILL.md"), "# Parity skill\nReturn the supplied fixture input.\n");
+    const [skill] = await server.db.insert(companySkills).values({
+      companyId: fixture.companyId, key: `company/${fixture.companyId}/parity`, slug: "parity", name: "Parity skill",
+      markdown: "# Parity skill\n", sourceType: "local_path", sourceLocator: skillDir,
+      trustLevel: "markdown_only", compatibility: "compatible", fileInventory: [{ path: "SKILL.md", kind: "skill" }], metadata: { sourceKind: "managed_local" },
+    }).returning();
+    const call = { tool: "call_api", callId: "skill-test-create", arguments: {
+      operationId: "POST /api/companies/{companyId}/skills/{skillId}/test-runs", pathParams: { skillId: skill.id },
+      body: { agentId: fixture.agentId, content: "Fixture input" },
+    } };
+    const result = await fixture.authority.execute(call) as any;
+    expect(result).toMatchObject({ ok: true, status: 201, data: { skillId: skill.id, agentId: fixture.agentId } });
+    expect(await fixture.authority.execute(call)).toEqual(result);
+    expect((await fixture.snapshot()).issues.some(issue => issue.id === result.data.issueId)).toBe(true);
   });
 
   it("creates and reads secret proposals while preserving redaction and board review", async () => {
