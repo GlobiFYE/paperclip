@@ -299,6 +299,19 @@ describe("runner API request boundary", () => {
     expect(save).not.toHaveBeenCalled();
     expect(reserve).not.toHaveBeenCalled();
   });
+  it("withholds a credential response when the run is revoked during HTTP", async () => {
+    let authorized = true;
+    const request = vi.fn<typeof fetch>(async () => {
+      authorized = false;
+      return Response.json({ value: "private-fixture-value" });
+    });
+    const result = await executeRunnerApi({ operationId: "POST /api/agents/me/secrets/{key}/value", pathParams: { key: "fixture-key" } }, context, {
+      ...io(request), beforeDispatch: async () => { if (!authorized) throw new Error("Run revoked"); },
+    });
+    expect(result).toMatchObject({ ok: false, error: "api_transport_failure", outcome: "unknown" });
+    expect(JSON.stringify(result)).not.toContain("private-fixture-value");
+    expect(request).toHaveBeenCalledOnce();
+  });
   it("forwards only server-owned authentication and preserves API denials", async () => {
     const request = vi.fn<typeof fetch>(async () =>
       Response.json({ error: "Board access required" }, { status: 403 }),

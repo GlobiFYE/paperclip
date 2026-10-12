@@ -195,6 +195,7 @@ export async function executeRunnerApi(input: RunnerApiCall, context: RunnerApiC
       // saved assets. Their replay receipt is encrypted by the tool authority.
       timeout = setTimeout(() => controller.abort(), RUNNER_API_TIMEOUT_MS);
       bytes = await readBoundedResponse(response);
+      await io.beforeDispatch?.();
     } else if (assetTextRange && response.ok) {
       timeout = setTimeout(() => controller.abort(), RUNNER_API_TIMEOUT_MS);
       bytes = await readBoundedResponse(response, textLimit + 2);
