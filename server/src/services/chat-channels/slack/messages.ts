@@ -78,3 +78,12 @@ export function isSlackReceiptReactionAlreadyApplied(error: unknown): boolean {
   }
   return false;
 }
+
+export function slackThreadChannelId(threadId: string): string | null {
+  if (!threadId.startsWith("slack:")) return null;
+  const channelAndThread = threadId.slice("slack:".length);
+  const separator = channelAndThread.indexOf(":");
+  const channelId =
+    separator === -1 ? channelAndThread : channelAndThread.slice(0, separator);
+  return channelId || null;
+}
