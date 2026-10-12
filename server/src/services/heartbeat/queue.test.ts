@@ -41,6 +41,7 @@ function callbacks(db: Db) {
     activeRunExecutions: new Set<string>(),
     activeRunExecutionPromises: new Set<Promise<void>>(),
     activeWakeupPromises: new Set<Promise<unknown>>(),
+    runtimeEnv: {},
     liveRunExecutions: { has: vi.fn(() => false) },
     isHeartbeatRunTerminalStatus: (status: string | null | undefined) => ["succeeded", "failed", "cancelled", "timed_out"].includes(status ?? ""),
     isSameTaskScope: (left: string | null, right: string | null) => left === right,
