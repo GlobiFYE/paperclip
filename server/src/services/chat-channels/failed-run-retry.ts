@@ -1,3 +1,4 @@
+import { continuingTeamsFilePublication, type ContinuingTeamsFileTransfer } from "./microsoft-teams/file-transfer-source.js";
 import { notifyChatPublicationWork } from "../chat-work-notifications.js";
 
 import {
@@ -30,20 +31,17 @@ import {
 import {
   agentWakeupRequests,
   agents,
-  assets,
   chatActions,
   chatConversations,
   chatDeliveries,
   chatEndpoints,
   chatPublications,
-  chatTeamsFileTransfers,
   heartbeatRunEvents,
   heartbeatRuns,
   nativeRunFinalizations,
   nativeRunResults,
   environmentLeases,
   issueComments,
-  issueAttachments,
   issueThreadInteractions,
   issueQuestionResponseDeliveries,
   issues,
@@ -645,12 +643,7 @@ export function createChatFailedRunRetry(db: Db, options: ChatFailedRunRetryOpti
         decisionId?: string;
         /** Internal source-proof continuation for one locked Teams transfer.
          * Never permission to repeat its card/PUT or retry a model run. */
-        continuingTeamsFileTransfer?: {
-          transferId: string;
-          publicationId: string;
-          version: number;
-          phase: "consent_unknown" | "file_info_unknown";
-        };
+        continuingTeamsFileTransfer?: ContinuingTeamsFileTransfer;
       };
     },
     visited = new Set<string>(),
@@ -799,121 +792,17 @@ export function createChatFailedRunRetry(db: Db, options: ChatFailedRunRetryOpti
     const continuingTransfer =
       input.committedResponse?.continuingTeamsFileTransfer;
     if (continuingTransfer !== undefined) {
-      if (
-        input.publication !== true ||
-        input.retryActionId !== undefined ||
-        input.runId !== undefined ||
-        provider !== "microsoft-teams" ||
-        !continuingTransfer ||
-        !isUuidLike(continuingTransfer.transferId) ||
-        !isUuidLike(continuingTransfer.publicationId) ||
-        !Number.isSafeInteger(continuingTransfer.version) ||
-        continuingTransfer.version < 1 ||
-        !["consent_unknown", "file_info_unknown"].includes(
-          continuingTransfer.phase,
-        )
-      )
-        throw failedChatRetryDenied();
-      // The caller supplies a selector only. Independently prove the exact
-      // unknown publication is this native run's own selected file, not a
-      // sibling effect or another actor/generation. All ordinary source and
-      // committed-result authorization below still runs unchanged.
-      const [continuing] = await tx
-        .select({
-          publicationId: chatPublications.id,
-          attemptId: chatTeamsFileTransfers.attemptId,
-          attemptExpiresAt: chatTeamsFileTransfers.attemptExpiresAt,
-        })
-        .from(chatTeamsFileTransfers)
-        .innerJoin(
-          chatPublications,
-          and(
-            eq(chatPublications.id, chatTeamsFileTransfers.publicationId),
-            eq(chatPublications.companyId, chatTeamsFileTransfers.companyId),
-            eq(chatPublications.endpointId, chatTeamsFileTransfers.endpointId),
-            eq(
-              chatPublications.conversationId,
-              chatTeamsFileTransfers.conversationId,
-            ),
-            eq(chatPublications.issueId, chatTeamsFileTransfers.issueId),
-            eq(chatPublications.commentId, chatTeamsFileTransfers.commentId),
-            eq(chatPublications.state, "delivery_unknown"),
-            sql`${chatPublications.payload}->'attachmentIds' = jsonb_build_array(${chatTeamsFileTransfers.attachmentId}::text)`,
-          ),
-        )
-        .innerJoin(
-          chatEndpoints,
-          and(
-            eq(chatEndpoints.id, chatTeamsFileTransfers.endpointId),
-            eq(chatEndpoints.companyId, input.companyId),
-            eq(chatEndpoints.provider, "microsoft-teams"),
-          ),
-        )
-        .innerJoin(
-          chatConversations,
-          and(
-            eq(chatConversations.id, chatTeamsFileTransfers.conversationId),
-            eq(chatConversations.companyId, input.companyId),
-            eq(chatConversations.endpointId, chatTeamsFileTransfers.endpointId),
-            eq(chatConversations.issueId, issue.id),
-            eq(
-              chatConversations.sessionGeneration,
-              chatTeamsFileTransfers.conversationGeneration,
-            ),
-          ),
-        )
-        .innerJoin(
-          issueComments,
-          and(
-            eq(issueComments.id, chatTeamsFileTransfers.commentId),
-            eq(issueComments.companyId, input.companyId),
-            eq(issueComments.issueId, issue.id),
-            eq(issueComments.createdByRunId, failedRun.id),
-            eq(issueComments.authorAgentId, input.agentId),
-            isNull(issueComments.deletedAt),
-          ),
-        )
-        .innerJoin(
-          issueAttachments,
-          and(
-            eq(issueAttachments.id, chatTeamsFileTransfers.attachmentId),
-            eq(issueAttachments.companyId, input.companyId),
-            eq(issueAttachments.issueId, issue.id),
-            eq(issueAttachments.issueCommentId, issueComments.id),
-            eq(issueAttachments.originatingRunId, failedRun.id),
-          ),
-        )
-        .innerJoin(
-          assets,
-          and(
-            eq(assets.id, issueAttachments.assetId),
-            eq(assets.companyId, input.companyId),
-            eq(assets.sha256, chatTeamsFileTransfers.sha256),
-            eq(assets.byteSize, chatTeamsFileTransfers.byteSize),
-          ),
-        )
-        .where(
-          and(
-            eq(chatTeamsFileTransfers.companyId, input.companyId),
-            eq(chatTeamsFileTransfers.issueId, issue.id),
-            eq(chatTeamsFileTransfers.id, continuingTransfer.transferId),
-            eq(
-              chatTeamsFileTransfers.publicationId,
-              continuingTransfer.publicationId,
-            ),
-            eq(chatTeamsFileTransfers.version, continuingTransfer.version),
-            eq(chatTeamsFileTransfers.phase, continuingTransfer.phase),
-          ),
-        )
-        .for("share", { noWait: true });
-      if (
-        !continuing ||
-        (continuing.attemptId &&
-          (!continuing.attemptExpiresAt ||
-            continuing.attemptExpiresAt > new Date()))
-      )
-        throw failedChatRetryDenied();
-      continuingUnknownPublicationId = continuing.publicationId;
+      continuingUnknownPublicationId = await continuingTeamsFilePublication(tx, {
+        companyId: input.companyId,
+        agentId: input.agentId,
+        issueId: issue.id,
+        failedRunId: failedRun.id,
+        provider,
+        publication: input.publication,
+        retryActionId: input.retryActionId,
+        runId: input.runId,
+        continuingTransfer,
+      }, failedChatRetryDenied);
     }
     const [question] = await tx
       .select({ id: issueThreadInteractions.id })

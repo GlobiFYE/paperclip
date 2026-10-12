@@ -284,3 +284,23 @@ do not move that entire function and claim its complexity is resolved. Action
 resolution and endpoint configuration are later candidates. Keep runtime lease
 acquisition, partial startup and shutdown together until their ownership contract
 is explicit. This batch ends with five stacked PRs; merging is separate work.
+
+### 2026-10-12 channel-folder reassessment: slice 5
+
+Keep retry admission, complete source-batch authorization, ancestor checks,
+in-flight deduplication, authority registration and shutdown coordination shared.
+References to native runner providers describe execution recovery, not chat
+channel implementations, and remain with that shared proof.
+
+Move the exact Teams file-transfer continuation proof into
+`microsoft-teams/file-transfer-source.ts`. It receives the caller's transaction,
+explicit source identifiers and original denial factory; it returns only the
+verified publication ID. The shared caller still validates the committed result,
+all original inputs and other uncertain publications. All provider proof guards,
+join predicates, row locks and attempt checks retain their statements.
+
+Baseline: 59 retry cases plus six negative Teams authority cases passed. These
+include service lifetime checks and transfer ambiguity without duplicate uploads.
+The same 65 cases passed after. Server typecheck and module boundaries pass.
+The remaining retry coordinator
+has 1,825 lines; the Teams proof module has 149 lines.
