@@ -68,3 +68,18 @@ handoff. Record failures honestly; a retry does not erase the original failure.
 - Reassessment: Slack task starter confirmation, recovery and failure settlement
   form one boundary. Keep normal message admission shared and pass its exact
   existing call contract; do not duplicate provider-visible posts during recovery.
+
+## Slice 4: Slack task starts
+
+- Service: 31,438 lines / 1,225,374 bytes → 30,449 lines / 1,190,643 bytes.
+- `slack/task-start.ts`: 1,075 lines / 39,262 bytes.
+- Nine moved declarations and all remaining statements preserve syntax. The
+  existing positional message-admission contract is unchanged. The claim barrier
+  remains live through a getter; no worker or mutable per-service state moves.
+- The same 25 public-service cases passed before and after, covering slash-task
+  admission, provider-confirmed recovery without reposting, reclaimed admission,
+  stale credential ownership, ambiguous sends and explicit operator retries.
+  Server typecheck passes.
+- Reassessment: Discord command registration and native control admission can
+  share a channel module. Expose only a live lease-key/token lookup; retain the
+  gateway ownership map, renewal, partial acquisition and shutdown in the service.
