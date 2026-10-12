@@ -30,7 +30,7 @@ import {
   issueWorkProducts,
 } from "@paperclipai/db";
 import { readPaperclipSkillSyncPreference, writePaperclipSkillSyncPreference } from "@paperclipai/adapter-utils/server-utils";
-import { repositorySkillProjection } from "./skill-repository-package.js";
+import { REPOSITORY_CONTENT_DIR, repositorySkillProjection } from "./skill-repository-package.js";
 import type { PaperclipDesiredSkillEntry, PaperclipSkillEntry } from "@paperclipai/adapter-utils/server-utils";
 import type {
   AgentDesiredSkillEntry,
@@ -698,7 +698,11 @@ function deriveCanonicalSkillKey(
 }
 
 export function classifyInventoryKind(relativePath: string): CompanySkillFileInventoryEntry["kind"] {
-  const normalized = normalizePortablePath(relativePath).toLowerCase();
+  let normalized = normalizePortablePath(relativePath).toLowerCase();
+  // Projection adds a container, not a new meaning for the original file path.
+  while (normalized.startsWith(`${REPOSITORY_CONTENT_DIR}/`)) {
+    normalized = normalized.slice(REPOSITORY_CONTENT_DIR.length + 1);
+  }
   if (normalized.endsWith("/skill.md") || normalized === "skill.md") return "skill";
   const fileName = path.posix.basename(normalized);
   // Font packages commonly keep their binary assets in a dedicated fonts folder.
@@ -2586,7 +2590,7 @@ async function auditInstalledSkillBytes(skill: CompanySkill, requireEntrypoint =
   }
 
   const remoteExecPattern = /\b(?:curl|wget)\b[\s\S]{0,160}\|\s*(?:sh|bash)|\b(?:bash|sh)\s+-c\b|\beval(?:\s*\(|[ \t]+["'$`])|\bpython\s+-c\b|\bnode\s+-e\b/i;
-  const shellEvalPattern = /(?:^|[;&|(){}!\n]|\b(?:if|then|else|elif|while|until|do|time)\s+)\s*(?:(?:command|builtin)\s+)*["']?eval["']?(?:\s|;|$)/i;
+  const shellEvalPattern = /(?:^|[;&|(){}!\n]|\b(?:if|then|else|elif|while|until|do|time)[ \t]+)[ \t]*(?:(?:command|builtin)[ \t]+)*["']?eval["']?(?:\s|;|$)/i;
   const secretExfilPattern = /\b(?:cat|printenv|env|grep)\b[\s\S]{0,160}(?:\.aws\/credentials|\.ssh\/|\.npmrc|id_rsa|OPENAI_API_KEY|ANTHROPIC_API_KEY|API_KEY|TOKEN|SECRET)[\s\S]{0,160}\b(?:curl|wget|nc|netcat|scp)\b/i;
   const networkPattern = /\b(?:curl|wget|fetch|httpie|nc|netcat|scp|ssh)\b|https?:\/\//i;
   const secretReferencePattern = /\b(?:process\.env|printenv|\$[A-Z][A-Z0-9_]{2,}|API_KEY|TOKEN|SECRET|PASSWORD|\.env)\b/i;
@@ -4617,10 +4621,7 @@ export function companySkillService(db: Db) {
             .set({ forkCount: sql`${companySkills.forkCount} + 1`, installCount: sql`${companySkills.installCount} + 1`, updatedAt: new Date() })
             .where(and(eq(companySkills.id, forkSource.id), eq(companySkills.companyId, companyId)));
         }
-        const versionInventory = await Promise.all(inventory.map(async (entry) => ({
-          ...entry,
-          content: await fs.readFile(path.join(skillDir, entry.path), "utf8"),
-        })));
+        const versionInventory = await collectVersionFileInventoryFromDirectory(skillDir);
         await createVersion(companyId, created.id, { label: "Initial version" }, actor, {
           database: tx,
           skipInventoryRefresh: true,
