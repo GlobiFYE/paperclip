@@ -586,6 +586,36 @@ describeEmbeddedPostgres("company/project default execution policy", () => {
     expect(put.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
   });
 
+  it("redacts the company default execution policy's monitor externalRef on the generic GET /companies/:companyId response", async () => {
+    const company = await seedCompany();
+
+    await request(app(boardActor))
+      .put(`/api/companies/${company.id}/default-execution-policy`)
+      .send({
+        defaultExecutionPolicy: {
+          ...approvalPolicy("company-reviewer"),
+          monitor: {
+            nextCheckAt: new Date(Date.now() + 60_000).toISOString(),
+            kind: "external_service",
+            serviceName: "github",
+            externalRef: "https://example.com/webhook?token=super-secret",
+          },
+        },
+      })
+      .expect(200);
+
+    const get = await request(app(boardActor))
+      .get(`/api/companies/${company.id}`)
+      .expect(200);
+    expect(get.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
+    // The stage/participant content the dedicated endpoint also returns must
+    // still come through untouched -- this is a redaction, not a wipe.
+    expect(get.body.defaultExecutionPolicy.stages[0].participants[0]).toMatchObject({
+      type: "user",
+      userId: "company-reviewer",
+    });
+  });
+
   it("redacts the project default execution policy's monitor externalRef on read", async () => {
     const company = await seedCompany();
     const project = await seedProject(company.id);

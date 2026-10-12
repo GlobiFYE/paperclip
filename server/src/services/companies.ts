@@ -29,6 +29,7 @@ import { environmentService } from "./environments.js";
 import { heartbeatService } from "./heartbeat.js";
 import { logActivity, type ActivityPublication } from "./activity-log.js";
 import { builtInAgentService } from "./built-in-agents.js";
+import { redactIssueMonitorExternalRef } from "./issue-execution-policy.js";
 
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -129,10 +130,32 @@ export function companyService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
     updatedAt: companies.updatedAt,
   };
 
-  function enrichCompany<T extends { logoAssetId: string | null }>(company: T) {
+  // Every row this touches carries the real stored defaultExecutionPolicy,
+  // monitor.externalRef included. This runs on every list/get/create/update,
+  // not just the dedicated default-execution-policy endpoints that already
+  // redact it -- so it must redact here too, and must never throw on a
+  // stored value that doesn't parse, unlike normalizeIssueExecutionPolicy.
+  function redactCompanyDefaultExecutionPolicy(policy: unknown) {
+    if (!policy || typeof policy !== "object") return (policy ?? null) as typeof policy;
+    const monitor = (policy as { monitor?: unknown }).monitor;
+    if (!monitor || typeof monitor !== "object") return policy;
+    const externalRef = (monitor as { externalRef?: unknown }).externalRef;
+    if (typeof externalRef !== "string" || externalRef.length === 0) return policy;
+    return {
+      ...policy,
+      monitor: { ...monitor, externalRef: redactIssueMonitorExternalRef(externalRef) },
+    };
+  }
+
+  function enrichCompany<T extends { logoAssetId: string | null; defaultExecutionPolicy?: unknown }>(
+    company: T,
+  ) {
     return {
       ...company,
       logoUrl: company.logoAssetId ? `/api/assets/${company.logoAssetId}/content` : null,
+      ...("defaultExecutionPolicy" in company
+        ? { defaultExecutionPolicy: redactCompanyDefaultExecutionPolicy(company.defaultExecutionPolicy) }
+        : {}),
     };
   }
 
