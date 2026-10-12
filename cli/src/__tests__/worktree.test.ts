@@ -285,6 +285,34 @@ function buildSourceConfig(): PaperclipConfig {
   };
 }
 
+function writeSeedConfigFiles(
+  sourceConfigPath: string,
+  targetConfigPath: string,
+  targetRoot: string,
+  targetPaths: ReturnType<typeof resolveWorktreeLocalPaths>,
+  sourceConfig: PaperclipConfig,
+  targetConfig: PaperclipConfig,
+): void {
+  fs.mkdirSync(path.dirname(sourceConfigPath), { recursive: true });
+  fs.mkdirSync(path.dirname(targetConfigPath), { recursive: true });
+  fs.writeFileSync(sourceConfigPath, `${JSON.stringify(sourceConfig)}\n`);
+  fs.writeFileSync(path.join(path.dirname(sourceConfigPath), ".env"), "PAPERCLIP_INSTANCE_ID=source\n");
+  fs.writeFileSync(targetConfigPath, `${JSON.stringify(targetConfig)}\n`);
+  fs.writeFileSync(
+    path.join(targetRoot, ".paperclip", ".env"),
+    `PAPERCLIP_HOME=${targetPaths.homeDir}\nPAPERCLIP_INSTANCE_ID=${targetPaths.instanceId}\n`,
+  );
+}
+
+function initializeTestRepo(repoRoot: string): void {
+  execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
+  execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot, stdio: "ignore" });
+  execFileSync("git", ["config", "user.name", "Test User"], { cwd: repoRoot, stdio: "ignore" });
+  fs.writeFileSync(path.join(repoRoot, "README.md"), "# temp\n", "utf8");
+  execFileSync("git", ["add", "README.md"], { cwd: repoRoot, stdio: "ignore" });
+  execFileSync("git", ["commit", "-m", "Initial commit"], { cwd: repoRoot, stdio: "ignore" });
+}
+
 describe("worktree helpers", () => {
   it("uses the repo-local config for the current worktree", () => {
     const targetRoot = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "paperclip-current-worktree-"));
@@ -531,18 +559,6 @@ describe("worktree helpers", () => {
     }
   });
 
-  it("surfaces a credential-safe diagnostic when the target shuts down during restore", () => {
-    expect(formatWorktreeSeedFailureDiagnostic(
-      "restore",
-      new Error(
-        "Failed to restore seed.sql.gz: FATAL: the database system is shutting down; psql error: write EPIPE",
-      ),
-    )).toBe(
-      "Target embedded PostgreSQL shut down during restore. Stop any competing worktree service and retry the seed.",
-    );
-    expect(formatWorktreeSeedFailureDiagnostic("migrations", new Error("secret connection failure")))
-      .toBe("Seed failed during migrations.");
-  });
 
   it("surfaces the missing credential artifact for authenticated seed validation", () => {
     expect(formatWorktreeSeedFailureDiagnostic(
@@ -661,15 +677,7 @@ describe("worktree helpers", () => {
         serverPort: 3199,
         databasePort: 54999,
       });
-      fs.mkdirSync(path.dirname(sourceConfigPath), { recursive: true });
-      fs.mkdirSync(path.dirname(targetConfigPath), { recursive: true });
-      fs.writeFileSync(sourceConfigPath, `${JSON.stringify(sourceConfig)}\n`);
-      fs.writeFileSync(path.join(path.dirname(sourceConfigPath), ".env"), "PAPERCLIP_INSTANCE_ID=source\n");
-      fs.writeFileSync(targetConfigPath, `${JSON.stringify(targetConfig)}\n`);
-      fs.writeFileSync(
-        path.join(targetRoot, ".paperclip", ".env"),
-        `PAPERCLIP_HOME=${targetPaths.homeDir}\nPAPERCLIP_INSTANCE_ID=${targetPaths.instanceId}\n`,
-      );
+      writeSeedConfigFiles(sourceConfigPath, targetConfigPath, targetRoot, targetPaths, sourceConfig, targetConfig);
       markWorktreeSeedPending({ configPath: targetConfigPath, sourceConfigPath });
 
       const seedDatabase = vi.fn().mockResolvedValue({
@@ -780,15 +788,7 @@ describe("worktree helpers", () => {
         serverPort: 3194,
         databasePort: 54994,
       });
-      fs.mkdirSync(path.dirname(sourceConfigPath), { recursive: true });
-      fs.mkdirSync(path.dirname(targetConfigPath), { recursive: true });
-      fs.writeFileSync(sourceConfigPath, `${JSON.stringify(sourceConfig)}\n`);
-      fs.writeFileSync(path.join(path.dirname(sourceConfigPath), ".env"), "PAPERCLIP_INSTANCE_ID=source\n");
-      fs.writeFileSync(targetConfigPath, `${JSON.stringify(targetConfig)}\n`);
-      fs.writeFileSync(
-        path.join(targetRoot, ".paperclip", ".env"),
-        `PAPERCLIP_HOME=${targetPaths.homeDir}\nPAPERCLIP_INSTANCE_ID=${targetPaths.instanceId}\n`,
-      );
+      writeSeedConfigFiles(sourceConfigPath, targetConfigPath, targetRoot, targetPaths, sourceConfig, targetConfig);
       const inspectLegacyDatabase = vi.fn().mockResolvedValue(null);
       const seedDatabase = vi.fn().mockResolvedValue(mockVerifiedSeedResult());
 
@@ -827,15 +827,7 @@ describe("worktree helpers", () => {
         serverPort: 3193,
         databasePort: 54993,
       });
-      fs.mkdirSync(path.dirname(sourceConfigPath), { recursive: true });
-      fs.mkdirSync(path.dirname(targetConfigPath), { recursive: true });
-      fs.writeFileSync(sourceConfigPath, `${JSON.stringify(sourceConfig)}\n`);
-      fs.writeFileSync(path.join(path.dirname(sourceConfigPath), ".env"), "PAPERCLIP_INSTANCE_ID=source\n");
-      fs.writeFileSync(targetConfigPath, `${JSON.stringify(targetConfig)}\n`);
-      fs.writeFileSync(
-        path.join(targetRoot, ".paperclip", ".env"),
-        `PAPERCLIP_HOME=${targetPaths.homeDir}\nPAPERCLIP_INSTANCE_ID=${targetPaths.instanceId}\n`,
-      );
+      writeSeedConfigFiles(sourceConfigPath, targetConfigPath, targetRoot, targetPaths, sourceConfig, targetConfig);
       const seedDatabase = vi.fn();
 
       await expect(ensureWorktreeSeeded(
@@ -981,6 +973,8 @@ describe("worktree helpers", () => {
   );
 
   it("ensure-seeded records a target shutdown diagnostic when restore fails", async () => {
+    expect(formatWorktreeSeedFailureDiagnostic("migrations", new Error("secret connection failure")))
+      .toBe("Seed failed during migrations.");
     const tempRoot = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "paperclip-worktree-ensure-seeded-failure-"));
     try {
       const sourceConfigPath = path.join(tempRoot, "source", "config.json");
@@ -998,15 +992,7 @@ describe("worktree helpers", () => {
         serverPort: 3198,
         databasePort: 54998,
       });
-      fs.mkdirSync(path.dirname(sourceConfigPath), { recursive: true });
-      fs.mkdirSync(path.dirname(targetConfigPath), { recursive: true });
-      fs.writeFileSync(sourceConfigPath, `${JSON.stringify(sourceConfig)}\n`);
-      fs.writeFileSync(path.join(path.dirname(sourceConfigPath), ".env"), "PAPERCLIP_INSTANCE_ID=source\n");
-      fs.writeFileSync(targetConfigPath, `${JSON.stringify(targetConfig)}\n`);
-      fs.writeFileSync(
-        path.join(targetRoot, ".paperclip", ".env"),
-        `PAPERCLIP_HOME=${targetPaths.homeDir}\nPAPERCLIP_INSTANCE_ID=${targetPaths.instanceId}\n`,
-      );
+      writeSeedConfigFiles(sourceConfigPath, targetConfigPath, targetRoot, targetPaths, sourceConfig, targetConfig);
       markWorktreeSeedPending({ configPath: targetConfigPath, sourceConfigPath });
 
       await expect(
@@ -1061,15 +1047,7 @@ describe("worktree helpers", () => {
         serverPort: 3197,
         databasePort: 54997,
       });
-      fs.mkdirSync(path.dirname(sourceConfigPath), { recursive: true });
-      fs.mkdirSync(path.dirname(targetConfigPath), { recursive: true });
-      fs.writeFileSync(sourceConfigPath, `${JSON.stringify(sourceConfig)}\n`);
-      fs.writeFileSync(path.join(path.dirname(sourceConfigPath), ".env"), "PAPERCLIP_INSTANCE_ID=source\n");
-      fs.writeFileSync(targetConfigPath, `${JSON.stringify(targetConfig)}\n`);
-      fs.writeFileSync(
-        path.join(targetRoot, ".paperclip", ".env"),
-        `PAPERCLIP_HOME=${targetPaths.homeDir}\nPAPERCLIP_INSTANCE_ID=${targetPaths.instanceId}\n`,
-      );
+      writeSeedConfigFiles(sourceConfigPath, targetConfigPath, targetRoot, targetPaths, sourceConfig, targetConfig);
       markWorktreeSeedPending({ configPath: targetConfigPath, sourceConfigPath });
 
       const seedDatabase = vi.fn(async () => {
@@ -1111,15 +1089,7 @@ describe("worktree helpers", () => {
         serverPort: 3196,
         databasePort: 54996,
       });
-      fs.mkdirSync(path.dirname(sourceConfigPath), { recursive: true });
-      fs.mkdirSync(path.dirname(targetConfigPath), { recursive: true });
-      fs.writeFileSync(sourceConfigPath, `${JSON.stringify(sourceConfig)}\n`);
-      fs.writeFileSync(path.join(path.dirname(sourceConfigPath), ".env"), "PAPERCLIP_INSTANCE_ID=source\n");
-      fs.writeFileSync(targetConfigPath, `${JSON.stringify(targetConfig)}\n`);
-      fs.writeFileSync(
-        path.join(targetRoot, ".paperclip", ".env"),
-        `PAPERCLIP_HOME=${targetPaths.homeDir}\nPAPERCLIP_INSTANCE_ID=${targetPaths.instanceId}\n`,
-      );
+      writeSeedConfigFiles(sourceConfigPath, targetConfigPath, targetRoot, targetPaths, sourceConfig, targetConfig);
       markWorktreeSeedPending({ configPath: targetConfigPath, sourceConfigPath });
       const interrupted = readWorktreeSeedManifest(targetConfigPath)!;
       fs.writeFileSync(
@@ -2347,12 +2317,7 @@ describe("worktree helpers", () => {
 
     try {
       fs.mkdirSync(repoRoot, { recursive: true });
-      execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
-      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot, stdio: "ignore" });
-      execFileSync("git", ["config", "user.name", "Test User"], { cwd: repoRoot, stdio: "ignore" });
-      fs.writeFileSync(path.join(repoRoot, "README.md"), "# temp\n", "utf8");
-      execFileSync("git", ["add", "README.md"], { cwd: repoRoot, stdio: "ignore" });
-      execFileSync("git", ["commit", "-m", "Initial commit"], { cwd: repoRoot, stdio: "ignore" });
+      initializeTestRepo(repoRoot);
 
       const sourceHooksDir = path.join(repoRoot, ".git", "hooks");
       const sourceHookPath = path.join(sourceHooksDir, "pre-commit");
@@ -2399,12 +2364,7 @@ describe("worktree helpers", () => {
     try {
       fs.mkdirSync(repoRoot, { recursive: true });
       fs.mkdirSync(fakeHome, { recursive: true });
-      execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
-      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot, stdio: "ignore" });
-      execFileSync("git", ["config", "user.name", "Test User"], { cwd: repoRoot, stdio: "ignore" });
-      fs.writeFileSync(path.join(repoRoot, "README.md"), "# temp\n", "utf8");
-      execFileSync("git", ["add", "README.md"], { cwd: repoRoot, stdio: "ignore" });
-      execFileSync("git", ["commit", "-m", "Initial commit"], { cwd: repoRoot, stdio: "ignore" });
+      initializeTestRepo(repoRoot);
 
       process.chdir(repoRoot);
 
@@ -2430,12 +2390,7 @@ describe("worktree helpers", () => {
 
     try {
       fs.mkdirSync(repoRoot, { recursive: true });
-      execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
-      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot, stdio: "ignore" });
-      execFileSync("git", ["config", "user.name", "Test User"], { cwd: repoRoot, stdio: "ignore" });
-      fs.writeFileSync(path.join(repoRoot, "README.md"), "# temp\n", "utf8");
-      execFileSync("git", ["add", "README.md"], { cwd: repoRoot, stdio: "ignore" });
-      execFileSync("git", ["commit", "-m", "Initial commit"], { cwd: repoRoot, stdio: "ignore" });
+      initializeTestRepo(repoRoot);
 
       process.chdir(repoRoot);
       await worktreeRepairCommand({});
@@ -2463,12 +2418,7 @@ describe("worktree helpers", () => {
 
     try {
       fs.mkdirSync(repoRoot, { recursive: true });
-      execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
-      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot, stdio: "ignore" });
-      execFileSync("git", ["config", "user.name", "Test User"], { cwd: repoRoot, stdio: "ignore" });
-      fs.writeFileSync(path.join(repoRoot, "README.md"), "# temp\n", "utf8");
-      execFileSync("git", ["add", "README.md"], { cwd: repoRoot, stdio: "ignore" });
-      execFileSync("git", ["commit", "-m", "Initial commit"], { cwd: repoRoot, stdio: "ignore" });
+      initializeTestRepo(repoRoot);
       fs.mkdirSync(path.dirname(worktreePath), { recursive: true });
       execFileSync("git", ["worktree", "add", "-b", "repair-me", worktreePath, "HEAD"], {
         cwd: repoRoot,
@@ -2505,12 +2455,7 @@ describe("worktree helpers", () => {
 
     try {
       fs.mkdirSync(repoRoot, { recursive: true });
-      execFileSync("git", ["init"], { cwd: repoRoot, stdio: "ignore" });
-      execFileSync("git", ["config", "user.email", "test@example.com"], { cwd: repoRoot, stdio: "ignore" });
-      execFileSync("git", ["config", "user.name", "Test User"], { cwd: repoRoot, stdio: "ignore" });
-      fs.writeFileSync(path.join(repoRoot, "README.md"), "# temp\n", "utf8");
-      execFileSync("git", ["add", "README.md"], { cwd: repoRoot, stdio: "ignore" });
-      execFileSync("git", ["commit", "-m", "Initial commit"], { cwd: repoRoot, stdio: "ignore" });
+      initializeTestRepo(repoRoot);
       fs.writeFileSync(sourceConfigPath, JSON.stringify(buildSourceConfig(), null, 2), "utf8");
 
       process.chdir(repoRoot);
