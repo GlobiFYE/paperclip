@@ -11,7 +11,7 @@ import { useCompany } from "@/context/CompanyContext";
 import type { ChatEndpoint, ChatEndpointResource, ChatIdentityLink } from "@/api/chatEndpoints";
 import { storybookAgents } from "../../fixtures/paperclipData";
 
-type Scenario = "populated" | "empty" | "error" | "channel-added";
+type Scenario = "populated" | "empty" | "error" | "channel-added" | "unlinked" | "invitation-expired";
 function ChatManagementPage({ tab = "settings", scenario = "populated" }: { tab?: string; scenario?: Scenario }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -26,7 +26,7 @@ function ChatManagementPage({ tab = "settings", scenario = "populated" }: { tab?
       assignedAgentId: agent.id, assignedAgentName: agent.name, providerAccountId: "TSTORY",
       providerAccountLabel: "Paperclip", botExternalId: "UARLO", botLabel: "Arlo", botUsername: "arlo-paperclip",
       allowUnlinkedPeople: false, allowDirectMessages: true,
-      setup: { step: "complete", slackApp: { appName: "Arlo", botName: "Arlo", command: "/arlo" } },
+      setup: { step: "complete", slackRegistration: { status: "configured", appId: "ASTORY" }, slackApp: { appName: "Arlo", botName: "Arlo", command: "/arlo" } },
     };
     let resources: ChatEndpointResource[] = scenario === "empty" ? [] : [
       { id: "engineering", type: "channel", providerResourceId: "CENGINEERING", label: "#engineering", availability: "available", enabled: true },
@@ -37,6 +37,8 @@ function ChatManagementPage({ tab = "settings", scenario = "populated" }: { tab?
       { id: "grace", principalId: "grace", externalLabel: "Grace Hopper", status: "pending" },
     ];
     let resourceReads = 0;
+    let invitationSent = false;
+    let invitationConfirmed = false;
     window.fetch = async (input, init) => {
       const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url, location.origin);
       const path = url.pathname;
@@ -62,7 +64,18 @@ function ChatManagementPage({ tab = "settings", scenario = "populated" }: { tab?
         }
         return json(resources);
       }
-      if (route === "principals") return json(principals);
+      if (route === "slack/test-message") {
+        if ((scenario === "unlinked" || scenario === "invitation-expired") && !invitationConfirmed) {
+          if (!JSON.parse(String(init?.body)).slackUserId) return json({ status: "connection_required", accounts: [{ id: "UADA", name: "Ada Lovelace" }], nextCursor: null });
+          invitationSent = true;
+          return json({ status: "connection_pending", principalId: "ada", expiresAt: new Date(Date.now() + (scenario === "invitation-expired" ? 50 : 600_000)).toISOString() });
+        }
+        return json({ status: "sent", slackUrl: "https://app.slack.com/client/TSTORY/DADA" });
+      }
+      if (route === "principals") {
+        if (invitationSent && scenario !== "invitation-expired") invitationConfirmed = true;
+        return json(scenario === "invitation-expired" ? [] : principals);
+      }
       if (route.endsWith("/link-intent")) return json({ confirmationUrl: "https://example.test/chat-identity/confirm?token=storybook-only" });
       if (route.endsWith("/link") && init?.method === "DELETE") {
         principals = principals.map(person => route.includes(person.id) ? { ...person, status: "revoked", paperclipUserId: null } : person);
@@ -110,11 +123,38 @@ export const InvitePeople: Story = {
   },
 };
 export const Conversations: Story = { name: "4 · Conversations", args: { tab: "conversations" } };
-export const SlackAvatar: Story = {
-  name: "5 · Slack avatar", args: { tab: "settings" },
+export const TestMessage: Story = {
+  name: "5 · Test message", args: { tab: "settings" },
   play: async ({ canvasElement }) => {
-    await userEvent.click(await within(canvasElement).findByText("Agent avatar", { selector: "summary" }));
-    await expect(within(canvasElement).getByRole("img", { name: "Arlo’s Cliptoon avatar" })).toBeVisible();
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByRole("button", { name: "Send me a test message" }));
+    await expect(await canvas.findByRole("button", { name: "Test message sent" })).toBeVisible();
+    await expect(canvas.queryByRole("link", { name: "View message" })).not.toBeInTheDocument();
+    await expect(canvas.getByRole("link", { name: "Open Slack configuration" })).toHaveAttribute("href", "https://api.slack.com/apps/ASTORY/oauth");
+    await expect(canvas.queryByText("Agent avatar")).not.toBeInTheDocument();
+    await expect(canvas.queryByText("Message in a channel")).not.toBeInTheDocument();
+  },
+};
+export const ConnectAndTest: Story = {
+  name: "Connect and send test message", args: { tab: "settings", scenario: "unlinked" },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByRole("button", { name: "Send me a test message" }));
+    const page = within(canvasElement.ownerDocument.body);
+    await userEvent.click(await page.findByRole("radio", { name: "Ada Lovelace (UADA)" }));
+    await userEvent.click(page.getByRole("button", { name: "Send connection invitation" }));
+    await expect(await canvas.findByRole("button", { name: "Test message sent" })).toBeVisible();
+  },
+};
+export const InvitationExpired: Story = {
+  name: "Expired Slack invitation", args: { tab: "settings", scenario: "invitation-expired" },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByRole("button", { name: "Send me a test message" }));
+    const page = within(canvasElement.ownerDocument.body);
+    await userEvent.click(await page.findByRole("radio", { name: "Ada Lovelace (UADA)" }));
+    await userEvent.click(page.getByRole("button", { name: "Send connection invitation" }));
+    await expect(await canvas.findByRole("button", { name: "Request a new invitation" })).toBeEnabled();
   },
 };
 export const ChannelAdded: Story = {
