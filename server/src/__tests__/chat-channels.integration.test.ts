@@ -6263,6 +6263,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       const token = `xoxb-bot-token-canary-${id}`;
       const scopes = buildSlackAppManifest({ app: appDetails, agentName: "Maya", webhookUrl: "https://paperclip.example/hook" }).oauth_config.scopes.bot;
       const state = {
+        managedAccessToken: token, rejectOldBotToken: false,
         userListCursor: null as string | null, userListNextCursor: "",
         managedBotAppId: appId, grantedScopes: scopes, managedError: null as string | null, failCreate: false, failValidate: false, failInventory: false, failAuth: false, failExchange: false,
         failManifestUpdate: false, timeoutManifestUpdate: false,
@@ -6279,7 +6280,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       const provider = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
         const url = String(input);
         if (url.endsWith("bots.info")) return Response.json({ ok: true, bot: { id: "BMANAGED", app_id: state.managedBotAppId, user_id: botId, deleted: false } });
-        if (url.endsWith("apps.managedInstall")) return Response.json(state.managedError ? { ok: false, error: state.managedError } : { ok: true, app_id: appId, team_id: "TAUTO", api_access_tokens: { bot_access_token: token } });
+        if (url.endsWith("apps.managedInstall")) return Response.json(state.managedError ? { ok: false, error: state.managedError } : { ok: true, app_id: appId, team_id: "TAUTO", api_access_tokens: { bot_access_token: state.managedAccessToken } });
         if (url.endsWith("apps.manifest.validate")) return Response.json(state.failValidate ? { ok: false, error: "invalid_auth", detail: configToken } : { ok: true });
         if (url.endsWith("apps.manifest.create")) {
           if (state.failCreate) throw new Error(`Timeout ${configToken} ${clientSecret}`);
@@ -6302,6 +6303,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         }
         if (url.endsWith("auth.test")) {
           await state.beforeAuth?.();
+          if (state.rejectOldBotToken && new Headers(init?.headers).get("authorization") !== `Bearer ${state.managedAccessToken}`) return Response.json({ ok: false, error: "token_revoked" });
           if (state.failAuth) throw new Error(`Temporary failure ${token}`);
           return Response.json({ ok: true, team_id: "TAUTO", user_id: botId, bot_id: "BMANAGED", user: `maya-${id}`, team: "Test workspace" }, { headers: { "x-oauth-scopes": state.grantedScopes.join(",") } });
         }
@@ -6518,6 +6520,31 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         const saved = await f.service.get(f.endpoint.id);
         expect(saved.providerAccountId).toBeNull();
         expect(saved.setup.slackRegistration).toMatchObject({ status: "credentials_saved", errorCode: "slack_install_scopes_missing" });
+      });
+      it.each(["revoked", "attention", "active"] as const)("reinstalls the configured app on an explicit %s reconnect", async status => {
+        const f = await managedFixture(); await f.provision(); f.provider.mockClear();
+        await db.update(chatEndpoints).set({ status }).where(eq(chatEndpoints.id, f.endpoint.id));
+        f.state.managedAccessToken = `xoxb-reconnected-${f.botId}`; f.state.rejectOldBotToken = true;
+        const reconnectInput = { ...f.input, requestId: randomUUID(), reconnect: true };
+        await f.service.slackRegistration.managed.provision(f.endpoint.id, actor, reconnectInput);
+        expect(f.provider.mock.calls.filter(([url]) => String(url).endsWith("apps.managedInstall"))).toHaveLength(1);
+        expect(f.provider.mock.calls.filter(([url]) => String(url).endsWith("apps.manifest.create"))).toHaveLength(0);
+        expect((await f.service.get(f.endpoint.id)).status).not.toBe("revoked");
+        expect((await f.service.get(f.endpoint.id)).setup.slackRegistration).toMatchObject({ status: "configured", appId: f.appId });
+        await f.service.slackRegistration.managed.provision(f.endpoint.id, actor, reconnectInput);
+        await f.provision();
+        expect(f.provider.mock.calls.filter(([url]) => String(url).endsWith("apps.managedInstall"))).toHaveLength(1);
+      });
+      it("preserves configured-app reconnect intent when managed installation fails", async () => {
+        const f = await managedFixture(); await f.provision(); f.provider.mockClear();
+        await db.update(chatEndpoints).set({ status: "revoked" }).where(eq(chatEndpoints.id, f.endpoint.id));
+        f.state.managedError = "temporary_error";
+        await f.provision();
+        expect((await f.service.get(f.endpoint.id)).setup.slackRegistration).toMatchObject({ status: "install", appId: f.appId });
+        f.state.managedError = null;
+        await f.provision();
+        expect((await f.service.get(f.endpoint.id)).setup.slackRegistration?.status).toBe("configured");
+        expect(f.provider.mock.calls.filter(([url]) => String(url).endsWith("apps.manifest.create"))).toHaveLength(0);
       });
       it("reinstalls the saved app after missing bot scopes without creating another app", async () => {
         const f = await managedFixture(); const scopes = f.state.grantedScopes;

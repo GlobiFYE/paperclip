@@ -1658,6 +1658,7 @@ function ProviderConnectStep({
       {automaticSlack && <SlackSetup
         key={endpoint.id}
         autoStart={managedAutoStart}
+        reconnect={repairing}
         endpoint={endpoint} stage={slackStage} disabled={!endpoint.setup?.webhookUrl || !endpoint.setup?.slackOAuthCallbackUri?.startsWith("https://") || !slackValidation.success}
         saveDetails={async () => {}}
         onBusy={onAutomaticBusy} onSaved={onEndpointSaved} onContinue={onSlackAppCreated}

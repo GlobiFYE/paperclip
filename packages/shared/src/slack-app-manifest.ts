@@ -140,7 +140,7 @@ export const slackSetupOptionsSchema = z.object({
 });
 export type SlackSetupOptions = z.infer<typeof slackSetupOptionsSchema>;
 export const slackManagedProvisionSchema = z.object({
-  requestId: z.string().uuid(), grantId: z.string().uuid(), confirmedNoAppCreated: z.boolean().optional(),
+  requestId: z.string().uuid(), grantId: z.string().uuid(), confirmedNoAppCreated: z.boolean().optional(), reconnect: z.boolean().optional(),
 }).strict();
 export type SlackManagedProvisionInput = z.infer<typeof slackManagedProvisionSchema>;
 export const slackManagedResultSchema = z.object({ authorization: slackInstallAuthorizationSchema.optional() });

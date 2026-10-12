@@ -37,6 +37,14 @@ it("starts a single managed install after Continue even across rerenders", async
   expect(api.provisionManagedSlack).toHaveBeenCalledWith("endpoint", expect.objectContaining({ grantId: "grant" }));
   expect(api.authorizeSlackManager).not.toHaveBeenCalled();
 });
+it("requests explicit reinstall when reconnecting a configured app", async () => {
+  endpoint.setup!.slackRegistration = { status: "configured", appId: "app", managerGrantId: "grant" } as NonNullable<ChatEndpoint["setup"]>["slackRegistration"];
+  await render({ autoStart: false, reconnect: true });
+  const button = Array.from(container.querySelectorAll("button")).find(item => item.textContent === "Continue in Slack");
+  expect(button).toBeDefined();
+  await act(async () => button!.click());
+  expect(api.provisionManagedSlack).toHaveBeenCalledWith("endpoint", expect.objectContaining({ grantId: "grant", reconnect: true, requestId: expect.any(String) }));
+});
 it("opens manager authorization directly when there is no saved workspace", async () => {
   api.slackSetupOptions.mockResolvedValue({ managedAvailable: true, workspaces: [] });
   await render();

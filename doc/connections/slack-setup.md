@@ -155,3 +155,8 @@ The action records a durable request before sending. Repeating the same request
 returns its saved result; an uncertain delivery is never automatically resent.
 **Open Slack configuration** opens the saved app's OAuth & Permissions page.
 Legacy connections without an app ID open Slack's app list instead.
+
+An explicit managed reconnect reinstalls the saved app and verifies the replacement
+bot credentials. Its request ID is saved before dispatch, so a duplicate completed
+request does not reinstall again. Credential-configuration recovery still resumes
+the saved token after a downstream failure. No reconnect creates another Slack app.

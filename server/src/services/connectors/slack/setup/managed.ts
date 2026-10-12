@@ -1,3 +1,5 @@
+import { and, eq } from "drizzle-orm";
+import { chatActions, chatSlackRegistrations } from "@paperclipai/db";
 import { type SlackManagedProvisionInput, type SlackManagedResult } from "@paperclipai/shared";
 import { conflict } from "../../../../errors.js";
 import type { createCustomerOwnedSetup } from "./customer-owned.js";
@@ -22,13 +24,35 @@ export function createManagedSlackSetup(store: SlackRegistrationStore, grants: R
       if (!row?.appId || row.status === "removed" || row.errorCode === "slack_manifest_update_pending") return;
       if (row.managerGrantId !== authorized.grant.id || latest.endpoint.setup.slackSetupMethod !== "managed") throw conflict("Slack setup changed");
       store.assertOrigins(row, latest.endpoint.publicId);
-      const needsReinstall = row.status === "credentials_saved" && ["slack_install_token_invalid", "slack_install_scopes_missing"].includes(row.errorCode ?? "");
-      if (row.status === "configured" || row.status === "credentials_saved" && !needsReinstall) {
+      const reconnectKey = input.reconnect ? `slack_managed_reconnect:${actor.userId}:${input.requestId}` : null;
+      const [previous] = reconnectKey ? await store.db.select().from(chatActions).where(and(eq(chatActions.companyId, row.companyId), eq(chatActions.endpointId, endpointId), eq(chatActions.providerActionId, reconnectKey))) : [];
+      async function completeSaved() {
         await completion.resumeLocked(endpointId, actor, lease);
+        if (reconnectKey && (await store.registration(endpointId))?.status === "configured") {
+          await lease.assertOwned();
+          await store.db.update(chatActions).set({ status: "processed", updatedAt: new Date() }).where(and(eq(chatActions.companyId, row!.companyId), eq(chatActions.endpointId, endpointId), eq(chatActions.providerActionId, reconnectKey)));
+        }
+      }
+      if (previous && row.status === "configured" && !["revoked", "attention"].includes(latest.endpoint.status)) {
+        await completeSaved(); return;
+      }
+      const needsReinstall = row.status === "configured" && (input.reconnect || ["revoked", "attention"].includes(latest.endpoint.status))
+        || row.status === "credentials_saved" && ["slack_install_token_invalid", "slack_install_scopes_missing"].includes(row.errorCode ?? "");
+      if (reconnectKey && !previous) {
+        // Atomically bind an explicit reconnect to its durable installation intent.
+        // Duplicate requests can return the saved connection without reinstalling.
+        await store.db.transaction(async tx => {
+          await lease.assertOwned(tx);
+          await tx.insert(chatActions).values({ companyId: row.companyId, endpointId, kind: "slack_managed_reconnect", providerActionId: reconnectKey, status: "processing", payload: { grantId: row.managerGrantId, registrationRequestId: row.requestId } });
+          if (needsReinstall) await tx.update(chatSlackRegistrations).set({ status: "install", errorCode: row.errorCode ?? "slack_install_failed", updatedAt: new Date() }).where(eq(chatSlackRegistrations.endpointId, endpointId));
+        });
+      }
+      if ((row.status === "configured" || row.status === "credentials_saved") && !needsReinstall) {
+        await completeSaved();
         return;
       }
       // Keep reinstall intent durable even if this dispatch fails or the process exits.
-      if (needsReinstall) await store.setFailure(row, "install", row.errorCode!, lease);
+      if (needsReinstall && (!reconnectKey || previous)) await store.setFailure(row, "install", row.errorCode ?? "slack_install_failed", lease);
       const { grant } = await grants.token(input.grantId, row.companyId, actor);
       try {
         await lease.assertOwned();
@@ -48,7 +72,7 @@ export function createManagedSlackSetup(store: SlackRegistrationStore, grants: R
         fallback = ["slack_approval_required", "slack_approval_pending", "slack_approval_denied"].includes(safe);
         return;
       }
-      await completion.resumeLocked(endpointId, actor, lease);
+      await completeSaved();
     });
     // OAuth's state/actor binding is ours; never trust a provider-supplied redirect.
     return fallback ? { authorization: await installFallback(endpointId, actor) } : {};
