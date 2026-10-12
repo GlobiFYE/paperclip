@@ -351,7 +351,10 @@ describe('repository packages', () => {
       const service = pathToFileURL(path.resolve(import.meta.dirname, '../services/company-skills.ts')).href;
       const loader = path.resolve(import.meta.dirname, '../../../cli/node_modules/tsx/dist/loader.mjs');
       const script = `import { auditSkillSnapshot } from ${JSON.stringify(service)};
-        const findings = await auditSkillSnapshot([{ path: 'scripts/whitespace.sh', kind: 'script', content: '\\n'.repeat(1024 * 1024 - 1) + 'x' }], false);
+        const findings = await auditSkillSnapshot([
+          { path: 'scripts/newlines.sh', kind: 'script', content: '\\n'.repeat(1024 * 1024 - 1) + 'x' },
+          { path: 'scripts/spaces.sh', kind: 'script', content: 'then' + ' '.repeat(1024 * 1024 - 5) + 'x' },
+        ], false);
         console.log(JSON.stringify(findings));`;
       const { stdout } = await promisify(execFile)(process.execPath, ['--import', loader, '--input-type=module', '-e', script], {
         timeout: 10_000, killSignal: 'SIGKILL', encoding: 'utf8', env: { ...process.env, TMPDIR: scratch },

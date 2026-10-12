@@ -4,6 +4,8 @@ import { z } from 'zod';
 import { assertSkillSnapshotPath, skillFileBytes } from './skill-snapshot.js';
 
 export const REPOSITORY_CONTENT_DIR = '.paperclip-repository';
+export const MAX_REPOSITORY_FILES = 9_990;
+export const MAX_REPOSITORY_BYTES = 61 * 1024 * 1024;
 const manifestSchema = z.object({
   version: z.literal(1),
   skills: z.array(z.string().min(1).max(4096)).min(1).max(1000),

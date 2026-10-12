@@ -203,6 +203,7 @@ describe('GitHub skill source import', () => {
     expect(skillSourcesApi.discoverStream).toHaveBeenLastCalledWith('company-1', expect.objectContaining({ packageMode: 'repository' }), expect.any(Function), expect.any(AbortSignal));
     expect(skillSourcesApi.discoverStream).toHaveBeenCalledTimes(1);
     expect(document.body.textContent).toContain('Choose skills · 1 selected');
+    expect(document.body.textContent).not.toContain('Select whole skill packages.');
     expect(document.body.textContent).not.toContain('The full repository travels');
     expect(document.body.textContent).not.toContain('Importing does not install');
     expect(button('View 1 file')).toBeTruthy();
@@ -216,6 +217,7 @@ describe('GitHub skill source import', () => {
     await act(async () => individual.click()); await flush();
     expect(skillSourcesApi.discoverStream).toHaveBeenLastCalledWith('company-1', expect.objectContaining({ packageMode: 'skills' }), expect.any(Function), expect.any(AbortSignal));
     expect(button('Import 2 skills').disabled).toBe(false);
+    expect(document.body.textContent).toContain('Select whole skill packages.');
     expect(JSON.parse(sessionStorage.getItem('paperclip.skill-source-draft:company-1:new')!).packageMode).toBe('skills');
   });
   it('blocks importing a repository with invalid shared content and gives its reason', async () => {

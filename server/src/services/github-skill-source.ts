@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { repositoryPackageInspection } from './skill-repository-package.js';
+import { MAX_REPOSITORY_BYTES, MAX_REPOSITORY_FILES, repositoryPackageInspection } from './skill-repository-package.js';
 import type { CompanySkillVersionFileInventoryEntry, SkillSourceCandidate, SkillSourceDiscovery, SkillSourcePreviewRequest, SkillSourceFilePreview, SkillSourceScanUpdate, SkillSourceScanProgress } from '@paperclipai/shared';
 import { parseFrontmatterMarkdown, parseGitHubSkillRepositoryUrl } from '@paperclipai/shared';
 import { notFound, unprocessable } from '../errors.js';
@@ -128,7 +128,12 @@ async function scanRepository(input: SkillScanInput, providerRead: GitHubRead, o
       if (declaredBytes > MAX_SCAN_BYTES) throw unprocessable('Skill packages exceed the 100 MB scan limit.');
     }
     const warnings = entries.filter(e => e.mode === '120000' || e.type === 'commit').map(e => `Not followed: ${e.path} (${e.mode === '120000' ? 'symlink' : 'submodule'}).`);
-    const blobs = new Map<string, Buffer>();
+    const repositoryInventory = input.packageMode === 'repository' ? entries.filter(entry => entry.type !== 'tree') : null;
+    if (repositoryInventory && repositoryInventory.length > MAX_REPOSITORY_FILES) throw unprocessable('Repository package exceeds the 9,990 file limit.');
+    const readable = repositoryInventory?.filter(entry => entry.type === 'blob' && ['100644', '100755'].includes(entry.mode) && (entry.size ?? 0) <= MAX_FILE_BYTES);
+    if (readable && readable.reduce((sum, entry) => sum + (entry.size ?? 0), 0) > MAX_REPOSITORY_BYTES) throw unprocessable('Repository package exceeds the 61 MB runtime limit.');
+    // A single bounded batch supplies both skill manifests and support files.
+    const blobs = readable && snapshot.readBlobs ? await snapshot.readBlobs(readable, options.signal) : new Map<string, Buffer>();
     let totalBytes = 0;
     const readBlob = async (entry: TreeEntry) => {
       if ((entry.size ?? 0) > MAX_FILE_BYTES) return null;
@@ -183,8 +188,7 @@ async function scanRepository(input: SkillScanInput, providerRead: GitHubRead, o
     let repositoryFiles: CompanySkillVersionFileInventoryEntry[] | undefined;
     let repositoryPackage: ReturnType<typeof repositoryPackageInspection> | undefined;
     if (input.packageMode === 'repository') {
-      const inventory = entries.filter(entry => entry.type !== 'tree');
-      if (inventory.length > 9_990) throw unprocessable('Repository package exceeds the 9,990 file limit.');
+      const inventory = repositoryInventory!;
       repositoryFiles = [];
       let packageError: string | null = skills.find(skill => skill.error)?.error ?? null;
       totalBytes = 0;
@@ -196,7 +200,7 @@ async function scanRepository(input: SkillScanInput, providerRead: GitHubRead, o
         }
         const bytes = await readBlob(entry);
         if (!bytes) { packageError ??= `File exceeds the 1 MB limit: ${entry.path}`; continue; }
-        if (totalBytes > 61 * 1024 * 1024) throw unprocessable('Repository package exceeds the 61 MB runtime limit.');
+        if (totalBytes > MAX_REPOSITORY_BYTES) throw unprocessable('Repository package exceeds the 61 MB runtime limit.');
         const kind = entry.mode === '100755' || bytes.subarray(0, 2).toString() === '#!'
           ? 'script' : classifyInventoryKind(entry.path);
         repositoryFiles.push(snapshotFile(entry.path, kind, bytes, entry.mode === '100755'));

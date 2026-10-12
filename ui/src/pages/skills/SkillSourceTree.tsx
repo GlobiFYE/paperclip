@@ -52,10 +52,11 @@ export function buildSkillPackageTree(candidates: SkillTreeCandidate[]) {
   return { nodes: transform(buildFileTree(Object.fromEntries(candidates.map(skill => [skill.path, null])))), included };
 }
 
-export function SkillSourceTree({ candidates, selected, excludedFolders, onChange, onPreview, disabled = false }: {
+export function SkillSourceTree({ candidates, selected, excludedFolders, onChange, onPreview, disabled = false, packageMode = 'skills' }: {
   candidates: SkillTreeCandidate[]; selected: Set<string>; excludedFolders: string[];
   onChange: (selected: Set<string>, excludedFolders: string[]) => void;
   onPreview?: (skill: SkillTreeCandidate, filePath?: string) => void; disabled?: boolean;
+  packageMode?: 'skills' | 'repository';
 }) {
   const [search, setSearch] = useState('');
   const [expansion, setExpansion] = useState(new Map<string, boolean>());
@@ -147,6 +148,6 @@ export function SkillSourceTree({ candidates, selected, excludedFolders, onChang
         }}
       />
     </div>
-    <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">Select whole skill packages. Expand a skill to see its included files. Nested skills are selected separately.</p>
+    {packageMode === 'skills' && <p className="border-t border-border px-3 py-2 text-xs text-muted-foreground">Select whole skill packages. Expand a skill to see its included files. Nested skills are selected separately.</p>}
   </div>;
 }

@@ -156,7 +156,7 @@ function SourceDialog({ companyId, source, onClose, onSaved }: {
   const ready = Boolean(source || discovery);
   const repositoryPackage = discovery?.repositoryPackage ?? source?.repositoryPackage;
   const outsideCount = candidates.filter(candidate => candidate.inspection?.references.some(ref => ref.kind === 'outside_package')).length;
-  const selectionTree = <SkillSourceTree onPreview={(skill, filePath) => setPreview({ skill, filePath })} candidates={candidates} selected={selected} excludedFolders={excludedFolders} onChange={(paths, folders) => { setSelected(paths); setExcludedFolders(folders); }} disabled={scan.isPending || save.isPending} />;
+  const selectionTree = <SkillSourceTree packageMode={packageMode} onPreview={(skill, filePath) => setPreview({ skill, filePath })} candidates={candidates} selected={selected} excludedFolders={excludedFolders} onChange={(paths, folders) => { setSelected(paths); setExcludedFolders(folders); }} disabled={scan.isPending || save.isPending} />;
   const eligibleCount = candidates.filter(candidate => selected.has(candidate.path) && !candidate.error).length;
   const skippedCount = candidates.filter(candidate => selected.has(candidate.path) && candidate.error).length;
   const busy = scan.isPending || save.isPending;

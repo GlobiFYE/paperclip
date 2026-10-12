@@ -18,6 +18,7 @@ test('repository import preserves its files while selecting library entrypoints'
   await files.getByRole('button', { name: 'Close', exact: true }).click();
 
   await dialog.locator('summary').filter({ hasText: 'Choose skills' }).click();
+  await expect(dialog.getByText('Select whole skill packages.', { exact: false })).toHaveCount(0);
   await dialog.getByRole('checkbox', { name: 'Import skills/research/SKILL.md', exact: true }).uncheck();
   await expect(dialog.getByText('Choose skills · 1 selected', { exact: true })).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'View 17 files', exact: true })).toBeVisible();
