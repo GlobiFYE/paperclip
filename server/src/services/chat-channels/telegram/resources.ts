@@ -1,33 +1,33 @@
-import { and,eq,sql } from "drizzle-orm";
-import { chatConversations,chatEndpointResources,chatEndpoints,type Db } from "@paperclipai/db";
+import { and, eq, sql } from "drizzle-orm";
+import { chatConversations, chatEndpointResources, chatEndpoints, type Db } from "@paperclipai/db";
 import type { ChatProviderLifecycleEffect } from "../../chat-provider-lifecycle.js";
-type DbTransaction=Parameters<Parameters<Db["transaction"]>[0]>[0];
-type EndpointRow=typeof chatEndpoints.$inferSelect;
+type DbTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
+type EndpointRow = typeof chatEndpoints.$inferSelect;
 
 export function telegramResourceLabelIsFallback(
   providerResourceId: string,
   label: string,
 ): boolean {
-  const candidate=label.trim();
+  const candidate = label.trim();
   return (
-    candidate===providerResourceId||
-    candidate===`telegram:${providerResourceId}`
+    candidate === providerResourceId ||
+    candidate === `telegram:${providerResourceId}`
   );
 }
 
 export async function prepareTelegramResourceMigration(
-  tx: DbTransaction,currentEndpoint: EndpointRow,
-  effect: Extract<ChatProviderLifecycleEffect,{ kind: "resource" }>,
-  providerResourceId: string,previousProviderResourceId: string|undefined,now: Date,
+  tx: DbTransaction, currentEndpoint: EndpointRow,
+  effect: Extract<ChatProviderLifecycleEffect, { kind: "resource" }>,
+  providerResourceId: string, previousProviderResourceId: string | undefined, now: Date,
 ) {
-  const previousResource=previousProviderResourceId
+  const previousResource = previousProviderResourceId
     ? await tx
       .select()
       .from(chatEndpointResources)
       .where(
         and(
-          eq(chatEndpointResources.endpointId,currentEndpoint.id),
-          eq(chatEndpointResources.type,"chat"),
+          eq(chatEndpointResources.endpointId, currentEndpoint.id),
+          eq(chatEndpointResources.type, "chat"),
           eq(
             chatEndpointResources.providerResourceId,
             previousProviderResourceId,
@@ -35,17 +35,17 @@ export async function prepareTelegramResourceMigration(
         ),
       )
       .for("update")
-      .then((rows) => rows[0]??null)
-    :null;
-  const migratedLabel=
-    previousResource&&
-      telegramResourceLabelIsFallback(providerResourceId,effect.label)
+      .then((rows) => rows[0] ?? null)
+    : null;
+  const migratedLabel =
+    previousResource &&
+      telegramResourceLabelIsFallback(providerResourceId, effect.label)
       ? previousResource.label
-      :effect.label;
-  const migratedEnabled=previousResource?.enabled===true;
-  if(
-    previousResource&&
-    previousProviderResourceId!==providerResourceId
+      : effect.label;
+  const migratedEnabled = previousResource?.enabled === true;
+  if (
+    previousResource &&
+    previousProviderResourceId !== providerResourceId
   ) {
     await tx
       .update(chatEndpointResources)
@@ -59,19 +59,19 @@ export async function prepareTelegramResourceMigration(
         },
         updatedAt: now,
       })
-      .where(eq(chatEndpointResources.id,previousResource.id));
+      .where(eq(chatEndpointResources.id, previousResource.id));
   }
-  return { previousResource,migratedLabel,migratedEnabled };
+  return { previousResource, migratedLabel, migratedEnabled };
 }
 
 export async function migrateTelegramResourceConversations(
-  tx: DbTransaction,currentEndpoint: EndpointRow,
+  tx: DbTransaction, currentEndpoint: EndpointRow,
   previousResource: typeof chatEndpointResources.$inferSelect,
-  resource: { id: string },previousProviderResourceId: string|undefined,
-  providerResourceId: string,migratedLabel: string,now: Date,
+  resource: { id: string }, previousProviderResourceId: string | undefined,
+  providerResourceId: string, migratedLabel: string, now: Date,
 ) {
-  const previousThreadPrefix=`telegram:${previousProviderResourceId}`;
-  const migratedThreadPrefix=`telegram:${providerResourceId}`;
+  const previousThreadPrefix = `telegram:${previousProviderResourceId}`;
+  const migratedThreadPrefix = `telegram:${providerResourceId}`;
   await tx
     .update(chatConversations)
     .set({
@@ -96,9 +96,9 @@ export async function migrateTelegramResourceConversations(
     })
     .where(
       and(
-        eq(chatConversations.companyId,currentEndpoint.companyId),
-        eq(chatConversations.endpointId,currentEndpoint.id),
-        eq(chatConversations.resourceId,previousResource.id),
+        eq(chatConversations.companyId, currentEndpoint.companyId),
+        eq(chatConversations.endpointId, currentEndpoint.id),
+        eq(chatConversations.resourceId, previousResource.id),
       ),
     );
 }
