@@ -52,7 +52,8 @@ export async function runRepositorySkillsFlow(input: {
   await dialog.getByRole("button", { name: "Find skills", exact: true }).click();
   await expect(dialog.getByRole("button", { name: /View \d+ files?/ })).toBeVisible({ timeout: 120_000 });
   await expect(dialog.getByRole("button", { name: "Import repository", exact: true })).toBeEnabled({ timeout: 120_000 });
-  await dialog.locator("summary").filter({ hasText: "Choose skills" }).click();
+  await expect(dialog.getByRole("checkbox", { name: "Import folder Repository", exact: true })).toBeChecked();
+  await expect(dialog.getByRole("button", { name: "More import options", exact: true })).toHaveCount(0);
   // Deselect every default; exactly two become discoverable, all siblings stay supporting files.
   const all = dialog.getByRole("checkbox", { name: "Import folder Repository", exact: true });
   if (await all.isChecked()) await all.uncheck();
