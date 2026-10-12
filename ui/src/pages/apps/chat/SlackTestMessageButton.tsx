@@ -14,9 +14,10 @@ export function SlackTestMessageButton({ endpointId }: { endpointId: string }) {
   const [accounts, setAccounts] = useState<Extract<SlackTestMessageResult, { status: "connection_required" }>["accounts"] | null>(null);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [selected, setSelected] = useState("");
+  const [invitationExpired, setInvitationExpired] = useState(false);
   const [search, setSearch] = useState("");
   const send = useMutation({
-    mutationFn: (input: { slackUserId?: string; accountCursor?: string }) => chatEndpointsApi.sendSlackTestMessage(endpointId, { requestId, ...input }),
+    mutationFn: (input: { slackUserId?: string; accountCursor?: string; requestId?: string }) => chatEndpointsApi.sendSlackTestMessage(endpointId, { requestId, ...input }),
     onSuccess: (result, input) => {
       if (result.status === "connection_required") {
         setAccounts(previous => input.accountCursor ? [...new Map([...(previous ?? []), ...result.accounts].map(account => [account.id, account])).values()] : result.accounts);
@@ -29,22 +30,34 @@ export function SlackTestMessageButton({ endpointId }: { endpointId: string }) {
   });
   const sent = send.data?.status === "sent";
   const pendingConnection = send.data?.status === "connection_pending" ? send.data : null;
+  useEffect(() => {
+    setInvitationExpired(false);
+    if (!pendingConnection) return;
+    const timer = setTimeout(() => setInvitationExpired(true), Math.max(0, new Date(pendingConnection.expiresAt).getTime() - Date.now()));
+    return () => clearTimeout(timer);
+  }, [pendingConnection?.expiresAt]);
   const principals = useQuery({
     queryKey: queryKeys.chatEndpoints.principals(endpointId),
     queryFn: () => chatEndpointsApi.listPrincipals(endpointId),
-    enabled: Boolean(pendingConnection), refetchInterval: pendingConnection ? 3000 : false,
+    enabled: Boolean(pendingConnection) && !invitationExpired, refetchInterval: pendingConnection && !invitationExpired ? 3000 : false,
   });
   const confirmed = Boolean(pendingConnection && principals.data?.some(link => link.principalId === pendingConnection.principalId && link.status === "linked"));
   useEffect(() => {
     if (confirmed && !send.isPending && !send.isError) send.mutate({ slackUserId: selected });
   }, [confirmed, send.isPending, send.isError]);
   const reset = () => { setRequestId(crypto.randomUUID()); send.reset(); };
+  const startTest = () => {
+    if (invitationExpired) {
+      const next = crypto.randomUUID(); setRequestId(next);
+      send.mutate({ requestId: next, slackUserId: selected });
+    } else send.mutate({});
+  };
   return <div className="space-y-2">
-      <Button variant="outline" disabled={send.isPending || sent || Boolean(pendingConnection)} onClick={() => send.mutate({})}>
+      <Button variant="outline" disabled={send.isPending || sent || Boolean(pendingConnection && !invitationExpired)} onClick={startTest}>
         {send.isPending ? <Loader2 className="size-4 animate-spin" /> : sent ? <Check className="size-4" /> : <Send className="size-4" />}
-        {send.isPending ? "Sending…" : sent ? "Test message sent" : pendingConnection ? "Waiting for Slack connection…" : "Send me a test message"}
+        {send.isPending ? "Sending…" : sent ? "Test message sent" : invitationExpired ? "Request a new invitation" : pendingConnection ? "Waiting for Slack connection…" : "Send me a test message"}
       </Button>
-    {pendingConnection && <p role="status" className="text-sm text-muted-foreground">Open the invitation in Slack to connect your account.</p>}
+    {pendingConnection && <p role="status" className="text-sm text-muted-foreground">{invitationExpired ? "The Slack invitation expired." : "Open the invitation in Slack to connect your account."}</p>}
     {send.isError && <div role="alert" className="max-w-sm text-sm text-destructive">
       {send.error.message} <button className="underline" onClick={reset}>Dismiss</button>
     </div>}
