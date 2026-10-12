@@ -758,7 +758,7 @@ describe("environment routes", () => {
       expect(mockEnvironmentService.update).not.toHaveBeenCalled();
     });
 
-    
+
 
     it("hides the local environment from every read surface under managed-sandbox-only", async () => {
       mockInstanceSettingsService.getExperimental.mockResolvedValue({ enableManagedSandboxOnly: true });

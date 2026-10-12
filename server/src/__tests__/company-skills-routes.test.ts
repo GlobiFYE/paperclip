@@ -1746,7 +1746,7 @@ describe("company skill mutation permissions", () => {
     expect(mockCompanySkillService.createLocalSkill).toHaveBeenCalled();
   });
 
-  
+
 
   it("allows suggest-tier skill mutations without a second consent decision", async () => {
     mockAccessService.decide
