@@ -714,15 +714,16 @@ function buildWorkspaceTarExtractCommand(input: {
 // already-confined relative paths from the git snapshot.
 function buildRemoveDeletedPathsCommand(input: { remoteDir: string; manifestPath: string }): string {
   // NUL input plus bounded xargs batches preserve whitespace and never create
-  // one argument list for the full snapshot. Refuse symlink ancestors.
+  // one argument list for the full snapshot. Validate the whole batch before
+  // removing anything, then avoid starting a separate rm process per path.
   const remove = `for entry do
     parent=$entry
     while [ "\${parent#*/}" != "$parent" ]; do
       parent=\${parent%/*}
       if [ -L "$parent" ] || { [ -e "$parent" ] && [ ! -d "$parent" ]; }; then exit 42; fi
     done
-    rm -rf -- "$entry" || exit
-  done`;
+  done
+  rm -rf -- "$@"`;
   return `cd ${shellQuote(input.remoteDir)} && xargs -0 -r -n 64 sh -c ${shellQuote(remove)} sh < ${shellQuote(input.manifestPath)} && rm -f -- ${shellQuote(input.manifestPath)}`;
 }
 
