@@ -1,21 +1,45 @@
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { expect, test } from "@playwright/test";
-import { completeCloudOnboarding, HIRING_TASK_TITLE } from "./onboarding-flow";
+import { mockOnboardingLocalAiConnection } from "./helpers/onboarding-ai-connection";
+import {
+  expectLandsOnFirstTaskWithoutDashboardBounce,
+  instrumentNavLog,
+} from "./helpers/onboarding-landing";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+/** The name the CEO role fills in — see AGENT_ROLE_LABELS. */
+const AGENT_NAME = "CEO";
+const TASK_TITLE = "Paperclip onboarding";
+
+/** Wait for the saved question before checking its dismissed presentation. */
+async function expectOpeningQuestionDismissed(page: import("@playwright/test").Page) {
+  await expect(page.getByTestId("task-chat-unanswered-question")).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByTestId("task-chat-composer-takeover")).toHaveCount(0);
+  await expect(page.getByTestId("task-chat-pending-input-indicator")).toHaveCount(0);
+  await expect(page.getByTestId("task-chat-composer-mode")).toBeVisible({ timeout: 30_000 });
+}
+
+/** The opening question arrives after the interactions fetch. Dismiss it once. */
+async function dismissOpeningCard(page: import("@playwright/test").Page) {
+  const takeover = page.getByTestId("task-chat-composer-takeover");
+  await expect(takeover).toBeVisible({ timeout: 30_000 });
+  await takeover.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expectOpeningQuestionDismissed(page);
+}
 
 test("captures planning mode UI for desktop and mobile", async ({ page }) => {
   const timestamp = Date.now();
   const companyName = `PAP-3413-${timestamp}`;
-  // Resolve against this file, not the cwd, so screenshots land in the
-  // gitignored tests/e2e/test-results/ rather than an untracked dir at the
-  // repo root that a contributor could commit by accident.
-  const screenshotDir = path.join(__dirname, "test-results", "planning-mode");
+  const screenshotDir = "test-results/planning-mode";
 
-  // Intercept hire → perform a REAL hire server-side with an inert http adapter
-  // so no real agent process spawns. (The cloud flow hires with
-  // requireEnvProbe: false, so there is no adapter-environment probe to stub.)
+  await instrumentNavLog(page);
+  await mockOnboardingLocalAiConnection(page);
+
+  await page.route("**/test-environment", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ status: "pass", checks: [] }),
+    }),
+  );
+
   await page.route("**/agent-hires", async (route) => {
     const req = route.request();
     const body = JSON.parse(req.postData() || "{}");
@@ -42,16 +66,49 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
   });
 
   await page.goto("/onboarding");
+  const startBtn = page.getByRole("button", { name: /Start Onboarding|New Organization|Add Agent/ });
+  if (await startBtn.count()) await startBtn.first().click();
 
-  // This spec only needs a company with a seeded first task to screenshot the
-  // planning-mode UI against; drive the whole onboarding flow to get one.
-  await completeCloudOnboarding(page, {
-    companyName,
-    mission: "Capture planning mode visual evidence for the graduated task UI.",
-    choice: "hiring",
-  });
+  const createCard = page.getByRole("button", { name: /Build a new organization/ });
+  if (await createCard.count()) await createCard.first().click();
 
-  await expect(page).toHaveURL(/\/dashboard$/, { timeout: 30_000 });
+  await expect(page.getByRole("heading", { name: "What is the name of your organization?" })).toBeVisible({ timeout: 15_000 });
+
+  await page.locator('input[placeholder="e.g. Northwind Labs"]').fill(companyName);
+  await page.getByRole("button", { name: /^Continue/ }).click();
+
+  // Naming the company creates it and goes straight to the agent step.
+
+  // The agent step asks for a name and nothing else; the name is what gates
+  // "Next", and the hire is filed under the neutral `general` role.
+  await page.waitForSelector("#onboarding-agent-name", { timeout: 30_000 });
+  await page.locator("#onboarding-agent-name").fill(AGENT_NAME);
+
+  await page.getByRole("button", { name: /^Next$/ }).click();
+
+  // The connect step arrives with no source selected — the tile row is a
+  // question, not a confirmation — so its CTA stays disabled until one is
+  // pressed. It reads "Connect", not "Next": the button starts the sign-in
+  // where there is one to start. The test simulates successful local account
+  // connection, then exercises the real first-task creation flow.
+  //
+  // Waited on for enabled rather than visible: it is already on screen, and
+  // clicking a disabled button raises nothing and does nothing.
+  const source = page.getByRole("radio").first();
+  await source.waitFor({ timeout: 30_000 });
+  await source.click();
+  const connectNext = page.getByRole("button", { name: /^Connect$/ });
+  await expect(connectNext).toBeEnabled({ timeout: 30_000 });
+  await connectNext.click();
+
+  // The review step names the agent rather than the step.
+  await expect(
+    page.getByRole("heading", { name: "Let's get started..." }),
+  ).toBeVisible({ timeout: 30_000 });
+  await page.getByRole("button", { name: /Get started/ }).click();
+  // The wizard now drops the user straight onto the first task's detail page,
+  // and must not bounce through the dashboard (PAP-404).
+  await expectLandsOnFirstTaskWithoutDashboardBounce(page);
 
   const baseOrigin = new URL(page.url()).origin;
   const companyRes = await page.request.get(`${baseOrigin}/api/companies`);
@@ -64,7 +121,7 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
   const issues = await issueRes.json();
   const planningSeedIssue = issues.find(
     (candidate: { id: string; identifier?: string; title: string }) =>
-      candidate.title === HIRING_TASK_TITLE,
+      candidate.title === TASK_TITLE,
   );
   expect(planningSeedIssue).toBeTruthy();
 
@@ -92,12 +149,13 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
   await setMode("planning");
 
   await page.goto(issuePath);
+  await dismissOpeningCard(page);
+  await page.reload();
+  await expectOpeningQuestionDismissed(page);
   await expect(page.getByText("Plan mode").first()).toBeVisible();
-  await expect(page.getByTestId("issue-chat-composer")).toHaveAttribute("data-pending-work-mode", "planning");
-  const desktopPlanningToggle = page.getByTestId("issue-chat-composer-work-mode-toggle");
+  const desktopPlanningToggle = page.getByTestId("task-chat-composer-mode");
   await expect(desktopPlanningToggle).toBeVisible();
   await expect(desktopPlanningToggle).toHaveAttribute("data-pending-work-mode", "planning");
-  await expect(desktopPlanningToggle).toHaveAttribute("aria-pressed", "true");
 
   await page.screenshot({
     path: `${screenshotDir}/desktop-planning-detail-${timestamp}.png`,
@@ -113,11 +171,10 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
   });
 
   await page.goto(issuePath);
-  await page.getByTestId("issue-chat-composer-work-mode-toggle").click();
-  await page.getByTestId("issue-chat-composer-work-mode-menu-standard").click();
-  await expect(page.getByTestId("issue-chat-composer")).toHaveAttribute("data-pending-work-mode", "standard");
-  await expect(page.getByTestId("issue-chat-composer-work-mode-toggle")).toHaveAttribute("data-pending-work-mode", "standard");
-  await expect(page.getByTestId("issue-chat-composer-work-mode-toggle")).toHaveAttribute("aria-pressed", "false");
+  await expectOpeningQuestionDismissed(page);
+  await page.getByTestId("task-chat-composer-mode").click();
+  await expect(page.getByTestId("task-chat-composer-mode")).toHaveCount(0);
+  await expect(page.getByTestId("task-chat-composer-add")).toBeVisible();
   await page.screenshot({
     path: `${screenshotDir}/desktop-standard-toggle-${timestamp}.png`,
     fullPage: true,
@@ -126,11 +183,11 @@ test("captures planning mode UI for desktop and mobile", async ({ page }) => {
   await setMode("planning");
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(issuePath);
+  await expectOpeningQuestionDismissed(page);
   await expect(page.getByText("Plan mode").first()).toBeVisible();
-  const mobilePlanningToggle = page.getByTestId("issue-chat-composer-work-mode-toggle");
+  const mobilePlanningToggle = page.getByTestId("task-chat-composer-mode");
   await expect(mobilePlanningToggle).toBeVisible();
   await expect(mobilePlanningToggle).toHaveAttribute("data-pending-work-mode", "planning");
-  await expect(mobilePlanningToggle).toHaveAttribute("aria-pressed", "true");
   await page.screenshot({
     path: `${screenshotDir}/mobile-planning-detail-${timestamp}.png`,
     fullPage: true,
