@@ -2164,11 +2164,13 @@
       "capability": "provider-controlled",
       "supportedActions": "Account/team-authorized project and deployment actions; identity scope is not an admin permission.",
       "evidence": [
+        "https://vercel.com/docs/agent-resources/vercel-mcp",
+        "https://vercel.com/docs/agent-resources/vercel-mcp/tools",
         "https://mcp.vercel.com/.well-known/oauth-protected-resource"
       ],
-      "reviewedAt": "2026-09-30",
+      "reviewedAt": "2026-10-12",
       "liveProof": "not-run",
-      "evidenceLimit": "Provider documentation was unavailable or not readable during this review; metadata/registered source only. Account-bound proof remains outstanding."
+      "evidenceLimit": "Vercel's supported-client list does not include Paperclip. Account-bound proof and provider approval remain outstanding. The documented root endpoint returned an OAuth challenge; /mcp returned 404 on 2026-10-12."
     },
     {
       "app": "webflow",

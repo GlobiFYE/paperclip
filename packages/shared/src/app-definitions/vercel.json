@@ -25,7 +25,7 @@
       ],
       "whenToUse": "Use the provider-hosted connection for the quickest setup.",
       "defaults": {
-        "serverUrl": "https://mcp.vercel.com/mcp",
+        "serverUrl": "https://mcp.vercel.com",
         "scopesHint": [
           "openid"
         ]
@@ -41,6 +41,6 @@
   ],
   "availability": {
     "available": false,
-    "reason": "Vercel currently reviews and approves MCP clients."
+    "reason": "Vercel only permits reviewed MCP clients. Paperclip is not on Vercel's supported-client list (checked 2026-10-12)."
   }
 }

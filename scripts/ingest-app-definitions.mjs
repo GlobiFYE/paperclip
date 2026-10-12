@@ -801,7 +801,7 @@ const apps = [
       "mcp-oauth",
       "mcp_remote",
       "oauth",
-      { serverUrl: "https://mcp.vercel.com/mcp" },
+      { serverUrl: "https://mcp.vercel.com" },
       "S3",
       "Connect the Vercel team and projects agents should operate.",
       { requiredResourceFilters: ["team", "project", "environment"] },
