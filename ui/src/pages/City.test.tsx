@@ -39,9 +39,6 @@ describe("City connection state", () => {
     expect(markup).toContain("Checking connection…");
     expect(markup).toContain(CITY_DEFAULT_ORIGIN);
     expect(markup).toContain("requires a browser on the M4 host");
-    expect(markup.replace(/\s+/g, " ")).toContain(
-      "not a verified agent feed",
-    );
     // Developer setup/filepath/launchd prose stays in source comments, not the UI.
     expect(markup).not.toContain("VITE_CITY_URL");
     expect(markup).not.toContain("com.pantheon.city");

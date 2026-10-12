@@ -170,7 +170,7 @@ export function City() {
   return (
     <div
       ref={frameAreaRef}
-      className="flex h-full min-h-0 flex-col gap-3 bg-background p-4"
+      className={`flex min-h-0 flex-col gap-3 bg-background p-4 ${fullscreenActive ? "h-dvh" : "h-(--sz-calc-38) md:h-full"}`}
       data-page="city"
     >
       <header className="flex flex-wrap items-center gap-2">
@@ -183,7 +183,6 @@ export function City() {
         >
           {STATE_LABEL[connection]}
         </span>
-        <span className="font-mono text-xs text-muted-foreground break-all">{CITY_ORIGIN}</span>
         <div className="ml-auto flex items-center gap-2">
           <Button
             type="button"
@@ -215,9 +214,7 @@ export function City() {
       </header>
 
       <p data-testid="city-local-m4-caveat" className="text-xs text-muted-foreground">
-        {originIsLoopback ? "Loopback origin — this page requires a browser on the M4 host. " : null}
-        &quot;Service reachable&quot; means the City app answered at this origin, not a verified
-        agent feed.
+        {originIsLoopback ? "City requires a browser on the M4 host." : "Explore your workforce in City."}
       </p>
 
       {connection === "connected" ? (
@@ -240,8 +237,7 @@ export function City() {
       )}
 
       <p className="text-xs text-muted-foreground">
-        If the embedded view stays blank while the service is reachable, the City app may disallow
-        framing — use Open City above. Press Escape to leave full screen.
+        {fullscreenActive ? "Press Escape to leave full screen." : "Use Open City to explore in a separate tab."}
       </p>
     </div>
   );
