@@ -42,3 +42,17 @@ Remap these measurements after the fifth extraction and stop at five PRs.
   passed. The selection hook remains live through an options getter.
 - Next: accepted-file receipt recovery. Keep the generic outbound publication
   link writer shared and pass it as a typed callback to the Slack module.
+
+## Slice 2: Slack accepted-file receipts
+
+- Service: 29,553 lines / 1,156,944 bytes → 28,620 lines / 1,122,992 bytes.
+- Destination: 1,000 lines / 36,807 bytes. Thirteen declarations move together:
+  receipt validation, recording, authorization, recovery, settlement and due-work
+  selection. The generic outbound-link writer remains shared.
+- All nine selected public-service cases passed before and after. They cover
+  accepted upload recovery without reposting, original-attempt ownership,
+  competing retry deadlines, revoked reach and selected file publication.
+  Server typecheck, module boundaries and syntax parity passed. No state or
+  worker is added. Credential lease identity and all transactions are unchanged.
+- Next: Telegram private draft reservation and stopped-generation callbacks,
+  retaining shared runtime-map identity and source-publication authorization.
