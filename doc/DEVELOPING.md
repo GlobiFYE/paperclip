@@ -35,6 +35,22 @@ New workflow versions merged into master then receive runner access without a
 separate SHA allowlist update. Dependabot leaves this first-party reference on
 master.
 
+Runner selection calls `ci-routing.yml@master` on the dedicated
+`paperclip-ci-routing-x64` AWS Fleet. The `paperclip-ci-routing` runner group
+admits only `paperclipai/paperclip/.github/workflows/ci-routing.yml@refs/heads/master`
+and repository ID `1170821064`. The routing workflow reads GitHub metadata
+without checking out or executing PR code. Its author, sender, rerun actor,
+repository, head, and merge validation still decide whether tests can use AWS.
+Unapproved test workloads continue to use GitHub-hosted runners.
+
+The routing Fleet has two warm On-Demand runners and a four-runner ceiling.
+Test fleets cannot consume its runner slots. Hosted test queues therefore do
+not block AWS runner selection. A manual dispatch of `ci-routing.yml` on master
+checks placement without launching the test matrix; its non-PR event returns
+the hosted test-runner output. Configure and verify the group and Fleet before
+merging this caller. To roll back, restore the hosted gate and retain the routing
+workflow authorization until assigned jobs finish.
+
 Keep the `.github/**` rule in `.github/CODEOWNERS` and the active master ruleset's
 code-owner review requirement enabled. This covers the caller, the trusted
 workflow, and CODEOWNERS itself. Existing administrator pull-request bypasses
