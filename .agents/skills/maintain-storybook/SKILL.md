@@ -52,6 +52,12 @@ feature coverage.
 
 Preserve story exports and IDs. Before moves/title changes, capture the existing
 built `index.json`; use explicit meta IDs when needed and compare IDs afterward.
+Place stories under `ui/storybook/stories/<primary-feature-area>/`. Use the feature
+map's section and feature names as their sidebar prefix; keep useful scenario
+groupings beneath that prefix. Put shared fixture modules in `ui/storybook/support/`.
+Keep the catalog's `stableId` equal to the explicit CSF meta ID even when the title
+changes. Unmapped component examples belong under Foundations; the catalog guide
+belongs under Overview. The checker verifies these conventions.
 Keep review links and snapshot names working. Prefer classification/index fixes
 before bulk directory moves. Record every directly rendered production subject in
 the catalog's review sources, including relative imports and primitives when they

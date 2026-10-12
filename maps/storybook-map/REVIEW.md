@@ -7,17 +7,17 @@ coverage, or production acceptance for all stories.
 
 ## Inventory and organization
 
-There is one Storybook, already centralized under `ui/storybook/`. Its 223 story
-files are split between 176 files at the stories root and 47 nested files. The
-existing sidebar has 51 top-level groups. A bulk file move would add churn without
-fixing the main problem: product meaning, provenance, and review status were not
-recorded consistently.
+There is one Storybook, already centralized under `ui/storybook/`. At the initial
+baseline, its 223 story files were split between 176 files at the stories root and
+47 nested files, with 51 top-level sidebar groups. The initial pass recorded
+product meaning, provenance, and review status before changing that organization.
+The follow-up organization pass below moves the files and sidebar together.
 
 The downstream catalog gives each file a primary feature home and related stable
 capability IDs. The generated index includes all 171 upstream capabilities across
 35 feature areas. The existing Overview story now provides searchable feature
-navigation into the actual built story index. Existing sidebar titles remain
-stable to preserve links and snapshot identity.
+navigation into the actual built story index. The initial pass kept sidebar titles
+stable; the follow-up uses explicit IDs to preserve links while changing titles.
 
 | Dimension | Initial classification |
 | --- | --- |
@@ -100,6 +100,41 @@ that foundation stories demonstrate. Explanatory review guides keep their separa
 guide classification. This records change detection, not new parity
 acceptance. Added a real CSF parser regression for nested discovery, include/exclude
 rules, stable explicit IDs, and play counts.
+
+## Feature organization follow-up — 2026-10-12
+
+Source baseline: `75bd3c977cd828d5222823850339e8204f40eb47` (parent PR #16046).
+The 223 story files now live under their primary feature area in
+`ui/storybook/stories/`. The sidebar uses the feature map's section and feature
+labels in map order. Existing scenario groups remain below those labels.
+Overview and shared Foundations have dedicated homes. Areas without stories do
+not get empty sidebar groups; their gaps remain visible in the catalog.
+
+Nineteen supporting files moved to `ui/storybook/support/`, including fixtures,
+shared wrappers, guide READMEs, an HTML fixture, and a fixture test. Relative imports,
+active documentation, catalog sources, and replacement references follow the
+moves. Classification and review scope did not change. The upstream feature map
+and its skill are unchanged.
+
+Every suite now has an explicit meta ID, recorded as `stableId` in the catalog.
+The built index comparison preserved all 2,210 story IDs, the single docs ID, and
+all entry names. No story was removed or added. Catalog validation checks primary
+feature folders, sidebar prefixes, and stable meta IDs; its nine tests passed.
+
+The Storybook build, UI typecheck, all 8,176 UI tests in 728 files, token gates,
+map checks, and the maintenance-skill validator passed. A source comparison found
+only changed meta titles/IDs, rebased relative references, and updated fixture
+path text in story files. The full repository suite was not repeated for these
+file moves; the prior full-suite limitation above still applies.
+
+Local Chromium verified the sidebar's section/feature order, rendered the guide,
+searched `steering/queue`, and followed its link to the unchanged
+`composer-steering-and-queued-messages--queued-while-running` ID. The nine play
+cases listed above and `fast-responses-01-settings--empty` all reached
+`storyFinished: success` without page exceptions after relocation. This is a
+sample of interactions and rendering, not execution of all 2,210 stories.
+The fixture-server story and visual-baseline comparisons remain untested for the
+reasons below. The owned static preview was left running for the requested test-drive.
 
 ## Remaining review work
 
