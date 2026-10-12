@@ -47,6 +47,7 @@ import { DecisionQueueRail } from "../components/DecisionQueueRail";
 import { DecisionDateChips, type AttentionCustomRange } from "../components/DecisionDateChips";
 import { DecisionResolver } from "../components/DecisionResolver";
 import { IssueGroupHeader } from "../components/IssueGroupHeader";
+import { BulkConfirm } from "../components/BulkConfirm";
 
 /** Curtain rows never expand; module-level so memoized rows see one identity. */
 const noopToggleExpand = () => {};
@@ -262,6 +263,7 @@ export function WhatNeedsMe() {
   }, [deskItems, filters, sortOrder, groupBy, now]);
 
   const visibleCount = useMemo(() => groups.reduce((sum, group) => sum + group.items.length, 0), [groups]);
+  const bulkVisibleItems = useMemo(() => groups.flatMap((group) => group.items), [groups]);
   const keyboardItems = useMemo(
     () => groups.filter((group) => group.label === null || !collapsedGroupKeys.has(group.key)).flatMap((group) => group.items),
     [collapsedGroupKeys, groups],
@@ -531,6 +533,8 @@ export function WhatNeedsMe() {
           onSortOrderChange={updateSortOrder}
         />
       </div>
+
+      <BulkConfirm key={selectedCompanyId} companyId={selectedCompanyId} items={bulkVisibleItems} revision={feed?.generatedAt} agentMap={agentMap} />
 
       {/* Queue quicklinks + date-range chips (§4.1–§4.2). The rail self-hides
           when the company has no queues; the chips filter the desk server-side. */}

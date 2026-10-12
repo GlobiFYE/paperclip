@@ -5,8 +5,10 @@ import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { userEvent, within } from "storybook/test";
 import type { Agent } from "@paperclipai/shared";
 import { ApiError } from "../api/client";
+import { bulkQuestions } from "../fixtures/bulkConfirmFixtures";
 import { IssueThreadInteractionCard } from "./IssueThreadInteractionCard";
 import { ThemeProvider } from "../context/ThemeContext";
 import { TooltipProvider } from "./ui/tooltip";
@@ -124,6 +126,18 @@ afterEach(() => {
 });
 
 describe("IssueThreadInteractionCard", () => {
+  it("marks explicit recommendations and supports keyboard radio selection without submitting", async () => {
+    const submit = vi.fn();
+    const host = renderCard({ interaction: bulkQuestions(), onSubmitInteractionAnswers: submit });
+    const radios = within(host).getAllByRole("radio") as HTMLInputElement[];
+    expect(within(host).getByText("Recommended")).toBeTruthy();
+    await act(async () => { await userEvent.click(radios[0]); });
+    await act(async () => { await userEvent.keyboard("{ArrowRight}"); });
+    expect(radios[1].checked).toBe(true);
+    expect(document.activeElement).toBe(radios[1]);
+    expect(submit).not.toHaveBeenCalled();
+  });
+
   it("opens the shared connection setup for the addressed user", async () => {
     connectionIntentsApiMocks.setupOptions.mockResolvedValue({ existingConnections: [] });
     const host = renderCard({
@@ -174,22 +188,22 @@ describe("IssueThreadInteractionCard", () => {
       "interaction-questions-default-collapse-depth-prompt",
     );
 
-    const radios = [...host.querySelectorAll('[role="radio"]')];
+    const radios = [...host.querySelectorAll<HTMLInputElement>('input[type="radio"]')];
     expect(radios).toHaveLength(2);
-    expect(radios[0]?.getAttribute("aria-checked")).toBe("false");
+    expect(radios[0]?.checked).toBe(false);
 
     act(() => {
-      (radios[0] as HTMLButtonElement).click();
+      radios[0].click();
     });
 
-    expect(radios[0]?.getAttribute("aria-checked")).toBe("true");
-    expect(radios[1]?.getAttribute("aria-checked")).toBe("false");
+    expect(radios[0]?.checked).toBe(true);
+    expect(radios[1]?.checked).toBe(false);
 
     const multiGroup = host.querySelector('[role="group"]');
     expect(multiGroup?.getAttribute("aria-labelledby")).toBe(
       "interaction-questions-default-post-submit-summary-prompt",
     );
-    expect(host.querySelectorAll('[role="checkbox"]')).toHaveLength(3);
+    expect(host.querySelectorAll('input[type="checkbox"]')).toHaveLength(3);
 
     const otherLink = Array.from(host.querySelectorAll("button")).find((button) =>
       button.textContent === "Other",
@@ -226,8 +240,8 @@ describe("IssueThreadInteractionCard", () => {
       textarea!.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
-    const summaryCheckbox = Array.from(host.querySelectorAll('[role="checkbox"]')).find((button) =>
-      button.textContent?.includes("Inline answer pills"),
+    const summaryCheckbox = Array.from(host.querySelectorAll('input[type="checkbox"]')).find((button) =>
+      button.closest("label")?.textContent?.includes("Inline answer pills"),
     );
     await act(async () => {
       summaryCheckbox?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
@@ -272,16 +286,16 @@ describe("IssueThreadInteractionCard", () => {
     // No text field until the free-text option is selected.
     expect(host.querySelector("textarea")).toBeNull();
 
-    const describeOption = Array.from(host.querySelectorAll('[role="radio"]')).find(
-      (button) => button.textContent?.includes("I'll describe it"),
-    ) as HTMLButtonElement | undefined;
+    const describeOption = Array.from(host.querySelectorAll('input[type="radio"]')).find(
+      (button) => button.closest("label")?.textContent?.includes("I'll describe it"),
+    ) as HTMLInputElement | undefined;
     expect(describeOption).toBeTruthy();
 
     await act(async () => {
       describeOption?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
-    expect(describeOption?.getAttribute("aria-checked")).toBe("true");
+    expect(describeOption?.checked).toBe(true);
     const textarea = host.querySelector("textarea") as HTMLTextAreaElement | null;
     expect(textarea).toBeTruthy();
 
@@ -351,7 +365,7 @@ describe("IssueThreadInteractionCard", () => {
     });
 
     expect(host.childElementCount).toBeGreaterThan(0);
-    expect(host.querySelectorAll('[role="radio"]').length).toBeGreaterThan(0);
+    expect(host.querySelectorAll('input[type="radio"]').length).toBeGreaterThan(0);
   });
 
   it("keeps a closed native select set closed while preserving direct-question defaults", () => {
@@ -692,7 +706,7 @@ describe("IssueThreadInteractionCard", () => {
     });
 
     // Answer every question so Submit is enabled, then submit.
-    for (const group of ['[role="radio"]', '[role="checkbox"]']) {
+    for (const group of ['input[type="radio"]', 'input[type="checkbox"]']) {
       const option = host.querySelector(group);
       await act(async () => {
         (option as HTMLElement | null)?.click();

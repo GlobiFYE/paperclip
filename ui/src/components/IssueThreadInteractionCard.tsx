@@ -975,56 +975,66 @@ function SuggestTasksCard({
   );
 }
 
-function QuestionOptionButton({
+function QuestionOptionChoice({
   id,
+  groupName,
   label,
   description,
+  recommended,
   selected,
   selectionMode,
   onClick,
 }: {
   id: string;
+  groupName: string;
   label: string;
   description?: string | null;
+  recommended?: boolean;
   selected: boolean;
   selectionMode: "single" | "multi";
   onClick: () => void;
 }) {
   return (
-    <button
-      type="button"
-      role={selectionMode === "single" ? "radio" : "checkbox"}
-      aria-checked={selected}
+    <label
       className={cn(
-        "w-full rounded-sm border px-4 py-3 text-left transition-colors outline-none focus-visible:border-ring focus-visible:ring-(length:--rad-3) focus-visible:ring-ring/50",
+        "flex w-full cursor-pointer items-start gap-3 rounded-sm border px-4 py-3 text-left transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50",
         selected
           ? "border-sky-500/80 bg-sky-500/10 text-sky-950 dark:border-sky-400/80 dark:bg-sky-400/15 dark:text-sky-50"
           : "border-border/70 bg-transparent text-foreground hover:border-sky-500/70 hover:bg-sky-500/10 dark:hover:border-sky-400/70 dark:hover:bg-sky-400/10",
       )}
-      id={id}
-      onClick={onClick}
     >
-      <div
-        className={cn(
-          "text-sm font-medium",
-          selected ? "text-sky-950 dark:text-sky-50" : "text-foreground",
-        )}
-      >
-        {label}
-      </div>
-      {description ? (
-        <div
+      <input
+        id={id}
+        name={groupName}
+        type={selectionMode === "single" ? "radio" : "checkbox"}
+        checked={selected}
+        onChange={onClick}
+        className="mt-1 shrink-0 accent-primary"
+      />
+      <span className="min-w-0">
+        <span
           className={cn(
-            "mt-1 text-sm leading-6",
-            selected
-              ? "text-sky-900/80 dark:text-sky-100/80"
-              : "text-muted-foreground",
+            "block text-sm font-medium",
+            selected ? "text-sky-950 dark:text-sky-50" : "text-foreground",
           )}
         >
-          {description}
-        </div>
-      ) : null}
-    </button>
+          {label}
+          {recommended && <span className="ml-2 text-xs text-muted-foreground">Recommended</span>}
+        </span>
+        {description ? (
+          <span
+            className={cn(
+              "mt-1 block text-sm leading-6",
+              selected
+                ? "text-sky-900/80 dark:text-sky-100/80"
+                : "text-muted-foreground",
+            )}
+          >
+            {description}
+          </span>
+        ) : null}
+      </span>
+    </label>
   );
 }
 
@@ -1242,10 +1252,14 @@ function AskUserQuestionsCard({
                       : (draftAnswers[question.id] ?? []).includes(option.id);
                     return (
                       <div key={option.id} className="space-y-2">
-                        <QuestionOptionButton
+                        <QuestionOptionChoice
                           id={`${interaction.id}-${question.id}-${option.id}`}
+                          groupName={`${interaction.id}-${question.id}`}
                           label={option.label}
                           description={option.description}
+                          recommended={interaction.payload.questionSet?.questions.some((shown) =>
+                            shown.id === question.id && shown.prompt === question.prompt
+                            && shown.options?.some((choice) => choice.id === option.id && choice.label === option.label && choice.recommended === true))}
                           selected={optionSelected}
                           selectionMode={question.selectionMode}
                           onClick={() =>

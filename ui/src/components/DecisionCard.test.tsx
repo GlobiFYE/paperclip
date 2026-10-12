@@ -120,6 +120,16 @@ function clickButtonWithText(el: HTMLElement, text: string) {
   return button;
 }
 
+function choiceWithText(el: HTMLElement, text: string) {
+  return [...el.querySelectorAll("label")].find((label) => label.textContent?.includes(text))?.querySelector<HTMLInputElement>('input[type="radio"]');
+}
+
+function selectChoice(el: HTMLElement, text: string) {
+  const choice = choiceWithText(el, text);
+  if (!choice) throw new Error(`No choice with text "${text}"`);
+  act(() => { choice.click(); });
+}
+
 afterEach(() => {
   if (root) act(() => root?.unmount());
   container?.remove();
@@ -188,7 +198,9 @@ describe("DecisionCard", () => {
   it("fires onDecide with the chosen option id", () => {
     const onDecide = vi.fn();
     const el = render({ onDecide });
-    clickButtonWithText(el, "Comment and snooze");
+    selectChoice(el, "Comment and snooze");
+    expect(onDecide).not.toHaveBeenCalled();
+    clickButtonWithText(el, "Confirm choice");
     expect(onDecide).toHaveBeenCalledWith("comment", expect.any(Object));
   });
 
@@ -211,7 +223,7 @@ describe("DecisionCard", () => {
     });
     expect(el.textContent).toContain("changed since this was proposed");
     expect(el.textContent).toContain("Blocked · stale");
-    const strict = [...el.querySelectorAll("button")].find((b) => b.textContent?.includes("Cancel it"));
+    const strict = choiceWithText(el, "Cancel it");
     expect(strict?.disabled).toBe(true);
   });
 
@@ -237,9 +249,9 @@ describe("DecisionCard", () => {
         ],
       }),
     });
-    const strict = [...el.querySelectorAll("button")].find((button) => button.textContent?.includes("Create the follow-up"));
+    const strict = choiceWithText(el, "Create the follow-up");
     expect(strict?.disabled).toBe(true);
-    expect(strict?.textContent).toContain("Blocked · stale");
+    expect(strict?.closest("label")?.textContent).toContain("Blocked · stale");
   });
 
   it("gates a cancel_issue_tree option behind a type-to-confirm step", () => {
@@ -254,8 +266,8 @@ describe("DecisionCard", () => {
       }),
     });
     expect(el.textContent).toContain("Destructive");
-    // First click opens the confirm gate rather than deciding.
-    clickButtonWithText(el, "Cancel the tree");
+    selectChoice(el, "Cancel the tree");
+    clickButtonWithText(el, "Confirm choice");
     expect(onDecide).not.toHaveBeenCalled();
     expect(el.textContent).toContain("to confirm");
     const confirm = [...el.querySelectorAll("button")].find((b) => b.textContent?.match(/Cancel \d+ issue/));
