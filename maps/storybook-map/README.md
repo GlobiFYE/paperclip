@@ -25,6 +25,24 @@ is its primary home; remaining capabilities are lookup references, not copies.
 Foundations/guides and proposals without a mapped capability need an exception
 reason. An absent story is not automatically a feature gap.
 
+## Folders and sidebar
+
+Story files live in `ui/storybook/stories/<primary-feature-area>/`, using the first
+capability's area slug. Related capabilities still point to the same story. Shared
+fixture modules and assets live in `ui/storybook/support/`; production wrappers in
+`ui/storybook/prototypes/` retain their existing ownership.
+
+The sidebar follows the section and feature names in the feature-map README, then
+retains each suite's useful scenario grouping. Foundations contains shared component
+examples with no primary product capability. Overview contains the catalog guide.
+Areas with no stories do not get empty sidebar folders.
+
+Each suite declares an explicit CSF `id`, recorded as `stableId` in the catalog.
+The `sidebarTitle` can change without changing that identity. Existing story and
+autodocs URLs and screenshot names remain valid. Do not derive a replacement ID
+from a newly organized title. The checker rejects missing or changed explicit IDs,
+incorrect feature folders, and sidebar titles outside their primary feature home.
+
 Each entry records purpose, capability references, review sources/date/fingerprint,
 notes, and three independent dimensions:
 
