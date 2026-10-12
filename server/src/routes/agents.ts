@@ -5313,8 +5313,8 @@ export function agentRoutes(
     }
     if (existing.runtimeConfig.aiConnection && requestedRuntimeConfig && !requestedRuntimeConfig.aiConnection && adapterUsesAiConnection(requestedAdapterType)) requestedRuntimeConfig.aiConnection = existing.runtimeConfig.aiConnection;
     const nextAiBinding = adapterUsesAiConnection(requestedAdapterType)
-      ? aiConnectionBindingSchema.safeParse(requestedRuntimeConfig?.aiConnection ?? existing.runtimeConfig.aiConnection).data
-      : aiConnectionBindingSchema.safeParse(requestedRuntimeConfig?.aiConnection).data;
+      ? aiRuntimeConnectionBindingSchema.safeParse(requestedRuntimeConfig?.aiConnection ?? existing.runtimeConfig.aiConnection).data
+      : aiRuntimeConnectionBindingSchema.safeParse(requestedRuntimeConfig?.aiConnection).data;
     if (nextAiBinding) {
       await assertCanUpdateAgent(req, existing);
       const changed = JSON.stringify(nextAiBinding) !== JSON.stringify(existing.runtimeConfig.aiConnection);
