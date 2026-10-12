@@ -39,6 +39,7 @@ import { issueRecoveryActionService } from "../../../services/issue-recovery-act
 import { readContinuationAttempt } from "../../../services/recovery/run-liveness-continuations.js";
 import { withRecoveryContext } from "../../../services/recovery/status-only-context.js";
 import { parseIssueExecutionState } from "../../../services/issue-execution-policy.js";
+import { readNativeReviewAssignmentContext } from "../../../services/native-runtime/native-review-participant.js";
 import {
   queuedCommentIdsFromWakePayload,
   withQueuedCommentIdsInWakePayload,
@@ -1141,8 +1142,10 @@ export function createPostgresWakeQueueAdapter(db: Db, deps: WakeQueuePostgresAd
         // A queued successor whose agent has handed the issue over is not one:
         // the queued-run staleness gate cancels it with issue_assignee_changed
         // before it starts, so it must not strand the new owner's deferred wake.
-        // A source-scoped recovery wake counts as live here because its
-        // authorization needs a separate read; the dispatch gate decides it.
+        // A source-scoped recovery wake and a native completion review count
+        // as live here because confirming them needs separate reads (the review
+        // is assigned through its interaction, not the issue's participant);
+        // the dispatch gate decides them.
         const successors = await tx.select({
           id: heartbeatRuns.id,
           status: heartbeatRuns.status,
@@ -1169,9 +1172,10 @@ export function createPostgresWakeQueueAdapter(db: Db, deps: WakeQueuePostgresAd
             isNonAssigneeWorkspaceBusyRetry: isNonAssigneeWorkspaceBusyRetry(retryReason, context),
             isInteractionWake: allowsIssueInteractionWake(context, ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS),
             isCurrentReviewParticipant:
-              issueRow.status === "in_review" &&
-              reviewParticipant?.type === "agent" &&
-              reviewParticipant.agentId === run.agentId,
+              (issueRow.status === "in_review" &&
+                reviewParticipant?.type === "agent" &&
+                reviewParticipant.agentId === run.agentId) ||
+              readNativeReviewAssignmentContext(context) !== null,
             isAuthorizedSourceScopedRecovery: context.wakeReason === "source_scoped_recovery_action",
           });
         });
