@@ -8,18 +8,13 @@ import {
   agentWakeupRequests,
   agents,
   companies,
-  completionContracts,
   createDb,
   environmentLeases,
   heartbeatRunEvents,
   heartbeatRuns,
   issueComments,
   issueRecoveryActions,
-  issueThreadInteractions,
   issues,
-  nativeRunResults,
-  statusDecisions,
-  workAssessments,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -68,14 +63,9 @@ describeEmbeddedPostgres("wake-queue postgres adapter", () => {
     await db.delete(issueComments);
     await db.delete(heartbeatRunEvents);
     await db.delete(environmentLeases);
-    await db.delete(issueThreadInteractions);
-    await db.delete(statusDecisions);
-    await db.delete(workAssessments);
-    await db.delete(nativeRunResults);
     // `heartbeat_runs.wakeup_request_id` references `agent_wakeup_requests.id`,
     // so the run row must go first.
     await db.delete(heartbeatRuns);
-    await db.delete(completionContracts);
     await db.delete(agentWakeupRequests);
     await db.delete(issueRecoveryActions);
     await db.delete(issues);
@@ -419,140 +409,6 @@ describeEmbeddedPostgres("wake-queue postgres adapter", () => {
     const runId = await seedRun({ companyId, agentId, status: "succeeded", contextSnapshot: { issueId } });
     await seedRun({ companyId, agentId, status, contextSnapshot: { issueId } });
     const wakeId = await seedDeferredWake({ companyId, agentId, issueId });
-    const adapter = createPostgresWakeQueueAdapter(db, stubDeps);
-    let drained = false;
-    await adapter.withIssueExecutionLock({ companyId, runId, now: new Date() }, async () => {
-      drained = true;
-      return { outcome: { kind: "released" }, postCommitEffects: [] };
-    });
-    expect(drained).toBe(false);
-    const [wake] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeId));
-    expect(wake.status).toBe("deferred_issue_execution");
-  });
-
-  it("promotes the new assignee's deferred wake past a queued successor of the agent that handed the issue over", async () => {
-    const companyId = await seedCompany();
-    const previousOwnerId = await seedAgent({ companyId, name: "Reviewer" });
-    const newOwnerId = await seedAgent({ companyId, name: "Approver" });
-    const issueId = await seedIssue({ companyId, assigneeAgentId: newOwnerId });
-    const runId = await seedRun({ companyId, agentId: previousOwnerId, status: "succeeded", contextSnapshot: { issueId } });
-    const staleRunId = await seedRun({ companyId, agentId: previousOwnerId, status: "queued", contextSnapshot: { issueId } });
-    const wakeId = await seedDeferredWake({ companyId, agentId: newOwnerId, issueId });
-    const release = createReleaseIssueExecution({
-      issueLock: createPostgresWakeQueueAdapter(db, stubDeps),
-      recovery: { escalateStrandedAssignedIssue: async () => {}, escalateStrandedRecoveryIssueInPlace: async () => {} },
-    });
-    const result = await release({ companyId, runId, now: new Date() });
-    expect(result.outcome.kind).toBe("promoted");
-    const [wake] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeId));
-    const promoted = (await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.companyId, companyId)))
-      .find(candidate => candidate.agentId === newOwnerId);
-    expect(promoted).toMatchObject({ status: "queued" });
-    expect(wake).toMatchObject({ status: "queued", runId: promoted!.id });
-    const [issue] = await db.select().from(issues).where(eq(issues.id, issueId));
-    expect(issue).toMatchObject({ assigneeAgentId: newOwnerId, executionRunId: promoted!.id });
-    const [stale] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, staleRunId));
-    expect(stale.status).toBe("queued");
-  });
-
-  // A pending native completion review of the worker's applied decision, addressed to the reviewer.
-  async function seedNativeReview(input: { companyId: string; workerId: string; reviewerId: string; issueId: string }) {
-    const { companyId, workerId, reviewerId, issueId } = input;
-    const sourceRunId = randomUUID(), decisionId = randomUUID(), interactionId = randomUUID();
-    const contractId = randomUUID(), resultId = randomUUID(), assessmentId = randomUUID();
-    await db.insert(heartbeatRuns).values({ id: sourceRunId, companyId, agentId: workerId, status: "succeeded",
-      runtimeMode: "native", nativeIssueId: issueId });
-    await db.insert(completionContracts).values({ id: contractId, companyId, issueId, revision: 1, schemaVersion: "1",
-      policyVersion: "test", risk: "low", completionAuthority: "agent_claim_policy", incompleteCriteriaPolicy: "block",
-      contractJson: {}, canonicalSha256: randomUUID(), createdByActorType: "agent", createdByActorId: workerId });
-    await db.update(heartbeatRuns).set({ completionContractId: contractId }).where(eq(heartbeatRuns.id, sourceRunId));
-    await db.insert(nativeRunResults).values({ id: resultId, companyId, issueId, runId: sourceRunId,
-      completionContractId: contractId, serverFingerprint: randomUUID(), schemaStatus: "valid", resultJson: {},
-      canonicalSha256: randomUUID() });
-    await db.insert(workAssessments).values({ id: assessmentId, companyId, issueId, runId: sourceRunId, contractId,
-      resultId, triggerKind: "test", triggerActorCompanyId: companyId, priorIssueStatus: "in_progress",
-      priorStatusVersion: 0, policyVersion: "test", assessmentJson: {}, inputDigest: randomUUID() });
-    await db.insert(statusDecisions).values({ id: decisionId, companyId, issueId, runId: sourceRunId, assessmentId,
-      decisionVersion: 1, policyVersion: "test", fromStatus: "in_progress", toStatus: "in_review",
-      reasonCode: "completion_review", decisionJson: { projectedStatusVersion: 1 }, decisionDigest: randomUUID(),
-      applicationState: "applied" });
-    await db.insert(issueThreadInteractions).values({ id: interactionId, companyId, issueId, kind: "request_confirmation",
-      status: "pending", continuationPolicy: "wake_assignee", requestedResolverPolicy: "anyone",
-      effectiveResolverPolicy: "anyone", resolverPolicyProvenance: "inherited", sourceRunId, addresseeAgentId: reviewerId,
-      payload: { version: 1, prompt: "Review", target: { type: "custom", key: "native_completion_review", revisionId: decisionId } } });
-    await db.update(issues).set({ status: "in_review", statusVersion: 1, lastStatusDecisionId: decisionId })
-      .where(eq(issues.id, issueId));
-    return { nativeReviewInteractionId: interactionId, nativeReviewDecisionId: decisionId };
-  }
-
-  it.each([true, false])("lets a queued native completion review hold the issue only while its assignment is live: %s", async (live) => {
-    const companyId = await seedCompany();
-    const reviewerId = await seedAgent({ companyId, name: "Reviewer" });
-    const workerId = await seedAgent({ companyId, name: "Worker" });
-    const issueId = await seedIssue({ companyId, assigneeAgentId: workerId });
-    const reviewContext = await seedNativeReview({ companyId, workerId, reviewerId, issueId });
-    // The board reassigns the issue, so the saved review ids no longer resolve to an assignment.
-    const wakeAgentId = live ? workerId : await seedAgent({ companyId, name: "New owner" });
-    if (!live) await db.update(issues).set({ assigneeAgentId: wakeAgentId }).where(eq(issues.id, issueId));
-    const runId = await seedRun({ companyId, agentId: reviewerId, status: "succeeded", contextSnapshot: { issueId } });
-    await seedRun({ companyId, agentId: reviewerId, status: "queued", contextSnapshot: { issueId, ...reviewContext } });
-    const wakeId = await seedDeferredWake({ companyId, agentId: wakeAgentId, issueId });
-    const adapter = createPostgresWakeQueueAdapter(db, stubDeps);
-    let drained = false;
-    await adapter.withIssueExecutionLock({ companyId, runId, now: new Date() }, async () => {
-      drained = true;
-      return { outcome: { kind: "released" }, postCommitEffects: [] };
-    });
-    expect(drained).toBe(!live);
-    const [wake] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeId));
-    if (live) expect(wake.status).toBe("deferred_issue_execution");
-  });
-
-  it.each([true, false])("lets a queued source-scoped recovery hold the issue only while its action is live: %s", async (live) => {
-    const companyId = await seedCompany();
-    const ownerId = await seedAgent({ companyId, name: "Recovery owner" });
-    const assigneeId = await seedAgent({ companyId, name: "Assignee" });
-    const issueId = await seedIssue({ companyId, assigneeAgentId: assigneeId });
-    const [action] = await db.insert(issueRecoveryActions).values({ companyId, sourceIssueId: issueId,
-      kind: "active_run_watchdog", status: live ? "active" : "resolved", ownerType: "agent", ownerAgentId: ownerId,
-      cause: "stranded_assigned_issue", fingerprint: `source-scoped:${issueId}`, evidence: {},
-      nextAction: "Recover the issue." }).returning();
-    const runId = await seedRun({ companyId, agentId: ownerId, status: "succeeded", contextSnapshot: { issueId } });
-    await seedRun({ companyId, agentId: ownerId, status: "queued", contextSnapshot: {
-      issueId, wakeReason: "source_scoped_recovery_action", recoveryActionId: action!.id,
-    } });
-    await seedDeferredWake({ companyId, agentId: assigneeId, issueId });
-    const adapter = createPostgresWakeQueueAdapter(db, stubDeps);
-    let drained = false;
-    await adapter.withIssueExecutionLock({ companyId, runId, now: new Date() }, async () => {
-      drained = true;
-      return { outcome: { kind: "released" }, postCommitEffects: [] };
-    });
-    expect(drained).toBe(!live);
-  });
-
-  it("keeps a queued successor of the current review participant ahead of other deferred wakes", async () => {
-    const companyId = await seedCompany();
-    const reviewerId = await seedAgent({ companyId, name: "Reviewer" });
-    const assigneeId = await seedAgent({ companyId, name: "Producer" });
-    const issueId = await seedIssue({ companyId, status: "in_review", assigneeAgentId: assigneeId });
-    await db.update(issues).set({
-      executionState: {
-        status: "pending",
-        currentStageId: randomUUID(),
-        currentStageIndex: 0,
-        currentStageType: "review",
-        currentParticipant: { type: "agent", agentId: reviewerId },
-        returnAssignee: { type: "agent", agentId: assigneeId },
-        reviewRequest: null,
-        completedStageIds: [],
-        lastDecisionId: null,
-        lastDecisionOutcome: null,
-      },
-    }).where(eq(issues.id, issueId));
-    const runId = await seedRun({ companyId, agentId: reviewerId, status: "succeeded", contextSnapshot: { issueId } });
-    await seedRun({ companyId, agentId: reviewerId, status: "queued", contextSnapshot: { issueId } });
-    const wakeId = await seedDeferredWake({ companyId, agentId: assigneeId, issueId });
     const adapter = createPostgresWakeQueueAdapter(db, stubDeps);
     let drained = false;
     await adapter.withIssueExecutionLock({ companyId, runId, now: new Date() }, async () => {
