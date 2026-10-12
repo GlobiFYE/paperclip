@@ -1,4 +1,6 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { usePrimaryAgentPresentation } from "@/components/primary-agent/PrimaryAgentPresentation";
+import { AgentAvatar } from "@/components/AgentAvatar";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "@/lib/router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -19,9 +21,10 @@ import { useSidebar } from "../context/SidebarContext";
 import { useToastActions } from "../context/ToastContext";
 import { agentsApi } from "../api/agents";
 import { builtInAgentsApi, type BuiltInAgentStatus } from "../api/builtInAgents";
-import { BuiltInAgentBadge, BuiltInLifecycleChip } from "./BuiltInAgentBadges";
+import { BuiltInLifecycleChip } from "./BuiltInAgentBadges";
 import { authApi } from "../api/auth";
 import { heartbeatsApi } from "../api/heartbeats";
+import { instanceSettingsApi } from "../api/instanceSettings";
 import { SIDEBAR_SCROLL_RESET_STATE } from "../lib/navigation-scroll";
 import { queryKeys } from "../lib/queryKeys";
 import { cn, agentRouteRef, agentUrl, SIDEBAR_RAIL_HIDDEN_LABEL } from "../lib/utils";
@@ -42,7 +45,6 @@ import {
   type AgentSidebarSortMode,
   writeAgentSortMode,
 } from "../lib/agent-order";
-import { AgentIcon } from "./AgentIconPicker";
 import { BudgetSidebarMarker } from "./BudgetSidebarMarker";
 import { SidebarNavItem } from "./SidebarNavItem";
 import { SidebarSection, type SidebarSectionRadioChoice } from "./SidebarSection";
@@ -63,6 +65,7 @@ import type { Agent } from "@paperclipai/shared";
  * recently-active agents plus a "See all agents" link (IA Phase 5).
  */
 const RECENT_AGENT_LIMIT = 3;
+const LIVE_AGENT_LINGER_MS = 120_000;
 
 const AGENT_SORT_CHOICES: SidebarSectionRadioChoice[] = [
   { value: "top", label: "Top" },
@@ -152,8 +155,9 @@ function SidebarAgentItem({
       : isPaused && hasInvalidOrgChain
         ? "Invalid org chain"
       : pauseResumeLabel;
+  const showBuiltInLifecycle = builtInStatus === "needs_setup" || builtInStatus === "pending_approval";
   const trailingLabel = [
-    builtInStatus ? `Built-in agent ${builtInStatus.replace(/_/g, " ")}` : null,
+    showBuiltInLifecycle ? `Built-in agent ${builtInStatus.replace(/_/g, " ")}` : null,
     hasInvalidOrgChain ? "Invalid reporting chain" : null,
   ].filter(Boolean).join(", ") || undefined;
 
@@ -163,10 +167,10 @@ function SidebarAgentItem({
     <SidebarNavItem
       to={href}
       label={agent.name}
-      iconNode={<AgentIcon icon={agent.icon} className="shrink-0 h-4 w-4" />}
+      iconNode={<AgentAvatar agent={agent} size={16} className="shrink-0 h-4 w-4"/>}
       active={isActive}
       liveCount={runCount}
-      labelClassName={builtInStatus ? "min-w-(--sz-4_5rem) flex-initial" : undefined}
+      labelClassName={showBuiltInLifecycle ? "min-w-(--sz-4_5rem) flex-initial" : undefined}
       className={cn(
         "min-w-0 flex-1",
         // Reserve room for the hover ⋯ menu; starred rows widen it for the
@@ -174,14 +178,9 @@ function SidebarAgentItem({
         starred && !isMobile ? "pr-14" : "pr-8",
       )}
       trailing={
-        builtInStatus || hasInvalidOrgChain ? (
+        showBuiltInLifecycle || hasInvalidOrgChain ? (
           <span className="ml-1 flex shrink-0 items-center gap-1">
-            {builtInStatus ? (
-              <>
-                <BuiltInAgentBadge compact />
-                <BuiltInLifecycleChip status={builtInStatus} compact />
-              </>
-            ) : null}
+            {showBuiltInLifecycle ? <BuiltInLifecycleChip status={builtInStatus} compact /> : null}
             {hasInvalidOrgChain ? (
               <AlertTriangle className="h-3.5 w-3.5 shrink-0 text-amber-500" aria-label="Invalid reporting chain" />
             ) : null}
@@ -298,8 +297,11 @@ function SidebarAgentItem({
 export function SidebarAgents({ streamlined = false }: { streamlined?: boolean } = {}) {
   const [open, setOpen] = useState(true);
   const [pendingAgentIds, setPendingAgentIds] = useState<Set<string>>(() => new Set());
+  const [liveLingerVersion, setLiveLingerVersion] = useState(0);
+  const lastSeenLiveAtRef = useRef<Map<string, number>>(new Map());
   const queryClient = useQueryClient();
   const { selectedCompanyId } = useCompany();
+  const primary = usePrimaryAgentPresentation(selectedCompanyId);
   const { openNewAgent } = useDialogActions();
   const { isMobile, setSidebarOpen, collapsed, peeking } = useSidebar();
   const rail = collapsed && !peeking;
@@ -311,18 +313,25 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+  const { data: experimentalSettings } = useQuery({
+    queryKey: queryKeys.instance.experimentalSettings,
+    queryFn: () => instanceSettingsApi.getExperimental(),
+    enabled: !!selectedCompanyId,
+  });
+  const builtInAgentsEnabled = experimentalSettings?.enableBuiltInAgents === true;
   const { data: builtInAgents } = useQuery({
     queryKey: queryKeys.builtInAgents.list(selectedCompanyId!),
     queryFn: () => builtInAgentsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
+    enabled: !!selectedCompanyId && builtInAgentsEnabled,
   });
   const builtInStatusByAgentId = useMemo(() => {
     const map = new Map<string, BuiltInAgentStatus>();
+    if (!builtInAgentsEnabled) return map;
     for (const entry of builtInAgents ?? []) {
       if (entry.agentId) map.set(entry.agentId, entry.status);
     }
     return map;
-  }, [builtInAgents]);
+  }, [builtInAgents, builtInAgentsEnabled]);
   const { data: session } = useQuery({
     queryKey: queryKeys.auth.session,
     queryFn: () => authApi.getSession(),
@@ -336,7 +345,8 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
     resourceKey: "live-runs",
     queryKey: liveRunsQueryKey,
     enabled: !!selectedCompanyId,
-    refetchInterval: 10_000,
+    // Event-sourced via LiveUpdatesProvider (issue 9627); no interval poll needed.
+    refetchInterval: false,
     leaderOnly: true,
   });
   const { data: liveRuns, dataUpdatedAt: liveRunsUpdatedAt } = useQuery({
@@ -354,6 +364,13 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
     }
     return counts;
   }, [liveRuns]);
+  const liveAgentIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const [agentId, count] of liveCountByAgent) {
+      if (count > 0) ids.add(agentId);
+    }
+    return ids;
+  }, [liveCountByAgent]);
 
   const visibleAgents = useMemo(() => {
     const filtered = (agents ?? []).filter(
@@ -384,15 +401,39 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
     () => sortAgents(orderedAgents, sortMode),
     [orderedAgents, sortMode],
   );
+  const sortedAgentIdSet = useMemo(
+    () => new Set(sortedAgents.map((agent: Agent) => agent.id)),
+    [sortedAgents],
+  );
+
+  useEffect(() => {
+    const now = Date.now();
+    for (const agentId of liveAgentIds) {
+      lastSeenLiveAtRef.current.set(agentId, now);
+    }
+    for (const agentId of lastSeenLiveAtRef.current.keys()) {
+      if (!sortedAgentIdSet.has(agentId)) {
+        lastSeenLiveAtRef.current.delete(agentId);
+      }
+    }
+  }, [liveAgentIds, sortedAgentIdSet]);
 
   // IA Phase 5 (streamlined): if any agent has a live run, show only those
-  // active agents. Otherwise fall back to up to RECENT_AGENT_LIMIT agents. Either
-  // way a "See all agents" link is shown so the full list is always reachable.
+  // active agents. Agents that just stopped running linger briefly so clustered
+  // run boundaries do not make rows pop out and the section does not immediately
+  // swap to the recent fallback during short all-idle gaps. Otherwise fall back
+  // to up to RECENT_AGENT_LIMIT agents. Either way a "See all agents" link is
+  // shown so the full list is always reachable.
   // Classic mode (PAP-89, flag OFF) restores the show-all behavior.
-  const runningAgents = useMemo(
-    () => sortedAgents.filter((agent: Agent) => (liveCountByAgent.get(agent.id) ?? 0) > 0),
-    [sortedAgents, liveCountByAgent],
-  );
+  const runningAgents = useMemo(() => {
+    const nowForLiveLinger = Date.now();
+    const lastSeenLiveAtByAgent = lastSeenLiveAtRef.current;
+    return sortedAgents.filter((agent: Agent) => {
+      if ((liveCountByAgent.get(agent.id) ?? 0) > 0) return true;
+      const lastSeenLiveAt = lastSeenLiveAtByAgent.get(agent.id);
+      return lastSeenLiveAt !== undefined && nowForLiveLinger - lastSeenLiveAt <= LIVE_AGENT_LINGER_MS;
+    });
+  }, [liveCountByAgent, liveLingerVersion, sortedAgents]);
   const hasActiveAgents = runningAgents.length > 0;
   const displayedAgents = !streamlined
     ? sortedAgents
@@ -436,6 +477,30 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
       window.removeEventListener(AGENT_SORT_MODE_UPDATED_EVENT, onCustomEvent);
     };
   }, [sortModeStorageKey]);
+
+  useEffect(() => {
+    if (!streamlined) return;
+
+    const now = Date.now();
+    let nextExpiryAt: number | null = null;
+    for (const agent of sortedAgents) {
+      if ((liveCountByAgent.get(agent.id) ?? 0) > 0) continue;
+      const lastSeenLiveAt = lastSeenLiveAtRef.current.get(agent.id);
+      if (lastSeenLiveAt === undefined) continue;
+      const expiresAt = lastSeenLiveAt + LIVE_AGENT_LINGER_MS;
+      if (expiresAt < now) continue;
+      nextExpiryAt = nextExpiryAt === null ? expiresAt : Math.min(nextExpiryAt, expiresAt);
+    }
+    if (nextExpiryAt === null) return;
+
+    const timeoutId = window.setTimeout(() => {
+      setLiveLingerVersion((version) => version + 1);
+    }, Math.max(0, nextExpiryAt - now + 1));
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [streamlined, sortedAgents, liveCountByAgent, liveLingerVersion]);
 
   const persistSortMode = useCallback(
     (value: string) => {
@@ -545,6 +610,10 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
     [displayedAgents, starredAgentIdSet],
   );
 
+  const primaryAgent = primary && !primary.loading
+    ? visibleAgents.find(agent => agent.id === primary.primaryAgentId)
+    : undefined;
+
   const renderAgentRow = (agent: Agent, isStarredRow: boolean) => (
     <SidebarAgentItem
       key={agent.id}
@@ -587,8 +656,11 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
         onRadioValueChange: persistSortMode,
       }}
     >
-      {starredAgents.map((agent: Agent) => renderAgentRow(agent, true))}
-      {dedupedDisplayedAgents.map((agent: Agent) => renderAgentRow(agent, false))}
+      {[
+        ...(primaryAgent ? [primaryAgent] : []),
+        ...starredAgents.filter(agent => agent.id !== primaryAgent?.id),
+        ...dedupedDisplayedAgents.filter(agent => agent.id !== primaryAgent?.id),
+      ].map(agent => renderAgentRow(agent, starredAgentIdSet.has(agent.id)))}
       {showSeeAllLink && (() => {
         // Deliberately NOT a SidebarNavItem: this is a quiet muted affordance
         // (plain Link) that must not adopt nav-row active-route highlighting.
@@ -600,7 +672,7 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
             onClick={() => {
               if (isMobile) setSidebarOpen(false);
             }}
-            className="flex items-center gap-2.5 mx-2 rounded-lg px-2 py-1.5 pointer-coarse:py-1 text-(length:--text-compact) font-medium text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+            className="flex items-center gap-2.5 mx-2 rounded-lg px-2 py-1.5 pointer-coarse:py-1 text-(length:--text-compact) font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
           >
             <Users className="shrink-0 h-4 w-4" />
             <span className={rail ? SIDEBAR_RAIL_HIDDEN_LABEL : undefined}>See all agents</span>
