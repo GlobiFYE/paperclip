@@ -142,7 +142,7 @@ import {
   WORKSPACE_WORKTREE_REQUIRES_PROJECT_REMEDIATION,
 } from "../execution-workspace-policy.js";
 import { readContinuationAttempt } from "../recovery/index.js";
-import { allowsIssueInteractionWake, verifyAddresseeInteractionWake } from "../../modules/run-dispatch/index.js";
+import { allowsIssueInteractionWake, verifyAddresseeInteractionWake, requeueAdoptedCommentsForAssignee } from "../../modules/run-dispatch/index.js";
 import { withAgentStartLock } from "../agent-start-lock.js";
 import {
   evaluateAgentInvokability,
@@ -1203,76 +1203,6 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         updatedAt: claimedAt,
       }).where(and(eq(issues.id, issueId), eq(issues.companyId, run.companyId)));
     }
-    // A stale-addressee cancel must not silently drop user comments the wake
-    // adopted: the original deferred receipts were already marked `coalesced`
-    // onto this run, so cancelling without a redelivery path loses them.
-    // Requeue the adopted comment ids as a fresh deferred receipt for the
-    // issue's current assignee; the established deferred-adoption path
-    // delivers them on the owner's next run.
-    async function requeueAdoptedCommentsForAssignee(
-      tx: Db,
-      input: {
-        companyId: string;
-        issueId: string;
-        runId: string;
-        source: string;
-        triggerDetail: string | null;
-        adoptedCommentIds: string[];
-      },
-    ) {
-      const commentIds = [
-        ...new Set(
-          input.adoptedCommentIds.filter((id) => id.trim().length > 0),
-        ),
-      ];
-      if (commentIds.length === 0) return;
-      const [issue] = await tx
-        .select({ assigneeAgentId: issues.assigneeAgentId })
-        .from(issues)
-        .where(
-          and(
-            eq(issues.id, input.issueId),
-            eq(issues.companyId, input.companyId),
-          ),
-        )
-        .limit(1);
-      const ownerAgentId = issue?.assigneeAgentId;
-      if (!ownerAgentId) return;
-      const [author] = await tx
-        .select({ authorUserId: issueComments.authorUserId })
-        .from(issueComments)
-        .where(
-          and(
-            eq(issueComments.companyId, input.companyId),
-            eq(issueComments.issueId, input.issueId),
-            inArray(issueComments.id, commentIds),
-          ),
-        )
-        .orderBy(desc(issueComments.createdAt))
-        .limit(1);
-      await tx.insert(agentWakeupRequests).values({
-        companyId: input.companyId,
-        agentId: ownerAgentId,
-        source: input.source,
-        triggerDetail: input.triggerDetail,
-        reason: "issue_commented",
-        payload: withQueuedCommentIdsInWakePayload(
-          {
-            issueId: input.issueId,
-            [DEFERRED_WAKE_CONTEXT_KEY]: {
-              wakeReason: "issue_commented",
-              issueId: input.issueId,
-              requeuedFromRunId: input.runId,
-            },
-          },
-          commentIds,
-        ),
-        status: "deferred_issue_execution",
-        requestedByActorType: "user",
-        requestedByActorId: author?.authorUserId ?? null,
-        idempotencyKey: `stale-addressee-requeue:${input.runId}`,
-      });
-    }
     const nativeReviewContext = readNativeReviewAssignmentContext(context);
     const queuedCommentIds = queuedCommentIdsFromRunContext(context);
     if (
@@ -2101,6 +2031,41 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
     for (const { wake } of strandedQueues) {
       if (!queuedCommentIdsFromWakePayload(wake.payload).length &&
           !await readQueuedInteractionResponse(db, wake.companyId, String(wake.payload?.issueId), wake.payload)) continue;
+      const requeuedFromRunId = readNonEmptyString(parseObject(wake.payload?.[DEFERRED_WAKE_CONTEXT_KEY]).requeuedFromRunId);
+      if (requeuedFromRunId && wake.idempotencyKey === `stale-addressee-requeue:${requeuedFromRunId}`) {
+        // A cancelled addressee is not an owner run whose cleanup can promote
+        // this queue. Re-admit the saved comment receipt through ordinary wake
+        // admission instead, including native owners and owners with no history.
+        const [source] = await db.select().from(heartbeatRuns).where(and(
+          eq(heartbeatRuns.companyId, wake.companyId),
+          sql`${heartbeatRuns.id}::text = ${requeuedFromRunId}`,
+          eq(heartbeatRuns.status, "cancelled"),
+          eq(heartbeatRuns.errorCode, "issue_assignee_changed"),
+          sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${String(wake.payload?.issueId)}`,
+          sql`${heartbeatRuns.contextSnapshot}->>'wakeReason' = 'interaction_pending'`,
+        )).limit(1);
+        if (source) {
+          await db.update(agentWakeupRequests).set({ updatedAt: new Date() }).where(and(
+            eq(agentWakeupRequests.id, wake.id), eq(agentWakeupRequests.status, "deferred_issue_execution"),
+          ));
+          await enqueueWakeup(wake.agentId, {
+            source: "on_demand", triggerDetail: "manual", reason: "issue_commented",
+            payload: parseObject(wake.payload),
+            contextSnapshot: withQueuedCommentIdsInRunContext({
+              issueId: String(wake.payload?.issueId),
+              source: "stale_addressee_redelivery",
+              requeuedFromRunId,
+            }, queuedCommentIdsFromWakePayload(wake.payload)),
+            requestedByActorType: "user", requestedByActorId: wake.requestedByActorId,
+            queuedCommentRequestId: wake.id,
+            issueStateGuard: { assigneeAgentId: wake.agentId, statuses: ["todo", "in_progress", "in_review", "blocked"] },
+            idempotencyKey: `stale-addressee-delivery:${wake.id}`,
+          }, wake.id).catch(err => {
+            logger.warn({ err, queueId: wake.id }, "failed to redeliver stale addressee comments");
+          });
+          continue;
+        }
+      }
       const [latest] = await db.select().from(heartbeatRuns).where(and(
         eq(heartbeatRuns.companyId, wake.companyId), eq(heartbeatRuns.agentId, wake.agentId),
         sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${String(wake.payload?.issueId)}`,

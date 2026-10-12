@@ -901,6 +901,7 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
           companyId,
           issueId,
           authorUserId: "local-board",
+          authorType: "user",
           body: "Please also confirm the rollout plan.",
         });
       }
@@ -928,7 +929,7 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
           })
           .where(eq(agentWakeupRequests.id, wakeupRequestId));
       }
-      return { companyId, assigneeAgentId, addresseeAgentId, issueId, interactionId, runId, wakeupRequestId };
+      return { companyId, assigneeAgentId, addresseeAgentId, issueId, interactionId, runId, wakeupRequestId, queuedCommentId };
     }
 
     it("runs the named addressee even though another agent is the issue assignee", async () => {
@@ -1049,6 +1050,55 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
       expect(resolvedAtClaim).toBe(true);
       expect(run).toMatchObject({ status: "cancelled", errorCode: "issue_assignee_changed" });
       expect(wakeup).toMatchObject({ status: "skipped" });
+      expect(countExecuteCallsForRun(runId)).toBe(0);
+    });
+
+    it.each([
+      { stage: "gate", history: "none" },
+      { stage: "gate", history: "native" },
+      { stage: "claim", history: "none" },
+      { stage: "claim", history: "native" },
+    ])("delivers adopted comments after $stage cancellation with $history assignee history", async ({ stage, history }) => {
+      const { companyId, runId, issueId, assigneeAgentId, interactionId, queuedCommentId } =
+        await seedAddressedInteractionFixture({
+          withQueuedComments: true,
+          interactionStatus: stage === "gate" ? "accepted" : "pending",
+        });
+      if (history === "native") {
+        await db.insert(heartbeatRuns).values({
+          id: randomUUID(), companyId, agentId: assigneeAgentId,
+          invocationSource: "assignment", triggerDetail: "system",
+          status: "succeeded", runtimeMode: "native", finishedAt: new Date(),
+          contextSnapshot: { issueId },
+        });
+      }
+      let resolvedAtClaim = false;
+      beforeClaimCheck = async ({ runId: guardedRunId, stage: claimStage }) => {
+        if (stage !== "claim" || claimStage !== "claim" || guardedRunId !== runId || resolvedAtClaim) return;
+        resolvedAtClaim = true;
+        await db.update(issueThreadInteractions)
+          .set({ status: "accepted", resolvedAt: new Date(), updatedAt: new Date() })
+          .where(eq(issueThreadInteractions.id, interactionId));
+      };
+      await heartbeat.resumeQueuedRuns();
+      expect((await heartbeat.getRun(runId))?.status).toBe("cancelled");
+      expect(resolvedAtClaim).toBe(stage === "claim");
+      // A durable cancellation receipt is retried through ordinary wake
+      // admission, not dependent on an unrelated owner wake or legacy history.
+      await heartbeat.resumeQueuedRuns();
+      await heartbeat.resumeQueuedRuns();
+      const delivered = await waitForCondition(async () => mockAdapterExecute.mock.calls.some(([context]) =>
+        context?.agent.id === assigneeAgentId &&
+        context.context.wakeCommentIds?.includes(queuedCommentId),
+      ));
+      expect(delivered).toBe(true);
+      await drainHeartbeatRunsToQuiescence(db, heartbeat);
+      await heartbeat.resumeQueuedRuns();
+      const deliveries = mockAdapterExecute.mock.calls.filter(([context]) =>
+        context?.agent.id === assigneeAgentId &&
+        context.context.wakeCommentIds?.includes(queuedCommentId),
+      );
+      expect(deliveries).toHaveLength(1);
       expect(countExecuteCallsForRun(runId)).toBe(0);
     });
 

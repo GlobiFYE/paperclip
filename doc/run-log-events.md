@@ -266,8 +266,13 @@ named agent again under the issue lock. A stale interaction cancels the queued
 run with `issue_assignee_changed` and writes a warning `lifecycle` event on the
 system stream. The event explains that the assignee changed before the queued
 run could start; it contains no interaction body or credentials. The current
-issue assignee receives any adopted comments through a deduplicated deferred
-wake instead of losing those comments with the cancelled run. This check does
+issue assignee receives adopted user comments through a deduplicated deferred
+wake instead of losing those comments with the cancelled run. Both the initial
+staleness gate and the final claim save that receipt in the cancellation
+transaction. The scheduler retries it through normal comment-wake admission,
+including when the assignee has native run history or no prior run. The saved
+comment and receipt are rechecked under the issue lock, so edits, discards,
+concurrent delivery, execution holds and pauses still apply. This check does
 not grant a general assignee bypass and adds no new Telemetry export.
 
 Cancelled runs retain `resultJson.cancellation`: a closed `source` label

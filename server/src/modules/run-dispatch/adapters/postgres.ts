@@ -1,7 +1,11 @@
 import { hasConversationContinuationPolicy } from "../../../services/conversation-continuation.js";
 import { getExecutionBlocker } from "../../../services/execution-blocker.js";
 import { getNativeReviewAssignment } from "../../../services/native-runtime/native-review-participant.js";
-import { and, asc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
+import {
+  queuedCommentIdsFromRunContext,
+  withQueuedCommentIdsInWakePayload,
+} from "../../../services/issue-queued-comment-queue.js";
 import type { Db } from "@paperclipai/db";
 import {
   agentWakeupRequests,
@@ -69,6 +73,50 @@ import type {
   PromoteScheduledRetryOutcome,
 } from "../application/types.js";
 import { RunDispatchApplicationError } from "../application/types.js";
+
+// All stale-addressee cancellation paths persist redelivery in their own
+// transaction. The scheduler re-admits this receipt through ordinary wake
+// admission, even without owner run history.
+export async function requeueAdoptedCommentsForAssignee(
+  tx: Db,
+  input: {
+    companyId: string;
+    issueId: string;
+    runId: string;
+    source: string;
+    triggerDetail: string | null;
+    adoptedCommentIds: string[];
+  },
+) {
+  const commentIds = [...new Set(input.adoptedCommentIds.filter((id) => id.trim().length > 0))];
+  if (commentIds.length === 0) return;
+  const [issue] = await tx.select({ assigneeAgentId: issues.assigneeAgentId }).from(issues)
+    .where(and(eq(issues.id, input.issueId), eq(issues.companyId, input.companyId))).limit(1);
+  if (!issue?.assigneeAgentId) return;
+  const [author] = await tx.select({ authorUserId: issueComments.authorUserId }).from(issueComments)
+    .where(and(eq(issueComments.companyId, input.companyId), eq(issueComments.issueId, input.issueId),
+      inArray(issueComments.id, commentIds)))
+    .orderBy(desc(issueComments.createdAt)).limit(1);
+  await tx.insert(agentWakeupRequests).values({
+    companyId: input.companyId,
+    agentId: issue.assigneeAgentId,
+    source: input.source,
+    triggerDetail: input.triggerDetail,
+    reason: "issue_commented",
+    payload: withQueuedCommentIdsInWakePayload({
+      issueId: input.issueId,
+      _paperclipWakeContext: {
+        wakeReason: "issue_commented",
+        issueId: input.issueId,
+        requeuedFromRunId: input.runId,
+      },
+    }, commentIds),
+    status: "deferred_issue_execution",
+    requestedByActorType: "user",
+    requestedByActorId: author?.authorUserId ?? null,
+    idempotencyKey: `stale-addressee-requeue:${input.runId}`,
+  });
+}
 
 type HeartbeatRun = typeof heartbeatRuns.$inferSelect;
 type LoadGateFactsInput = {
@@ -991,6 +1039,13 @@ export function createPostgresRunDispatchAdapter(
       }
 
       const context = parseObject(row.contextSnapshot);
+      if (decision.errorCode === "issue_assignee_changed" && context.wakeReason === "interaction_pending") {
+        await requeueAdoptedCommentsForAssignee(tx, {
+          companyId: row.companyId, issueId, runId: row.id,
+          source: row.invocationSource, triggerDetail: row.triggerDetail,
+          adoptedCommentIds: queuedCommentIdsFromRunContext(context),
+        });
+      }
       if (decision.errorCode === "issue_waiting_for_response" && context.connectionIntentResolution === "existing_connection"
         && context.source === "connection_intent.resolved" && context.interactionKind === "connection_intent"
         && typeof context.interactionId === "string") {
