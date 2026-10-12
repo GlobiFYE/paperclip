@@ -1,4 +1,8 @@
-import { createChatResourceReconciliation, githubRepositoryInventoryItemFromPayload, baseTeamsConversationId, slackResourceLabelIsFallback, telegramResourceLabelIsFallback } from "./chat-channels/resource-reconciliation.js";
+import { createChatResourceReconciliation } from "./chat-channels/resource-reconciliation.js";
+import { githubRepositoryInventoryItemFromPayload } from "./chat-channels/github/resources.js";
+import { baseTeamsConversationId } from "./chat-channels/microsoft-teams/resources.js";
+import { slackResourceLabelIsFallback } from "./chat-channels/slack/resources.js";
+import { telegramResourceLabelIsFallback } from "./chat-channels/telegram/resources.js";
 import {
   MAX_INBOUND_TEXT,
   stableExternalPrincipalId,

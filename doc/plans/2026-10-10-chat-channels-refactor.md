@@ -150,3 +150,25 @@ function, generation reader and error text limit. It creates no worker or cache.
 - Local baseline and after selections could not start PostgreSQL and skipped
   the suite. They are not passes. Server typecheck and module boundaries pass.
 - Require complete chat CI on this slice before starting the next extraction.
+
+### 2026-10-12 channel-folder reassessment: slice 2
+
+PR #15823 was merged at the user's request. Rebase this slice onto the merged
+master, then retain the remaining four PRs for review in dependency order.
+
+- GitHub payload parsing, repository coordinate repair, webhook recovery,
+  repository pagination and bulk-selection entry points live in
+  `chat-channels/github/resources.ts`.
+- Telegram migration preparation and conversation migration live in
+  `telegram/resources.ts`. They receive the existing transaction and timestamp;
+  the shared coordinator still upserts the destination between those steps.
+- Slack fallback labels, Teams conversation IDs and Photon participant parsing
+  live in each provider's `resources.ts`.
+- Shared inventory replacement, availability settlement and audited selection
+  retain their transaction and credential-lease ownership. Small provider
+  dispatch predicates remain next to the shared operation they select.
+- All eight moved declarations and three transaction blocks retain their logic.
+  The GitHub provider guard stays in the caller. No factory starts background work.
+- Existing public-service tests: 15 resource cases and the Telegram migration
+  case passed before; the same 16 cases passed after. The name filter excludes
+  unrelated cases. No live third-party provider calls were made.
