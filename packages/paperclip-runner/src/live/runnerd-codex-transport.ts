@@ -1,3 +1,4 @@
+import { openCodeApiVersionForVersion } from "../drivers/opencode/api-client.js";
 import { resolvePinnedOpenCodeCommand } from "../drivers/opencode/opencode-server-driver.js";
 import { ACPX_CAPABILITY_PROFILES } from "../drivers/acpx/capability-profiles.js";
 import { admittedPiThinkingLevel, resolvePiThinkingLevel } from "../drivers/acpx/pi-thinking.js";
@@ -3549,8 +3550,22 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
         (command.type === "run.prepare" || command.type === "run.attach")
         && record(command.payload).provider !== undefined,
       )?.payload;
-    const model = record(record(template).provider).model;
-    return typeof model === "string" && model.startsWith("openrouter/");
+    const provider = record(record(template).provider);
+    // OpenCode 2.x removed the per-turn reasoning variant that V1 exposes. The
+    // advertised capability must follow the provider line: claiming support for
+    // a V2 server would make a caller send a reasoningMode the OpenCode session
+    // rejects before any prompt runs.
+    const version =
+      this.#evidence.providerVersion ??
+      (typeof provider.providerVersion === "string"
+        ? provider.providerVersion
+        : null);
+    return (
+      typeof provider.model === "string" &&
+      provider.model.startsWith("openrouter/") &&
+      version !== null &&
+      openCodeApiVersionForVersion(version) === "v1"
+    );
   }
 
   turnControlCapabilities(): NativeTurnControlCapabilities | null {
