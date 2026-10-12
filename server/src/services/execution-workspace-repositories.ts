@@ -17,6 +17,7 @@ import { taskWorkspaceSelectableCondition } from "./task-workspace-selection.js"
 import { captureRunIdentity } from "./run-identity.js";
 import { toolAccessService } from "./tool-access.js";
 import { normalizeProjectRepositoryUrl } from "./project-repositories.js";
+import { localRepositoryPath } from "./local-repository-path.js";
 import { buildGitAuthInvocation, createGitRemoteAuthProvider } from "./git-credentials.js";
 import { materializeManagedProjectWorkspace, ensureManagedRepositoriesIgnored } from "./managed-repository-checkout.js";
 
@@ -25,7 +26,7 @@ type RepositoryRow = typeof executionWorkspaceRepositories.$inferSelect;
 type DbTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
 /** Match physical aliases, including task directories not materialized yet. */
-async function canonicalRepositoryRoot(cwd: string): Promise<string> {
+export async function canonicalRepositoryRoot(cwd: string): Promise<string> {
   const absolute = path.resolve(cwd);
   try { return await fs.realpath(absolute); }
   catch (error) {
@@ -103,6 +104,34 @@ export function assertRepositoryRetryMatches(row: Pick<RepositoryRow, "repositor
   if (row.repositoryIdentity !== identity || row.requestedRef !== ref) {
     throw conflict("Repository preparation conflicts with an existing receipt. A different ref requires a separate workspace; existing files are never switched automatically.");
   }
+}
+
+/** A configured source can be an existing checkout or a local repository URL
+ * before its checkout exists. Use the same physical owner for reads and detach
+ * preservation; unrelated unavailable paths cannot block company-wide scans. */
+async function configuredWorkspaceRoot(input: { cwd: string | null; repoUrl?: string | null }, scan: boolean): Promise<string | null> {
+  const resolveDirectory = async (cwd: string): Promise<string | null> => {
+    try {
+      const entry = await fs.stat(cwd);
+      if (!entry.isDirectory()) {
+        if (scan) return null;
+        throw forbidden("Workspace files cannot be detached from unverifiable provenance");
+      }
+      return await fs.realpath(cwd);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT" || (scan && ["ENOTDIR", "EACCES", "EPERM", "ELOOP", "ENAMETOOLONG"].includes(code ?? ""))) return null;
+      throw error;
+    }
+  };
+  if (input.cwd) {
+    const cwd = await resolveDirectory(input.cwd);
+    if (cwd) return cwd;
+  }
+  let repositoryPath: string | null;
+  try { repositoryPath = input.repoUrl ? localRepositoryPath(input.repoUrl) : null; }
+  catch (error) { if (scan) return null; throw error; }
+  return repositoryPath ? resolveDirectory(repositoryPath) : null;
 }
 
 /** Resolve persisted and physical file provenance without registering readers or policies. */
@@ -204,7 +233,7 @@ async function resolveRepositoryRootSources(tx: Db | DbTransaction, input: {
   if ([...publishedNames].some(name => !recognizedNames.has(name))) throw forbidden("Published repository has no retained workspace provenance");
   // Configured folders can contain project files before any task has an
   // execution workspace. Read access must include their current aliases too.
-  const configured = await tx.select({ projectId: projectWorkspaces.projectId, cwd: projectWorkspaces.cwd })
+  const configured = await tx.select({ projectId: projectWorkspaces.projectId, cwd: projectWorkspaces.cwd, repoUrl: projectWorkspaces.repoUrl })
     .from(projectWorkspaces).where(eq(projectWorkspaces.companyId, input.companyId));
   // Retain the privacy owner, not its disposable workspace configuration.
   // Execution sources may later lose their project FK; retained files must not.
@@ -222,11 +251,8 @@ async function resolveRepositoryRootSources(tx: Db | DbTransaction, input: {
     }
   }
   for (const source of configured) {
-    if (!source.cwd || sharedProjectIds.has(source.projectId)) continue;
-    const sourceRoot = await fs.realpath(source.cwd).catch((error: NodeJS.ErrnoException) => {
-      if (["ENOENT", "ENOTDIR", "EACCES", "EPERM", "ELOOP", "ENAMETOOLONG"].includes(error.code ?? "")) return null;
-      throw error;
-    });
+    if (sharedProjectIds.has(source.projectId)) continue;
+    const sourceRoot = await configuredWorkspaceRoot(source, true);
     if (!sourceRoot || !repositoryRootsOverlap(sourceRoot, canonicalCwd)) continue;
     sourceProjectIds.add(source.projectId);
     if (!isCopiedAncestor(source.projectId, sourceRoot)) sharedProjectIds.add(source.projectId);
@@ -251,7 +277,7 @@ async function assertRootProjectAccess(db: Db | DbTransaction, actor: Authorizat
   }
 }
 
-async function retainedRootReader(tx: DbTransaction, companyId: string, reader: typeof executionWorkspaceRepositoryAccess.$inferSelect) {
+async function retainedRootReader(tx: DbTransaction, companyId: string, reader: Pick<typeof executionWorkspaceRepositoryAccess.$inferSelect, "scopeId" | "issueId" | "agentId" | "responsibleUserId">) {
   const [run] = await tx.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.id, reader.scopeId), eq(heartbeatRuns.companyId, companyId)));
   const [agent] = reader.agentId ? await tx.select({ id: agents.id }).from(agents).where(and(eq(agents.id, reader.agentId), eq(agents.companyId, companyId))) : [];
   const [issue] = reader.issueId ? await tx.select().from(issues).where(and(eq(issues.id, reader.issueId), eq(issues.companyId, companyId))) : [];
@@ -274,16 +300,10 @@ export async function lockExecutionWorkspaceRootProvenance(tx: DbTransaction, co
  * Preserve that ownership before its configuration can move or disappear.
  * Caller holds the company root fence and the fresh configured-workspace lock. */
 export async function preserveConfiguredProjectWorkspaceRootProvenance(tx: DbTransaction, input: {
-  companyId: string; projectId: string; cwd: string | null;
+  companyId: string; projectId: string; cwd: string | null; repoUrl?: string | null;
 }): Promise<void> {
-  if (!input.cwd) return;
-  const directory = await fs.stat(input.cwd).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT") return null;
-    throw error;
-  });
-  if (!directory) return;
-  if (!directory.isDirectory()) throw forbidden("Workspace files cannot be detached from unverifiable provenance");
-  const canonicalCwd = await canonicalRepositoryRoot(input.cwd);
+  const canonicalCwd = await configuredWorkspaceRoot(input, false);
+  if (!canonicalCwd) return;
   const rootKey = createHash("sha256").update(canonicalCwd).digest("hex");
   const entries = await tx.select().from(executionWorkspaceRepositoryAccess).where(and(
     eq(executionWorkspaceRepositoryAccess.companyId, input.companyId), eq(executionWorkspaceRepositoryAccess.rootKey, rootKey)));
@@ -358,14 +378,20 @@ async function unusedIsolatedCopyTarget(cwd: string): Promise<boolean> {
 
 /** Match realization's checkout and common repository roots. A configured cwd
  * may be a subdirectory or linked worktree while Git copies a broader tree. */
-async function isolatedWorkspaceSourceRoots(sourceCwd: string): Promise<string[]> {
+type WorkspaceSourceCopyKind = "linked_worktree" | "repository";
+async function isolatedWorkspaceSourceRoots(sourceCwd: string, copyKind: WorkspaceSourceCopyKind = "linked_worktree"): Promise<string[]> {
   const git = async (cwd: string, argument: string) => (await execFile("git", ["-C", cwd, "rev-parse", argument], {
     timeout: 30_000, env: { ...process.env, GIT_NO_LAZY_FETCH: "1" },
   })).stdout.trim();
+  const localRoot = await fs.realpath(sourceCwd);
+  if (copyKind === "repository" && await git(sourceCwd, "--is-bare-repository") === "true") {
+    const gitRoot = await fs.realpath(path.resolve(sourceCwd, await git(sourceCwd, "--absolute-git-dir")));
+    return [...new Set([localRoot, gitRoot])];
+  }
   const checkoutRoot = await fs.realpath(path.resolve(await git(sourceCwd, "--show-toplevel")));
   const commonDir = await git(checkoutRoot, "--git-common-dir");
   const ownerRoot = await fs.realpath(path.dirname(path.resolve(checkoutRoot, commonDir)));
-  return [...new Set([checkoutRoot, ownerRoot])];
+  return [...new Set(copyKind === "repository" ? [localRoot, checkoutRoot, ownerRoot] : [checkoutRoot, ownerRoot])];
 }
 
 /** Internal, deny-only snapshot captured before copying; never accepted from a model or API payload. */
@@ -377,9 +403,9 @@ export type IsolatedWorkspaceSourceAccess = {
 };
 
 export async function assertIsolatedWorkspaceSourceReadAccess(db: Db, input: {
-  companyId: string; sourceCwd: string; actor: AuthorizationActor;
+  companyId: string; sourceCwd: string; actor: AuthorizationActor; copyKind?: WorkspaceSourceCopyKind;
 }): Promise<IsolatedWorkspaceSourceAccess> {
-  const roots = await isolatedWorkspaceSourceRoots(input.sourceCwd);
+  const roots = await isolatedWorkspaceSourceRoots(input.sourceCwd, input.copyKind);
   return db.transaction(async tx => {
     await lockExecutionWorkspaceRootProvenance(tx, input.companyId);
     const workspaceIds = new Set<string>(), projectIds = new Set<string>();
@@ -401,12 +427,12 @@ export async function assertIsolatedWorkspaceSourceReadAccess(db: Db, input: {
  * already-copied private bytes never become an unowned readable target. */
 export async function retainIsolatedWorkspaceSourceAccess(db: Db, input: {
   companyId: string; sourceCwd: string; targetCwd: string; actor: AuthorizationActor;
-  captured: IsolatedWorkspaceSourceAccess; issueId?: string; phase?: "preparing" | "verified";
+  captured: IsolatedWorkspaceSourceAccess; issueId?: string; phase?: "preparing" | "verified"; copyKind?: WorkspaceSourceCopyKind;
 }): Promise<void> {
   if (input.captured.companyId !== input.companyId) throw forbidden("Isolated copy source identity changed");
   let sourceFailure: unknown;
   const roots = new Set(input.captured.roots);
-  try { for (const cwd of await isolatedWorkspaceSourceRoots(input.sourceCwd)) roots.add(cwd); }
+  try { for (const cwd of await isolatedWorkspaceSourceRoots(input.sourceCwd, input.copyKind)) roots.add(cwd); }
   catch (error) { sourceFailure = error; }
   const canonicalCwd = await canonicalRepositoryRoot(input.targetCwd);
   const rootKey = createHash("sha256").update(canonicalCwd).digest("hex");
@@ -447,12 +473,17 @@ export async function retainIsolatedWorkspaceSourceAccess(db: Db, input: {
         throw error;
       });
       if (targetEntry?.isSymbolicLink()) throw forbidden("Isolated copy target cannot be a symbolic link");
-      if (phase === "verified") {
-        if (!await verifiedIsolatedWorktree(canonicalCwd, roots)) throw forbidden("Isolated copy target is not a verified Git worktree");
+      // Upgrades and interrupted admissions can already have a registered
+      // worktree without the newer proof row. Verify the same physical evidence
+      // during preparation before adopting it; never infer isolation from files.
+      const linkedWorktree = input.copyKind !== "repository";
+      const verifiedTarget = linkedWorktree && await verifiedIsolatedWorktree(canonicalCwd, roots);
+      if (linkedWorktree && (phase === "verified" || verifiedTarget)) {
+        if (!verifiedTarget) throw forbidden("Isolated copy target is not a verified Git worktree");
         for (const scopeId of projectIds) if (!existing.some(entry => entry.kind === "isolated_copy" && entry.scopeId === scopeId)) {
           await tx.insert(executionWorkspaceRepositoryAccess).values({ companyId: input.companyId, rootKey, canonicalCwd, kind: "isolated_copy", scopeId });
         }
-      } else if (await unusedIsolatedCopyTarget(input.targetCwd)) {
+      } else if (linkedWorktree && await unusedIsolatedCopyTarget(input.targetCwd)) {
         // This allowance exists only for this pre-copy check. No proof row is
         // written until the harness confirms Git's completed registration.
         preparingCopyProjectIds = projectIds;
@@ -708,19 +739,80 @@ export function executionWorkspaceRepositoryService(db: Db) {
   async function list(companyId: string, workspaceId: string) {
     return db.select().from(executionWorkspaceRepositories).where(and(eq(executionWorkspaceRepositories.companyId, companyId), eq(executionWorkspaceRepositories.executionWorkspaceId, workspaceId)));
   }
+  type PublicationInput = { companyId: string; issueId: string; workspaceId: string; cwd: string; agentId: string; runId: string };
+  async function publicationBinding(tx: DbTransaction, input: PublicationInput) {
+    const [issue] = await tx.select().from(issues).where(and(eq(issues.id, input.issueId), eq(issues.companyId, input.companyId)));
+    const [workspace] = await tx.select().from(executionWorkspaces).where(and(eq(executionWorkspaces.id, input.workspaceId), eq(executionWorkspaces.companyId, input.companyId)));
+    if (!issue || !workspace || issue.executionWorkspaceId !== workspace.id || !workspace.cwd
+      || await canonicalRepositoryRoot(workspace.cwd) !== await canonicalRepositoryRoot(input.cwd)) {
+      throw forbidden("Task repository publication binding is unavailable");
+    }
+    await requiresAnonymousAcquisition(tx, { issue, workspace, agentId: input.agentId, runId: input.runId });
+    const [run] = await tx.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.id, input.runId), eq(heartbeatRuns.companyId, input.companyId)));
+    const { actor } = await retainedRootReader(tx, input.companyId, {
+      scopeId: input.runId, issueId: input.issueId, agentId: input.agentId, responsibleUserId: run?.responsibleUserId ?? null,
+    });
+    return { workspace, actor };
+  }
   /** Configured-source publication shares this root, but does not acquire a repository. */
-  async function guardForPublication(input: { companyId: string; issueId: string; workspaceId: string; cwd: string; agentId: string; runId: string }) {
+  async function guardForPublication(input: PublicationInput) {
     await db.transaction(async tx => {
       await lockExecutionWorkspaceRootProvenance(tx, input.companyId);
-      const [issue] = await tx.select().from(issues).where(and(eq(issues.id, input.issueId), eq(issues.companyId, input.companyId)));
-      const [workspace] = await tx.select().from(executionWorkspaces).where(and(eq(executionWorkspaces.id, input.workspaceId), eq(executionWorkspaces.companyId, input.companyId)));
-      if (!issue || !workspace || issue.executionWorkspaceId !== workspace.id || !workspace.cwd
-        || await canonicalRepositoryRoot(workspace.cwd) !== await canonicalRepositoryRoot(input.cwd)) {
-        throw forbidden("Task repository publication binding is unavailable");
-      }
-      await requiresAnonymousAcquisition(tx, { issue, workspace, agentId: input.agentId, runId: input.runId });
+      const { workspace } = await publicationBinding(tx, input);
       await authorizeRootAccess(tx, { companyId: input.companyId, cwd: input.cwd, sourceWorkspaceId: workspace.id, reader: input });
     });
+  }
+  /** Ordinary sibling clones inherit source privacy on their admitted task root.
+   * These records never prove worktree isolation or confer source WRITE rights.
+   * The callback rechecks before publication/reuse and keeps captured owners
+   * even if their configuration disappears while files are being copied. */
+  async function prepareConfiguredRepositorySource(input: PublicationInput & { sourceCwd: string }): Promise<() => Promise<void>> {
+    const roots = new Set<string>(), workspaceIds = new Set<string>(), projectIds = new Set<string>();
+    const retain = async () => {
+      let sourceFailure: unknown;
+      try {
+        roots.add(await fs.realpath(input.sourceCwd));
+        for (const cwd of await isolatedWorkspaceSourceRoots(input.sourceCwd, "repository")) roots.add(cwd);
+      } catch (error) { sourceFailure = error; }
+      const denied = await db.transaction(async tx => {
+        await lockExecutionWorkspaceRootProvenance(tx, input.companyId);
+        const { workspace, actor } = await publicationBinding(tx, input);
+        const canonicalCwd = await canonicalRepositoryRoot(input.cwd);
+        const rootKey = createHash("sha256").update(canonicalCwd).digest("hex");
+        const existing = await tx.select().from(executionWorkspaceRepositoryAccess).where(and(
+          eq(executionWorkspaceRepositoryAccess.companyId, input.companyId), eq(executionWorkspaceRepositoryAccess.rootKey, rootKey)));
+        if (existing.some(entry => entry.canonicalCwd !== canonicalCwd)) throw forbidden("Repository root identity conflicts with its retained access record");
+        let failure = sourceFailure;
+        for (const cwd of roots) {
+          try {
+            const source = await resolveRepositoryRootSources(tx, { companyId: input.companyId, cwd });
+            for (const id of source.sourceIds) workspaceIds.add(id);
+            for (const id of source.sourceProjectIds) projectIds.add(id);
+          } catch (error) { failure ??= error; }
+        }
+        for (const id of workspaceIds) {
+          try { await assertTaskWorkspaceAccess(tx, actor, input.companyId, id); }
+          catch (error) { failure ??= error; }
+        }
+        for (const id of projectIds) {
+          try { await assertRootProjectAccess(tx, actor, input.companyId, new Set([id])); }
+          catch (error) { failure ??= error; }
+        }
+        for (const [kind, ids] of [["isolated_source", workspaceIds], ["isolated_project_source", projectIds]] as const) {
+          for (const scopeId of ids) if (!existing.some(entry => entry.kind === kind && entry.scopeId === scopeId)) {
+            await tx.insert(executionWorkspaceRepositoryAccess).values({ companyId: input.companyId, rootKey, canonicalCwd, kind, scopeId });
+          }
+        }
+        try {
+          await authorizeRootAccess(tx, { companyId: input.companyId, cwd: input.cwd, sourceWorkspaceId: workspace.id,
+            actor, issueId: input.issueId });
+        } catch (error) { failure ??= error; }
+        return failure;
+      });
+      if (denied) throw denied;
+    };
+    await retain();
+    return retain;
   }
   /** Recovery keeps its admitted identity and folder; only fence future publication. */
   async function reserveForRecovery(input: { companyId: string; issueId: string; workspaceId: string; cwd: string; agentId: string; runId: string }) {
@@ -882,7 +974,7 @@ export function executionWorkspaceRepositoryService(db: Db) {
           if (!acquisitionRestricted) {
             await assertCurrentControllerAcquisition(input);
             const result = await materializeManagedProjectWorkspace(cwd, {
-              repoUrl: row.repoUrl,
+              repoUrl: source.repoUrl,
               stagingParent,
               repoRef: authorizedPin ?? (row.requestedRef === "HEAD" ? null : row.requestedRef),
               resolveGitAuth: source.catalogRepositoryId ? resolveAuth : async () => anonymous,
@@ -914,5 +1006,5 @@ export function executionWorkspaceRepositoryService(db: Db) {
     }
     return prepared;
   }
-  return { request, list, prepareForAdmission, reserveForRecovery, guardForPublication };
+  return { request, list, prepareForAdmission, reserveForRecovery, guardForPublication, prepareConfiguredRepositorySource };
 }

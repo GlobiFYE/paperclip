@@ -3,7 +3,7 @@ import { parseObject } from "../adapters/utils.js";
 import { resolveCoreTrustPreset } from "./trust-preset-resolver.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { taskWorkspaceSelectableCondition } from "./task-workspace-selection.js";
-import { executionWorkspaceRepositoryService, lockExecutionWorkspaceRootProvenance, preserveExecutionWorkspaceRootProvenance, assertExecutionWorkspaceRootWriteAccess } from "./execution-workspace-repositories.js";
+import { executionWorkspaceRepositoryService, lockExecutionWorkspaceRootProvenance, preserveExecutionWorkspaceRootProvenance, assertExecutionWorkspaceRootWriteAccess, assertExecutionWorkspaceRootReadAccess, assertIsolatedWorkspaceSourceReadAccess, retainIsolatedWorkspaceSourceAccess, canonicalRepositoryRoot, type IsolatedWorkspaceSourceAccess } from "./execution-workspace-repositories.js";
 import { forbidden } from "../errors.js";
 import { taskWorkspaceSelectionSchema, type TaskWorkspaceSelection, type TaskWorkspaceIntent } from "@paperclipai/shared";
 import { authorizationService, executionWorkspaceReadSqlCondition, projectReadSqlCondition, issueReadSqlCondition, type AuthorizationActor } from "./authorization.js";
@@ -2186,6 +2186,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
     listTaskRepositories: executionWorkspaceRepositoryService(db).list,
     prepareTaskRepositoriesForAdmission: executionWorkspaceRepositoryService(db).prepareForAdmission,
     guardTaskRepositoryRootForPublication: executionWorkspaceRepositoryService(db).guardForPublication,
+    prepareConfiguredRepositorySource: executionWorkspaceRepositoryService(db).prepareConfiguredRepositorySource,
     reserveTaskRepositoryRootForRecovery: executionWorkspaceRepositoryService(db).reserveForRecovery,
     resolveSourceWorkspaceStrategy, validateSelection, inspectTaskWorkspace, selectTaskWorkspace, applyPendingTaskWorkspaceSelection, bindTaskWorkspace, prepareTaskWorkspaceUpdate, assertTaskWorkspaceUpdateAccess,
     listOverview: async (
@@ -3246,10 +3247,10 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
 
     // Reopen one closed isolated execution workspace so an authorized issue can
     // use it again. The caller must first authorize the request on the issue.
-    // The whole operation runs under the per-workspace lifecycle lock: it reads
-    // the row in the issue scope, rebuilds the worktree, and only then publishes
-    // the row as "active". A rebuild failure keeps the row closed and returns an
-    // error, so the caller never dispatches a run against a broken workspace.
+    // Source privacy is retained before the lifecycle transaction, which rechecks
+    // the binding and rebuilds under its per-workspace fence. Read-only copy
+    // checks avoid taking the root fence in reverse order. Final provenance is
+    // committed after lifecycle release, including failed provisioning.
     reopenClosedIsolatedExecutionWorkspaceForIssue: async (input: {
       workspaceId: string;
       issue: { id: string; companyId: string; projectId: string | null };
@@ -3257,7 +3258,102 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       authorizationActor: AuthorizationActor;
     }): Promise<ReopenClosedIsolatedExecutionWorkspaceResult> => {
       const { issue, actor } = input;
-      return db.transaction(async (tx): Promise<ReopenClosedIsolatedExecutionWorkspaceResult> => {
+      const [boundSnapshot] = await db.select({ id: issues.id }).from(issues).where(and(
+        eq(issues.id, issue.id), eq(issues.companyId, issue.companyId),
+        eq(issues.executionWorkspaceId, input.workspaceId),
+        await issueReadSqlCondition(db, input.authorizationActor),
+      ));
+      const snapshot = boundSnapshot ? await db.select().from(executionWorkspaces).where(and(
+        eq(executionWorkspaces.id, input.workspaceId), eq(executionWorkspaces.companyId, issue.companyId),
+        eq(executionWorkspaces.mode, "isolated_workspace"),
+        await executionWorkspaceReadSqlCondition(db, input.authorizationActor),
+      )).then(rows => rows[0] ?? null) : null;
+      if (!snapshot) return { ok: false, code: "not_reopenable", message: "Execution workspace is not reopenable" };
+      await assertTaskWorkspaceAccess(db, input.authorizationActor, issue.companyId, snapshot.id);
+      const [
+        { ensurePersistedExecutionWorkspaceAvailable },
+        { workspaceOperationService },
+        { ensureManagedProjectWorkspace },
+      ] = await Promise.all([
+        import("./workspace-runtime.js"),
+        import("./workspace-operations.js"),
+        // heartbeat.js imports this module, so a static import creates a
+        // cycle. Load ensureManagedProjectWorkspace dynamically instead.
+        import("./heartbeat.js"),
+      ]);
+      const [projectWorkspace, projectPolicy] = await Promise.all([
+        snapshot.projectWorkspaceId
+          ? db
+              .select({ cwd: projectWorkspaces.cwd })
+              .from(projectWorkspaces)
+              .where(and(
+                eq(projectWorkspaces.companyId, snapshot.companyId),
+                eq(projectWorkspaces.id, snapshot.projectWorkspaceId),
+              ))
+              .then((rows) => rows[0] ?? null)
+          : null,
+        db
+          .select({ executionWorkspacePolicy: projects.executionWorkspacePolicy })
+          .from(projects)
+          .where(and(eq(projects.companyId, snapshot.companyId), snapshot.projectId ? eq(projects.id, snapshot.projectId) : sql`false`))
+          .then((rows) => parseProjectExecutionWorkspacePolicy(rows[0]?.executionWorkspacePolicy)),
+      ]);
+      // Resolve the base checkout that the rebuild spawns git in. A
+      // local-folder project stores its base path in projectWorkspaces.cwd.
+      // A managed_checkout project stores null there, so resolve its live
+      // managed checkout instead. Never use snapshot.cwd for a git_worktree
+      // rebuild: snapshot.cwd is the archived worktree path, which the reaper
+      // already removed from disk. A spawn in that missing directory fails
+      // with "spawn git ENOENT" and hides the real cause.
+      let resolvedBaseCwd = projectWorkspace?.cwd ?? null;
+      if (isClosedExecutionWorkspaceStatus(snapshot.status) && resolvedBaseCwd == null && snapshot.strategyType === "git_worktree" && snapshot.projectId) {
+        try {
+          const managedWorkspace = await ensureManagedProjectWorkspace({
+            companyId: snapshot.companyId,
+            projectId: snapshot.projectId,
+            repoUrl: snapshot.repoUrl,
+            prepareLocalSource: async sourceCwd => {
+              const captured = await assertIsolatedWorkspaceSourceReadAccess(db, {
+                companyId: snapshot.companyId, sourceCwd, actor: input.authorizationActor, copyKind: "repository",
+              });
+              return targetCwd => retainIsolatedWorkspaceSourceAccess(db, {
+                companyId: snapshot.companyId, sourceCwd, targetCwd, actor: input.authorizationActor,
+                captured, issueId: issue.id, copyKind: "repository",
+              });
+            },
+            resolveGitAuth: createGitRemoteAuthProvider(db, snapshot.companyId, {
+              issueId: snapshot.sourceIssueId ?? issue.id,
+            }),
+          });
+          resolvedBaseCwd = managedWorkspace.cwd;
+        } catch {
+          return { ok: false, code: "rebuild_failed", message: "Failed to rebuild the execution workspace" };
+        }
+      }
+      // This transaction commits deny-only ownership before any copy. Holding
+      // the lifecycle fence while acquiring the company root fence would invert
+      // archive's lock order and roll ownership back after failed Git writes.
+      let capturedSource: IsolatedWorkspaceSourceAccess | null = null;
+      let authorizedTarget: string | null = null;
+      if (isClosedExecutionWorkspaceStatus(snapshot.status) && snapshot.strategyType === "git_worktree") {
+        try {
+          if (!resolvedBaseCwd || !(snapshot.providerRef ?? snapshot.cwd)) throw new Error("Missing workspace copy identity");
+          authorizedTarget = await canonicalRepositoryRoot(snapshot.providerRef ?? snapshot.cwd!);
+          if (snapshot.cwd && await canonicalRepositoryRoot(snapshot.cwd) !== authorizedTarget) {
+            throw new Error("Workspace checkout and provider roots disagree");
+          }
+          capturedSource = await assertIsolatedWorkspaceSourceReadAccess(db, {
+            companyId: snapshot.companyId, sourceCwd: resolvedBaseCwd, actor: input.authorizationActor,
+          });
+          await retainIsolatedWorkspaceSourceAccess(db, {
+            companyId: snapshot.companyId, sourceCwd: resolvedBaseCwd, targetCwd: authorizedTarget,
+            actor: input.authorizationActor, captured: capturedSource, issueId: issue.id, phase: "preparing",
+          });
+        } catch {
+          return { ok: false, code: "rebuild_failed", message: "Failed to rebuild the execution workspace" };
+        }
+      }
+      const result = await db.transaction(async (tx): Promise<ReopenClosedIsolatedExecutionWorkspaceResult> => {
         await acquireExecutionWorkspaceLifecycleLock(tx, input.workspaceId);
         // Organizational project assignment does not identify the source of files.
         // Reopen only the task's persisted binding, with current source access.
@@ -3284,6 +3380,9 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         }
         await assertTaskWorkspaceAccess(tx, input.authorizationActor, issue.companyId, row.id);
         if (!isClosedExecutionWorkspaceStatus(row.status)) {
+          if (row.cwd) await assertExecutionWorkspaceRootReadAccess(tx, {
+            companyId: row.companyId, cwd: row.cwd, actor: input.authorizationActor,
+          });
           // A concurrent reopen already restored the row. Report success without a
           // second rebuild so the caller continues normally. The other request
           // owns the reopen-pending flag, so return its generation and let the
@@ -3296,53 +3395,29 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           };
         }
 
-        const [
-          { ensurePersistedExecutionWorkspaceAvailable },
-          { workspaceOperationService },
-          { ensureManagedProjectWorkspace },
-        ] = await Promise.all([
-          import("./workspace-runtime.js"),
-          import("./workspace-operations.js"),
-          // heartbeat.js imports this module, so a static import creates a
-          // cycle. Load ensureManagedProjectWorkspace dynamically instead.
-          import("./heartbeat.js"),
-        ]);
-        const [projectWorkspace, projectPolicy] = await Promise.all([
-          row.projectWorkspaceId
-            ? db
-                .select({ cwd: projectWorkspaces.cwd })
-                .from(projectWorkspaces)
-                .where(and(
-                  eq(projectWorkspaces.companyId, row.companyId),
-                  eq(projectWorkspaces.id, row.projectWorkspaceId),
-                ))
-                .then((rows) => rows[0] ?? null)
-            : null,
-          db
-            .select({ executionWorkspacePolicy: projects.executionWorkspacePolicy })
-            .from(projects)
-            .where(and(eq(projects.companyId, row.companyId), row.projectId ? eq(projects.id, row.projectId) : sql`false`))
-            .then((rows) => parseProjectExecutionWorkspacePolicy(rows[0]?.executionWorkspacePolicy)),
-        ]);
-        // Resolve the base checkout that the rebuild spawns git in. A
-        // local-folder project stores its base path in projectWorkspaces.cwd.
-        // A managed_checkout project stores null there, so resolve its live
-        // managed checkout instead. Never use row.cwd for a git_worktree
-        // rebuild: row.cwd is the archived worktree path, which the reaper
-        // already removed from disk. A spawn in that missing directory fails
-        // with "spawn git ENOENT" and hides the real cause.
-        let resolvedBaseCwd = projectWorkspace?.cwd ?? null;
-        if (resolvedBaseCwd == null && row.strategyType === "git_worktree" && row.projectId) {
-          const managedWorkspace = await ensureManagedProjectWorkspace({
-            companyId: row.companyId,
-            projectId: row.projectId,
-            repoUrl: row.repoUrl,
-            resolveGitAuth: createGitRemoteAuthProvider(db, row.companyId, {
-              issueId: row.sourceIssueId ?? issue.id,
-            }),
-          });
-          resolvedBaseCwd = managedWorkspace.cwd;
+        if (capturedSource && !["projectId", "projectWorkspaceId", "cwd", "providerRef", "repoUrl", "baseRef", "branchName", "strategyType", "mode", "metadata"]
+          .every(key => isDeepStrictEqual(row[key as keyof typeof row], snapshot[key as keyof typeof snapshot]))) {
+          return { ok: false, code: "not_reopenable", message: "Execution workspace source changed during reopen" };
         }
+        if (capturedSource && snapshot.projectWorkspaceId) {
+          const [currentSource] = await tx.select({ cwd: projectWorkspaces.cwd }).from(projectWorkspaces)
+            .where(and(eq(projectWorkspaces.id, snapshot.projectWorkspaceId), eq(projectWorkspaces.companyId, snapshot.companyId)));
+          if (!isDeepStrictEqual(currentSource ?? null, projectWorkspace)) {
+            return { ok: false, code: "not_reopenable", message: "Execution workspace source changed during reopen" };
+          }
+        }
+        const verifyCopyIdentity = capturedSource && authorizedTarget ? async (sourceCwd: string, targetCwd: string) => {
+          if (!capturedSource!.roots.includes(await fs.realpath(sourceCwd))
+            || await canonicalRepositoryRoot(targetCwd) !== authorizedTarget) {
+            throw forbidden("Execution workspace copy identity changed during reopen");
+          }
+          // Read-only checks under the lifecycle fence cannot acquire the
+          // root mutation fence. The target already retains the captured owners.
+          for (const cwd of [...capturedSource!.roots, authorizedTarget!]) await assertExecutionWorkspaceRootReadAccess(tx, {
+            companyId: row.companyId, cwd, actor: input.authorizationActor,
+          });
+        } : undefined;
+
         const config = readExecutionWorkspaceConfig(row.metadata as Record<string, unknown> | null);
         const nextGeneration = readExecutionWorkspaceLifecycleGeneration(
           row.metadata as Record<string, unknown> | null,
@@ -3359,6 +3434,8 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         try {
           const realized = await ensurePersistedExecutionWorkspaceAvailable({
             db: tx as unknown as Db,
+            beforeSourceCopy: verifyCopyIdentity,
+            afterSourceCopy: verifyCopyIdentity,
             base: {
               baseCwd: resolvedBaseCwd ?? row.cwd ?? "",
               source: "task_session",
@@ -3504,7 +3581,21 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           },
         });
         return { ok: true, reopened: true, workspace: toExecutionWorkspace(activeRow), generation: nextGeneration };
+      }).catch((error): ReopenClosedIsolatedExecutionWorkspaceResult => {
+        logger.warn({ error, executionWorkspaceId: snapshot.id }, "Execution workspace reopen failed");
+        return { ok: false, code: "rebuild_failed", message: "Failed to rebuild the execution workspace" };
       });
+      if (capturedSource && authorizedTarget && resolvedBaseCwd) {
+        try {
+          await retainIsolatedWorkspaceSourceAccess(db, {
+            companyId: snapshot.companyId, sourceCwd: resolvedBaseCwd, targetCwd: authorizedTarget,
+            actor: input.authorizationActor, captured: capturedSource, issueId: issue.id, phase: "verified",
+          });
+        } catch {
+          return { ok: false, code: "rebuild_failed", message: "Failed to rebuild the execution workspace" };
+        }
+      }
+      return result;
     },
 
     // Clear the reopen-pending flag after a caller failed to consume a reopened

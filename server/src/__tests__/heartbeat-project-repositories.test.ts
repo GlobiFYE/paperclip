@@ -3,21 +3,22 @@ import request from "supertest";
 import { fileResourceRoutes } from "../routes/file-resources.js";
 import { errorHandler } from "../middleware/index.js";
 import { EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, mkdir, writeFile, readFile, realpath, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, readFile, realpath, readdir, rename, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { agents, authUsers, companies, companyMemberships, createDb, environments, executionWorkspaces, heartbeatRuns, issues, principalPermissionGrants, projects, projectAccessMembers, projectWorkspaces } from "@paperclipai/db";
+import { agents, authUsers, companies, companyMemberships, createDb, environments, executionWorkspaces, heartbeatRuns, issues, issueAccessGrants, principalPermissionGrants, projects, projectAccessMembers, projectWorkspaces } from "@paperclipai/db";
 import { setExpensiveWorkspaceGitExecutor } from "@paperclipai/adapter-utils/git-workspace-sync";
 import { buildProjectMentionHref } from "@paperclipai/shared";
 import { createWorkspaceGitOperationScheduler, WorkspaceGitScanError } from "../services/workspace-git-operation-scheduler.js";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { heartbeatService } from "../services/heartbeat.ts";
-import { resolvePaperclipInstanceRoot } from "../home-paths.js";
+import { createHeartbeatWorkspaceResolver } from "../services/heartbeat/workspaces.js";
+import { resolveManagedProjectWorkspaceDir, resolvePaperclipInstanceRoot } from "../home-paths.js";
 import { accessService } from "../services/access.js";
 import { assertExecutionWorkspaceRootWriteAccess } from "../services/execution-workspace-repositories.js";
 import { instanceSettingsService } from "../services/instance-settings.ts";
@@ -743,6 +744,183 @@ suite("task project repository provisioning", () => {
     expect(await readFile(path.join(copies[0]!.cwd, "README.md"), "utf8")).toBe("preserved dirty work");
     await expect(readFile(path.join(copies[0]!.cwd, "private.secret"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(await readFile(path.join(source, "README.md"), "utf8")).toBe("preserved dirty work");
+  }, 40_000);
+
+  it.each(["fresh", "existing", "occupied", "file_url", "absolute_path"] as const)("authorizes a late private configured sibling before %s copy and retains its privacy", async (scenario) => {
+    const previousPrivacyMode = process.env.PAPERCLIP_ISSUE_PRIVACY_MODE;
+    vi.stubEnv("PAPERCLIP_ISSUE_PRIVACY_MODE", "enforce");
+    try {
+      const companyId = randomUUID(), projectId = randomUUID(), agentId = randomUUID(), issueId = randomUUID();
+      const sourceId = randomUUID(), siblingId = randomUUID(), privateIssueId = randomUUID();
+      const anchor = path.join(root, companyId, "anchor"), sibling = path.join(root, companyId, "private-sibling");
+      for (const cwd of [anchor, sibling]) {
+        await mkdir(cwd, { recursive: true });
+        execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "ignore" });
+        await writeFile(path.join(cwd, "README.md"), "public committed content");
+        execFileSync("git", ["add", "."], { cwd, stdio: "ignore" });
+        execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "seed"], { cwd, stdio: "ignore" });
+      }
+      execFileSync("git", ["remote", "add", "origin", pathToFileURL(anchor).href], { cwd: anchor, stdio: "ignore" });
+      const urlOnly = scenario === "file_url" || scenario === "absolute_path";
+      await writeFile(path.join(sibling, "private.txt"), "PRIVATE_DIRTY_SIBLING_BYTES");
+      if (urlOnly) {
+        execFileSync("git", ["add", "private.txt"], { cwd: sibling, stdio: "ignore" });
+        execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "private source"], { cwd: sibling, stdio: "ignore" });
+        await writeFile(path.join(sibling, "uncommitted.txt"), "DO_NOT_OVERLAY_URL_ONLY_SOURCE");
+      }
+      await db.insert(companies).values({ id: companyId, name: "Late sibling", issuePrefix: "L" + companyId.slice(0, 6), defaultResponsibleUserId: "responsible-user" });
+      await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "owner" });
+      await db.insert(projects).values({ id: projectId, companyId, name: "Read-only source", executionWorkspacePolicy: { authorizationPolicy: { assignmentPolicy: { mode: "protected" } } } });
+      await db.insert(projectWorkspaces).values({ id: sourceId, companyId, projectId, name: "Primary", sourceType: "local_path", cwd: anchor, repoUrl: pathToFileURL(anchor).href, isPrimary: true });
+      await db.insert(agents).values({ id: agentId, companyId, name: "Reader", adapterType: "codex_local", status: "idle", adapterConfig: {}, permissions: {} });
+      await db.insert(issues).values({ id: issueId, companyId, title: "Keep task binding", status: "todo", assigneeAgentId: agentId,
+        projectWorkspaceId: sourceId, executionWorkspaceSettings: { mode: "isolated_workspace", workspaceStrategy: { type: "git_worktree" } },
+        workspaceSelection: { version: 1, source: "explicit", selection: { kind: "configured_source", projectWorkspaceId: sourceId, mode: "managed_isolated" } } });
+      const admit = async () => {
+        await db.update(issues).set({ status: "todo" }).where(eq(issues.id, issueId));
+        const run = await heartbeat.wakeup(agentId, { source: "on_demand", triggerDetail: "manual", contextSnapshot: { issueId } });
+        expect(run).not.toBeNull();
+        await vi.waitFor(async () => expect((await heartbeat.getRun(run!.id))?.status).toMatch(/^(succeeded|failed)$/), { timeout: 15_000 });
+        await drainHeartbeatRunsToQuiescence(db, heartbeat);
+        return (await heartbeat.getRun(run!.id))!;
+      };
+      const initial = await admit();
+      expect(initial).toMatchObject({ status: "succeeded", error: null });
+      const binding = (await db.select().from(issues).where(eq(issues.id, issueId)))[0].executionWorkspaceId!;
+      const taskCwd = execute.mock.calls.find(([input]) => input.runId === initial.id)![0].context.paperclipWorkspace.cwd as string;
+      // The private local source appears only after the original task is bound.
+      await db.insert(issues).values({ id: privateIssueId, companyId, title: "Private source task", status: "todo", visibility: "private", responsibleUserId: "private-owner" });
+      await db.insert(executionWorkspaces).values({ companyId, projectId: null, sourceIssueId: privateIssueId, name: "Private source files",
+        mode: "shared_workspace", strategyType: "project_primary", cwd: sibling, providerType: "local_fs", status: "active" });
+      const repoUrl = scenario === "absolute_path" ? sibling : pathToFileURL(sibling).href;
+      const configuredCwd = urlOnly ? null : sibling;
+      await db.insert(projectWorkspaces).values({ id: siblingId, companyId, projectId, name: "Late sibling", sourceType: "local_path", cwd: configuredCwd, repoUrl, isPrimary: false });
+      const key = (scenario === "absolute_path" ? "repo-" : "private-sibling-") + createHash("sha256").update(JSON.stringify([siblingId, repoUrl, null, configuredCwd])).digest("hex").slice(0, 12);
+      const copy = path.join(taskCwd, ".paperclip-repositories", key);
+      if (scenario === "existing" || scenario === "occupied") {
+        await mkdir(path.dirname(copy), { recursive: true });
+        if (scenario === "existing") execFileSync("git", ["clone", "--no-hardlinks", sibling, copy], { stdio: "ignore" });
+        else await mkdir(copy);
+        await writeFile(path.join(copy, "private.txt"), "PRESERVED_EXISTING_SIBLING_BYTES");
+      }
+      const denied = await admit();
+      expect(denied.status).toBe("failed");
+      expect(execute.mock.calls.filter(([input]) => input.runId === denied.id)).toHaveLength(0);
+      if (scenario === "fresh" || urlOnly) expect(await readdir(path.join(taskCwd, ".paperclip-repositories")).catch(() => [])).toEqual([]);
+      else expect(await readFile(path.join(copy, "private.txt"), "utf8")).toBe("PRESERVED_EXISTING_SIBLING_BYTES");
+      await db.insert(issueAccessGrants).values([
+        { issueId: privateIssueId, subjectType: "agent", subjectId: agentId, source: "explicit" },
+        { issueId: privateIssueId, subjectType: "user", subjectId: "responsible-user", source: "explicit" },
+      ]);
+      const authorized = await admit();
+      expect(authorized.status).toBe(scenario === "occupied" ? "failed" : "succeeded");
+      expect(execute.mock.calls.filter(([input]) => input.runId === authorized.id)).toHaveLength(scenario === "occupied" ? 0 : 1);
+      if (scenario === "occupied") expect(authorized.error).toContain("not a git checkout");
+      const expectedBytes = scenario === "fresh" || urlOnly ? "PRIVATE_DIRTY_SIBLING_BYTES" : "PRESERVED_EXISTING_SIBLING_BYTES";
+      expect(await readFile(path.join(copy, "private.txt"), "utf8")).toBe(expectedBytes);
+      if (urlOnly) await expect(readFile(path.join(copy, "uncommitted.txt"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      expect((await db.select().from(issues).where(eq(issues.id, issueId)))[0].executionWorkspaceId).toBe(binding);
+      const app = express();
+      app.use(express.json());
+      app.use((req, _res, next) => { req.actor = { type: "board", userId: "responsible-user", companyIds: [companyId], source: "session", isInstanceAdmin: false }; next(); });
+      app.use("/api", fileResourceRoutes(db));
+      app.use(errorHandler);
+      const fileUrl = "/api/issues/" + issueId + "/file-resources/content";
+      const relativeFile = path.relative(taskCwd, path.join(copy, "private.txt"));
+      expect((await request(app).get(fileUrl).query({ workspace: "execution", path: relativeFile }).expect(200)).body.content.data).toBe(expectedBytes);
+      // Removing configuration must not erase permissions of already copied files.
+      await db.delete(projectWorkspaces).where(eq(projectWorkspaces.id, siblingId));
+      await db.delete(issueAccessGrants).where(eq(issueAccessGrants.issueId, privateIssueId));
+      for (const download of [false, true]) {
+        const response = await request(app).get(fileUrl).query({ workspace: "execution", path: relativeFile, download }).expect(404);
+        expect(JSON.stringify(response.body)).not.toContain(expectedBytes);
+      }
+      const deniedContinuation = await admit();
+      expect(deniedContinuation.status).toBe("failed");
+      expect(execute.mock.calls.filter(([input]) => input.runId === deniedContinuation.id)).toHaveLength(0);
+      expect(await readFile(path.join(copy, "private.txt"), "utf8")).toBe(expectedBytes);
+    } finally {
+      vi.stubEnv("PAPERCLIP_ISSUE_PRIVACY_MODE", previousPrivacyMode);
+    }
+  }, 60_000);
+
+  it("guards an unbound private file-URL anchor before cloning and retains copied source privacy", async () => {
+    const previousPrivacyMode = process.env.PAPERCLIP_ISSUE_PRIVACY_MODE;
+    vi.stubEnv("PAPERCLIP_ISSUE_PRIVACY_MODE", "enforce");
+    try {
+      const companyId = randomUUID(), projectId = randomUUID(), agentId = randomUUID(), issueId = randomUUID();
+      const sourceId = randomUUID(), privateIssueId = randomUUID();
+      const source = path.join(root, companyId, "private-anchor");
+      await mkdir(source, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd: source, stdio: "ignore" });
+      await writeFile(path.join(source, "secret.txt"), "PRIVATE_ANCHOR_COMMITTED_BYTES");
+      execFileSync("git", ["add", "."], { cwd: source, stdio: "ignore" });
+      execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "private source"], { cwd: source, stdio: "ignore" });
+      await writeFile(path.join(source, "dirty.txt"), "DO_NOT_OVERLAY_URL_ONLY_ANCHOR");
+      await db.insert(companies).values({ id: companyId, name: "Private anchor", issuePrefix: "A" + companyId.slice(0, 6), defaultResponsibleUserId: "responsible-user" });
+      await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "owner" });
+      await db.insert(projects).values({ id: projectId, companyId, name: "Public project" });
+      await db.insert(projectWorkspaces).values({ id: sourceId, companyId, projectId, name: "URL-only anchor", sourceType: "git_repo", cwd: null, repoUrl: pathToFileURL(source).href, isPrimary: true });
+      await db.insert(agents).values({ id: agentId, companyId, name: "Reader", adapterType: "codex_local", status: "idle", adapterConfig: {}, permissions: {} });
+      await db.insert(issues).values({ id: privateIssueId, companyId, title: "Private original", visibility: "private", responsibleUserId: "private-owner" });
+      await db.insert(executionWorkspaces).values({ companyId, projectId: null, sourceIssueId: privateIssueId, name: "Private original files",
+        mode: "shared_workspace", strategyType: "project_primary", cwd: source, providerType: "local_fs", status: "active" });
+      await db.insert(issues).values({ id: issueId, companyId, title: "Read anchor", status: "todo", assigneeAgentId: agentId, projectWorkspaceId: sourceId,
+        workspaceSelection: { version: 1, source: "explicit", selection: { kind: "configured_source", projectWorkspaceId: sourceId, mode: "shared" } } });
+      const [actualAgent] = await db.select().from(agents).where(eq(agents.id, agentId));
+      const [otherAgent] = await db.insert(agents).values({ companyId, name: "Other run owner", adapterType: "codex_local", status: "idle" }).returning();
+      const [foreignRun] = await db.insert(heartbeatRuns).values({ companyId, agentId: otherAgent.id, issueId, status: "failed", responsibleUserId: "responsible-user" }).returning();
+      const resolver = createHeartbeatWorkspaceResolver(db);
+      await expect(resolver.resolveWorkspaceForRun(actualAgent, { issueId, executionIdentityRunId: foreignRun.id }, null))
+        .rejects.toThrow(/authoritative run identity/);
+      await db.insert(authUsers).values({ id: "private-owner", name: "Private owner", email: "private-owner@example.test", createdAt: new Date(), updatedAt: new Date() }).onConflictDoNothing();
+      await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "private-owner", status: "active", membershipRole: "member" });
+      await db.insert(issueAccessGrants).values({ issueId: privateIssueId, subjectType: "agent", subjectId: agentId, source: "explicit" });
+      const [ownedRun] = await db.insert(heartbeatRuns).values({ companyId, agentId, issueId, status: "failed", responsibleUserId: "responsible-user" }).returning();
+      // A caller-supplied sponsor cannot replace the responsible user on the run.
+      await expect(resolver.resolveWorkspaceForRun(actualAgent, { issueId, executionIdentityRunId: ownedRun.id, responsibleUserId: "private-owner" }, null))
+        .rejects.toThrow(/access|source/i);
+      await db.delete(issueAccessGrants).where(eq(issueAccessGrants.issueId, privateIssueId));
+      const admit = async () => {
+        await db.update(issues).set({ status: "todo" }).where(eq(issues.id, issueId));
+        const run = await heartbeat.wakeup(agentId, { source: "on_demand", triggerDetail: "manual", contextSnapshot: { issueId } });
+        expect(run).not.toBeNull();
+        await vi.waitFor(async () => expect((await heartbeat.getRun(run!.id))?.status).toMatch(/^(succeeded|failed)$/), { timeout: 15_000 });
+        await drainHeartbeatRunsToQuiescence(db, heartbeat);
+        return (await heartbeat.getRun(run!.id))!;
+      };
+      const denied = await admit();
+      expect(denied.status).toBe("failed");
+      expect(execute.mock.calls.filter(([input]) => input.runId === denied.id)).toHaveLength(0);
+      const managedCwd = resolveManagedProjectWorkspaceDir({ companyId, projectId, repoName: "private-anchor" });
+      await expect(readdir(managedCwd)).rejects.toMatchObject({ code: "ENOENT" });
+      await db.insert(issueAccessGrants).values([
+        { issueId: privateIssueId, subjectType: "agent", subjectId: agentId, source: "explicit" },
+        { issueId: privateIssueId, subjectType: "user", subjectId: "responsible-user", source: "explicit" },
+      ]);
+      const authorized = await admit();
+      expect(authorized).toMatchObject({ status: "succeeded", error: null });
+      const copiedCwd = execute.mock.calls.find(([input]) => input.runId === authorized.id)![0].context.paperclipWorkspace.cwd;
+      expect(await realpath(copiedCwd)).toBe(await realpath(managedCwd));
+      expect(await readFile(path.join(copiedCwd, "secret.txt"), "utf8")).toBe("PRIVATE_ANCHOR_COMMITTED_BYTES");
+      await expect(readFile(path.join(copiedCwd, "dirty.txt"))).rejects.toMatchObject({ code: "ENOENT" });
+      const app = express();
+      app.use(express.json());
+      app.use((req, _res, next) => { req.actor = { type: "board", userId: "responsible-user", companyIds: [companyId], source: "session", isInstanceAdmin: false }; next(); });
+      app.use("/api", fileResourceRoutes(db)); app.use(errorHandler);
+      const fileUrl = "/api/issues/" + issueId + "/file-resources/content";
+      expect((await request(app).get(fileUrl).query({ workspace: "execution", path: "secret.txt" }).expect(200)).body.content.data).toBe("PRIVATE_ANCHOR_COMMITTED_BYTES");
+      await db.delete(issueAccessGrants).where(eq(issueAccessGrants.issueId, privateIssueId));
+      await expect(resolver.resolveWorkspaceForRun(actualAgent, { issueId, executionIdentityRunId: authorized.id, responsibleUserId: "private-owner" }, null))
+        .rejects.toThrow(/access|source/i);
+      await db.delete(projectWorkspaces).where(eq(projectWorkspaces.id, sourceId));
+      await rename(source, source + "-removed");
+      await db.delete(issueAccessGrants).where(eq(issueAccessGrants.issueId, privateIssueId));
+      for (const download of [false, true]) await request(app).get(fileUrl).query({ workspace: "execution", path: "secret.txt", download }).expect(404);
+      expect(await readFile(path.join(copiedCwd, "secret.txt"), "utf8")).toBe("PRIVATE_ANCHOR_COMMITTED_BYTES");
+    } finally {
+      vi.stubEnv("PAPERCLIP_ISSUE_PRIVACY_MODE", previousPrivacyMode);
+    }
   }, 40_000);
 
   it.each([1, 2])("gives a task all %i repositories without any configured local folders", async (count) => {

@@ -1,22 +1,23 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile, access } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, readdir, rm, writeFile, access, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { captureDirectorySnapshot, directorySnapshotSha256, serializeDirectorySnapshot } from "@paperclipai/adapter-utils/workspace-restore-merge";
 import type { AdapterExecutionTarget } from "@paperclipai/adapter-utils/execution-target";
-import { agents, companies, createDb, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, environmentLeases, heartbeatRuns, issues, projects, projectWorkspaces, type Db } from "@paperclipai/db";
+import { agents, companies, createDb, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, environmentLeases, executionWorkspaces, executionWorkspaceRepositoryAccess, heartbeatRuns, issues, issueAccessGrants, projects, projectWorkspaces, type Db } from "@paperclipai/db";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "../../__tests__/helpers/embedded-postgres.js";
 import { environmentRunOrchestrator } from "../environment-run-orchestrator.js";
 import { environmentService } from "../environments.js";
+import { assertExecutionWorkspaceRootReadAccess } from "../execution-workspace-repositories.js";
 import { executionWorkspaceService } from "../execution-workspaces.js";
 import { instanceSettingsService } from "../instance-settings.js";
 import { workspaceOperationService } from "../workspace-operations.js";
 import { nativeWorkspaceSyncInternals, prepareNativeWorkspaceSync } from "../native-runtime/native-workspace-sync.js";
-import { createHeartbeatWorkspaceResolver, resolveExecutionWorkspaceReuseRequestForIssue } from "./workspaces.js";
+import { createHeartbeatWorkspaceResolver, prepareProjectRepositoryWorkspaces, resolveExecutionWorkspaceReuseRequestForIssue } from "./workspaces.js";
 import { prepareHeartbeatWorkspace, type HeartbeatWorkspacePreparationInput } from "./workspace-preparation.js";
 
 const execFile = promisify(execFileCallback);
@@ -144,6 +145,59 @@ describe.skipIf(!support.supported)("heartbeat workspace preparation boundary", 
     expect(guard).toHaveBeenCalledOnce();
     expect(await readdir(namespace)).toEqual([]);
     expect(await leases(input.run.id)).toEqual([]);
+  });
+
+  it("retains sibling privacy before copying when its source disappears before publication", async () => {
+    const previousPrivacyMode = process.env.PAPERCLIP_ISSUE_PRIVACY_MODE;
+    vi.stubEnv("PAPERCLIP_ISSUE_PRIVACY_MODE", "enforce");
+    try {
+      const { input, source, issue } = await fixture();
+      const sibling = source + "-private-sibling";
+      await execFile("git", ["clone", "--no-hardlinks", source, sibling]);
+      await writeFile(join(sibling, "private.txt"), "PRIVATE_SIBLING_STAGING_BYTES");
+      const [privateIssue] = await db.insert(issues).values({ companyId: issue.companyId, title: "Private sibling owner",
+        visibility: "private", responsibleUserId: "private-owner" }).returning();
+      const [privateWorkspace] = await db.insert(executionWorkspaces).values({ companyId: issue.companyId,
+        name: "Private sibling", projectId: null, sourceIssueId: privateIssue.id, cwd: sibling,
+        providerType: "local_fs", strategyType: "project_primary", mode: "shared_workspace", status: "active" }).returning();
+      await db.insert(issueAccessGrants).values({ issueId: privateIssue.id, subjectType: "agent", subjectId: input.agent.id, source: "explicit" });
+      const [configured] = await db.insert(projectWorkspaces).values({ companyId: issue.companyId, projectId: issue.projectId!,
+        name: "Private sibling", cwd: sibling, repoUrl: pathToFileURL(sibling).href }).returning();
+      const namespace = join(source, ".paperclip-repositories");
+      const originalPrepare = input.services.executionWorkspacesSvc.prepareConfiguredRepositorySource;
+      const prepare = vi.spyOn(input.services.executionWorkspacesSvc, "prepareConfiguredRepositorySource").mockImplementation(async args => {
+        const recheck = await originalPrepare(args);
+        return async () => {
+          const candidates = await readdir(namespace);
+          expect(candidates).toHaveLength(1);
+          expect(candidates[0]).toContain(".clone-");
+          expect(await readFile(join(namespace, candidates[0]!, "private.txt"), "utf8")).toBe("PRIVATE_SIBLING_STAGING_BYTES");
+          const retained = await db.select().from(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.companyId, issue.companyId));
+          expect(retained).toContainEqual(expect.objectContaining({ kind: "isolated_source", scopeId: privateWorkspace.id }));
+          await rename(sibling, sibling + "-moved");
+          await db.update(projectWorkspaces).set({ cwd: sibling + "-moved" }).where(eq(projectWorkspaces.id, configured.id));
+          await recheck();
+        };
+      });
+      await expect(prepareHeartbeatWorkspace(db, input)).rejects.toThrow(/ENOENT|unavailable|inaccessible|no longer/i);
+      expect(prepare).toHaveBeenCalledOnce();
+      expect(await readdir(namespace)).toEqual([]);
+      expect(await leases(input.run.id)).toEqual([]);
+      await db.delete(issueAccessGrants).where(eq(issueAccessGrants.issueId, privateIssue.id));
+      await expect(assertExecutionWorkspaceRootReadAccess(db, { companyId: issue.companyId, cwd: source,
+        actor: { type: "agent", source: "agent_jwt", companyId: issue.companyId, agentId: input.agent.id } })).rejects.toThrow();
+    } finally {
+      vi.stubEnv("PAPERCLIP_ISSUE_PRIVACY_MODE", previousPrivacyMode);
+    }
+  });
+
+  it.each(["file://untrusted-host/private/repository", "file:///private%2Frepository", "file:///private/repository?other", "file:///private/repository#other"])("rejects malformed local repository URL before source access: %s", async repoUrl => {
+    const { source, issue } = await fixture();
+    const prepareLocalSource = vi.fn();
+    await expect(prepareProjectRepositoryWorkspaces({ cwd: source, anchorRepoUrl: null,
+      workspaces: [{ id: issue.projectWorkspaceId!, repoUrl, repoRef: null, cwd: null }], prepareLocalSource })).rejects.toThrow();
+    expect(prepareLocalSource).not.toHaveBeenCalled();
+    expect(await readdir(join(source, ".paperclip-repositories"))).toEqual([]);
   });
 
   it("persists and reuses task-owned files without adopting the organizational project as their source", async () => {

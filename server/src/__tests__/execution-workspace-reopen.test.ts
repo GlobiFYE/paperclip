@@ -1,14 +1,19 @@
 import { EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm, stat } from "node:fs/promises";
+import { mkdtemp, rm, stat, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { pathToFileURL } from "node:url";
+import { assertExecutionWorkspaceRootReadAccess } from "../services/execution-workspace-repositories.js";
 import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   activityLog,
+  authUsers,
+  companyMemberships,
+  issueAccessGrants,
   companies,
   createDb,
   executionWorkspaces,
@@ -57,7 +62,9 @@ describeEmbeddedPostgres("reopen archived isolated execution workspace", () => {
     await db.delete(executionWorkspaces);
     await db.delete(projectWorkspaces);
     await db.delete(projects);
+    await db.delete(companyMemberships);
     await db.delete(companies);
+    await db.delete(authUsers);
     await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
   });
 
@@ -409,6 +416,54 @@ describeEmbeddedPostgres("reopen archived isolated execution workspace", () => {
       else process.env.PAPERCLIP_HOME = previousHome;
     }
   });
+
+  it.each([false, true])("guards a private local managed reopen before Git and retains privacy after provisioning failure=%s", async provisionFails => {
+    const previousHome = process.env.PAPERCLIP_HOME;
+    const previousPrivacy = process.env.PAPERCLIP_ISSUE_PRIVACY_MODE;
+    const home = await makeExistingDir();
+    process.env.PAPERCLIP_HOME = home;
+    process.env.PAPERCLIP_ISSUE_PRIVACY_MODE = "enforce";
+    try {
+      const { companyId, projectId, projectWorkspaceId } = await seedManagedCheckoutProject();
+      const readerId = randomUUID();
+      await db.insert(authUsers).values({ id: readerId, name: "Reader", email: `${readerId}@example.test`, createdAt: new Date(), updatedAt: new Date() });
+      await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: readerId, status: "active", membershipRole: "member" });
+      const authorizationActor = { type: "board" as const, source: "session" as const, userId: readerId, companyIds: [companyId], isInstanceAdmin: false };
+      const source = join(home, "private-source"), target = join(home, "worktree-copy");
+      initManagedGitRepo(source, "reopen-feature");
+      writeFileSync(join(source, "private.txt"), "PRIVATE_REOPEN_BYTES");
+      execFileSync("git", ["add", "private.txt"], { cwd: source });
+      execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-m", "private"], { cwd: source });
+      execFileSync("git", ["branch", "-f", "reopen-feature", "HEAD"], { cwd: source });
+      const repoUrl = pathToFileURL(source).href;
+      await db.update(projectWorkspaces).set({ repoUrl }).where(eq(projectWorkspaces.id, projectWorkspaceId));
+      const privateIssueId = randomUUID();
+      await db.insert(issues).values({ id: privateIssueId, companyId, title: "Private source", visibility: "private", status: "todo", responsibleUserId: "another-owner" });
+      await db.insert(executionWorkspaces).values({ companyId, projectId: null, sourceIssueId: privateIssueId, name: "Private owner", mode: "shared_workspace", strategyType: "project_primary", cwd: source, providerType: "local_fs", status: "active" });
+      const workspaceId = await seedClosedGitWorktreeWorkspace({ companyId, projectId, projectWorkspaceId, cwd: target, repoUrl, branchName: "reopen-feature" });
+      if (provisionFails) await db.update(executionWorkspaces).set({ metadata: { [EXECUTION_WORKSPACE_LIFECYCLE_GENERATION_METADATA_KEY]: 1, config: { provisionCommand: "exit 42" } } }).where(eq(executionWorkspaces.id, workspaceId));
+      const issueId = await seedIssue({ companyId, projectId, workspaceId, issueNumber: 4901 });
+      const reopen = () => executionWorkspaceService(db).reopenClosedIsolatedExecutionWorkspaceForIssue({ workspaceId, issue: { id: issueId, companyId, projectId }, actor: { actorType: "user", agentId: null }, authorizationActor });
+      expect(await reopen()).toMatchObject({ ok: false, code: "rebuild_failed" });
+      await expect(stat(target)).rejects.toMatchObject({ code: "ENOENT" });
+      const managed = resolveManagedProjectWorkspaceDir({ companyId, projectId, repoName: "private-source" });
+      await expect(stat(managed)).rejects.toMatchObject({ code: "ENOENT" });
+      await db.insert(issueAccessGrants).values({ issueId: privateIssueId, subjectType: "user", subjectId: readerId, source: "explicit" });
+      const results = provisionFails ? [await reopen()] : await Promise.all([reopen(), reopen()]);
+      expect(results.every(result => result.ok)).toBe(!provisionFails);
+      if (!provisionFails) expect(results.map(result => result.ok && result.reopened).sort()).toEqual([false, true]);
+      expect(await readFile(join(target, "private.txt"), "utf8")).toBe("PRIVATE_REOPEN_BYTES");
+      await expect(assertExecutionWorkspaceRootReadAccess(db, { companyId, cwd: target, actor: authorizationActor })).resolves.toBeUndefined();
+      await db.delete(projectWorkspaces).where(eq(projectWorkspaces.id, projectWorkspaceId));
+      await db.delete(issueAccessGrants).where(eq(issueAccessGrants.issueId, privateIssueId));
+      await rm(source, { recursive: true, force: true });
+      for (const cwd of [managed, target]) await expect(assertExecutionWorkspaceRootReadAccess(db, { companyId, cwd, actor: authorizationActor })).rejects.toMatchObject({ status: 403 });
+      expect(await readFile(join(target, "private.txt"), "utf8")).toBe("PRIVATE_REOPEN_BYTES");
+    } finally {
+      if (previousHome === undefined) delete process.env.PAPERCLIP_HOME; else process.env.PAPERCLIP_HOME = previousHome;
+      if (previousPrivacy === undefined) delete process.env.PAPERCLIP_ISSUE_PRIVACY_MODE; else process.env.PAPERCLIP_ISSUE_PRIVACY_MODE = previousPrivacy;
+    }
+  }, 30_000);
 
   it("refuses to reopen a workspace in another company", async () => {
     const first = await seedCompanyProject();

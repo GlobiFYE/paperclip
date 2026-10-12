@@ -44,6 +44,23 @@ describe("atomic managed repository publication", () => {
     expect(JSON.parse(await readFile(path.join(target, ".git", "paperclip-workspace-owner.json"), "utf8"))).toMatchObject({ repositoryId: "receipt", pinnedCommit: expect.stringMatching(/^[a-f0-9]{40}$/) });
     expect(await readFile(path.join(target, "source.txt"), "utf8")).toBe("initial\n");
   });
+  it("authorizes the empty staging root before copying any source bytes", async () => {
+    const { root, source, target } = await fixture();
+    let stagingChecked = false;
+    await expect(materializeManagedProjectWorkspace(target, {
+      repoUrl: source,
+      beforeCopy: async staging => {
+        expect(await readdir(staging)).toEqual([]);
+        expect(await stat(target).catch(() => null)).toBeNull();
+        stagingChecked = true;
+        throw new Error("Private staging source denied");
+      },
+    })).rejects.toThrow("Private staging source denied");
+    expect(stagingChecked).toBe(true);
+    expect(await stat(target).catch(() => null)).toBeNull();
+    expect((await readdir(root)).filter(name => name.startsWith("target.clone-"))).toEqual([]);
+    expect(await readFile(path.join(source, "source.txt"), "utf8")).toBe("initial\n");
+  });
   it("does not publish an incomplete checkout when its receipt cannot be committed", async () => {
     const { root, source, target } = await fixture();
     await expect(materializeManagedProjectWorkspace(target, { repoUrl: "https://github.com/test/source", localSource: source, beforePublish: async () => { throw new Error("receipt failed"); } })).rejects.toThrow(/receipt failed/);

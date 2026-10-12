@@ -20,6 +20,8 @@ export async function materializeManagedProjectWorkspace(
     repoRef?: string | null;
     localSource?: string | null;
     resolveGitAuth?: GitRemoteAuthProvider | null;
+    /** Protect the fresh staging directory before Git reads any local source bytes. */
+    beforeCopy?: (cloneCwd: string) => Promise<void>;
     /** Internal preparation receipt is committed inside the clone before atomic publication. */
     beforePublish?: (cloneCwd: string) => Promise<void>;
     /** Existing, validated private staging parent outside published repositories. */
@@ -67,6 +69,7 @@ export async function materializeManagedProjectWorkspace(
     ? path.join(input.stagingParent, `${path.basename(cwd)}.clone-`)
     : `${cwd}.clone-`);
   try {
+    await input.beforeCopy?.(cloneTmpDir);
     try {
       await execFile(
         "git",

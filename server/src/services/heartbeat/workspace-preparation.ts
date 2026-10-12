@@ -130,7 +130,7 @@ export interface HeartbeatWorkspacePreparationInput {
   };
   services: {
     envOrchestrator: Pick<ReturnType<typeof environmentRunOrchestrator>, "resolveEnvironment" | "acquireForRun" | "realizeForRun">;
-    executionWorkspacesSvc: Pick<ReturnType<typeof executionWorkspaceService>, "create" | "update" | "bindTaskWorkspace" | "prepareTaskRepositoriesForAdmission" | "guardTaskRepositoryRootForPublication" | "reserveTaskRepositoryRootForRecovery">;
+    executionWorkspacesSvc: Pick<ReturnType<typeof executionWorkspaceService>, "create" | "update" | "bindTaskWorkspace" | "prepareTaskRepositoriesForAdmission" | "guardTaskRepositoryRootForPublication" | "prepareConfiguredRepositorySource" | "reserveTaskRepositoryRootForRecovery">;
     workspaceOperationsSvc: Pick<ReturnType<typeof workspaceOperationService>, "createRecorder">;
     resolveWorkspaceForRun: WorkspaceResolver["resolveWorkspaceForRun"];
     resolveReusedGitWorkspaceAnchor: WorkspaceResolver["resolveReusedGitWorkspaceAnchor"];
@@ -909,7 +909,7 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
   }
   if (executionWorkspace.projectId
     && (resolvedWorkspace.source === "project_primary" || Boolean(reusableExistingExecutionWorkspace?.projectWorkspaceId))
-    && !resolvedWorkspace.baseCwdFallback && !persistedNativeExecutionInput) {
+    && !resolvedWorkspace.baseCwdFallback && !persistedNativeExecutionInput && !nativeRecoveryExecutionWorkspaceId) {
     const repositoryRows = await db.select().from(projectWorkspaces).where(and(
       eq(projectWorkspaces.companyId, agent.companyId),
       eq(projectWorkspaces.projectId, executionWorkspace.projectId),
@@ -919,6 +919,11 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
       anchorRepoUrl: executionWorkspace.repoUrl,
       workspaces: repositoryRows,
       resolveGitAuth: workspaceGitAuthProvider,
+      prepareLocalSource: persistedExecutionWorkspace && issueId
+        ? (sourceCwd) => executionWorkspacesSvc.prepareConfiguredRepositorySource({
+            companyId: agent.companyId, issueId, workspaceId: persistedExecutionWorkspace!.id,
+            cwd: executionWorkspace.cwd, agentId: agent.id, runId: run.id, sourceCwd,
+          }) : undefined,
       beforePublish: persistedExecutionWorkspace && issueId && !nativeRecoveryExecutionWorkspaceId
         ? () => executionWorkspacesSvc.guardTaskRepositoryRootForPublication({
             companyId: agent.companyId, issueId, workspaceId: persistedExecutionWorkspace!.id,

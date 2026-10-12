@@ -1,3 +1,5 @@
+import { assertIsolatedWorkspaceSourceReadAccess, retainIsolatedWorkspaceSourceAccess } from "../execution-workspace-repositories.js";
+import { forbidden } from "../../errors.js";
 import { readGitConnectionFailure } from "../git-connection-failure.js";
 import { materializeManagedProjectWorkspace, ensureManagedRepositoriesIgnored } from "../managed-repository-checkout.js";
 export { materializeManagedProjectWorkspace } from "../managed-repository-checkout.js";
@@ -11,6 +13,7 @@ import {
 } from "@paperclipai/adapter-utils/git-workspace-sync";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { localRepositoryPath } from "../local-repository-path.js";
 import { execFile as execFileCallback } from "node:child_process";
 import { promisify } from "node:util";
 import {
@@ -439,6 +442,8 @@ function deriveRepoNameFromRepoUrl(repoUrl: string | null): string | null {
   }
 }
 
+type PrepareManagedLocalSource = (sourceCwd: string, targetCwd: string) => Promise<(targetCwd: string) => Promise<void>>;
+
 /**
  * In-flight managed-checkout materializations keyed by target cwd. Two issues on the same
  * project can wake within seconds of each other; without this, both runs raced the same
@@ -454,6 +459,7 @@ export async function ensureManagedProjectWorkspace(input: {
   companyId: string;
   projectId: string;
   repoUrl: string | null;
+  prepareLocalSource?: PrepareManagedLocalSource;
   /** Optional git credential source for cloning private repos; null/absent preserves ambient behavior. */
   resolveGitAuth?: GitRemoteAuthProvider | null;
 }): Promise<{ cwd: string; warning: string | null }> {
@@ -476,11 +482,20 @@ export async function ensureManagedProjectWorkspace(input: {
     // The winner may have cloned a different repository with the same basename.
     return ensureManagedProjectWorkspace(input);
   }
-  const attempt = materializeManagedProjectWorkspace(cwd, input).finally(() => {
+  const localSource = input.repoUrl ? localRepositoryPath(input.repoUrl) : null;
+  const guardLocalSource = localSource ? await input.prepareLocalSource?.(localSource, cwd) : undefined;
+  await guardLocalSource?.(cwd);
+  const attempt = materializeManagedProjectWorkspace(cwd, {
+    ...input,
+    beforeCopy: guardLocalSource,
+    beforePublish: guardLocalSource ? () => guardLocalSource(cwd) : undefined,
+  }).finally(() => {
     managedCheckoutMaterializations.delete(cwd);
   });
   managedCheckoutMaterializations.set(cwd, attempt);
   const result = await attempt;
+  // Covers the materializer's existing checkout and competing-publisher paths.
+  await guardLocalSource?.(cwd);
   if (input.repoUrl) {
     // A different server process can publish a same-name checkout between the
     // initial origin check and the atomic rename. Never adopt its other repo.
@@ -501,6 +516,9 @@ export async function prepareProjectRepositoryWorkspaces(input: {
   workspaces: Array<Pick<typeof projectWorkspaces.$inferSelect, "id" | "repoUrl" | "repoRef"> & { cwd?: string | null }>;
   resolveGitAuth?: GitRemoteAuthProvider | null;
   beforePublish?: () => Promise<void>;
+  /** Authorize and retain the configured local source before cloning or reuse.
+   * The returned guard rechecks that same source envelope before publication. */
+  prepareLocalSource?: (sourceCwd: string) => Promise<() => Promise<void>>;
 }): Promise<Array<{ workspaceId: string; cwd: string; repoUrl: string; repoRef: string | null }>> {
   const identity = (url: string) => url.trim().replace(/\.git\/?$/, "").replace(/\/$/, "");
   const seen = new Set(input.anchorRepoUrl ? [identity(input.anchorRepoUrl)] : []);
@@ -524,11 +542,27 @@ export async function prepareProjectRepositoryWorkspaces(input: {
     const cwd = path.join(root, key);
     const existing = await fs.lstat(cwd).catch(() => null);
     if (existing && (!existing.isDirectory() || existing.isSymbolicLink())) throw new Error("Invalid project repository checkout path");
-    const localSource = workspace.cwd && workspace.cwd !== REPO_ONLY_CWD_SENTINEL
-      && await fs.stat(workspace.cwd).then((entry) => entry.isDirectory()).catch(() => false)
-      ? workspace.cwd : null;
-    const result = await materializeManagedProjectWorkspace(cwd, { repoUrl, repoRef: workspace.repoRef, localSource, resolveGitAuth: input.resolveGitAuth, beforePublish: input.beforePublish });
+    const configuredLocalSource = workspace.cwd && workspace.cwd !== REPO_ONLY_CWD_SENTINEL ? workspace.cwd : null;
+    // A URL-only clone can still read this host. Keep its committed-only clone
+    // behavior, but authorize the physical file source before any Git read.
+    const urlLocalSource = localRepositoryPath(repoUrl);
+    // Run before the materializer's existing-checkout shortcut too. A sibling
+    // added after the first admission still contributes private source bytes.
+    const sourceToAuthorize = configuredLocalSource ?? urlLocalSource;
+    const recheckLocalSource = sourceToAuthorize
+      ? await input.prepareLocalSource?.(sourceToAuthorize) : undefined;
+    const localSource = configuredLocalSource
+      && await fs.stat(configuredLocalSource).then((entry) => entry.isDirectory()).catch(() => false)
+      ? configuredLocalSource : null;
+    const beforePublish = async () => {
+      await recheckLocalSource?.();
+      await input.beforePublish?.();
+    };
+    const result = await materializeManagedProjectWorkspace(cwd, { repoUrl, repoRef: workspace.repoRef, localSource, resolveGitAuth: input.resolveGitAuth, beforePublish });
     if (result.warning) throw new Error(result.warning);
+    // Existing clones and a competing publisher can return without invoking
+    // beforePublish. Reauthorize before exposing either result to the run.
+    await beforePublish();
     results.push({ workspaceId: workspace.id, cwd, repoUrl, repoRef: workspace.repoRef });
   }
   // Retain detached checkout work outside the synchronized repository set.
@@ -554,6 +588,7 @@ async function resolveConfiguredOrManagedProjectCwd(input: {
   cwd: string | null;
   repoUrl: string | null;
   resolveGitAuth?: GitRemoteAuthProvider | null;
+  prepareLocalSource?: PrepareManagedLocalSource;
 }): Promise<{ cwd: string; warning: string | null }> {
   const configuredCwd = readNonEmptyString(input.cwd);
   if (configuredCwd && configuredCwd !== REPO_ONLY_CWD_SENTINEL) {
@@ -564,6 +599,7 @@ async function resolveConfiguredOrManagedProjectCwd(input: {
     projectId: input.projectId,
     repoUrl: readNonEmptyString(input.repoUrl),
     resolveGitAuth: input.resolveGitAuth ?? null,
+    prepareLocalSource: input.prepareLocalSource,
   });
 }
 
@@ -586,6 +622,7 @@ export interface ResolveAdditionalProjectWorkspaceDeps {
 function defaultAdditionalProjectWorkspaceDeps(
   db: Db,
   resolveGitAuth?: GitRemoteAuthProvider,
+  prepareLocalSource?: PrepareManagedLocalSource,
 ): ResolveAdditionalProjectWorkspaceDeps {
   return {
     loadProjectWorkspaceRows: (companyId, projectId) =>
@@ -602,6 +639,7 @@ function defaultAdditionalProjectWorkspaceDeps(
     resolveConfiguredOrManagedProjectCwd: (input) =>
       resolveConfiguredOrManagedProjectCwd({
         ...input,
+        prepareLocalSource: input.prepareLocalSource ?? prepareLocalSource,
         resolveGitAuth:
           input.resolveGitAuth ??
           resolveGitAuth ??
@@ -610,6 +648,7 @@ function defaultAdditionalProjectWorkspaceDeps(
     ensureManagedProjectWorkspace: (input) =>
       ensureManagedProjectWorkspace({
         ...input,
+        prepareLocalSource: input.prepareLocalSource ?? prepareLocalSource,
         resolveGitAuth:
           input.resolveGitAuth ??
           resolveGitAuth ??
@@ -3239,6 +3278,50 @@ function readNonEmptyString(value: unknown): string | null {
 
 /** Database-bound workspace resolution for a heartbeat service instance. */
 export function createHeartbeatWorkspaceResolver(db: Db) {
+  function managedLocalSourceGuard(
+    agent: typeof agents.$inferSelect,
+    issueId: string | null,
+    runId: string | null,
+  ): PrepareManagedLocalSource {
+    return async (sourceCwd) => {
+      const [run] = runId
+        ? await db.select().from(heartbeatRuns).where(and(
+            eq(heartbeatRuns.id, runId),
+            eq(heartbeatRuns.companyId, agent.companyId),
+            eq(heartbeatRuns.agentId, agent.id),
+          ))
+        : [];
+      const runIssueId = run?.nativeIssueId ?? run?.contextSnapshot?.issueId
+        ?? run?.contextSnapshot?.taskId ?? run?.issueId ?? null;
+      if (!run || runIssueId !== issueId) {
+        throw forbidden("Local repository source requires an authoritative run identity");
+      }
+      const actor = {
+        type: "agent" as const,
+        source: "agent_jwt" as const,
+        companyId: agent.companyId,
+        agentId: agent.id,
+        runId: run.id,
+        onBehalfOfUserId: run.responsibleUserId === "local-board" ? null : run.responsibleUserId,
+      };
+      const captured = await assertIsolatedWorkspaceSourceReadAccess(db, {
+        companyId: agent.companyId,
+        sourceCwd,
+        actor,
+        copyKind: "repository",
+      });
+      return targetCwd => retainIsolatedWorkspaceSourceAccess(db, {
+        companyId: agent.companyId,
+        sourceCwd,
+        targetCwd,
+        actor,
+        captured,
+        issueId: issueId ?? undefined,
+        copyKind: "repository",
+      });
+    };
+  }
+
   async function resolveReusedGitWorkspaceAnchor(input: {
     agent: typeof agents.$inferSelect;
     workspace: ExecutionWorkspace;
@@ -3288,6 +3371,7 @@ export function createHeartbeatWorkspaceResolver(db: Db) {
           companyId: agent.companyId,
           projectId: workspace.projectId!,
           repoUrl: workspace.repoUrl,
+          prepareLocalSource: managedLocalSourceGuard(agent, input.issueId, input.runId),
           resolveGitAuth: createGitRemoteAuthProvider(db, agent.companyId, {
             issueId: input.issueId, heartbeatRunId: input.runId, agentId: agent.id,
             responsibleUserId: input.responsibleUserId,
@@ -3417,6 +3501,7 @@ export function createHeartbeatWorkspaceResolver(db: Db) {
             cwd: workspace.cwd,
             repoUrl: workspace.repoUrl,
             resolveGitAuth,
+            prepareLocalSource: managedLocalSourceGuard(agent, issueId, readNonEmptyString(context.executionIdentityRunId)),
           });
           projectCwd = resolvedCwd.cwd;
           managedWorkspaceWarning = resolvedCwd.warning;
@@ -3625,7 +3710,8 @@ export function createHeartbeatWorkspaceResolver(db: Db) {
         resolveProjectWorkspace: (project) =>
           resolveAdditionalProjectWorkspace(
             { companyId: agent.companyId, project },
-            defaultAdditionalProjectWorkspaceDeps(db, resolveGitAuth),
+            defaultAdditionalProjectWorkspaceDeps(db, resolveGitAuth,
+              managedLocalSourceGuard(agent, issueId, readNonEmptyString(context.executionIdentityRunId))),
           ),
       });
 
