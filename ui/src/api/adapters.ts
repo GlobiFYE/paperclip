@@ -4,6 +4,35 @@
 
 import { api } from "./client";
 
+/**
+ * The safe scalar login fields the server projects for an adapter that declares
+ * an interactive login capability. The projection carries no function member and
+ * no secret. The form reads it to pick the login flow and the login panel.
+ */
+export interface AdapterLoginProjection {
+  panelMode: "displayed_code" | "submitted_browser_code";
+  timeoutPolicy: "caller_bounded" | "fixed";
+}
+
+export interface AdapterCapabilities {
+  supportsInstructionsBundle: boolean;
+  supportsSkills: boolean;
+  supportsLocalAgentJwt: boolean;
+  requiresMaterializedRuntimeSkills: boolean;
+  supportsAcp: boolean;
+  /** Present only when the adapter declares an interactive login capability. */
+  login?: AdapterLoginProjection;
+}
+
+export interface AcpTargetDescriptor {
+  agentId: string;
+  skillsMode: "ephemeral" | "unsupported";
+  prerequisites: {
+    nodeRange?: string;
+    packages?: string[];
+  };
+}
+
 export interface AdapterInfo {
   type: string;
   label: string;
@@ -11,6 +40,8 @@ export interface AdapterInfo {
   modelsCount: number;
   loaded: boolean;
   disabled: boolean;
+  capabilities: AdapterCapabilities;
+  acp?: AcpTargetDescriptor;
   /** Installed version (for external npm adapters) */
   version?: string;
   /** Package name (for external adapters) */
