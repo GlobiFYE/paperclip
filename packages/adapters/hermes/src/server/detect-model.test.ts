@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, test } from "vitest";
 
-import { parseModelFromConfig, resolveProvider } from "./detect-model.js";
+import { inferProviderFromModel, parseModelFromConfig, resolveProvider } from "./detect-model.js";
 import { testEnvironment } from "./test.js";
 
 const providerEnvKeys = [
@@ -88,6 +88,19 @@ test("resolveProvider still infers from the requested model when Hermes config i
     provider: "anthropic",
     resolvedFrom: "modelInference",
   });
+});
+
+test("inferProviderFromModel routes the Ollama Cloud free pool to ollama", () => {
+  expect(inferProviderFromModel("gemma4:31b")).toBe("ollama");
+  expect(inferProviderFromModel("nemotron-3-ultra")).toBe("ollama");
+  expect(inferProviderFromModel("nemotron-3-super")).toBe("ollama");
+  expect(inferProviderFromModel("nemotron-3-nano:30b")).toBe("ollama");
+  expect(inferProviderFromModel("gpt-oss:20b")).toBe("ollama");
+  expect(inferProviderFromModel("gpt-oss:120b")).toBe("ollama");
+});
+
+test("inferProviderFromModel keeps full NVIDIA model IDs on nvidia before generic nemotron-3 prefixes", () => {
+  expect(inferProviderFromModel("nvidia/nemotron-3-ultra-550b-a55b")).toBe("nvidia");
 });
 
 async function withHermesHomeConfig(

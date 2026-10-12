@@ -36,6 +36,7 @@ export const VALID_PROVIDERS = [
   "xiaomi",
   "gemini",
   "nvidia",
+  "ollama",
   "openrouter",
   "nous",
   "openai-codex",
@@ -63,6 +64,17 @@ export const MODEL_PREFIX_PROVIDER_HINTS: [string, string][] = [
   // (longer/specific prefixes must be matched before generic ones).
   ["mimo", "xiaomi"],
   ["nvidia/", "nvidia"],
+  // Ollama Cloud free pool (second Nemotron pool; base_url https://ollama.com/v1).
+  // Only the six free models are enabled (gemma4:31b, nemotron-3-ultra,
+  // nemotron-3-super, nemotron-3-nano:30b, gpt-oss:20b, gpt-oss:120b).
+  // Full NVIDIA model IDs must stay above the generic nemotron-3-* prefixes so
+  // bare NVIDIA names keep routing to "nvidia"; add new NVIDIA IDs here first.
+  ["nemotron-3-ultra-550b-a55b", "nvidia"],
+  ["nemotron-3-ultra", "ollama"],
+  ["nemotron-3-super", "ollama"],
+  ["nemotron-3-nano", "ollama"],
+  ["gemma4", "ollama"],
+  ["gpt-oss", "ollama"],
   // OpenAI-native models
   ["gpt-4", "openai-codex"],
   ["gpt-5", "copilot"],
