@@ -1,3 +1,4 @@
+import { imessageProgressSupersessionReason } from "./imessage-photon/publications.js";
 import { fastResponseRequests } from "@paperclipai/db";
 
 import {
@@ -74,9 +75,10 @@ export function createChatPublicationReplacement(db: Db, options: ChatPublicatio
     publication: typeof chatPublications.$inferSelect,
   ): Promise<string | null> {
     const progress = publication.payload.progressState;
-    if (progress && ["queued", "working"].includes(progress)) {
+    const typingReason = imessageProgressSupersessionReason(progress);
+    if (typingReason) {
       const endpoint = await endpointRecord(publication.endpointId);
-      if (endpoint?.endpoint.provider === "imessage-photon") return "iMessage uses typing instead of progress bubbles";
+      if (endpoint?.endpoint.provider === "imessage-photon") return typingReason;
     }
     if (
       !progress ||

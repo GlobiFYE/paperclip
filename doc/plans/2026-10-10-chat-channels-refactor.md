@@ -220,3 +220,16 @@ by the service. No state or registration moves in this slice.
 - Existing CI fixtures cover exact outbound ownership, interleaved control
   messages, consumed progress, interactions, committed failure replacement and
   issue-to-run lock order. Local database capacity remains blocked.
+
+### 2026-10-12 channel-folder reassessment: slice 4
+
+Publication replacement is shared ownership logic: exact outbound links, run and
+wake scope, consumed progress messages, interaction prompts and retained-source
+authorization. Keep those queries together. The close-message provider allowlist
+is shared dispatch metadata, not four separate implementations.
+
+Move the iMessage queued/working suppression policy and explanation to
+`imessage-photon/publications.ts`. Preserve when endpoint lookup occurs and leave
+all ownership queries unchanged. Baseline: 49 public-service publication and
+Photon cases passed, including close-owned progress, interleaved Slack control,
+Telegram confirmation and FIFO replacement. The same 49 cases passed after. Server typecheck and module boundaries pass.
