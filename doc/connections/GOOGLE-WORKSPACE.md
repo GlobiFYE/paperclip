@@ -25,16 +25,19 @@ Google OAuth client or the same Paperclip Cloud broker deployment.
 ## Temporary Connections page visibility hold
 
 While Google OAuth verification is pending, the Connections landing page
-(`ui/src/pages/apps/Browse.tsx`) hides all nine Google Workspace entries,
-including their saved accounts. This is a display-only filter. App definitions,
-direct setup and management routes, OAuth profiles, saved credentials, and
+(`ui/src/pages/apps/Browse.tsx`) hides Google Workspace catalog entries with no
+saved connections. Existing accounts remain visible and searchable, including
+custom MCP connections matched by URL. Their card opens **Manage** instead of
+offering **Add account**. Archived connections remain hidden. This is a
+display-only filter. App definitions, direct setup and management routes,
+OAuth profiles, saved credentials, and
 runtime tools remain unchanged. This is not an access-control restriction.
 
 Keep verification instances pinned to their pre-hold app release so reviewers
 can still find and test the integrations. After approval, remove the page's
-`GOOGLE_CONNECTOR_SLUGS` filter and update its visibility tests before upgrading
-those instances. Do not disable the shared definitions or broker profiles to
-control this page's visibility.
+`GOOGLE_CONNECTOR_SLUGS` filter and management-only card action, then update its
+visibility tests before upgrading those instances. Do not disable the shared
+definitions or broker profiles to control this page's visibility.
 
 ## Developer Preview enrollment
 

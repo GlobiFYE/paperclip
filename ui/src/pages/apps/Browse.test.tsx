@@ -829,8 +829,22 @@ describe("Connectors landing page", () => {
     expect(archiveConnectionMock).not.toHaveBeenCalled();
   });
 
+  it("does not restore a Google catalog card for archived accounts", async () => {
+    listGalleryMock.mockResolvedValue({ apps: [getAppStoreDefinition("gmail")] });
+    listApplicationsMock.mockResolvedValue({ applications: [application({
+      id: "app-gmail", name: "Gmail", metadata: { sourceTemplateKey: "gmail" },
+    })] });
+    listConnectionsMock.mockResolvedValue({ connections: [connection({
+      applicationId: "app-gmail", status: "archived", config: { sourceTemplateKey: "gmail" },
+    })] });
+    await renderBrowse();
+
+    expect(container.querySelector('[data-app-slug="gmail"]')).toBeNull();
+    expect(archiveConnectionMock).not.toHaveBeenCalled();
+  });
+
   it.each(["active", "draft", "disabled"])(
-    "hides saved Google %s accounts without disabling or removing them",
+    "shows saved Google %s accounts without disabling or removing them",
     async (status) => {
       const applications = googleSlugs.map((slug) => application({
         id: `app-${slug}`, name: `Saved ${slug}`, applicationKey: `app-gallery:${slug}:one`,
@@ -846,8 +860,13 @@ describe("Connectors landing page", () => {
       const client = await renderBrowse();
 
       for (const slug of googleSlugs) {
-        expect(container.querySelector(`[data-app-slug="${slug}"]`)).toBeNull();
-        expect(container.textContent).not.toContain(`Account for ${slug}`);
+        const row = container.querySelector(`[data-app-slug="${slug}"]`)!;
+        expect(row).not.toBeNull();
+        expect(row.textContent).toContain(`Account for ${slug}`);
+        expect(row.querySelector('button[aria-label^="Add account"]')).toBeNull();
+        const manage = row.querySelector<HTMLButtonElement>('button[aria-label^="Manage"]')!;
+        await act(async () => manage.click());
+        expect(navigateMock).toHaveBeenLastCalledWith(`/apps/conn-${slug}/permissions`);
       }
       expect(client.getQueryData(queryKeys.tools.connections("company-1"))).toEqual({ connections });
       expect(client.getQueryData(queryKeys.tools.applications("company-1"))).toEqual({ applications });
@@ -856,7 +875,37 @@ describe("Connectors landing page", () => {
   );
 
   it.each(["config", "transportConfig"])(
-    "hides a Google account identified by %s even when its gallery entry is absent",
+    "keeps a custom Gmail URL connection visible and searchable via %s",
+    async (urlField) => {
+      listGalleryMock.mockResolvedValue({ apps: [getAppStoreDefinition("gmail")] });
+      listApplicationsMock.mockResolvedValue({ applications: [application({
+        id: "custom-gmail", name: "Mail organizer", applicationKey: "app-gallery:link:custom",
+        metadata: { source: "link" },
+      })] });
+      listConnectionsMock.mockResolvedValue({ connections: [connection({
+        id: "custom-gmail-account", applicationId: "custom-gmail", name: "Mail organizer",
+        authKind: "none", config: {}, transportConfig: {},
+        [urlField]: { url: "https://gmailmcp.googleapis.com/mcp/v1" },
+      }), connection({
+        id: "archived-gmail", applicationId: "custom-gmail", name: "Archived mail",
+        status: "archived", config: {},
+      })] });
+      await renderBrowse();
+
+      expect(container.querySelector('[data-app-slug="gmail"][data-connected="true"]')).not.toBeNull();
+      expect(container.textContent).toContain("Mail organizer");
+      expect(container.textContent).not.toContain("Archived mail");
+      await search("Mail organizer");
+      expect(container.textContent).toContain("Mail organizer");
+      const account = container.querySelector<HTMLButtonElement>('button[aria-label="Open Mail organizer permissions"]')!;
+      await act(async () => account.click());
+      expect(navigateMock).toHaveBeenLastCalledWith("/apps/custom-gmail-account/permissions");
+      expect(archiveConnectionMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(["config", "transportConfig"])(
+    "shows a Google account identified by %s even when its gallery entry is absent",
     async (sourceField) => {
       listGalleryMock.mockResolvedValue({ apps: [] });
       listApplicationsMock.mockResolvedValue({ applications: [application({
@@ -868,7 +917,7 @@ describe("Connectors landing page", () => {
       }), connection()] });
       await renderBrowse();
 
-      expect(container.textContent).not.toContain("Saved Google account");
+      expect(container.textContent).toContain("Saved Google account");
       expect(container.textContent).toContain("Notion");
       expect(archiveConnectionMock).not.toHaveBeenCalled();
     },
@@ -883,7 +932,7 @@ describe("Connectors landing page", () => {
         ? { name: "My tools", applicationKey: null, metadata: null }
         : {})] });
       const connections = [connection({
-        id: "google-account", name: "Hidden Google account",
+        id: "google-account", name: "Saved Google account",
         config: { sourceTemplateKey: "google-docs" },
       }), connection({
         id: "notion-account", name: "Visible Notion account",
@@ -893,7 +942,7 @@ describe("Connectors landing page", () => {
       const client = await renderBrowse();
 
       expect(container.textContent).toContain("Visible Notion account");
-      expect(container.textContent).not.toContain("Hidden Google account");
+      expect(container.textContent).toContain("Saved Google account");
       expect(container.textContent).toContain(rowKind === "catalog" ? "Notion" : "My tools");
       expect(client.getQueryData(queryKeys.tools.connections("company-1"))).toEqual({ connections });
       expect(archiveConnectionMock).not.toHaveBeenCalled();
@@ -901,7 +950,7 @@ describe("Connectors landing page", () => {
   );
 
   it.each(["metadata", "applicationKey"])(
-    "keeps a non-Google custom connector identified by %s when only its Google accounts are hidden",
+    "keeps saved Google accounts in a custom connector identified by %s",
     async (sourceField) => {
       listGalleryMock.mockResolvedValue({ apps: [] });
       const savedApplication = application({
@@ -911,14 +960,14 @@ describe("Connectors landing page", () => {
       });
       listApplicationsMock.mockResolvedValue({ applications: [savedApplication] });
       const connections = [connection({
-        name: "Hidden Google account", config: { sourceTemplateKey: "google-docs" },
+        name: "Saved Google account", config: { sourceTemplateKey: "google-docs" },
       })];
       listConnectionsMock.mockResolvedValue({ connections });
       const client = await renderBrowse();
 
       expect(container.querySelector('[data-app-slug="custom-provider"]')).not.toBeNull();
       expect(container.textContent).toContain("My custom connector");
-      expect(container.textContent).not.toContain("Hidden Google account");
+      expect(container.textContent).toContain("Saved Google account");
       expect(client.getQueryData(queryKeys.tools.applications("company-1"))).toEqual({ applications: [savedApplication] });
       expect(client.getQueryData(queryKeys.tools.connections("company-1"))).toEqual({ connections });
       expect(archiveConnectionMock).not.toHaveBeenCalled();

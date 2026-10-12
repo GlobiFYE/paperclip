@@ -141,8 +141,8 @@ type ConnectionRemovalTarget = {
   poolRevision?: number;
 } & ({ kind: "chat"; provider: ChatProvider } | { kind?: undefined });
 
-// Temporary, page-only hold until Google OAuth verification is approved.
-// Keep definitions, direct setup/management routes, and runtime access intact.
+// Temporary catalog hold until Google OAuth verification is approved.
+// Keep saved accounts visible for management, including custom URL connections.
 // Remove this filter after approval; reviewer instances stay on their pinned build.
 const GOOGLE_CONNECTOR_SLUGS = new Set(
   Object.values(GOOGLE_WORKSPACE_CONNECTOR_PROFILES).map((profile) => profile.appSlug),
@@ -263,6 +263,9 @@ function connectorAction(
 } {
   if (row.entry?.aiConnectionRouter) return { label: "Add connection pool", href: row.entry.availability?.available === false ? null : connectHrefFor(row.entry), title: row.entry.availability?.reason };
   if (row.aggregatorApp && isInstalled(row)) return { label: "Manage", href: null };
+  if (GOOGLE_CONNECTOR_SLUGS.has(row.slug) && row.connections.length > 0) {
+    return { label: "Manage", href: `/apps/${row.connections[0].id}/permissions` };
+  }
   const applicationId = row.applications[0]?.id ?? null;
   const chatHref = (row.slug === "agentmail" || chatConnectorsEnabled)
     ? chatConnectHref(
@@ -621,15 +624,7 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
       const savedAppConnections =
         connectionsByApplicationId.get(application.id) ?? [];
       if (applicationSlug === "gateway" && savedAppConnections.length === 0) continue;
-      let appConnections = savedAppConnections.filter(
-        (connection) => !GOOGLE_CONNECTOR_SLUGS.has(appConnectionSourceSlug(connection) ?? ""),
-      );
-      // Hide source-only Google rows, but keep independently identified connectors.
-      if (
-        (!applicationSlug || applicationSlug === "link") &&
-        savedAppConnections.length > 0 &&
-        appConnections.length === 0
-      ) continue;
+      let appConnections = savedAppConnections;
       // One legacy gateway application may contain several API formats. Group
       // each saved AI account by its actual routing, not the old application slug.
       const ungroupedCount = appConnections.length;
@@ -750,7 +745,7 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
       }));
 
     return [...rowsBySlug.values(), ...customRows, ...aggregatorRows]
-      .filter((row) => !GOOGLE_CONNECTOR_SLUGS.has(row.slug) || row.upstreamApps?.some(snapshot => snapshot.accounts.length > 0))
+      .filter((row) => !GOOGLE_CONNECTOR_SLUGS.has(row.slug) || isInstalled(row))
       .map((row) => ({
         ...row,
         connections: [...row.connections].sort(
