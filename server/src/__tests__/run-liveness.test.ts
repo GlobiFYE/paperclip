@@ -38,7 +38,7 @@ describe("run liveness classifier", () => {
     expect(classification.actionability).toBe("unknown");
   });
 
-  it("does not treat an echoed Paperclip wake payload as progress or a next action", () => {
+  it("ignores an echoed user wake message without treating it as progress or a next action", () => {
     const classification = classifyRunLiveness({
       ...baseInput,
       resultJson: {
@@ -58,6 +58,44 @@ describe("run liveness classifier", () => {
     expect(classification.livenessState).toBe("empty_response");
     expect(classification.actionability).toBe("unknown");
     expect(classification.nextAction).toBeNull();
+  });
+
+  it("preserves a real blocker after an echoed user wake message", () => {
+    const echoedWake = JSON.stringify({
+      type: "message_start",
+      message: {
+        role: "user",
+        content: [{
+          type: "text",
+          text: "## Paperclip Wake Payload\nNext action: deploy to production.",
+        }],
+      },
+    });
+    const classification = classifyRunLiveness({
+      ...baseInput,
+      stdoutExcerpt: `Next action noted: ${echoedWake}\nI cannot proceed because I need access credentials.`,
+    });
+
+    expect(classification.livenessState).toBe("blocked");
+    expect(classification.actionability).toBe("blocked_external");
+    expect(classification.nextAction).toBeNull();
+  });
+
+  it("preserves a real next action after an echoed user wake message", () => {
+    const echoedWake = JSON.stringify({
+      type: "message_start",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "## Paperclip Wake Payload\nNext action: deploy to production." }],
+      },
+    });
+    const classification = classifyRunLiveness({
+      ...baseInput,
+      stdoutExcerpt: `${echoedWake}\nNext action: run pnpm test and report the result.`,
+    });
+
+    expect(classification.actionability).toBe("runnable");
+    expect(classification.nextAction).toBe("run pnpm test and report the result.");
   });
 
   it("treats issue comments, documents, products, and actions as progress", () => {

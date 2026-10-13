@@ -97,14 +97,80 @@ function readText(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function isWakePayloadEcho(value: string) {
-  return /##\s*Paperclip Wake Payload/i.test(value) ||
-    /"type"\s*:\s*"message_start"[\s\S]{0,500}"role"\s*:\s*"user"/i.test(value);
+function findJsonValueEnd(value: string, start: number) {
+  const closing: string[] = [];
+  let inString = false;
+  let escaped = false;
+
+  for (let index = start; index < value.length; index += 1) {
+    const character = value[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (character === "\\") escaped = true;
+      else if (character === '"') inString = false;
+      continue;
+    }
+    if (character === '"') {
+      inString = true;
+      continue;
+    }
+    if (character === "{" || character === "[") {
+      closing.push(character === "{" ? "}" : "]");
+      continue;
+    }
+    if (character === "}" || character === "]") {
+      if (closing.pop() !== character) return null;
+      if (closing.length === 0) return index + 1;
+    }
+  }
+  return null;
+}
+
+function isSerializedUserMessage(value: string) {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return false;
+    const record = parsed as Record<string, unknown>;
+    const message = record.message;
+    return record.type === "message_start" &&
+      Boolean(message && typeof message === "object" && !Array.isArray(message) &&
+        (message as Record<string, unknown>).role === "user");
+  } catch {
+    return false;
+  }
+}
+
+function stripSerializedUserMessages(value: string) {
+  let text = value;
+  let searchFrom = 0;
+  while (searchFrom < text.length) {
+    const start = text.indexOf("{", searchFrom);
+    if (start < 0) break;
+    const end = findJsonValueEnd(text, start);
+    if (end === null) {
+      searchFrom = start + 1;
+      continue;
+    }
+    const candidate = text.slice(start, end);
+    if (!isSerializedUserMessage(candidate)) {
+      searchFrom = end;
+      continue;
+    }
+
+    const lineStart = text.lastIndexOf("\n", start - 1) + 1;
+    const prefix = text.slice(lineStart, start);
+    const removeStart = /^\s*(?:next action noted|next action|user message|echoed message)\s*:\s*$/i.test(prefix)
+      ? lineStart
+      : start;
+    text = `${text.slice(0, removeStart)}${text.slice(end)}`;
+    searchFrom = removeStart;
+  }
+  return text;
 }
 
 function readLivenessText(value: unknown): string | null {
   const text = readText(value);
-  return text && !isWakePayloadEcho(text) ? text : null;
+  return text ? readText(stripSerializedUserMessages(text)) : null;
 }
 
 function hasUnmanagedBackgroundTaskEvidence(resultJson: Record<string, unknown> | null | undefined) {
@@ -259,8 +325,8 @@ function nextNonNoiseLine(lines: string[], startIndex: number) {
 }
 
 function extractNextActionFromText(text: string) {
-  if (isWakePayloadEcho(text)) return null;
-  const lines = text.split(/\r?\n/).map((entry) => entry.trim());
+  const sanitized = stripSerializedUserMessages(text);
+  const lines = sanitized.split(/\r?\n/).map((entry) => entry.trim());
   for (let i = 0; i < lines.length; i += 1) {
     const rawLine = lines[i] ?? "";
     if (!rawLine || isNoisyTranscriptLine(rawLine)) continue;
