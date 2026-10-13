@@ -56,7 +56,11 @@ describe("durable Dot Runner integration", () => {
     vi.stubEnv("PAPERCLIP_SECRETS_MASTER_KEY", randomBytes(32).toString("base64"));
     await instanceSettingsService(db).updateExperimental({ enablePublicMcp: true, enableOpenAiDot: true, enableNativeRunner: false });
   }, 360000);
-  afterEach(async () => { await instanceSettingsService(db).updateExperimental({ enableGrokBot: false, enableNativeRunner: false }); });
+  afterEach(async () => {
+    const { heartbeatService } = await import("../services/heartbeat.js");
+    dotRunnerBroker(db, { heartbeat: heartbeatService(db) });
+    await instanceSettingsService(db).updateExperimental({ enableGrokBot: false, enableNativeRunner: false });
+  });
   afterAll(async () => {
     try {
       await temporary?.cleanup();
@@ -446,6 +450,34 @@ describe("durable Dot Runner integration", () => {
         expect(await db.select().from(dotMailboxItems).where(and(eq(dotMailboxItems.assignmentId, assignment.id), eq(dotMailboxItems.kind, "follow_up")))).toHaveLength(0);
       } finally { await f.events.stop(); }
     }, 30000);
+
+  it.each(["queued", "running"] as const)("stops a %s Grok run before an external assignment exists", async status => {
+    const f = await fixture({ provider: "grok_bot" });
+    const [run] = await db.insert(heartbeatRuns).values({ companyId: f.company.id, agentId: f.agent.id, status, invocationSource: "assignment", triggerDetail: "system" }).returning();
+    const cancelRun = vi.fn().mockResolvedValue(null);
+    const broker = dotRunnerBroker(db, { heartbeat: { wakeup: vi.fn(), cancelRun } });
+    expect(await broker.stopGrokWork(f.company.id, f.agent.id, f.userId, run!.id)).toMatchObject({ stopped: true, remoteTerminationConfirmed: false });
+    expect(cancelRun).toHaveBeenCalledWith(run!.id, "Paperclip work stopped; Grok execution unconfirmed");
+    expect(await grokRoutineService(db).recoveryNeeded(f.company.id, f.agent.id)).toBe(status === "running");
+    expect(await db.select().from(dotRunnerAssignments).where(eq(dotRunnerAssignments.runId, run!.id))).toHaveLength(0);
+    const other = await fixture({ provider: "grok_bot" });
+    await expect(broker.stopGrokWork(other.company.id, other.agent.id, other.userId, run!.id)).rejects.toThrow("changed");
+    expect(cancelRun).toHaveBeenCalledTimes(1);
+    await f.events.stop(); await other.events.stop();
+  });
+
+  it("cancels queued Grok work without fencing another active assignment", async () => {
+    const f = await fixture({ provider: "grok_bot" }), active = await offeredWork(f);
+    const [queued] = await db.insert(heartbeatRuns).values({ companyId: f.company.id, agentId: f.agent.id, status: "queued", invocationSource: "assignment", triggerDetail: "system" }).returning();
+    const cancelRun = vi.fn().mockResolvedValue(null);
+    const broker = dotRunnerBroker(db, { heartbeat: { wakeup: vi.fn(), cancelRun } });
+    await broker.stopGrokWork(f.company.id, f.agent.id, f.userId, queued!.id);
+    expect(cancelRun).toHaveBeenCalledTimes(1);
+    expect(cancelRun).toHaveBeenCalledWith(queued!.id, "Paperclip work stopped; Grok execution unconfirmed");
+    expect((await db.select().from(dotRunnerAssignments).where(eq(dotRunnerAssignments.id, active.assignment.id)))[0]!.status).toBe("offered");
+    expect(await grokRoutineService(db).recoveryNeeded(f.company.id, f.agent.id)).toBe(false);
+    await f.events.stop();
+  });
 
   it("rejects a stale Grok Stop click without fencing the newly displayed work", async () => {
     const f = await fixture({ provider: "grok_bot" });

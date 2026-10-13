@@ -496,19 +496,31 @@ function createBroker(db: Db) {
         const [binding] = await tx.select().from(bindings).where(and(eq(bindings.companyId, companyId), eq(bindings.agentId, agentId), eq(bindings.providerKind, "grok_bot"), isNull(bindings.revokedAt))).for("update");
         if (!binding) throw fail("Grok connection is unavailable.");
         const rows = await tx.select().from(assignments).where(and(eq(assignments.bindingId, binding.id), inArray(assignments.status, ["offered", "accepted"])));
-        if (expectedRunId && rows.some(row => row.runId !== expectedRunId)) throw fail("The work session changed. Reload before stopping it.");
-        await tx.update(assignments).set({ status: "fenced" }).where(and(eq(assignments.bindingId, binding.id), inArray(assignments.status, ["offered", "accepted"])));
-        if (rows.length) await tx.update(grokBotRoutines).set({ recoveryRequiredAt: new Date(), recoveryReason: "work_session" }).where(eq(grokBotRoutines.bindingId, binding.id));
+        const [requestedRun] = expectedRunId ? await tx.select({ id: heartbeatRuns.id, status: heartbeatRuns.status }).from(heartbeatRuns)
+          .where(and(eq(heartbeatRuns.id, expectedRunId), eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.agentId, agentId))) : [];
+        if (expectedRunId && (!requestedRun || !["queued", "running"].includes(requestedRun.status))) throw fail("The work session changed. Reload before stopping it.");
+        const [previousAssignment] = expectedRunId ? await tx.select({ status: assignments.status }).from(assignments)
+          .where(and(eq(assignments.bindingId, binding.id), eq(assignments.runId, expectedRunId))) : [];
+        const otherWork = expectedRunId && rows.some(row => row.runId !== expectedRunId);
+        if (otherWork && previousAssignment && !["offered", "accepted"].includes(previousAssignment.status)) throw fail("The work session changed. Reload before stopping it.");
+        const targeted = expectedRunId ? rows.filter(row => row.runId === expectedRunId) : rows;
+        const runIds = [...new Set([...targeted.map(row => row.runId), ...(requestedRun ? [requestedRun.id] : [])])];
+        if (targeted.length) await tx.update(assignments).set({ status: "fenced" }).where(inArray(assignments.id, targeted.map(row => row.id)));
+        // A queued run has no external authority. Preparing work with no other
+        // active assignment needs a fence before asynchronous native cancellation.
+        if (targeted.length || requestedRun?.status === "running" && !previousAssignment && !otherWork) {
+          await tx.update(grokBotRoutines).set({ recoveryRequiredAt: new Date(), recoveryReason: "work_session" }).where(eq(grokBotRoutines.bindingId, binding.id));
+        }
         const { grokBotDispatches } = await import("@paperclipai/db");
-        await tx.update(grokBotDispatches).set({ status: "cancelled", updatedAt: new Date() }).where(and(eq(grokBotDispatches.bindingId, binding.id), eq(grokBotDispatches.status, "prepared")));
+        if (targeted.length) await tx.update(grokBotDispatches).set({ status: "cancelled", updatedAt: new Date() }).where(and(eq(grokBotDispatches.bindingId, binding.id), inArray(grokBotDispatches.assignmentId, targeted.map(row => row.id)), eq(grokBotDispatches.status, "prepared")));
         await logActivity(tx as unknown as Db, { companyId, actorType: "user", actorId: operatorId,
           action: "grok.paperclip_work_stopped", entityType: "agent", entityId: agentId,
-          details: { assignmentIds: rows.map(row => row.id), remoteTerminationConfirmed: false } });
-        return rows;
+          details: { assignmentIds: targeted.map(row => row.id), runIds, remoteTerminationConfirmed: false } });
+        return runIds;
       });
-      await Promise.all(active.map(async row => {
-        await ports.get(row.runId)?.revoke?.().catch(() => {});
-        await (await admissionHeartbeat(db)).cancelRun(row.runId, "Paperclip work stopped; Grok execution unconfirmed");
+      await Promise.all(active.map(async runId => {
+        await ports.get(runId)?.revoke?.().catch(() => {});
+        await (await admissionHeartbeat(db)).cancelRun(runId, "Paperclip work stopped; Grok execution unconfirmed");
       }));
       return { stopped: true, remoteTerminationConfirmed: false };
     },
@@ -598,6 +610,7 @@ function createBroker(db: Db) {
                 eq(assignments.runId, runId), eq(assignments.bindingId, ref.bindingId),
                 eq(assignments.bindingGeneration, ref.bindingGeneration), eq(assignments.turnId, ref.turnId),
                 eq(assignments.normalizedSessionId, ref.normalizedSessionId), eq(assignments.revision, ref.assignmentRevision),
+                b.providerKind === "grok_bot" ? inArray(assignments.status, ["offered", "accepted"]) : undefined,
               )).returning();
               // A turn fenced before offering work has no external assignment to acknowledge.
               if (!fenced) return;

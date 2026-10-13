@@ -23,14 +23,14 @@ export function GrokBotSetup({ companyId, companyName, onBack, onClose }: {
   const resume = useQuery({ queryKey: ["grok-invitation", companyId], queryFn: () => grokBotApi.resume(companyId), retry: false, staleTime: 0 });
   const managers = useQuery({ queryKey: queryKeys.agents.list(companyId), queryFn: () => agentsApi.list(companyId) });
   useEffect(() => {
-    if (!resume.isFetchedAfterMount || restored.current) return;
+    if (!resume.isFetchedAfterMount || !resume.isSuccess || restored.current) return;
     restored.current = true;
     if (resume.data) {
       setInvitation(resume.data);
       setDetails({ name: resume.data.agent.name, botName: resume.data.agent.botName, role: resume.data.agent.role, reportsTo: resume.data.agent.reportsTo });
       setStep(resume.data.binding?.routine?.configured ? 3 : resume.data.binding?.connected ? 2 : 1);
     }
-  }, [resume.isFetchedAfterMount, resume.data]);
+  }, [resume.isFetchedAfterMount, resume.isSuccess, resume.data]);
   const key = ["grok-binding", companyId, invitation?.agent.id];
   const connection = useQuery({ queryKey: key,
     queryFn: ({ signal }) => grokBotApi.connection(companyId, invitation!.agent.id, signal),
