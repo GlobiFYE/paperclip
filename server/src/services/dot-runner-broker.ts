@@ -194,7 +194,7 @@ function createBroker(db: Db) {
             inArray(heartbeatRuns.status, ["succeeded", "failed", "cancelled", "timed_out"])));
         for (const { assignment } of terminal) {
           await tx.update(assignments).set({ status: "fenced" }).where(eq(assignments.id, assignment.id));
-          if (binding.providerKind === "grok_bot") await tx.update(grokBotRoutines).set({ recoveryRequiredAt: new Date(), updatedAt: new Date() }).where(eq(grokBotRoutines.bindingId, binding.id));
+          if (binding.providerKind === "grok_bot") await tx.update(grokBotRoutines).set({ recoveryRequiredAt: new Date(), recoveryReason: "work_session", updatedAt: new Date() }).where(eq(grokBotRoutines.bindingId, binding.id));
           await tx.insert(mailbox).values({ companyId, bindingId, bindingGeneration: binding.generation,
             assignmentId: assignment.id, kind: "authority_revoked", sourceEventId: randomUUID(),
             references: { assignmentId: assignment.id, runId: assignment.runId, externalStopConfirmed: false } });
@@ -498,7 +498,7 @@ function createBroker(db: Db) {
         const rows = await tx.select().from(assignments).where(and(eq(assignments.bindingId, binding.id), inArray(assignments.status, ["offered", "accepted"])));
         if (expectedRunId && rows.some(row => row.runId !== expectedRunId)) throw fail("The work session changed. Reload before stopping it.");
         await tx.update(assignments).set({ status: "fenced" }).where(and(eq(assignments.bindingId, binding.id), inArray(assignments.status, ["offered", "accepted"])));
-        if (rows.length) await tx.update(grokBotRoutines).set({ recoveryRequiredAt: new Date() }).where(eq(grokBotRoutines.bindingId, binding.id));
+        if (rows.length) await tx.update(grokBotRoutines).set({ recoveryRequiredAt: new Date(), recoveryReason: "work_session" }).where(eq(grokBotRoutines.bindingId, binding.id));
         const { grokBotDispatches } = await import("@paperclipai/db");
         await tx.update(grokBotDispatches).set({ status: "cancelled", updatedAt: new Date() }).where(and(eq(grokBotDispatches.bindingId, binding.id), eq(grokBotDispatches.status, "prepared")));
         await logActivity(tx as unknown as Db, { companyId, actorType: "user", actorId: operatorId,
@@ -517,7 +517,7 @@ function createBroker(db: Db) {
         const [b] = await tx.select().from(bindings).where(and(eq(bindings.companyId, companyId), eq(bindings.agentId, agentId), isNull(bindings.revokedAt), grantId ? eq(bindings.grantId, grantId) : undefined)).for("update");
         if (!b) return [];
         const active = await tx.select({ runId: assignments.runId }).from(assignments).where(and(eq(assignments.bindingId, b.id), inArray(assignments.status, ["offered", "accepted"])));
-        if (b.providerKind === "grok_bot" && active.length) await tx.update(grokBotRoutines).set({ recoveryRequiredAt: new Date(), updatedAt: new Date() }).where(eq(grokBotRoutines.bindingId, b.id));
+        if (b.providerKind === "grok_bot" && active.length) await tx.update(grokBotRoutines).set({ recoveryRequiredAt: new Date(), recoveryReason: "work_session", updatedAt: new Date() }).where(eq(grokBotRoutines.bindingId, b.id));
         await tx.update(bindings).set({ status: "revoked", generation: b.generation + 1, revokedAt: new Date(), pairingCodeHash: null, challengeHash: null, updatedAt: new Date() }).where(eq(bindings.id, b.id));
         if (b.grantId) await tx.update(mcpOauthGrants).set({ revokedAt: new Date() }).where(eq(mcpOauthGrants.id, b.grantId));
         const [agent] = await tx.select().from(agents).where(and(eq(agents.id, agentId), eq(agents.companyId, companyId))).for("update");
@@ -601,7 +601,7 @@ function createBroker(db: Db) {
               )).returning();
               // A turn fenced before offering work has no external assignment to acknowledge.
               if (!fenced) return;
-              if (b.providerKind === "grok_bot") await tx.update(grokBotRoutines).set({ recoveryRequiredAt: new Date(), updatedAt: new Date() }).where(and(eq(grokBotRoutines.bindingId, b.id), eq(grokBotRoutines.companyId, b.companyId)));
+              if (b.providerKind === "grok_bot") await tx.update(grokBotRoutines).set({ recoveryRequiredAt: new Date(), recoveryReason: "work_session", updatedAt: new Date() }).where(and(eq(grokBotRoutines.bindingId, b.id), eq(grokBotRoutines.companyId, b.companyId)));
               await tx.insert(mailbox).values({ companyId: b.companyId, bindingId: b.id, bindingGeneration: b.generation,
                 assignmentId: fenced.id, kind: "authority_revoked", sourceEventId: event.sourceEventId,
                 references: { assignmentId: fenced.id, runId, externalStopConfirmed: false } }).onConflictDoNothing(); return;
@@ -642,7 +642,11 @@ function createBroker(db: Db) {
             await tx.update(operations).set({ status: "completed", outcome: p.outcome, sourceEventId: event.sourceEventId, updatedAt: new Date() }).where(eq(operations.id, op.id));
             const action = op.command.action;
             await tx.update(assignments).set({ lastActivityAt: new Date(), ...(action === "renew" && p.outcome.status === "renewed" ? { expiresAt: new Date(Number(p.outcome.expiresAtUnixMs)) } : {}), ...(a.status !== "fenced" && p.outcome.status !== "rejected" && action === "accept" ? { status: "accepted" as const, acceptedAt: new Date() }
-              : a.status !== "fenced" && action === "finish" ? { status: "settled" as const, settledAt: new Date() } : {}) }).where(eq(assignments.id, a.id));
+              : a.status !== "fenced" && action === "finish" && p.outcome.status === "completed" ? { status: "settled" as const, settledAt: new Date() } : {}) }).where(eq(assignments.id, a.id));
+            if (a.status !== "fenced" && action === "finish" && p.outcome.status === "completed") {
+              const [binding] = await tx.select({ providerKind: bindings.providerKind }).from(bindings).where(eq(bindings.id, a.bindingId));
+              if (binding?.providerKind === "grok_bot") await grokRoutineService(tx as unknown as Db).settleWorkNotifications(a.companyId, a.bindingId, a.id);
+            }
             // Only asynchronous tool results need a wake; progress/accept/finish do not self-wake.
             if (action === "tool") await tx.insert(mailbox).values({ companyId: a.companyId, bindingId: a.bindingId, bindingGeneration: a.bindingGeneration,
               assignmentId: a.id, kind: "operation_result", sourceEventId: event.sourceEventId, references: { assignmentId: a.id, requestId: op.requestId } }).onConflictDoNothing();

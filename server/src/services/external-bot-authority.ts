@@ -23,13 +23,13 @@ export async function authorizeExternalBotBinding(db: Db, principal: McpPrincipa
     eq(dotAgentBindings.companyId, principal.grant.companyId), isNull(dotAgentBindings.revokedAt)));
   if (!binding || (options.provider && binding.providerKind !== options.provider)
       || (requireReady && binding.status !== "ready")) throw new McpOAuthError("access_denied", "Connect this agent and complete its wake verification first.", 409);
+  if (!await externalBotEnabled(db, binding.providerKind)) throw new McpOAuthError("access_denied", "This external provider is disabled.", 409);
   const [grant] = await db.select().from(mcpOauthGrants).where(and(eq(mcpOauthGrants.id, principal.grant.id), isNull(mcpOauthGrants.revokedAt)));
   const [agent] = await db.select().from(agents).where(and(eq(agents.id, binding.agentId), eq(agents.companyId, binding.companyId)));
   const access = grant ? await boardAuthService(db).resolveBoardAccess(grant.userId) : null;
   const membership = access?.memberships.find(m => m.companyId === binding.companyId && m.status === "active");
   if (!access?.user || !membership || membership.membershipRole === "viewer" || !grant || grant.agentId !== binding.agentId || !agent
       || agent.adapterType !== "paperclip_runner" || agent.adapterConfig.provider !== binding.providerKind
-      || !await externalBotEnabled(db, binding.providerKind)
       || ["terminated", "pending_approval"].includes(agent.status)
       || (!options.allowPaused && (requireReady ? agent.status === "paused" : !canConfigureAgentConnection(agent)))) {
     throw new McpOAuthError("access_denied", "Agent connection authority is unavailable.", 409);

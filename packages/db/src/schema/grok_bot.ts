@@ -21,6 +21,7 @@ export const grokBotRoutines = pgTable("grok_bot_routines", {
   verifiedAt: timestamp("verified_at", { withTimezone: true }),
   lastContactAt: timestamp("last_contact_at", { withTimezone: true }),
   recoveryRequiredAt: timestamp("recovery_required_at", { withTimezone: true }),
+  recoveryReason: text("recovery_reason").$type<"dispatch" | "work_session">(),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 }, t => [uniqueIndex("grok_routines_binding_uq").on(t.bindingId), index("grok_routines_company_agent_idx").on(t.companyId, t.agentId)]);

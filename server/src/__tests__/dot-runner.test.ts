@@ -1,3 +1,4 @@
+import { createGrokRoutineDispatcher } from "../services/grok-bot/dispatcher.js";
 import { grokRoutineService } from "../services/grok-bot/routine.js";
 import { accessService } from "../services/access.js";
 import { Readable } from "node:stream";
@@ -10,11 +11,11 @@ import { fileURLToPath } from "node:url";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import express, { type Request } from "express";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { agents, authUsers, companies, companyMemberships, createDb, dotAgentBindings, dotMailboxItems, dotRunnerAssignments, dotRunnerOperations,
+import { grokBotRoutines, grokBotDispatches, agents, authUsers, companies, companyMemberships, createDb, dotAgentBindings, dotMailboxItems, dotRunnerAssignments, dotRunnerOperations,
   heartbeatRuns, agentWakeupRequests, issueComments, issues, nativeRunResults, nativeRunFinalizations, completionContracts, mcpEventDeliveries, mcpEventSubscriptions, workspaceOperations, workAssessments, statusDecisions, issueThreadInteractions } from "@paperclipai/db";
 import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { createPublicMcpOAuth, DEVICE_GRANT } from "../services/public-mcp/oauth.js";
@@ -446,6 +447,40 @@ describe("durable Dot Runner integration", () => {
       } finally { await f.events.stop(); }
     }, 30000);
 
+  it("rejects a stale Grok Stop click without fencing the newly displayed work", async () => {
+    const f = await fixture({ provider: "grok_bot" });
+    const old = await offeredWork(f);
+    await db.update(dotRunnerAssignments).set({ status: "settled" }).where(eq(dotRunnerAssignments.id, old.assignment.id));
+    await db.update(heartbeatRuns).set({ status: "succeeded" }).where(eq(heartbeatRuns.id, old.run.id));
+    const current = await offeredWork(f);
+    await expect(f.broker.stopGrokWork(f.company.id, f.agent.id, f.userId, old.run.id)).rejects.toThrow("changed");
+    expect((await db.select().from(dotRunnerAssignments).where(eq(dotRunnerAssignments.id, current.assignment.id)))[0]!.status).toBe("offered");
+    expect((await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, current.run.id)))[0]!.status).toBe("queued");
+    await f.events.stop();
+  });
+
+  it("preserves Grok feedback and its deferred wake while routine recovery blocks notification", async () => {
+    const f = await fixture({ provider: "grok_bot" }), { run, assignment } = await offeredWork(f);
+    const [task] = await db.insert(issues).values({ companyId: f.company.id, title: "Grok feedback", assigneeAgentId: f.agent.id }).returning();
+    await db.update(heartbeatRuns).set({ nativeIssueId: task!.id, status: "running", runtimeMode: "native", nativeSessionId: assignment.normalizedSessionId }).where(eq(heartbeatRuns.id, run.id));
+    await db.update(dotRunnerAssignments).set({ status: "accepted" }).where(eq(dotRunnerAssignments.id, assignment.id));
+    await db.update(grokBotRoutines).set({ recoveryRequiredAt: new Date(), recoveryReason: "dispatch" }).where(eq(grokBotRoutines.bindingId, f.snapshot.bindingId));
+    const [comment] = await db.insert(issueComments).values({ companyId: f.company.id, issueId: task!.id, authorUserId: f.userId, body: "Please include the source dates." }).returning();
+    await db.transaction(async tx => {
+      expect(await publishActiveDotComment(tx as unknown as typeof db, { companyId: f.company.id, agentId: f.agent.id,
+        bindingId: f.snapshot.bindingId, runId: run.id, issueId: task!.id, commentId: comment!.id })).toMatchObject({ consumed: false });
+      await tx.insert(agentWakeupRequests).values({ companyId: f.company.id, agentId: f.agent.id, source: "assignment", triggerDetail: "system",
+        reason: "issue_comment", status: "deferred_issue_execution", payload: { issueId: task!.id, commentId: comment!.id } });
+    });
+    const delivery = vi.fn().mockResolvedValue({ delivery: "accepted", httpStatus: 200 });
+    const dispatcher = createGrokRoutineDispatcher(db, () => true, delivery);
+    await dispatcher.tick();
+    expect(delivery).not.toHaveBeenCalled();
+    expect(await db.select().from(dotMailboxItems).where(and(eq(dotMailboxItems.assignmentId, assignment.id), eq(dotMailboxItems.kind, "follow_up")))).toHaveLength(1);
+    expect(await db.select().from(agentWakeupRequests).where(and(eq(agentWakeupRequests.agentId, f.agent.id), eq(agentWakeupRequests.status, "deferred_issue_execution")))).toHaveLength(1);
+    await f.events.stop();
+  });
+
   it("serializes tool-result writes and cursor reads with the binding mailbox lock", async () => {
     const f = await fixture();
     const { run, assignment } = await offeredWork(f);
@@ -830,7 +865,14 @@ describe("durable Dot Runner integration", () => {
           schema: "paperclip.run_result.v1", reportedWorkDisposition: "done", artifacts: [], attentionRequests: [],
           verification: [{ commandOrCheck: "17 + 25", status: "passed" }],
         } } });
+        if (provider === "grok_bot") await db.update(grokBotDispatches).set({ status: "accepted", sentAt: new Date() })
+          .where(and(eq(grokBotDispatches.assignmentId, assignment!.id), eq(grokBotDispatches.kind, "mailbox_updated")));
         await f.broker.operation(f.principal, assignment!.id, randomUUID(), "finish", { result });
+        if (provider === "grok_bot") {
+          await vi.waitFor(async () => expect(await db.select().from(grokBotDispatches).where(and(eq(grokBotDispatches.assignmentId, assignment!.id),
+            eq(grokBotDispatches.kind, "mailbox_updated"), inArray(grokBotDispatches.status, ["prepared", "sending", "accepted", "unknown"])))).toHaveLength(0));
+          expect(await grokRoutineService(db).recoveryNeeded(f.company.id, f.agent.id)).toBe(false);
+        }
         await resultPromise;
         // The heartbeat records its controller workspace settlement before the
         // ordinary status finalizer commits the task disposition.

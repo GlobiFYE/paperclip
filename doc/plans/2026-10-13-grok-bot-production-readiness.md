@@ -136,3 +136,11 @@ Do not promote the temporary shared Dot connection to ready or substitute its ev
 - Cloud’s current ingress allows the existing agent protocol but needs exact GET/PUT exceptions for bounded file tickets. Extend the current Cloud baseline in isolation and test header stripping and denied adjacent routes. No Cloud primary edits or fleet-default change are authorized or required.
 
 The Grok routine is still a **transport-only qualification** routine. Explicitly replace those test instructions before actual assigned/proactive work; retain Grok’s own authorized native tools. No real client work, Linux managed Runner artifact or deployed candidate has been qualified yet.
+
+## Review and environment changes — 2026-10-13
+
+The app and supporting Cloud ingress candidates are open as draft PRs. The first app review found task-summary privacy, deferred-feedback durability, settled-delivery reconciliation and stale Stop targeting gaps. The corrections use the existing task privacy predicate, keep comment admission independent of routine egress, close notification obligations only on canonical successful finish, and pass the displayed run to Stop. Recovery records distinguish dispatch uncertainty from revoked work; a late reply cannot clear a work-session hold or restore task authority. OpenAPI setup contracts and feature-card ordering are synchronized.
+
+The guided story now uses Night Shift's production task thread, question form and document card with synthetic local callbacks. Incorrect credentials can be replaced from saved setup. This proves UI behavior only.
+
+Cloud master has introduced a separate Test environment for branch experiments. Staging now admits only master-derived app and schema revisions; the previous pre-merge staging harness override is retired. The selected staging tenant remains the authorized destination, but a pre-merge candidate cannot be forced onto it. Candidate testing must either use an explicitly authorized Test workspace/harness or wait for reviewed master changes. Do not change the staging guard or fleet default to bypass this constraint.

@@ -16,6 +16,7 @@ export function GrokBotSetup({ companyId, companyName, onBack, onClose }: {
   const [pairing, setPairing] = useState<DotPairing | null>(null);
   const [webhookUrl, setWebhookUrl] = useState("");
   const [webhookKey, setWebhookKey] = useState("");
+  const [editingCredentials, setEditingCredentials] = useState(false);
   const attemptedPairing = useRef(false);
   const restored = useRef(false);
   const verifyRequest = useRef<string | null>(null);
@@ -56,7 +57,7 @@ export function GrokBotSetup({ companyId, companyName, onBack, onClose }: {
   }, [pairing]);
   const configure = useMutation({ mutationFn: async () => {
     await grokBotApi.configure(companyId, invitation!.agent.id, { bindingId: binding!.id, expectedRevision: binding?.routine?.revision ?? 0, botName: details.botName, webhookUrl, webhookKey });
-    setWebhookUrl(""); setWebhookKey(""); await connection.refetch(); setStep(3);
+    setWebhookUrl(""); setWebhookKey(""); setEditingCredentials(false); verifyRequest.current = null; await connection.refetch(); setStep(3);
   }, gcTime: 0 });
   const verify = useMutation({ mutationFn: async () => {
     if (["rejected", "cancelled"].includes(binding?.routine?.lastExchange?.status ?? "")) verifyRequest.current = null;
@@ -71,7 +72,7 @@ export function GrokBotSetup({ companyId, companyName, onBack, onClose }: {
   const next = () => {
     if (step === 0) { if (invitation) setStep(1); else create.mutate(); }
     else if (step === 1) setStep(2);
-    else if (step === 2) { if (routine?.configured && !webhookUrl && !webhookKey) setStep(3); else configure.mutate(); }
+    else if (step === 2) { if (routine?.configured && !editingCredentials && !webhookUrl && !webhookKey) setStep(3); else configure.mutate(); }
     else if (ready) onClose();
     else verify.mutate();
   };
@@ -79,7 +80,7 @@ export function GrokBotSetup({ companyId, companyName, onBack, onClose }: {
     managers={(managers.data ?? []).filter(agent => agent.status !== "terminated" && agent.id !== invitation?.agent.id)}
     loading={resume.isPending} busy={busy} error={error?.message} connection={connection.data} pairing={binding?.connected ? null : pairing}
     approvalHref={invitation?.approvalId && (connection.data?.agentStatus ?? invitation.agent.status) === "pending_approval" ? `/approvals/${invitation.approvalId}` : undefined}
-    webhookUrl={webhookUrl} webhookKey={webhookKey} onDetails={setDetails} onCredentials={(url, key) => { setWebhookUrl(url); setWebhookKey(key); }}
+    webhookUrl={webhookUrl} webhookKey={webhookKey} editingCredentials={editingCredentials} onEditCredentials={() => setEditingCredentials(true)} onDetails={setDetails} onCredentials={(url, key) => { setWebhookUrl(url); setWebhookKey(key); }}
     onBack={() => step === 0 ? onBack() : setStep((step - 1) as GrokSetupStep)}
     onExit={() => { if (!invitation && details.name.trim() && details.botName.trim()) create.mutate(undefined, { onSuccess: onClose }); else if (step === 2 && webhookUrl && webhookKey) configure.mutate(undefined, { onSuccess: onClose }); else onClose(); }}
     onNext={next} onRetry={() => { if (connection.error) void connection.refetch(); else if (resume.error) void resume.refetch(); else if (pair.error) pair.mutate(binding?.id); else next(); }} />;

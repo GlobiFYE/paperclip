@@ -1,5 +1,6 @@
 import express from "express";
 import request from "supertest";
+import { grokBotRoutes } from "../routes/grok-bot.js";
 import { publicMcpIngressRoutes } from "../routes/public-mcp.js";
 import { createPublicMcpExecutor } from "../services/public-mcp/capabilities.js";
 import { createDotRunnerMcpTools } from "../services/dot-runner-broker.js";
@@ -7,7 +8,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import { agents, authUsers, companies, companyMemberships, createDb, dotAgentBindings, grokBotDispatches,
-  grokBotRoutines, mcpOauthGrants, activityLog } from "@paperclipai/db";
+  grokBotRoutines, mcpOauthGrants, activityLog, issues, heartbeatRuns, dotRunnerAssignments } from "@paperclipai/db";
 import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { accessService } from "../services/access.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
@@ -21,6 +22,7 @@ let db: ReturnType<typeof createDb>;
 beforeAll(async () => {
   temporary = await startEmbeddedPostgresTestDatabase("paperclip-grok-routine-");
   db = createDb(temporary.connectionString);
+  vi.stubEnv("PAPERCLIP_ISSUE_PRIVACY_MODE", "enforce");
   vi.stubEnv("PAPERCLIP_SECRETS_MASTER_KEY", randomBytes(32).toString("base64"));
   await instanceSettingsService(db).updateExperimental({ enablePublicMcp: true, enableNativeRunner: true, enableGrokBot: true, enableOpenAiDot: true });
 }, 120000);
@@ -86,6 +88,50 @@ describe("durable Grok routine qualification", () => {
     await f.service.send(f.company.id, f.agent.id, row.id);
     await accessService(db).setPrincipalPermission(f.company.id, "user", f.principal.grant.userId, "agents:create", false, f.principal.grant.userId);
     await expect(f.service.acknowledge(f.principal, acknowledgement(row))).rejects.toThrow("permission");
+  });
+
+  it("filters private current and queued tasks from the connection overview", async () => {
+    const f = await fixture();
+    const reader = randomUUID();
+    await db.insert(authUsers).values({ id: reader, name: "Reader", email: `${reader}@example.test`, createdAt: new Date(), updatedAt: new Date() });
+    await db.insert(companyMemberships).values({ companyId: f.company.id, principalType: "user", principalId: reader, membershipRole: "member", status: "active" });
+    const [privateTask] = await db.insert(issues).values({ companyId: f.company.id, title: "Private strategy", visibility: "private", createdByUserId: f.principal.grant.userId, assigneeAgentId: f.agent.id, status: "todo" }).returning();
+    await db.insert(issues).values({ companyId: f.company.id, title: "Visible task", assigneeAgentId: f.agent.id, status: "todo" });
+    const [run] = await db.insert(heartbeatRuns).values({ companyId: f.company.id, agentId: f.agent.id, status: "running", invocationSource: "assignment", triggerDetail: "system", nativeIssueId: privateTask!.id }).returning();
+    await db.insert(dotRunnerAssignments).values({ companyId: f.company.id, agentId: f.agent.id, bindingId: f.pairing.bindingId, bindingGeneration: 1,
+      runId: run!.id, normalizedSessionId: randomUUID(), turnId: randomUUID(), controllerGeneration: 1, catalogDigest: "fixture", projection: {},
+      status: "accepted", acceptBy: new Date(Date.now() + 60000), expiresAt: new Date(Date.now() + 60000) });
+    const app = express(); app.use((req, _res, next) => { req.actor = { type: "board", source: "session", userId: reader, companyIds: [f.company.id], memberships: [{ companyId: f.company.id, membershipRole: "member", status: "active" }] }; next(); });
+    app.use("/api", grokBotRoutes(db, f.oauth.config.resource));
+    const path = `/api/companies/${f.company.id}/agents/${f.agent.id}/grok-binding`;
+    const hidden = await request(app).get(path).expect(200);
+    expect(hidden.body).toMatchObject({ currentTask: null, queuedTaskCount: 1 });
+    expect(JSON.stringify(hidden.body)).not.toContain("Private strategy");
+    await db.update(issues).set({ responsibleUserId: reader }).where(eq(issues.id, privateTask!.id));
+    const visible = await request(app).get(path).expect(200);
+    expect(visible.body).toMatchObject({ currentTask: { id: privateTask!.id, title: "Private strategy" }, queuedTaskCount: 2 });
+  });
+
+  it.each(["dispatch", "work_session"] as const)("closes settled wake obligations without clearing a %s hold incorrectly", async reason => {
+    const f = await fixture(); const verified = await verification(f);
+    await f.service.send(f.company.id, f.agent.id, verified.id); await f.service.acknowledge(f.principal, acknowledgement(verified));
+    const [run] = await db.insert(heartbeatRuns).values({ companyId: f.company.id, agentId: f.agent.id, status: "succeeded", invocationSource: "assignment", triggerDetail: "system" }).returning();
+    const [work] = await db.insert(dotRunnerAssignments).values({ companyId: f.company.id, agentId: f.agent.id, bindingId: f.pairing.bindingId, bindingGeneration: 1,
+      runId: run!.id, normalizedSessionId: randomUUID(), turnId: randomUUID(), controllerGeneration: 1, catalogDigest: "fixture", projection: {},
+      status: "settled", acceptBy: new Date(), expiresAt: new Date(Date.now() - 1) }).returning();
+    const wake = await f.service.reserve({ companyId: f.company.id, agentId: f.agent.id, bindingId: f.pairing.bindingId,
+      assignmentId: work!.id, kind: "mailbox_updated", sourceEventId: randomUUID() });
+    await db.update(grokBotDispatches).set({ status: "unknown", sentAt: new Date() }).where(eq(grokBotDispatches.id, wake.id));
+    await db.update(grokBotRoutines).set({ recoveryRequiredAt: new Date(), recoveryReason: reason }).where(eq(grokBotRoutines.bindingId, f.pairing.bindingId));
+    await db.transaction(tx => grokRoutineService(tx as unknown as typeof db).settleWorkNotifications(f.company.id, f.pairing.bindingId, work!.id));
+    expect((await db.select().from(grokBotDispatches).where(eq(grokBotDispatches.id, wake.id)))[0]!.status).toBe("cancelled");
+    const ack = { correlationId: wake.id, bindingId: wake.bindingId, bindingGeneration: wake.bindingGeneration };
+    expect(await f.service.acknowledge(f.principal, ack)).toMatchObject({ status: "acknowledged", remoteTerminationConfirmed: false });
+    expect(await f.service.recoveryNeeded(f.company.id, f.agent.id)).toBe(reason === "work_session");
+    await expect(dotRunnerBroker(db).operation(f.principal, work!.id, randomUUID(), "progress", { text: "late effect" })).rejects.toThrow("expired");
+    expect((await db.select().from(dotRunnerAssignments).where(eq(dotRunnerAssignments.id, work!.id)))[0]!.status).toBe("settled");
+    await db.update(dotRunnerAssignments).set({ status: "fenced" }).where(eq(dotRunnerAssignments.id, work!.id));
+    await expect(f.service.acknowledge(f.principal, ack)).rejects.toThrow("revoked");
   });
 
   it("keeps HTTP delivery and authenticated reply separate, with auditable agent and authorizer", async () => {

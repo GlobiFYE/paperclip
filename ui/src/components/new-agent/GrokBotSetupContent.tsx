@@ -15,7 +15,8 @@ export interface GrokBotSetupContentProps {
   created: boolean; loading?: boolean; busy?: boolean; error?: string;
   managers: Array<{ id: string; name: string }>;
   connection?: GrokConnection; pairing: DotPairing | null; approvalHref?: string;
-  webhookUrl: string; webhookKey: string;
+  webhookUrl: string; webhookKey: string; editingCredentials?: boolean;
+  onEditCredentials?: () => void;
   onDetails: (details: CreateGrokInvitation) => void;
   onCredentials: (url: string, key: string) => void;
   onBack: () => void; onExit: () => void; onNext: () => void; onRetry: () => void;
@@ -32,7 +33,7 @@ export function GrokBotSetupContent(p: GrokBotSetupContentProps) {
   const nextDisabled = p.busy || p.loading || !!p.approvalHref
     || p.step === 0 && (!p.details.name.trim() || !p.details.botName.trim())
     || p.step === 1 && !binding?.connected
-    || p.step === 2 && (!routine?.configured && (!p.webhookUrl || !p.webhookKey))
+    || p.step === 2 && ((!routine?.configured || p.editingCredentials) && (!p.webhookUrl || !p.webhookKey))
     || p.step === 3 && !ready && (!!pending || !!routine?.recoveryNeeded || !!replied);
   return <>
     <div className="min-h-0 space-y-6 overflow-y-auto px-6 pb-6 pt-8 sm:px-8">
@@ -64,7 +65,7 @@ export function GrokBotSetupContent(p: GrokBotSetupContentProps) {
           <p>Ask your Bot to create a webhook-only routine, then open its Webhook panel in the desktop app.</p>
           {binding && <AgentSetupPrompt prompt={buildGrokRoutinePrompt(binding.id, p.details.botName)} label="Copy routine instructions" title="Enable assignments" description="Send this to the connected Bot. The routine wakes it when Paperclip work changes." />}
           <p className="text-xs text-muted-foreground">If clicking the routine does nothing, use the “Webhook URL” navigation link the Bot supplies.</p>
-          {routine?.configured && !p.webhookUrl && !p.webhookKey ? <p role="status" className="text-muted-foreground">Routine credentials are stored. Continue to verify both directions.</p> : <>
+          {routine?.configured && !p.editingCredentials && !p.webhookUrl && !p.webhookKey ? <div className="space-y-2"><p role="status" className="text-muted-foreground">Routine credentials are stored. Continue to verify both directions.</p>{p.onEditCredentials && <Button variant="outline" onClick={p.onEditCredentials} disabled={p.busy}>Replace routine credentials</Button>}</div> : <>
             <label className="block space-y-2"><span>Webhook URL</span><Input value={p.webhookUrl} onChange={e => p.onCredentials(e.target.value, p.webhookKey)} type="password" autoComplete="off" spellCheck={false} /></label>
             <label className="block space-y-2"><span>Webhook key</span><Input value={p.webhookKey} onChange={e => p.onCredentials(p.webhookUrl, e.target.value)} type="password" autoComplete="off" spellCheck={false} /></label>
           </>}

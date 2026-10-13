@@ -38,7 +38,7 @@ export function GrokBotConnection({ companyId, agentId }: { companyId?: string; 
   }, onSuccess: refresh, gcTime: 0 });
   const disconnect = useMutation({ mutationFn: () => grokBotApi.disconnect(companyId!, agentId!), onSuccess: async () => { setPairing(null); await refresh(); } });
   const recover = useMutation({ mutationFn: () => grokBotApi.recover(companyId!, agentId!), onSuccess: async () => { setInspected(false); verifyRequest.current = null; await refresh(); } });
-  const stop = useMutation({ mutationFn: () => grokBotApi.stop(companyId!, agentId!), onSuccess: refresh });
+  const stop = useMutation({ mutationFn: (runId: string) => grokBotApi.stop(companyId!, agentId!, runId), onSuccess: refresh });
   useEffect(() => { if (routine?.botName) setBotName(routine.botName); }, [routine?.botName]);
   useEffect(() => {
     if (!pairing) return;
@@ -76,7 +76,7 @@ export function GrokBotConnection({ companyId, agentId }: { companyId?: string; 
         <label className="block space-y-2"><span>One-use pairing code</span><Input type="password" autoComplete="off" readOnly value={pairing.pairingCode} onFocus={e => e.target.select()} /></label>
       </>}
     </>}
-    {binding?.assignment && <div className="space-y-2"><p>{binding.assignment.status === "offered" ? "Awaiting acknowledgement" : "Working in a Paperclip work session"}</p><Button variant="outline" disabled={busy} onClick={() => stop.mutate()}>Stop Paperclip work</Button><p className="text-xs text-muted-foreground">Revokes this session’s Paperclip authority and stops future dispatch. Remote execution may continue. Open Grok Bot to inspect it.</p></div>}
+    {binding?.assignment && <div className="space-y-2"><p>{binding.assignment.status === "offered" ? "Awaiting acknowledgement" : "Working in a Paperclip work session"}</p><Button variant="outline" disabled={busy} onClick={() => stop.mutate(binding.assignment!.runId)}>Stop Paperclip work</Button><p className="text-xs text-muted-foreground">Revokes this session’s Paperclip authority and stops future dispatch. Remote execution may continue. Open Grok Bot to inspect it.</p></div>}
     {recovering && <div className="space-y-3 rounded-md border border-border p-3">
       <p className="font-medium">Recovery needed</p><p className="text-muted-foreground">Paperclip cannot determine whether Grok is still working. Open Grok Bot, inspect this Bot and stop the old work before clearing the hold. The session must be stopped in Paperclip too.</p>
       <label className="flex items-start gap-2"><input type="checkbox" checked={inspected} onChange={e => setInspected(e.target.checked)} /><span>I inspected Grok and resolved the old work.</span></label>

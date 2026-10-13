@@ -2,9 +2,10 @@ import { Router, type Request } from "express";
 import { z } from "zod";
 import { heartbeatRuns, issues, type Db } from "@paperclipai/db";
 import { and, eq, sql } from "drizzle-orm";
-import { createGrokInvitationSchema, configureGrokRoutineSchema, verifyGrokRoutineSchema, recoverGrokRoutineSchema } from "@paperclipai/shared";
+import { createGrokInvitationSchema, configureGrokRoutineSchema, verifyGrokRoutineSchema, recoverGrokRoutineSchema, pairGrokBindingSchema, stopGrokWorkSchema } from "@paperclipai/shared";
 import { assertBoard, assertCompanyAccess } from "./authz.js";
 import { forbidden, HttpError, notFound } from "../errors.js";
+import { issueReadSqlCondition } from "../services/authorization.js";
 import { agentService } from "../services/agents.js";
 import { authorizeExternalBotOperator } from "../services/external-bot-authority.js";
 import { dotRunnerBroker } from "../services/dot-runner-broker.js";
@@ -44,10 +45,11 @@ export function grokBotRoutes(db: Db, resourceUrl: string) {
   router.get(path, async (req, res) => {
     const { companyId, agentId, agent } = await scope(req);
     const binding = await broker.bindingForAgent(companyId, agentId);
-    const [queued] = await db.select({ count: sql<number>`count(*)::int` }).from(issues).where(and(eq(issues.companyId, companyId), eq(issues.assigneeAgentId, agentId), eq(issues.status, "todo")));
+    const readable = await issueReadSqlCondition(db, req.actor);
+    const [queued] = await db.select({ count: sql<number>`count(*)::int` }).from(issues).where(and(eq(issues.companyId, companyId), eq(issues.assigneeAgentId, agentId), eq(issues.status, "todo"), readable));
     const [currentTask] = binding?.assignment ? await db.select({ id: issues.id, identifier: issues.identifier, title: issues.title }).from(heartbeatRuns)
       .innerJoin(issues, and(eq(issues.id, heartbeatRuns.nativeIssueId), eq(issues.companyId, companyId)))
-      .where(and(eq(heartbeatRuns.id, binding.assignment.runId), eq(heartbeatRuns.agentId, agentId), eq(heartbeatRuns.companyId, companyId))) : [];
+      .where(and(eq(heartbeatRuns.id, binding.assignment.runId), eq(heartbeatRuns.agentId, agentId), eq(heartbeatRuns.companyId, companyId), readable)) : [];
     res.set("Cache-Control", "no-store").json({ queuedTaskCount: queued?.count ?? 0, currentTask: currentTask ?? null, enabled: resourceUrl.startsWith("https://") && await broker.enabled("grok_bot"), resourceUrl,
       agentStatus: agent.status, agentLifecycleState: agent.lifecycleState, recoveryNeeded: await routines.recoveryNeeded(companyId, agentId), canConfigureConnection: canConfigureAgentConnection(agent),
       binding });
@@ -55,7 +57,7 @@ export function grokBotRoutes(db: Db, resourceUrl: string) {
   router.post(path, async (req, res) => {
     const { companyId, agentId, operatorId } = await scope(req, true);
     if (!resourceUrl.startsWith("https://")) throw forbidden("Grok Bot requires an authenticated public HTTPS instance.");
-    const body = z.object({ replaceBindingId: z.uuid().optional() }).strict().parse(req.body ?? {});
+    const body = pairGrokBindingSchema.parse(req.body ?? {});
     res.set("Cache-Control", "no-store").status(201).json(await broker.createPairing({ companyId, agentId, operatorId, provider: "grok_bot", ...body }));
   });
   router.put(path + "/routine", async (req, res) => {
@@ -71,7 +73,7 @@ export function grokBotRoutes(db: Db, resourceUrl: string) {
   });
   router.post(path + "/stop", async (req, res) => {
     const { companyId, agentId, operatorId } = await scope(req, true);
-    const { expectedRunId } = z.object({ expectedRunId: z.uuid().optional() }).strict().parse(req.body ?? {});
+    const { expectedRunId } = stopGrokWorkSchema.parse(req.body ?? {});
     res.set("Cache-Control", "no-store").json(await broker.stopGrokWork(companyId, agentId, operatorId, expectedRunId));
   });
   router.post(path + "/recover", async (req, res) => {

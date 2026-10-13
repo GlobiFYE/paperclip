@@ -1,4 +1,3 @@
-import { grokRoutineService } from "./grok-bot/routine.js";
 import { and, eq, gt, gte, inArray, isNull, sql } from "drizzle-orm";
 import { dotAgentBindings, dotMailboxItems, dotRunnerAssignments, dotRunnerOperations, agentWakeupRequests, heartbeatRuns, issueComments, type Db } from "@paperclipai/db";
 import { queuedCommentIdsFromWakePayload, withQueuedCommentIdsInWakePayload } from "./issue-queued-comment-queue.js";
@@ -39,10 +38,8 @@ export async function publishActiveDotComment(db: Db, input: {
   const [item] = await db.select({ references: dotMailboxItems.references }).from(dotMailboxItems).where(and(
     eq(dotMailboxItems.bindingId, binding.id), eq(dotMailboxItems.bindingGeneration, binding.generation),
     eq(dotMailboxItems.sourceEventId, `dot-follow-up:${assignment.id}:${input.commentId}`)));
-  if (binding.providerKind === "grok_bot" && item?.references.consumed !== true) {
-    await grokRoutineService(db).reserve({ companyId: input.companyId, agentId: input.agentId, bindingId: binding.id, assignmentId: assignment.id,
-      sourceEventId: `dot-follow-up:${assignment.id}:${input.commentId}`, kind: "mailbox_updated" });
-  }
+  // The Grok dispatcher observes this committed mailbox entry. Notification
+  // uncertainty must not roll back the comment's durable deferred wake.
   return { assignmentId: assignment.id, consumed: item?.references.consumed === true };
 }
 

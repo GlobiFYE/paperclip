@@ -49,7 +49,7 @@ export function grokRoutineService(db: Db, deliver: Delivery = deliverGrokRoutin
       if (active) throw fail("Stop or finish the current Paperclip work session before clearing recovery.");
       for (const routine of rows) {
         await tx.update(dispatches).set({ status: "cancelled", updatedAt: new Date() }).where(and(eq(dispatches.routineId, routine.id), inArray(dispatches.status, ["prepared", "sending", "accepted", "unknown"])));
-        await tx.update(routines).set({ recoveryRequiredAt: null, verifiedAt: null, verifiedGrantId: null, updatedAt: new Date() }).where(eq(routines.id, routine.id));
+        await tx.update(routines).set({ recoveryRequiredAt: null, recoveryReason: null, verifiedAt: null, verifiedGrantId: null, updatedAt: new Date() }).where(eq(routines.id, routine.id));
         await tx.update(bindings).set({ status: "connected", readyAt: null, updatedAt: new Date() }).where(and(eq(bindings.id, routine.bindingId), isNull(bindings.revokedAt)));
       }
       await logActivity(tx as unknown as Db, { companyId, actorType: "user", actorId: operatorId, action: "grok.recovery_inspected",
@@ -187,10 +187,29 @@ export function grokRoutineService(db: Db, deliver: Delivery = deliverGrokRoutin
       const [changed] = await tx.update(dispatches).set({ status: outcome.delivery, httpStatus: outcome.httpStatus, updatedAt: new Date() })
         .where(and(eq(dispatches.id, correlationId), eq(dispatches.status, "sending"))).returning();
       // A matching authenticated reply can win this race and reconcile delivery.
-      if (changed?.status === "unknown") await tx.update(routines).set({ recoveryRequiredAt: new Date(), updatedAt: new Date() })
-        .where(and(eq(routines.id, intent.routine.id), eq(routines.revision, intent.routine.revision)));
+      if (changed?.status === "unknown") await tx.update(routines).set({ recoveryRequiredAt: new Date(), recoveryReason: "dispatch", updatedAt: new Date() })
+        .where(and(eq(routines.id, intent.routine.id), eq(routines.revision, intent.routine.revision),
+          or(isNull(routines.recoveryReason), eq(routines.recoveryReason, "dispatch"))));
     });
     return state(companyId, agentId, intent.row.bindingId);
+  }
+
+  /** Called in the authoritative successful-finish transaction, with the binding lock held. */
+  async function settleWorkNotifications(companyId: string, bindingId: string, assignmentId: string) {
+    const [assignment] = await db.select({ id: assignments.id }).from(assignments).where(and(eq(assignments.id, assignmentId),
+      eq(assignments.companyId, companyId), eq(assignments.bindingId, bindingId), eq(assignments.status, "settled")));
+    if (!assignment) throw fail("Only settled work can close its notification obligation.");
+    await db.update(dispatches).set({ status: "cancelled", updatedAt: new Date() }).where(and(eq(dispatches.companyId, companyId),
+      eq(dispatches.bindingId, bindingId), eq(dispatches.assignmentId, assignmentId), eq(dispatches.kind, "mailbox_updated"),
+      inArray(dispatches.status, ["prepared", "sending", "accepted", "unknown"])));
+    const [uncertain] = await db.select({ id: dispatches.id }).from(dispatches).where(and(eq(dispatches.companyId, companyId),
+      eq(dispatches.bindingId, bindingId), or(eq(dispatches.status, "unknown"),
+        and(eq(dispatches.status, "sending"), lte(dispatches.updatedAt, new Date(Date.now() - 30_000))),
+        and(eq(dispatches.status, "accepted"), lte(dispatches.expiresAt, new Date()))))).limit(1);
+    // A canonical finish closes this session; it never proves a webhook ACK or
+    // restores execution authority. Other uncertain deliveries keep their hold.
+    if (!uncertain) await db.update(routines).set({ recoveryRequiredAt: null, recoveryReason: null, updatedAt: new Date() })
+      .where(and(eq(routines.companyId, companyId), eq(routines.bindingId, bindingId), eq(routines.recoveryReason, "dispatch")));
   }
 
   async function acknowledge(principal: McpPrincipal, raw: Ack) {
@@ -205,8 +224,9 @@ export function grokRoutineService(db: Db, deliver: Delivery = deliverGrokRoutin
         eq(dispatches.grantId, principal.grant.id))).for("update");
       const [routine] = row ? await tx.select().from(routines).where(eq(routines.id, row.routineId)).for("update") : [];
       if (!row || !routine || routine.bindingGeneration !== currentBinding.generation || row.routineRevision !== routine.revision
-        || row.expiresAt <= new Date() || !["sending", "accepted", "unknown", "acknowledged"].includes(row.status)) throw fail("Wake expired, was cancelled, or its authority changed.");
+        || row.expiresAt <= new Date() || !["sending", "accepted", "unknown", "acknowledged", "cancelled"].includes(row.status)) throw fail("Wake expired, was cancelled, or its authority changed.");
       if (row.kind === "verify") {
+        if (row.status === "cancelled") throw fail("Verification was cancelled.");
         await authorizeExternalBotBinding(database, principal, { provider: "grok_bot", requireReady: false });
         if (!input.challenge || !row.challengeHash || !timingSafeEqual(Buffer.from(digest(input.challenge)), Buffer.from(row.challengeHash))) throw fail("Verification challenge does not match.");
       } else {
@@ -214,17 +234,26 @@ export function grokRoutineService(db: Db, deliver: Delivery = deliverGrokRoutin
         const [assignment] = row.assignmentId ? await tx.select().from(assignments).where(and(eq(assignments.id, row.assignmentId),
           eq(assignments.companyId, binding.companyId), eq(assignments.bindingId, binding.id), eq(assignments.bindingGeneration, binding.generation),
           eq(assignments.agentId, binding.agentId))) : [];
-        if (row.kind === "mailbox_updated" && row.assignmentId) {
+        const settledDelivery = row.kind === "mailbox_updated" && assignment?.status === "settled" && !!row.sentAt;
+        if (row.status === "cancelled" && !settledDelivery) throw fail("Wake was cancelled.");
+        if (row.kind === "mailbox_updated" && row.assignmentId && !settledDelivery) {
           const { dotRunnerBroker } = await import("../dot-runner-broker.js");
           await dotRunnerBroker(db).assertWakeAuthority(binding.companyId, binding.agentId, binding.id, row.assignmentId);
         }
         if (!assignment || (row.kind === "authority_revoked" ? assignment.status !== "fenced"
-          : !["offered", "accepted"].includes(assignment.status) || assignment.expiresAt <= new Date())) throw fail("Work wake authority is no longer current.");
+          : !settledDelivery && (!["offered", "accepted"].includes(assignment.status) || assignment.expiresAt <= new Date()))) throw fail("Work wake authority is no longer current.");
       }
       if (row.status === "acknowledged") return { status: "acknowledged", correlationId: row.id, workSessionClosed: false, remoteTerminationConfirmed: false };
       await tx.update(dispatches).set({ status: "acknowledged", acknowledgedAt: new Date(), updatedAt: new Date() }).where(eq(dispatches.id, row.id));
-      await tx.update(routines).set({ lastContactAt: new Date(), ...(row.kind !== "authority_revoked" ? { recoveryRequiredAt: null } : {}), updatedAt: new Date(),
+      await tx.update(routines).set({ lastContactAt: new Date(), updatedAt: new Date(),
         ...(row.kind === "verify" ? { verifiedAt: new Date(), verifiedGrantId: principal.grant.id } : {}) }).where(eq(routines.id, routine.id));
+      if (row.kind !== "authority_revoked") {
+        const [other] = await tx.select({ id: dispatches.id }).from(dispatches).where(and(eq(dispatches.routineId, routine.id),
+          or(eq(dispatches.status, "unknown"), and(eq(dispatches.status, "sending"), lte(dispatches.updatedAt, new Date(Date.now() - 30_000))),
+            and(eq(dispatches.status, "accepted"), lte(dispatches.expiresAt, new Date()))))).limit(1);
+        if (!other) await tx.update(routines).set({ recoveryRequiredAt: null, recoveryReason: null })
+          .where(and(eq(routines.id, routine.id), eq(routines.recoveryReason, "dispatch")));
+      }
       if (row.kind === "verify") await tx.update(bindings).set({ status: "ready", readyAt: new Date(), updatedAt: new Date() }).where(eq(bindings.id, binding.id));
       await logActivity(database, { companyId: binding.companyId, actorType: "agent", actorId: binding.agentId,
         action: row.kind === "verify" ? "grok.wake_verified" : "grok.wake_acknowledged", entityType: "agent", entityId: binding.agentId,
@@ -235,5 +264,5 @@ export function grokRoutineService(db: Db, deliver: Delivery = deliverGrokRoutin
     if (input.challenge) scheduleAgentLifecycle(db, binding.agentId);
     return result;
   }
-  return { state, configure, reserve, send, acknowledge, recoveryNeeded, recover };
+  return { state, configure, reserve, send, acknowledge, settleWorkNotifications, recoveryNeeded, recover };
 }

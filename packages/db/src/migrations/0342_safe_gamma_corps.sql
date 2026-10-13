@@ -1,0 +1,1 @@
+ALTER TABLE "grok_bot_routines" ADD COLUMN IF NOT EXISTS "recovery_reason" text;
