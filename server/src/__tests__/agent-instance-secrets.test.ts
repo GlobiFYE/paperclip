@@ -30,13 +30,18 @@ const support = await getEmbeddedPostgresTestSupport();
       manifestJson: { agentLifecycle: true, capabilities: ["agents.lifecycle.manage"] } as never });
   }, 90_000);
   afterAll(async () => { await database?.cleanup(); vi.unstubAllEnvs(); });
-  async function fixture() {
+  async function fixture(ownerPluginId = pluginId) {
     const operationId = randomUUID();
+    const owner = randomUUID();
+    const now = new Date();
     const [agent] = await db.insert(agents).values({ companyId, name: "Secret owner", lifecycleState: "preparing", lifecycleVersion: 1,
-      lifecycleRequiredPluginIds: [pluginId], lifecycleOperation: { id: operationId, hostComplete: true, completedPluginIds: [], attempts: 0 } }).returning();
+      lifecycleRequiredPluginIds: [ownerPluginId], lifecycleOperation: { id: operationId, hostComplete: true, completedPluginIds: [], attempts: 0,
+        leaseOwner: owner, leaseUntil: new Date(now.getTime() + 120_000).toISOString() } }).returning();
     const request: AgentLifecycleRequest = { companyId, agentId: agent.id, operationId, version: 1, phase: "preparing" };
-    const scope = { companyId, agentId: agent.id, pluginId };
-    return { agent, request, scope, service: agentInstanceSecretService(db) };
+    const scope = { companyId, agentId: agent.id, pluginId: ownerPluginId };
+    const native = agentInstanceSecretService(db);
+    const service = { read: native.read, apply: (input: AgentLifecycleRequest, id: string, changes: unknown, attemptOwner = owner) => native.apply(input, id, changes, attemptOwner) };
+    return { agent, request, scope, service, owner };
   }
 
   it("persists and rotates native secret versions, survives restart, and isolates agent, company and plugin", async () => {
@@ -124,6 +129,38 @@ const support = await getEmbeddedPostgresTestSupport();
     const missing = path.join(resolveCodexAuthCacheDir(undefined, companyId), "missing-instance-secret-fixture");
     await expect(f.service.apply(f.request, pluginId, { runtime: missing })).rejects.toThrow("storage unavailable");
     expect(await f.service.read(f.scope)).toEqual({});
+  });
+
+  it("rejects a previous attempt after lease takeover and rejects an expired owner's writes", async () => {
+    const f = await fixture(); await f.service.apply(f.request, pluginId, { runtime });
+    const snapshot = (await createLifecycleStore(db, {} as never).get(f.agent.id))!;
+    const successor = randomUUID();
+    await db.update(agents).set({ lifecycleOperation: { ...f.agent.lifecycleOperation!, leaseOwner: successor } }).where(eq(agents.id, f.agent.id));
+    await f.service.apply(f.request, pluginId, { runtime: "successor credentials" }, successor);
+    await expect(f.service.apply(f.request, pluginId, { runtime })).rejects.toThrow("stale or outside scope");
+    await expect(f.service.apply(f.request, pluginId, { runtime: null })).rejects.toThrow("stale or outside scope");
+    const call = vi.fn(async (_id, _method, input) => ({ operationId: input.operationId, version: input.version, status: "complete", instanceSecrets: { runtime } }));
+    await expect(createLifecycleDriver(db, { call } as never).runPlugin(snapshot, pluginId)).rejects.toThrow("stale or outside scope");
+    expect(await f.service.read(f.scope)).toEqual({ runtime: "successor credentials" });
+    await db.update(agents).set({ lifecycleOperation: { ...f.agent.lifecycleOperation!, leaseOwner: successor, leaseUntil: new Date(0).toISOString() } }).where(eq(agents.id, f.agent.id));
+    await expect(f.service.apply(f.request, pluginId, { runtime }, successor)).rejects.toThrow("stale or outside scope");
+    expect(await f.service.read(f.scope)).toEqual({ runtime: "successor credentials" });
+  });
+
+  it("deletes live secret metadata and versions with the owning agent or plugin", async () => {
+    for (const deleting of ["agent", "plugin"] as const) {
+      const ownerPluginId = randomUUID();
+      await db.insert(plugins).values({ id: ownerPluginId, pluginKey: ownerPluginId, packageName: "fixture-cascade", version: "1.0.0", status: "ready",
+        manifestJson: { agentLifecycle: true, capabilities: ["agents.lifecycle.manage"] } as never });
+      const f = await fixture(ownerPluginId);
+      await f.service.apply(f.request, ownerPluginId, { runtime });
+      const [stored] = await db.select().from(companySecrets).where(eq(companySecrets.ownerAgentId, f.agent.id));
+      expect(await db.select().from(companySecretVersions).where(eq(companySecretVersions.secretId, stored.id))).toHaveLength(1);
+      if (deleting === "agent") await db.delete(agents).where(eq(agents.id, f.agent.id));
+      else await db.delete(plugins).where(eq(plugins.id, ownerPluginId));
+      expect(await secretService(db).getById(stored.id)).toBeNull();
+      expect(await db.select().from(companySecretVersions).where(eq(companySecretVersions.secretId, stored.id))).toEqual([]);
+    }
   });
 
   it("can clean up after a lost master key without decrypting credentials", async () => {

@@ -349,7 +349,6 @@ function remoteProviderHttpError(error: unknown, context: {
     return new HttpError(error.status, error.message, safeRemoteProviderErrorDetails(error, context));
   }
   if (error instanceof HttpError) return error;
-  // Provider errors can echo secret values; log only the fixed diagnostic fields.
   logger.warn(
     {
       companyId: context.companyId,
@@ -3474,7 +3473,6 @@ export function secretService(db: Db | DbTransaction) {
   return {
     listProviders: () => listSecretProviders(),
 
-    /** Trusted tenant runtime only; these values cannot be company bindings or agent API secrets. */
     agentInstance: {
       async read(scope: { companyId: string; agentId: string; pluginId: string }): Promise<Record<string, string>> {
         const rows = await db.select().from(companySecrets).where(and(eq(companySecrets.companyId, scope.companyId),
@@ -3490,7 +3488,6 @@ export function secretService(db: Db | DbTransaction) {
         }
         return values;
       },
-      // The lifecycle coordinator holds the owning agent's row lock across these writes.
       async set(scope: { companyId: string; agentId: string; pluginId: string }, key: string, value: string | null) {
         return withAccountHomeSecretMutationLock(undefined, scope.companyId, async () => {
           if (value) await assertAccountHomeCacheDirStillValid(undefined, scope.companyId, value);

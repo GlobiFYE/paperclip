@@ -31,7 +31,6 @@ export function createLifecycleDriver(db: Db, manager: PluginWorkerManager): Lif
       }
       const operationId = agent.lifecycleOperation!.id;
       const secrets = agentInstanceSecretService(db);
-      // Stop/cleanup must work even when a saved credential can no longer be decrypted.
       const instanceSecrets = ["preparing", "resuming"].includes(agent.lifecycleState)
         ? await secrets.read({ companyId: agent.companyId, agentId: agent.id, pluginId }) : {};
       const request = { companyId: agent.companyId, agentId: agent.id, operationId, version: agent.lifecycleVersion, phase: agent.lifecycleState,
@@ -40,7 +39,7 @@ export function createLifecycleDriver(db: Db, manager: PluginWorkerManager): Lif
       if (!result || result.operationId !== operationId || result.version !== agent.lifecycleVersion || !["complete", "pending"].includes(result.status)) {
         throw Object.assign(new Error("Invalid lifecycle result"), { code: "invalid_lifecycle_result" });
       }
-      if (result.instanceSecrets !== undefined) await secrets.apply(request, pluginId, result.instanceSecrets);
+      if (result.instanceSecrets !== undefined) await secrets.apply(request, pluginId, result.instanceSecrets, agent.lifecycleOperation?.leaseOwner);
       return result.status;
     },
     async runHost(agent) {

@@ -7,14 +7,13 @@ import { withAccountHomeSecretMutationLock } from "@paperclipai/adapter-codex-lo
 
 type Scope = { companyId: string; agentId: string; pluginId: string };
 
-/** Trusted tenant server only. No REST, company-secret, agent, or plugin-state surface. */
 export function agentInstanceSecretService(db: Db) {
   return {
     async read(scope: Scope): Promise<Record<string, string>> {
       try { return await secretService(db).agentInstance.read(scope); }
       catch { throw new Error("Agent instance secret unavailable"); }
     },
-    async apply(request: AgentLifecycleRequest, pluginId: string, changes: unknown): Promise<void> {
+    async apply(request: AgentLifecycleRequest, pluginId: string, changes: unknown, attemptOwner: string | undefined): Promise<void> {
       if (!changes || typeof changes !== "object" || Array.isArray(changes)) throw new Error("Invalid agent instance secret changes");
       const entries = Object.entries(changes);
       if (entries.length > 16 || entries.some(([key, value]) => !/^[a-z][a-z0-9_]{0,63}$/.test(key) ||
@@ -22,8 +21,10 @@ export function agentInstanceSecretService(db: Db) {
       const scope = { companyId: request.companyId, agentId: request.agentId, pluginId };
       await withAccountHomeSecretMutationLock(undefined, request.companyId, () => db.transaction(async tx => {
         const [agent] = await tx.select().from(agents).where(and(eq(agents.companyId, request.companyId), eq(agents.id, request.agentId))).for("update");
+        const leaseUntil = Date.parse(agent?.lifecycleOperation?.leaseUntil ?? "");
         if (!agent || agent.lifecycleVersion !== request.version || agent.lifecycleState !== request.phase ||
-          agent.lifecycleOperation?.id !== request.operationId || !agent.lifecycleRequiredPluginIds?.includes(pluginId)) {
+          agent.lifecycleOperation?.id !== request.operationId || !agent.lifecycleRequiredPluginIds?.includes(pluginId) ||
+          !attemptOwner || agent.lifecycleOperation.leaseOwner !== attemptOwner || !Number.isFinite(leaseUntil) || leaseUntil <= Date.now()) {
           throw new Error("Agent instance secret operation is stale or outside scope");
         }
         if (entries.some(([, value]) => value !== null) && !["preparing", "resuming"].includes(request.phase)) throw new Error("Agent instance secrets require preparation or resume");

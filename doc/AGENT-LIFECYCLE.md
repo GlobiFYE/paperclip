@@ -229,7 +229,8 @@ also occur during stop and cleanup. Use at most 16 keys per result, with names
 matching `[a-z][a-z0-9_]{0,63}` and values no larger than 64 KiB each.
 
 The tenant persists the changes before accepting the result. It locks the agent
-and checks its company, phase, operation, revision, and required plugin selection.
+and checks its company, phase, operation, revision, required plugin selection,
+and the captured attempt's current lease owner and unexpired deadline.
 A stale reply or a failed secret write cannot complete preparation. Calls after
 a restart receive the saved values. Stop and cleanup requests receive an empty
 map, so a damaged credential cannot block removal. Return removals even while
