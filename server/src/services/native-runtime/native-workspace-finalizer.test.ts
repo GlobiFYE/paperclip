@@ -593,6 +593,85 @@ describe("native workspace finalization recovery", () => {
     } finally { probe.mockRestore(); }
   });
 
+  it.each(["done", "cancelled", "execution replaced", "checkout replaced", "newer run", "queued legacy run", "reassigned", "result unbound", "result rejected", "run stopped"])("does not copy saved files after the task moves on during platform verification: %s", async changed => {
+    const seed = await seedAbandonedCopyback();
+    const worker = { provider: "railway" as const, projectId: "p", environmentId: "e", serviceId: "s", deploymentId: "d" };
+    const owner = { ...seed.owner, worker };
+    await db.update(heartbeatRuns).set({ runnerProfileJson: { nativeWorkspaceFinalizationOwner: owner } }).where(eq(heartbeatRuns.id, seed.runId));
+    const file = path.join(workspaceRoot, `${seed.runId}.txt`);
+    await fs.writeFile(file, "new task work");
+    const probe = vi.spyOn(platformProof, "requestWorkspaceWorkerStopProof").mockImplementation(async () => {
+      if (changed === "done" || changed === "cancelled") await db.update(issues).set({ status: changed }).where(eq(issues.id, seed.issueId));
+      if (changed === "execution replaced") await db.update(issues).set({ executionRunId: null }).where(eq(issues.id, seed.issueId));
+      if (changed === "checkout replaced") {
+        const [other] = await db.insert(heartbeatRuns).values({ companyId, agentId, status: "succeeded" }).returning();
+        await db.update(issues).set({ checkoutRunId: other.id }).where(eq(issues.id, seed.issueId));
+      }
+      if (changed === "reassigned") await db.update(issues).set({ assigneeAgentId: null }).where(eq(issues.id, seed.issueId));
+      if (changed === "result unbound") await db.update(nativeRunFinalizations).set({ resultId: null }).where(eq(nativeRunFinalizations.runId, seed.runId));
+      if (changed === "result rejected") await db.update(nativeRunResults).set({ schemaStatus: "rejected" }).where(eq(nativeRunResults.runId, seed.runId));
+      if (changed === "run stopped") await db.update(heartbeatRuns).set({ status: "failed" }).where(eq(heartbeatRuns.id, seed.runId));
+      if (changed === "newer run" || changed === "queued legacy run") {
+        const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, seed.runId));
+        await db.insert(heartbeatRuns).values({ companyId, agentId,
+          runtimeMode: changed === "newer run" ? "native" : "legacy",
+          nativeIssueId: changed === "newer run" ? seed.issueId : null,
+          contextSnapshot: { issueId: seed.issueId }, status: changed === "newer run" ? "succeeded" : "queued",
+          createdAt: new Date(run.createdAt.getTime() + (changed === "newer run" ? 60_000 : -60_000)),
+        });
+      }
+      return { v: 1, iss: "paperclip-cloud", aud: "paperclip-workspace-worker-stop/v1", sub: "stack", runId: seed.runId, ownerToken: owner.token, worker, stopped: true, iat: 1, exp: 61 };
+    });
+    const copyback = vi.fn(async () => fs.writeFile(file, "old sandbox work"));
+    try {
+      expect(await withNativeWorkspaceFinalizationOwnership(seed, copyback)).toEqual({ acquired: false });
+      expect(copyback).not.toHaveBeenCalled();
+      expect(await fs.readFile(file, "utf8")).toBe("new task work");
+      const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, seed.runId));
+      expect(run.runnerProfileJson?.nativeWorkspaceFinalizationOwner).toEqual(owner);
+      expect(run.runnerProfileJson?.nativeWorkspaceOwnerStopProof).toBeUndefined();
+    } finally { probe.mockRestore(); }
+  });
+
+  it("rechecks automatic task ownership at the copyback publication boundary", async () => {
+    const seed = await seedAbandonedCopyback();
+    const worker = { provider: "railway" as const, projectId: "p", environmentId: "e", serviceId: "s", deploymentId: "d" };
+    const owner = { ...seed.owner, worker };
+    await db.update(heartbeatRuns).set({ runnerProfileJson: { nativeWorkspaceFinalizationOwner: owner } }).where(eq(heartbeatRuns.id, seed.runId));
+    const probe = vi.spyOn(platformProof, "requestWorkspaceWorkerStopProof").mockResolvedValue({ v: 1, iss: "paperclip-cloud", aud: "paperclip-workspace-worker-stop/v1", sub: "stack", runId: seed.runId, ownerToken: owner.token, worker, stopped: true, iat: 1, exp: 61 });
+    const write = vi.fn();
+    try {
+      await expect(withNativeWorkspaceFinalizationOwnership(seed, async ownership => {
+        await db.update(issues).set({ status: "cancelled" }).where(eq(issues.id, seed.issueId));
+        await ownership.assertHeld();
+        write();
+      })).rejects.toThrow("native_workspace_finalization_ownership_lost");
+      expect(write).not.toHaveBeenCalled();
+    } finally { probe.mockRestore(); }
+  });
+
+  it.each(["closed", "superseded"])("does not start a workspace operation when the real reconciler selects a %s task", async changed => {
+    const seed = await seedAbandonedCopyback();
+    const worker = { provider: "railway" as const, projectId: "p", environmentId: "e", serviceId: "s", deploymentId: "d" };
+    const owner = { ...seed.owner, worker };
+    const workspaceId = randomUUID(), cwd = path.join(workspaceRoot, seed.runId);
+    await fs.mkdir(cwd);
+    await fs.writeFile(path.join(cwd, "current.txt"), "new task work");
+    await db.insert(executionWorkspaces).values({ id: workspaceId, companyId, projectId, mode: "local", strategyType: "local_directory", name: "Current workspace", cwd });
+    await db.update(issues).set({ executionWorkspaceId: workspaceId,
+      ...(changed === "closed" ? { status: "done" } : { executionRunId: null }),
+    }).where(eq(issues.id, seed.issueId));
+    await db.update(heartbeatRuns).set({ runnerProfileJson: { nativeWorkspaceFinalizationOwner: owner } }).where(eq(heartbeatRuns.id, seed.runId));
+    const probe = vi.spyOn(platformProof, "requestWorkspaceWorkerStopProof").mockResolvedValue({ v: 1, iss: "paperclip-cloud", aud: "paperclip-workspace-worker-stop/v1", sub: "stack", runId: seed.runId, ownerToken: owner.token, worker, stopped: true, iat: 1, exp: 61 });
+    try {
+      await reconcileNativeFinalizations(db, [seed.runId]);
+      expect(probe).toHaveBeenCalledOnce();
+      expect(await db.select().from(workspaceOperations).where(eq(workspaceOperations.heartbeatRunId, seed.runId))).toHaveLength(0);
+      expect((await db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, seed.runId)))[0].phase).toBe("workspace_finalizing");
+      expect(await fs.readFile(path.join(cwd, "current.txt"), "utf8")).toBe("new task work");
+    } finally { probe.mockRestore(); }
+  });
+
   it("surfaces an unverifiable foreign controller as board recovery without physical writes", async () => {
     const seeded = await seedRun({ executionWorkspaceId: randomUUID(), title: "Foreign copyback controller" });
     const owner = { token: randomUUID(), hostname: "other-controller.invalid", pid: 42, processStartedAt: new Date().toISOString() };

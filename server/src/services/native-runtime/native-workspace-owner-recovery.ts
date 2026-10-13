@@ -1,10 +1,10 @@
 import os from "node:os";
-import { and, eq, gt, inArray, ne, or, sql } from "drizzle-orm";
-import { heartbeatRuns, issues, issueRecoveryActions, nativeRunFinalizations, nativeRunResults, type Db } from "@paperclipai/db";
+import { and, eq, sql } from "drizzle-orm";
+import { heartbeatRuns, issues, issueRecoveryActions, nativeRunFinalizations, type Db } from "@paperclipai/db";
 import { resumeWorkspaceFinalizationSchema } from "@paperclipai/shared";
 import { conflict } from "../../errors.js";
 import { persistActivity, publishActivity } from "../activity-log.js";
-import { getNativeReviewAssignment } from "./native-review-participant.js";
+import { currentNativeWorkspaceRecoveryResult } from "./native-workspace-recovery-binding.js";
 import { evaluateNativeControllerTakeover } from "./native-restart-recovery.js";
 
 const OWNER_KEY = "nativeWorkspaceFinalizationOwner";
@@ -34,26 +34,11 @@ export async function resumeNativeWorkspaceAfterOwnerStop(input: {
     if (!issue || !run || !coordinator || !action || action.evidence?.runId !== run.id
       || action.cause !== "native_workspace_finalization_owner_unverified" || action.ownerType !== "board"
       || action.kind !== "active_run_watchdog" || !["active", "escalated"].includes(action.status)
-      || run.runtimeMode !== "native" || run.status !== "running" || !["result_accepted", "workspace_finalizing", "retryable_failure"].includes(coordinator.phase)
-      || (coordinator.leaseOwner && (!coordinator.leaseExpiresAt || coordinator.leaseExpiresAt.getTime() > Date.now())) || !coordinator.resultId || ["done", "cancelled"].includes(issue.status)
-      || issue.executionRunId !== run.id
-      || (issue.checkoutRunId && issue.checkoutRunId !== run.id)) throw changed();
-    if (issue.assigneeAgentId !== run.agentId && !await getNativeReviewAssignment(tx as unknown as Db, {
-      companyId: input.companyId, issueId: issue.id, agentId: run.agentId,
-      contextSnapshot: run.contextSnapshot, actingRunId: run.id, issueExecutionRunId: issue.executionRunId,
-      allowResolvedByRunId: run.id,
-    })) throw changed();
-    const [result] = await tx.select().from(nativeRunResults).where(and(
-      eq(nativeRunResults.id, coordinator.resultId), eq(nativeRunResults.companyId, input.companyId),
-      eq(nativeRunResults.issueId, input.issueId), eq(nativeRunResults.runId, input.runId), eq(nativeRunResults.schemaStatus, "accepted"),
-    ));
-    if (!result || result.completionContractId !== run.completionContractId) throw changed();
-    const [newer] = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(and(
-      eq(heartbeatRuns.companyId, input.companyId), ne(heartbeatRuns.id, run.id),
-      or(eq(heartbeatRuns.nativeIssueId, issue.id), sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${issue.id}`),
-      or(gt(heartbeatRuns.createdAt, run.createdAt), inArray(heartbeatRuns.status, ["queued", "running"])),
-    )).limit(1);
-    if (newer) throw changed();
+      || (coordinator.leaseOwner && (!coordinator.leaseExpiresAt || coordinator.leaseExpiresAt.getTime() > Date.now()))) throw changed();
+    const result = await currentNativeWorkspaceRecoveryResult(tx as unknown as Db, {
+      companyId: input.companyId, issue, run, coordinator,
+    });
+    if (!result) throw changed();
     const prior = record(run.runnerProfileJson?.[OWNER_KEY]);
     const recordedOwner = record(action.evidence?.owner);
     const stop = record(action.evidence?.workspaceOwnerStop);

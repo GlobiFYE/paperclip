@@ -51,13 +51,23 @@ entry when replacing only the exact owner under the existing advisory lock. The
 normal reconciler resumes the accepted result; it does not create a provider turn
 or change approval/monitor waits. A changed owner during verification fails closed.
 
+Stop proof alone does not authorize old work to overwrite a current task. After
+the provider read, automatic recovery uses the operator path's shared binding
+checks under short coordinator, issue and run row locks, atomically with the
+owner claim. The task must still be open, assigned to the run or its authoritative
+review participant, and bound to that running native execution and accepted
+result. A different checkout, newer execution or queued/running legacy execution
+prevents takeover. Publication checks repeat this validation; row locks are never
+held across physical copyback I/O.
+
 The harness endpoint is `POST /v1/tenant/workspace-worker-stop`. The fleet-wide
 server token authorizes a read request, never stop evidence: responses must be
 signed by the harness. This endpoint requires the companion cloud harness change.
 Deploying only the application keeps unknown owners fenced. No cloud provider
 credentials are delivered to tenant applications.
 
-The task view shows only “Restoring saved work…” while this path is available,
+The task view shows only “Restoring saved work…” after the server confirms recovery
+or an operator queues it,
 then removes the notice when commitment resolves recovery. It exposes no process
 identifiers, shutdown form or manual resume control. Legacy receipts without
 platform identity and unsupported platforms say operator assistance is needed;
