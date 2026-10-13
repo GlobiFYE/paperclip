@@ -795,7 +795,7 @@
         "activity/activity",
         "gateways-profiles/activity"
       ],
-      "purpose": "Apps/App detail · Activity (lifecycle)",
+      "purpose": "Apps/App detail \u00b7 Activity (lifecycle)",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -809,8 +809,8 @@
         "ui/storybook/stories/activity/app-activity-lifecycle.stories.tsx"
       ],
       "fingerprint": "1642f6a6692ccd3ac058d1841f388607b3379c683711bbe558aad3cc79ffc077",
-      "stableId": "apps-app-detail-·-activity-lifecycle",
-      "sidebarTitle": "Oversight and operation/Dashboards and audit trails/Apps/App detail · Activity (lifecycle)"
+      "stableId": "apps-app-detail-\u00b7-activity-lifecycle",
+      "sidebarTitle": "Oversight and operation/Dashboards and audit trails/Apps/App detail \u00b7 Activity (lifecycle)"
     },
     {
       "file": "ui/storybook/stories/connection-setup/apps-catalog-source-selection.stories.tsx",
@@ -2480,7 +2480,7 @@
       "capabilities": [
         "skills/authoring"
       ],
-      "purpose": "Product/Skill Studio · FrontmatterPanel",
+      "purpose": "Product/Skill Studio \u00b7 FrontmatterPanel",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -2492,8 +2492,8 @@
         "ui/storybook/stories/skills/frontmatter-panel.stories.tsx"
       ],
       "fingerprint": "e7b2ffabdadc43d7fa2f564465792539d25f15da54fb4f7fec31cc4a2f0aec76",
-      "stableId": "product-skill-studio-·-frontmatterpanel",
-      "sidebarTitle": "Agents and reusable capabilities/Skills and Skill Studio/Product/Skill Studio · FrontmatterPanel"
+      "stableId": "product-skill-studio-\u00b7-frontmatterpanel",
+      "sidebarTitle": "Agents and reusable capabilities/Skills and Skill Studio/Product/Skill Studio \u00b7 FrontmatterPanel"
     },
     {
       "file": "ui/storybook/stories/gateways-profiles/gateways-tab.stories.tsx",
@@ -4471,7 +4471,7 @@
         "routines/definition",
         "routines/management"
       ],
-      "purpose": "Product/Routines · Detail (variation C)",
+      "purpose": "Product/Routines \u00b7 Detail (variation C)",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -4489,8 +4489,8 @@
         "ui/storybook/stories/routines/routine-detail-c.stories.tsx"
       ],
       "fingerprint": "c07544c830cd35d90c553d9388e2a9479e42f69460a6c506e1c541cea78607d4",
-      "stableId": "product-routines-·-detail-variation-c",
-      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines · Detail (variation C)"
+      "stableId": "product-routines-\u00b7-detail-variation-c",
+      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines \u00b7 Detail (variation C)"
     },
     {
       "file": "ui/storybook/stories/routines/routine-secrets.stories.tsx",
@@ -4498,7 +4498,7 @@
         "routines/definition",
         "secrets/runtime-delivery"
       ],
-      "purpose": "Product/Routines · Secrets tab",
+      "purpose": "Product/Routines \u00b7 Secrets tab",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -4513,8 +4513,8 @@
         "ui/storybook/stories/routines/routine-secrets.stories.tsx"
       ],
       "fingerprint": "03c05c0cca01d220885ea96f13495bcc185121eecbbeb00918511b4d7de26016",
-      "stableId": "product-routines-·-secrets-tab",
-      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines · Secrets tab"
+      "stableId": "product-routines-\u00b7-secrets-tab",
+      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines \u00b7 Secrets tab"
     },
     {
       "file": "ui/storybook/stories/routines/routine-webhooks-ux.stories.tsx",
@@ -4576,7 +4576,7 @@
         "routines/definition",
         "routines/management"
       ],
-      "purpose": "Product/Routines · List (grouped cards)",
+      "purpose": "Product/Routines \u00b7 List (grouped cards)",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -4588,8 +4588,8 @@
         "ui/storybook/stories/routines/routines-list-groups.stories.tsx"
       ],
       "fingerprint": "02a433aeee5be2ecc3284f0a27c45c4222e3abf05cbd478e55bfb7462a301d19",
-      "stableId": "product-routines-·-list-grouped-cards",
-      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines · List (grouped cards)"
+      "stableId": "product-routines-\u00b7-list-grouped-cards",
+      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines \u00b7 List (grouped cards)"
     },
     {
       "file": "ui/storybook/stories/tasks/runner-activity.stories.tsx",
@@ -4940,7 +4940,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Source review confirms ordinary recovery fixtures remain applicable after the native-owner resolution gate; native-owner stop verification has its own suite.",
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/recovery.md",
@@ -4950,7 +4950,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/recovery/source-issue-recovery.stories.tsx"
       ],
-      "fingerprint": "ad00308c561a44cfb60a7b359ac88b48ad5ee2f13d4b36af99552c29c0a3df67",
+      "fingerprint": "b61a76d4cbaeaeb86c5b496e65c4bcae970a548205c6591a88bc45049662a181",
       "stableId": "paperclip-source-issue-recovery",
       "sidebarTitle": "Projects and execution/Recovery/Paperclip/Source Issue Recovery"
     },
@@ -5596,6 +5596,55 @@
       "fingerprint": "b9cd51c58b31ab445e2997b9f2a23c7a7b3f4ecd7b6dd39fc0f35ae0779311df",
       "stableId": "workspaces-service-control-bar",
       "sidebarTitle": "Projects and execution/Workspaces, services, and files/Workspaces/Service control bar"
+    },
+    {
+      "file": "ui/storybook/stories/recovery/workspace-finalization-recovery/01-notice.stories.tsx",
+      "capabilities": [
+        "recovery/workspace",
+        "recovery/source-action"
+      ],
+      "purpose": "Workspace finalization recovery/01 Notice",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Source review covers the shipped notice, stop confirmation, stale-owner rejection and hidden generic resolution control. API queue responses are fixtures; no live provider stop or file export is asserted.",
+      "reviewedAt": "2026-10-12",
+      "sources": [
+        "maps/feature-map/recovery.md",
+        "ui/src/components/IssueRecoveryActionCard.tsx",
+        "ui/src/components/WorkspaceExportRecovery.tsx",
+        "ui/storybook/stories/recovery/workspace-finalization-recovery/01-notice.stories.tsx",
+        "ui/storybook/support/workspace-finalization-recovery/fixtures.tsx"
+      ],
+      "fingerprint": "2e50fc0b40026add72f4bbdde2c3f79a568488c1190b4c011cae1d24fc4f4583",
+      "stableId": "workspace-finalization-recovery-01-notice",
+      "sidebarTitle": "Projects and execution/Recovery/Workspace finalization recovery/01 Notice"
+    },
+    {
+      "file": "ui/storybook/stories/recovery/workspace-finalization-recovery/02-task-journey.stories.tsx",
+      "capabilities": [
+        "recovery/workspace",
+        "recovery/source-action"
+      ],
+      "purpose": "Workspace finalization recovery/02 Task journey",
+      "status": "unreviewed",
+      "implementation": "mixed",
+      "boundary": "fixtures",
+      "notes": "The app shell and recovery notice are production components. The task conversation is a local composition, not the shipped task page. API queue responses and messages are fixtures; server finalization and approval behavior need separate verification.",
+      "reviewedAt": "2026-10-12",
+      "sources": [
+        "maps/feature-map/recovery.md",
+        "ui/src/components/Layout.tsx",
+        "ui/src/components/StatusBadge.tsx",
+        "ui/src/components/WorkspaceExportRecovery.tsx",
+        "ui/src/components/task-chat/TaskChatBubble.tsx",
+        "ui/src/components/task-chat/TaskChatComposer.tsx",
+        "ui/storybook/stories/recovery/workspace-finalization-recovery/02-task-journey.stories.tsx",
+        "ui/storybook/support/workspace-finalization-recovery/fixtures.tsx"
+      ],
+      "fingerprint": "ee6b90ed352645491e8a0bf3c39ecb09cc4eb7719f234acb5d52e5a85316c653",
+      "stableId": "workspace-finalization-recovery-02-task-journey",
+      "sidebarTitle": "Projects and execution/Recovery/Workspace finalization recovery/02 Task journey"
     }
   ]
 }

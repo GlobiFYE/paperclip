@@ -8,7 +8,7 @@ import { WorkspaceExportRecovery } from "@/components/WorkspaceExportRecovery";
 import { StatusBadge } from "@/components/StatusBadge";
 import { PluginLauncherProvider } from "@/plugins/launchers";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
-import { RecoveryApiFixture, issueId, recoveryAction } from "./fixtures";
+import { RecoveryApiFixture, issueId, recoveryAction } from "../../../support/workspace-finalization-recovery/fixtures";
 
 function TaskConversation() {
   const [messages, setMessages] = useState<string[]>([]);
@@ -33,7 +33,8 @@ function Journey() {
   return <RecoveryApiFixture><PluginLauncherProvider><Routes><Route path="/:companyPrefix" element={<Layout />}><Route path="issues/:issueId" element={<TaskConversation />} /></Route></Routes></PluginLauncherProvider></RecoveryApiFixture>;
 }
 const meta = {
-  title: "Workspace finalization recovery/02 Task journey", component: Journey,
+  id: "workspace-finalization-recovery-02-task-journey",
+  title: "Projects and execution/Recovery/Workspace finalization recovery/02 Task journey", component: Journey,
   parameters: { layout: "fullscreen", initialEntries: ["/PAP/issues/PAP-24"], docs: { description: { component: "A composed task conversation in the production app shell, using the shipped recovery notice, task bubbles and composer. Record stop evidence, confirm shutdown, and resume the saved result. This simulates queue admission only; finalization and approval resolution are verified separately by server tests." }, story: { inline: false } } },
 } satisfies Meta<typeof Journey>;
 export default meta;

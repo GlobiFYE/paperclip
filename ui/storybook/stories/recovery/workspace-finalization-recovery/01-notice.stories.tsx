@@ -2,10 +2,11 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, within } from "storybook/test";
 import { WorkspaceExportRecovery } from "@/components/WorkspaceExportRecovery";
 import { IssueRecoveryActionCard } from "@/components/IssueRecoveryActionCard";
-import { RecoveryApiFixture, confirmStopped, issueId, queuedAction, recoveryAction, stopEvidence } from "./fixtures";
+import { RecoveryApiFixture, confirmStopped, issueId, queuedAction, recoveryAction, stopEvidence } from "../../../support/workspace-finalization-recovery/fixtures";
 
 const meta = {
-  title: "Workspace finalization recovery/01 Notice",
+  id: "workspace-finalization-recovery-01-notice",
+  title: "Projects and execution/Recovery/Workspace finalization recovery/01 Notice",
   component: WorkspaceExportRecovery,
   args: { issueId, action: recoveryAction, canManage: true, onQueued: () => {} },
   parameters: { layout: "fullscreen", docs: { description: { component: "The production recovery notice from PR #15824. Record platform stop evidence and confirm the exact previous controller and all copyback processes stopped, then resume the saved result. API responses are simulated; these examples do not modify staging." } } },
