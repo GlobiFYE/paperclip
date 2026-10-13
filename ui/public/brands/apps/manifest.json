@@ -659,6 +659,12 @@
       "catalogVisible": false,
       "localAsset": "/brands/apps/monday.png",
       "darkAsset": "/brands/apps/monday-dark.png"
+    },
+    {
+      "slug": "hindsight",
+      "provider": "Hindsight",
+      "catalogVisible": true,
+      "localAsset": "/brands/apps/hindsight.svg"
     }
   ]
 }
