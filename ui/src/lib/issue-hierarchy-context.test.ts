@@ -30,19 +30,21 @@ describe("bounded hierarchy reads", () => {
         ? Array.from({ length: 500 }, (_, index) => task(`nested-${index}`, "child")) : [];
       return rows.slice(offset, offset + limit);
     };
-    expect(await loadIssueHierarchyChildren("company", [root, child], [], 5, read)).toHaveLength(5);
+    const first = await loadIssueHierarchyChildren("company", [root, child], [], 5, read);
+    expect(first.issues).toHaveLength(5);
+    expect(first.hasMore).toBe(true);
     expect(calls).toEqual(["root", "child"]);
     calls.length = 0;
-    expect(await loadIssueHierarchyChildren("company", [root, child], [], 10, read)).toHaveLength(10);
+    expect((await loadIssueHierarchyChildren("company", [root, child], [], 10, read)).issues).toHaveLength(10);
     expect(calls).toEqual(["root", "child"]);
   });
   it("probes collapsed parents without fetching their tree and rejects foreign-company rows", async () => {
     const calls: Array<[string, number]> = [];
     const rows = await loadIssueHierarchyChildren("company", [task("root")], ["root"], 5,
       async (id, limit) => { calls.push([id, limit]); return [task("child", "root")]; });
-    expect(rows.map((issue) => issue.id)).toEqual(["child"]);
+    expect(rows.issues.map((issue) => issue.id)).toEqual(["child"]);
     expect(calls).toEqual([["root", 1]]);
     expect(await loadIssueHierarchyChildren("company", [task("root")], [], 1,
-      async () => [{ ...task("foreign", "root"), companyId: "other" }])).toEqual([]);
+      async () => [{ ...task("foreign", "root"), companyId: "other" }])).toEqual({ issues: [], hasMore: true });
   });
 });

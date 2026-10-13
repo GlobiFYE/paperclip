@@ -835,6 +835,7 @@ function StreamlinedIssuesList({
   const [assigneeSearch, setAssigneeSearch] = useState("");
   const [issueSearch, setIssueSearch] = useState(initialSearch ?? "");
   const [renderedIssueRowLimit, setRenderedIssueRowLimit] = useState(INITIAL_ISSUE_ROW_RENDER_LIMIT);
+  const [hierarchyRowBudget, setHierarchyRowBudget] = useState(INITIAL_ISSUE_ROW_RENDER_LIMIT);
   const [visibleIssueColumns, setVisibleIssueColumns] = useState<InboxIssueColumn[]>(initialPreferences.columns);
   const renderedIssueIdsRef = useRef("");
   const initialServerFillRequestedRef = useRef(false);
@@ -1300,10 +1301,11 @@ function StreamlinedIssuesList({
     || viewState.boardColdLaneMode !== "auto"
     || viewState.boardColumnPageSize !== KANBAN_COLUMN_DEFAULT_PAGE_SIZE;
 
+  const hierarchyEnabled = enableAgentCreatedVisibilityFilter && !viewState.showAgentCreatedTasks && viewState.nestingEnabled && viewState.viewMode === "list";
   const hierarchy = useIssueHierarchyContext(
     selectedCompanyId, filtered.slice(0, renderedIssueRowLimit), viewState.collapsedParents,
-    enableAgentCreatedVisibilityFilter && !viewState.showAgentCreatedTasks && viewState.nestingEnabled && viewState.viewMode === "list",
-    renderedIssueRowLimit,
+    hierarchyEnabled,
+    hierarchyRowBudget,
   );
   const baseGroupedContent = useMemo(() => {
     if (viewState.groupBy === "none") {
@@ -1594,20 +1596,28 @@ function StreamlinedIssuesList({
     const previousIssueIds = renderedIssueIdsRef.current;
     renderedIssueIdsRef.current = nextIssueIds;
 
+    const sameResultsOrAppend = previousIssueIds.length > 0 && nextIssueIds.startsWith(previousIssueIds);
+    if (!sameResultsOrAppend) setHierarchyRowBudget(INITIAL_ISSUE_ROW_RENDER_LIMIT);
     setRenderedIssueRowLimit((current) => {
       const nextInitialLimit = Math.min(visibleListRowCount, INITIAL_ISSUE_ROW_RENDER_LIMIT);
-      const listAppended = previousIssueIds.length > 0
-        && nextIssueIds.startsWith(previousIssueIds)
-        && visibleListRowCount >= current;
+      // Context arrives asynchronously and must not undo a reveal request.
+      if (hierarchyEnabled && sameResultsOrAppend) return Math.max(current, nextInitialLimit);
+      const listAppended = sameResultsOrAppend && visibleListRowCount >= current;
       if (listAppended) return Math.min(visibleListRowCount, Math.max(current, nextInitialLimit));
       return nextInitialLimit;
     });
-  }, [filtered, visibleListRowCount, viewState.viewMode]);
+  }, [filtered, visibleListRowCount, viewState.viewMode, hierarchyEnabled]);
 
+  const hasMoreHierarchyRows = hierarchyEnabled && hierarchy.hasMore;
   const hasMoreRenderedRows = viewState.viewMode === "list" && renderedIssueRowLimit < visibleListRowCount;
   const remainingIssueRowCount = Math.max(visibleListRowCount - renderedIssueRowLimit, 0);
   const loadMoreIssueRows = useCallback(() => {
     if (viewState.viewMode !== "list") return;
+    if (hasMoreHierarchyRows && !hierarchy.isFetching) {
+      setHierarchyRowBudget((current) => current + ISSUE_ROW_RENDER_BATCH_SIZE);
+      setRenderedIssueRowLimit((current) => current + ISSUE_ROW_RENDER_BATCH_SIZE);
+      return;
+    }
     if (hasMoreRenderedRows) {
       setRenderedIssueRowLimit((current) => Math.min(visibleListRowCount, current + ISSUE_ROW_RENDER_BATCH_SIZE));
       return;
@@ -1619,6 +1629,8 @@ function StreamlinedIssuesList({
     visibleListRowCount,
     hasMoreIssues,
     hasMoreRenderedRows,
+    hasMoreHierarchyRows,
+    hierarchy.isFetching,
     isLoadingMoreIssues,
     onLoadMoreIssues,
     viewState.viewMode,
@@ -1626,7 +1638,7 @@ function StreamlinedIssuesList({
 
   const canLoadMoreIssues = viewState.viewMode === "list"
     && !isLoading
-    && (hasMoreRenderedRows || (hasMoreIssues && !isLoadingMoreIssues));
+    && (hasMoreRenderedRows || (hasMoreHierarchyRows && !hierarchy.isFetching) || (hasMoreIssues && !isLoadingMoreIssues));
 
   useEffect(() => {
     if (!canLoadMoreIssues) return;
@@ -2540,10 +2552,10 @@ function StreamlinedIssuesList({
           </Collapsible>
           );
           })}
-          {(remainingIssueRowCount > 0 || hasMoreIssues || isLoadingMoreIssues) && (
+          {(remainingIssueRowCount > 0 || hasMoreHierarchyRows || hasMoreIssues || isLoadingMoreIssues) && (
             <div className="py-2" data-testid="issues-load-more-sentinel">
               <p className="text-xs text-muted-foreground">
-                {isLoadingMoreIssues
+                {isLoadingMoreIssues || (hierarchyEnabled && hierarchy.isFetching)
                   ? "Loading more tasks..."
                   : remainingIssueRowCount > 0
                     ? `Rendering ${Math.min(renderedIssueRowLimit, visibleListRowCount)} of ${visibleListRowCount} tasks`

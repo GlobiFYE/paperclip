@@ -30,16 +30,21 @@ export function useIssueHierarchyContext(companyId: string | null, matches: Issu
       return ancestors;
     },
   })) });
-  const children = useQuery({
+  const children = useQuery<Awaited<ReturnType<typeof loadIssueHierarchyChildren>>>({
     queryKey: [...queryKeys.issues.list(companyId ?? "__unscoped__"), "hierarchy-children", matches.map((issue) => issue.id), collapsedParents, rowBudget],
     enabled: enabled && Boolean(companyId) && matches.length > 0,
     staleTime: 30_000,
+    placeholderData: (previous) => previous ? {
+      ...previous, issues: previous.issues.filter((issue) => issue.companyId === companyId),
+    } : undefined,
     queryFn: ({ signal }) => loadIssueHierarchyChildren(companyId!, matches, collapsedParents, rowBudget,
       (parentId, limit, offset) => issuesApi.list(companyId!, { parentId, limit, offset, includeRoutineExecutions: true }, { signal })),
   });
   const queries = [...ancestorQueries, children];
   return {
-    issues: queries.flatMap((query) => query.data ?? []),
+    issues: [...ancestorQueries.flatMap((query) => query.data ?? []), ...(children.data?.issues ?? [])],
+    hasMore: children.data?.hasMore ?? false,
+    isFetching: children.isFetching,
     error: queries.find((query) => query.error)?.error,
   };
 }

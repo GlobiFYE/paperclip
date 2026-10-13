@@ -41,7 +41,7 @@ function CreationVisibilityStory({ included = false }: { included?: boolean }) {
     const listKey = queryKeys.issues.list(companyId);
     const ancestor = creationVisibilityTasks.find((issue) => issue.id === "visibility-ancestor")!;
     queryClient.setQueryData([...listKey, "hierarchy-ancestors", ancestor.id], [ancestor]);
-    queryClient.setQueryData([...listKey, "hierarchy-children", ["visibility-human", "visibility-human-child"], [], 100], [creationVisibilityTasks.find((issue) => issue.id === "visibility-child")!]);
+    queryClient.setQueryData([...listKey, "hierarchy-children", ["visibility-human", "visibility-human-child"], [], 100], { issues: [creationVisibilityTasks.find((issue) => issue.id === "visibility-child")!], hasMore: false });
     return true;
   });
   return (

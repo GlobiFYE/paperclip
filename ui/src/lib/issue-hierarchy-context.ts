@@ -38,7 +38,7 @@ export async function loadIssueHierarchyChildren(
   collapsedParents: string[],
   rowBudget: number,
   readChildren: (parentId: string, limit: number, offset: number) => Promise<Issue[]>,
-): Promise<Issue[]> {
+): Promise<{ issues: Issue[]; hasMore: boolean }> {
   const context: Issue[] = [];
   const queue = matches.map((issue) => ({ issue, offset: 0 }));
   const visited = new Set<string>();
@@ -60,5 +60,5 @@ export async function loadIssueHierarchyChildren(
     }
     if (!collapsed && rows.length === limit) queue.unshift({ issue, offset: offset + rows.length });
   }
-  return context;
+  return { issues: context, hasMore: queue.length > 0 };
 }

@@ -2196,10 +2196,11 @@ creator identity and origin; assignee/responsible users do not imply human
 authorship. Routine executions remain automated even when manually triggered.
 Creator-less ordinary tasks are system-created. Inbound channel conversations
 can identify a human request through their origin without a local user account;
-outbound tool-created email conversations remain automated. Human ordinary, channel, and onboarding
-tasks remain visible. Apply collection creation filters before search limits and
+outbound tool-created email conversations remain automated. Human ordinary,
+channel, and onboarding tasks remain visible. Apply collection creation filters before search limits and
 pagination, and retrieve hierarchy context separately under existing access checks.
-Context does not count as independent results or board cards.
+Context does not count as independent results or board cards. Bounded context
+reads retain loaded rows while users reveal more of the tree.
 
 Inbox membership, archives, unread state, and badges retain existing participation
 rules, including assignment, comments, and manual routine runs. Responsibility and

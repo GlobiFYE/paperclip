@@ -1567,6 +1567,48 @@ describe("IssuesList", () => {
     });
   });
 
+  it.each([true, false])("retains loaded context while revealing a large automated tree (streamlined=%s)", async (streamlined) => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableStreamlinedUi: streamlined });
+    const parent = createIssue({ id: "human-root", createdByUserId: "person", originKind: "manual" });
+    const children = Array.from({ length: 250 }, (_, index) => createIssue({
+      id: `automated-child-${index}`, title: `Automated child ${index}`,
+      parentId: parent.id, createdByUserId: null, createdByAgentId: "agent", originKind: "manual",
+    }));
+    let holdNextRead = false;
+    let releaseRead: (() => void) | undefined;
+    mockIssuesApi.list.mockImplementation(async (_companyId, filters) => {
+      if (filters.parentId !== parent.id) return [];
+      const rows = children.slice(filters.offset ?? 0, (filters.offset ?? 0) + filters.limit);
+      if (holdNextRead) {
+        holdNextRead = false;
+        return new Promise<Issue[]>((resolve) => { releaseRead = () => resolve(rows); });
+      }
+      return rows;
+    });
+    const { root } = renderWithQueryClient(
+      <IssuesList issues={[parent]} agents={[]} projects={[]} viewStateKey="paperclip:test-tree"
+        enableAgentCreatedVisibilityFilter onUpdateIssue={() => undefined} />,
+      container,
+    );
+    await waitForAssertion(() => expect(container.querySelectorAll("[data-testid='issue-row']")).toHaveLength(100));
+    holdNextRead = true;
+    act(() => {
+      setDocumentScrollMetrics({ innerHeight: 600, scrollY: 1500, scrollHeight: 2000 });
+      window.dispatchEvent(new Event("scroll"));
+    });
+    await flushAnimationFrame();
+    await waitForAssertion(() => {
+      expect(releaseRead).toBeDefined();
+      expect(container.querySelectorAll("[data-testid='issue-row']").length).toBeGreaterThanOrEqual(100);
+    });
+    await act(async () => releaseRead!());
+    await waitForAssertion(() => {
+      expect(container.querySelectorAll("[data-testid='issue-row']")).toHaveLength(251);
+      expect(container.textContent).toContain("Automated child 249");
+    }, 60);
+    act(() => root.unmount());
+  });
+
   it("keeps rendering local issue batches while the user stays near the bottom", async () => {
     const manyIssues = Array.from({ length: 420 }, (_, index) =>
       createIssue({

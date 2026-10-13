@@ -2883,7 +2883,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Creation visibility now defaults to hiding automated independent tasks, with a Show agent-created tasks control and inbox participation exceptions. Source alignment reviewed; these fixture stories do not establish live server pagination or authorization. Focused creation-visibility stories mount the production collection with simulated hierarchy reads and assert hidden roots, opt-in inclusion, and the unchecked filter control. Creation visibility examples and fixture setup now live in a support module so the surface matrix stays below 1000 lines; exported story IDs are unchanged. Creation visibility now shares the subscribed preference across modern and legacy controls; hierarchy child reads share a bounded rendering budget. Source alignment inspected; server behavior is tested separately.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Creation visibility now defaults to hiding automated independent tasks, with a Show agent-created tasks control and inbox participation exceptions. Source alignment reviewed; these fixture stories do not establish live server pagination or authorization. Focused creation-visibility stories mount the production collection with simulated hierarchy reads and assert hidden roots, opt-in inclusion, and the unchecked filter control. Creation visibility examples and fixture setup now live in a support module so the surface matrix stays below 1000 lines; exported story IDs are unchanged. Creation visibility now shares the subscribed preference across modern and legacy controls; hierarchy child reads share a bounded rendering budget. Source alignment inspected; server behavior is tested separately. Hierarchy fetch and rendering budgets are separate; loaded context remains during paging. The large-tree UI regression exercises delayed reads in both list interfaces.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/tasks.md",
@@ -2905,7 +2905,7 @@
         "ui/storybook/stories/tasks/issue-management.stories.tsx",
         "ui/storybook/support/issue-creation-visibility.tsx"
       ],
-      "fingerprint": "82da07c22d1bdd0bc0a87dc42363b52bcfec6c8248c7160fe298a374f707957e",
+      "fingerprint": "63ec578efb2e479690dfe0f5d0bac3f216d86d4846d9a885b909cb26af579a62",
       "stableId": "product-issue-management",
       "sidebarTitle": "Tasks and conversations/Task creation and lifecycle/Product/Issue Management"
     },
@@ -5088,7 +5088,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Creation visibility now defaults to hiding automated independent tasks, with a Show agent-created tasks control and inbox participation exceptions. Source alignment reviewed; these fixture stories do not establish live server pagination or authorization. Creation visibility now shares the subscribed preference across modern and legacy controls; hierarchy child reads share a bounded rendering budget. Source alignment inspected; server behavior is tested separately.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Creation visibility now defaults to hiding automated independent tasks, with a Show agent-created tasks control and inbox participation exceptions. Source alignment reviewed; these fixture stories do not establish live server pagination or authorization. Creation visibility now shares the subscribed preference across modern and legacy controls; hierarchy child reads share a bounded rendering budget. Source alignment inspected; server behavior is tested separately. Hierarchy fetch and rendering budgets are separate; loaded context remains during paging. The large-tree UI regression exercises delayed reads in both list interfaces.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/task-coordination.md",
@@ -5096,7 +5096,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/task-coordination/sub-issues-workflow.stories.tsx"
       ],
-      "fingerprint": "5e0106f1854cb1419fa8bf3ed8ecbd97180ada69c171d5801b20e9622a3e3169",
+      "fingerprint": "4461d14e90da3e93b82826efdddf131ae014c61a040f33cfae1df1368c6ddb2d",
       "stableId": "ux-labs-sub-issues-workflow-checklist",
       "sidebarTitle": "Tasks and conversations/Delegation, dependencies, and signoff/UX Labs/Sub-issues Workflow Checklist"
     },
