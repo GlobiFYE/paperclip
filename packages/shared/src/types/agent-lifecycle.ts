@@ -23,9 +23,13 @@ export interface AgentLifecycleRequest {
   operationId: string;
   version: number;
   phase: AgentLifecycleState;
+  /** Server-only, agent-scoped secrets owned by this lifecycle plugin. Never expose to agents or UI. */
+  instanceSecrets?: Record<string, string>;
 }
 export interface AgentLifecycleResult {
   operationId: string;
   version: number;
   status: "complete" | "pending";
+  /** Local secret changes. The tenant encrypts these before accepting the result; null removes a key. */
+  instanceSecrets?: Record<string, string | null>;
 }

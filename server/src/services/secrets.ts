@@ -338,7 +338,6 @@ function remoteProviderHttpError(error: unknown, context: {
   if (isSecretProviderClientError(error)) {
     logger.warn(
       {
-        err: error,
         companyId: context.companyId,
         provider: context.provider,
         providerConfigId: context.providerConfigId,
@@ -350,9 +349,9 @@ function remoteProviderHttpError(error: unknown, context: {
     return new HttpError(error.status, error.message, safeRemoteProviderErrorDetails(error, context));
   }
   if (error instanceof HttpError) return error;
+  // Provider errors can echo secret values; log only the fixed diagnostic fields.
   logger.warn(
     {
-      err: error,
       companyId: context.companyId,
       provider: context.provider,
       providerConfigId: context.providerConfigId,
@@ -649,6 +648,7 @@ type SecretResolutionOptions = {
   bindingContext?: SecretBindingContext;
   accessContext?: SecretConsumerContext;
   allowUserSecretScope?: boolean;
+  instanceOwner?: { agentId: string; pluginId: string };
 };
 
 export type AgentSecretReadContext = {
@@ -1361,7 +1361,9 @@ export function secretService(db: Db | DbTransaction) {
     const secret = await getById(secretId);
     if (!secret) throw notFound("Secret not found");
     if (secret.companyId !== companyId) throw unprocessable("Secret must belong to same company");
-    if (secret.scope !== "company" && !options?.allowUserSecretScope) {
+    const instanceOwned = secret.scope === "instance" && options?.instanceOwner &&
+      secret.ownerAgentId === options.instanceOwner.agentId && secret.ownerPluginId === options.instanceOwner.pluginId;
+    if (secret.scope !== "company" && !(secret.scope === "user" && options?.allowUserSecretScope) && !instanceOwned) {
       throw unprocessable("User-scoped secrets must be resolved through user secret declarations", {
         code: "secret_scope_invalid",
       });
@@ -2186,8 +2188,9 @@ export function secretService(db: Db | DbTransaction) {
       providerMetadata?: Record<string, unknown> | null;
     },
     actor?: { userId?: string | null; agentId?: string | null },
+    instanceOwner?: { agentId: string; pluginId: string },
   ) {
-    const existing = await getByName(companyId, input.name);
+    const existing = instanceOwner ? null : await getByName(companyId, input.name);
     if (existing) throw conflict(`Secret already exists: ${input.name}`);
     const key = normalizeSecretKey(input.key ?? input.name);
     if (!key) throw unprocessable("Secret key is required");
@@ -2201,7 +2204,7 @@ export function secretService(db: Db | DbTransaction) {
         ne(companySecrets.status, "deleted"),
       ))
       .then((rows) => rows[0] ?? null);
-    if (duplicateKey) throw conflict(`Secret key already exists: ${key}`);
+    if (!instanceOwner && duplicateKey) throw conflict(`Secret key already exists: ${key}`);
 
     const managedMode = input.managedMode ?? "paperclip_managed";
     const provider = getSecretProvider(input.provider);
@@ -2229,6 +2232,9 @@ export function secretService(db: Db | DbTransaction) {
       .insert(companySecrets)
       .values({
         companyId,
+        scope: instanceOwner ? "instance" : "company",
+        ownerAgentId: instanceOwner?.agentId ?? null,
+        ownerPluginId: instanceOwner?.pluginId ?? null,
         key,
         name: input.name,
         provider: input.provider,
@@ -3467,6 +3473,38 @@ export function secretService(db: Db | DbTransaction) {
 
   return {
     listProviders: () => listSecretProviders(),
+
+    /** Trusted tenant runtime only; these values cannot be company bindings or agent API secrets. */
+    agentInstance: {
+      async read(scope: { companyId: string; agentId: string; pluginId: string }): Promise<Record<string, string>> {
+        const rows = await db.select().from(companySecrets).where(and(eq(companySecrets.companyId, scope.companyId),
+          eq(companySecrets.scope, "instance"), eq(companySecrets.ownerAgentId, scope.agentId),
+          eq(companySecrets.ownerPluginId, scope.pluginId), ne(companySecrets.status, "deleted")));
+        const values: Record<string, string> = Object.create(null);
+        for (const row of rows) {
+          const resolved = await resolveSecretValueInternal(scope.companyId, row.id, "latest", {
+            instanceOwner: scope, accessContext: { consumerType: "plugin_worker", consumerId: scope.pluginId,
+              actorType: "plugin", actorId: scope.pluginId, pluginId: scope.pluginId },
+          });
+          values[row.name] = resolved.value;
+        }
+        return values;
+      },
+      // The lifecycle coordinator holds the owning agent's row lock across these writes.
+      async set(scope: { companyId: string; agentId: string; pluginId: string }, key: string, value: string | null) {
+        const normalizedKey = normalizeSecretKey(key);
+        const [existing] = await db.select().from(companySecrets).where(and(eq(companySecrets.companyId, scope.companyId),
+          eq(companySecrets.scope, "instance"), eq(companySecrets.ownerAgentId, scope.agentId),
+          eq(companySecrets.ownerPluginId, scope.pluginId), eq(companySecrets.key, normalizedKey), ne(companySecrets.status, "deleted")));
+        if (value === null) {
+          if (existing) await removeSecretUnlocked(existing.id);
+        } else if (existing) {
+          await rotateUnlocked(existing.id, { value, expectedLatestVersion: existing.latestVersion });
+        } else {
+          await createSecretUnlocked(scope.companyId, { name: key, key, provider: "local_encrypted", value }, undefined, scope);
+        }
+      },
+    },
 
     checkProviders: () => checkSecretProviders(),
 
