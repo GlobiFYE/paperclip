@@ -1,4 +1,5 @@
 import {
+  UserPlus,
   Inbox,
   ListChecks,
   CircleDot,
@@ -25,6 +26,7 @@ import {
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
+import { usePendingHireCount } from "../pages/Hiring";
 import { SidebarNavItem } from "./SidebarNavItem.production";
 import { SidebarAgents } from "./SidebarAgents.production";
 import { SidebarProjects } from "./SidebarProjects";
@@ -96,6 +98,7 @@ export function Sidebar() {
     refetchInterval: 60_000,
   });
   const attentionCount = attentionBadgeCount(attentionFeed);
+  const pendingHireCount = usePendingHireCount(selectedCompanyId);
   const showCases = experimentalSettings?.enableCases === true;
   // Streamlined left navigation (top-level Projects link + starred children) is
   // now the standard product sidebar (PAP-12472). The former experimental
@@ -172,6 +175,13 @@ export function Sidebar() {
               badgeLabel="decisions"
             />
           ) : null}
+          <SidebarNavItem
+            to="/hiring"
+            label="Hiring"
+            icon={UserPlus}
+            badge={pendingHireCount}
+            badgeLabel="hires waiting"
+          />
           {showStatusCards ? (
             <SidebarNavItem to="/status" label="Status" icon={LayoutGrid} textBadge="beta" />
           ) : null}

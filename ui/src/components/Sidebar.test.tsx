@@ -383,7 +383,7 @@ describe("Sidebar", () => {
     });
   });
 
-  it("shows Status directly below Decisions in primary navigation", async () => {
+  it("shows Hiring directly below Decisions, then Status, in primary navigation", async () => {
     mockInstanceSettingsApi.getExperimental.mockResolvedValue({
       enableDecisions: true,
       enableStatusCards: true,
@@ -400,7 +400,10 @@ describe("Sidebar", () => {
     expect(statusLink?.textContent).toContain("beta");
     expect(statusLink?.textContent).not.toContain("exp");
     expect(statusLink?.textContent).not.toContain("cards");
-    expect(primaryNavLinks.indexOf(statusLink!)).toBe(primaryNavLinks.indexOf(decisionsLink!) + 1);
+    const hiringLink = primaryNavLinks.find((anchor) => anchor.getAttribute("href") === "/hiring");
+    expect(hiringLink?.textContent).toContain("Hiring");
+    expect(primaryNavLinks.indexOf(hiringLink!)).toBe(primaryNavLinks.indexOf(decisionsLink!) + 1);
+    expect(primaryNavLinks.indexOf(statusLink!)).toBe(primaryNavLinks.indexOf(decisionsLink!) + 2);
 
     flushSync(() => {
       root.unmount();

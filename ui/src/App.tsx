@@ -49,6 +49,7 @@ import { ExecutionWorkspaceDetail } from "./pages/ExecutionWorkspaceDetail";
 import { Goals } from "./pages/Goals";
 import { Artifacts } from "./pages/Artifacts";
 import { Deliverables } from "./pages/Deliverables";
+import { Hiring } from "./pages/Hiring";
 import { GoalDetail } from "./pages/GoalDetail";
 import { Approvals } from "./pages/Approvals";
 import { ApprovalDetail } from "./pages/ApprovalDetail";
@@ -428,6 +429,7 @@ function boardRoutes(streamlinedUiEnabled: boolean) {
         <Route path="dev/task-chat-lab" element={<TaskChatLab />} />
       ) : null}
       <Route path="decisions" element={<WhatNeedsMe />} />
+      <Route path="hiring" element={<Hiring />} />
       <Route path="decisions/queues/:key" element={<DecisionQueuePage />} />
       <Route path="inbox" element={<InboxRootRedirect />} />
       <Route path="inbox/mine" element={<Inbox />} />
@@ -810,6 +812,7 @@ export function App() {
             </>
           ) : null}
           <Route path="decisions" element={<UnprefixedBoardRedirect />} />
+          <Route path="hiring" element={<UnprefixedBoardRedirect />} />
           <Route path="city" element={<UnprefixedBoardRedirect />} />
           <Route path="u/:userSlug" element={<UnprefixedBoardRedirect />} />
           <Route path="skills/studio" element={<UnprefixedBoardRedirect />} />

@@ -1,4 +1,5 @@
 import {
+  UserPlus,
   Inbox,
   ListChecks,
   CircleCheck,
@@ -28,6 +29,7 @@ import {
 import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
+import { usePendingHireCount } from "../pages/Hiring";
 import { SidebarNavItem } from "./SidebarNavItem";
 import { SidebarAgents } from "./SidebarAgents";
 import { SidebarProjects } from "./SidebarProjects";
@@ -107,6 +109,7 @@ export function Sidebar({ children }: { children?: ReactNode }) {
     refetchInterval: 60_000,
   });
   const attentionCount = attentionBadgeCount(attentionFeed);
+  const pendingHireCount = usePendingHireCount(selectedCompanyId);
   const showCases = experimentalSettings?.enableCases === true;
   // Conference Room Chat flag (PAP-136/PAP-137): the Conference Room nav item
   // is a new surface, hidden entirely while the flag is off (same no-flash
@@ -187,6 +190,13 @@ export function Sidebar({ children }: { children?: ReactNode }) {
               badgeLabel="decisions"
             />
           ) : null}
+          <SidebarNavItem
+            to="/hiring"
+            label="Hiring"
+            icon={UserPlus}
+            badge={pendingHireCount}
+            badgeLabel="hires waiting"
+          />
           {showStatusCards ? (
             <SidebarNavItem to="/status" label="Status" icon={LayoutGrid} textBadge="beta" />
           ) : null}
