@@ -2567,10 +2567,17 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
                 : pausingWorkRunId
             }
             onStopRun={
-              grokWork && interruptibleIssueRun
-                ? () => stopGrokWork.mutateAsync(interruptibleIssueRun).then(() => undefined).catch(() => undefined)
-                : onPauseWorkRun
-                ? (runId) => onPauseWorkRun(runId).catch(() => undefined)
+              grokWork || onPauseWorkRun
+                ? async (runId) => {
+                    const selectedRun = resolvedLiveRuns.find(run => run.id === runId)
+                      ?? (resolvedActiveRun?.id === runId ? resolvedActiveRun : null);
+                    const selectedAgent = selectedRun ? agentMap.get(selectedRun.agentId) : null;
+                    if (selectedRun && selectedAgent?.adapterType === "paperclip_runner" && selectedAgent.adapterConfig.provider === "grok_bot") {
+                      await stopGrokWork.mutateAsync(selectedRun).catch(() => undefined);
+                    } else if (onPauseWorkRun) {
+                      await onPauseWorkRun(runId).catch(() => undefined);
+                    }
+                  }
                 : undefined
             }
             stopRunLabel={grokWork ? "Stop Paperclip work" : "Pause work"}

@@ -5,15 +5,16 @@ import { publicMcpIngressRoutes } from "../routes/public-mcp.js";
 import { createPublicMcpExecutor } from "../services/public-mcp/capabilities.js";
 import { createDotRunnerMcpTools } from "../services/dot-runner-broker.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
 import { agents, authUsers, companies, companyMemberships, createDb, dotAgentBindings, grokBotDispatches,
-  grokBotRoutines, mcpOauthGrants, activityLog, issues, heartbeatRuns, dotRunnerAssignments } from "@paperclipai/db";
+  grokBotRoutines, mcpOauthGrants, activityLog, issues, heartbeatRuns, dotRunnerAssignments, dotMailboxItems, nativeRunFinalizations } from "@paperclipai/db";
 import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { accessService } from "../services/access.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
 import { createPublicMcpOAuth } from "../services/public-mcp/oauth.js";
 import { dotRunnerBroker } from "../services/dot-runner-broker.js";
+import { createGrokRoutineDispatcher } from "../services/grok-bot/dispatcher.js";
 import { grokRoutineService } from "../services/grok-bot/routine.js";
 import { type GrokRoutineWake } from "../services/grok-bot/webhook.js";
 
@@ -211,6 +212,90 @@ describe("durable Grok routine qualification", () => {
     await expect(f.service.configure({ ...f.config, expectedRevision: 1, companyId: randomUUID() })).rejects.toThrow();
     await expect(f.service.configure({ ...f.config, expectedRevision: 1, webhookUrl: "https://user:password@bot.example.test/routine" })).rejects.toThrow("Invalid");
   });
+  it("retries only confirmed rejection, retaining receipts and deduplicating concurrent operator retries", async () => {
+    const f = await fixture(); const row = await verification(f);
+    f.delivery.mockResolvedValueOnce({ delivery: "rejected", httpStatus: 429 });
+    await f.service.send(f.company.id, f.agent.id, row.id);
+    await expect(f.service.retryRejected(f.company.id, f.agent.id, randomUUID(), row.id)).rejects.toThrow("permission");
+    await expect(f.service.retryRejected(randomUUID(), f.agent.id, f.principal.grant.userId, row.id)).rejects.toThrow();
+    await Promise.all([1, 2].map(() => f.service.retryRejected(f.company.id, f.agent.id, f.principal.grant.userId, row.id)));
+    const receipts = await db.select().from(grokBotDispatches).where(eq(grokBotDispatches.bindingId, f.pairing.bindingId));
+    expect(receipts).toHaveLength(2);
+    expect(receipts.find(receipt => receipt.id === row.id)).toMatchObject({ status: "rejected", httpStatus: 429 });
+    const retry = receipts.find(receipt => receipt.id !== row.id)!;
+    expect(retry).toMatchObject({ status: "accepted", sourceEventId: `retry:${row.id}` });
+    expect(f.delivery).toHaveBeenCalledTimes(2);
+    await expect(f.service.retryRejected(f.company.id, f.agent.id, f.principal.grant.userId, retry.id)).rejects.toThrow("confirmed rejected");
+    await f.service.acknowledge(f.principal, acknowledgement(retry));
+    expect(await f.service.state(f.company.id, f.agent.id, row.bindingId)).toMatchObject({ verified: true });
+  });
+
+  it("keeps rejected unread feedback available for an explicit retry without automatic resend", async () => {
+    const f = await fixture(); const verified = await verification(f);
+    await f.service.send(f.company.id, f.agent.id, verified.id);
+    await f.service.acknowledge(f.principal, acknowledgement(verified));
+    const sessionId = randomUUID();
+    const [run] = await db.insert(heartbeatRuns).values({ companyId: f.company.id, agentId: f.agent.id,
+      status: "running", runtimeMode: "native", nativeSessionId: sessionId, invocationSource: "assignment", triggerDetail: "system" }).returning();
+    const [task] = await db.insert(issues).values({ companyId: f.company.id, title: "Feedback retry",
+      assigneeAgentId: f.agent.id, executionRunId: run!.id, checkoutRunId: run!.id, status: "in_progress" }).returning();
+    await db.update(heartbeatRuns).set({ nativeIssueId: task!.id }).where(eq(heartbeatRuns.id, run!.id));
+    await db.insert(nativeRunFinalizations).values({ runId: run!.id, companyId: f.company.id, issueId: task!.id,
+      phase: "observed", controllerGeneration: 1, leaseExpiresAt: new Date(Date.now() + 60_000) });
+    const [work] = await db.insert(dotRunnerAssignments).values({ companyId: f.company.id, agentId: f.agent.id,
+      bindingId: f.pairing.bindingId, bindingGeneration: 1, runId: run!.id, normalizedSessionId: sessionId, turnId: randomUUID(),
+      controllerGeneration: 1, catalogDigest: "test", status: "accepted", projection: {},
+      acceptBy: new Date(Date.now() + 60_000), expiresAt: new Date(Date.now() + 60_000) }).returning();
+    const sourceEventId = randomUUID();
+    await db.insert(dotMailboxItems).values({ companyId: f.company.id, bindingId: f.pairing.bindingId, bindingGeneration: 1,
+      assignmentId: work!.id, kind: "follow_up", sourceEventId, references: { consumed: false } });
+    f.delivery.mockClear(); f.delivery.mockResolvedValueOnce({ delivery: "rejected", httpStatus: 429 });
+    const dispatcher = createGrokRoutineDispatcher(db, () => true, f.delivery);
+    await dispatcher.tick(); await dispatcher.tick();
+    expect(f.delivery).toHaveBeenCalledTimes(1);
+    const [rejected] = await db.select().from(grokBotDispatches).where(and(eq(grokBotDispatches.assignmentId, work!.id), eq(grokBotDispatches.sourceEventId, sourceEventId)));
+    expect(rejected).toMatchObject({ status: "rejected" });
+    await f.service.retryRejected(f.company.id, f.agent.id, f.principal.grant.userId, rejected!.id);
+    await dispatcher.tick();
+    expect(f.delivery).toHaveBeenCalledTimes(2);
+    const [input] = await db.select().from(dotMailboxItems).where(eq(dotMailboxItems.sourceEventId, sourceEventId));
+    expect(input?.references).toMatchObject({ consumed: false });
+  });
+
+  it("never retries uncertain delivery or a rejection from replaced credentials", async () => {
+    const f = await fixture(); const row = await verification(f);
+    f.delivery.mockResolvedValueOnce({ delivery: "unknown", httpStatus: 504 });
+    await f.service.send(f.company.id, f.agent.id, row.id);
+    await expect(f.service.retryRejected(f.company.id, f.agent.id, f.principal.grant.userId, row.id)).rejects.toThrow("confirmed rejected");
+    await f.service.recover(f.company.id, f.agent.id, f.principal.grant.userId);
+    const rejected = await verification(f);
+    f.delivery.mockResolvedValueOnce({ delivery: "rejected", httpStatus: 401 });
+    await f.service.send(f.company.id, f.agent.id, rejected.id);
+    await f.service.configure({ ...f.config, expectedRevision: 1 });
+    await expect(f.service.retryRejected(f.company.id, f.agent.id, f.principal.grant.userId, rejected.id)).rejects.toThrow("authority changed");
+    expect(f.delivery).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for the binding before acquiring routine recovery locks", async () => {
+    const f = await fixture();
+    let recovery: Promise<unknown> | undefined;
+    try {
+      await db.transaction(async tx => {
+        await tx.select().from(dotAgentBindings).where(eq(dotAgentBindings.id, f.pairing.bindingId)).for("update");
+        recovery = f.service.recover(f.company.id, f.agent.id, f.principal.grant.userId);
+        void recovery.catch(() => {});
+        await vi.waitFor(async () => {
+          const result = await db.execute(sql`select exists (select 1 from pg_stat_activity where datname = current_database()
+            and pid <> pg_backend_pid() and wait_event_type = 'Lock' and query like '%dot_agent_bindings%') as waiting`);
+          expect(result.rows[0]?.waiting).toBe(true);
+        }, { timeout: 5000 });
+        await tx.execute(sql`set local lock_timeout = '2s'`);
+        // A reverse-order recovery holds this row while waiting for our binding.
+        await tx.select().from(grokBotRoutines).where(eq(grokBotRoutines.bindingId, f.pairing.bindingId)).for("update");
+      });
+    } finally { await recovery; }
+  });
+
   it("holds uncertainty across disconnect and requires inspection plus a fresh verification", async () => {
     const f = await fixture(); const row = await verification(f);
     f.delivery.mockResolvedValue({ delivery: "unknown", httpStatus: 504 });

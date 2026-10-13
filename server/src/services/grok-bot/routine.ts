@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { and, desc, eq, inArray, isNull, isNotNull, lte, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, isNotNull, lte, or } from "drizzle-orm";
 import { z } from "zod";
 import { companies, dotAgentBindings as bindings, dotRunnerAssignments as assignments,
   grokBotRoutines as routines, grokBotDispatches as dispatches, mcpOauthGrants, type Db } from "@paperclipai/db";
@@ -44,6 +44,10 @@ export function grokRoutineService(db: Db, deliver: Delivery = deliverGrokRoutin
   async function recover(companyId: string, agentId: string, operatorId: string) {
     await authorizeExternalBotOperator(db, companyId, operatorId);
     await db.transaction(async tx => {
+      // All routine writers serialize on the binding before dispatch/routine rows.
+      // Include retired bindings so recovery cannot bypass an old activity hold.
+      await tx.select({ id: bindings.id }).from(bindings).where(and(eq(bindings.companyId, companyId),
+        eq(bindings.agentId, agentId), eq(bindings.providerKind, "grok_bot"))).orderBy(asc(bindings.id)).for("update");
       const rows = await tx.select().from(routines).where(and(eq(routines.companyId, companyId), eq(routines.agentId, agentId))).for("update");
       const [active] = await tx.select({ id: assignments.id }).from(assignments).where(and(eq(assignments.companyId, companyId), eq(assignments.agentId, agentId), inArray(assignments.status, ["offered", "accepted"])));
       if (active) throw fail("Stop or finish the current Paperclip work session before clearing recovery.");
@@ -109,7 +113,8 @@ export function grokRoutineService(db: Db, deliver: Delivery = deliverGrokRoutin
   }
 
   async function reserve(input: { companyId: string; agentId: string; bindingId: string; sourceEventId: string;
-    kind: GrokRoutineWake["kind"]; assignmentId?: string; after?: number }) {
+    kind: GrokRoutineWake["kind"]; assignmentId?: string; after?: number;
+    expectedAuthority?: { grantId: string; generation: number; routineRevision: number } }) {
     if (await recoveryNeeded(input.companyId, input.agentId)) throw fail("Inspect and recover remote work before another delivery.");
     return db.transaction(async tx => {
       const database = tx as unknown as Db;
@@ -117,6 +122,10 @@ export function grokRoutineService(db: Db, deliver: Delivery = deliverGrokRoutin
       const [routine] = await tx.select().from(routines).where(and(eq(routines.bindingId, binding.id),
         eq(routines.companyId, input.companyId), eq(routines.agentId, input.agentId))).for("update");
       if (!routine || routine.bindingGeneration !== binding.generation || routine.recoveryRequiredAt) throw fail("Configure or recover the Grok routine first.");
+      if (input.expectedAuthority && (input.expectedAuthority.grantId !== grant.id
+        || input.expectedAuthority.generation !== binding.generation || input.expectedAuthority.routineRevision !== routine.revision)) {
+        throw fail("Rejected delivery authority changed.");
+      }
       const [old] = await tx.select().from(dispatches).where(and(eq(dispatches.bindingId, binding.id),
         eq(dispatches.bindingGeneration, binding.generation), eq(dispatches.routineRevision, routine.revision), eq(dispatches.sourceEventId, input.sourceEventId)));
       if (old) return old;
@@ -194,6 +203,32 @@ export function grokRoutineService(db: Db, deliver: Delivery = deliverGrokRoutin
     return state(companyId, agentId, intent.row.bindingId);
   }
 
+  async function retryRejected(companyId: string, agentId: string, operatorId: string, correlationId: string) {
+    await authorizeExternalBotOperator(db, companyId, operatorId);
+    const [row] = await db.select({ dispatch: dispatches, routine: routines }).from(dispatches)
+      .innerJoin(routines, eq(routines.id, dispatches.routineId)).where(and(eq(dispatches.id, correlationId),
+        eq(dispatches.companyId, companyId), eq(routines.companyId, companyId), eq(routines.agentId, agentId)));
+    if (!row || row.dispatch.status !== "rejected") throw fail("Only a confirmed rejected delivery can be retried.");
+    const { binding } = await current(db, companyId, agentId, row.dispatch.bindingId);
+    if (row.dispatch.grantId !== binding.grantId || row.dispatch.bindingGeneration !== binding.generation
+      || row.dispatch.routineRevision !== row.routine.revision) throw fail("Rejected delivery authority changed.");
+    if (row.dispatch.kind === "mailbox_updated") {
+      if (!row.dispatch.assignmentId) throw fail("Work wake requires an admitted assignment.");
+      const { dotRunnerBroker } = await import("../dot-runner-broker.js");
+      await dotRunnerBroker(db).assertWakeAuthority(companyId, agentId, binding.id, row.dispatch.assignmentId);
+    }
+    // Retain the rejected receipt. Concurrent clicks reserve the same next intent;
+    // accepted/unknown work can never enter this path, and is never replayed.
+    const intent = await reserve({ companyId, agentId, bindingId: binding.id,
+      sourceEventId: `retry:${row.dispatch.id}`, kind: row.dispatch.kind,
+      expectedAuthority: { grantId: row.dispatch.grantId, generation: row.dispatch.bindingGeneration, routineRevision: row.dispatch.routineRevision },
+      ...(row.dispatch.assignmentId ? { assignmentId: row.dispatch.assignmentId } : {}),
+      after: (row.dispatch.payload as GrokRoutineWake & { after?: number }).after });
+    await logActivity(db, { companyId, actorType: "user", actorId: operatorId, action: "grok.delivery_retry_requested",
+      entityType: "agent", entityId: agentId, details: { rejectedCorrelationId: row.dispatch.id, correlationId: intent.id } });
+    return send(companyId, agentId, intent.id);
+  }
+
   /** Called in the authoritative successful-finish transaction, with the binding lock held. */
   async function settleWorkNotifications(companyId: string, bindingId: string, assignmentId: string) {
     const [assignment] = await db.select({ id: assignments.id }).from(assignments).where(and(eq(assignments.id, assignmentId),
@@ -264,5 +299,5 @@ export function grokRoutineService(db: Db, deliver: Delivery = deliverGrokRoutin
     if (input.challenge) scheduleAgentLifecycle(db, binding.agentId);
     return result;
   }
-  return { state, configure, reserve, send, acknowledge, settleWorkNotifications, recoveryNeeded, recover };
+  return { state, configure, reserve, send, acknowledge, settleWorkNotifications, recoveryNeeded, recover, retryRejected };
 }

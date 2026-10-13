@@ -842,6 +842,11 @@ describe("durable Dot Runner integration", () => {
           await expect(transfers.getUploadUrl(f.principal, { ...args, taskId: randomUUID() }, assignment!.id)).rejects.toThrow();
           const download = new URL(String((await transfers.getDownloadUrl(f.principal, uploaded.body.attachment.id, assignment!.id)).url));
           expect((await request(api).get(download.pathname + download.search)).status).toBe(200);
+          const pendingUpload = new URL(String((await transfers.getUploadUrl(f.principal, { ...args, requestId: randomUUID() }, assignment!.id)).url));
+          await db.update(issues).set({ workMode: "ask" }).where(eq(issues.id, issue!.id));
+          await expect(transfers.getUploadUrl(f.principal, { ...args, requestId: randomUUID() }, assignment!.id)).rejects.toThrow("work mode");
+          expect((await request(api).put(pendingUpload.pathname + pendingUpload.search).set("Content-Type", "text/plain").send(body)).status).toBeGreaterThanOrEqual(400);
+          await db.update(issues).set({ workMode: "standard" }).where(eq(issues.id, issue!.id));
           await db.update(agents).set({ status: "paused" }).where(eq(agents.id, f.agent.id));
           expect((await request(api).get(download.pathname + download.search)).status).toBeGreaterThanOrEqual(400);
           await db.update(agents).set({ status: "active" }).where(eq(agents.id, f.agent.id));

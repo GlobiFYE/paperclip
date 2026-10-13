@@ -13,7 +13,7 @@ import { getStorageService } from "../storage/index.js";
 import { agents, companies, heartbeatRuns, issues, agentWakeupRequests, nativeRunFinalizations, mcpOauthGrants,
   mcpEventSubscriptions, dotAgentBindings as bindings, dotRunnerAssignments as assignments,
   dotRunnerOperations as operations, dotMailboxItems as mailbox, grokBotRoutines, type Db } from "@paperclipai/db";
-import { externalOperationDigest, type DotBindingSnapshot, type ExternalProviderPort, type ExternalProviderOperation } from "../vendor/paperclip-runner/index.js";
+import { CAPABILITY_SEMANTIC_TOOL_CATALOG, externalOperationDigest, type DotBindingSnapshot, type ExternalProviderPort, type ExternalProviderOperation } from "../vendor/paperclip-runner/index.js";
 import { McpOAuthError, type McpPrincipal } from "./public-mcp/oauth.js";
 import type { PublicMcpToolExtension } from "./public-mcp/dot-runner.js";
 import { boardAuthService } from "./board-auth.js";
@@ -219,12 +219,19 @@ function createBroker(db: Db) {
       return { companyId, agentId, bindingId, bindingGeneration: state.generation,
         acceptByUnixMs: Date.now() + 10 * 60_000, expiresAtUnixMs: Date.now() + 2 * 60 * 60_000 };
     },
-    async authorizeFileSession(principal: McpPrincipal, assignmentId: string, taskId: string, _write: boolean) {
+    async authorizeFileSession(principal: McpPrincipal, assignmentId: string, taskId: string, write: boolean) {
       const { binding, assignment } = await authorizeAssignment(principal, assignmentId);
       if (binding.providerKind !== "grok_bot" || assignment.status !== "accepted") throw fail("Files require a current accepted Grok work session.");
       const [run] = await db.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.id, assignment.runId), eq(heartbeatRuns.companyId, binding.companyId)));
       if (run?.nativeIssueId !== taskId) throw fail("File is outside this work session's task.");
-      if (_write && readNativeReviewAssignmentContext(run.contextSnapshot)) throw fail("Completion review sessions cannot upload deliverables.");
+      if (write) {
+        if (readNativeReviewAssignmentContext(run.contextSnapshot)) throw fail("Completion review sessions cannot upload deliverables.");
+        const [task] = await db.select().from(issues).where(and(eq(issues.id, taskId), eq(issues.companyId, binding.companyId)));
+        const deliverable = CAPABILITY_SEMANTIC_TOOL_CATALOG.find(tool => tool.operationId === "register_deliverable");
+        if (!task || !deliverable?.allowedModes.includes(task.workMode as "standard" | "planning" | "ask")) {
+          throw fail("This task's work mode does not permit deliverable uploads.");
+        }
+      }
       return { agentId: binding.agentId, runId: assignment.runId };
     },
     async assertWakeAuthority(companyId: string, agentId: string, bindingId: string, assignmentId: string) {

@@ -14,6 +14,7 @@ export const configureGrokRoutineSchema = z.object({
   webhookUrl: z.string().min(1).max(2048), webhookKey: z.string().min(1).max(16384),
 }).strict();
 export const verifyGrokRoutineSchema = z.object({ bindingId: z.uuid(), requestId: z.uuid() }).strict();
+export const retryGrokDeliverySchema = z.object({ correlationId: z.uuid() }).strict();
 export const pairGrokBindingSchema = z.object({ replaceBindingId: z.uuid().optional() }).strict();
 export const stopGrokWorkSchema = z.object({ expectedRunId: z.uuid().optional() }).strict();
 export const recoverGrokRoutineSchema = z.object({ inspectedRemoteWork: z.literal(true) }).strict();
