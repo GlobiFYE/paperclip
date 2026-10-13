@@ -13,7 +13,8 @@ interface Snapshot {
   individual: AttentionItem[];
 }
 
-export function BulkConfirm({ companyId, items, agentMap, userLabelMap, currentUserId, onSelectIndividual }: {
+export function BulkConfirm({ companyId, items, agentMap, userLabelMap, currentUserId, onSelectIndividual, actionLabel = "Confirm all" }: {
+  actionLabel?: string;
   companyId: string;
   items: AttentionItem[];
   agentMap: Map<string, Agent>;
@@ -89,7 +90,7 @@ export function BulkConfirm({ companyId, items, agentMap, userLabelMap, currentU
       <Dialog open={snapshot !== null} onOpenChange={(next) => { if (next) open(); else close(); }}>
         {(plan.length >= 2 || snapshot) && (
           <DialogTrigger asChild>
-            <Button disabled={hydrated.isFetching || progress !== null || plan.length < 2}>Confirm all ({plan.length})</Button>
+            <Button disabled={hydrated.isFetching || progress !== null || plan.length < 2}>{actionLabel} ({plan.length})</Button>
           </DialogTrigger>
         )}
         {snapshot && (

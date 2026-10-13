@@ -1,0 +1,30 @@
+import { expect, it, vi, afterEach } from "vitest";
+import { QueryClient } from "@tanstack/react-query";
+import { decisionsApi } from "../../api/decisions";
+import { bulkApproval, bulkAttention } from "../../fixtures/bulkConfirmFixtures";
+import { loadAttentionRecords, hydrateBulkItems } from "../../lib/bulk-confirm-api";
+import { classifyDecision, validateDecisionRecord } from "./classifyDecision";
+import { plainDecision } from "./testFixtures";
+const decision = { ...plainDecision(), id: "plain" };
+afterEach(() => vi.restoreAllMocks());
+it("loads standalone decisions independently of G's bulk eligibility, reusing versioned reads", async () => {
+  const item = bulkAttention(bulkApproval("plain"), "decision"); item.subject.kind = "decision";
+  const read = vi.spyOn(decisionsApi, "get").mockResolvedValue(decision);
+  const client = new QueryClient();
+  const loaded = await loadAttentionRecords("company-1", [item], null, client, true);
+  expect(classifyDecision(item, validateDecisionRecord(item, loaded.records.get(item.id)))).toBe("question");
+  await loadAttentionRecords("company-1", [item], null, client, true);
+  expect(read).toHaveBeenCalledTimes(1);
+  const bulk = await hydrateBulkItems("company-1", [item], null, client);
+  expect(bulk.records).toEqual([]); expect(read).toHaveBeenCalledTimes(1);
+  client.clear();
+});
+it("fails closed on failed decision reads and never loads a different company's records", async () => {
+  const item = bulkAttention(bulkApproval("plain"), "decision"); item.subject.kind = "decision";
+  const read = vi.spyOn(decisionsApi, "get").mockRejectedValue(new Error("Offline"));
+  const loaded = await loadAttentionRecords("company-1", [item], null, undefined, true);
+  expect(loaded.unavailableIds).toEqual([item.id]);
+  expect(classifyDecision(item, validateDecisionRecord(item, loaded.records.get(item.id)))).toBe("closer_look");
+  await loadAttentionRecords("another-company", [item], null, undefined, true);
+  expect(read).toHaveBeenCalledTimes(1);
+});

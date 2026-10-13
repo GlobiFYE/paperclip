@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { within, userEvent } from "storybook/test";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ATTENTION_SOURCE_KINDS, type AttentionItem } from "@paperclipai/shared";
-import { WhatNeedsMe } from "./WhatNeedsMe";
+import { AllDecisions as WhatNeedsMe } from "./WhatNeedsMe";
 import { attentionApi } from "../api/attention";
 import { approvalsApi } from "../api/approvals";
 import { agentsApi } from "../api/agents";

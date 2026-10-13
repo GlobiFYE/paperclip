@@ -51,6 +51,8 @@ import { DecisionResolver } from "../components/DecisionResolver";
 import { IssueGroupHeader } from "../components/IssueGroupHeader";
 import { BulkConfirm } from "../components/BulkConfirm";
 
+import { DecisionTabs } from "./WhatNeedsMe/DecisionTabs";
+
 /** Curtain rows never expand; module-level so memoized rows see one identity. */
 const noopToggleExpand = () => {};
 
@@ -87,7 +89,9 @@ function findScrollContainer(element: HTMLElement | null): HTMLElement | null {
   return null;
 }
 
-export function WhatNeedsMe() {
+export function WhatNeedsMe() { return <DecisionTabs />; }
+
+export function AllDecisions({ onlyItemIds }: { onlyItemIds?: ReadonlySet<string> } = {}) {
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -216,7 +220,7 @@ export function WhatNeedsMe() {
     setPendingRestore(new Set());
   }, [feed?.generatedAt]);
 
-  const allItems = useMemo(() => feed?.items ?? [], [feed]);
+  const allItems = useMemo(() => (feed?.items ?? []).filter((item) => !onlyItemIds || onlyItemIds.has(item.id)), [feed, onlyItemIds]);
 
   const isServerHidden = (item: AttentionItem) => item.dismissal != null && item.dismissal.isActive;
 
@@ -384,6 +388,8 @@ export function WhatNeedsMe() {
         (prev) => {
           const next = new URLSearchParams(prev);
           next.delete("decisionId");
+          // Preserve the full resolver while the tab classifier is still hydrating.
+          next.set("tab", "all");
           return next;
         },
         { replace: true },
@@ -393,12 +399,12 @@ export function WhatNeedsMe() {
 
   // Auto-expand the topmost inline-capable decision, once.
   useEffect(() => {
-    if (autoExpandDone || deskItems.length === 0) return;
+    if (autoExpandDone || deepLinkDecisionId || deskItems.length === 0) return;
     const sorted = sortAttentionItems(deskItems, sortOrder);
     const topInline = sorted.find((item) => isInlineResolvable(item));
     if (topInline) setExpandedId(topInline.id);
     setAutoExpandDone(true);
-  }, [deskItems, autoExpandDone, sortOrder]);
+  }, [deskItems, autoExpandDone, deepLinkDecisionId, sortOrder]);
 
   const updateGroupBy = (next: AttentionGroupBy) => {
     setGroupBy(next);
@@ -551,7 +557,7 @@ export function WhatNeedsMe() {
   return (
     <div ref={rootRef} className="max-w-3xl space-y-4">
       <div className="flex items-center justify-between gap-2">
-        <h1 className="text-xl font-bold">Decisions</h1>
+        {!onlyItemIds && <h1 className="text-xl font-bold">Decisions</h1>}
         <DecisionsToolbar
           visibleCount={visibleCount}
           filterOptions={filterOptions}
@@ -564,8 +570,8 @@ export function WhatNeedsMe() {
         />
       </div>
 
-      <BulkConfirm key={selectedCompanyId} companyId={selectedCompanyId} items={bulkVisibleItems} agentMap={agentMap}
-        currentUserId={currentUserId} userLabelMap={userLabelMap} onSelectIndividual={selectIndividualAnswer} />
+      {!onlyItemIds && <BulkConfirm key={selectedCompanyId} companyId={selectedCompanyId} items={bulkVisibleItems} agentMap={agentMap}
+        currentUserId={currentUserId} userLabelMap={userLabelMap} onSelectIndividual={selectIndividualAnswer} />}
 
       {/* Queue quicklinks + date-range chips (§4.1–§4.2). The rail self-hides
           when the company has no queues; the chips filter the desk server-side. */}

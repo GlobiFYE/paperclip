@@ -3217,3 +3217,8 @@ span.paperclip-mention-chip[data-mention-kind="external-object"] {
   .skill-import-enter, .skill-import-sweep { animation: none; }
   .skill-import-progress::-webkit-progress-value { transition: none; }
 }
+
+/* Decisions advances through one question at a time; shared motion tokens honor reduced motion. */
+.decision-question-card {
+  animation: tc-fade-in var(--motion-duration-fast) var(--motion-ease-standard) both;
+}

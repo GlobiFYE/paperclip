@@ -1,5 +1,6 @@
 import type { AttentionItem } from "@paperclipai/shared";
 import type { QueryClient } from "@tanstack/react-query";
+import { decisionsApi } from "../api/decisions";
 import { approvalsApi } from "../api/approvals";
 import { issuesApi } from "../api/issues";
 import { bulkConfirmPlan, validateBulkRecord, type BulkConfirmEntry, type HydratedBulkRecord } from "./bulk-confirm";
@@ -11,56 +12,60 @@ export interface BulkHydration {
 
 export const bulkRecordCacheKey = (companyId: string) => ["bulk-confirm-records", companyId] as const;
 
-/** One interaction read per issue, with at most four outstanding API reads. */
-export async function hydrateBulkItems(companyId: string, items: readonly AttentionItem[], currentUserId?: string | null,
-  queryClient?: QueryClient): Promise<BulkHydration> {
+/** Shared full-record loader. Classification and bulk planning are separate consumers. */
+export async function loadAttentionRecords(companyId: string, items: readonly AttentionItem[], currentUserId?: string | null,
+  queryClient?: QueryClient, includeDecisions = false): Promise<{ records: Map<string, unknown>; unavailableIds: string[] }> {
   const groups = new Map<string, AttentionItem[]>();
   for (const item of items) {
     if (item.companyId !== companyId) continue;
-    // Metadata can rule a row out, never establish eligibility. Full records
-    // remain authoritative, and absent metadata still gets hydrated.
     const metadata = item.subject.metadata;
     if (item.sourceKind === "approval" && typeof metadata?.type === "string" && metadata.type !== "hire_agent") continue;
     if (item.sourceKind === "issue_thread_interaction" && typeof metadata?.kind === "string"
       && !["ask_user_questions", "request_confirmation"].includes(metadata.kind)) continue;
     const key = item.sourceKind === "approval" ? `approval:${item.subject.id}`
-      : item.sourceKind === "issue_thread_interaction" && item.relatedIssue ? `issue:${item.relatedIssue.id}` : null;
+      : item.sourceKind === "issue_thread_interaction" && item.relatedIssue ? `issue:${item.relatedIssue.id}`
+      : includeDecisions && item.sourceKind === "decision" ? `decision:${item.subject.id}` : null;
     if (key) groups.set(key, [...(groups.get(key) ?? []), item]);
   }
-  const jobs = [...groups.values()];
-  const recordsById = new Map<string, HydratedBulkRecord>();
+  const jobs = [...groups.entries()];
+  const recordsById = new Map<string, unknown>();
   const unavailableIds: string[] = [];
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(4, jobs.length) }, async () => {
     while (next < jobs.length) {
-      const group = jobs[next++];
+      const [key, group] = jobs[next++];
       const first = group[0];
       try {
         const read = async () => first.sourceKind === "approval"
           ? [await approvalsApi.get(first.subject.id)]
+          : first.sourceKind === "decision" ? [await decisionsApi.get(first.subject.id)]
           : await issuesApi.listInteractions(first.relatedIssue!.id);
-        // Desk membership is not a record version. Filters, hides and arrivals
-        // reuse unchanged reads, while each submit deliberately bypasses this cache.
         const version = group.reduce((latest, item) => Math.max(latest, Date.parse(item.updatedAt) || 0), 0);
         const records = queryClient ? await queryClient.fetchQuery({
-          queryKey: [...bulkRecordCacheKey(companyId), currentUserId ?? null, first.sourceKind === "approval"
-            ? `approval:${first.subject.id}` : `issue:${first.relatedIssue!.id}`, version],
-          queryFn: read,
-          staleTime: Infinity,
-          retry: false,
+          queryKey: [...bulkRecordCacheKey(companyId), currentUserId ?? null, key, version],
+          queryFn: read, staleTime: Infinity, retry: false,
         }) : await read();
         for (const item of group) {
           const record = records.find((record) => record?.id === item.subject.id);
-          if (!record) { unavailableIds.push(item.id); continue; }
-          const validated = validateBulkRecord(item, record, currentUserId);
-          if (validated) recordsById.set(item.id, validated);
+          if (!record) unavailableIds.push(item.id);
+          else recordsById.set(item.id, record);
         }
       } catch {
         unavailableIds.push(...group.map((item) => item.id));
       }
     }
   }));
-  return { records: items.flatMap((item) => recordsById.get(item.id) ?? []), unavailableIds };
+  return { records: recordsById, unavailableIds };
+}
+
+/** G's eligibility validation and planner remain authoritative for bulk actions. */
+export async function hydrateBulkItems(companyId: string, items: readonly AttentionItem[], currentUserId?: string | null,
+  queryClient?: QueryClient): Promise<BulkHydration> {
+  const loaded = await loadAttentionRecords(companyId, items, currentUserId, queryClient);
+  return {
+    records: items.flatMap((item) => validateBulkRecord(item, loaded.records.get(item.id), currentUserId) ?? []),
+    unavailableIds: loaded.unavailableIds,
+  };
 }
 
 export interface BulkConfirmResult {

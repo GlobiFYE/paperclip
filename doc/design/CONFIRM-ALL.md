@@ -518,3 +518,57 @@ R8 changes five files: `server/src/services/interaction-bulk-eligibility.ts`,
 `server/src/__tests__/interaction-bulk-eligibility.test.ts`,
 `ui/src/lib/bulk-confirm.test.ts`, and this document. Earlier uncommitted changes
 remain in the checkout.
+
+## Plan I: simple Decisions tabs and Hiring
+
+The Decisions page now offers Hiring, Yes / No, Questions, Needs a closer look,
+and All. Tab counts use the active desk (the same dismissal and aging boundary
+as G), and `?tab=` preserves the selected view. Without a saved tab, the first
+nonempty Hiring, Yes / No, or Questions category opens after hydration; otherwise
+Needs a closer look opens. Decision deep links retain the All resolver.
+
+Full-record loading, individual classification (`classifyDecision`), and G's bulk
+planner are separate. The shared loader also reads standalone decisions. Only
+plain options with no effects, inputs, destructive style, unknown fields, special
+metadata, or target snapshots use the question flow. Unknown or unavailable
+records keep their full resolver. Governed interactions and requests above the
+existing 20-answer endpoint limit also keep their full controls.
+
+Hiring and Yes / No reuse G's frozen snapshot dialog, restricted to their own
+category. The Hiring page shares the Hiring-tab rows and dialog. No uses the
+existing reject interaction endpoint; `rejectRequiresReason` opens a required
+one-line reason field. No server endpoint or response limit changes are needed.
+
+Questions are answered one interaction at a time. Single-choice clicks submit
+immediately for single-question interactions. Multi-question requests keep a
+local draft and submit the complete response only on the final question. Custom
+answers open a focused text field; multi-select uses Done. Skip leaves the whole
+interaction unanswered, Back revisits unfinished drafts, and leaving the page
+or tab discards those drafts as disclosed on the card. Number shortcuts choose
+options; S skips; arrows browse draft questions and pending interactions. Errors
+stay on the current card. The card moves focus and announces its new content,
+with token-based motion honoring reduced-motion settings.
+
+The existing company-prefixed Hiring route, unprefixed redirect and sidebar
+badge are retained. Recently hired defaults to 30 days with 7/30/90-day filters,
+includes only active/idle/running/paused/error agents, and excludes agents linked
+to rejected hire approvals. Rows wrap at narrow widths and show names instead of
+internal IDs.
+
+
+### Plan I inspection 1 fixes
+
+The plain-choice allowlist accepts `signedSpec`, the opaque server signature
+included in `outcome()` alongside every decisions-table field and `executions`.
+The response fixture now includes that field; unknown execution fields still
+keep decisions in the full resolver. Consuming a decision deep link writes
+`tab=all` in the same URL update that removes `decisionId`, preserving the
+expanded resolver while individual-record hydration finishes. Generic auto-expand
+defers to a pending deep link, so it cannot replace the requested card.
+
+Question progress counts only unanswered requests. Reaching the end after
+skipping shows the unanswered count and a prompt to go back; “All caught up”
+is reserved for an empty unanswered queue. Submission errors restore card focus,
+and checkbox focus permits the number, skip and arrow shortcuts while text
+inputs retain normal typing. Recommended badges and ordering require matching
+question IDs, prompts, option IDs and labels, as in the full interaction card.

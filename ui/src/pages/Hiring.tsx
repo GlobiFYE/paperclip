@@ -1,237 +1,70 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import type { Agent, Approval } from "@paperclipai/shared";
+import { Link } from "../lib/router";
 import { approvalsApi } from "../api/approvals";
 import { agentsApi } from "../api/agents";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { queryKeys } from "../lib/queryKeys";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { UserPlus } from "lucide-react";
-
-type Payload = Record<string, unknown>;
-const str = (v: unknown) => (typeof v === "string" ? v : "");
-const obj = (v: unknown): Payload => (v && typeof v === "object" && !Array.isArray(v) ? (v as Payload) : {});
+import { Button } from "../components/ui/button";
+import { Badge } from "../components/ui/badge";
+import { HiringList, agentDescription, hireAttention } from "./WhatNeedsMe/CompactDecisions";
 
 export function pendingHires<T extends { type: string; status: string }>(approvals: T[] | undefined): T[] {
-  return (approvals ?? []).filter((a) => a.type === "hire_agent" && a.status === "pending");
+  return (approvals ?? []).filter((approval) => approval.type === "hire_agent" && approval.status === "pending");
 }
-
-function firstSentence(text: string) {
-  const s = text.split(/(?<=[.!?])\s/)[0] ?? text;
-  return s.length > 160 ? `${s.slice(0, 157)}…` : s;
-}
-
 const RECENT_STATUSES = new Set(["active", "idle", "running", "paused", "error"]);
-const STATUS_LABEL: Record<string, string> = { idle: "ready", running: "working", active: "ready", paused: "paused", error: "error" };
-
+const STATUS_LABEL: Record<string, string> = { idle: "ready", active: "ready", running: "working", paused: "paused", error: "error" };
+export function recentHires(agents: Agent[], approvals: Approval[], days: number, now = Date.now()) {
+  const rejected = new Set(approvals.filter((approval) => approval.type === "hire_agent" && approval.status === "rejected")
+    .map((approval) => approval.payload.agentId).filter((id): id is string => typeof id === "string"));
+  return agents.filter((agent) => RECENT_STATUSES.has(agent.status) && !rejected.has(agent.id)
+    && new Date(agent.createdAt).getTime() >= now - days * 86_400_000 && new Date(agent.createdAt).getTime() <= now)
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+}
 export function Hiring() {
   const { selectedCompanyId } = useCompany();
+  return <CompanyHiring key={selectedCompanyId} companyId={selectedCompanyId} />;
+}
+function CompanyHiring({ companyId }: { companyId: string | null }) {
   const { setBreadcrumbs } = useBreadcrumbs();
-  const queryClient = useQueryClient();
-  const [busy, setBusy] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
   const [days, setDays] = useState(30);
-  const running = useRef(false);
-  const cancelled = useRef(false);
-  useEffect(() => {
-    cancelled.current = false;
-    return () => {
-      cancelled.current = true;
-    };
-  }, [selectedCompanyId]);
-
   useEffect(() => setBreadcrumbs([{ label: "Hiring" }]), [setBreadcrumbs]);
-
-  const { data: approvals, isLoading, error: approvalsError } = useQuery({
-    queryKey: queryKeys.approvals.list(selectedCompanyId!),
-    queryFn: () => approvalsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
-  });
-  const { data: agents, error: agentsError } = useQuery({
-    queryKey: queryKeys.agents.list(selectedCompanyId!),
-    queryFn: () => agentsApi.list(selectedCompanyId!),
-    enabled: !!selectedCompanyId,
-  });
-
-  const nameOf = useMemo(() => new Map((agents ?? []).map((a) => [a.id, a.name])), [agents]);
-  const pending = pendingHires(approvals);
-  const recent = useMemo(() => {
-    const cutoff = Date.now() - days * 86_400_000;
-    return (agents ?? [])
-      .filter((a) => RECENT_STATUSES.has(a.status) && new Date(a.createdAt).getTime() >= cutoff)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  }, [agents, days]);
-
-  const refresh = () => {
-    queryClient.invalidateQueries({ queryKey: ["approvals"] });
-    queryClient.invalidateQueries({ queryKey: ["issues", "approvals"] });
-    queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(selectedCompanyId!) });
-    queryClient.invalidateQueries({ queryKey: queryKeys.attention(selectedCompanyId!) });
-  };
-
-  async function decide(id: string, action: "approve" | "reject") {
-    setBusy(id);
-    setMessage(null);
-    try {
-      if (action === "approve") await approvalsApi.approve(id, "Confirmed by the owner on the Hiring page.");
-      else await approvalsApi.reject(id, "Cancelled by the owner on the Hiring page.");
-    } catch (err) {
-      setMessage(err instanceof Error ? err.message : "That didn't work. Try again.");
-    } finally {
-      setBusy(null);
-      refresh();
-    }
-  }
-
-  async function confirmAll() {
-    if (running.current) return;
-    running.current = true;
-    const ids = pending.map((a) => a.id); // snapshot: later arrivals are never included
-    let ok = 0;
-    let skipped = 0;
-    const failed: string[] = [];
-    for (let i = 0; i < ids.length; i++) {
-      setBusy(`all:${i + 1}/${ids.length}`);
-      if (cancelled.current) break;
-      try {
-        // Re-read right before deciding: skip anything no longer a pending hire.
-        const current = await approvalsApi.get(ids[i]);
-        if (current.type !== "hire_agent" || current.status !== "pending") {
-          skipped++;
-          continue;
-        }
-        if (cancelled.current) break;
-        const res = await approvalsApi.approve(ids[i], "Confirmed by the owner with Confirm all on the Hiring page.");
-        if (res.status === "approved") ok++;
-        else failed.push(ids[i]);
-      } catch {
-        failed.push(ids[i]);
-      }
-    }
-    setBusy(null);
-    running.current = false;
-    if (cancelled.current) return;
-    const parts = [`${ok} hired`];
-    if (skipped) parts.push(`${skipped} skipped because they changed`);
-    if (failed.length) parts.push(`${failed.length} could not be confirmed and are still listed below`);
-    setMessage(`${parts.join(", ")}.`);
-    refresh();
-  }
-
-  const progress = busy?.startsWith("all:") ? busy.slice(4) : null;
-
-  return (
-    <div className="mx-auto flex max-w-3xl flex-col gap-6 px-4 py-6">
-      <header className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <UserPlus className="size-5 text-muted-foreground" aria-hidden />
-          <h1 className="text-xl font-semibold">Hiring</h1>
-        </div>
-        {pending.length > 0 ? (
-          <Button onClick={confirmAll} disabled={!!busy} aria-live="polite">
-            {progress ? `Confirming ${progress}…` : `Confirm all (${pending.length})`}
-          </Button>
-        ) : null}
-      </header>
-
-      {approvalsError || agentsError ? (
-        <p role="alert" className="rounded-md border border-destructive px-3 py-2 text-sm text-destructive">
-          Couldn't load hiring data. Refresh the page to try again.
-        </p>
-      ) : null}
-      {message ? (
-        <p role="status" className="rounded-md border px-3 py-2 text-sm">
-          {message}
-        </p>
-      ) : null}
-
-      <section aria-labelledby="pending-h" className="flex flex-col gap-2">
-        <h2 id="pending-h" className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-          Waiting for you {pending.length ? <Badge variant="secondary">{pending.length}</Badge> : null}
-        </h2>
-        {isLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
-        {!isLoading && !approvalsError && pending.length === 0 ? (
-          <p className="rounded-md border px-3 py-4 text-sm text-muted-foreground">No hires waiting. You're all caught up.</p>
-        ) : null}
-        <ul className="flex flex-col divide-y rounded-md border">
-          {pending.map((a) => {
-            const p = obj(a.payload);
-            const meta = obj(p.metadata);
-            const model = str(obj(p.adapterConfig).model) || (str(p.adapterType) === "process" ? "Local AI / Jev" : "");
-            const manager = nameOf.get(str(p.reportsTo)) ?? "";
-            const reason = str(p.capabilities) ? firstSentence(str(p.capabilities)) : "";
-            return (
-              <li key={a.id} className="flex flex-wrap items-center gap-3 px-3 py-3">
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium">{str(p.name) || "New agent"}</div>
-                  {str(p.title) ? <div className="text-sm">{str(p.title)}</div> : null}
-                  <div className="text-sm text-muted-foreground">
-                    {[str(meta.division), model, manager ? `reports to ${manager}` : ""].filter(Boolean).join(" · ")}
-                  </div>
-                  {reason ? <div className="mt-1 text-sm">{reason}</div> : null}
-                </div>
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={() => decide(a.id, "approve")} disabled={!!busy}>
-                    {busy === a.id ? "Confirming…" : "Confirm"}
-                  </Button>
-                  <Button size="sm" variant="outline" onClick={() => decide(a.id, "reject")} disabled={!!busy}>
-                    Cancel
-                  </Button>
-                </div>
-              </li>
-            );
-          })}
-        </ul>
-      </section>
-
-      <section aria-labelledby="recent-h" className="flex flex-col gap-2">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <h2 id="recent-h" className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
-            Recently hired
-          </h2>
-          <div className="flex gap-1" role="group" aria-label="Time range">
-            {[7, 30, 90].map((d) => (
-              <Button key={d} size="sm" variant={days === d ? "default" : "ghost"} onClick={() => setDays(d)}>
-                {d} days
-              </Button>
-            ))}
-          </div>
-        </div>
-        {recent.length === 0 ? <p className="text-sm text-muted-foreground">No new hires in this period.</p> : null}
-        <ul className="flex flex-col divide-y rounded-md border">
-          {recent.map((a) => {
-            const meta = obj(a.metadata);
-            const model = str(obj(a.adapterConfig).model) || (a.adapterType === "process" ? "Local AI / Jev" : "");
-            return (
-              <li key={a.id} className="flex flex-wrap items-center gap-3 px-3 py-2">
-                <div className="min-w-0 flex-1">
-                  <a href={`../agents/${a.urlKey ?? a.id}`} className="font-medium hover:underline">
-                    {a.name}
-                  </a>
-                  <div className="text-sm text-muted-foreground">
-                    {[a.title ?? "", str(meta.division), model, nameOf.get(a.reportsTo ?? "") ? `reports to ${nameOf.get(a.reportsTo ?? "")}` : ""]
-                      .filter(Boolean)
-                      .join(" · ")}
-                  </div>
-                </div>
-                <Badge variant="outline">{STATUS_LABEL[a.status] ?? a.status}</Badge>
-              </li>
-            );
-          })}
-        </ul>
-      </section>
-    </div>
-  );
+  const approvals = useQuery({ queryKey: queryKeys.approvals.list(companyId!), queryFn: () => approvalsApi.list(companyId!), enabled: !!companyId });
+  const agents = useQuery({ queryKey: queryKeys.agents.list(companyId!), queryFn: () => agentsApi.list(companyId!), enabled: !!companyId });
+  const agentMap = useMemo(() => new Map((agents.data ?? []).map((agent) => [agent.id, agent])), [agents.data]);
+  const entries = useMemo(() => pendingHires(approvals.data).map((record) => ({ record, item: hireAttention(record) })), [approvals.data]);
+  const recent = useMemo(() => recentHires(agents.data ?? [], approvals.data ?? [], days), [agents.data, approvals.data, days]);
+  if (!companyId) return <p>Select an organization first.</p>;
+  return <div className="mx-auto flex min-w-0 max-w-3xl flex-col gap-6 px-4 py-6">
+    <h1 className="text-xl font-semibold">Hiring</h1>
+    {(approvals.error || agents.error) && <p role="alert" className="text-sm text-destructive">Couldn't load hiring data. Refresh the page to try again.</p>}
+    <section aria-labelledby="pending-h" className="flex min-w-0 flex-col gap-3">
+      <h2 id="pending-h" className="text-lg font-semibold">Waiting for you <Badge variant="secondary">{entries.length}</Badge></h2>
+      {approvals.isLoading ? <p>Loading…</p> : !approvals.error && <HiringList companyId={companyId} entries={entries} agentMap={agentMap} />}
+    </section>
+    <section aria-labelledby="recent-h" className="flex min-w-0 flex-col gap-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h2 id="recent-h" className="text-lg font-semibold">Recently hired</h2>
+        <div role="group" aria-label="Time range" className="flex flex-wrap gap-1">{[7, 30, 90].map((value) =>
+          <Button key={value} size="sm" variant={value === days ? "default" : "ghost"} aria-pressed={value === days} onClick={() => setDays(value)}>{value} days</Button>)}</div>
+      </div>
+      {agents.isLoading || approvals.isLoading ? <p>Loading…</p> : !agents.error && !approvals.error && <>
+        {!recent.length && <p className="text-sm text-muted-foreground">No new hires in this period.</p>}
+        <ul className="flex min-w-0 flex-col gap-3">{recent.map((agent) => <li key={agent.id} className="flex min-w-0 flex-wrap items-center gap-3 rounded-md border p-3">
+          <Link to={`/agents/${agent.urlKey ?? agent.id}`} className="min-w-0 flex-1 break-words text-sm hover:underline">
+            {agentDescription(agent as unknown as Record<string, unknown>, agentMap, false)}</Link>
+          <Badge variant="outline">{STATUS_LABEL[agent.status]}</Badge>
+        </li>)}</ul>
+      </>}
+    </section>
+  </div>;
 }
 
-/** Pending hire count for the sidebar badge. */
+/** Both desktop and mobile sidebar surfaces share this pending approval count. */
 export function usePendingHireCount(companyId: string | null | undefined) {
-  const { data } = useQuery({
-    queryKey: queryKeys.approvals.list(companyId!),
-    queryFn: () => approvalsApi.list(companyId!),
-    enabled: !!companyId,
-    refetchInterval: 60_000,
-  });
+  const { data } = useQuery({ queryKey: queryKeys.approvals.list(companyId!), queryFn: () => approvalsApi.list(companyId!),
+    enabled: !!companyId, refetchInterval: 60_000 });
   return pendingHires(data).length;
 }
