@@ -1,4 +1,5 @@
 import { parseObject } from "../adapters/utils.js";
+import { assertLegacyRunTaskOwnership } from "../legacy-run-task-ownership.js";
 import { enqueueFastResponse } from "../services/fast-responses.js";
 import { hasRequiredWorkspaceRecovery, LEGACY_WORKSPACE_RECOVERY_SCHEMA } from "../services/workspace-restore-recovery-state.js";
 import { hasUnverifiedNativeWorkspaceFinalizationOwner } from "../services/native-runtime/native-workspace-finalization-recovery-state.js";
@@ -5631,6 +5632,11 @@ export function issueRoutes(
     if (!actorAgentId) {
       res.status(403).json({ error: "Agent authentication required" });
       return false;
+    }
+    if (req.actor.source === "agent_jwt" && req.actor.runId &&
+        issue.assigneeAgentId === null && issue.assigneeUserId) {
+      const run = await heartbeat.getRun(req.actor.runId);
+      if (run?.agentId === actorAgentId) assertLegacyRunTaskOwnership(run, issue);
     }
     // Task-watchdog runs receive a scoped *grant* to mutate issues inside the
     // watched subtree. This must be evaluated before the base assignee-ownership

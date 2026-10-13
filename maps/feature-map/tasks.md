@@ -58,7 +58,8 @@ Automated: [task detail](../../ui/src/pages/IssueDetail.test.tsx) covers compone
 Manual: For a disposable task owned by a legacy agent, have its current run
 assign the task to a human with status In review. Verify that assignment and
 status persist, that the current run finishes without `issue_reassigned`, and
-that slow workspace restoration does not turn the task Blocked. Repeat a board
+that slow workspace restoration does not turn the task Blocked. Try a later edit
+from the outgoing run and verify rejection. Repeat a board
 reassignment and confirm that the outgoing run still stops.
 
 Manual: Add a comment and edit authorized properties. Reload and verify history, actor, and values. Complete a disposable task and inspect its deliverable; reopen through an available action and confirm the next execution follows current policy.

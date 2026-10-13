@@ -34,7 +34,8 @@ The REST request must use the run's signed token and match the current agent,
 company, task, and active run. The assignment and requested status persist while
 the current turn finishes normally. This avoids losing the handoff when workspace
 restoration takes longer than the stop timeout. The former agent no longer owns
-the task. Normal ownership checks apply to subsequent task writes.
+the task. Its later task mutations are rejected, including under the update
+transaction's task and run locks. Read and comment access follows normal policy.
 
 Board-initiated reassignments, agent API keys, native executions, and handoffs to
 another agent still require the outgoing execution to stop before ownership changes.

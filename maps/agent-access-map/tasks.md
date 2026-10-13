@@ -73,7 +73,9 @@ for permitted non-lifecycle fields; REST.
 Policy: Company/task visibility, assignment/change policy, active-run checkout ownership
 and lifecycle rules. A legacy run can assign its own task to a human without
 cancelling itself only with its signed run token and matching active run, agent,
-company and task. Agent keys, native runs, board reassignment and transfers to
+company and task. The outgoing run cannot mutate its human-owned task afterward,
+including through a late update already admitted before the handoff. Agent keys,
+native runs, board reassignment and transfers to
 another agent retain verified-stop requirements.
 
 Evidence: `source-only` — [implementation](../../server/src/routes/issues.ts) at the

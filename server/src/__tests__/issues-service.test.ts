@@ -7172,6 +7172,11 @@ describeEmbeddedPostgres("issueService.assertCheckoutOwner stale checkout adopti
     expect(run!.status).toBe("running");
     await expect(svc.assertCheckoutOwner(seeded.issueId, seeded.actorAgentId, seeded.actorRunId))
       .rejects.toMatchObject({ status: 409 });
+    await expect(svc.update(seeded.issueId, {
+      title: "Late outgoing edit",
+      actorAgentId: seeded.actorAgentId,
+      actorRunId: seeded.actorRunId,
+    })).rejects.toMatchObject({ status: 403, details: { code: "issue_handed_off" } });
 
     await terminalizeLegacyExecution({
       db,
@@ -7182,6 +7187,11 @@ describeEmbeddedPostgres("issueService.assertCheckoutOwner stale checkout adopti
       patch: { finishedAt: new Date(), ...(status === "failed" ? { errorCode: "process_lost" } : {}) },
     });
     await settleUnrecoverableExecutions(db);
+    await expect(svc.update(seeded.issueId, {
+      status: "done",
+      actorAgentId: seeded.actorAgentId,
+      actorRunId: seeded.actorRunId,
+    })).rejects.toMatchObject({ status: 403, details: { code: "issue_handed_off" } });
     expect(await svc.getById(seeded.issueId)).toMatchObject({
       status: "in_review",
       assigneeAgentId: null,

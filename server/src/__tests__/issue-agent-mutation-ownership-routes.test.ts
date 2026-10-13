@@ -2755,6 +2755,25 @@ describe("agent issue mutation checkout ownership", () => {
       expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
     });
 
+    it.each(["edit", "complete", "reclaim"])("rejects the outgoing run's later %s after handing the task to a human", async action => {
+      const app = handoffApp({ ...ownerActor(), source: "agent_jwt" });
+      const handedOff = await request(app).patch(`/api/issues/${issueId}`).send(handoff);
+      expect(handedOff.status, JSON.stringify(handedOff.body)).toBe(200);
+      mockIssueService.getById.mockResolvedValue(makeIssue(handoff));
+      mockIssueService.update.mockClear();
+
+      const res = await request(app).patch(`/api/issues/${issueId}`).send(
+        action === "edit" ? { title: "Late outgoing edit" } :
+          action === "complete" ? { status: "done" } :
+            { assigneeAgentId: ownerAgentId, assigneeUserId: null },
+      );
+
+      expect(res.status, JSON.stringify(res.body)).toBe(403);
+      expect(res.body.details).toMatchObject({ code: "issue_handed_off" });
+      expect(mockIssueService.update).not.toHaveBeenCalled();
+      expect(mockHeartbeatService.cancelRun).not.toHaveBeenCalled();
+    });
+
     it("keeps a queued human response with its current agent", async () => {
       const res = await request(createApp({ ...ownerActor(), source: "agent_jwt" }))
         .patch(`/api/issues/${issueId}`).send(handoff);
