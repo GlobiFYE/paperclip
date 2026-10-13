@@ -52,3 +52,14 @@ export function createAudioSave({stop, upload}) {
     },
   };
 }
+
+/** Older writes must finish before final cleanup evidence can be stored. */
+export function createReportSaver(write) {
+  let pending = Promise.resolve();
+  return report => {
+    const snapshot = structuredClone(report);
+    const saved = pending.then(() => write(snapshot));
+    pending = saved.catch(() => {});
+    return saved;
+  };
+}

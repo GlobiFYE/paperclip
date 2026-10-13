@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCleanup, createAudioSave } from './cleanup.mjs';
+import { createCleanup, createAudioSave, createReportSaver } from './cleanup.mjs';
 
 test('failed hangup preserves evidence and retries only the unconfirmed provider operation', async () => {
   let locals = 0, ends = 0;
@@ -95,4 +95,31 @@ test('audio evidence waits for final recording data before upload and coalesces 
   finish(new Blob(['synthetic-audio']));
   await first; await evidence.save();
   assert.equal(uploads, 1);
+});
+
+test('final report waits for an older write and preserves its cleanup failures', async () => {
+  let release;
+  const writes = [], stored = [];
+  const save = createReportSaver(async report => {
+    writes.push(report);
+    if (writes.length === 1) await new Promise(resolve => { release = resolve; });
+    stored.push(report);
+  });
+  const earlier = {events: ['working'], cleanupFailures: []};
+  const oldSave = save(earlier);
+  await Promise.resolve();
+  earlier.events.push('mutated after enqueue');
+  const finalSave = save({events: ['ended'], cleanupFailures: ['session.end']});
+  await Promise.resolve();
+  assert.equal(writes.length, 1);
+  release();
+  await Promise.all([oldSave, finalSave]);
+  assert.deepEqual(stored, [{events: ['working'], cleanupFailures: []}, {events: ['ended'], cleanupFailures: ['session.end']}]);
+});
+
+test('a failed periodic write does not prevent storing final cleanup evidence', async () => {
+  let writes = 0;
+  const save = createReportSaver(async report => { if (++writes === 1) throw new Error('failed'); return report; });
+  await assert.rejects(save({events: []}));
+  assert.deepEqual(await save({events: ['ended']}), {events: ['ended']});
 });

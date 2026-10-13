@@ -1,5 +1,5 @@
 import { VoiceConversation } from '@spekoai/client';
-import { createCleanup, createAudioSave } from './cleanup.mjs';
+import { createCleanup, createAudioSave, createReportSaver } from './cleanup.mjs';
 const config = JSON.parse(document.querySelector('#config').textContent);
 const $ = (id) => document.getElementById(id);
 const events = [];
@@ -81,11 +81,12 @@ function renderTranscript(list) {
     const item = document.createElement('li'); item.textContent = `${m.source}: ${m.text}`; return item;
   }));
 }
+const saveQueuedReport = createReportSaver(report => api("/report", report));
 async function saveReport() {
   const report = { sessionId, sdkVersion: '0.0.13', syntheticMicrophone: true, events, transcripts, cleanupFailures,
     sdkOpen: conversation?.isOpen() ?? false, audioElements: document.querySelectorAll('audio').length,
     inputTrackStates: tracks.map((t) => ({ enabled: t.enabled, readyState: t.readyState })) };
-  await api('/report', report);
+  await saveQueuedReport(report);
   $('evidence').textContent = JSON.stringify({ ...report, transcripts: `${transcripts.length} reconciled segments` }, null, 2);
 }
 const cleanup = createCleanup({
