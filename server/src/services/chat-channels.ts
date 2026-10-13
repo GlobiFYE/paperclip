@@ -1,3 +1,6 @@
+import { createInboundWakeAuthority, inboundWakeScope } from "./chat-channels/inbound/wakeup-authorization.js";
+import { createInboundWakeups } from "./chat-channels/inbound/wakeups.js";
+import { createInboundWakeNotices } from "./chat-channels/inbound/wakeup-notices.js";
 import { createDiscordRuntimeReconciliation } from "./chat-channels/discord/runtime-reconciliation.js";
 import { createPhotonRuntimeCallbacks } from "./chat-channels/imessage-photon/runtime-callbacks.js";
 import { createChatReceiverOwnership } from "./chat-channels/runtime/ownership.js";
@@ -50,7 +53,6 @@ import { createSlackInventory } from "./chat-channels/slack/inventory.js";
 
 import { REQUIRED_GITHUB_EVENTS, UNAVOIDABLE_GITHUB_EVENTS } from "./chat-channels/github/credentials.js";
 
-
 import { createPhotonCredentialChecks } from "./chat-channels/imessage-photon/credentials.js";
 import { slackTestMessageService } from "./connectors/slack/test-message.js";
 import type { SlackSetupOptions } from "./connectors/slack/setup/registration.js";
@@ -62,7 +64,6 @@ import { createProviderEffects, providerEffectPayload, type ProviderEffectTarget
 import { createTelegramCallbackNoticeAuthority } from "./chat-channels/telegram/callback-notices.js";
 import { createOutboundAttachments } from "./chat-channels/outbound-attachments.js";
 export { hydrateOutboundAttachment } from "./chat-channels/outbound-attachments.js";
-
 
 import { createInboundAttachments } from "./chat-channels/inbound-attachments.js";
 import { createInboundReactions } from "./chat-channels/reactions.js";
@@ -87,21 +88,13 @@ import { createChatPublicationReplacement } from "./chat-channels/publication-re
 import { createChatIdentityLinks } from "./chat-channels/identity-links.js";
 import { createChatResourceReconciliation } from "./chat-channels/resource-reconciliation.js";
 
-
 import { slackResourceLabelIsFallback } from "./chat-channels/slack/resources.js";
 
 import {
   MAX_INBOUND_TEXT,
   stableExternalPrincipalId,
 } from "./chat-channels/message-lifecycle.js";
-import {
-  telegramLifecycleEventFromPayload,
-  isTelegramEditedMessageRaw,
-  isTelegramMigrationRaw,
-  telegramZeroMessageId,
-  telegramDeliveryHasZeroMessageId,
-} from "./chat-channels/telegram/messages.js";
-
+import { telegramLifecycleEventFromPayload, isTelegramEditedMessageRaw, isTelegramMigrationRaw, telegramZeroMessageId } from "./chat-channels/telegram/messages.js";
 
 import {
   microsoftTeamsLifecycleEventFromPayload,
@@ -114,21 +107,19 @@ import { nextChatActionAt } from "./chat-action-work.js";
 import type { ScheduledChatAction } from "./chat-work-notifications.js";
 import { notifyChatDeliveryWork, notifyChatPublicationWork, notifyChatActionWork } from "./chat-work-notifications.js";
 
-
 import { voiceSessionService } from "./voice/voice-session-service.js";
 import { createSpekoProvider } from "./voice/speko-provider.js";
 import { currentVoiceCredentialFingerprint, voiceSessionStore } from "./voice/voice-session-store.js";
 import { createChatRuntime, type ChatRuntime } from "./chat-runtime.js";
 import type { ChatEndpointRuntime } from "./voice/voice-runtime.js";
 
-import { fastResponseService, enqueueFastResponse, fastResponseSourceCurrent, fastResponseTurnQueued } from "./fast-responses.js";
+import { fastResponseService, fastResponseSourceCurrent } from "./fast-responses.js";
 import { fastResponseRequests } from "@paperclipai/db";
 import { chatCredentialMutationLease } from "./chat-credential-mutation-lease.js";
 import type { AgentAvatarRequest } from "./agent-avatars.js";
 import { slackChatRegistrationService } from "./chat-slack-registration.js";
 
-
-import { canActorReadIssuePrivacy, canPublishIssueToChatAudience } from "./authorization.js";
+import { canPublishIssueToChatAudience } from "./authorization.js";
 
 import { mirrorSlackBoardComment } from "./slack-board-messages.js";
 
@@ -142,7 +133,7 @@ import { githubReviewCheckService } from "./chat-github-checks.js";
 import { githubAutomaticAdmission } from "./chat-github-events.js";
 import { githubManualMessagePrompt } from "./chat-github-review-policy.js";
 import { chatGitHubReviews } from "@paperclipai/db";
-import type { GitHubReviewEventContext, GitHubIssueEventContext, GitHubAutomaticEventContext, GitHubReviewPolicy } from "@paperclipai/shared";
+import type { GitHubReviewEventContext, GitHubIssueEventContext, GitHubReviewPolicy } from "@paperclipai/shared";
 import { githubChatReviewService } from "./chat-github-reviews.js";
 import { githubResponseCommentService } from "./chat-github-response-comments.js";
 
@@ -167,7 +158,7 @@ import {
   or,
   sql,
 } from "drizzle-orm";
-import { alias } from "drizzle-orm/pg-core";
+
 import {
   recordChatWebhookReceipt,
   recordChatWebhookStage,
@@ -175,12 +166,9 @@ import {
 import {
   readChatControlChronology,
 } from "./chat-control-chronology.js";
-import { retryChatControlAdmission } from "./chat-control-admission-retry.js";
+
 import type { Db } from "@paperclipai/db";
-import {
-  createDurableChatWakeupRequest,
-  assertDurableChatWakeupReceipt,
-} from "./durable-chat-wakeup.js";
+
 import { agentWakeupRequests, agents, assets, chatActions, chatConversations, chatDeliveries, chatEndpointResources, chatEndpoints, chatExternalPrincipals, chatIdentityLinks, chatMessageLinks, chatPublications, chatTeamsFileTransfers, companyMemberships, heartbeatRuns, issueComments, issueAttachments, issueThreadInteractions, issues, toolConnections } from "@paperclipai/db";
 import type {
   ChatEventKind,
@@ -201,7 +189,6 @@ import {
 import {
   type TeamsFileTransferOptions,
 } from "./chat-teams-file-transfers.js";
-
 
 import {
   projectChatFileTransfer,
@@ -229,23 +216,18 @@ import {
   type DiscordGatewayCallbackEvent,
 } from "./chat-sdk-runtime.js";
 
-
 import {
   logActivity,
   publishActivity,
   type ActivityPublication,
 } from "./activity-log.js";
-import {
-  queueIssueAssignmentWakeup,
-  type IssueAssignmentWakeupDeps,
-} from "./issue-assignment-wakeup.js";
+import { type IssueAssignmentWakeupDeps } from "./issue-assignment-wakeup.js";
 import { issueService } from "./issues.js";
 import {
   NativeChatReviewPresentationContentionError,
 } from "./native-runtime/native-chat-review-presentation.js";
 import { isExternalChatWaitAuthorizationContention } from "./native-runtime/chat-attachment-reuse.js";
 import { projectSafeChatPublication } from "./chat-publication-projection.js";
-
 
 import {
   githubAttachmentLimitOmissions,
@@ -265,12 +247,7 @@ import {
   type ChatProviderLifecycleEffect,
 } from "./chat-provider-lifecycle.js";
 
-import {
-  inboundWakePublicationKey,
-  inboundWakePublicationText,
-  parseInboundWakePublicationKey,
-  resolveInboundWakeReceipt,
-} from "./chat-inbound-wakeup-publications.js";
+import { parseInboundWakePublicationKey } from "./chat-inbound-wakeup-publications.js";
 
 import {
   questionResponseDeliveryService,
@@ -331,7 +308,6 @@ const PUBLICATION_ENDPOINT_CONCURRENCY = 4;
 
 function leasedChatProvider(provider: string): boolean { return provider === "discord" || provider === "imessage-photon"; }
 
-
 const DISCORD_GATEWAY_LEASE_POLL_MS = 100;
 const PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS = 25_000;
 const GITHUB_WEBHOOK_RESPONSE_BUDGET_MS = 8_000;
@@ -379,7 +355,6 @@ function credentialFingerprint(refs: ToolCredentialSecretRef[]): string {
 }
 type ConversationRow = typeof chatConversations.$inferSelect;
 type DeliveryRow = typeof chatDeliveries.$inferSelect;
-
 
 export interface ChatChannelServiceOptions {
   /**
@@ -910,7 +885,9 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   const { lockTelegramCallbackNoticeAuthority } = createTelegramCallbackNoticeAuthority({ nonDirectDestinationAllowed, lockCurrentPrincipalAuthorization });
   const { stageProviderEffect, processProviderEffect, processPendingProviderEffects } = createProviderEffects(db, { endpointRecord, runtimeCallbackEndpoint, withCredentialMutationLease, runtimeFor, invalidateRuntime, lockCurrentPrincipalAuthorization, redactError, MAX_ERROR_TEXT, nonDirectDestinationAllowed, lockTelegramCallbackNoticeAuthority });
   const { publicationFiles } = createOutboundAttachments(db, { get storage() { return options.storage; } });
+  const { authorizeInboundWakeup, authorizeInboundWorkStart, authorizeFastResponse } = createInboundWakeAuthority(db, { runtimeCallbackEndpoint, lockCurrentPrincipalAuthorization });
   const { ingestAttachments, attachmentOmissionDetail } = createInboundAttachments(db, { authorizeInboundWakeup, lifecycleRuntimeFence, sanitizeFilename, issuesSvc, isExternalActionAuthorizationChange, redactError, get storage() { return options.storage; } });
+  const { stageInboundWakeup, acceptInboundWakeup, settleRejectedInboundWakeups, processInboundWakeup } = createInboundWakeups(db, { authorizeInboundWakeup, authorizeInboundWorkStart, attachmentOmissionDetail, isExternalActionAuthorizationChange, redactError, fetchImpl, get heartbeat() { return options.heartbeat; } });
   const { settleTelegramAttachmentOnlyFailure } = createTelegramAttachmentFailure(db, {
     attachmentOmissionDetail, runtimeContextForRecord, endpointRecord, stageProviderEffect, scheduleProviderEffect,
   });
@@ -945,7 +922,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   });
 
   const { handleGitHubWebhookEvent } = createGitHubWebhookEvents(db, { processMessage, recordLifecycleDelivery: (...args) => recordLifecycleDelivery(...args), githubAutomaticMessages, githubIssueMessages, fetchImpl, runtimeCallbackEndpoint });
-
 
   const { authenticateGitHubWebhook } = createGitHubWebhookAuthentication(db, { endpointRecord, runtimeContextForRecord, withCredentialMutationLease, resolveCredentials, reconcileGitHubWebhookRepository, stageGitHubWebhookIngress, processGitHubWebhookIngress, githubIngressAcceptedResponse, scheduleMessageProcessing, backgroundMessageTasks, redactError, get githubWebhookAuthenticationBarrier() { return options.githubWebhookAuthenticationBarrier; }, get deferWebhookProcessing() { return options.deferWebhookProcessing; } });
   const { inspectSlackWebhookScope, recordSlackWebhookCallback } = createSlackWebhookCallbacks(db, { resolveCredentials, runtimeCallbackEndpoint, getWebhookPublicBaseUrl, scheduleMessageProcessing, slackRegistration: { notifyVerified: (endpointId) => slackRegistration.notifyVerified(endpointId) } });
@@ -1265,241 +1241,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     };
   }
 
-  async function stageInboundWakeup(
-    tx: DbOrTransaction,
-    input: {
-      endpoint: EndpointRow;
-      deliveryId: string;
-      conversation: typeof chatConversations.$inferSelect;
-      commentId: string;
-      principalId: string;
-      actorUserId: string | null;
-    },
-  ) {
-    await tx
-      .insert(chatActions)
-      .values({
-        companyId: input.endpoint.companyId,
-        endpointId: input.endpoint.id,
-        deliveryId: input.deliveryId,
-        conversationId: input.conversation.id,
-        principalId: input.principalId,
-        kind: "inbound_wakeup",
-        providerActionId: `inbound_wakeup:${input.deliveryId}`,
-        status: "preparing",
-        payload: {
-          version: 1,
-          issueId: input.conversation.issueId,
-          agentId: input.endpoint.assignedAgentId,
-          commentId: input.commentId,
-          sessionGeneration: input.conversation.sessionGeneration,
-          requestedByActorType: input.actorUserId ? "user" : "system",
-          requestedByActorId: input.actorUserId ?? input.principalId,
-        },
-      })
-      .onConflictDoNothing();
-  }
-
-  async function authorizeInboundWakeup(
-    tx: DbOrTransaction,
-    action: typeof chatActions.$inferSelect,
-    notice?: { nonblocking: true; terminal: boolean },
-  ) {
-    const payload = action.payload;
-    const deny = () =>
-      forbidden(
-        "This accepted chat message is no longer authorized to start work",
-        { code: "chat_action_authorization_changed" },
-      );
-    if (
-      payload.version !== 1 ||
-      typeof payload.issueId !== "string" ||
-      typeof payload.agentId !== "string" ||
-      typeof payload.commentId !== "string" ||
-      !action.conversationId ||
-      !action.principalId ||
-      !action.deliveryId ||
-      !["user", "system"].includes(String(payload.requestedByActorType)) ||
-      typeof payload.requestedByActorId !== "string"
-    )
-      throw deny();
-    const issue = await tx
-      .select()
-      .from(issues)
-      .where(
-        and(
-          eq(issues.companyId, action.companyId),
-          eq(issues.id, payload.issueId),
-        ),
-      )
-      .for("update", notice ? { noWait: true } : undefined)
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    if (
-      !issue ||
-      issue.assigneeAgentId !== payload.agentId ||
-      (!notice?.terminal &&
-        ["backlog", "done", "cancelled"].includes(issue.status))
-    )
-      throw deny();
-    // The scheduler already owns the issue lock. Do not wait in the opposite
-    // order behind an ingress transaction which owns the endpoint first.
-    const endpoint = await tx
-      .select()
-      .from(chatEndpoints)
-      .where(
-        and(
-          eq(chatEndpoints.companyId, action.companyId),
-          eq(chatEndpoints.id, action.endpointId),
-        ),
-      )
-      .for("no key update", { noWait: true })
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    const delivery = await tx
-      .select()
-      .from(chatDeliveries)
-      .where(
-        and(
-          eq(chatDeliveries.companyId, action.companyId),
-          eq(chatDeliveries.id, action.deliveryId),
-        ),
-      )
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    const fence = delivery ? lifecycleRuntimeFence(delivery) : null;
-    if (
-      !endpoint ||
-      endpoint.assignedAgentId !== payload.agentId ||
-      !delivery ||
-      telegramDeliveryHasZeroMessageId(delivery, endpoint.provider) ||
-      delivery.endpointId !== endpoint.id ||
-      delivery.conversationId !== action.conversationId ||
-      delivery.principalId !== action.principalId ||
-      !fence ||
-      !(await runtimeCallbackEndpoint(tx as unknown as DbTransaction, endpoint.id, fence, [
-        "verifying",
-        "active",
-      ]))
-    )
-      throw deny();
-    const conversation = await tx
-      .select()
-      .from(chatConversations)
-      .where(
-        and(
-          eq(chatConversations.companyId, action.companyId),
-          eq(chatConversations.id, action.conversationId),
-        ),
-      )
-      .for("update")
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    if (
-      !conversation ||
-      conversation.endpointId !== endpoint.id ||
-      conversation.issueId !== issue.id ||
-      conversation.sessionGeneration !== payload.sessionGeneration ||
-      !["active", "waiting"].includes(conversation.state)
-    )
-      throw deny();
-    const resource = conversation.resourceId
-      ? await tx
-          .select()
-          .from(chatEndpointResources)
-          .where(
-            and(
-              eq(chatEndpointResources.endpointId, endpoint.id),
-              eq(chatEndpointResources.id, conversation.resourceId),
-            ),
-          )
-          .for("update")
-          .limit(1)
-          .then((rows) => rows[0] ?? null)
-      : null;
-    const authorization = await lockCurrentPrincipalAuthorization(
-      tx,
-      endpoint,
-      action.principalId,
-    );
-    const automatic = (delivery.normalizedEvent.githubAutomatic ?? delivery.normalizedEvent.githubIssue) as { context: GitHubAutomaticEventContext } | undefined;
-    if (endpoint.provider === "github" && automatic) {
-      const admission = await githubAutomaticAdmission(tx, endpoint, automatic.context);
-      if (!admission?.allowed) throw deny();
-      authorization.userId = admission.responsibleUserId ?? null;
-    }
-    if (!(await canActorReadIssuePrivacy(tx, authorization.userId
-      ? { type: "board", userId: authorization.userId }
-      : { type: "none" }, issue))) throw deny();
-    const expectedUserId =
-      payload.requestedByActorType === "user"
-        ? payload.requestedByActorId
-        : null;
-    if (
-      !(conversation.isDirectMessage
-        ? endpoint.allowDirectMessages
-        : nonDirectDestinationAllowed(endpoint, resource)) ||
-      !authorization.allowed ||
-      authorization.userId !== expectedUserId ||
-      (payload.requestedByActorType === "system" &&
-        payload.requestedByActorId !== action.principalId)
-    )
-      throw deny();
-    const source = await tx
-      .select({
-        authorUserId: issueComments.authorUserId,
-        deletedAt: issueComments.deletedAt,
-      })
-      .from(chatMessageLinks)
-      .innerJoin(
-        issueComments,
-        and(
-          eq(issueComments.id, chatMessageLinks.commentId),
-          eq(issueComments.companyId, action.companyId),
-          eq(issueComments.issueId, issue.id),
-        ),
-      )
-      .where(
-        and(
-          eq(chatMessageLinks.companyId, action.companyId),
-          eq(chatMessageLinks.endpointId, endpoint.id),
-          eq(chatMessageLinks.conversationId, conversation.id),
-          eq(chatMessageLinks.deliveryId, delivery.id),
-          eq(chatMessageLinks.commentId, payload.commentId),
-          eq(chatMessageLinks.direction, "inbound"),
-        ),
-      )
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    if (
-      !source ||
-      (source.deletedAt && !notice?.terminal) ||
-      source.authorUserId !== expectedUserId
-    )
-      throw deny();
-    return { issue, delivery, endpoint, conversation };
-  }
-
-  function inboundWakeScope(action: typeof chatActions.$inferSelect) {
-    return JSON.stringify([
-      action.companyId,
-      action.endpointId,
-      action.conversationId,
-      action.deliveryId,
-      action.principalId,
-      action.kind,
-      ...[
-        "version",
-        "issueId",
-        "agentId",
-        "commentId",
-        "sessionGeneration",
-        "requestedByActorType",
-        "requestedByActorId",
-      ].map((key) => action.payload[key]),
-    ]);
-  }
-
   const {
     retryCommentIds,
     assertFailedRetryReceipt,
@@ -1533,6 +1274,8 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     withCredentialMutationLease, teamsFileRetryAfter, isShuttingDown: () => shuttingDown,
     get teamsFileUploadRequest() { return options.teamsFileUploadRequest; },
   });
+  const { enqueueInboundWakeupPublications, authorizeInboundWakePublication } = createInboundWakeNotices(db, { authorizeInboundWakeup, enqueueFailedChatRetryPublications, authorizeRetainedChatSourcePublication, isExternalActionAuthorizationChange, isShuttingDown: () => shuttingDown });
+
   async function authorizeRetainedChatSourcePublication(
     tx: DbOrTransaction,
     publication: typeof chatPublications.$inferSelect,
@@ -1688,748 +1431,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       )
         return false;
       throw error;
-    }
-  }
-
-  async function currentInboundWakeNotice(
-    tx: DbOrTransaction,
-    action: typeof chatActions.$inferSelect,
-    terminal: boolean,
-  ) {
-    const identityLock = await tx.execute(
-      sql`select pg_try_advisory_xact_lock(hashtextextended(${`chat-identity:${action.companyId}:${action.principalId}`}, 0)) as locked`,
-    );
-    if (!identityLock[0]?.locked)
-      throw new NativeChatReviewPresentationContentionError();
-    const authorized = await authorizeInboundWakeup(tx, action, {
-      nonblocking: true,
-      terminal,
-    });
-    // The policy locks above serialize destination/identity changes. Re-read
-    // both receipts under NOWAIT locks: cancellation can update them without
-    // taking the policy locks, and must win if it committed first.
-    const [delivery] = await tx
-      .select()
-      .from(chatDeliveries)
-      .where(eq(chatDeliveries.id, action.deliveryId!))
-      .for("update", { noWait: true });
-    const [currentAction] = await tx
-      .select()
-      .from(chatActions)
-      .where(eq(chatActions.id, action.id))
-      .for("update", { noWait: true });
-    if (
-      !currentAction ||
-      inboundWakeScope(currentAction) !== inboundWakeScope(action) ||
-      !["processed", "failed"].includes(currentAction.status) ||
-      !delivery ||
-      delivery.state !== "processed" ||
-      delivery.companyId !== action.companyId ||
-      delivery.endpointId !== action.endpointId ||
-      delivery.conversationId !== action.conversationId ||
-      delivery.principalId !== action.principalId
-    )
-      return null;
-    const [comment] = await tx
-      .select()
-      .from(issueComments)
-      .where(
-        and(
-          eq(issueComments.id, String(action.payload.commentId)),
-          eq(issueComments.companyId, action.companyId),
-          eq(issueComments.issueId, authorized.issue.id),
-        ),
-      )
-      .for("share", { noWait: true });
-    if (
-      !comment ||
-      (comment.deletedAt && !terminal) ||
-      comment.authorUserId !==
-        (action.payload.requestedByActorType === "user"
-          ? action.payload.requestedByActorId
-          : null)
-    )
-      return null;
-    const [receipt] = await tx
-      .select()
-      .from(agentWakeupRequests)
-      .where(eq(agentWakeupRequests.id, action.id))
-      .for("update", { noWait: true });
-    const ownerId =
-      receipt?.payload?.coalescedIntoWakeupRequestId ?? receipt?.id;
-    if (typeof ownerId !== "string" || !isUuidLike(ownerId)) return null;
-    const owner =
-      ownerId === receipt?.id
-        ? receipt
-        : await tx
-            .select()
-            .from(agentWakeupRequests)
-            .where(eq(agentWakeupRequests.id, ownerId))
-            .for("update", { noWait: true })
-            .then((rows) => rows[0]);
-    const resolved = resolveInboundWakeReceipt(
-      currentAction,
-      receipt ?? null,
-      owner ?? null,
-      terminal && comment.deletedAt !== null,
-    );
-    return resolved ? { ...resolved, ...authorized } : null;
-  }
-
-  let inboundWakeNoticeCursor: { createdAt: Date; id: string } | null = null;
-
-  async function inboundQueueNoticeStillVisible(
-    tx: DbOrTransaction,
-    publication: typeof chatPublications.$inferSelect,
-  ) {
-    if (publication.state !== "published" || !publication.providerMessageId)
-      return false;
-    const [link] = await tx
-      .select({ id: chatMessageLinks.id })
-      .from(chatMessageLinks)
-      .where(
-        and(
-          eq(chatMessageLinks.companyId, publication.companyId),
-          eq(chatMessageLinks.endpointId, publication.endpointId),
-          eq(chatMessageLinks.conversationId, publication.conversationId),
-          eq(chatMessageLinks.publicationId, publication.id),
-          eq(chatMessageLinks.providerMessageId, publication.providerMessageId),
-          eq(chatMessageLinks.direction, "outbound"),
-          isNull(chatMessageLinks.commentId),
-        ),
-      )
-      .for("update", { noWait: true });
-    return Boolean(link);
-  }
-
-  async function enqueueInboundWakeupPublications(limit = 50): Promise<number> {
-    if (shuttingDown) return 0;
-    const retryInserted = await enqueueFailedChatRetryPublications(limit);
-    const owner = alias(agentWakeupRequests, "chat_notice_owner");
-    const cursor = inboundWakeNoticeCursor;
-    const sourceRemoved = sql`exists (select 1 from issue_comments removed_comment
-      where removed_comment.company_id = ${chatActions.companyId}
-        and removed_comment.issue_id::text = ${chatActions.payload}->>'issueId'
-        and removed_comment.id::text = ${chatActions.payload}->>'commentId'
-        and removed_comment.deleted_at is not null)`;
-    const hasVisibleQueue = sql`exists (select 1 from chat_publications queued_notice
-      join chat_message_links visible_queue on visible_queue.publication_id = queued_notice.id
-        and visible_queue.company_id = queued_notice.company_id
-        and visible_queue.endpoint_id = queued_notice.endpoint_id
-        and visible_queue.conversation_id = queued_notice.conversation_id
-        and visible_queue.provider_message_id = queued_notice.provider_message_id
-        and visible_queue.direction = 'outbound' and visible_queue.comment_id is null
-      where queued_notice.company_id = ${chatActions.companyId}
-        and queued_notice.comment_id::text = ${chatActions.payload}->>'commentId'
-        and queued_notice.state = 'published'
-        and queued_notice.idempotency_key = 'wake:' || ${owner.id}::text || ':queued:' ||
-          ${chatActions.endpointId}::text || ':' || ${chatActions.conversationId}::text)`;
-    // A bounded keyset sweep, not an in-memory work queue. Advancing even past
-    // revoked candidates prevents an inaccessible old message starving others.
-    const candidates = await db
-      .select({ action: chatActions })
-      .from(chatActions)
-      .innerJoin(
-        agentWakeupRequests,
-        eq(agentWakeupRequests.id, chatActions.id),
-      )
-      .innerJoin(
-        owner,
-        sql`${owner.id}::text = coalesce(${agentWakeupRequests.payload}->>'coalescedIntoWakeupRequestId', ${agentWakeupRequests.id}::text)`,
-      )
-      .where(
-        and(
-          eq(chatActions.kind, "inbound_wakeup"),
-          inArray(chatActions.status, ["processed", "failed"]),
-          eq(owner.companyId, chatActions.companyId),
-          or(
-            and(
-              isNull(owner.runId),
-              inArray(owner.status, [
-                "deferred_issue_execution",
-                "cancelled",
-                "failed",
-                "skipped",
-              ]),
-            ),
-            and(sourceRemoved, hasVisibleQueue),
-          ),
-          sql`(( ${owner.status} = 'deferred_issue_execution'
-          and ${agentWakeupRequests.status} not in ('cancelled','failed','skipped') and not (${sourceRemoved}))
-          or ${hasVisibleQueue})`,
-          cursor
-            ? sql`(${chatActions.createdAt}, ${chatActions.id}) > (${cursor.createdAt.toISOString()}::timestamptz, ${cursor.id}::uuid)`
-            : undefined,
-          sql`not exists (select 1 from chat_publications notice
-          where notice.company_id = ${chatActions.companyId}
-            and notice.idempotency_key = 'wake:' || ${owner.id}::text || ':' ||
-              (case when ${sourceRemoved} then 'removed' when ${owner.status} = 'deferred_issue_execution'
-                and ${agentWakeupRequests.status} not in ('cancelled','failed','skipped')
-                then 'queued' else 'not_started' end) || ':' ||
-              ${chatActions.endpointId}::text || ':' || ${chatActions.conversationId}::text)`,
-        ),
-      )
-      .orderBy(asc(chatActions.createdAt), asc(chatActions.id))
-      .limit(Math.max(1, Math.min(limit, 200)));
-    const last = candidates.at(-1)?.action;
-    inboundWakeNoticeCursor =
-      candidates.length >= Math.max(1, Math.min(limit, 200)) && last
-        ? { createdAt: last.createdAt, id: last.id }
-        : null;
-    let inserted = retryInserted;
-    for (const { action } of candidates) {
-      try {
-        inserted += await db.transaction(async (tx) => {
-          const [receipt] = await tx
-            .select()
-            .from(agentWakeupRequests)
-            .where(eq(agentWakeupRequests.id, action.id));
-          const ownerId =
-            receipt?.payload?.coalescedIntoWakeupRequestId ?? receipt?.id;
-          if (
-            typeof ownerId !== "string" ||
-            !isUuidLike(ownerId) ||
-            !action.conversationId
-          )
-            return 0;
-          const queuedKey = inboundWakePublicationKey(
-            ownerId,
-            "queued",
-            action.endpointId,
-            action.conversationId,
-          );
-          const [prior] = await tx
-            .select()
-            .from(chatPublications)
-            .where(
-              and(
-                eq(chatPublications.companyId, action.companyId),
-                eq(chatPublications.idempotencyKey, queuedKey),
-              ),
-            );
-          // Only the exact original notice may be retired; never post a failure
-          // notice for input which never received a provider queue acknowledgement.
-          if (
-            prior &&
-            (prior.state !== "published" ||
-              prior.commentId !== action.payload.commentId)
-          )
-            return 0;
-          const context = await currentInboundWakeNotice(
-            tx,
-            action,
-            Boolean(prior),
-          );
-          if (
-            !context ||
-            context.ownerId !== ownerId ||
-            context.state === "promoted" ||
-            (context.state !== "queued" && !prior) ||
-            (context.state === "queued" && prior)
-          )
-            return 0;
-          if (prior && !(await inboundQueueNoticeStillVisible(tx, prior)))
-            return 0;
-          await notifyChatPublicationWork(tx);
-          const rows = await tx
-            .insert(chatPublications)
-            .values({
-              companyId: action.companyId,
-              endpointId: action.endpointId,
-              conversationId: action.conversationId,
-              issueId: context.issue.id,
-              commentId: String(action.payload.commentId),
-              idempotencyKey: inboundWakePublicationKey(
-                ownerId,
-                context.state,
-                action.endpointId,
-                action.conversationId,
-              ),
-              payload: projectSafeChatPublication({
-                classification: "external",
-                source: "safe_milestone",
-                text: inboundWakePublicationText(context.state),
-                progressState: context.state === "queued" ? "queued" : "failed",
-              }),
-            })
-            .onConflictDoNothing()
-            .returning({ id: chatPublications.id });
-          return rows.length;
-        });
-      } catch (error) {
-        if (
-          !isExternalActionAuthorizationChange(error) &&
-          !isExternalChatWaitAuthorizationContention(error) &&
-          !(error instanceof NativeChatReviewPresentationContentionError)
-        )
-          throw error;
-      }
-    }
-    return inserted;
-  }
-
-  async function authorizeInboundWakePublication(
-    tx: DbOrTransaction,
-    publication: typeof chatPublications.$inferSelect,
-  ) {
-    const key = parseInboundWakePublicationKey(publication.idempotencyKey);
-    if (key) {
-      const [retry] = await tx
-        .select({ kind: chatActions.kind })
-        .from(chatActions)
-        .where(
-          and(
-            eq(chatActions.id, key.wakeId),
-            eq(chatActions.companyId, publication.companyId),
-          ),
-        );
-      if (retry?.kind === "failed_run_retry")
-        return authorizeRetainedChatSourcePublication(tx, publication);
-    }
-    if (
-      !key ||
-      key.endpointId !== publication.endpointId ||
-      key.conversationId !== publication.conversationId ||
-      !publication.commentId
-    )
-      return false;
-    const actions = await tx
-      .select()
-      .from(chatActions)
-      .where(
-        and(
-          eq(chatActions.companyId, publication.companyId),
-          eq(chatActions.endpointId, publication.endpointId),
-          eq(chatActions.conversationId, publication.conversationId),
-          eq(chatActions.kind, "inbound_wakeup"),
-          sql`${chatActions.payload}->>'issueId' = ${publication.issueId}`,
-          sql`${chatActions.payload}->>'commentId' = ${publication.commentId}`,
-        ),
-      )
-      .limit(2);
-    if (actions.length !== 1) return false;
-    if (key.state !== "queued") {
-      const [prior] = await tx
-        .select()
-        .from(chatPublications)
-        .where(
-          and(
-            eq(chatPublications.companyId, publication.companyId),
-            eq(chatPublications.commentId, publication.commentId),
-            eq(chatPublications.state, "published"),
-            eq(
-              chatPublications.idempotencyKey,
-              inboundWakePublicationKey(
-                key.wakeId,
-                "queued",
-                key.endpointId,
-                key.conversationId,
-              ),
-            ),
-          ),
-        );
-      if (!prior || !(await inboundQueueNoticeStillVisible(tx, prior)))
-        return false;
-    }
-    try {
-      const context = await currentInboundWakeNotice(
-        tx,
-        actions[0]!,
-        key.state !== "queued",
-      );
-      return context?.ownerId === key.wakeId && context.state === key.state;
-    } catch (error) {
-      if (isExternalActionAuthorizationChange(error)) return false;
-      if (isExternalChatWaitAuthorizationContention(error))
-        throw new NativeChatReviewPresentationContentionError();
-      throw error;
-    }
-  }
-
-  async function acceptInboundWakeup(
-    deliveryId: string,
-    attachmentResult: Awaited<ReturnType<typeof ingestAttachments>>,
-  ) {
-    // Retry the rolled-back authorization/admission transaction only. A
-    // concurrent ingress may briefly own the endpoint lock; provider I/O
-    // and task creation have already completed and must not be repeated.
-    await retryChatControlAdmission(() =>
-      db.transaction(async (tx) => {
-        const action = await tx
-          .select()
-          .from(chatActions)
-          .where(
-            and(
-              eq(chatActions.deliveryId, deliveryId),
-              eq(chatActions.kind, "inbound_wakeup"),
-            ),
-          )
-          .limit(1)
-          .then((rows) => rows[0] ?? null);
-        if (!action) throw new Error("chat_inbound_wakeup_intent_missing");
-        const { delivery } = await authorizeInboundWakeup(tx, action);
-        if (delivery.state === "processed") return;
-        if (delivery.state !== "processing")
-          throw new Error("chat_inbound_wakeup_delivery_claim_lost");
-        if (action.status !== "preparing") {
-          const existingReceipt = await tx
-            .select()
-            .from(agentWakeupRequests)
-            .where(eq(agentWakeupRequests.id, action.id))
-            .limit(1)
-            .then((rows) => rows[0] ?? null);
-          if (!existingReceipt)
-            throw new Error("chat_inbound_wakeup_action_claim_lost");
-          assertDurableChatWakeupReceipt(
-            createDurableChatWakeupRequest({
-              id: action.id,
-              companyId: action.companyId,
-              agentId: String(action.payload.agentId),
-              issueId: String(action.payload.issueId),
-              commentId: String(action.payload.commentId),
-              requestedByActorType: action.payload.requestedByActorType as
-                "user" | "system",
-              requestedByActorId: String(action.payload.requestedByActorId),
-              requestedAt: action.createdAt,
-              authorize: async () => {},
-            }),
-            existingReceipt,
-          );
-        }
-        await notifyChatDeliveryWork(tx);
-        const acceptedAt = new Date();
-        const accepted = await tx
-          .update(chatDeliveries)
-          .set({
-            state: "processed",
-            processedAt: acceptedAt,
-            redactedError: attachmentOmissionDetail(attachmentResult),
-            nextAttemptAt: null,
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(chatDeliveries.id, deliveryId),
-              eq(chatDeliveries.state, "processing"),
-              eq(chatDeliveries.updatedAt, delivery.updatedAt),
-            ),
-          )
-          .returning({ id: chatDeliveries.id });
-        if (accepted.length !== 1)
-          throw new Error("chat_inbound_wakeup_delivery_claim_lost");
-        // An operator can repair a failed delivery ledger after its wake was
-        // already committed. Keep the immutable receipt and never admit twice.
-        if (action.status !== "preparing") return;
-        await notifyChatDeliveryWork(tx);
-        const issued = await tx
-          .update(chatActions)
-          .set({
-            status: "issued",
-            payload: {
-              ...action.payload,
-              attachmentOmissionReasons: attachmentResult.omissionReasons,
-            },
-            updatedAt: new Date(),
-          })
-          .where(
-            and(
-              eq(chatActions.id, action.id),
-              eq(chatActions.status, "preparing"),
-            ),
-          )
-          .returning({ id: chatActions.id });
-        if (issued.length !== 1)
-          throw new Error("chat_inbound_wakeup_action_claim_lost");
-        const source = delivery.normalizedEvent as { githubAutomatic?: unknown; principal?: { isBot?: boolean }; message?: { text?: string } };
-        if (!source.githubAutomatic && !source.principal?.isBot && !/^\s*\//.test(source.message?.text ?? "")) {
-          await enqueueFastResponse(tx as unknown as Db, { companyId: action.companyId, issueId: String(action.payload.issueId), agentId: String(action.payload.agentId),
-            sourceCommentId: String(action.payload.commentId), sourceKey: `comment:${action.payload.commentId}`, acceptedAt,
-            responsibleUserId: action.payload.requestedByActorType === "user" ? String(action.payload.requestedByActorId) : null,
-            sponsored: action.payload.requestedByActorType !== "user", endpointId: action.endpointId, conversationId: action.conversationId, deliveryId: action.deliveryId });
-        }
-      }),
-    );
-  }
-
-  async function settleRejectedInboundWakeups(onlyDeliveryId?: string) {
-    await db
-      .update(chatActions)
-      .set({
-        status: "failed",
-        result: { code: "inbound_wakeup_delivery_rejected" },
-        updatedAt: new Date(),
-      })
-      .where(
-        and(
-          eq(chatActions.kind, "inbound_wakeup"),
-          eq(chatActions.status, "preparing"),
-          onlyDeliveryId
-            ? eq(chatActions.deliveryId, onlyDeliveryId)
-            : undefined,
-          sql`exists (select 1 from ${chatDeliveries}
-            where ${chatDeliveries.id} = ${chatActions.deliveryId}
-              and ${chatDeliveries.companyId} = ${chatActions.companyId}
-              and ${chatDeliveries.endpointId} = ${chatActions.endpointId}
-              and ${chatDeliveries.state} in ('filtered', 'failed'))`,
-        ),
-      );
-  }
-
-  async function authorizeInboundWorkStart(
-    tx: DbOrTransaction,
-    action: typeof chatActions.$inferSelect,
-  ) {
-    const current = await authorizeInboundWakeup(tx, action);
-    if (
-      current.endpoint.provider === "slack" &&
-      current.endpoint.requireAtMention &&
-      !current.conversation.isDirectMessage &&
-      current.delivery.normalizedEvent.trigger !== "mention" &&
-      (current.delivery.normalizedEvent.message as { mentionedBot?: boolean } | undefined)?.mentionedBot !== true
-    ) {
-      throw forbidden("Message did not @mention the bot", {
-        code: "chat_action_authorization_changed",
-      });
-    }
-    return current;
-  }
-
-  async function authorizeFastResponse(tx: Db, request: typeof fastResponseRequests.$inferSelect) {
-    const [action] = await tx.select().from(chatActions).where(and(eq(chatActions.companyId, request.companyId), eq(chatActions.deliveryId, request.deliveryId!), eq(chatActions.kind, "inbound_wakeup")));
-    if (!action || action.endpointId !== request.endpointId || action.conversationId !== request.conversationId || action.payload.commentId !== request.sourceCommentId || action.payload.agentId !== request.agentId || action.payload.issueId !== request.issueId) throw forbidden();
-    const current = await authorizeInboundWorkStart(tx, action);
-    const normalized = current.delivery.normalizedEvent as { message?: { text?: string; attachments?: Array<{ name?: string; mimeType?: string }> }; principal?: { isBot?: boolean } };
-    if (normalized.principal?.isBot || current.delivery.normalizedEvent.githubAutomatic || current.delivery.state !== "processed") throw forbidden();
-    if ((action.payload.requestedByActorType === "user" ? action.payload.requestedByActorId : null) !== request.responsibleUserId) throw forbidden();
-    const [agent] = await tx.select({ name: agents.name }).from(agents).where(and(eq(agents.id, request.agentId!), eq(agents.companyId, request.companyId)));
-    const [receipt] = await tx.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, action.id));
-    if (receipt && ["skipped", "cancelled", "failed"].includes(receipt.status)) throw forbidden();
-    return { agentName: agent?.name ?? "Assistant", message: normalized.message?.text ?? "Shared an attachment.", queued: !receipt?.runId || await fastResponseTurnQueued(tx, request),
-      attachments: normalized.message?.attachments?.map(a => `${a.name ?? "Attachment"} (${a.mimeType ?? "unknown type"})`) };
-  }
-
-  async function processInboundWakeup(deliveryId: string): Promise<boolean> {
-    const now = new Date();
-    const candidate = await db
-      .select()
-      .from(chatActions)
-      .where(
-        and(
-          eq(chatActions.deliveryId, deliveryId),
-          eq(chatActions.kind, "inbound_wakeup"),
-        ),
-      )
-      .limit(1)
-      .then((rows) => rows[0] ?? null);
-    if (
-      !candidate ||
-      !["preparing", "issued", "processing"].includes(candidate.status)
-    )
-      return true;
-    if (
-      candidate.status === "preparing" ||
-      (candidate.status === "processing" &&
-        candidate.updatedAt.getTime() >
-          now.getTime() - DELIVERY_PROCESSING_STALE_MS) ||
-      (typeof candidate.result?.retryAt === "string" &&
-        Date.parse(candidate.result.retryAt) > now.getTime())
-    )
-      return false;
-    const claimed = await db.transaction(async (tx) => {
-      await notifyChatDeliveryWork(tx);
-      return tx
-        .update(chatActions)
-        .set({ status: "processing", updatedAt: now })
-        .where(
-          and(
-            eq(chatActions.id, candidate.id),
-            eq(chatActions.status, candidate.status),
-            eq(chatActions.updatedAt, candidate.updatedAt),
-          ),
-        )
-        .returning()
-        .then((rows) => rows[0] ?? null);
-    });
-    if (!claimed) return false;
-    const attemptCount = Number(candidate.result?.attemptCount ?? 0) + 1;
-    const receiptDeclined = (row: typeof agentWakeupRequests.$inferSelect) =>
-      ["skipped", "cancelled", "failed"].includes(row.status);
-    const settle = async (status: string, result: Record<string, unknown>) => {
-      const changed = await db.transaction(async (tx) => {
-        await notifyChatDeliveryWork(tx);
-        const changed = await tx
-          .update(chatActions)
-          .set({ status, result, updatedAt: new Date() })
-          .where(
-            and(
-              eq(chatActions.id, claimed.id),
-              eq(chatActions.status, "processing"),
-              eq(chatActions.updatedAt, now),
-            ),
-          )
-          .returning({ id: chatActions.id });
-        if (changed.length && status === "failed") {
-          await tx
-            .update(chatDeliveries)
-            .set({
-              redactedError:
-                result.code === "inbound_wakeup_authorization_changed"
-                  ? "Input saved. Work was not scheduled because current chat access no longer permits it."
-                  : "Input saved. Its work request was skipped, cancelled, or failed; no automatic replay was performed.",
-              updatedAt: new Date(),
-            })
-            .where(
-              and(
-                eq(chatDeliveries.id, deliveryId),
-                eq(chatDeliveries.companyId, claimed.companyId),
-                eq(chatDeliveries.state, "processed"),
-              ),
-            );
-        }
-        return changed.length > 0;
-      });
-      // A durable scheduler receipt must accept the work before GitHub shows
-      // it as working. This also covers acceptance after a maintenance retry.
-      if (changed && status === "processed") {
-        const [endpoint] = await db.select({ provider: chatEndpoints.provider })
-          .from(chatEndpoints).where(and(eq(chatEndpoints.id, claimed.endpointId),
-            eq(chatEndpoints.companyId, claimed.companyId)));
-        if (endpoint?.provider === "github")
-          await githubResponseCommentService(db, fetchImpl).tryAcknowledge(deliveryId);
-      }
-    };
-    let request: ReturnType<typeof createDurableChatWakeupRequest> | null =
-      null;
-    const receipt = async () => {
-      const row = await db
-        .select()
-        .from(agentWakeupRequests)
-        .where(eq(agentWakeupRequests.id, claimed.id))
-        .limit(1)
-        .then((rows) => rows[0] ?? null);
-      if (row && request) assertDurableChatWakeupReceipt(request, row);
-      return row;
-    };
-    try {
-      if (
-        claimed.payload.version !== 1 ||
-        typeof claimed.payload.agentId !== "string" ||
-        typeof claimed.payload.issueId !== "string" ||
-        typeof claimed.payload.commentId !== "string" ||
-        typeof claimed.payload.requestedByActorId !== "string" ||
-        !["user", "system"].includes(
-          String(claimed.payload.requestedByActorType),
-        )
-      ) {
-        throw forbidden("Invalid durable inbound chat source", {
-          code: "chat_action_authorization_changed",
-        });
-      }
-      request = createDurableChatWakeupRequest({
-        id: claimed.id,
-        companyId: claimed.companyId,
-        agentId: claimed.payload.agentId,
-        issueId: claimed.payload.issueId,
-        commentId: claimed.payload.commentId,
-        requestedByActorType: claimed.payload.requestedByActorType as
-          | "user"
-          | "system",
-        requestedByActorId: String(claimed.payload.requestedByActorId),
-        requestedAt: claimed.createdAt,
-        authorize: async (tx) => {
-          const current = await authorizeInboundWorkStart(tx, claimed);
-          if (current.delivery.state !== "processed")
-            throw new Error("chat_inbound_wakeup_acceptance_not_committed");
-        },
-      });
-      const priorReceipt = await receipt();
-      if (priorReceipt) {
-        await settle(receiptDeclined(priorReceipt) ? "failed" : "processed", {
-          code: receiptDeclined(priorReceipt)
-            ? `inbound_wakeup_${priorReceipt.status}`
-            : "inbound_wakeup_already_durable",
-          wakeupRequestId: priorReceipt.id,
-          runId: priorReceipt.runId,
-          receiptStatus: priorReceipt.status,
-          attemptCount,
-        });
-        return true;
-      }
-      const context = await db.transaction((tx) =>
-        authorizeInboundWorkStart(tx, claimed),
-      );
-      if (context.delivery.state !== "processed")
-        throw new Error("chat_inbound_wakeup_acceptance_not_committed");
-      await queueIssueAssignmentWakeup({
-        heartbeat: options.heartbeat,
-        issue: context.issue,
-        reason: "External chat message received",
-        mutation: "chat_message_received",
-        contextSource: `chat:${context.endpoint.provider}`,
-        requestedByActorType: request.requestedByActorType,
-        requestedByActorId: request.requestedByActorId,
-        taskKey: context.issue.identifier,
-        wakeCommentId: request.commentId,
-        attachmentOmissionReasons: claimed.payload.attachmentOmissionReasons as
-          | Record<string, number>
-          | undefined,
-        durableChatRequest: request,
-        rethrowOnError: true,
-      });
-      const durable = await receipt();
-      if (!durable) throw new Error("chat_inbound_wakeup_receipt_missing");
-      await settle(receiptDeclined(durable) ? "failed" : "processed", {
-        code: receiptDeclined(durable)
-          ? `inbound_wakeup_${durable.status}`
-          : "inbound_wakeup_durable",
-        wakeupRequestId: durable.id,
-        runId: durable.runId,
-        receiptStatus: durable.status,
-        ...(durable.status === "skipped" ? { reason: durable.reason } : {}),
-        attemptCount,
-      });
-      return true;
-    } catch (error) {
-      const conflictingReceipt =
-        error instanceof Error &&
-        error.message === "chat_inbound_wakeup_receipt_conflict";
-      const durable = request && !conflictingReceipt ? await receipt() : null;
-      if (durable) {
-        await settle(receiptDeclined(durable) ? "failed" : "processed", {
-          code: receiptDeclined(durable)
-            ? `inbound_wakeup_${durable.status}`
-            : "inbound_wakeup_already_durable",
-          wakeupRequestId: durable.id,
-          runId: durable.runId,
-          receiptStatus: durable.status,
-          attemptCount,
-        });
-        return true;
-      }
-      const denied =
-        conflictingReceipt || isExternalActionAuthorizationChange(error);
-      await settle(denied ? "failed" : "issued", {
-        code: conflictingReceipt
-          ? "inbound_wakeup_receipt_conflict"
-          : denied
-            ? "inbound_wakeup_authorization_changed"
-            : "inbound_wakeup_retry",
-        attemptCount,
-        ...(!denied
-          ? {
-              retryAt: new Date(
-                Date.now() +
-                  Math.min(30_000, 1000 * 2 ** Math.min(attemptCount, 5)),
-              ).toISOString(),
-            }
-          : {}),
-      });
-      if (!denied)
-        logger.warn(
-          { deliveryId, error: redactError(error) },
-          "accepted inbound chat wakeup will retry",
-        );
-      return denied;
     }
   }
 
@@ -3887,7 +2888,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     return conversationDeliveryQueue.drainConversationDeliveries(...args);
   }
 
-
   async function handleSdkMessage(
     event: ChatSdkMessageCallbackEvent,
     runtimeContext?: RuntimeContext,
@@ -3938,7 +2938,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   async function handleMessageDeleted(...args: Parameters<ReturnType<typeof createChatMessageLifecycle>["handleMessageDeleted"]>) {
     return messageLifecycle.handleMessageDeleted(...args);
   }
-
 
   async function handleSlashCommand(
     event: ChatSdkCallbackEvent<SlashCommandEvent>,
@@ -4447,7 +3446,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
    * authenticated attachment downloads through the endpoint runtime; unsafe
    * or no-longer-available files are omitted without losing the text turn.
    */
-
 
   async function processPendingChatMaintenance(limit = 25) {
     return Promise.allSettled([
@@ -5970,7 +4968,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   async function processPendingPublications(...args: Parameters<ReturnType<typeof createChatPublicationQueue>["processPendingPublications"]>) {
     return publicationQueue.processPendingPublications(...args);
   }
-
 
   let githubMaintenancePending = false;
   function scheduleGitHubMaintenance() {
