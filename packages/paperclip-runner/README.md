@@ -280,6 +280,10 @@ PAPERCLIP_OPENCODE_SERVER_AUTH='Bearer <token>'
 PAPERCLIP_OPENCODE_SERVER_VERSION=2.0.27
 ```
 
+Remote daemon URLs must use HTTPS because the configured authentication header
+is sent to the provider. Cleartext HTTP is accepted only for numeric loopback
+addresses (`127.0.0.0/8` and `::1`) used for local daemons.
+
 `PAPERCLIP_OPENCODE_RUNTIME_DIR` remains required. The driver probes `/api/info`,
 requires a V2 server, and waits for the `/api/event` subscription before it
 sends a prompt. It injects Paperclip instructions into the session and removes
