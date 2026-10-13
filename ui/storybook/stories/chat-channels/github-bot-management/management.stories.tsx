@@ -52,7 +52,7 @@ const meta = {
   argTypes: {
     state: {
       control: "select",
-      options: ["populated", "empty", "loading", "error", "long", "many", "setup", "skills", "guests", "mentions"],
+      options: ["populated", "empty", "loading", "error", "long", "many", "setup", "skills", "guests", "mentions", "reviewed"],
     },
   },
   render: ({ state }) => (
@@ -317,6 +317,11 @@ export const AccessMobile: Story = {
 export const ContributorAccess: Story = {
   name: "02 States / Selected members and external contributors",
   args: { state: "guests" },
+  parameters: route("access"),
+};
+export const ReviewedAuthors: Story = {
+  name: "02 States / Reviewed authors",
+  args: { state: "reviewed" },
   parameters: route("access"),
 };
 export const MentionsOnly: Story = {

@@ -913,8 +913,11 @@ export function GitHubAccessEditor({
         </div>
         <p className="text-xs text-muted-foreground">
           Pull requests from these GitHub users get automatic reviews under the
-          responsible member. They need no company membership and cannot mention
-          or control the bot. Reviews use only this bot’s GitHub connection.
+          responsible member, without guest quarantine or a sandbox. They need
+          no company membership and cannot mention or control the bot. Add only
+          people you trust, because their pull request content drives the run.
+          The run never receives a person’s or the host’s GitHub credentials,
+          and tools stay limited to this bot’s connection.
         </p>
         <div className="divide-y divide-border">
           {reviewedAuthors.map((author) => (
