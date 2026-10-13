@@ -54,11 +54,17 @@ export function createAudioSave({stop, upload}) {
 }
 
 /** Older writes must finish before final cleanup evidence can be stored. */
-export function createReportSaver(write) {
+export function createReportSaver(write, { timeoutMs } = {}) {
   let pending = Promise.resolve();
   return report => {
     const snapshot = structuredClone(report);
-    const saved = pending.then(() => write(snapshot));
+    const saved = pending.then(async () => {
+      if (timeoutMs === undefined) return write(snapshot);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(new Error('Report save timed out')), timeoutMs);
+      try { return await write(snapshot, controller.signal); }
+      finally { clearTimeout(timer); }
+    });
     pending = saved.catch(() => {});
     return saved;
   };

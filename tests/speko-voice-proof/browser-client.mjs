@@ -11,8 +11,8 @@ let conversation, context, destination, muted = false, running = false, ended = 
 let speaking = false, notificationSent = false, sessionId, interval, recorder, audioEvidence;
 const event = (kind, fields = {}) => { events.push({ kind, elapsedMs: Math.round(performance.now() - began), ...fields }); };
 const status = (text) => { $('status').textContent = text; };
-async function api(path, body = {}) {
-  const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-proof-csrf': config.csrf }, body: JSON.stringify(body) });
+async function api(path, body = {}, signal) {
+  const response = await fetch(path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-proof-csrf': config.csrf }, body: JSON.stringify(body), signal });
   const data = await response.json();
   if (!response.ok) throw new Error(data.error ?? `Request failed (${response.status})`);
   return data;
@@ -81,7 +81,7 @@ function renderTranscript(list) {
     const item = document.createElement('li'); item.textContent = `${m.source}: ${m.text}`; return item;
   }));
 }
-const saveQueuedReport = createReportSaver(report => api("/report", report));
+const saveQueuedReport = createReportSaver((report, signal) => api("/report", report, signal), {timeoutMs: 10_000});
 async function saveReport() {
   const report = { sessionId, sdkVersion: '0.0.13', syntheticMicrophone: true, events, transcripts, cleanupFailures,
     sdkOpen: conversation?.isOpen() ?? false, audioElements: document.querySelectorAll('audio').length,
@@ -126,7 +126,13 @@ $('connect').onclick = async () => {
     });
     $('scenario').disabled = $('mute').disabled = $('end').disabled = false;
     await conversation.startAudioPlayback();
-    interval = setInterval(async () => { try { await saveReport(); } catch { /* latest evidence remains visible */ } }, 3000);
+    let periodicReportPending = false;
+    interval = setInterval(async () => {
+      if (periodicReportPending) return;
+      periodicReportPending = true;
+      try { await saveReport(); } catch { /* latest evidence remains visible */ }
+      finally { periodicReportPending = false; }
+    }, 3000);
     status('Connected. Wait for the greeting, then run the speech scenario.');
   } catch (error) { status(error.message); event('connect_failed'); await end(); }
 };

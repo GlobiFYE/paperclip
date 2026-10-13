@@ -123,3 +123,27 @@ test('a failed periodic write does not prevent storing final cleanup evidence', 
   await assert.rejects(save({events: []}));
   assert.deepEqual(await save({events: ['ended']}), {events: ['ended']});
 });
+
+
+test('stalled periodic transport is aborted and final evidence advances behind its late server write', async () => {
+  let release, calls = 0;
+  const stored = [];
+  const serverSave = createReportSaver(async report => {
+    if (!stored.length && report.phase === 'periodic') await new Promise(resolve => { release = resolve; });
+    stored.push(report);
+    return report;
+  });
+  const clientSave = createReportSaver((report, signal) => {
+    const response = serverSave(report);
+    if (++calls !== 1) { release(); return response; }
+    return new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(signal.reason), {once: true});
+      response.then(resolve, reject);
+    });
+  }, {timeoutMs: 20});
+  const first = clientSave({phase: 'periodic'});
+  const final = clientSave({phase: 'ended', cleanupFailures: ['session.end']});
+  await assert.rejects(first, /Report save timed out/);
+  assert.deepEqual(await final, {phase: 'ended', cleanupFailures: ['session.end']});
+  assert.deepEqual(stored, [{phase: 'periodic'}, {phase: 'ended', cleanupFailures: ['session.end']}]);
+});

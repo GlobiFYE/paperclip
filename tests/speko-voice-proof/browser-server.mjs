@@ -6,6 +6,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { homedir } from 'node:os';
 import { resolve, dirname } from 'node:path';
 import { build } from 'esbuild';
+import { createReportSaver } from './cleanup.mjs';
 import { createProof, createProofServer, DELAY_MS } from './proof.mjs';
 const key = process.env.SPEKO_MCP_API_KEY;
 if (!key) throw new Error('Credential required in environment');
@@ -16,6 +17,11 @@ const sourceDigests = {};
 for (const file of ['browser-server.mjs', 'browser-client.mjs', 'cleanup.mjs', 'browser.html', 'proof.mjs', 'application-notification.txt']) sourceDigests[file] = createHash('sha256').update(await readFile(new URL(file, import.meta.url))).digest('hex');
 await writeFile(resolve(out, 'source.json'), JSON.stringify({ startedAt: new Date().toISOString(), sourceDigests }), { mode: 0o600 });
 const bundle = await build({ entryPoints: [new URL('./browser-client.mjs', import.meta.url).pathname], bundle: true, write: false, platform: 'browser', format: 'esm' });
+// Disk writes stay serialized even when a browser request times out.
+const saveReport = createReportSaver(async body => {
+  await writeFile(resolve(out, 'browser-report.json'), JSON.stringify(body, null, 2), {mode: 0o600});
+  await writeFile(resolve(out, 'proof.json'), JSON.stringify(proof.evidence(), null, 2), {mode: 0o600});
+});
 const inputs = new Map();
 for (const name of ['start', 'followup']) {
   const data = await readFile(new URL(`../../.paperclip-local/speko-proof-audio/${name}.pcm`, import.meta.url));
@@ -73,7 +79,7 @@ const server = createServer(async (req, res) => {
       return reply(200, { acceptedRequests: evidence.acceptedRequests, resultReturned: evidence.resultReturned, notificationReady: startTime !== undefined && Date.now() >= startTime + DELAY_MS + 1000,
         expectedNumber: evidence.expectedSyntheticResult?.match(/Verification number (\d+)/)?.[1] ?? null });
     }
-    if (req.url === '/report') { await writeFile(resolve(out, 'browser-report.json'), JSON.stringify(body, null, 2), { mode: 0o600 }); await writeFile(resolve(out, 'proof.json'), JSON.stringify(proof.evidence(), null, 2), { mode: 0o600 }); return reply(200, { saved: true }); }
+    if (req.url === '/report') { await saveReport(body); return reply(200, { saved: true }); }
     if (req.url === '/end') { await endSession(); return reply(200, { ended: true }); }
     return reply(404, { error: 'Not found' });
   } catch { return reply(502, { error: 'Probe request failed; inspect private evidence. Do not retry session creation.' }); }
