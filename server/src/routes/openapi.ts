@@ -240,6 +240,7 @@ import {
   createAcceptedPlanDecompositionSchema,
   resolveIssueRecoveryActionSchema,
   retryWorkspaceExportSchema,
+  resumeWorkspaceFinalizationSchema,
   cancelIssueThreadInteractionSchema,
   // Secret provider configs and remote import
   createSecretProviderConfigSchema,
@@ -1331,6 +1332,8 @@ const RUNTIME_TOOLS_OPERATIONS = new Set([
 const PUBLIC_OPERATIONS = new Set([
   "GET /api/agent-avatars/{version}/{palette}/{file}",
   "GET /api/health",
+  "GET /api/liveness",
+  "HEAD /api/liveness",
   "GET /api/openapi.json",
   "GET /api/board-claim/{token}",
   "POST /api/cli-auth/challenges",
@@ -1870,6 +1873,28 @@ function applyDocumentFixups(document: any): any {
 }
 
 // ─── Health ──────────────────────────────────────────────────────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/api/liveness",
+  tags: ["health"],
+  summary: "Process startup status without database access",
+  description: "Runs before actor/session resolution. Reports only in-memory startup recovery and the public build commit. Use /api/health for explicit database readiness or signed bootstrap. No workspace identity or control authority is granted.",
+  responses: {
+    200: r.ok(z.object({ status: z.literal("ok"), commit: z.string().nullable() }).strict()),
+    503: { description: "Startup recovery is not complete", content: {
+      "application/json": { schema: z.object({ status: z.literal("starting"), commit: z.string().nullable() }).strict() },
+    } },
+  },
+});
+
+registry.registerPath({
+  method: "head",
+  path: "/api/liveness",
+  tags: ["health"],
+  summary: "Process startup status without a response body",
+  responses: { 200: { description: "Process startup recovery is complete" }, 503: { description: "Startup recovery is not complete" } },
+});
 
 // Shared by the healthy and database-unreachable responses: full details
 // (including serverInfo) ride only on board/agent-actor responses.
@@ -10609,6 +10634,15 @@ registerCurrentRoute({
   path: "/api/issues/{id}/recovery-actions",
   tags: ["issues"],
   summary: "List issue recovery actions",
+});
+
+registerCurrentRoute({
+  method: "post",
+  path: "/api/issues/{id}/recovery-actions/resume-workspace-finalization",
+  tags: ["issues"],
+  summary: "Resume a saved native result after operator verification of the prior workspace owner's stop",
+  body: resumeWorkspaceFinalizationSchema,
+  responses: { 202: r.ok(), 400: r.badRequest, 401: r.unauthorized, 403: r.forbidden, 404: r.notFound, 409: r.conflict },
 });
 
 registerCurrentRoute({
