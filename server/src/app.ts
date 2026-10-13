@@ -1269,7 +1269,9 @@ export async function createApp(
       await chatChannels.reconcileProviderRuntimes();
       await chatChannels.voice.reconcile();
     },
-    processPendingDeliveries: () => chatChannels.processPendingChatMaintenance(),
+    // Chat delivery, action, and Telegram discovery workers now own these
+    // duties. Keep the coordinator's other maintenance lanes independent.
+    processPendingDeliveries: async () => undefined,
     processFailedGitHubWebhookDeliveries: () =>
       chatChannels.processFailedGitHubWebhookDeliveries(),
     projectRunMilestones: () =>

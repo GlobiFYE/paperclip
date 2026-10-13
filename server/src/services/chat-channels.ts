@@ -1380,7 +1380,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   const { handleTelegramSlashCommand } = createTelegramCommands({ runtime, runtimeFor, handleSdkMessage });
   const { stageGitHubWebhookIngress, githubIngressAcceptedResponse, processGitHubWebhookIngress, processFailedGitHubWebhookDeliveries, processPendingGitHubWebhookIngress } = createGitHubWebhookIngress(db, { endpointRecord, runtimeContextForRecord, resolveCredentialRefs, runtimeGeneration, credentialFingerprint, getWebhookPublicBaseUrl, redactError, handleWebhook, runtimeCallbackEndpoint, fetchImpl, persistence, withCredentialMutationLease, isShuttingDown: () => shuttingDown, get githubWebhookReplayBarrier() { return options.githubWebhookReplayBarrier; }, supportedWebhookEvents: SUPPORTED_GITHUB_WEBHOOK_EVENTS });
   const { stageSlackSessionStop, processSlackSessionStop, processPendingSlackSessionStops } = createSlackSessionStop(db, { runtimeCallbackEndpoint, lockCurrentPrincipalAuthorization, nonDirectDestinationAllowed, stageAuthorizedTaskControlPublication, getPublicBaseUrl, get heartbeat() { return options.heartbeat; }, redactError });
-  const { stageTelegramMaintenance, processTelegramMaintenance, processPendingTelegramMaintenance, hasTelegramStopSubscription, recordTelegramStopSubscription } = createTelegramMaintenance(db, { endpointRecord, runtimeContextForRecord, withCredentialMutationLease, resolveCredentials, clearCredentials, runtimeCallbackEndpoint, getWebhookPublicBaseUrl, fetchImpl, runtimeGeneration, credentialFingerprint, redactError, credentialCheckTimeoutMs: PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS });
+  const { stageTelegramMaintenance, processTelegramMaintenance, processPendingTelegramMaintenance, processPendingTelegramActions, processTelegramSubscriptionDiscovery, hasTelegramStopSubscription, recordTelegramStopSubscription } = createTelegramMaintenance(db, { endpointRecord, runtimeContextForRecord, withCredentialMutationLease, resolveCredentials, clearCredentials, runtimeCallbackEndpoint, getWebhookPublicBaseUrl, fetchImpl, runtimeGeneration, credentialFingerprint, redactError, credentialCheckTimeoutMs: PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS });
   const { reconcileGitHubWebhookRepository, reconcileProviderResourceRows, listResources, listGitHubRepositories, replaceResources, toggleAllGitHubRepositories, hasNewerProcessedProviderLifecycleEffect, applyProviderAvailability } = createChatResourceReconciliation(db, { endpointRecord, withCredentialMutationLease, runtimeGeneration, maxErrorText: MAX_ERROR_TEXT });
   const { applyGitHubInstallationLifecycle } = createGitHubInstallationLifecycle(db, {
     endpointRecord, resolveCredentials, runtimeCallbackEndpoint, runtimeGeneration, credentialFingerprint,
@@ -7854,6 +7854,8 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     processQueuedDeliveries: () => processPendingDeliveries(25, undefined, false),
     scheduleQueuedPublications: () => processPendingPublications(25, { waitForCompletion: false, maintenance: false }),
     processPendingChatMaintenance,
+    processPendingTelegramActions,
+    processTelegramSubscriptionDiscovery,
     processPendingSlackBoardMessages,
     processPendingSlackTaskStarts,
     processPendingVerificationMessages: slackRegistration.processPendingVerificationMessages,
