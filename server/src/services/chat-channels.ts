@@ -497,7 +497,7 @@ function absoluteBaseUrl(value: string | null | undefined): string | null {
 export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   const runtime = options.runtime ?? createChatRuntime();
   const githubManualMessages = new WeakMap<object, { policy: GitHubReviewPolicy; revision: number; event: "mention" | "comment" }>();
-  const githubAutomaticMessages = new WeakMap<object, { context: GitHubReviewEventContext; revision: number; policy: GitHubReviewPolicy }>();
+  const githubAutomaticMessages = new WeakMap<object, { context: GitHubReviewEventContext; revision: number; policy: GitHubReviewPolicy; reviewedAuthor?: boolean }>();
   const githubIssueMessages = new WeakMap<object, { context: GitHubIssueEventContext; revision: number; policy: GitHubReviewPolicy }>();
   const runtimeVersions = new Map<string, string>();
   const runtimeLocalEpochs = new Map<string, number>();
@@ -1724,9 +1724,13 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       if (endpoint.provider === "speko" && principalResolution.userId === null && !principalResolution.linkedDenied) {
         publicVoiceTaskAllowed = await authorizeSpekoPublicVoiceTask(db, endpoint, principalResolution.principal.externalId, voiceStore.authorizePrincipal);
       }
+      // The task transaction re-runs automatic admission before any task changes.
       const principalAllowed =
         !principalResolution.linkedDenied &&
-        (principalResolution.userId !== null || guestSponsorAllowed || publicVoiceTaskAllowed);
+        (principalResolution.userId !== null ||
+          guestSponsorAllowed ||
+          publicVoiceTaskAllowed ||
+          githubAutomatic?.reviewedAuthor === true);
       const activationAllowed = addressed || existingConversation !== null;
       const allowed =
         endpointAllowed &&
@@ -2076,6 +2080,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         taskTx: DbOrTransaction,
         taskEndpoint: EndpointRow,
         taskUserId: string | null,
+        reviewedAuthorReview: boolean,
       ) => {
         let conversation = existingConversation;
         if (!conversation) {
@@ -2169,7 +2174,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
                 .then((rows) => rows[0] ?? null);
         if (!issue) throw notFound("Bound task not found");
         const githubAgentRequiresLowTrust = taskEndpoint.provider === "github" && await githubAssignedAgentRequiresLowTrust(taskTx, taskEndpoint);
-        if (!taskUserId || ((githubAutomatic || githubIssue) && !principalResolution.userId) || githubAgentRequiresLowTrust) {
+        if (!taskUserId || (((githubAutomatic && !reviewedAuthorReview) || githubIssue) && !principalResolution.userId) || githubAgentRequiresLowTrust) {
           await applyChatTaskReviewContainment(taskTx, endpoint, issue);
           }
 
@@ -2371,6 +2376,8 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         const automaticAdmission = automaticContext ? await githubAutomaticAdmission(tx, currentEndpoint, automaticContext) : null;
         if (automaticContext && !automaticAdmission?.allowed) currentPrincipalAuthorization.allowed = false;
         if (automaticAdmission?.allowed) currentPrincipalAuthorization.userId = automaticAdmission.responsibleUserId ?? null;
+        const reviewedAuthorReview = automaticAdmission?.allowed === true && automaticAdmission.reviewedAuthor === true;
+        if (reviewedAuthorReview) Object.assign(currentPrincipalAuthorization, { allowed: true, linkedDenied: false });
         const endpointStillAllowed =
           currentEndpoint.status === "verifying" ||
           currentEndpoint.status === "active";
@@ -2468,6 +2475,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           tx,
           currentPrincipalAuthorization.sponsorUserId ? { ...currentEndpoint, sponsorUserId: currentPrincipalAuthorization.sponsorUserId } : currentEndpoint,
           currentPrincipalAuthorization.userId,
+          reviewedAuthorReview,
         );
       });
       if (!taskMutation) return;
