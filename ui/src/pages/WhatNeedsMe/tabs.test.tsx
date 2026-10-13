@@ -73,7 +73,8 @@ it("honors a saved tab and retains full controls for ineligible items", async ()
 it("defaults in order and treats hydration failures as closer look", async () => {
   expect(defaultDecisionTab({ hiring: 0, yesno: 2, question: 3, closer_look: 1 })).toBe("yesno");
   expect(defaultDecisionTab({ hiring: 0, yesno: 0, question: 3, closer_look: 1 })).toBe("questions");
-  expect(defaultDecisionTab({ hiring: 0, yesno: 0, question: 0, closer_look: 1 })).toBe("questions");
+  expect(defaultDecisionTab({ hiring: 0, yesno: 0, question: 0, closer_look: 1 })).toBe("closer_look");
+  expect(defaultDecisionTab({ hiring: 0, yesno: 0, question: 0, closer_look: 0 })).toBe("questions");
   vi.mocked(approvalsApi.get).mockRejectedValue(new Error("Unavailable"));
   await mount();
   expect(ui().getByRole("tab", { name: "Hiring 0" })).toBeTruthy();

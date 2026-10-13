@@ -26,7 +26,8 @@ export const decisionTabs = [
 ] as const;
 export type DecisionTab = typeof decisionTabs[number][0];
 export function defaultDecisionTab(counts: Record<DecisionCategory, number>): DecisionTab {
-  return counts.hiring ? "hiring" : counts.yesno ? "yesno" : "questions";
+  // Simple views first; never open on an empty tab while other items wait.
+  return counts.hiring ? "hiring" : counts.yesno ? "yesno" : counts.question ? "questions" : counts.closer_look ? "closer_look" : "questions";
 }
 
 export function DecisionTabs() {
