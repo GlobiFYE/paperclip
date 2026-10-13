@@ -18,7 +18,6 @@ export function SpekoQueryFixture({ children, endpoints = [spekoEndpoint], enabl
     const client = new QueryClient({ defaultOptions: { queries: { staleTime: Infinity, retry: false, refetchOnMount: false, refetchOnWindowFocus: false } } });
     client.setQueryData(queryKeys.instance.experimentalSettings, { enableChatConnectors: enabled });
     client.setQueryData(queryKeys.chatEndpoints.list(spekoCompanyId), endpoints);
-    client.setQueryData(["task-voice-endpoints", spekoCompanyId], endpoints);
     for (const endpoint of endpoints) client.setQueryData(queryKeys.chatEndpoints.detail(endpoint.id), endpoint);
     return client;
   });
