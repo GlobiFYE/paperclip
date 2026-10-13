@@ -4,6 +4,7 @@ import { heartbeatRuns, issues, issueRecoveryActions, nativeRunFinalizations, na
 import { resumeWorkspaceFinalizationSchema } from "@paperclipai/shared";
 import { conflict } from "../../errors.js";
 import { persistActivity, publishActivity } from "../activity-log.js";
+import { getNativeReviewAssignment } from "./native-review-participant.js";
 import { evaluateNativeControllerTakeover } from "./native-restart-recovery.js";
 
 const OWNER_KEY = "nativeWorkspaceFinalizationOwner";
@@ -34,9 +35,14 @@ export async function resumeNativeWorkspaceAfterOwnerStop(input: {
       || action.cause !== "native_workspace_finalization_owner_unverified" || action.ownerType !== "board"
       || action.kind !== "active_run_watchdog" || !["active", "escalated"].includes(action.status)
       || run.runtimeMode !== "native" || run.status !== "running" || coordinator.phase !== "workspace_finalizing"
-      || coordinator.leaseOwner || !coordinator.resultId || ["done", "cancelled"].includes(issue.status)
-      || issue.assigneeAgentId !== run.agentId || issue.executionRunId !== run.id
+      || (coordinator.leaseOwner && (!coordinator.leaseExpiresAt || coordinator.leaseExpiresAt.getTime() > Date.now())) || !coordinator.resultId || ["done", "cancelled"].includes(issue.status)
+      || issue.executionRunId !== run.id
       || (issue.checkoutRunId && issue.checkoutRunId !== run.id)) throw changed();
+    if (issue.assigneeAgentId !== run.agentId && !await getNativeReviewAssignment(tx as unknown as Db, {
+      companyId: input.companyId, issueId: issue.id, agentId: run.agentId,
+      contextSnapshot: run.contextSnapshot, actingRunId: run.id, issueExecutionRunId: issue.executionRunId,
+      allowResolvedByRunId: run.id,
+    })) throw changed();
     const [result] = await tx.select().from(nativeRunResults).where(and(
       eq(nativeRunResults.id, coordinator.resultId), eq(nativeRunResults.companyId, input.companyId),
       eq(nativeRunResults.issueId, input.issueId), eq(nativeRunResults.runId, input.runId), eq(nativeRunResults.schemaStatus, "accepted"),
