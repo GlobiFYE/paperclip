@@ -30,6 +30,14 @@ export interface ProgressIssueInput {
   assigneeAgentId: string | null;
 }
 
+/** Minimal row for parent-chain goal resolution; may be a hidden task. */
+export interface ProgressAncestorInput {
+  id: string;
+  goalId: string | null;
+  projectId: string | null;
+  parentId: string | null;
+}
+
 export interface ProgressProjectInput {
   id: string;
   /** The project's primary goal: `projects.goalId`, else its earliest `project_goals` link. */
@@ -93,6 +101,7 @@ export function computeGoalProgress(input: {
   issues: ProgressIssueInput[];
   agents: ProgressAgentInput[];
   projects?: ProgressProjectInput[];
+  ancestors?: ProgressAncestorInput[];
 }): GoalProgressResponse {
   const own = new Map<string, GoalProgressCounts>();
   const children = new Map<string, string[]>();
@@ -102,21 +111,33 @@ export function computeGoalProgress(input: {
   }
 
   const projectGoal = new Map<string, string | null>((input.projects ?? []).map((project) => [project.id, project.goalId]));
-  const issueById = new Map(input.issues.map((issue) => [issue.id, issue]));
-  const effective = new Map<string, string | null>();
-  const resolveGoal = (issue: ProgressIssueInput, trail = new Set<string>()): string | null => {
-    if (effective.has(issue.id)) return effective.get(issue.id)!;
-    let goalId: string | null = issue.goalId && own.has(issue.goalId) ? issue.goalId : null;
-    if (!goalId && issue.parentId && !trail.has(issue.id)) {
-      const parent = issueById.get(issue.parentId);
-      if (parent) goalId = resolveGoal(parent, new Set(trail).add(issue.id));
+  // Ancestor lookup includes hidden tasks (a hidden parent still carries its
+  // goal for visible children); only `input.issues` are counted.
+  const lookup = new Map<string, ProgressAncestorInput>();
+  for (const row of input.ancestors ?? []) lookup.set(row.id, row);
+  for (const issue of input.issues) lookup.set(issue.id, issue);
+  // Effective goal, deterministic and order-independent (no caching across
+  // tasks): the task's own goal, else the first explicit goal walking up the
+  // parent chain (stopping at a repeat), else the first project goal found
+  // walking the same chain from the task itself.
+  const resolveGoal = (issue: ProgressAncestorInput): string | null => {
+    const trail = new Set<string>();
+    let node: ProgressAncestorInput | undefined = issue;
+    while (node && !trail.has(node.id)) {
+      if (node.goalId && own.has(node.goalId)) return node.goalId;
+      trail.add(node.id);
+      node = node.parentId ? lookup.get(node.parentId) : undefined;
     }
-    if (!goalId && issue.projectId) {
-      const fromProject = projectGoal.get(issue.projectId) ?? null;
-      goalId = fromProject && own.has(fromProject) ? fromProject : null;
+    // Project fallback: the task's own project, else the nearest ancestor's project (same walk, same stop rule).
+    trail.clear();
+    node = issue;
+    while (node && !trail.has(node.id)) {
+      const fromProject = node.projectId ? projectGoal.get(node.projectId) ?? null : null;
+      if (fromProject && own.has(fromProject)) return fromProject;
+      trail.add(node.id);
+      node = node.parentId ? lookup.get(node.parentId) : undefined;
     }
-    effective.set(issue.id, goalId);
-    return goalId;
+    return null;
   };
 
   let unlinkedOpenTasks = 0;
@@ -229,7 +250,7 @@ export function computeGoalProgress(input: {
 export function goalProgressService(db: Db) {
   return {
     summary: async (companyId: string): Promise<GoalProgressResponse> => {
-      const [goalRows, issueRows, agentRows, projectRows] = await Promise.all([
+      const [goalRows, issueRows, agentRows, projectRows, ancestorRows] = await Promise.all([
         db
           .select({ id: goals.id, title: goals.title, level: goals.level, status: goals.status, parentId: goals.parentId, ownerAgentId: goals.ownerAgentId })
           .from(goals)
@@ -243,6 +264,10 @@ export function goalProgressService(db: Db) {
           .where(and(eq(issues.companyId, companyId), executionIssueCondition())),
         db.select({ id: agents.id, name: agents.name, status: agents.status }).from(agents).where(eq(agents.companyId, companyId)),
         db.select({ id: projects.id, goalId: projects.goalId }).from(projects).where(eq(projects.companyId, companyId)),
+        db
+          .select({ id: issues.id, goalId: issues.goalId, projectId: issues.projectId, parentId: issues.parentId })
+          .from(issues)
+          .where(eq(issues.companyId, companyId)),
       ]);
       const projectIds = projectRows.map((project) => project.id);
       const linkRows = projectIds.length === 0
@@ -260,7 +285,7 @@ export function goalProgressService(db: Db) {
         id: project.id,
         goalId: project.goalId ?? earliestLink.get(project.id)?.goalId ?? null,
       }));
-      return computeGoalProgress({ goals: goalRows, issues: issueRows, agents: agentRows, projects: projectInputs });
+      return computeGoalProgress({ goals: goalRows, issues: issueRows, agents: agentRows, projects: projectInputs, ancestors: ancestorRows });
     },
   };
 }

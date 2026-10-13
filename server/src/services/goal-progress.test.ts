@@ -75,6 +75,30 @@ describe("computeGoalProgress", () => {
     expect(out.agents[0]).toMatchObject({ name: "Ann", identifier: "TOP-2", goalId: "m1", goalTitle: "m1" });
   });
 
+  it("inherits through a hidden parent and resolves parent cycles the same in any order", () => {
+    const base = {
+      goals: [goal("ga", "task"), goal("gb", "task"), goal("m1", "task")],
+      projects: [{ id: "pa", goalId: "ga" }, { id: "pb", goalId: "gb" }],
+      agents: [],
+    };
+    // Hidden parent (not in issues, only in ancestors) carrying the goal.
+    const hidden = computeGoalProgress({
+      ...base,
+      issues: [issue("child", "todo", null, null, { parentId: "parent" })],
+      ancestors: [{ id: "parent", goalId: "m1", projectId: null, parentId: null }],
+    });
+    expect(hidden.goals.find((g) => g.id === "m1")!.counts.total).toBe(1);
+    expect(hidden.unlinkedOpenTasks).toBe(0);
+    // Parent cycle with different project goals: each task falls back to its own project.
+    const a = issue("a", "todo", null, null, { parentId: "b", projectId: "pa" });
+    const b = issue("b", "todo", null, null, { parentId: "a", projectId: "pb" });
+    for (const order of [[a, b], [b, a]]) {
+      const out = computeGoalProgress({ ...base, issues: order });
+      expect(out.goals.find((g) => g.id === "ga")!.counts.total).toBe(1);
+      expect(out.goals.find((g) => g.id === "gb")!.counts.total).toBe(1);
+    }
+  });
+
   it("counts open tasks with no goal and never crashes on a goal cycle", () => {
     const out = computeGoalProgress({
       goals: [goal("a", "team", "b"), goal("b", "team", "a")],
