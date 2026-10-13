@@ -33,6 +33,29 @@ function database(onPredicate: (kind: "where" | "join", condition: SQL) => void 
   } };
 }
 describe("authenticated activity notifications", () => {
+  it("uses the persisted local-board user identity for local task eligibility", async () => {
+    vi.mocked(taskToastEligible).mockImplementation(async (_db, _event, userId) => userId === "local-board");
+    const server = createServer();
+    setupLiveEventsWebSocketServer(server, database() as never, { deploymentMode: "local_trusted" });
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const socket = new WebSocket(`ws://127.0.0.1:${(server.address() as { port: number }).port}/api/companies/company/events/ws`);
+    try {
+      await once(socket, "open");
+      const delivery = once(socket, "message");
+      publishLiveEvent({ companyId: "company", type: "activity.logged", payload: {
+        action: "issue.updated", entityType: "issue", entityId: "visible", actorType: "agent", actorId: "agent",
+      } });
+      const [data] = await delivery;
+      expect(JSON.parse(data.toString()).toastEligible).toBe(true);
+      expect(taskToastEligible).toHaveBeenLastCalledWith(expect.anything(), expect.anything(), "local-board");
+    } finally {
+      socket.terminate();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      vi.mocked(taskToastEligible).mockReset().mockResolvedValue(false);
+    }
+  });
+
   it("projects eligibility per viewer and keeps authorized updates on lookup failure", async () => {
     vi.mocked(taskToastEligible).mockImplementation(async (_db, event, userId) => {
       if (event.payload.entityId === "lookup-failure") throw new Error("Relevance unavailable");

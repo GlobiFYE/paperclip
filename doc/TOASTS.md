@@ -59,6 +59,8 @@ never persisted or published on the shared company event bus.
 Authorized events still reach cache handling and component subscribers when
 eligibility is false. Lookup failure is logged but does not discard the authorized
 event. Existing task/run privacy checks and payload redaction remain in force.
+When an authenticated comment event omits the comment ID, the visible task thread
+refreshes through its authorized HTTP read instead of trying to hydrate the comment.
 Closed sockets cannot deliver stale notifications after account/company changes.
 No client-side task-list cache or new database migration is required. During a
 mixed-version rollout, a new client receiving events from an older server stays

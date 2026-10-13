@@ -773,6 +773,9 @@ function shouldDeferVisibleIssueCommentActivity(
 
   if (entityType !== "issue" || !entityId) return false;
   if (action !== "issue.comment_added") return false;
+  // Authenticated events omit comment details. Only defer a refetch when
+  // the event contains the ID needed to hydrate the new comment separately.
+  if (!readString(details?.commentId)) return false;
 
   const context = resolveVisibleIssueRouteContext(
     queryClient,
@@ -1367,6 +1370,20 @@ function invalidateActivityQueries(
         entityId,
         details,
       );
+      const visibleContext = options?.pathname
+        ? resolveVisibleIssueRouteContext(queryClient, options.pathname, {
+            isForegrounded: options.isForegrounded,
+          })
+        : null;
+      if (
+        visibleContext &&
+        overlaps(visibleContext.issueRefs, buildIssueRefsForPayload(entityId, details)) &&
+        !issueRefs.includes(visibleContext.routeIssueRef)
+      ) {
+        // Authenticated payloads omit the identifier. Include the visible
+        // route's cache key when its loaded task matches the event's UUID.
+        issueRefs.push(visibleContext.routeIssueRef);
+      }
       for (const ref of issueRefs) {
         const invalidationOptions =
           selfCommentActivity ||

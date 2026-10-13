@@ -345,7 +345,7 @@ export function setupLiveEventsWebSocketServer(
           let toastEligible = false;
           try {
             toastEligible = await taskToastEligible(db, visible,
-              context.actorType === "board" ? context.actorId : null);
+              context.actor.type === "board" ? context.actor.userId ?? null : null);
           } catch (err) {
             logger.warn({ err, companyId: context.companyId }, "task toast eligibility failed");
           }

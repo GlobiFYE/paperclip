@@ -433,10 +433,13 @@ test("task toasts follow personal involvement in multiplayer", async ({ browser,
     await expect(page.getByText("Another person's task", { exact: true }).first()).toBeVisible();
     await other.page.goto(`${BASE}/${prefix}/issues?view=all`);
     const toasts = page.locator('aside[aria-live="polite"]');
-    async function update(title: string, eligible: boolean) {
+    async function waitForSocket() {
       await page.waitForFunction((companyId) =>
         (window as unknown as { toastTestSockets: WebSocket[] }).toastTestSockets.some(socket =>
           socket.url.includes(`/companies/${companyId}/events/ws`) && socket.readyState === WebSocket.OPEN), company.id);
+    }
+    async function update(title: string, eligible: boolean) {
+      await waitForSocket();
       // Let the existing two-second server list cache expire after navigation.
       // This case tests steady-state notification scoping, not cache TTL policy.
       await page.waitForTimeout(2200);
@@ -477,9 +480,14 @@ test("task toasts follow personal involvement in multiplayer", async ({ browser,
     await expect(other.page.locator('aside[aria-live="polite"]')).toHaveCount(0);
     // Viewing the qualifying task suppresses redundant notifications.
     await page.getByRole("link", { name: `Open ${task.json!.identifier}: Historical mention survives reload`, exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Historical mention survives reload", exact: true })).toBeVisible();
+    await waitForSocket();
+    const beforeComment = frames.length;
     expect((await sessionJsonRequest(other.page, `${BASE}/api/issues/${id}/comments`, {
       method: "POST", data: { body: "Already visible in the task." },
     })).ok).toBe(true);
+    await expect.poll(() => frames.slice(beforeComment).find(e => e.payload.entityId === id && e.payload.action === "issue.comment_added")?.toastEligible)
+      .toBe(true);
     await expect(page.getByText("Already visible in the task.", { exact: true }).first()).toBeVisible();
     await expect(toasts).toHaveCount(0);
   } finally { await other.context.close(); }

@@ -74,6 +74,8 @@ activity, company isolation, local-board, and persisted run-task attribution.
 [Socket delivery](../../server/src/__tests__/live-events-toast.test.ts) checks
 viewer-specific projection; [UI delivery](../../ui/src/context/LiveUpdatesProvider.hook.test.tsx)
 checks eligibility gating, cache updates, stale callbacks, and existing suppression.
+[UI cache handling](../../ui/src/context/LiveUpdatesProvider.test.ts) checks visible
+comment refresh when authenticated events omit hydration metadata.
 The `task toasts follow personal involvement in multiplayer` case in the
 [authenticated browser suite](../../tests/e2e/multi-user-authenticated.spec.ts)
 exercises quiet unrelated updates, read-only visits, first/historical mentions,
