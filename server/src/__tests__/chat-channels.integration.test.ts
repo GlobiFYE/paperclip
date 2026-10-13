@@ -4993,6 +4993,10 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       for (const comment of f.responseComments.values()) comments.set(comment.id, comment);
       let head = "b".repeat(40);
       let check = { id: 99, status: "completed", external_id: `${f.endpoint.id}:91:${head}`, app: { id: Number(f.endpoint.botExternalId) } };
+      // Other bots can publish the same named check on this PR. Neither another
+      // App nor a different endpoint's review may be selected for our updates.
+      const peerCheck = { ...check, id: 9901, app: { id: Number(f.endpoint.botExternalId) + 1 } };
+      const otherEndpointCheck = { ...check, id: 9902, external_id: `other-bot:91:${head}` };
       const pull = () => ({
         number: 91,
         title: "Test PR",
@@ -5063,7 +5067,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
             },
           ]);
         if (url.includes("/check-runs?"))
-          return Response.json({ check_runs: [check] });
+          return Response.json({ check_runs: [peerCheck, otherEndpointCheck, check] });
         return Response.json([]);
       });
       const service = githubChatReviewService(db, f.providerFetch);
@@ -5151,6 +5155,11 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         conclusion: "failure",
         details_url: `https://current-vanity.example/${company.issuePrefix}/issues/${conversation.issueId}`,
       });
+      const postedSummary = mutations.find((m) => typeof m.body.body === "string" && m.body.body.includes("Addition subtracts"));
+      expect(postedSummary?.body.body).toContain(`## ${f.endpoint.botLabel} — 2/5`);
+      const publishedCheck = mutations.find((m) => m.body.conclusion === "failure");
+      expect(publishedCheck?.url).toBe(`https://api.github.com/repos/paperclipai/paperclip/check-runs/${check.id}`);
+      expect(mutations.some((m) => /\/check-runs\/990[12]$/.test(m.url))).toBe(false);
       const publishedCount = mutations.length;
       const retried = await service.execute(
         session,

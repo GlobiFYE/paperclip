@@ -152,3 +152,6 @@ to reply.
 Endpoint/destination execution defaults use the same board-only management
 boundary. Agents select an authorized workspace for their current task through
 the [workspace APIs](workspaces.md), rather than editing channel configuration.
+
+GitHub review summary headings use the bot display name. Checks remain
+independently scoped by GitHub App and endpoint/PR/commit identity.

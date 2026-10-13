@@ -1,3 +1,7 @@
+---
+navigation: {"section":"Projects and execution","sectionOrder":40,"order":10}
+---
+
 # Projects and repositories
 
 People group tasks into projects, attach goals and repositories, and configure the context and defaults used by project work.
@@ -59,3 +63,7 @@ step. Check Skills → Sources and the installed library afterward. Ordinary edi
 older projects do not adopt their repositories; explicit adoption belongs in Sources.
 Removing a repository retains installed skills and originating project access but stops
 its automatic tracking. Changing the ref does not retarget existing skill references.
+
+### Documentation scope: Projects and execution workspaces
+
+Provider-specific provisioning, multi-repository/submodule edge cases, Git reconciliation variants, and all service exposure combinations require deeper recipes.

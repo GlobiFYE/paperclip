@@ -490,3 +490,13 @@ all 57 affected cases on the corrected source with no skips or deadline changes.
 The macOS reproduction timed out in native DB setup; its broader attempt hit a
 privacy-test deadline. Those failures are retained separately from the qualified
 pass. Recursive typecheck and production build pass after the correction.
+
+Final head 0fa7fd008b passed fresh security and Greptile 5/5; tests completed
+without failures before another master merge introduced a catalog conflict.
+Master 7eea9d8214 moved Storybook metadata into each story and made generated
+indexes ignored. The two project-skill suites now carry their existing capability
+associations, production/fixture classification and durable limits inline, keeping
+all explicit meta IDs and exports. Both feature recipes and master's verification
+sections are retained. The deleted aggregate catalog/review ledger stays deleted.
+Map/generator validation passes; rebuilt browser and final-head gates are recorded
+on the PR. This structural migration is separate from the earlier live receipts.

@@ -39,7 +39,15 @@ type Scenario = { email?: boolean; access?: boolean; ai?: boolean; missingAiAcco
 const meta: Meta = {
   id: "connections-in-task-connections",
   title: "Apps, channels, and extensions/Connection setup/Connections/In-task connections",
-  parameters: { layout: "padded" },
+  parameters: { layout: "padded",
+    paperclip: {
+      "capabilities": [
+        "connection-setup/task-request"
+      ],
+      "implementation": "production",
+      "boundary": "fixtures"
+    },
+  },
   afterEach: ({ id }) => { document.body.dataset.inFeedStoryReady = id; },
   beforeEach: ({ parameters }) => {
     delete document.body.dataset.inFeedStoryReady;

@@ -1,4 +1,8 @@
-# Skill discovery, authoring, and policy
+---
+navigation: {"section":"Agents and reusable capabilities","sectionOrder":30,"order":30}
+---
+
+# Skills and Skill Studio
 
 Operators discover or import skills, author and test them in Skill Studio, manage source versions, and decide which agents may use them.
 
@@ -76,3 +80,16 @@ must be verified separately; inspect resolved version IDs across an upstream upd
 ### Connection repair during an update
 
 Open Choose connection while a source is being refreshed. Select an authorized account and save. If the source changes, the dialog must retain that selection, load the current revision, and allow a second save without reopening. The [project repository browser suite](../../tests/storybook-visual/project-repository-skills.spec.ts) covers this recovery with simulated upstream data.
+
+### Storybook verification
+
+#### `testing`
+
+Scope: ui
+Storybook: Studio test inputs/configuration, running, question/approval, result and failed test states.
+Production: Run bounded test of actual saved version with correct selected account/environment; inspect persisted test detail and eligible interaction response.
+Sources: Source: [SkillStudio.tsx](../../ui/src/pages/SkillStudio.tsx), [companySkills.ts](../../ui/src/api/companySkills.ts). Tests: [SkillStudio.test.tsx](../../ui/src/pages/SkillStudio.test.tsx), [company-skill-test-runs-service.test.ts](../../server/src/__tests__/company-skill-test-runs-service.test.ts)
+
+### Documentation scope: Skills, Skill Studio, and teams
+
+Main library/Studio/source/policy and CLI team-install paths are mapped. Full source-provider conflicts, harness sync, and remote package variants remain; catalog UI is not a current top-level route.
