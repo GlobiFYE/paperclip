@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { asc, eq } from "drizzle-orm";
+import { asc, eq, inArray } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { sql } from "drizzle-orm";
 import {
@@ -6177,6 +6177,161 @@ describeEmbeddedPostgres("issueService.clearExecutionRunIfTerminal", () => {
       targetIssueId,
       kind: "interaction_resolution",
     })).resolves.toMatchObject({ allowed: true, count: 2 });
+  });
+
+  it.each(["issueId", "taskId"] as const)(
+    "preserves an existing run %s source during checkout",
+    async (sourceKey) => {
+      const companyId = randomUUID();
+      const agentId = randomUUID();
+      const sourceIssueId = randomUUID();
+      const originalSourceIssueId = randomUUID();
+      const runId = randomUUID();
+
+      await db.insert(companies).values({
+        id: companyId,
+        name: "Paperclip",
+        issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      });
+      await db.insert(agents).values({
+        id: agentId,
+        companyId,
+        name: "CodexCoder",
+        role: "engineer",
+        status: "active",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      });
+      await db.insert(heartbeatRuns).values({
+        id: runId,
+        companyId,
+        agentId,
+        status: "running",
+        invocationSource: "timer",
+        contextSnapshot: { source: "timer", [sourceKey]: originalSourceIssueId },
+      });
+      await db.insert(issues).values({
+        id: sourceIssueId,
+        companyId,
+        title: "Routine execution",
+        status: "todo",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      });
+
+      await svc.checkout(sourceIssueId, agentId, ["todo"], runId);
+
+      const run = await db
+        .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
+        .from(heartbeatRuns)
+        .where(eq(heartbeatRuns.id, runId))
+        .then((rows) => rows[0]);
+      expect(run?.contextSnapshot).toEqual({
+        source: "timer",
+        [sourceKey]: originalSourceIssueId,
+      });
+    },
+  );
+
+  it("does not bind checkout context to a run from another company or agent", async () => {
+    const companyId = randomUUID();
+    const foreignCompanyId = randomUUID();
+    const agentId = randomUUID();
+    const foreignAgentId = randomUUID();
+    const foreignCompanyRunId = randomUUID();
+    const foreignAgentRunId = randomUUID();
+    const companyGuardIssueId = randomUUID();
+    const agentGuardIssueId = randomUUID();
+
+    await db.insert(companies).values([
+      {
+        id: companyId,
+        name: "Paperclip",
+        issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+      {
+        id: foreignCompanyId,
+        name: "Other company",
+        issuePrefix: `F${foreignCompanyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        requireBoardApprovalForNewAgents: false,
+      },
+    ]);
+    await db.insert(agents).values([
+      {
+        id: agentId,
+        companyId,
+        name: "CodexCoder",
+        role: "engineer",
+        status: "active",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+      {
+        id: foreignAgentId,
+        companyId,
+        name: "OtherCoder",
+        role: "engineer",
+        status: "active",
+        adapterType: "codex_local",
+        adapterConfig: {},
+        runtimeConfig: {},
+        permissions: {},
+      },
+    ]);
+    await db.insert(heartbeatRuns).values([
+      {
+        id: foreignCompanyRunId,
+        companyId: foreignCompanyId,
+        agentId,
+        status: "running",
+        invocationSource: "timer",
+        contextSnapshot: { source: "timer" },
+      },
+      {
+        id: foreignAgentRunId,
+        companyId,
+        agentId: foreignAgentId,
+        status: "running",
+        invocationSource: "timer",
+        contextSnapshot: { source: "timer" },
+      },
+    ]);
+    await db.insert(issues).values([
+      {
+        id: companyGuardIssueId,
+        companyId,
+        title: "Company guard",
+        status: "todo",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+      {
+        id: agentGuardIssueId,
+        companyId,
+        title: "Agent guard",
+        status: "todo",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+    ]);
+
+    await svc.checkout(companyGuardIssueId, agentId, ["todo"], foreignCompanyRunId);
+    await svc.checkout(agentGuardIssueId, agentId, ["todo"], foreignAgentRunId);
+
+    const runs = await db
+      .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
+      .from(heartbeatRuns)
+      .where(inArray(heartbeatRuns.id, [foreignCompanyRunId, foreignAgentRunId]));
+    expect(runs.map((run) => run.contextSnapshot)).toEqual([
+      { source: "timer" },
+      { source: "timer" },
+    ]);
   });
 
   it("does not clear checkout locks when a different execution run is live", async () => {

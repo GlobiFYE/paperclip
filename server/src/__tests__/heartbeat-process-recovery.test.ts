@@ -84,6 +84,7 @@ import {
   toolConnections,
   workAssessments,
   workspaceOperations,
+  workspaceRuntimeServices,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -654,6 +655,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     }
     for (let attempt = 0; attempt < 5; attempt += 1) {
       await db.delete(companySkills);
+      await db.delete(workspaceRuntimeServices);
       await db.delete(workspaceOperations);
       await db.delete(executionWorkspaces);
       await db.delete(projectWorkspaces);
@@ -841,6 +843,59 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
     return { environmentId, leaseId };
   }
+
+  it("preserves a source issue bound during adapter execution when runtime services complete", async () => {
+    const { agentId, runId, issueId } = await seedRunFixture({
+      agentStatus: "idle",
+      runStatus: "queued",
+      contextSnapshot: { source: "timer" },
+    });
+    await db
+      .update(heartbeatRuns)
+      .set({ contextSnapshot: { source: "timer" } })
+      .where(eq(heartbeatRuns.id, runId));
+
+    mockAdapterExecute.mockImplementationOnce(async () => {
+      await issueService(db).checkout(issueId, agentId, ["in_progress"], runId);
+      return {
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        errorMessage: null,
+        summary: "Started the preview service.",
+        provider: "test",
+        model: "test-model",
+        runtimeServices: [
+          {
+            id: randomUUID(),
+            serviceName: "preview",
+            url: "http://127.0.0.1:4173",
+          },
+        ],
+      };
+    });
+
+    const heartbeat = heartbeatService(db, {
+      runtimeEnv: { ...process.env, PAPERCLIP_IN_WORKTREE: "false" },
+    });
+    await heartbeat.resumeQueuedRuns();
+    await heartbeat.drainActiveRunExecutions();
+
+    expect(await heartbeat.getRun(runId)).toMatchObject({
+      status: "succeeded",
+      contextSnapshot: {
+        source: "timer",
+        issueId,
+        paperclipRuntimePrimaryUrl: "http://127.0.0.1:4173",
+        paperclipRuntimeServices: [
+          expect.objectContaining({
+            serviceName: "preview",
+            url: "http://127.0.0.1:4173",
+          }),
+        ],
+      },
+    });
+  });
 
   it("does not reap active adapter executions started by another heartbeat service instance", async () => {
     let releaseAdapter!: () => void;
