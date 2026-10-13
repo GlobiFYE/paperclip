@@ -1,4 +1,4 @@
-import { and, eq, isNull, like } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { heartbeatRuns, issueComments, issues, type Db } from "@paperclipai/db";
 import { extractUserMentionIds, type LiveEvent } from "@paperclipai/shared";
 import { touchedByUserCondition } from "../services/issue-participation.js";
@@ -33,11 +33,15 @@ export async function taskToastEligible(db: Db, event: LiveEvent, userId: string
   )).limit(1);
   if (participation) return true;
 
-  // Restrict the scan to this task's mention-bearing comments. Parse exact IDs;
-  // display names and substring matches never establish involvement.
-  const comments = await db.select({ body: issueComments.body }).from(issueComments).where(and(
+  // Match a complete link for this exact viewer in PostgreSQL. The existing
+  // body_search GIN trigram index supports this regex; LIMIT 1 bounds the
+  // history returned to each connection instead of parsing every comment.
+  const exactId = userId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const href = `user://(?:[^/\\s?#)]+@)?${exactId}|user:///+${exactId}`;
+  const mentionLink = `\\[[^\\]]*\\]\\((?:${href})(?:[?#][^\\s)]*)?\\)`;
+  const [comment] = await db.select({ body: issueComments.body }).from(issueComments).where(and(
     eq(issueComments.companyId, companyId), eq(issueComments.issueId, issueId),
-    isNull(issueComments.deletedAt), like(issueComments.body, "%user://%"),
-  ));
-  return comments.some(({ body }) => extractUserMentionIds(body).includes(userId));
+    isNull(issueComments.deletedAt), sql`${issueComments.body} ~ ${mentionLink}`,
+  )).limit(1);
+  return !!comment && extractUserMentionIds(comment.body).includes(userId);
 }

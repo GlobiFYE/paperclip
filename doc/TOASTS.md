@@ -19,6 +19,8 @@ user-mention parser resolves the exact user ID; plain names and bare URLs do not
 count. Existing comments are checked, so users need not have opened the task.
 The event introducing the first mention can notify immediately. Removing the
 only mention removes that qualification unless another participation rule holds.
+Historical comment lookup uses an exact viewer-link regex backed by the existing
+comment-body trigram index and returns at most one body for the shared parser.
 
 Agent ownership, primary-agent preference, task/run `responsibleUserId`, company
 membership, and involvement in a parent task do not qualify on their own.

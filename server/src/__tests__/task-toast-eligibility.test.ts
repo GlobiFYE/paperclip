@@ -65,6 +65,27 @@ describe.skipIf(!support.supported)("personal task toast eligibility (persisted 
     await db.insert(activityLog).values({ companyId, entityType: "issue", entityId: id, actorType: "user", actorId: "alice", action: "issue.updated" });
     await onlyAlice(id);
   });
+  it("finds an exact historical mention without loading unrelated mention history", async () => {
+    const id = await task();
+    await db.insert(issueComments).values(Array.from({ length: 500 }, (_, index) => ({
+      companyId, issueId: id, authorAgentId: agentId,
+      body: `[Another viewer](user://someone-${index}) alice user://alice [Similar](user://alice-extra)`,
+    })));
+    expect(await taskToastEligible(db, event(id), "alice")).toBe(false);
+    await db.insert(issueComments).values({ companyId, issueId: id, authorAgentId: agentId,
+      body: "[Alice](user://alice?source=review#note)" });
+    await onlyAlice(id);
+  });
+  it("escapes regex syntax in viewer IDs and preserves parsed href forms", async () => {
+    const id = await task();
+    await db.insert(issueComments).values({ companyId, issueId: id, authorAgentId: agentId,
+      body: "[Different user](user://aliceXX)" });
+    expect(await taskToastEligible(db, event(id), "alice.+")).toBe(false);
+    await db.insert(issueComments).values({ companyId, issueId: id, authorAgentId: agentId,
+      body: "[Alice](user:///alice.+) [Bob](user://name@bob)" });
+    expect(await taskToastEligible(db, event(id), "alice.+")).toBe(true);
+    expect(await taskToastEligible(db, event(id), "bob")).toBe(true);
+  });
   it("does not inherit involvement from responsibility, a shared agent, or a parent", async () => {
     const parentId = await task({ createdByUserId: "alice" });
     const id = await task({ parentId, createdByAgentId: agentId, assigneeAgentId: agentId, responsibleUserId: "alice" });
