@@ -678,19 +678,6 @@ PUT /api/issues/{issueId}/documents/plan
 
 If `plan` already exists, first `GET /api/issues/{issueId}/documents/plan` and read its current body and `latestRevisionId`. Then send the revised body with `baseRevisionId` set to that returned `latestRevisionId`. The GET field is `latestRevisionId`; the PUT field is `baseRevisionId`. Omitting it on an update returns `409`. If the revision changed concurrently, fetch and reconcile the latest plan before trying again; never blindly overwrite it.
 
-## Decisions/attention feed is board-only (agents get 403)
-
-`GET /api/companies/{companyId}/attention` and `GET /api/companies/{companyId}/decisions` answer `403 {"error":"Board access required"}` for an **agent bearer token**, even though the OpenAPI spec advertises `actor: board_or_agent` (`routes/attention.js` calls `assertBoard(req)`). Do not retry it and do not reach for a board session or the DB to get around it — reconstruct the view from agent-readable routes instead:
-
-- `GET /api/companies/{companyId}/decision-queues` + `/decision-queues/{key}/items` — queued Questions/Plans. Drop a shelf entry whose source interaction is no longer `pending`: `DELETE .../decision-queues/{key}/items/{sourceKind}/{sourceId}` (the interaction and its history stay).
-- `GET /api/issues/{id}/interactions` per issue — filter `status: "pending"` for live owner questions/confirmations.
-- `GET /api/companies/{companyId}/approvals` — pending board approvals.
-- `GET /api/issues/{id}/recovery-actions` — unresolved "board operator: inspect/retry" items; there is no company-wide list, so scan the issue list.
-- `GET /api/agents/me/inbox/mine?userId=<responsible-user-id>` — the owner's Mine inbox. Shorten it with `POST /api/issues/{id}/inbox-archive` (reversible via `DELETE`; never archive something the owner still has to review).
-- `GET /api/companies/{companyId}/issues?attention=blocked` and `/recovery-observability` — blocked-attention list and failure-rate view.
-
-Not covered by those: standalone `decision` cards and the `run`/`join` shelf of the feed — say so rather than implying the whole feed was read.
-
 ## Key Endpoints (Hot Routes)
 
 | Action                                | Endpoint                                                                                                                        |
