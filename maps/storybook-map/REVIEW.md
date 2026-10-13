@@ -221,3 +221,25 @@ Source base: `f07efa2802`, followed by scoped edits to the production recovery n
 MacOS in-app browser inspection passed for the task journey at desktop and 390px mobile widths: controller disclosure with Enter, evidence without confirmation remaining disabled, explicit confirmation enabling submission, and a simulated queued result in place. The `owner-changed` story's play assertions passed; the friendly error was visible, the note remained, confirmation cleared and the action was disabled. The `long-controller-name` story rendered at 390px without horizontal overflow. The mobile task shell showed its bottom navigation; evidence text computed to 16px and Tab reached the enabled action. No physical mobile keyboard, Linux screenshot baseline, live deployment stop, real API admission or provider copyback acceptance is claimed. Other story states received source review, not a full browser execution pass.
 
 Refreshed the two reviewed catalog entries only. Global catalog validation already reported unrelated source-fingerprint drift before this work; those entries require their own review.
+
+## Automatic workspace recovery revision — 2026-10-13
+
+Supersedes the task shutdown form reviewed above. The production task now renders
+only a quiet restoration status or an honest operator-assistance fallback. It
+contains no process metadata, evidence field, confirmation checkbox or resume
+button. The task thread omits the duplicate technical recovery card. Obsolete
+form stories and their simulated API fixture were removed; suite IDs remain
+stable. The composed task journey includes a saved state without the notice.
+
+Observed in the macOS in-app browser: automatic status in the production shell,
+completed example without the status, retained approval-wait message, and mobile
+bottom navigation with equal content and viewport widths (no horizontal overflow).
+These are fixture UI observations, not live provider shutdown or task commitment.
+The production component test verifies removal on a resolved action update. The
+real reconciler's database tests separately preserve accepted-result identity,
+monitor and approval waits, and create no new run or wake request.
+
+Only the two reviewed suites have refreshed fingerprints. Global validation has
+71 other source-fingerprint errors, including recovery-recipe dependents after
+the operator instructions changed. It is not globally green. No unrelated review
+fingerprints or visual baselines were accepted.

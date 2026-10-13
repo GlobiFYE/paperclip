@@ -144,12 +144,15 @@ confirm the repair's actual result before resuming. Check the denied and stale
 action paths. A changed card label is insufficient proof of workspace integrity.
 
 For an abandoned native controller, follow the [stop-verification procedure](../../doc/native-workspace-finalization-recovery.md)
-with a disposable deployment. Verify the exact controller and all copyback children
-stopped before recording evidence and selecting **Resume saved result**. Confirm
+with a disposable deployment. A new platform-bound owner recovers automatically
+only after the harness signs proof that the exact deployment fully stopped.
+Legacy owners require independently verified stop evidence through the operator
+API; the task has no shutdown form. Confirm
 the original accepted result commits, the recovery hold resolves, saved files
 remain intact, and existing approval waits or monitor checks remain. No new agent
 turn should start. Repeat with a retry-phase owner and an ordinary runtime manager;
-the first can resume after authorized confirmation, while the second cannot submit.
+the first can resume through automatic proof or authorized operator confirmation,
+while the second cannot use the operator API.
 
 ### `post-stop-message`
 

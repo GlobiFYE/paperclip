@@ -1,3 +1,4 @@
+import { logActivity } from "../activity-log.js";
 import { issueRecoveryActionService } from "../issue-recovery-actions.js";
 import { nativeSha256 } from "./canonical.js";
 import { NATIVE_WORKSPACE_OWNER_UNVERIFIED } from "./native-workspace-finalization-recovery-state.js";
@@ -10,6 +11,8 @@ import {
   evaluateNativeControllerTakeover,
 } from "./native-restart-recovery.js";
 
+import { currentWorkspaceWorker, requestWorkspaceWorkerStopProof, type WorkspaceWorker, type WorkspaceWorkerStopProof } from "./native-workspace-platform-proof.js";
+
 const OWNER_KEY = "nativeWorkspaceFinalizationOwner";
 const activeOwnerTokens = new Set<string>();
 // Positive same-boot evidence, retained only when durable cleanup could not be
@@ -21,6 +24,7 @@ type Owner = {
   hostname: string;
   pid: number;
   processStartedAt: string;
+  worker?: WorkspaceWorker;
 };
 export type NativeWorkspaceFinalizationOwnership = {
   token: string;
@@ -58,7 +62,7 @@ export async function withNativeWorkspaceFinalizationOwnership<T>(
   const identity = await currentNativeControllerIdentity();
   const owner: Owner = {
     token: randomUUID(), controllerBootId: identity.bootId, hostname: os.hostname(), pid: identity.pid,
-    processStartedAt: identity.processStartedAt.toISOString(),
+    processStartedAt: identity.processStartedAt.toISOString(), worker: currentWorkspaceWorker(),
   };
   const scope = and(eq(heartbeatRuns.id, input.runId), eq(heartbeatRuns.companyId, input.companyId), eq(heartbeatRuns.runtimeMode, "native"));
   const owned = and(scope, sql`${heartbeatRuns.runnerProfileJson}->${OWNER_KEY}->>'token' = ${owner.token}`);
@@ -73,6 +77,7 @@ export async function withNativeWorkspaceFinalizationOwnership<T>(
       if (!run) throw new Error("native_workspace_finalization_binding_missing");
       const rawPrior = run.profile?.[OWNER_KEY];
       const prior = readOwner(rawPrior);
+      let platformProof: WorkspaceWorkerStopProof | null = null;
       if (rawPrior != null) {
         const requireStopVerification = async () => {
           const fingerprint = nativeSha256({ runId: input.runId, owner: rawPrior });
@@ -102,12 +107,15 @@ export async function withNativeWorkspaceFinalizationOwnership<T>(
           });
           return { acquired: false } as const;
         };
-        // A foreign host or malformed receipt cannot prove the old physical owner stopped.
-        if (!prior || prior.hostname !== owner.hostname) return requireStopVerification();
+        // The harness checks the exact owned deployment, including orphaned children.
+        // A live deployment, unsigned answer or older receipt stays fenced.
+        if (prior?.worker) platformProof = await requestWorkspaceWorkerStopProof({ runId: input.runId, ownerToken: prior.token, worker: prior.worker });
+        if (!prior) return requireStopVerification();
+        if (!platformProof && prior.hostname !== owner.hostname) return requireStopVerification();
         const knownJoinedHere = prior.controllerBootId === identity.bootId
           && prior.pid === identity.pid && joinedOwnerTokens.has(prior.token)
           && !activeOwnerTokens.has(prior.token);
-        if (!knownJoinedHere) {
+        if (!platformProof && !knownJoinedHere) {
           const takeover = await evaluateNativeControllerTakeover({
             owner: { leaseOwner: prior.token, leaseExpiresAt: new Date(0), controllerPid: prior.pid,
               controllerProcessStartedAt: new Date(prior.processStartedAt) }, now: new Date(),
@@ -131,12 +139,17 @@ export async function withNativeWorkspaceFinalizationOwnership<T>(
       activeOwnerTokens.add(owner.token);
       claimed = true;
       const [claimedRun] = await input.db.update(heartbeatRuns).set({
-        runnerProfileJson: sql`jsonb_set(coalesce(${heartbeatRuns.runnerProfileJson}, '{}'::jsonb), array[${OWNER_KEY}], ${JSON.stringify(owner)}::jsonb)`,
+        runnerProfileJson: sql`jsonb_set(coalesce(${heartbeatRuns.runnerProfileJson}, '{}'::jsonb), array[${OWNER_KEY}], ${JSON.stringify(owner)}::jsonb) || ${JSON.stringify(platformProof ? { nativeWorkspaceOwnerStopProof: platformProof } : {})}::jsonb`,
       }).where(and(scope, prior
-        ? sql`${heartbeatRuns.runnerProfileJson}->${OWNER_KEY}->>'token' = ${prior.token}`
+        ? sql`${heartbeatRuns.runnerProfileJson}->${OWNER_KEY} = ${JSON.stringify(rawPrior)}::jsonb`
         : sql`${heartbeatRuns.runnerProfileJson}->>${OWNER_KEY} is null`
       )).returning({ id: heartbeatRuns.id });
       if (!claimedRun) return { acquired: false } as const;
+      if (platformProof && run.issueId) await logActivity(input.db, {
+        companyId: input.companyId, actorType: "system", actorId: "workspace-recovery",
+        action: "issue.workspace_owner_stop_verified", entityType: "issue", entityId: run.issueId,
+        runId: input.runId, details: { proof: platformProof },
+      });
       if (prior) joinedOwnerTokens.delete(prior.token);
       const ownership: NativeWorkspaceFinalizationOwnership = {
         token: owner.token,

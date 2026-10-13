@@ -35,6 +35,36 @@ leave tar/Git children alive, so incomplete copyback requires operator stop
 verification even on the same host. PID reuse is checked against its recorded
 start time rather than trusted by PID alone.
 
+## Automatic cloud recovery
+
+New Railway copyback receipts record the exact project, environment, service and
+deployment ID. On takeover, the existing finalization reconciler asks the cloud
+harness to inspect that deployment. The harness resolves the stack's owned
+resources independently and issues a short-lived Ed25519 receipt only when the
+exact deployment is `REMOVED` with `deploymentStopped: true`. This covers all
+processes in the deployment, including orphaned copyback children. Missing,
+truncated, live or unavailable provider evidence leaves the physical fence intact.
+
+The tenant verifies the configured harness key, disjoint receipt audience, stack,
+run, owner token, deployment identity and expiry. It records proof and an activity
+entry when replacing only the exact owner under the existing advisory lock. The
+normal reconciler resumes the accepted result; it does not create a provider turn
+or change approval/monitor waits. A changed owner during verification fails closed.
+
+The harness endpoint is `POST /v1/tenant/workspace-worker-stop`. The fleet-wide
+server token authorizes a read request, never stop evidence: responses must be
+signed by the harness. This endpoint requires the companion cloud harness change.
+Deploying only the application keeps unknown owners fenced. No cloud provider
+credentials are delivered to tenant applications.
+
+The task view shows only “Restoring saved work…” while this path is available,
+then removes the notice when commitment resolves recovery. It exposes no process
+identifiers, shutdown form or manual resume control. Legacy receipts without
+platform identity and unsupported platforms say operator assistance is needed;
+operators use the documented exact-owner API below after independent stop proof.
+The three diagnosed historical receipts do not gain a deployment identity merely
+by upgrading. Never infer one from elapsed time or a hostname.
+
 ## Unverified copyback after controller replacement
 
 Generic orphan recovery does not turn a missing provider PID into `process_lost`
@@ -66,10 +96,9 @@ exact prior controller **and its copyback subprocesses** have stopped. Retain th
 sandbox, accepted native result, and workspace descriptor. Do not run a new
 provider turn, delete workspace contents, or relax archive confinement.
 
-After that platform verification, open the task's **Finish saving the agent’s work**
-notice. A company owner, company administrator, or instance administrator records
-platform stop evidence, confirms that the exact controller and all its copyback
-processes have stopped, and selects **Resume saved result**. The equivalent API is
+For legacy receipts, an authorized company owner, company administrator or
+instance administrator records independently verified platform evidence through
+the operator API. The task has no shutdown form or resume control. The API is
 `POST /api/issues/:id/recovery-actions/resume-workspace-finalization` with:
 
 ```json

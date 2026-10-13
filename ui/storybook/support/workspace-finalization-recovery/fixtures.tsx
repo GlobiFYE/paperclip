@@ -1,6 +1,4 @@
-import { useEffect, type ReactNode } from "react";
 import type { IssueRecoveryAction } from "@paperclipai/shared";
-import { expect, userEvent, within } from "storybook/test";
 
 export const issueId = "00000000-0000-4000-8000-000000000824";
 export const stopEvidence = "The deployment platform confirms that previous-controller-7d4f and all its workspace-copyback processes exited. The saved workspace is retained.";
@@ -32,35 +30,8 @@ export const queuedAction: IssueRecoveryAction = {
   nextAction: "Workspace finalization is queued for the saved result. The agent will not repeat its work.",
 };
 
-export type ResponseState = "success" | "pending" | "conflict";
-
-/** Only this fixture's recovery POST is simulated; no live task is contacted. */
-export function RecoveryApiFixture({ response = "success", children }: { response?: ResponseState; children: ReactNode }) {
-  useEffect(() => {
-    const originalFetch = window.fetch;
-    const fixtureFetch: typeof window.fetch = async (input, init) => {
-      const rawUrl = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (new URL(rawUrl, window.location.origin).pathname !== `/api/issues/${issueId}/recovery-actions/resume-workspace-finalization`) {
-        return originalFetch(input, init);
-      }
-      if (response === "pending") return new Promise<Response>(() => {});
-      await new Promise(resolve => window.setTimeout(resolve, 600));
-      if (response === "conflict") return Response.json({ error: "The recorded workspace owner is no longer current. Refresh the task and inspect its run.", details: { code: "workspace_owner_recovery_stale" } }, { status: 409 });
-      return Response.json({ runId: recoveryAction.evidence.runId, resultId: "00000000-0000-4000-8000-000000000829", status: "queued" }, { status: 202 });
-    };
-    window.fetch = fixtureFetch;
-    return () => { if (window.fetch === fixtureFetch) window.fetch = originalFetch; };
-  }, [response]);
-  return children;
-}
-
-export async function confirmStopped(canvasElement: HTMLElement) {
-  const canvas = within(canvasElement);
-  const button = canvas.getByRole("button", { name: "Resume saved result" });
-  await expect(button).toBeDisabled();
-  await userEvent.type(canvas.getByRole("textbox", { name: "Shutdown evidence" }), stopEvidence);
-  await expect(button).toBeDisabled();
-  await userEvent.click(canvas.getByRole("checkbox"));
-  await expect(button).toBeEnabled();
-  return { canvas, button };
-}
+export const automaticAction: IssueRecoveryAction = {
+  ...recoveryAction, evidence: { ...recoveryAction.evidence, owner: { ...(recoveryAction.evidence.owner as object), worker: {
+    provider: "railway", projectId: "fixture-project", environmentId: "fixture-environment", serviceId: "fixture-service", deploymentId: "fixture-old-deployment",
+  } } },
+};

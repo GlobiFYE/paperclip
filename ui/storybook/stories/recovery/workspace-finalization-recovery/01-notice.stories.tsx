@@ -1,66 +1,24 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, within } from "storybook/test";
 import { WorkspaceExportRecovery } from "@/components/WorkspaceExportRecovery";
-import { IssueRecoveryActionCard } from "@/components/IssueRecoveryActionCard";
-import { RecoveryApiFixture, confirmStopped, issueId, queuedAction, recoveryAction, stopEvidence } from "../../../support/workspace-finalization-recovery/fixtures";
-
+import { automaticAction, queuedAction, recoveryAction } from "../../../support/workspace-finalization-recovery/fixtures";
 const meta = {
   id: "workspace-finalization-recovery-01-notice",
   title: "Projects and execution/Recovery/Workspace finalization recovery/01 Notice",
   component: WorkspaceExportRecovery,
-  args: { issueId, action: recoveryAction, canManage: true, canConfirmOwnerStop: true, onQueued: () => {} },
-  parameters: { layout: "fullscreen", docs: { story: { inline: false }, description: { component: "The production recovery notice from PR #15824. Record platform stop evidence and confirm the exact previous controller and all copyback processes stopped, then resume the saved result. API responses are simulated; these examples do not modify staging." } } },
-  decorators: [(Story, context) => <RecoveryApiFixture response={context.parameters.recoveryResponse ?? "success"}><div className="mx-auto max-w-2xl p-4 sm:p-8"><Story /></div></RecoveryApiFixture>],
+  args: { action: automaticAction },
+  parameters: { layout: "fullscreen", docs: { story: { inline: false }, description: { component: "Controller recovery runs in the harness. The task shows a quiet status and removes it when saving finishes. Legacy receipts without platform identity require operator assistance through the documented API; no shutdown form is shown to users." } } },
+  decorators: [Story => <div className="mx-auto max-w-2xl p-4 sm:p-8"><Story /></div>],
 } satisfies Meta<typeof WorkspaceExportRecovery>;
 export default meta;
 type Story = StoryObj<typeof meta>;
-
-export const NeedsVerification: Story = {};
-export const ReadyToResume: Story = { play: async ({ canvasElement }) => { await confirmStopped(canvasElement); } };
-export const Queueing: Story = {
-  parameters: { recoveryResponse: "pending" },
-  play: async ({ canvasElement }) => {
-    const { canvas, button } = await confirmStopped(canvasElement);
-    await userEvent.click(button);
-    await expect(await canvas.findByRole("button", { name: "Requesting…" })).toBeDisabled();
-  },
-};
-export const ResumeSavedResult: Story = {
-  play: async ({ canvasElement }) => {
-    const { canvas, button } = await confirmStopped(canvasElement);
-    await userEvent.click(button);
-    await expect(await canvas.findByRole("status")).toHaveTextContent("The agent will not repeat its work.");
-  },
-};
-export const ControllerDetails: Story = {
-  play: async ({ canvasElement }) => {
-    const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByText("Controller details"));
-    await expect(canvas.getByText("Process ID")).toBeVisible();
-  },
-};
-export const LongControllerName: Story = {
-  args: { action: { ...recoveryAction, evidence: { ...recoveryAction.evidence,
-    owner: { ...(recoveryAction.evidence.owner as object), hostname: "workspace-controller-qualification-previous-deployment-7d4f69f78d-very-long-container-name" } } } },
-  globals: { viewport: { value: "mobile", isRotated: false } },
-};
+export const RestoringSavedWork: Story = { play: async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await expect(canvas.getByRole("status")).toHaveTextContent("Restoring saved work");
+  await expect(canvas.queryByRole("button")).not.toBeInTheDocument();
+  await expect(canvas.queryByRole("textbox")).not.toBeInTheDocument();
+} };
+export const NeedsVerification: Story = { args: { action: recoveryAction } };
 export const AlreadyQueued: Story = { args: { action: queuedAction } };
-export const OwnerChanged: Story = {
-  parameters: { recoveryResponse: "conflict" },
-  play: async ({ canvasElement }) => {
-    const { canvas, button } = await confirmStopped(canvasElement);
-    await userEvent.click(button);
-    await expect(await canvas.findByRole("alert")).toHaveTextContent("Refresh the task and verify its current controller");
-    await expect(canvas.getByRole("textbox")).toHaveValue(stopEvidence);
-    await expect(canvas.getByRole("checkbox")).not.toBeChecked();
-    await expect(canvas.getByRole("button", { name: "Resume saved result" })).toBeDisabled();
-  },
-};
-export const ReadOnly: Story = { args: { canConfirmOwnerStop: false } };
+export const Saved: Story = { args: { action: null } };
 export const Mobile: Story = { globals: { viewport: { value: "mobile", isRotated: false } } };
-export const RecoveryDetails: Story = {
-  render: () => <IssueRecoveryActionCard action={recoveryAction} onResolve={() => {}} canFalsePositive />,
-  play: async ({ canvasElement }) => {
-    await expect(within(canvasElement).queryByTestId("recovery-action-resolve-trigger")).not.toBeInTheDocument();
-  },
-};

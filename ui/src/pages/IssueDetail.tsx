@@ -66,7 +66,6 @@ import {
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { accessApi, type CurrentBoardAccess } from "../api/access";
 import {
-  canBoardConfirmWorkspaceOwnerStop,
   canBoardManageRuntime,
   readRecoveryReconcileWorkspaceId,
 } from "../lib/recovery-reconcile";
@@ -2498,7 +2497,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
             blockerAttention={blockerAttention}
             successfulRunHandoff={successfulRunHandoff}
             scheduledRetry={scheduledRetry}
-            recoveryAction={recoveryAction ?? null}
+            recoveryAction={recoveryAction?.cause === "native_workspace_finalization_owner_unverified" ? null : recoveryAction ?? null}
             onResolveRecoveryAction={onResolveRecoveryAction}
             onReissueIsolatedRecoveryAction={onReissueIsolatedRecoveryAction}
             reissueIsolatedRecoveryActionPending={
@@ -7652,10 +7651,9 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
           />
 
           {resolvedDetailTab === "chat" && (
-            <WorkspaceExportRecovery key={`workspace-export:${issue.activeRecoveryAction?.id ?? issue.id}`} issueId={issue.id}
+            <WorkspaceExportRecovery key={`workspace-export:${issue.activeRecoveryAction?.id ?? issue.id}`}
               className={shellSectionClass}
-              action={issue.activeRecoveryAction ?? null} canManage={canManageBoardRuntime}
-              canConfirmOwnerStop={canBoardConfirmWorkspaceOwnerStop(issue.companyId, boardAccess)} onQueued={invalidateIssueDetail} />
+              action={issue.activeRecoveryAction ?? null} />
           )}
           {resolvedDetailTab === "chat" && issue.executionBlocker && (
             <ExecutionBlockerNotice className={shellSectionClass} companyId={issue.companyId} issueId={issue.id} blocker={issue.executionBlocker} onRetried={invalidateIssueDetail} />
@@ -8040,7 +8038,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                   blockerAttention={issue.blockerAttention ?? null}
                   successfulRunHandoff={issue.successfulRunHandoff ?? null}
                   scheduledRetry={issue.scheduledRetry ?? null}
-                  recoveryAction={issue.activeRecoveryAction ?? null}
+                  recoveryAction={issue.activeRecoveryAction?.cause === "native_workspace_finalization_owner_unverified" ? null : issue.activeRecoveryAction ?? null}
                   onResolveRecoveryAction={handleResolveRecoveryAction}
                   onReissueIsolatedRecoveryAction={
                     handleReissueIsolatedRecoveryAction
