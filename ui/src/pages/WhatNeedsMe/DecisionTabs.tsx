@@ -26,7 +26,7 @@ export const decisionTabs = [
 ] as const;
 export type DecisionTab = typeof decisionTabs[number][0];
 export function defaultDecisionTab(counts: Record<DecisionCategory, number>): DecisionTab {
-  return counts.hiring ? "hiring" : counts.yesno ? "yesno" : counts.question ? "questions" : "closer_look";
+  return counts.hiring ? "hiring" : counts.yesno ? "yesno" : "questions";
 }
 
 export function DecisionTabs() {
