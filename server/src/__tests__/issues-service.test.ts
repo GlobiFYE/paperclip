@@ -4262,7 +4262,6 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
     const blockerA = randomUUID();
     const blockerB = randomUUID();
     const blockedIssueId = randomUUID();
-    // Unattached workspaces must not add a finalize barrier after all blockers finish.
     await db.insert(issues).values([
       { id: blockerA, companyId, title: "Blocker A", status: "done", priority: "medium", executionWorkspaceId: null },
       { id: blockerB, companyId, title: "Blocker B", status: "todo", priority: "medium", executionWorkspaceId: null },
