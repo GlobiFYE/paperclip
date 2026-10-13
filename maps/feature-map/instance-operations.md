@@ -14,6 +14,12 @@ Agent access: [companion](../agent-access-map/instance-operations.md).
 - `diagnostics`: use doctor/health output to distinguish readiness from a listening port.
 - `backup`: create and inspect backups and verify restore only into a separate disposable target.
 
+Routine HTTP monitoring may use `GET /api/liveness` (or `HEAD`). It returns only
+process startup status and the public build commit without SQL or authentication.
+It remains reachable during an idle drain. Use `/api/health` for explicit database
+readiness, signed bootstrap, and authorized diagnostics; liveness does not
+establish database health or claim a workspace.
+
 ## How to get to it (user POV)
 
 ### `operator-cli`

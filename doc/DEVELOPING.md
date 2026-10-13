@@ -1363,6 +1363,8 @@ When a workspace service runs Paperclip for browser OAuth QA, configure its `exp
 ## Heartbeat Service Extractions
 
 Keep relevant heartbeat extractions and their focused tests in `server/src/services/heartbeat/`.
+Follow [Heartbeat execution boundaries](../rules/heartbeat-execution-boundaries.mdc)
+for state lifetime, admission, recovery ownership, cleanup ordering, and verification.
 
 Runtime-service coordination is in `server/src/services/heartbeat/runtime-services.ts`.
 It validates service intents, starts configured services, records adapter-managed

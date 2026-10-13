@@ -274,6 +274,35 @@ Reviewed the same twelve workspace-recipe-dependent entries after extending the 
 
 Reviewed the twelve unchanged workspace recipe subjects and fixtures after correcting implicit default selection. Task creation and controller classification now share configured-policy, primary, creation-time and ID precedence. Explicit choices and retained denial markers still suppress controller hooks. Project strategy fixtures show configuration, while runtime status and file/browser/artifact/service fixtures do not execute source scripts or prove this backend ordering. Refreshed only their reviewed recipe fingerprints and retained all classifications and stable IDs. No browser render, play, screenshot, Storybook build or live runtime acceptance was performed.
 
+## Workspace finalization UI refinement — 2026-10-13
+
+Source base: `f07efa2802`, followed by scoped edits to the production recovery notice and its two story suites. Reviewed `recovery/workspace` and `recovery/source-action`; stable story IDs and administrator admission remain unchanged. The notice leads with saved work, discloses controller metadata, explains evidence/confirmation requirements, and distinguishes queue acknowledgement from completion. A stale controller error preserves the note and clears confirmation so the operator must verify again. The task composition uses viewer identity for human bubbles and omits a routine status badge.
+
+MacOS in-app browser inspection passed for the task journey at desktop and 390px mobile widths: controller disclosure with Enter, evidence without confirmation remaining disabled, explicit confirmation enabling submission, and a simulated queued result in place. The `owner-changed` story's play assertions passed; the friendly error was visible, the note remained, confirmation cleared and the action was disabled. The `long-controller-name` story rendered at 390px without horizontal overflow. The mobile task shell showed its bottom navigation; evidence text computed to 16px and Tab reached the enabled action. No physical mobile keyboard, Linux screenshot baseline, live deployment stop, real API admission or provider copyback acceptance is claimed. Other story states received source review, not a full browser execution pass.
+
+Refreshed the two reviewed catalog entries only. Global catalog validation already reported unrelated source-fingerprint drift before this work; those entries require their own review.
+
+## Automatic workspace recovery revision — 2026-10-13
+
+Supersedes the task shutdown form reviewed above. The production task now renders
+only a quiet restoration status or an honest operator-assistance fallback. It
+contains no process metadata, evidence field, confirmation checkbox or resume
+button. The task thread omits the duplicate technical recovery card. Obsolete
+form stories and their simulated API fixture were removed; suite IDs remain
+stable. The composed task journey includes a saved state without the notice.
+
+Observed in the macOS in-app browser: automatic status in the production shell,
+completed example without the status, retained approval-wait message, and mobile
+bottom navigation with equal content and viewport widths (no horizontal overflow).
+These are fixture UI observations, not live provider shutdown or task commitment.
+The production component test verifies removal on a resolved action update. The
+real reconciler's database tests separately preserve accepted-result identity,
+monitor and approval waits, and create no new run or wake request.
+
+Only the two reviewed suites have refreshed fingerprints. Global validation has
+71 other source-fingerprint errors, including recovery-recipe dependents after
+the operator instructions changed. It is not globally green. No unrelated review
+fingerprints or visual baselines were accepted.
 
 ## Inherited activity, inbox and recovery recipes — 2026-10-12
 
@@ -435,6 +464,55 @@ and three also reference the Slack-only settings copy. Other source bytes and
 all classifications, fixture boundaries, story IDs and sidebar titles remain
 unchanged from that baseline. Catalog checks validate these references and
 fingerprints, not live Slack behavior.
+
+### Current-master reconciliation
+
+Merged master `5e8e992df2`. The newer catalog supplies the baseline associations
+and reviews. Compared every declared input against that master: only seven
+inputs changed for this feature (recovery recipe, recovery card, task page, quiet
+status, two stories and their fixture). Reviewed those changes and the unchanged
+subjects/fixtures they affect; refreshed the 26 dependent fingerprints while
+retaining their classifications and simulation boundaries. The task-page change
+adds the quiet status and suppresses only the owner-unverified duplicate card;
+other task variants retain their behavior. The recovery-card change blocks
+unsafe generic dismissal. Existing card regressions cover that denial.
+
+Five remaining errors have unchanged source bytes and metadata inherited from
+master: shared setup, decision-card, decisions-desk, search and what-needs-me.
+These require a separate review; no hashes or visual baselines were accepted for
+them. The earlier 71-error count above describes the pre-merge baseline.
+
+### Inherited index metadata follow-up
+
+The current master's personal-toast recipe also left shared setup and four inbox
+suites with stale metadata. Reviewed the recipe's added toast capability and
+verification limits: decision-card, decisions-desk and search still demonstrate
+their existing isolated subjects; what-needs-me's toast fixture does not prove
+viewer eligibility. Their subject and fixture bytes are unchanged from master;
+retained all unreviewed classifications and fixture boundaries. The generator
+adds the missing toast capability and description to the existing inbox feature,
+without changing feature order or IDs. Reviewed that generated diff and refreshed
+these four entries, the shared setup and Overview fingerprints. No toast behavior,
+new browser acceptance or visual baseline is claimed. Global catalog validation
+now passes. This supersedes the five inherited-error count above.
+
+### Confirmed recovery status
+
+Reviewed the shipped notice, server evidence contract and both recovery fixtures.
+Platform identity alone no longer means work is restoring: the server marks the
+exact recovery receipt resuming only after verified stop proof and a successful
+owner claim. Missing proof remains operator-required. The new unavailable-proof
+story covers a platform-bound receipt without progress; confirmed and queued
+stories retain the quiet status. Updated only the two affected fingerprints.
+This is component/fixture evidence, not deployed harness acceptance.
+
+### Latest master reconciliation
+
+Retained master’s task-creation visibility scenarios, source-review notes and
+unreviewed classifications. Seven overlapping entries differ from master only
+in the already reviewed recovery recipe or task-detail recovery notice wiring.
+Refreshed those combined-source fingerprints and regenerated the index. No new
+creation-visibility acceptance or visual baseline is claimed.
 
 ## Verification routes for unassociated capabilities — 2026-10-13
 
