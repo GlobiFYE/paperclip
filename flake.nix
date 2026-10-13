@@ -54,6 +54,7 @@
             inherit (pkgs) lib;
             nodejs = pkgs.nodejs;
             pnpm = pkgs.pnpm_10;
+            pythonWithYaml = pkgs.python3.withPackages (ps: [ ps.pyyaml ]);
             version = (builtins.fromJSON (builtins.readFile ./server/package.json)).version;
 
             # Keep packaging inputs independent from Nix modules, tests, and
@@ -105,10 +106,25 @@
 
               strictDeps = true;
 
+              # Cargo runs as part of the upstream Runner build. Vendor every
+              # crate from the committed lockfile before entering the sandbox.
+              cargoRoot = "packages/paperclip-runner/runner";
+              cargoDeps = pkgs.rustPlatform.importCargoLock {
+                lockFile = ./packages/paperclip-runner/runner/Cargo.lock;
+              };
+              CARGO_NET_OFFLINE = "true";
+              # CMake is for native Cargo dependencies, not this JS project.
+              dontUseCmakeConfigure = true;
+
               nativeBuildInputs = [
                 nodejs
                 pnpm
                 pkgs.pnpmConfigHook
+                pkgs.cargo
+                pkgs.rustc
+                pkgs.rustPlatform.cargoSetupHook
+                pkgs.cmake
+                pkgs.perl
                 pkgs.makeWrapper
                 pkgs.python3
                 pkgs.pkg-config
@@ -142,9 +158,7 @@
                 pnpm config set fetch-retry-maxtimeout 120000
                 pnpm config set fetch-timeout 600000
 
-                substituteInPlace pnpm-lock.yaml \
-                  --replace-fail x3fethhotv43zektyl5prdwf54 a93c6b5344b036508a5a86ba7e8589b11302119d46bdc51318e297b74fa5666e \
-                  --replace-fail 55uhvnotpqyiy37rn3pqpukhei d8b1e087e95f559a6342fc15954f11af22d9dca43a7fcca5762b6459913b5800
+                ${pythonWithYaml}/bin/python ${./nix/normalize-pnpm-lock.py} pnpm-lock.yaml
               '';
 
               pnpmDeps = pkgs.fetchPnpmDeps {
@@ -157,11 +171,13 @@
                   ;
                 inherit pnpm;
                 fetcherVersion = 4;
-                hash = "sha256-xcAji32woqLG93dclH/hDaWyNUeLHWdXfW+AKeIPF7o=";
+                hash = "sha256-Ic5BHRqO9PgstJ1m4Lj6KMzNhrdF/tszMX1NsdzJLzg=";
               };
 
               buildPhase = ''
                 runHook preBuild
+
+                export CARGO_BUILD_JOBS="''${NIX_BUILD_CORES:-1}"
 
                 # Keep this aligned with the production Docker build. The CLI is
                 # built as well because it is the flake's default executable.
@@ -174,6 +190,12 @@
 
                 test -f server/dist/index.js
                 test -f cli/dist/index.js
+                test -x packages/paperclip-runner/dist/bin/paperclip-runnerd
+                test -x server/dist/vendor/paperclip-runner/bin/paperclip-runnerd
+
+                # The staged binaries are runtime inputs; Cargo's target cache
+                # is not. Do not copy gigabytes of build artifacts into $out.
+                rm -rf packages/paperclip-runner/runner/target
 
                 runHook postBuild
               '';
@@ -319,6 +341,18 @@
 
             checks = {
               package = paperclip;
+              lockfile-normalization =
+                pkgs.runCommand "paperclip-pnpm-lock-tests"
+                  {
+                    nativeBuildInputs = [ pythonWithYaml ];
+                  }
+                  ''
+                    mkdir -p nix/tests
+                    cp ${./nix/normalize-pnpm-lock.py} nix/normalize-pnpm-lock.py
+                    cp ${./nix/tests/test_normalize_pnpm_lock.py} nix/tests/test_normalize_pnpm_lock.py
+                    python -m unittest discover -s nix/tests -p 'test_*.py' -v
+                    touch "$out"
+                  '';
             }
             // lib.optionalAttrs pkgs.stdenv.isLinux {
               nixos-module = import ./nix/tests/nixos-module.nix {
@@ -330,6 +364,10 @@
               packages = [
                 nodejs
                 pnpm
+                pkgs.cargo
+                pkgs.rustc
+                pkgs.cmake
+                pkgs.perl
                 pkgs.curl
                 pkgs.gh
                 pkgs.git
