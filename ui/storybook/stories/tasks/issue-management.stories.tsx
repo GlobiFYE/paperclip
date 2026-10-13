@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { creationVisibilityStories } from "../../support/issue-creation-visibility";
 import type { Issue, IssueLabel, Project } from "@paperclipai/shared";
 import type { RunForIssue } from "@/api/activity";
 import { useQueryClient } from "@tanstack/react-query";
@@ -594,7 +595,7 @@ function OpenFiltersPopover() {
           projects={storybookProjects.map((project) => ({ id: project.id, name: project.name }))}
           labels={storybookIssueLabels.map((label) => ({ id: label.id, name: label.name, color: label.color }))}
           currentUserId="user-board"
-          enableRoutineVisibilityFilter
+          enableAgentCreatedVisibilityFilter
           buttonVariant="outline"
           creators={[
             { id: "user:user-board", label: "Riley Board", kind: "user", searchText: "board user human" },
@@ -771,7 +772,7 @@ function IssueManagementStories() {
               viewStateKey={issueListViewKey}
               onUpdateIssue={() => undefined}
               createIssueLabel="issue"
-              enableRoutineVisibilityFilter
+              enableAgentCreatedVisibilityFilter
             />
           </Section>
 
@@ -938,4 +939,21 @@ export const IssuePropertiesRelationshipBadges: Story = {
 export const IssuePropertiesRelationshipBadgesInline: Story = {
   name: "IssueProperties - relationship badges inline",
   render: () => <IssuePropertiesRelationshipBadgesPane inline />,
+};
+
+
+export const AgentCreatedTasksHidden: Story = {
+  ...creationVisibilityStories.hidden,
+  name: "Agent-created tasks — hidden by default",
+  play: creationVisibilityStories.hidden.play,
+};
+export const AgentCreatedTasksIncluded: Story = {
+  ...creationVisibilityStories.included,
+  name: "Agent-created tasks — explicit opt-in",
+  play: creationVisibilityStories.included.play,
+};
+export const AgentCreatedTasksFilter: Story = {
+  ...creationVisibilityStories.filter,
+  name: "Agent-created tasks — filter control",
+  play: creationVisibilityStories.filter.play,
 };

@@ -2,7 +2,9 @@
 
 Product map: [Recovery](../feature-map/recovery.md).
 
-Review date: 2026-10-12. Source commit: `f981fa3cc10cb8663a87dec60345fbff46d54d0a`.
+Review date: 2026-10-12. Source commit: `58e16dbddfc9c8d0cf60867f9d9847f0feda055b`.
+Native REST transport reconciled in this change; see the
+[shared transport contract](README.md#native-rest-transport).
 
 This is a source-reviewed baseline of representative operations and known gaps.
 Each capability needs operation-level review before its entire scope can be
@@ -42,7 +44,8 @@ API: `present` — representative operation IDs:
 
 - `POST /api/issues/{id}/recovery-actions/resolve`.
 
-Agent access: `partial` — Eligible agent REST / CLI; native generic mutation restricted.
+Agent access: `partial` — Eligible agent REST / native `call_api` / CLI under
+source-bound recovery authority.
 
 Policy: Task/run visibility, run ownership and source/action policy; workspace export
 retry and some operator controls require board.
@@ -55,8 +58,9 @@ credentials/run context; inspect its result and applicable persistence/attributi
 Assert the relevant denied actor, owner, company or mode from Policy. Review the
 remaining operations before qualifying the whole capability.
 
-Gaps: Underlying route has agent checks; no corresponding default native recovery
-mutation tool is advertised.
+Gaps: Eligible resolutions use native `call_api`. The route retains owner and
+management authority, active-run/source-trust checks, board-only outcomes and
+reconciliation controls.
 
 ## `source-action`
 
@@ -67,7 +71,8 @@ API: `present` — representative operation IDs:
 - `GET /api/issues/{id}/recovery-actions`.
 - `POST /api/issues/{id}/recovery-actions/resolve`.
 
-Agent access: `partial` — Eligible agent REST / CLI; source-bound recovery state.
+Agent access: `partial` — Eligible agent REST / native `call_api` / CLI; source-bound
+recovery state.
 
 Policy: Task/run visibility, run ownership and source/action policy; workspace export
 retry and some operator controls require board. Completion or cancellation of a
@@ -89,8 +94,8 @@ physical copyback, and cleanup after the receipt is cleared. Exercise this
 sequence in a disposable instance; automatic cleanup must use the system actor
 and must not create reader participation. No live recovery proof is claimed.
 
-Gaps: Need operation-level eligibility and a real native binding for permitted recovery
-actions; do not route around lifecycle authority.
+Gaps: Permitted resolutions use native `call_api` under existing eligibility
+and ownership checks. Source/action policy determines whether continuation is allowed.
 
 ## `exhaustion`
 
@@ -124,23 +129,40 @@ Review: `baseline`.
 API: `present` — representative operation IDs:
 
 - `POST /api/issues/{id}/recovery-actions/retry-workspace-export`.
+- `POST /api/issues/{id}/recovery-actions/resume-workspace-finalization`.
 - `POST /api/execution-workspaces/{id}/reconcile-branch`.
 
 Agent access: `restricted` — Board/runtime management APIs; agent reads diagnosis and
 performs permitted workspace work.
 
-Policy: Task/run visibility, run ownership and source/action policy; workspace export
-retry and some operator controls require board.
+Policy: Export retry and branch reconciliation require board runtime management.
+Physical-owner stop confirmation uses the separate `runtime:confirm_owner_stop`
+action. It requires active company owner/admin membership, trusted local board
+access, or instance administration. Agents and ordinary runtime managers are denied.
+The exact source task, running native run, accepted result and owner receipt must
+match; active copyback locks, live local writers, and newer runs prevent admission.
+An authorized administrator must first verify through the deployment platform that
+the exact controller and all copyback children stopped, then attest that evidence.
+Elapsed time, an expired coordinator lease or a lost advisory connection is not proof.
+Only the exact owner receipt is released; normal reconciliation performs export and
+commitment without another provider turn or bypassing existing task waits.
 
-Evidence: `source-only` — [implementation](../../server/src/routes/issues.ts#L9478) at
-the reviewed commit above.
+Evidence: `source-only` — [route](../../server/src/routes/issues.ts),
+[administrator authorization](../../server/src/services/authorization.ts), and
+[owner admission](../../server/src/services/native-runtime/native-workspace-owner-recovery.ts)
+reviewed for this change. Local authorization, route, UI and finalization regressions
+cover member/agent denial, exact-owner admission and the real reconciler preserving
+monitor and approval waits. This is not live provider-stop proof.
 
-Verification: `not-run` — assert the documented agent denial with an owned test fixture;
+Verification: `not-run` for live agent/deployment execution — assert the documented agent denial with an owned test fixture;
 verify any listed agent request/result path separately. A delegated operation needs its
 own policy and access review.
 
-Gaps: Export retry/reconciliation APIs exist but require board. Native generic
-execution-control mutations are also blocked.
+Gaps: Export retry and branch reconciliation require board runtime:manage at
+their HTTP routes. The exact-owner operator fallback additionally requires
+runtime:confirm_owner_stop. Native call_api preserves these agent denials.
+Automatic managed-cloud recovery uses independently verified, signed platform
+proof through the finalization reconciler; agents cannot attest owner shutdown.
 
 ## `unknown-outcome`
 

@@ -31,7 +31,7 @@ manual verification steps, and gotchas.
 | --- | --- |
 | [Task creation and lifecycle](./tasks.md) | Creation, assignment, lists, properties, comments, and completion. |
 | [Delegation, dependencies, and signoff](./task-coordination.md) | Child work, prerequisites, reviewers, and task-tree controls. |
-| [Inbox, decisions, and search](./inbox-search.md) | Personal triage, decision queues, unread/blocked views, and search. |
+| [Inbox, decisions, and search](./inbox-search.md) | Personal triage, decision queues, unread/blocked views, search, and personal task toasts. |
 | [Agent conversations and project handoff](./agent-chat.md) | Persistent conversations, discovery, handoff, and gated board chat. |
 | [Questions and approvals](./questions-and-approvals.md) | Question/plan responses, formal approvals, and app-tool review. |
 | [Steering and queued messages](./steering.md) | Follow-ups, queue edits, interruption, and pause/resume. |

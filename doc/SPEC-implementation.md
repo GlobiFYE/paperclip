@@ -1130,6 +1130,10 @@ identity shows no failed runs. All retains company-wide failed-run visibility.
 Company health alerts do not contribute to the personal inbox badge.
 Run list responses, including summaries, retain `responsibleUserId`.
 
+Live task and run toasts require personal task participation or an explicit user
+mention, independently of read access. Agent ownership and responsible-user
+attribution alone do not qualify. See [toast semantics](TOASTS.md).
+
 Ownership split:
 
 - **Core / Free:** permission key and scoped-grant enforcement; responsible-user resolution; default-open, disabled, and allowlist policy modes; archive/unarchive APIs; per-user archive persistence; resurfacing behavior; activity audit records; and stable denial codes.
@@ -2077,8 +2081,17 @@ unavailable. Preserve current ownership and newer-work fences. See
   runs use local installed snapshots; pinned/active runs retain their versions.
 - Additions require reviewed selection, with new candidates checked by default and
   explicit folder exclusions retained. Upstream deletion keeps installed content with
-  removed status; moves are removal plus discovery. Deselect/disconnect retains content
+  removed status; moves are removal plus discovery. Deselect retains content
   and assignments. Originals are read-only, with the existing independent fork workflow.
+- Source disconnection requires a saved revision and an explicit copy/delete choice.
+  Remove the source and all entries to allow a fresh repository import, including
+  legacy disabled sources. Copy materializes complete local files in the caller's
+  My Skills folder, retaining skill IDs, keys, versions, and agent assignments.
+  Delete applies skills.remove to every linked skill (including deselected entries),
+  rejects skills still used by agents, and removes skills and source atomically with
+  the activity record. Copy applies skills.edit and skills.create to every linked
+  skill; failed writes or audit persistence leave the source and imported skills intact.
+
 - Adopt recognizable existing GitHub imports without provider calls or content changes;
   resolve missing repository IDs and full snapshots on successful refresh. Exclude bundled,
   catalog, local/project, skills.sh, and unsupported hosts. Existing GitHub import and update
@@ -2174,3 +2187,23 @@ See [the layer architecture](plans/2026-10-09-task-workspaces.md) for resolution
 ## Company fast-response service
 
 Companies may configure an optional shared API connection and model for short acknowledgements of accepted human turns. Fast responses use direct SDK inference alongside normal agent work, with a three-second admission deadline, bounded prompts/output, current authorization and independent `fast_response` accounting. They are server-marked platform receipts attributed to the agent, never completion, interaction or recovery evidence. Company-sponsored unlinked external senders are explicit; linked-user permission denials are never bypassed. See [fast-responses.md](fast-responses.md) for provider, delivery, history and endpoint contracts.
+
+### Task collection creation visibility (2026-10-13)
+
+Tasks and project collections default to hiding agent/system-created tasks and
+provide a saved **show agent-created tasks** filter. Classify creation using
+creator identity and origin; assignee/responsible users do not imply human
+authorship. Routine executions remain automated even when manually triggered.
+Creator-less ordinary tasks are system-created. All chat-channel tasks count as
+bot-created for this filter, including human-initiated inbound conversations.
+Human ordinary and onboarding tasks remain visible. Apply collection creation filters before search limits and
+pagination, and retrieve hierarchy context separately under existing access checks.
+Context does not count as independent results or board cards. Bounded context
+reads retain loaded rows while users reveal more of the tree.
+
+Inbox membership, archives, unread state, and badges retain existing participation
+rules, including assignment, comments, and manual routine runs. Responsibility and
+read-only activity do not admit scheduled work. Inbox discovery/Blocked preserve
+participated automation and hide unrelated automation by default. Agent profile
+history, routine history, and task-detail subtasks remain complete. API consumers
+that omit the optional creation filter retain their existing list behavior.
