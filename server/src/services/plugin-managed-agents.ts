@@ -17,6 +17,7 @@ import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
 import { logActivity } from "./activity-log.js";
 import { agentInstructionsBundleMode, agentInstructionsService } from "./agent-instructions.js";
+import { syncPluginToolGrants } from "./plugin-tool-grants.js";
 
 const MANAGED_AGENT_ENTITY_TYPE = "managed_agent";
 const DEFAULT_MANAGED_AGENT_ADAPTER_TYPE = "process";
@@ -188,6 +189,23 @@ export function pluginManagedAgentService(
       throw notFound(`Managed agent declaration not found: ${agentKey}`);
     }
     return declaration;
+  }
+
+  function grantedPluginToolNames(permissions: unknown) {
+    if (!permissions || typeof permissions !== "object" || Array.isArray(permissions)) return [];
+    const declared = (permissions as Record<string, unknown>).pluginTools;
+    if (!Array.isArray(declared)) return [];
+    if (!declared.some((key) => key === options.pluginKey)) return [];
+    return (options.manifest?.tools ?? []).map((tool) => `${options.pluginKey}:${tool.name}`);
+  }
+
+  async function syncGrantedTools(companyId: string, agentId: string, permissions: unknown) {
+    await syncPluginToolGrants(db, {
+      companyId,
+      agentId,
+      pluginKey: options.pluginKey,
+      grantedToolNames: grantedPluginToolNames(permissions),
+    });
   }
 
   async function getBinding(companyId: string, agentKey: string) {
@@ -482,6 +500,7 @@ export function pluginManagedAgentService(
     }
 
     await upsertBinding(companyId, declaration, created.id, { approvalId }, adapterType);
+    await syncGrantedTools(companyId, created.id, created.permissions);
     await logActivity(db, {
       companyId,
       actorType: "plugin",
@@ -569,6 +588,7 @@ export function pluginManagedAgentService(
       if (current.agent) {
         const agent = await backfillManagedPauseReason(companyId, declaration, current.agent);
         await upsertBinding(companyId, declaration, agent.id);
+        await syncGrantedTools(companyId, agent.id, agent.permissions);
         return resolution(companyId, declaration, agent, current.status, current.approvalId);
       }
 
@@ -582,6 +602,7 @@ export function pluginManagedAgentService(
           declaration,
           relinkedAgent,
         );
+        await syncGrantedTools(companyId, agent.id, agent.permissions);
         return resolution(companyId, declaration, agent, "relinked");
       }
 
@@ -607,6 +628,7 @@ export function pluginManagedAgentService(
       if (!updated) throw notFound("Managed agent not found");
       const updatedAgent = await materializeDeclaredInstructions(companyId, updated as Agent, declaration, { replaceExisting: true });
       await upsertBinding(companyId, declaration, updatedAgent.id, {}, adapterType);
+      await syncGrantedTools(companyId, updatedAgent.id, updatedAgent.permissions);
       await logActivity(db, {
         companyId,
         actorType: "plugin",

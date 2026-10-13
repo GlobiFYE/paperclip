@@ -15,6 +15,9 @@ import {
   pluginCompanySettings,
   pluginManagedResources,
   plugins,
+  toolProfileBindings,
+  toolProfileEntries,
+  toolProfiles,
 } from "@paperclipai/db";
 import type { PaperclipPluginManifestV1 } from "@paperclipai/shared";
 import {
@@ -100,6 +103,9 @@ describeEmbeddedPostgres("plugin-managed agents", () => {
     await db.delete(pluginEntities);
     await db.delete(pluginManagedResources);
     await db.delete(pluginCompanySettings);
+    await db.delete(toolProfileEntries);
+    await db.delete(toolProfileBindings);
+    await db.delete(toolProfiles);
     await db.delete(approvals);
     await db.delete(agents);
     await db.delete(plugins);
@@ -429,5 +435,118 @@ describeEmbeddedPostgres("plugin-managed agents", () => {
       sourcePluginKey: "paperclip.managed-agents-test",
       managedResourceKey: "wiki-maintainer",
     });
+  });
+
+  it("translates permissions.pluginTools into a deny-by-default tool grant", async () => {
+    const pluginManifest = manifest();
+    pluginManifest.tools = [
+      {
+        name: "wiki_search",
+        displayName: "Wiki search",
+        description: "Search the wiki",
+        parametersSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "wiki_write",
+        displayName: "Wiki write",
+        description: "Write the wiki",
+        parametersSchema: { type: "object", properties: {} },
+      },
+      {
+        name: "wiki_index",
+        displayName: "Wiki index",
+        description: "Refresh the wiki index",
+        parametersSchema: { type: "object", properties: {} },
+      },
+    ];
+    pluginManifest.agents![0] = {
+      ...pluginManifest.agents![0]!,
+      permissions: { pluginTools: [pluginManifest.id] },
+    };
+    const { companyId, services } = await seedCompanyAndPlugin({ manifest: pluginManifest });
+
+    const created = await services.agents.managedReconcile({ companyId, agentKey: "wiki-maintainer" });
+    expect(created.agentId).toBeTruthy();
+
+    const [profile] = await db.select().from(toolProfiles);
+    expect(profile).toMatchObject({
+      companyId,
+      profileKey: `plugin-grant:${pluginManifest.id}:${created.agentId}`,
+      status: "active",
+      defaultAction: "deny",
+    });
+
+    const entries = await db
+      .select()
+      .from(toolProfileEntries)
+      .where(eq(toolProfileEntries.profileId, profile!.id));
+    expect(entries.map((entry) => entry.toolName).sort()).toEqual([
+      `${pluginManifest.id}:wiki_index`,
+      `${pluginManifest.id}:wiki_search`,
+      `${pluginManifest.id}:wiki_write`,
+    ]);
+    expect(
+      entries.every((entry) => entry.selectorType === "tool_name" && entry.effect === "include"),
+    ).toBe(true);
+
+    const [binding] = await db
+      .select()
+      .from(toolProfileBindings)
+      .where(eq(toolProfileBindings.profileId, profile!.id));
+    expect(binding).toMatchObject({ companyId, targetType: "agent", targetId: created.agentId });
+  });
+
+  it("ignores pluginTools pinned to a different plugin key", async () => {
+    const pluginManifest = manifest();
+    pluginManifest.tools = [
+      {
+        name: "wiki_search",
+        displayName: "Wiki search",
+        description: "Search the wiki",
+        parametersSchema: { type: "object", properties: {} },
+      },
+    ];
+    pluginManifest.agents![0] = {
+      ...pluginManifest.agents![0]!,
+      permissions: { pluginTools: ["some.other.plugin"] },
+    };
+    const { companyId, services } = await seedCompanyAndPlugin({ manifest: pluginManifest });
+
+    const created = await services.agents.managedReconcile({ companyId, agentKey: "wiki-maintainer" });
+
+    const profiles = await db.select().from(toolProfiles).where(eq(toolProfiles.companyId, companyId));
+    expect(profiles).toHaveLength(0);
+    expect(created.agentId).toBeTruthy();
+  });
+
+  it("revokes the plugin tool grant when the live agent permissions drop pluginTools", async () => {
+    const pluginManifest = manifest();
+    pluginManifest.tools = [
+      {
+        name: "wiki_search",
+        displayName: "Wiki search",
+        description: "Search the wiki",
+        parametersSchema: { type: "object", properties: {} },
+      },
+    ];
+    pluginManifest.agents![0] = {
+      ...pluginManifest.agents![0]!,
+      permissions: { pluginTools: [pluginManifest.id] },
+    };
+    const { companyId, services } = await seedCompanyAndPlugin({ manifest: pluginManifest });
+
+    const created = await services.agents.managedReconcile({ companyId, agentKey: "wiki-maintainer" });
+    expect(await db.select().from(toolProfiles)).toHaveLength(1);
+
+    await db
+      .update(agents)
+      .set({ permissions: {}, updatedAt: new Date() })
+      .where(eq(agents.id, created.agentId!));
+
+    await services.agents.managedReconcile({ companyId, agentKey: "wiki-maintainer" });
+
+    expect(await db.select().from(toolProfiles)).toHaveLength(0);
+    expect(await db.select().from(toolProfileEntries)).toHaveLength(0);
+    expect(await db.select().from(toolProfileBindings)).toHaveLength(0);
   });
 });
