@@ -97,5 +97,38 @@ into the same per-service provenance maps.
 The same 225 lifecycle, ordering, lease, replay and recovery cases pass before and
 after. Typecheck and module boundaries pass. AST checks cover 26 declarations, the
 GitHub restoration body, and retained service order. Live maps and lease hooks retain
-their original lifetime. The publication predecessor's packaging checks remain
-unverified after a timeout; this fourth slice remains unpublished until they pass.
+their original lifetime. The publication predecessor's packaging retry passed unchanged. This fourth
+slice is published as PR #16096.
+
+
+## Fifth extraction
+
+Inbound authority, envelope preparation, durable admission and resource admission
+reduce the service to 7,899 lines and 335,607 bytes. The shared admission module
+keeps endpoint locking, runtime and credential fences, gateway lease renewal,
+deduplication and delivery insertion in one transaction. Teams, Telegram and
+Photon own their destination rules and use that same transaction. The main
+message path now calls preparation, durable admission and resource admission
+before the retained task workflow.
+
+The same 278 selected public-path cases pass before and after the first move.
+All 1,278 existing chat integration cases pass on the final provider dispatch
+in 309.47 seconds. Server typecheck and module boundaries pass. One full-suite attempt
+could not allocate PostgreSQL shared memory before any test ran. Only a verified
+unused 56-byte segment with a dead creator and zero attachments was reclaimed
+before retrying. No active database was stopped.
+
+AST checks cover 21 moved declarations, envelope and resource phase bodies,
+three provider destination bodies, and the complete admission transaction after
+restoring the explicit provider calls. The service still owns the per-call
+gateway ownership handoff. The envelope retains its per-call recovery map and
+the original authenticated runtime. No assertion or timeout changed.
+
+## Stack landing
+
+The ten prior PRs and five workflow PRs have individual behavioral evidence and
+review. Consolidate dependent branches with the supported squash method and
+compare each result with the verified tip tree. Keep the master-targeting root
+open for current-master reconciliation, a fresh aggregate review and CI, and
+repository-wide local verification. Preserve upstream execution-default policy
+in the extracted endpoint and retained task paths.

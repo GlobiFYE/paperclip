@@ -1,6 +1,13 @@
+import { PROVIDER_LABELS, CAPABILITIES } from "./chat-channels/provider-catalog.js";
+import { createMessageResourceAdmission } from "./chat-channels/inbound/resource-admission.js";
+import type { DiscordGatewayOwnership } from "./chat-channels/runtime-types.js";
+import { createInboundAdmission } from "./chat-channels/inbound/admission.js";
+import { createInboundEnvelope } from "./chat-channels/inbound/envelope.js";
+import { sameTeamsThreadIdentity, durableExternalThreadIdentity, teamsThreadRootMessageId, canonicalProviderResourceId, nonDirectDestinationAllowed, linearControlCommand, actionThreadMatchesConversation } from "./chat-channels/inbound/surfaces.js";
+import { createChatInboundAuthority } from "./chat-channels/inbound/authorization.js";
 import { createTeamsRoutes } from "./chat-channels/microsoft-teams/routes.js";
 import type { LiveInboundMessage } from "./chat-channels/runtime-types.js";
-import { DELIVERY_PROCESSING_STALE_MS, deliveryContentWasRedacted, normalizedDeliveryThreadId, normalizedLifecycleEffect, deliveryReady, pendingInboundWakeupCondition, lifecycleRuntimeFence, normalizedLifecycleWithRuntimeFence } from "./chat-channels/inbound/delivery-ledger.js";
+import { DELIVERY_PROCESSING_STALE_MS, normalizedDeliveryThreadId, normalizedLifecycleEffect, deliveryReady, pendingInboundWakeupCondition, lifecycleRuntimeFence, normalizedLifecycleWithRuntimeFence } from "./chat-channels/inbound/delivery-ledger.js";
 import { createChatMessageLifecycle } from "./chat-channels/inbound/lifecycle.js";
 import { createChatConversationDeliveryQueue } from "./chat-channels/inbound/conversation-queue.js";
 import { publicationTransportOrderKey } from "./chat-channels/publications/order.js";
@@ -55,7 +62,7 @@ export { hydrateOutboundAttachment } from "./chat-channels/outbound-attachments.
 
 import { createInboundAttachments } from "./chat-channels/inbound-attachments.js";
 import { createInboundReactions } from "./chat-channels/reactions.js";
-import { slackThreadChannelId } from "./chat-channels/slack/messages.js";
+
 import { createReceiptReactions } from "./chat-channels/receipt-reactions.js";
 import { createDiscordRootThreads } from "./chat-channels/discord/root-threads.js";
 import { createDiscordGatewayEvents } from "./chat-channels/discord/gateway-events.js";
@@ -76,9 +83,9 @@ import { createChatPublicationReplacement } from "./chat-channels/publication-re
 import { createChatIdentityLinks } from "./chat-channels/identity-links.js";
 import { createChatResourceReconciliation } from "./chat-channels/resource-reconciliation.js";
 
-import { baseTeamsConversationId } from "./chat-channels/microsoft-teams/resources.js";
+
 import { slackResourceLabelIsFallback } from "./chat-channels/slack/resources.js";
-import { telegramResourceLabelIsFallback } from "./chat-channels/telegram/resources.js";
+
 import {
   MAX_INBOUND_TEXT,
   stableExternalPrincipalId,
@@ -87,18 +94,13 @@ import {
   telegramLifecycleEventFromPayload,
   isTelegramEditedMessageRaw,
   isTelegramMigrationRaw,
-  telegramMessageSequence,
   telegramZeroMessageId,
   telegramDeliveryHasZeroMessageId,
-  telegramMessageSentAt,
 } from "./chat-channels/telegram/messages.js";
-import {
-  slackMessageSentAt,
-} from "./chat-channels/slack/messages.js";
+
 
 import {
   microsoftTeamsLifecycleEventFromPayload,
-  teamsActivitySentAt,
 } from "./chat-channels/microsoft-teams/messages.js";
 import {
   type GitHubLifecycleEvent,
@@ -146,17 +148,16 @@ import {
   githubAutomaticAdmission,
   githubPreviousAssessment,
   githubExplicitMentionEvent,
-  githubMessageAddressesAnotherBot,
 } from "./chat-github-events.js";
 import { githubReviewPrompt, githubManualMessagePrompt, GITHUB_CONFIGURED_SKILL_GUIDANCE } from "./chat-github-review-policy.js";
-import { chatGitHubConfigurations, chatGitHubReviews } from "@paperclipai/db";
+import { chatGitHubReviews } from "@paperclipai/db";
 import type { GitHubReviewEventContext, GitHubIssueEventContext, GitHubAutomaticEventContext, GitHubReviewPolicy } from "@paperclipai/shared";
 import { githubChatReviewService } from "./chat-github-reviews.js";
 import { githubResponseCommentService } from "./chat-github-response-comments.js";
 
 
 
-import { githubChatPrincipalAccess } from "./chat-github-access.js";
+
 
 import { resumeExternalConversation } from "./slack-conversation-state.js";
 
@@ -201,9 +202,7 @@ import {
   recordChatWebhookStage,
 } from "./chat-webhook-diagnostics.js";
 import {
-  canonicalTeamsThreadId,
   readChatControlChronology,
-  teamsConversationId,
 } from "./chat-control-chronology.js";
 import { retryChatControlAdmission } from "./chat-control-admission-retry.js";
 import type { Db } from "@paperclipai/db";
@@ -235,7 +234,6 @@ import {
   toolConnections,
 } from "@paperclipai/db";
 import type {
-  ChatAdapterCapabilities,
   ChatEventKind,
   ChatEndpointSetupState,
   ChatProvider,
@@ -250,13 +248,9 @@ import {
   LOW_TRUST_REVIEW_PRESET_VERSION,
   LOW_TRUST_REVIEW_RAW_OUTPUT_DISPOSITION,
 } from "@paperclipai/shared";
-import {
-  normalizeContentType,
-} from "../attachment-types.js";
 
-import {
-  deriveTeamsPersonalRecipient,
-} from "./chat-teams-personal-recipient.js";
+
+
 import {
   type TeamsFileTransferOptions,
 } from "./chat-teams-file-transfers.js";
@@ -333,7 +327,7 @@ import {
   type ChatProviderLifecycleEffect,
 } from "./chat-provider-lifecycle.js";
 
-import { chatProviderConversationUrl } from "./chat-provider-links.js";
+
 
 
 import {
@@ -353,116 +347,10 @@ import {
 
 import { secretService } from "./secrets.js";
 import type {
-  Attachment,
-  Author,
   Message,
   SlashCommandEvent,
   Thread,
 } from "chat";
-
-
-const PROVIDER_LABELS: Record<ChatProvider, string> = {
-  speko: "Speko",
-  "imessage-photon": "iMessage Photon",
-  agentmail: "AgentMail",
-  slack: "Slack",
-  github: "GitHub",
-  discord: "Discord",
-  "microsoft-teams": "Microsoft Teams",
-  telegram: "Telegram",
-};
-
-const CAPABILITIES: Record<ChatProvider, ChatAdapterCapabilities> = {
-  speko: { threads: false, directMessages: true, nativeStreaming: false, messageEdits: false, messageDeletes: false, reactions: false, files: false, cards: false, actions: false, modals: false, slashCommands: false, ephemeralMessages: false, proactiveDirectMessages: false },
-  "imessage-photon": { threads: false, directMessages: true, nativeStreaming: false, messageEdits: true, messageDeletes: false, reactions: false, files: true, cards: false, actions: true, modals: false, slashCommands: false, ephemeralMessages: false, proactiveDirectMessages: false },
-  agentmail: { threads: true, directMessages: true, nativeStreaming: false, messageEdits: false, messageDeletes: false, reactions: false, files: true, cards: false, actions: false, modals: false, slashCommands: false, ephemeralMessages: false, proactiveDirectMessages: true },
-  slack: {
-    threads: true,
-    directMessages: true,
-    nativeStreaming: true,
-    messageEdits: true,
-    messageDeletes: true,
-    reactions: true,
-    files: true,
-    cards: true,
-    actions: true,
-    modals: true,
-    slashCommands: true,
-    ephemeralMessages: true,
-    proactiveDirectMessages: false,
-  },
-  github: {
-    threads: true,
-    directMessages: false,
-    nativeStreaming: false,
-    messageEdits: true,
-    messageDeletes: true,
-    reactions: true,
-    files: false,
-    cards: true,
-    actions: false,
-    modals: false,
-    slashCommands: false,
-    ephemeralMessages: false,
-    proactiveDirectMessages: false,
-  },
-  discord: {
-    threads: true,
-    directMessages: true,
-    nativeStreaming: false,
-    messageEdits: true,
-    messageDeletes: true,
-    reactions: true,
-    files: true,
-    cards: true,
-    actions: true,
-    modals: true,
-    // Automatic registration upgrades these only after a durable provider
-    // receipt. A draft or an uncertain/conflicting registration stays false.
-    slashCommands: false,
-    ephemeralMessages: false,
-    proactiveDirectMessages: false,
-  },
-  "microsoft-teams": {
-    threads: true,
-    directMessages: true,
-    // Production webhook processing is deferred into Paperclip's durable
-    // ingress queue. The Teams adapter's request-scoped DM streamer is gone by
-    // the time agent output is published, so advertise the durable behavior we
-    // can actually provide. editMessage still lets one run coalesce its
-    // queued, working, and final states in place.
-    nativeStreaming: false,
-    // Paperclip supplements the pinned adapter's missing inbound Bot Framework
-    // messageUpdate/messageDelete dispatch after provider authentication.
-    messageEdits: true,
-    messageDeletes: true,
-    reactions: true,
-    files: true,
-    cards: true,
-    actions: true,
-    modals: true,
-    slashCommands: false,
-    ephemeralMessages: true,
-    proactiveDirectMessages: false,
-  },
-  telegram: {
-    threads: true,
-    directMessages: true,
-    nativeStreaming: true,
-    messageEdits: true,
-    // Telegram's Bot API does not emit an update when a user deletes a
-    // message, so this capability cannot be offered truthfully.
-    messageDeletes: false,
-    reactions: true,
-    files: true,
-    cards: true,
-    actions: true,
-    modals: false,
-    slashCommands: false,
-    ephemeralMessages: false,
-    proactiveDirectMessages: false,
-  },
-};
 
 const REQUIRED_CREDENTIALS: Record<
   Exclude<ChatProvider, "github">,
@@ -686,154 +574,6 @@ export interface ChatChannelServiceOptions {
   storage?: StorageService;
 }
 
-type DiscordGatewayOwnership = {
-  companyId: string;
-  context: RuntimeContext;
-  endpointId: string;
-  expiresAt: Date;
-  leaseKey: typeof DISCORD_GATEWAY_LEASE_KEY | "photon_receiver_runtime";
-  renewTimer: ReturnType<typeof setInterval> | null;
-  renewal: Promise<void> | null;
-  stopPromise: Promise<void> | null;
-  stopping: boolean;
-  token: string;
-};
-
-function providerResourceType(
-  provider: ChatProvider,
-  surfaceKind: ChatSurfaceKind,
-): string {
-  if (surfaceKind === "direct_message") return "direct_message";
-  if (provider === "github") return "repository";
-  if (provider === "imessage-photon") return "group_chat";
-  if (provider === "discord") return "channel";
-  if (provider === "microsoft-teams")
-    return surfaceKind === "linear_group" ? "group_chat" : "channel";
-  // Telegram topics are task/thread boundaries inside one group resource. The
-  // operator grants access to the chat once rather than having to rediscover
-  // and enable every topic independently.
-  if (provider === "telegram") return "chat";
-  return "channel";
-}
-
-type ChatSurfaceKind = "direct_message" | "linear_group" | "native_thread";
-
-
-function sameTeamsThreadIdentity(left: string, right: string): boolean {
-  const leftConversationId = teamsConversationId(left);
-  const rightConversationId = teamsConversationId(right);
-  return (
-    leftConversationId !== null &&
-    rightConversationId !== null &&
-    leftConversationId === rightConversationId
-  );
-}
-
-
-function durableExternalThreadIdentity(threadId: string): string {
-  return canonicalTeamsThreadId(threadId) ?? threadId;
-}
-
-function teamsThreadRootMessageId(threadId: string): string | null {
-  const conversationId = teamsConversationId(threadId);
-  if (!conversationId) return null;
-  return /;messageid=([^;]+)/i.exec(conversationId)?.[1] ?? null;
-}
-
-function canonicalProviderResourceId(
-  provider: ChatProvider,
-  thread: Pick<Thread, "channelId" | "id">,
-): string {
-  if (provider === "slack") return thread.channelId.replace(/^slack:/, "");
-  if (provider === "github")
-    return thread.channelId.replace(/^github:/, "").toLowerCase();
-  if (provider === "discord") {
-    const parts = thread.channelId.split(":");
-    return parts[2] ?? thread.channelId;
-  }
-  if (provider === "microsoft-teams") {
-    const conversationId =
-      teamsConversationId(thread.channelId) ?? teamsConversationId(thread.id);
-    return conversationId
-      ? baseTeamsConversationId(conversationId)
-      : baseTeamsConversationId(thread.channelId);
-  }
-  if (provider === "telegram")
-    return thread.channelId.replace(/^telegram:/, "");
-  return thread.channelId;
-}
-
-function providerResourceLabelFromThread(
-  provider: ChatProvider,
-  thread: Pick<Thread, "channelId" | "id" | "channel">,
-): { label: string; fallback: boolean } {
-  const providerResourceId = canonicalProviderResourceId(provider, thread);
-  const candidate = thread.channel.name?.trim();
-  if (!candidate) return { label: providerResourceId, fallback: true };
-  if (
-    (provider === "slack" &&
-      slackResourceLabelIsFallback(providerResourceId, candidate)) ||
-    (provider === "telegram" &&
-      telegramResourceLabelIsFallback(providerResourceId, candidate))
-  ) {
-    return { label: providerResourceId, fallback: true };
-  }
-  return { label: candidate, fallback: false };
-}
-
-/**
- * Native channel threads keep one issue forever. Linear surfaces instead
- * advance through Paperclip task generations because their provider id is
- * reused after a task completes or the user explicitly starts a new task.
- */
-function chatSurfaceKind(
-  provider: ChatProvider,
-  thread: Thread,
-): ChatSurfaceKind {
-  if (thread.isDM) return "direct_message";
-  if (provider === "imessage-photon") return "linear_group";
-  if (provider === "telegram") {
-    return /^telegram:[^:]+:[^:]+$/.test(thread.id)
-      ? "native_thread"
-      : "linear_group";
-  }
-  if (provider === "microsoft-teams") {
-    const conversationId = teamsConversationId(thread.id);
-    return conversationId?.includes(";messageid=")
-      ? "native_thread"
-      : "linear_group";
-  }
-  return "native_thread";
-}
-
-/**
- * Teams group chats are admitted as a class: installation at the provider and
- * the endpoint's group-chat toggle are the two gates the operator can
- * actually control. Teams channels, and every other non-DM destination,
- * retain the explicit per-resource enablement gate shown in Settings.
- */
-function nonDirectDestinationAllowed(
-  endpoint: EndpointRow,
-  resource: ResourceRow | null | undefined,
-): boolean {
-  if (!resource || resource.availability !== "available") return false;
-  if (
-    endpoint.provider === "microsoft-teams" &&
-    resource.type === "group_chat"
-  ) {
-    return endpoint.allowGroupChats;
-  }
-  return resource.enabled;
-}
-
-function linearControlCommand(text: string): "new" | "close" | "status" | null {
-  const match = /^\/(new|close|status)(?:@[\w.-]+)?\s*$/i.exec(text.trim());
-  return (
-    (match?.[1]?.toLowerCase() as "new" | "close" | "status" | undefined) ??
-    null
-  );
-}
-
 function safeTitle(text: string, fallback: string): string {
   const line = text
     .replace(/<@[A-Z0-9]+>/gi, "")
@@ -841,22 +581,6 @@ function safeTitle(text: string, fallback: string): string {
     .trim()
     .split(/\r?\n/)[0];
   return (line || fallback).slice(0, 160);
-}
-
-function actionThreadMatchesConversation(
-  provider: ChatProvider,
-  actionThreadId: string,
-  conversationThreadId: string,
-): boolean {
-  if (provider === "microsoft-teams") {
-    return sameTeamsThreadIdentity(actionThreadId, conversationThreadId);
-  }
-  if (provider !== "slack") return actionThreadId === conversationThreadId;
-  const actionChannelId = slackThreadChannelId(actionThreadId);
-  return (
-    actionChannelId !== null &&
-    actionChannelId === slackThreadChannelId(conversationThreadId)
-  );
 }
 
 function sanitizeFilename(value: string | undefined): string | null {
@@ -945,6 +669,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   const getTaskBaseUrl = () => runtimeCanonicalOrigin() ?? options.publicBaseUrl;
   const getWebhookPublicBaseUrl = () => configuredWebhookPublicBaseUrl ?? getPublicBaseUrl();
   const voiceStore = voiceSessionStore(db, { allowLocalBoard: options.allowLocalVoiceBoard === true });
+  const { findAuthorizedIdentityLink, ensurePrincipal, sponsorAllowsGuest, lockCurrentPrincipalAuthorization, requireCurrentExternalActionAuthorization, isExternalActionAuthorizationChange, ensureResource } = createChatInboundAuthority(db, { voiceStore, runtimeCallbackEndpoint });
   const voice = voiceSessionService(db, {
     allowLocalBoard: options.allowLocalVoiceBoard === true,
     credentials: async (endpoint, expectedFingerprint) => {
@@ -2083,387 +1808,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       ownedElsewhere,
       failed,
     };
-  }
-
-  async function findAuthorizedIdentityLink(endpoint: EndpointRow, userId: string) {
-    return db.select({ id: chatIdentityLinks.id }).from(chatIdentityLinks)
-      .innerJoin(companyMemberships, and(
-        eq(companyMemberships.companyId, chatIdentityLinks.companyId), eq(companyMemberships.principalType, "user"),
-        eq(companyMemberships.principalId, userId), eq(companyMemberships.status, "active"), ne(companyMemberships.membershipRole, "viewer"),
-      ))
-      .where(and(eq(chatIdentityLinks.companyId, endpoint.companyId), eq(chatIdentityLinks.endpointId, endpoint.id),
-        eq(chatIdentityLinks.paperclipUserId, userId), eq(chatIdentityLinks.status, "linked")))
-      .limit(1).then((rows) => rows[0] ?? null);
-  }
-
-  async function ensurePrincipal(
-    endpoint: EndpointRow,
-    author: Author,
-    raw?: unknown,
-  ) {
-    const providerAccountId = endpoint.providerAccountId ?? "unknown";
-    const externalId = stableExternalPrincipalId(
-      endpoint.provider,
-      author,
-      raw,
-    );
-    const [principal] = await db
-      .insert(chatExternalPrincipals)
-      .values({
-        companyId: endpoint.companyId,
-        provider: endpoint.provider,
-        providerAccountId,
-        externalId,
-        kind:
-          author.isBot === true ? "bot" : author.isSystem ? "system" : "user",
-        displayName: author.fullName,
-        handle: author.userName,
-        isBot: author.isBot === true || author.isMe,
-        lastSeenAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: [
-          chatExternalPrincipals.companyId,
-          chatExternalPrincipals.provider,
-          chatExternalPrincipals.providerAccountId,
-          chatExternalPrincipals.externalId,
-        ],
-        set: {
-          displayName: author.fullName,
-          handle: author.userName,
-          isBot: author.isBot === true || author.isMe,
-          lastSeenAt: new Date(),
-          updatedAt: new Date(),
-        },
-      })
-      .returning();
-    if (endpoint.provider === "speko") {
-      try {
-        const authorization = await db.transaction((tx) => voiceStore.authorizePrincipal(tx, endpoint.companyId, endpoint.id, externalId));
-        return { principal, userId: authorization.userId, linkedDenied: false };
-      } catch (error) {
-        if (!(error instanceof HttpError && [403, 404].includes(error.status))) throw error;
-        return { principal, userId: null, linkedDenied: true };
-      }
-    }
-    const link = await db
-      .select({
-        userId: chatIdentityLinks.paperclipUserId,
-        status: chatIdentityLinks.status,
-      })
-      .from(chatIdentityLinks)
-      .where(
-        and(
-          eq(chatIdentityLinks.endpointId, endpoint.id),
-          eq(chatIdentityLinks.principalId, principal.id),
-        ),
-      )
-      .then((rows) => rows[0] ?? null);
-    if (link?.status === "linked" && link.userId) {
-      const membership = await db
-        .select({
-          status: companyMemberships.status,
-          membershipRole: companyMemberships.membershipRole,
-        })
-        .from(companyMemberships)
-        .where(
-          and(
-            eq(companyMemberships.companyId, endpoint.companyId),
-            eq(companyMemberships.principalType, "user"),
-            eq(companyMemberships.principalId, link.userId),
-          ),
-        )
-        .then((rows) => rows[0] ?? null);
-      // External chat performs the same task mutations as the board. A linked
-      // viewer therefore remains read-only instead of gaining write authority
-      // merely by using a provider account.
-      if (
-        membership?.status !== "active" ||
-        membership.membershipRole === "viewer"
-      ) {
-        return { principal, userId: null, linkedDenied: true };
-      }
-      return { principal, userId: link.userId, linkedDenied: false };
-    }
-    return { principal, userId: null, linkedDenied: false };
-  }
-
-  async function sponsorAllowsGuest(endpoint: EndpointRow): Promise<boolean> {
-    // A null sponsor is the local board/operator context used by self-hosted
-    // instances. Cloud endpoints retain the creating user and must revalidate
-    // that user's current company authority on every sponsored guest turn.
-    if (!endpoint.sponsorUserId) return true;
-    const membership = await db
-      .select({
-        status: companyMemberships.status,
-        membershipRole: companyMemberships.membershipRole,
-      })
-      .from(companyMemberships)
-      .where(
-        and(
-          eq(companyMemberships.companyId, endpoint.companyId),
-          eq(companyMemberships.principalType, "user"),
-          eq(companyMemberships.principalId, endpoint.sponsorUserId),
-        ),
-      )
-      .then((rows) => rows[0] ?? null);
-    return (
-      membership?.status === "active" && membership.membershipRole !== "viewer"
-    );
-  }
-
-  async function lockCurrentPrincipalAuthorization(
-    tx: DbOrTransaction,
-    endpoint: EndpointRow,
-    principalId: string,
-  ): Promise<{
-    allowed: boolean;
-    linkedDenied: boolean;
-    userId: string | null;
-    sponsorUserId?: string | null;
-  }> {
-    if (endpoint.provider === "speko") {
-      const principal = await tx.select({ externalId: chatExternalPrincipals.externalId }).from(chatExternalPrincipals)
-        .where(and(eq(chatExternalPrincipals.id, principalId), eq(chatExternalPrincipals.companyId, endpoint.companyId), eq(chatExternalPrincipals.provider, "speko"))).then((rows) => rows[0]);
-      if (!principal) return { allowed: false, linkedDenied: true, userId: null };
-      try { return await voiceStore.authorizePrincipal(tx as import("./voice/voice-session-store.js").VoiceTransaction, endpoint.companyId, endpoint.id, principal.externalId); }
-      catch (error) {
-        if (!(error instanceof HttpError && [403, 404].includes(error.status))) throw error;
-        return { allowed: false, linkedDenied: true, userId: null };
-      }
-    }
-    const githubAccess = await githubChatPrincipalAccess(tx, endpoint, principalId);
-    if (githubAccess) return githubAccess;
-    // Link confirmation already uses this transaction-scoped identity key.
-    // Taking it at the final task mutation boundary prevents a newly confirmed
-    // identity from racing the authorization snapshot. Row locks below also
-    // serialize revocation and membership changes that do not use this key.
-    await tx.execute(
-      sql`select pg_advisory_xact_lock(hashtextextended(${`chat-identity:${endpoint.companyId}:${principalId}`}, 0))`,
-    );
-    const link = await tx
-      .select({
-        status: chatIdentityLinks.status,
-        userId: chatIdentityLinks.paperclipUserId,
-      })
-      .from(chatIdentityLinks)
-      .where(
-        and(
-          eq(chatIdentityLinks.companyId, endpoint.companyId),
-          eq(chatIdentityLinks.endpointId, endpoint.id),
-          eq(chatIdentityLinks.principalId, principalId),
-        ),
-      )
-      .for("update")
-      .then((rows) => rows[0] ?? null);
-    if (link?.status === "linked") {
-      if (!link.userId) {
-        return { allowed: false, linkedDenied: true, userId: null };
-      }
-      const membership = await tx
-        .select({
-          status: companyMemberships.status,
-          membershipRole: companyMemberships.membershipRole,
-        })
-        .from(companyMemberships)
-        .where(
-          and(
-            eq(companyMemberships.companyId, endpoint.companyId),
-            eq(companyMemberships.principalType, "user"),
-            eq(companyMemberships.principalId, link.userId),
-          ),
-        )
-        .for("update")
-        .then((rows) => rows[0] ?? null);
-      const allowed =
-        membership?.status === "active" &&
-        membership.membershipRole !== "viewer";
-      return {
-        allowed,
-        linkedDenied: !allowed,
-        userId: allowed ? link.userId : null,
-      };
-    }
-    if (!endpoint.allowUnlinkedPeople) {
-      return { allowed: false, linkedDenied: false, userId: null };
-    }
-    if (!endpoint.sponsorUserId) {
-      return { allowed: true, linkedDenied: false, userId: null };
-    }
-    const sponsorMembership = await tx
-      .select({
-        status: companyMemberships.status,
-        membershipRole: companyMemberships.membershipRole,
-      })
-      .from(companyMemberships)
-      .where(
-        and(
-          eq(companyMemberships.companyId, endpoint.companyId),
-          eq(companyMemberships.principalType, "user"),
-          eq(companyMemberships.principalId, endpoint.sponsorUserId),
-        ),
-      )
-      .for("update")
-      .then((rows) => rows[0] ?? null);
-    return {
-      allowed:
-        sponsorMembership?.status === "active" &&
-        sponsorMembership.membershipRole !== "viewer",
-      linkedDenied: false,
-      userId: null,
-    };
-  }
-
-  async function requireCurrentExternalActionAuthorization(
-    tx: DbTransaction,
-    input: {
-      conversationId: string;
-      endpointId: string;
-      expectedUserId: string;
-      principalId: string;
-      runtimeContext: LifecycleRuntimeFence;
-    },
-  ): Promise<void> {
-    const endpoint = await runtimeCallbackEndpoint(
-      tx,
-      input.endpointId,
-      input.runtimeContext,
-      ["active", "verifying"],
-    );
-    // Photon setup already admits linked senders and publishes agent prompts.
-    // Let those prompts resolve so a clarifying question cannot deadlock the
-    // actual-reply qualification. Other providers retain their active-only gate.
-    if (!endpoint || (endpoint.status !== "active" &&
-      (endpoint.provider !== "imessage-photon" || endpoint.setup.step !== "test"))) {
-      throw forbidden("This chat action is no longer authorized", {
-        code: "chat_action_authorization_changed",
-      });
-    }
-    const conversation = await tx
-      .select()
-      .from(chatConversations)
-      .where(
-        and(
-          eq(chatConversations.companyId, endpoint.companyId),
-          eq(chatConversations.endpointId, endpoint.id),
-          eq(chatConversations.id, input.conversationId),
-          inArray(chatConversations.state, ["active", "waiting"]),
-        ),
-      )
-      .for("update")
-      .then((rows) => rows[0] ?? null);
-    if (!conversation) {
-      throw forbidden("This chat action is no longer authorized", {
-        code: "chat_action_authorization_changed",
-      });
-    }
-    const resource = conversation.resourceId
-      ? await tx
-          .select()
-          .from(chatEndpointResources)
-          .where(
-            and(
-              eq(chatEndpointResources.companyId, endpoint.companyId),
-              eq(chatEndpointResources.endpointId, endpoint.id),
-              eq(chatEndpointResources.id, conversation.resourceId),
-            ),
-          )
-          .for("update")
-          .then((rows) => rows[0] ?? null)
-      : null;
-    const destinationAllowed = conversation.isDirectMessage
-      ? endpoint.allowDirectMessages
-      : nonDirectDestinationAllowed(endpoint, resource);
-    const authorization = await lockCurrentPrincipalAuthorization(
-      tx,
-      endpoint,
-      input.principalId,
-    );
-    // Governed actions never fall back to sponsored-guest authority. If the
-    // provider identity was relinked while this callback waited, reject this
-    // stale actor snapshot and let a fresh callback use the new identity.
-    if (
-      !destinationAllowed ||
-      !authorization.allowed ||
-      authorization.userId !== input.expectedUserId
-    ) {
-      throw forbidden("This chat action is no longer authorized", {
-        code: "chat_action_authorization_changed",
-      });
-    }
-  }
-
-  function isExternalActionAuthorizationChange(error: unknown): boolean {
-    if (!error || typeof error !== "object") return false;
-    const value = error as { details?: unknown };
-    return (
-      Boolean(value.details) &&
-      typeof value.details === "object" &&
-      (value.details as { code?: unknown }).code ===
-        "chat_action_authorization_changed"
-    );
-  }
-
-  async function ensureResource(
-    endpoint: EndpointRow,
-    thread: Thread,
-    enabledBySetupActivation: boolean,
-    database: DbOrTransaction = db,
-  ) {
-    const type = providerResourceType(
-      endpoint.provider,
-      chatSurfaceKind(endpoint.provider, thread),
-    );
-    const providerResourceId = canonicalProviderResourceId(
-      endpoint.provider,
-      thread,
-    );
-    const resourceLabel = providerResourceLabelFromThread(
-      endpoint.provider,
-      thread,
-    );
-    const [resource] = await database
-      .insert(chatEndpointResources)
-      .values({
-        companyId: endpoint.companyId,
-        endpointId: endpoint.id,
-        type,
-        providerResourceId,
-        label: resourceLabel.label,
-        availability: "available",
-        // Slack can deliver the invitation's app_mention before the membership
-        // callback. Give either arrival order the same new-channel default.
-        enabled:
-          thread.isDM ||
-          enabledBySetupActivation ||
-          (endpoint.provider === "slack" && type === "channel"),
-      })
-      .onConflictDoUpdate({
-        target: [
-          chatEndpointResources.endpointId,
-          chatEndpointResources.type,
-          chatEndpointResources.providerResourceId,
-        ],
-        set: {
-          // Provider inventory and membership lifecycle own availability.
-          // A delayed message must not resurrect a destination after the bot
-          // was removed or an installation lost access.
-          // Slack callbacks are not guaranteed to carry a channel name. Keep
-          // an inventory- or conversations.info-derived label instead of
-          // downgrading it to C… / slack:C… when a delayed message arrives.
-          ...(resourceLabel.fallback
-            ? {}
-            : {
-                label: sql<string>`case
-                  when ${chatEndpointResources.availability} = 'available' then ${resourceLabel.label}
-                  else ${chatEndpointResources.label}
-                end`,
-              }),
-          updatedAt: new Date(),
-        },
-      })
-      .returning();
-    return resource;
   }
 
   async function stageInboundWakeup(
@@ -3681,274 +3025,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     // One provider message can match both a mention handler and the catch-all
     // new-message handler. The trigger is policy metadata, not provider event
     // identity, so it must not defeat durable deduplication.
-    const githubAutomatic = endpoint.provider === "github" ? githubAutomaticMessages.get(message) : undefined;
-    const githubIssue = endpoint.provider === "github" ? githubIssueMessages.get(message) : undefined;
-    let githubManual = githubManualMessages.get(message);
-    if (endpoint.provider === "github" && !githubAutomatic && !githubIssue && !githubManual) {
-      const [config] = await db.select().from(chatGitHubConfigurations).where(eq(chatGitHubConfigurations.endpointId, endpoint.id));
-      if (config) {
-        const repository = thread.channelId.replace(/^github:/, "").toLowerCase();
-        const [repo] = await db.select().from(chatEndpointResources).where(and(eq(chatEndpointResources.endpointId, endpoint.id), eq(chatEndpointResources.providerResourceId, repository)));
-        const repositoryId = String(repo?.metadata?.providerRepositoryId ?? "");
-        githubManual = { policy: { ...config.configuration.defaults, ...config.configuration.repositories[repositoryId] }, revision: config.revision, event: trigger === "mention" || message.isMention ? "mention" : "comment" };
-      }
-    }
-    const providerEventId = `${durableExternalThreadIdentity(thread.id)}:${message.id}`;
-    const surfaceKind = chatSurfaceKind(endpoint.provider, thread);
-    const addressed =
-      endpoint.provider === "imessage-photon" ||
-      trigger === "mention" ||
-      trigger === "direct_message" ||
-      message.isMention === true;
-    const eventKind: ChatEventKind =
-      trigger === "direct_message"
-        ? "direct_message"
-        : trigger === "mention"
-          ? "mention"
-          : "message";
-    // A callback remains tied to the runtime that authenticated and parsed it.
-    // In particular, do not resolve the registry again here: pause or rotation
-    // may already have removed that instance, and recreating a runtime before
-    // the durable admission fence would either throw or bind old payload data
-    // to new credentials.
-    const endpointRuntime =
-      runtimeContext?.endpointRuntime ?? (await runtimeFor(endpoint));
-    // Non-personal generic files still require a separate Graph grant. Only
-    // exact inline image resources from the authenticated original activity
-    // receive a scope-bound, URL-free recovery locator. Reconstructed input
-    // can retain that proof, but cannot mint one from legacy fetch metadata.
-    const teamsNonPersonal =
-      endpoint.provider === "microsoft-teams" && !thread.isDM;
-    const attachmentSource = {
-      threadId: thread.id,
-      messageId: message.id,
-      runtimeGeneration: runtimeContext?.generation,
-      credentialFingerprint: runtimeContext?.credentialFingerprint,
-      principalExternalId: stableExternalPrincipalId(
-        endpoint.provider,
-        message.author,
-        message.raw,
-      ),
-      isDirectMessage: thread.isDM,
-      ...(runtimeContext?.endpointRuntime && !admittedDeliveryId
-        ? { message }
-        : {}),
-    };
-    const inlineRecovery = new Map<
-      Attachment,
-      ReturnType<ChatEndpointRuntime["attachmentRecoveryDescriptor"]>
-    >();
-    const nativeInboundAttachments = teamsNonPersonal
-      ? message.attachments.slice(0, 20).flatMap((attachment) => {
-          const descriptor = endpointRuntime.attachmentRecoveryDescriptor(
-            attachment,
-            attachmentSource,
-          );
-          if (descriptor?.locator.kind !== "teams_inline_image") return [];
-          const restored = endpointRuntime.rehydrateAttachment(
-            descriptor,
-            attachmentSource,
-          );
-          if (!restored) return [];
-          inlineRecovery.set(attachment, descriptor);
-          return [restored];
-        })
-      : message.attachments;
-    const unavailableTeamsReferences = teamsNonPersonal
-      ? Math.min(message.attachments.length, 20) -
-        nativeInboundAttachments.length
-      : 0;
-    const providerSentAt =
-      endpoint.provider === "microsoft-teams"
-        ? teamsActivitySentAt(message.raw)
-        : endpoint.provider === "telegram"
-          ? telegramMessageSentAt(message.raw)
-          : endpoint.provider === "slack"
-            ? slackMessageSentAt(message.raw, message.id)
-            : message.metadata.dateSent instanceof Date &&
-                Number.isFinite(message.metadata.dateSent.getTime())
-              ? message.metadata.dateSent
-              : null;
-    const providerSentAtSource = providerSentAt
-      ? endpoint.provider === "microsoft-teams"
-        ? "teams_activity_timestamp"
-        : endpoint.provider === "telegram"
-          ? "telegram_message_date"
-          : endpoint.provider === "slack"
-            ? "slack_message_ts"
-            : null
-      : null;
-    const providerUrl =
-      (githubAutomatic
-        ? `https://github.com/${githubAutomatic.context.repository}/pull/${githubAutomatic.context.pullNumber}`
-        : githubIssue ? `https://github.com/${githubIssue.context.repository}/issues/${githubIssue.context.issueNumber}` : null) ??
-      // Description/review requests and edits have synthetic ledger IDs, not
-      // native comment IDs. Their verified source URL must not acquire a fake
-      // issuecomment anchor from that ledger identity.
-      (endpoint.provider === "github" && githubManual && !receiptReactionSupported ? recoveredProviderUrl : null) ??
-      chatProviderConversationUrl({
-        provider: endpoint.provider,
-        providerAccountId: endpoint.providerAccountId,
-        botUsername: endpoint.botUsername,
-        threadId: thread.id,
-        providerMessageId: message.id,
-        raw: message.raw,
-      }) ?? recoveredProviderUrl;
-    // Preserve only the closed personal-recipient proof from the runtime that
-    // authenticated this original activity. A reconstructed delivery's AAD-only
-    // author and SDK route caches cannot recreate its Bot Framework recipient.
-    const teamsPersonalRecipient =
-      endpoint.provider === "microsoft-teams" &&
-      runtimeContext?.endpointRuntime &&
-      !admittedDeliveryId &&
-      endpoint.providerAccountId &&
-      endpoint.botExternalId
-        ? deriveTeamsPersonalRecipient(message, {
-            companyId: endpoint.companyId,
-            endpointId: endpoint.id,
-            runtimeGeneration: runtimeContext.generation,
-            credentialFingerprint: runtimeContext.credentialFingerprint,
-            tenantId: endpoint.providerAccountId,
-            botAppId: endpoint.botExternalId,
-            providerEventId,
-            threadId: thread.id,
-            isDirectMessage: thread.isDM,
-          })
-        : null;
-    const normalized = {
-      providerEventId,
-      kind: eventKind,
-      trigger,
-      ...(teamsPersonalRecipient ? { teamsPersonalRecipient } : {}),
-      ...(slackSlashControl
-        ? { admission: { origin: "slack_slash_control" } }
-        : suppressSetupDestinationActivation
-          ? // A slash-command root is provider-confirmed only after an enabled
-            // destination authorized its transport. Persist that closed origin so
-            // crash recovery can never reinterpret it as first-time setup traffic
-            // and undo a later operator reach revocation.
-            { admission: { origin: "provider_confirmed_action" } }
-          : {}),
-      ...(runtimeContext
-        ? {
-            runtimeContext: {
-              credentialFingerprint: runtimeContext.credentialFingerprint,
-              generation: runtimeContext.generation,
-            },
-          }
-        : {}),
-      acknowledgement: {
-        // Some provider callbacks represent an auditable user command without
-        // a provider message that can receive a reaction. Persist the
-        // distinction so a crash/retry cannot mistake the synthetic ledger id
-        // for a native message id.
-        receiptReactionSupported,
-      },
-      ...(githubAutomatic ? { githubAutomatic } : {}),
-      ...(githubIssue ? { githubIssue } : {}),
-      ...(githubManual ? { githubManual } : {}),
-      principal: {
-        // Bot/system authors have already been rejected at this intake boundary.
-        isBot: false,
-        externalId: stableExternalPrincipalId(
-          endpoint.provider,
-          message.author,
-          message.raw,
-        ),
-        displayName: message.author.fullName,
-        handle: message.author.userName,
-      },
-      resource: {
-        type: providerResourceType(endpoint.provider, surfaceKind),
-        providerResourceId: canonicalProviderResourceId(
-          endpoint.provider,
-          thread,
-        ),
-        label: thread.channel.name ?? thread.channelId,
-      },
-      conversation: {
-        externalConversationId: thread.channelId,
-        externalThreadId: thread.id,
-        label: thread.channel.name ?? thread.channelId,
-        isDirectMessage: thread.isDM,
-        providerUrl,
-      },
-      message: {
-        providerMessageId: message.id,
-        ...(endpoint.provider === "github" && typeof (message.raw as { githubSourceMessageId?: unknown })?.githubSourceMessageId === "string" && /^[1-9][0-9]*$/.test((message.raw as { githubSourceMessageId: string }).githubSourceMessageId)
-          ? { sourceProviderMessageId: (message.raw as { githubSourceMessageId: string }).githubSourceMessageId } : {}),
-        ...(endpoint.provider === "imessage-photon"
-          ? { photonReply: photonReplyReference(message.raw) }
-          : {}),
-        providerMessageSequence:
-          endpoint.provider === "telegram"
-            ? telegramMessageSequence(message.raw)
-            : null,
-        providerUpdateId:
-          endpoint.provider === "telegram" ? (providerUpdateId ?? null) : null,
-        text: message.text.slice(0, MAX_INBOUND_TEXT),
-        mentionedBot: message.isMention === true,
-        providerSentAt: providerSentAt?.toISOString() ?? null,
-        ...(providerSentAtSource ? { providerSentAtSource } : {}),
-        ...((endpoint.provider === "github" ||
-          endpoint.provider === "imessage-photon") &&
-        (githubAttachmentLimitOmissions(message) ||
-          Math.max(0, message.attachments.length - 20))
-          ? {
-              attachmentLimitOmissions:
-                githubAttachmentLimitOmissions(message) ||
-                Math.max(0, message.attachments.length - 20),
-            }
-          : {}),
-        attachments: message.attachments.slice(0, 20).map((attachment) => ({
-          name: sanitizeFilename(attachment.name),
-          mimeType: normalizeContentType(attachment.mimeType),
-          size: attachment.size ?? null,
-          recovery: teamsNonPersonal
-            ? (inlineRecovery.get(attachment) ?? null)
-            : nativeInboundAttachments.includes(attachment)
-              ? endpointRuntime.attachmentRecoveryDescriptor(
-                  attachment,
-                  ["telegram", "imessage-photon"].includes(endpoint.provider)
-                    ? attachmentSource
-                    : undefined,
-                )
-              : null,
-        })),
-      },
-    };
-    // Teams RSC can deliver messages from every installed channel, and a
-    // Telegram bot can receive addressed traffic from a provider-available
-    // group that the operator has not enabled in Paperclip. Until the reach
-    // gate admits that destination, retain only identifiers required for
-    // deduplication and operator-visible filtering—not user text, attachment
-    // metadata, or an external principal profile.
-    const redactedDestinationNormalized = {
-      providerEventId,
-      kind: eventKind,
-      trigger,
-      ...(runtimeContext
-        ? {
-            runtimeContext: {
-              credentialFingerprint: runtimeContext.credentialFingerprint,
-              generation: runtimeContext.generation,
-            },
-          }
-        : {}),
-      resource: {
-        type: providerResourceType(endpoint.provider, surfaceKind),
-        providerResourceId: canonicalProviderResourceId(
-          endpoint.provider,
-          thread,
-        ),
-      },
-      conversation: { externalThreadId: thread.id },
-      message: {
-        providerMessageId: message.id,
-        providerSentAt: providerSentAt?.toISOString() ?? null,
-      },
-      filtering: { contentRetained: false },
-    };
+    const { githubAutomatic, githubIssue, githubManual, providerEventId, surfaceKind, addressed, eventKind, endpointRuntime, nativeInboundAttachments, unavailableTeamsReferences, providerSentAt, providerUrl, normalized, redactedDestinationNormalized } = await prepareInboundEnvelope({ endpoint, thread, message, trigger, receiptReactionSupported, recoveredProviderUrl, runtimeContext, providerUpdateId, admittedDeliveryId, suppressSetupDestinationActivation, slackSlashControl });
     const reorderWindow = INGRESS_REORDER_WINDOW_MS[endpoint.provider];
     const scheduledAt =
       ingressOnly && reorderWindow
@@ -3963,406 +3040,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         ownership: DiscordGatewayOwnership;
       };
     } = {};
-    const admission = await db.transaction(async (tx) => {
-      const currentEndpoint = await tx
-        .select({
-          status: chatEndpoints.status,
-          setup: chatEndpoints.setup,
-          allowDirectMessages: chatEndpoints.allowDirectMessages,
-          requireAtMention: chatEndpoints.requireAtMention,
-          allowGroupChats: chatEndpoints.allowGroupChats,
-          botUsername: chatEndpoints.botUsername,
-        })
-        .from(chatEndpoints)
-        .where(eq(chatEndpoints.id, endpoint.id))
-        .for("update")
-        .then((rows) => rows[0] ?? null);
-      if (!currentEndpoint) return null;
-      // An SDK callback can finish parsing after a pause/resume cycle. Each
-      // runtime captures the durable endpoint generation at registration;
-      // resume advances it under the same row lock used by admission. This
-      // rejects stale callbacks without relying on provider/server clock sync.
-      const currentRuntimeGeneration = runtimeGeneration(currentEndpoint.setup);
-      const currentCredentialFingerprint = runtimeContext
-        ? await tx
-            .select({ refs: toolConnections.credentialSecretRefs })
-            .from(toolConnections)
-            .where(
-              and(
-                eq(toolConnections.companyId, endpoint.companyId),
-                eq(toolConnections.id, endpoint.connectionId),
-              ),
-            )
-            .then((rows) => credentialFingerprint(rows[0]?.refs ?? []))
-        : null;
-      const staleActivation =
-        runtimeContext !== undefined &&
-        (runtimeContext.generation !== currentRuntimeGeneration ||
-          runtimeContext.credentialFingerprint !==
-            currentCredentialFingerprint);
-      const endpointAccepting =
-        ["verifying", "active"].includes(currentEndpoint.status) &&
-        !staleActivation;
-      if (
-        endpointAccepting &&
-        leasedChatProvider(endpoint.provider) &&
-        runtimeContext &&
-        !admittedDeliveryId
-      ) {
-        // The first process-local ownership check can precede a host pause.
-        // Reclaim the same durable token while the endpoint admission row is
-        // locked so a standby takeover cannot be followed by an obsolete
-        // callback write. This renews only the exact token that authenticated
-        // the callback; generation and credential checks above remain intact.
-        const gatewayOwnership =
-          await renewDiscordGatewayOwnershipForMessageAdmission(
-            tx,
-            endpoint.id,
-            runtimeContext,
-          );
-        if (gatewayOwnership.kind === "lost") {
-          if (gatewayOwnership.ownership) {
-            discordGatewayAdmissionState.lost = gatewayOwnership.ownership;
-          }
-          return null;
-        }
-        discordGatewayAdmissionState.renewed = gatewayOwnership;
-      }
-      let provisionalTeamsSetupReply = false;
-      let destinationAccepting = true;
-      if (endpointAccepting && thread.isDM) {
-        destinationAccepting = currentEndpoint.allowDirectMessages;
-      }
-      if (
-        endpointAccepting &&
-        endpoint.provider === "microsoft-teams" &&
-        !thread.isDM
-      ) {
-        let resource = await ensureResource(endpoint, thread, false, tx);
-        const enabledChannelCount = await tx
-          .select({ count: sql<number>`count(*)::int` })
-          .from(chatEndpointResources)
-          .where(
-            and(
-              eq(chatEndpointResources.endpointId, endpoint.id),
-              eq(chatEndpointResources.enabled, true),
-              eq(chatEndpointResources.availability, "available"),
-              eq(chatEndpointResources.type, "channel"),
-            ),
-          )
-          .then((rows) => rows[0]?.count ?? 0);
-        const canActivateFirstSetupChannel =
-          currentEndpoint.status === "verifying" &&
-          resource.type === "channel" &&
-          resource.availability === "available" &&
-          enabledChannelCount === 0 &&
-          addressed;
-        if (canActivateFirstSetupChannel && !resource.enabled) {
-          resource = await tx
-            .update(chatEndpointResources)
-            .set({ enabled: true, updatedAt: new Date() })
-            .where(eq(chatEndpointResources.id, resource.id))
-            .returning()
-            .then((rows) => rows[0] ?? resource);
-        }
-        const teamsRootMessageId = teamsThreadRootMessageId(thread.id);
-        provisionalTeamsSetupReply =
-          currentEndpoint.status === "verifying" &&
-          resource.type === "channel" &&
-          resource.availability === "available" &&
-          enabledChannelCount === 0 &&
-          !addressed &&
-          Boolean(teamsRootMessageId) &&
-          teamsRootMessageId !== message.id;
-        destinationAccepting =
-          nonDirectDestinationAllowed(
-            { ...endpoint, allowGroupChats: currentEndpoint.allowGroupChats },
-            resource,
-          ) || provisionalTeamsSetupReply;
-      }
-      if (
-        endpointAccepting &&
-        endpoint.provider === "telegram" &&
-        !thread.isDM
-      ) {
-        let resource = await ensureResource(endpoint, thread, false, tx);
-        const enabledResourceCount = await tx
-          .select({ count: sql<number>`count(*)::int` })
-          .from(chatEndpointResources)
-          .where(
-            and(
-              eq(chatEndpointResources.endpointId, endpoint.id),
-              eq(chatEndpointResources.enabled, true),
-              eq(chatEndpointResources.availability, "available"),
-              ne(chatEndpointResources.type, "direct_message"),
-              ne(chatEndpointResources.type, "group_chat"),
-            ),
-          )
-          .then((rows) => rows[0]?.count ?? 0);
-        const canActivateFirstSetupGroup =
-          currentEndpoint.status === "verifying" &&
-          resource.availability === "available" &&
-          enabledResourceCount === 0 &&
-          addressed;
-        if (canActivateFirstSetupGroup && !resource.enabled) {
-          resource = await tx
-            .update(chatEndpointResources)
-            .set({ enabled: true, updatedAt: new Date() })
-            .where(eq(chatEndpointResources.id, resource.id))
-            .returning()
-            .then((rows) => rows[0] ?? resource);
-        }
-        // Telegram's privacy-mode contract is explicit: in a group or forum
-        // topic, every admitted turn must address the bot. A direct reply to a
-        // bot message is normalized as a mention by the pinned adapter, while
-        // unrelated subscribed traffic remains unaddressed and is filtered.
-        destinationAccepting =
-          addressed &&
-          nonDirectDestinationAllowed(
-            { ...endpoint, allowGroupChats: currentEndpoint.allowGroupChats },
-            resource,
-          );
-      }
-      if (
-        endpointAccepting &&
-        endpoint.provider === "imessage-photon" &&
-        !thread.isDM
-      ) {
-        const resource = await ensureResource(endpoint, thread, false, tx);
-        destinationAccepting =
-          resource.enabled &&
-          resource.availability === "available" &&
-          currentEndpoint.allowGroupChats;
-      }
-      const mentionRequired =
-        endpoint.provider === "slack" &&
-        currentEndpoint.requireAtMention &&
-        trigger !== "mention" &&
-        message.isMention !== true;
-      // GitHub sends the same comment to every installed App. Subscribed
-      // conversations are a fallback for unaddressed replies, not permission
-      // to wake every bot when the person names a different connected App.
-      // Recheck inside durable admission so recovered deliveries follow the
-      // same company-scoped routing decision before any task or reaction.
-      const githubAddressedElsewhere =
-        endpointAccepting &&
-        endpoint.provider === "github" &&
-        !githubAutomatic &&
-        !githubIssue &&
-        (await githubMessageAddressesAnotherBot(tx, {
-          id: endpoint.id,
-          companyId: endpoint.companyId,
-          botUsername: currentEndpoint.botUsername,
-        }, message.text));
-      const accepting = endpointAccepting && destinationAccepting && !githubAddressedElsewhere && !mentionRequired;
-      const redactDestinationDelivery =
-        githubAddressedElsewhere || mentionRequired || (!accepting && thread.isDM) ||
-
-        (!thread.isDM &&
-          (endpoint.provider === "microsoft-teams" ||
-            endpoint.provider === "telegram" ||
-            endpoint.provider === "imessage-photon") &&
-          (!accepting || provisionalTeamsSetupReply));
-      const ignoredAt = accepting ? null : new Date();
-      const inactiveReason = !endpointAccepting
-        ? staleActivation
-          ? "Connection activation changed before admission"
-          : "Connection is not active"
-        : githubAddressedElsewhere
-          ? "GitHub message explicitly mentions a different connected bot"
-          : mentionRequired
-            ? "Message did not @mention the bot"
-          : endpoint.provider === "telegram" && !thread.isDM && !addressed
-            ? "Message did not address the agent"
-            : "Destination is not enabled in Paperclip";
-      let candidate = admittedDeliveryId
-        ? await tx
-            .select()
-            .from(chatDeliveries)
-            .where(
-              and(
-                eq(chatDeliveries.id, admittedDeliveryId),
-                eq(chatDeliveries.endpointId, endpoint.id),
-                eq(chatDeliveries.providerEventId, providerEventId),
-              ),
-            )
-            .for("update")
-            .then((rows) => rows[0] ?? null)
-        : null;
-      if (!admittedDeliveryId) {
-        await notifyChatDeliveryWork(tx);
-        const [delivery] = await tx
-          .insert(chatDeliveries)
-          .values({
-            companyId: endpoint.companyId,
-            endpointId: endpoint.id,
-            providerEventId,
-            deduplicationKey: createHash("sha256")
-              .update(providerEventId)
-              .digest("hex"),
-            eventKind,
-            normalizedEvent: redactDestinationDelivery
-              ? redactedDestinationNormalized
-              : deferDrainUntilFollowup && accepting
-                ? {
-                    ...normalized,
-                    providerThreadPending: true,
-                  }
-                : normalized,
-            state: accepting
-              ? deferDrainUntilFollowup
-                ? "retry"
-                : "received"
-              : "filtered",
-            nextAttemptAt:
-              accepting && deferDrainUntilFollowup
-                ? new Date(
-                    Date.now() + DISCORD_ROOT_THREAD_CONFIRMATION_DELAY_MS,
-                  )
-                : accepting && scheduledAt
-                  ? new Date(scheduledAt)
-                  : null,
-            redactedError:
-              accepting && deferDrainUntilFollowup
-                ? "Waiting for Discord thread creation confirmation"
-                : accepting
-                  ? null
-                  : inactiveReason,
-            processedAt: ignoredAt,
-          })
-          .onConflictDoNothing()
-          .returning();
-        candidate = delivery ?? null;
-      }
-      if (!candidate && !admittedDeliveryId) {
-        const existingDelivery = await tx
-          .select()
-          .from(chatDeliveries)
-          .where(
-            and(
-              eq(chatDeliveries.endpointId, endpoint.id),
-              eq(chatDeliveries.providerEventId, providerEventId),
-            ),
-          )
-          .then((rows) => rows[0] ?? null);
-        if (existingDelivery) {
-          const hydrateTeamsDelivery =
-            endpoint.provider === "microsoft-teams" &&
-            !thread.isDM &&
-            accepting &&
-            !provisionalTeamsSetupReply &&
-            ["received", "retry", "processing"].includes(
-              existingDelivery.state,
-            ) &&
-            deliveryContentWasRedacted(existingDelivery.normalizedEvent);
-          await notifyChatDeliveryWork(tx);
-          [candidate] = await tx
-            .update(chatDeliveries)
-            .set({
-              // Increment under PostgreSQL's row lock so simultaneous handler
-              // fanout and provider retries cannot lose duplicate telemetry.
-              normalizedEvent: redactDestinationDelivery
-                ? sql`${JSON.stringify(redactedDestinationNormalized)}::jsonb
-                    || jsonb_build_object(
-                      'deduplication',
-                      jsonb_build_object(
-                        'duplicateCount',
-                        coalesce((${chatDeliveries.normalizedEvent}#>>'{deduplication,duplicateCount}')::integer, 0) + 1,
-                        'lastDuplicateAt',
-                        ${new Date().toISOString()}::text
-                      )
-                    )`
-                : hydrateTeamsDelivery
-                  ? sql`${JSON.stringify(normalized)}::jsonb
-                    || jsonb_build_object(
-                      'deduplication',
-                      coalesce(${chatDeliveries.normalizedEvent}->'deduplication', '{}'::jsonb)
-                        || jsonb_build_object(
-                          'duplicateCount',
-                          coalesce((${chatDeliveries.normalizedEvent}#>>'{deduplication,duplicateCount}')::integer, 0) + 1,
-                          'lastDuplicateAt',
-                          ${new Date().toISOString()}::text
-                        )
-                    )`
-                  : sql`coalesce(${chatDeliveries.normalizedEvent}, '{}'::jsonb)
-                    || jsonb_build_object(
-                      'deduplication',
-                      coalesce(${chatDeliveries.normalizedEvent}->'deduplication', '{}'::jsonb)
-                        || jsonb_build_object(
-                          'duplicateCount',
-                          coalesce((${chatDeliveries.normalizedEvent}#>>'{deduplication,duplicateCount}')::integer, 0) + 1,
-                          'lastDuplicateAt',
-                          ${new Date().toISOString()}::text
-                        )
-                    )`,
-              ...(!accepting &&
-              ["received", "retry"].includes(existingDelivery.state)
-                ? {
-                    state: "filtered" as const,
-                    nextAttemptAt: null,
-                    redactedError: inactiveReason,
-                    processedAt: ignoredAt,
-                  }
-                : {}),
-              updatedAt: new Date(),
-            })
-            .where(eq(chatDeliveries.id, existingDelivery.id))
-            .returning();
-        }
-      }
-      if (
-        candidate &&
-        admittedDeliveryId &&
-        accepting &&
-        !provisionalTeamsSetupReply &&
-        endpoint.provider === "microsoft-teams" &&
-        !thread.isDM &&
-        ["received", "retry", "processing"].includes(candidate.state) &&
-        deliveryContentWasRedacted(candidate.normalizedEvent)
-      ) {
-        [candidate] = await tx
-          .update(chatDeliveries)
-          .set({ normalizedEvent: normalized, updatedAt: new Date() })
-          .where(eq(chatDeliveries.id, candidate.id))
-          .returning();
-      }
-      if (
-        candidate &&
-        admittedDeliveryId &&
-        !accepting &&
-        ["received", "retry", "processing"].includes(candidate.state)
-      ) {
-        await notifyChatDeliveryWork(tx);
-        [candidate] = await tx
-          .update(chatDeliveries)
-          .set({
-            state: "filtered",
-            ...(redactDestinationDelivery
-              ? {
-                  normalizedEvent: redactedDestinationNormalized,
-                  principalId: null,
-                }
-              : {}),
-            nextAttemptAt: null,
-            redactedError: inactiveReason,
-            processedAt: ignoredAt,
-            updatedAt: new Date(),
-          })
-          .where(eq(chatDeliveries.id, candidate.id))
-          .returning();
-      }
-      if (!accepting && ignoredAt) {
-        await tx
-          .update(chatEndpoints)
-          .set({ lastEventAt: ignoredAt, updatedAt: ignoredAt })
-          .where(eq(chatEndpoints.id, endpoint.id));
-      }
-      return {
-        accepting,
-        candidate: candidate ?? null,
-        provisionalTeamsSetupReply,
-      };
-    });
+    const admission = await admitInboundMessage({ endpoint, thread, message, trigger, runtimeContext, admittedDeliveryId, deferDrainUntilFollowup, scheduledAt, envelope: { providerEventId, addressed, eventKind, normalized, redactedDestinationNormalized, githubAutomatic, githubIssue } }, discordGatewayAdmissionState);
     // The database token is authoritative. Publish its new expiry to the
     // process-local fast path only after the admission transaction commits.
     // Conversely, synchronously fence an obsolete local owner after a failed
@@ -4669,76 +3347,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         message.author,
         message.raw,
       );
-      const mayEnableSetupDestination =
-        // Slack channels start enabled. Never use first-test activation to
-        // override an existing channel the operator explicitly disabled.
-        endpoint.provider !== "slack" &&
-        endpoint.provider !== "imessage-photon" &&
-        !thread.isDM &&
-        endpoint.status === "verifying" &&
-        addressed &&
-        !suppressSetupDestinationActivation &&
-        !(
-          endpoint.provider === "microsoft-teams" &&
-          surfaceKind === "linear_group"
-        );
-      const resourceAdmission = mayEnableSetupDestination
-        ? await db.transaction(async (tx) => {
-            const currentEndpoint = await tx
-              .select({ status: chatEndpoints.status })
-              .from(chatEndpoints)
-              .where(eq(chatEndpoints.id, endpoint.id))
-              .for("update")
-              .then((rows) => rows[0] ?? null);
-            if (!currentEndpoint) throw notFound("Chat endpoint not found");
-            const enabledResourceCount = await tx
-              .select({ count: sql<number>`count(*)::int` })
-              .from(chatEndpointResources)
-              .where(
-                and(
-                  eq(chatEndpointResources.endpointId, endpoint.id),
-                  eq(chatEndpointResources.enabled, true),
-                  eq(chatEndpointResources.availability, "available"),
-                  ne(chatEndpointResources.type, "direct_message"),
-                  ne(chatEndpointResources.type, "group_chat"),
-                ),
-              )
-              .then((rows) => rows[0]?.count ?? 0);
-            const enableSetupDestination =
-              currentEndpoint.status === "verifying" &&
-              enabledResourceCount === 0;
-            let resource = await ensureResource(
-              endpoint,
-              thread,
-              enableSetupDestination,
-              tx,
-            );
-            if (enableSetupDestination && !resource.enabled) {
-              resource = await tx
-                .update(chatEndpointResources)
-                .set({ enabled: true, updatedAt: new Date() })
-                .where(eq(chatEndpointResources.id, resource.id))
-                .returning()
-                .then((rows) => rows[0] ?? resource);
-            }
-            return { enabledResourceCount, resource };
-          })
-        : {
-            enabledResourceCount: await db
-              .select({ count: sql<number>`count(*)::int` })
-              .from(chatEndpointResources)
-              .where(
-                and(
-                  eq(chatEndpointResources.endpointId, endpoint.id),
-                  eq(chatEndpointResources.enabled, true),
-                  eq(chatEndpointResources.availability, "available"),
-                  ne(chatEndpointResources.type, "direct_message"),
-                  ne(chatEndpointResources.type, "group_chat"),
-                ),
-              )
-              .then((rows) => rows[0]?.count ?? 0),
-            resource: await ensureResource(endpoint, thread, false),
-          };
+      const resourceAdmission = await admitMessageResource({ endpoint, thread, addressed, suppressSetupDestinationActivation, surfaceKind });
       const { enabledResourceCount, resource } = resourceAdmission;
       await db
         .update(chatDeliveries)
@@ -9094,6 +7703,9 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     prepareProviderInventory, reconcileProviderResourceRows, listResources, replaceResources, update, configure, test, handleWebhook,
     get githubWizardOrigin() { return options.githubWizardOrigin; },
   });
+  const { prepareInboundEnvelope } = createInboundEnvelope(db, { runtimeFor, sanitizeFilename, githubManualMessages, githubAutomaticMessages, githubIssueMessages });
+  const { admitInboundMessage } = createInboundAdmission(db, { runtimeGeneration, credentialFingerprint, leasedChatProvider, renewDiscordGatewayOwnershipForMessageAdmission, ensureResource, DISCORD_ROOT_THREAD_CONFIRMATION_DELAY_MS });
+  const { admitMessageResource } = createMessageResourceAdmission(db, { ensureResource });
   const messageLifecycle = createChatMessageLifecycle(db, {
     DELIVERY_PROCESSING_STALE_MS, ORPHAN_FOLLOW_UP_GRACE_MS, ORPHAN_FOLLOW_UP_MAX_ATTEMPTS,
     INGRESS_REORDER_WINDOW_MS, issuesSvc, lockCurrentPrincipalAuthorization, nonDirectDestinationAllowed,
