@@ -6,6 +6,7 @@ import {
   type AgentSchedulerCapacityFacts,
 } from "../domain/policy.js";
 import type {
+  AgentSchedulerDb,
   AgentSchedulerEnqueueActivity,
   AgentSchedulerHost,
   AgentSchedulerWriter,
@@ -84,7 +85,9 @@ export type MaterializeRunnableWakeInput = {
   configuredMaxConcurrentRuns: number;
   agentId: string;
   companyId: string;
-  createRunForWake: (wake: RunnableWakeRow) => Promise<string | null>;
+  /** INSERT through tx only. No provider calls or publication before commit. */
+  createRunForWake: (wake: RunnableWakeRow, tx: AgentSchedulerDb) => Promise<string | null>;
+  requestedAtOrAfter?: Date;
 };
 
 export function createPromoteAgentRunnableWork(deps: {
@@ -117,22 +120,28 @@ export function createPromoteAgentRunnableWork(deps: {
     const skippedWakeIds = new Set<string>();
 
     while (slotsRemaining > 0) {
-      const candidates = await deps.writer.listRunnableWakes(input.agentId, 50);
-      const wake = candidates.find((row) => !skippedWakeIds.has(row.id));
+      const candidates = await deps.writer.listRunnableWakes(input.agentId, 50, {
+        excludeWakeIds: [...skippedWakeIds],
+        requestedAtOrAfter: input.requestedAtOrAfter,
+      });
+      const wake = candidates[0];
       if (!wake) break;
-      const claimed = await deps.writer.tryClaimRunnableWake(wake.id);
-      if (!claimed) {
-        skippedWakeIds.add(wake.id);
-        continue;
-      }
+      // Exclude failures and confirmed no-write returns before the next SQL
+      // LIMIT. One bad wake must not strand unrelated healthy assignments.
+      skippedWakeIds.add(wake.id);
       let runId: string | null;
       try {
-        runId = await input.createRunForWake(wake);
+        runId = await deps.writer.createAndLinkRunnableWake({
+          wake,
+          createRun: input.createRunForWake,
+          dequeueReason: AGENT_SCHEDULER_DEQUEUE_REASON,
+        });
       } catch {
-        // The callback can fail AFTER its INSERT commits (for example during
-        // publication). Releasing this intent would permit a duplicate run.
-        // Reconciliation may attach a persisted run, but time alone must never
-        // re-authorize creation. Keep the uncertain intent durable and visible.
+        // Never replay a failed transaction or manually release an uncertain
+        // creation. Its atomic link is the receipt: commit => linked/queued;
+        // rollback => ready; an in-flight transaction retains its row lock.
+        // Dispatch, not run construction, enforces active-run capacity. Other
+        // ready wakes may therefore progress without recreating this intent.
         await deps.host.appendSchedulerEvent({
           companyId: wake.companyId,
           agentId: wake.agentId,
@@ -143,48 +152,9 @@ export function createPromoteAgentRunnableWork(deps: {
           queueDepth: await deps.writer.countRunnableWakes(input.agentId),
           effectiveCapacity,
         });
-        slotsRemaining -= 1;
-        skippedWakeIds.add(wake.id);
         continue;
       }
-      if (!runId) {
-        await deps.writer.releaseClaimedRunnableWake({
-          wakeId: wake.id,
-          companyId: wake.companyId,
-          agentId: wake.agentId,
-          enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON,
-        });
-        skippedWakeIds.add(wake.id);
-        continue;
-      }
-      let linked = false;
-      try {
-        linked = await deps.writer.materializeRunnableWake({
-          wake,
-          runId,
-          dequeueReason: AGENT_SCHEDULER_DEQUEUE_REASON,
-        });
-      } catch {
-        // A rejected response does not prove that the link failed to commit.
-        // Keep the same creation intent; report only a sanitized reason below.
-      }
-      if (!linked) {
-        // Creation is confirmed. Never free the intent when linking is not.
-        // The adapter can repair this link from heartbeat_runs on the next pass.
-        await deps.host.appendSchedulerEvent({
-          companyId: wake.companyId,
-          agentId: wake.agentId,
-          wakeRequestId: wake.id,
-          issueId: readIssueId(wake.payload),
-          kind: "blocked",
-          reason: "materialization_link_unconfirmed",
-          queueDepth: await deps.writer.countRunnableWakes(input.agentId),
-          effectiveCapacity,
-        });
-        slotsRemaining -= 1;
-        skippedWakeIds.add(wake.id);
-        continue;
-      }
+      if (!runId) continue;
       promoted += 1;
       runIds.push(runId);
       slotsRemaining -= 1;

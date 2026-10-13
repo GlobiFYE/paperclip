@@ -70,3 +70,6 @@ export function createAgentScheduler(db: Db, host: AgentSchedulerHost, deps: Age
 }
 
 export type AgentScheduler = ReturnType<typeof createAgentScheduler>;
+
+export { listAgentSchedulerResumeCandidates } from "./adapters/resume.js";
+export { checkAgentCapacityWithinClaimTransaction } from "./adapters/dispatch-capacity.js";

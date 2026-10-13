@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgentSchedulerHost, AgentSchedulerWriter, RunnableWakeRow } from "./ports.js";
+import type { AgentSchedulerDb, AgentSchedulerHost, AgentSchedulerWriter, RunnableWakeRow } from "./ports.js";
 import {
   AGENT_SCHEDULER_DEQUEUE_REASON,
   AGENT_SCHEDULER_ENQUEUE_REASON,
@@ -39,8 +39,49 @@ function createMemoryWriter(now: () => number = Date.now): AgentSchedulerWriter 
     (row.reason === null || row.reason === AGENT_SCHEDULER_ENQUEUE_REASON) && roots(row).length === 0;
   return {
     parked, runnable, materialized, claimed, persistedRuns,
-    async listRunnableWakes(agentId, limit) {
-      return runnable.filter((row) => row.agentId === agentId && eligible(row)).slice(0, limit);
+    async listRunnableWakes(agentId, limit, options) {
+      return runnable.filter((row) => row.agentId === agentId && eligible(row) &&
+        !options?.excludeWakeIds?.includes(row.id) &&
+        (!options?.requestedAtOrAfter || row.requestedAt >= options.requestedAtOrAfter)).slice(0, limit);
+    },
+    async createAndLinkRunnableWake(input) {
+      const row = runnable.find(entry => entry.id === input.wake.id &&
+        entry.companyId === input.wake.companyId && entry.agentId === input.wake.agentId);
+      if (!row || !eligible(row)) return null;
+      const oldReason = row.reason;
+      const priorRunIds = new Set(roots(row).map(run => run.id));
+      if (!await this.tryClaimRunnableWake(row.id)) return null;
+      try {
+        // This fake models only the atomic port. Actual SQL/rollback/visibility
+        // are exercised independently by adapters/postgres.test.ts.
+        const runId = await input.createRun({ ...row, reason: oldReason }, {} as AgentSchedulerDb);
+        if (runId === null) {
+          if (roots(row).length) throw new Error("null result after write");
+          await this.releaseClaimedRunnableWake({ wakeId: row.id, companyId: row.companyId,
+            agentId: row.agentId, enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON });
+          return null;
+        }
+        if (!roots(row).some(run => run.id === runId)) {
+          persistedRuns.push({ id: runId, wakeId: row.id, companyId: row.companyId, agentId: row.agentId });
+        }
+        if (!await this.materializeRunnableWake({ wake: row, runId, dequeueReason: input.dequeueReason })) {
+          throw new Error("synthetic link rejection");
+        }
+        return runId;
+      } catch (error) {
+        // Roll back only this transaction's wake; retain concurrent other work.
+        for (let i = persistedRuns.length - 1; i >= 0; i--) {
+          const run = persistedRuns[i]!;
+          if (run.wakeId === row.id && !priorRunIds.has(run.id)) persistedRuns.splice(i, 1);
+        }
+        for (let i = materialized.length - 1; i >= 0; i--) {
+          if (materialized[i]?.wakeId === row.id) materialized.splice(i, 1);
+        }
+        if (!runnable.some(entry => entry.id === row.id)) runnable.push(row);
+        row.reason = oldReason;
+        claimed.delete(row.id);
+        throw error;
+      }
     },
     async countRunnableWakes(agentId) { return runnable.filter((row) => row.agentId === agentId).length; },
     async parkWakeAsRunnable(input) {
@@ -181,13 +222,16 @@ describe("claim recovery and deferred activity", () => {
     expect(await promote({ ...BASE_FACTS, createRunForWake: async () => "run-retry" }))
       .toEqual({ promoted: 1, runIds: ["run-retry"] });
   });
-  it("does not retry a callback exception with an uncertain result", async () => {
+  it("does not replay inside a failed pass and retries only a rolled-back atomic wake later", async () => {
     const { writer, host, promote } = setup(); await park(writer, "error");
     const create = vi.fn(async () => { throw new Error("synthetic failure"); });
     await promote({ ...BASE_FACTS, createRunForWake: create });
+    expect(create).toHaveBeenCalledTimes(1);
+    expect(writer.claimed.has("error")).toBe(false);
+    expect(writer.runnable[0]?.reason).toBe(AGENT_SCHEDULER_ENQUEUE_REASON);
     await promote({ ...BASE_FACTS, createRunForWake: create });
-    expect(writer.runnable[0]?.reason).toBe(AGENT_SCHEDULER_MATERIALIZING_REASON);
-    expect(writer.claimed.has("error")).toBe(true); expect(create).toHaveBeenCalledTimes(1);
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(writer.persistedRuns).toHaveLength(0);
     expect(host.events[0]).toMatchObject({ kind: "blocked", reason: "materialization_outcome_uncertain" });
   });
   it("does not reclaim a live intent at the old lease boundary", async () => {
@@ -247,13 +291,19 @@ describe("materialization uncertainty regressions", () => {
     } finally { release(); await first; }
     expect(writer.persistedRuns).toHaveLength(1);
   });
-  it("repairs an INSERT committed before callback rejection without another INSERT", async () => {
+  it("does not repeat creation when an atomic commit succeeds but its response is lost", async () => {
     const { writer, promote } = setup(); await park(writer, "committed");
-    const create = vi.fn(async () => { persisted(writer, "committed", "original"); throw new Error("publication failed"); });
-    await promote({ ...BASE_FACTS, createRunForWake: create }); expect(writer.claimed.has("committed")).toBe(true);
+    const atomic = writer.createAndLinkRunnableWake.bind(writer);
+    writer.createAndLinkRunnableWake = async input => {
+      await atomic(input); throw new Error("response lost after COMMIT");
+    };
+    const create = vi.fn(async () => "original");
+    await promote({ ...BASE_FACTS, createRunForWake: create });
     await promote({ ...BASE_FACTS, createRunForWake: create });
     expect(create).toHaveBeenCalledTimes(1);
     expect(writer.materialized).toEqual([{ wakeId: "committed", runId: "original" }]);
+    expect(writer.persistedRuns).toHaveLength(1);
+    expect(writer.claimed.size).toBe(0);
   });
   it("repairs an existing run link even while the agent is at capacity", async () => {
     const { writer, promote } = setup(1); await park(writer, "running");
@@ -262,24 +312,30 @@ describe("materialization uncertainty regressions", () => {
     expect(create).toHaveBeenCalledTimes(0);
     expect(writer.materialized).toEqual([{ wakeId: "running", runId: "active" }]);
   });
-  it("does not release a confirmed creation when linking returns false", async () => {
+  it("rolls back the INSERT as well when linking is rejected", async () => {
     const { writer, host, promote } = setup(); await park(writer, "link-false");
+    const link = writer.materializeRunnableWake.bind(writer);
     writer.materializeRunnableWake = async () => false;
     const create = vi.fn(async () => { persisted(writer, "link-false", "created"); return "created"; });
     await promote({ ...BASE_FACTS, createRunForWake: create });
-    expect(writer.claimed.has("link-false")).toBe(true);
-    expect(host.events[0]).toMatchObject({ kind: "blocked", reason: "materialization_link_unconfirmed" });
+    expect(writer.persistedRuns).toHaveLength(0);
+    expect(writer.claimed.has("link-false")).toBe(false);
+    expect(host.events[0]).toMatchObject({ kind: "blocked", reason: "materialization_outcome_uncertain" });
+    writer.materializeRunnableWake = link;
+    await promote({ ...BASE_FACTS, createRunForWake: create });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(writer.materialized).toEqual([{ wakeId: "link-false", runId: "created" }]);
+    expect(writer.persistedRuns).toHaveLength(1);
+  });
+  it("rolls back both records after a link exception and does not leave an orphan run", async () => {
+    const { writer, promote } = setup(); await park(writer, "link-rejected");
+    writer.materializeRunnableWake = async () => { throw new Error("connection lost before COMMIT"); };
+    const create = vi.fn(async () => { persisted(writer, "link-rejected", "persisted"); return "persisted"; });
     await promote({ ...BASE_FACTS, createRunForWake: create });
     expect(create).toHaveBeenCalledTimes(1);
-    expect(writer.materialized).toEqual([{ wakeId: "link-false", runId: "created" }]);
-  });
-  it("does not release a creation intent after a rejected link response", async () => {
-    const { writer, promote } = setup(); await park(writer, "link-rejected");
-    writer.materializeRunnableWake = async () => { throw new Error("connection lost"); };
-    const create = vi.fn(async () => { persisted(writer, "link-rejected", "persisted"); return "persisted"; });
-    await promote({ ...BASE_FACTS, createRunForWake: create }); await promote({ ...BASE_FACTS, createRunForWake: create });
-    expect(create).toHaveBeenCalledTimes(1);
-    expect(writer.materialized).toEqual([{ wakeId: "link-rejected", runId: "persisted" }]);
+    expect(writer.materialized).toHaveLength(0);
+    expect(writer.persistedRuns).toHaveLength(0);
+    expect(writer.runnable[0]?.reason).toBe(AGENT_SCHEDULER_ENQUEUE_REASON);
   });
   it("preserves conflicting historical runs rather than creating a third", async () => {
     const { writer, promote } = setup(); await park(writer, "ambiguous"); await writer.tryClaimRunnableWake("ambiguous");
@@ -302,5 +358,31 @@ describe("materialization uncertainty regressions", () => {
     expect(await writer.materializeRunnableWake({ wake, runId: "one", dequeueReason: AGENT_SCHEDULER_DEQUEUE_REASON })).toBe(true);
     expect(await writer.materializeRunnableWake({ wake, runId: "other", dequeueReason: AGENT_SCHEDULER_DEQUEUE_REASON })).toBe(false);
     expect(writer.materialized).toHaveLength(1);
+  });
+});
+
+
+describe("same-pass healthy progress without a heartbeat", () => {
+  it("does not strand healthy work after the last run finishes and creation fails", async () => {
+    const { writer, host, promote } = setup(0);
+    await park(writer, "bad"); await park(writer, "healthy");
+    const create = vi.fn(async (wake: RunnableWakeRow) => {
+      if (wake.id === "bad") throw new Error("failure before INSERT");
+      return "healthy-run";
+    });
+    expect(await promote({ ...BASE_FACTS, createRunForWake: create }))
+      .toEqual({ promoted: 1, runIds: ["healthy-run"] });
+    expect(create).toHaveBeenCalledTimes(2);
+    expect(host.events).toContainEqual(expect.objectContaining({ kind: "blocked", wakeRequestId: "bad" }));
+  });
+
+  it("filters 50 confirmed no-write candidates before selecting a healthy wake", async () => {
+    const { writer, promote } = setup(0);
+    for (let i = 0; i < 50; i++) await park(writer, `no-write-${i}`);
+    await park(writer, "healthy-51");
+    const create = vi.fn(async (wake: RunnableWakeRow) => wake.id === "healthy-51" ? "healthy-run" : null);
+    expect(await promote({ ...BASE_FACTS, createRunForWake: create }))
+      .toEqual({ promoted: 1, runIds: ["healthy-run"] });
+    expect(create).toHaveBeenCalledTimes(51);
   });
 });

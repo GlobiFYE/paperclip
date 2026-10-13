@@ -32,7 +32,18 @@ export type AgentSchedulerHost = {
 };
 
 export type AgentSchedulerWriter = {
-  listRunnableWakes(agentId: string, limit: number): Promise<RunnableWakeRow[]>;
+  listRunnableWakes(agentId: string, limit: number, options?: {
+    excludeWakeIds?: string[];
+    requestedAtOrAfter?: Date;
+  }): Promise<RunnableWakeRow[]>;
+  /** Pure database callback: claim, INSERT and wake link commit together.
+   * Never invoke providers, publish events, or use a different DB connection.
+   */
+  createAndLinkRunnableWake(input: {
+    wake: RunnableWakeRow;
+    createRun: (wake: RunnableWakeRow, tx: AgentSchedulerDb) => Promise<string | null>;
+    dequeueReason: string;
+  }): Promise<string | null>;
   countRunnableWakes(agentId: string): Promise<number>;
   parkWakeAsRunnable(input: {
     wakeRequestId: string;

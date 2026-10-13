@@ -1,5 +1,5 @@
 import { agentWakeupRequests, heartbeatRuns } from "@paperclipai/db";
-import { and, asc, count, eq, exists, isNull, notExists, or, sql } from "drizzle-orm";
+import { and, asc, count, eq, exists, gte, isNull, notExists, notInArray, or, sql } from "drizzle-orm";
 import type { AgentSchedulerDb, AgentSchedulerWriter, RunnableWakeRow } from "../application/ports.js";
 import {
   AGENT_SCHEDULER_DEQUEUE_REASON,
@@ -32,14 +32,69 @@ export function createPostgresAgentSchedulerAdapter(db: AgentSchedulerDb): Agent
     eq(agentWakeupRequests.reason, AGENT_SCHEDULER_ENQUEUE_REASON));
 
   return {
-    async listRunnableWakes(agentId, limit) {
+    async listRunnableWakes(agentId, limit, options) {
       const rows = await db.select().from(agentWakeupRequests).where(and(
         eq(agentWakeupRequests.agentId, agentId),
         eq(agentWakeupRequests.status, AGENT_RUNNABLE_STATUS),
         isNull(agentWakeupRequests.runId), unclaimed(), notExists(rootsForWake()),
-      )).orderBy(asc(agentWakeupRequests.requestedAt)).limit(limit);
+        options?.excludeWakeIds?.length ? notInArray(agentWakeupRequests.id, options.excludeWakeIds) : undefined,
+        options?.requestedAtOrAfter ? gte(agentWakeupRequests.requestedAt, options.requestedAtOrAfter) : undefined,
+      )).orderBy(asc(agentWakeupRequests.requestedAt), asc(agentWakeupRequests.id)).limit(limit);
       // Filter BEFORE LIMIT: 50 held intents must not starve a later ready wake.
       return rows.map(toRunnableRow);
+    },
+    async createAndLinkRunnableWake(input) {
+      return db.transaction(async (tx) => {
+        // A process loss releases this row lock by rolling back. A slow live
+        // creator retains it; no lease expiry authorizes a competing INSERT.
+        const [current] = await tx.select().from(agentWakeupRequests).where(and(
+          eq(agentWakeupRequests.id, input.wake.id),
+          eq(agentWakeupRequests.companyId, input.wake.companyId),
+          eq(agentWakeupRequests.agentId, input.wake.agentId),
+          eq(agentWakeupRequests.status, AGENT_RUNNABLE_STATUS),
+          isNull(agentWakeupRequests.runId), unclaimed(),
+        )).for("update", { skipLocked: true }).limit(1);
+        if (!current) return null;
+        const existingRoots = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(and(
+          eq(heartbeatRuns.wakeupRequestId, current.id),
+          eq(heartbeatRuns.companyId, current.companyId),
+          eq(heartbeatRuns.agentId, current.agentId),
+          isNull(heartbeatRuns.retryOfRunId),
+        )).limit(2);
+        // Historical/ambiguous intents go through the existing reconciler,
+        // never through the creation callback.
+        if (existingRoots.length > 0) return null;
+        await tx.update(agentWakeupRequests).set({
+          reason: AGENT_SCHEDULER_MATERIALIZING_REASON,
+          claimedAt: new Date(), updatedAt: new Date(),
+        }).where(eq(agentWakeupRequests.id, current.id));
+        const runId = await input.createRun(toRunnableRow(current), tx as unknown as AgentSchedulerDb);
+        const writer = createPostgresAgentSchedulerAdapter(tx as unknown as AgentSchedulerDb);
+        if (runId === null) {
+          const [unexpectedWrite] = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(and(
+            eq(heartbeatRuns.wakeupRequestId, current.id),
+            eq(heartbeatRuns.companyId, current.companyId),
+            eq(heartbeatRuns.agentId, current.agentId),
+          )).limit(1);
+          if (unexpectedWrite) throw new Error("scheduler_null_creation_wrote_a_run");
+          await writer.releaseClaimedRunnableWake({
+            wakeId: current.id, companyId: current.companyId, agentId: current.agentId,
+            enqueueReason: AGENT_SCHEDULER_ENQUEUE_REASON,
+          });
+          return null;
+        }
+        const createdRoots = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(and(
+          eq(heartbeatRuns.wakeupRequestId, current.id), eq(heartbeatRuns.companyId, current.companyId),
+          eq(heartbeatRuns.agentId, current.agentId), isNull(heartbeatRuns.retryOfRunId),
+        )).limit(2);
+        if (createdRoots.length !== 1 || createdRoots[0]?.id !== runId) {
+          throw new Error("scheduler_atomic_creation_result_ambiguous");
+        }
+        if (!await writer.materializeRunnableWake({
+          wake: toRunnableRow(current), runId, dequeueReason: input.dequeueReason,
+        })) throw new Error("scheduler_atomic_run_link_rejected");
+        return runId;
+      });
     },
     async countRunnableWakes(agentId) {
       const [row] = await db.select({ total: count() }).from(agentWakeupRequests).where(and(
