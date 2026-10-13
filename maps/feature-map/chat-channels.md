@@ -8,7 +8,7 @@ Agent access: [companion](../agent-access-map/chat-channels.md).
 
 ## Sub-features
 
-- `providers`: configure the available Slack, Discord, Microsoft Teams, Telegram, GitHub, AgentMail, and experimental iMessage Photon paths; availability still depends on gates and provider support.
+- `providers`: configure the available Slack, Discord, Microsoft Teams, Telegram, GitHub, AgentMail, and experimental iMessage Photon paths; availability still depends on gates and provider support. GitHub review bots expose common, event-specific, and base review prompts in Settings, with skill links and resetting the scoring rubric to its default.
 - `identity`: link the external sender to the intended authorized Paperclip identity.
 - `conversation`: route inbound messages to the selected agent and send replies to the correct thread.
 - `attachments`: transfer supported files with inspectable delivery and failure states.
@@ -49,6 +49,12 @@ confirm a plain DM is rejected. Use a private channel for threaded conversations
 Automated: [channel integration](../../server/src/__tests__/chat-channels.integration.test.ts) covers shared endpoint/delivery behavior; live credential repair and provider ownership remain manual checks.
 
 Manual: Inspect the bound agent and identity, recent activity, and delivery failure details. Repair a disposable credential, retry a safe message when offered, and verify exactly one external reply. Disable the endpoint and confirm new traffic is not silently processed.
+
+For GitHub, save a custom **Base review prompt**, revisit Settings to check
+persistence, and reset it to the default. Submit a disposable PR and verify the
+task uses the saved prompt, the summary heading uses the bot's display name, and
+the check remains **Paperclip Review**. For two separate bots on one PR, verify
+their App-scoped checks and comments remain independent.
 
 Configure optional project and workspace defaults at the connection and destination
 levels. Start a new conversation and inspect its task workspace. Verify that

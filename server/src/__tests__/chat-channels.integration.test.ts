@@ -2411,6 +2411,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       const skill = async (name: string, companyId = f.companyId) => db.insert(companySkills).values({
         companyId, key: `company/${companyId}/${name}`, slug: name, name, markdown: `# ${name}`,
       }).returning().then((rows) => rows[0]);
+      const base = await skill("base");
       const common = await skill("common");
       const mention = await skill("mention");
       const next = await skill("next");
@@ -2422,6 +2423,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       const saved = await f.management.configuration(f.endpoint.id, "owner-user");
       await f.management.saveConfiguration(f.endpoint.id, { expectedRevision: saved.revision, configuration: {
         ...saved.configuration, defaults: { ...saved.configuration.defaults,
+          baseReviewPrompt: `Use ${ref(base)} as the review rubric.`,
           instructions: `Use ${ref(common)} and ${ref(foreign)}.`,
           prompts: { ...saved.configuration.defaults.prompts, mention: `Use ${ref(mention)}.`, opened: ref(injected) },
         },
@@ -2432,14 +2434,15 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       const [conversation] = await readChatConversationsByEndpointId(f.endpoint.id);
       const [comment] = await readIssueCommentsByIssueId(conversation.issueId!);
       const args = { db, companyId: f.companyId, issueId: conversation.issueId!, commentIds: [comment.id] };
-      expect(await resolveRunScopedMentionedSkillKeys(args)).toEqual([common.key, mention.key]);
+      expect(await resolveRunScopedMentionedSkillKeys(args)).toEqual([base.key, common.key, mention.key]);
+      expect(comment.body).toContain(ref(base));
       expect(comment.body).toContain(ref(common));
       expect(comment.body).toContain(ref(mention));
       expect(comment.body).toContain(ref(injected)); // Present as untrusted context, never assigned.
       expect(await resolveRunScopedMentionedSkillKeys({ ...args, companyId: other.companyId })).toEqual([]);
       const changed = await f.management.configuration(f.endpoint.id, "owner-user");
       await f.management.saveConfiguration(f.endpoint.id, { expectedRevision: changed.revision, configuration: {
-        ...changed.configuration, defaults: { ...changed.configuration.defaults, instructions: ref(next),
+        ...changed.configuration, defaults: { ...changed.configuration.defaults, baseReviewPrompt: "", instructions: ref(next),
           prompts: { ...changed.configuration.defaults.prompts, comment: "Answer briefly." },
         },
       } }, "owner-user");
@@ -2449,8 +2452,8 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       expect(all).toHaveLength(2);
       expect(await resolveRunScopedMentionedSkillKeys({ ...args, commentIds: [all[1].id] })).toEqual([next.key]);
       // A later event must not change the snapshot for a queued older wake.
-      expect(await resolveRunScopedMentionedSkillKeys(args)).toEqual([common.key, mention.key]);
-      expect(await resolveRunScopedMentionedSkillKeys({ ...args, commentIds: all.map((c) => c.id) })).toEqual(expect.arrayContaining([common.key, mention.key, next.key]));
+      expect(await resolveRunScopedMentionedSkillKeys(args)).toEqual([base.key, common.key, mention.key]);
+      expect(await resolveRunScopedMentionedSkillKeys({ ...args, commentIds: all.map((c) => c.id) })).toEqual(expect.arrayContaining([base.key, common.key, mention.key, next.key]));
       expect(await resolveRunScopedMentionedSkillKeys({ ...args, commentIds: [] })).toEqual([next.key]);
     });
     it.each([
@@ -4984,6 +4987,10 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       for (const comment of f.responseComments.values()) comments.set(comment.id, comment);
       let head = "b".repeat(40);
       let check = { id: 99, status: "completed", external_id: `${f.endpoint.id}:91:${head}`, app: { id: Number(f.endpoint.botExternalId) } };
+      // Other bots can publish the same named check on this PR. Neither another
+      // App nor a different endpoint's review may be selected for our updates.
+      const peerCheck = { ...check, id: 9901, app: { id: Number(f.endpoint.botExternalId) + 1 } };
+      const otherEndpointCheck = { ...check, id: 9902, external_id: `other-bot:91:${head}` };
       const pull = () => ({
         number: 91,
         title: "Test PR",
@@ -5054,7 +5061,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
             },
           ]);
         if (url.includes("/check-runs?"))
-          return Response.json({ check_runs: [check] });
+          return Response.json({ check_runs: [peerCheck, otherEndpointCheck, check] });
         return Response.json([]);
       });
       const service = githubChatReviewService(db, f.providerFetch);
@@ -5142,6 +5149,11 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         conclusion: "failure",
         details_url: `https://current-vanity.example/${company.issuePrefix}/issues/${conversation.issueId}`,
       });
+      const postedSummary = mutations.find((m) => typeof m.body.body === "string" && m.body.body.includes("Addition subtracts"));
+      expect(postedSummary?.body.body).toContain(`## ${f.endpoint.botLabel} — 2/5`);
+      const publishedCheck = mutations.find((m) => m.body.conclusion === "failure");
+      expect(publishedCheck?.url).toBe(`https://api.github.com/repos/paperclipai/paperclip/check-runs/${check.id}`);
+      expect(mutations.some((m) => /\/check-runs\/990[12]$/.test(m.url))).toBe(false);
       const publishedCount = mutations.length;
       const retried = await service.execute(
         session,

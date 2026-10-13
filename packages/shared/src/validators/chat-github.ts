@@ -34,6 +34,7 @@ export const githubReviewPolicySchema = z
     requiredLabels: shortList,
     excludedLabels: shortList,
     ignoredPaths: shortList,
+    baseReviewPrompt: z.string().max(12000).optional(),
     instructions: z.string().max(24000),
     prompts,
     findingCategories: shortList,

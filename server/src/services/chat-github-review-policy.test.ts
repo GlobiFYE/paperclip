@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   defaultGitHubReviewPolicy,
+  DEFAULT_GITHUB_BASE_REVIEW_PROMPT,
+  githubReviewPolicySchema,
   githubAllowedPersonSchema,
   type GitHubChatConfiguration,
   type GitHubReviewAssessment,
@@ -40,12 +42,12 @@ describe("configured GitHub instruction skills", () => {
   it.each(["mention", "comment"] as const)("uses only configured %s instructions", (event) => {
     const policy = defaultGitHubReviewPolicy();
     expect(githubConfiguredInstructionSources({ githubManual: { policy, event }, message: "untrusted /skill" }))
-      .toEqual([policy.instructions, policy.prompts[event]]);
+      .toEqual([DEFAULT_GITHUB_BASE_REVIEW_PROMPT, policy.instructions, policy.prompts[event]]);
   });
   it("selects only the current automatic event and common instructions", () => {
     const policy = { ...defaultGitHubReviewPolicy(), issueOpenedInstructions: "Handle issues." };
     expect(githubConfiguredInstructionSources({ githubAutomatic: { context, policy } }))
-      .toEqual([policy.instructions, policy.prompts.opened]);
+      .toEqual([DEFAULT_GITHUB_BASE_REVIEW_PROMPT, policy.instructions, policy.prompts.opened]);
     expect(githubConfiguredInstructionSources({ githubIssue: { context: { body: "untrusted /skill" }, policy } }))
       .toEqual([policy.instructions, policy.issueOpenedInstructions]);
     expect(githubConfiguredInstructionSources({ message: "untrusted /skill", raw: { policy } })).toEqual([]);
@@ -56,7 +58,7 @@ describe("configured GitHub instruction skills", () => {
     policy.prompts[event] = `Use ${skill}.`;
     const manual = event === "mention" || event === "comment";
     const admitted = manual ? { githubManual: { policy, event } } : { githubAutomatic: { context: { ...context, event }, policy } };
-    expect(githubConfiguredInstructionSources(admitted)).toEqual([policy.instructions, `Use ${skill}.`]);
+    expect(githubConfiguredInstructionSources(admitted)).toEqual([DEFAULT_GITHUB_BASE_REVIEW_PROMPT, policy.instructions, `Use ${skill}.`]);
     const prompt = manual
       ? githubManualMessagePrompt({ event, policy, repository: "test/repo", thread: "thread", sender: context.sender, message: "untrusted text" })
       : githubReviewPrompt({ ...context, event }, policy, 1);
@@ -75,6 +77,38 @@ describe("configured GitHub instruction skills", () => {
         ? { repository: "test/repo", thread: "thread", sender: context.sender, message: "untrusted text" }
         : context)));
     }
+  });
+});
+
+describe("GitHub base review prompt", () => {
+  it("uses the default rubric for legacy saved policies", () => {
+    const policy = defaultGitHubReviewPolicy();
+    delete policy.baseReviewPrompt;
+    expect(githubReviewPolicySchema.parse(policy)).not.toHaveProperty("baseReviewPrompt");
+    expect(githubReviewPrompt(context, policy, 1)).toContain(DEFAULT_GITHUB_BASE_REVIEW_PROMPT);
+  });
+  it("uses custom guidance for automatic and requested reviews while retaining the tool protocol", () => {
+    const skill = "[/review](paperclip://skills/11111111-1111-4111-8111-111111111111?slug=review)";
+    const policy = { ...defaultGitHubReviewPolicy(), baseReviewPrompt: `Use ${skill}. Prioritize security; explain the rating.`, instructions: "Focus on the cart." };
+    const manual = githubManualMessagePrompt({ event: "mention", policy, repository: "test/repo", thread: "thread", sender: context.sender, message: "Review this PR" });
+    const automatic = githubReviewPrompt(context, policy, 2);
+    for (const prompt of [manual, automatic]) {
+      expect(prompt).toContain(policy.baseReviewPrompt);
+      expect(prompt).not.toContain(DEFAULT_GITHUB_BASE_REVIEW_PROMPT);
+      expect(prompt).toContain("begin_review");
+      expect(prompt).toContain("submit_review");
+      expect(prompt).toContain("Never substitute personal credentials");
+      expect(prompt.indexOf(policy.baseReviewPrompt)).toBeLessThan(prompt.indexOf(policy.instructions));
+    }
+    expect(githubConfiguredInstructionSources({ githubAutomatic: { context, policy } })).toContain(policy.baseReviewPrompt);
+    expect(githubConfiguredInstructionSources({ githubManual: { policy, event: "mention" } })).toContain(policy.baseReviewPrompt);
+    expect(githubConfiguredInstructionSources({ githubIssue: { context: {}, policy } })).not.toContain(policy.baseReviewPrompt);
+  });
+  it("preserves an intentionally empty base prompt and validates its size", () => {
+    const policy = { ...defaultGitHubReviewPolicy(), baseReviewPrompt: "" };
+    expect(githubReviewPrompt(context, policy, 1)).not.toContain(DEFAULT_GITHUB_BASE_REVIEW_PROMPT);
+    expect(githubReviewPolicySchema.parse(policy).baseReviewPrompt).toBe("");
+    expect(githubReviewPolicySchema.safeParse({ ...policy, baseReviewPrompt: "x".repeat(12001) }).success).toBe(false);
   });
 });
 

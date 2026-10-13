@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   defaultGitHubReviewPolicy,
+  DEFAULT_GITHUB_BASE_REVIEW_PROMPT,
   buildSkillMentionHref,
   type GitHubChatConfiguration,
   type GitHubTaskReview,
@@ -691,9 +692,10 @@ describe("GitHub bot management", () => {
     await click("Discard changes");
     expect(container.querySelector<HTMLTextAreaElement>('textarea[id$="github-ignoredPaths"]')?.value).toBe("dist/**\nvendor/**");
   });
-  it("saves skill links in general and event instructions without resetting other guidance", async () => {
+  it("saves skill links in base, general and event instructions without resetting other guidance", async () => {
     await render();
     const skill = `[/review](${buildSkillMentionHref("11111111-1111-4111-8111-111111111111", "review")})`;
+    await input(container.querySelector('textarea[aria-label="Base review prompt"]')!, `Review using ${skill} and score security.`);
     await input(container.querySelector('textarea[aria-label="Agent instructions"]')!, `Use ${skill}.`);
     await input(container.querySelector('select[id$="github-prompt-event"]')!, "mention");
     await input(container.querySelector('textarea[aria-label="Mention instructions"]')!, `For mentions, use ${skill}.`);
@@ -701,11 +703,31 @@ describe("GitHub bot management", () => {
     await input(container.querySelector('textarea[aria-label="New issue instructions"]')!, `For issues, use ${skill}.`);
     await click("Save changes");
     const saved = mocks.save.mock.calls[0][2];
+    expect(saved.defaults.baseReviewPrompt).toBe(`Review using ${skill} and score security.`);
     expect(saved.defaults.instructions).toBe(`Use ${skill}.`);
     expect(saved.defaults.prompts.mention).toBe(`For mentions, use ${skill}.`);
     expect(saved.defaults.issueOpenedInstructions).toBe(`For issues, use ${skill}.`);
     expect(saved.defaults.prompts.opened).toBe(base.defaults.prompts.opened);
     expect(saved.people).toEqual(base.people);
+  });
+  it("shows the default base prompt for old settings and can save, discard and reset edits", async () => {
+    const legacy = structuredClone(base);
+    delete legacy.defaults.baseReviewPrompt;
+    mocks.config.mockResolvedValue({ revision: 4, configuration: legacy });
+    await render();
+    const editor = () => container.querySelector<HTMLTextAreaElement>('textarea[aria-label="Base review prompt"]')!;
+    expect(editor().value).toBe(DEFAULT_GITHUB_BASE_REVIEW_PROMPT);
+    await input(editor(), "Custom rating rubric");
+    await click("Save changes");
+    expect(mocks.save.mock.calls[0][2].defaults.baseReviewPrompt).toBe("Custom rating rubric");
+    await input(editor(), "Unsaved rubric");
+    await click("Discard changes");
+    expect(editor().value).toBe("Custom rating rubric");
+    await click("Reset to default");
+    expect(editor().value).toBe(DEFAULT_GITHUB_BASE_REVIEW_PROMPT);
+    await click("Save changes");
+    expect(mocks.save.mock.calls[1][2].defaults.baseReviewPrompt).toBe(DEFAULT_GITHUB_BASE_REVIEW_PROMPT);
+    expect(mocks.save.mock.calls[1][2].defaults.instructions).toBe(base.defaults.instructions);
   });
   it.each(["mentions_only", "linked_authors", "allowed_authors"] as const)(
     "makes mentions explicit in the selected %s mode", async (invocation) => {

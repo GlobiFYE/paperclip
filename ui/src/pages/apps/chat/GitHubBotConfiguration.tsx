@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   GITHUB_REVIEW_EVENTS,
+  DEFAULT_GITHUB_BASE_REVIEW_PROMPT,
   type GitHubChatConfiguration,
   type GitHubReviewPolicy,
   type GitHubAllowedPerson,
@@ -337,6 +338,32 @@ export function GitHubPolicyEditor({
             <p className="text-xs text-muted-foreground">
               Added to the main instructions for this event. Type / to select a skill for the agent to use.
             </p>
+          </div>
+        </GitHubSettingsDisclosure>
+        <GitHubSettingsDisclosure title="Base review prompt">
+          <div className="grid gap-3 pt-3">
+            <p className="text-sm text-muted-foreground">
+              Set the review approach and 0–5 scoring rubric. Your main and
+              event-specific instructions are added afterward.
+            </p>
+            <MarkdownEditor
+              readOnly={readOnly}
+              ariaLabel="Base review prompt"
+              contentClassName="min-h-32"
+              value={policy.baseReviewPrompt ?? DEFAULT_GITHUB_BASE_REVIEW_PROMPT}
+              onChange={(value) => set("baseReviewPrompt", value)}
+            />
+            <div className="flex justify-end">
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={readOnly || (policy.baseReviewPrompt ?? DEFAULT_GITHUB_BASE_REVIEW_PROMPT) === DEFAULT_GITHUB_BASE_REVIEW_PROMPT}
+                onClick={() => set("baseReviewPrompt", DEFAULT_GITHUB_BASE_REVIEW_PROMPT)}
+              >
+                Reset to default
+              </Button>
+            </div>
           </div>
         </GitHubSettingsDisclosure>
       </section>

@@ -152,3 +152,11 @@ to reply.
 Endpoint/destination execution defaults use the same board-only management
 boundary. Agents select an authorized workspace for their current task through
 the [workspace APIs](workspaces.md), rather than editing channel configuration.
+
+GitHub review configuration, including the optional `baseReviewPrompt`, uses
+`PUT /api/chat-endpoints/{endpointId}/github/configuration` under the existing
+board/company authorization and configuration-revision checks. The admitted
+snapshot supplies base/common/event skill references; provider content cannot
+assign skills. Agents receive the prompt in task context and do not gain an API
+permission to edit the bot's policy. Summary headings use the bot display name;
+checks remain independently scoped by GitHub App and endpoint/PR/commit identity.
