@@ -24,6 +24,7 @@ interface ExeDevDriverConfig {
   apiKey: string | null;
   apiUrl: string;
   namePrefix: string;
+  sourceVm: string | null;
   image: string | null;
   command: string | null;
   cpu: number | null;
@@ -68,15 +69,19 @@ const SSH_SIGKILL_GRACE_MS = 250;
 const MAX_VM_RECORD_DEPTH = 4;
 const EXE_DEV_SSH_ONBOARDING_MARKER = "Please complete registration by running: ssh exe.dev";
 const EXE_DEV_SSH_EMAIL_PROMPT = "Please enter your email address:";
+const EXE_DEV_SSH_INVALID_KEY_FORMAT = /Load key [^\n]*invalid format/i;
+const UUID_SECRET_REF_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // exe.dev's `--setup-script` runs at VM init as the unprivileged `exedev` user, which
 // has passwordless sudo. The Paperclip sandbox callback bridge is a Node script, so
 // every Paperclip workload on this provider needs node on PATH before the bridge can
-// start. When the operator hasn't supplied their own setup script, install Node 20 via
+// start. When the operator hasn't supplied their own setup script, install Node 24 via
 // nodesource so the VM comes up ready for Paperclip out of the box.
 const DEFAULT_SETUP_SCRIPT =
-  "command -v node >/dev/null 2>&1 || " +
-  "(curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash - && " +
+  "(command -v node >/dev/null 2>&1 && " +
+  "node -e 'const v=process.versions.node.split(\".\").map(Number);" +
+  "process.exit(v[0]>24||(v[0]===24&&v[1]>=11)?0:1)' >/dev/null 2>&1) || " +
+  "(curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash - && " +
   "sudo apt-get install -y nodejs)";
 
 class ExeDevApiError extends Error {
@@ -139,6 +144,74 @@ function isValidUrl(value: string): boolean {
   }
 }
 
+function isSecretRef(value: string): boolean {
+  return UUID_SECRET_REF_RE.test(value);
+}
+
+// Catch the SSH-key paste failure modes we've seen in the wild (wrong file,
+// PPK export, truncated paste) before the user pays the cost of provisioning a
+// VM and getting a cryptic SSH error. Inline parse — no `ssh-keygen` dependency
+// — so this also works on hosts where openssh-client isn't installed.
+export function validateSshPrivateKey(rawKey: string): string | null {
+  const trimmed = rawKey.trim();
+  if (!trimmed) return null;
+
+  if (/^PuTTY-User-Key-File-\d/m.test(trimmed)) {
+    return "sshPrivateKey looks like a PuTTY .ppk file. Convert it to OpenSSH format (PuTTYgen → Conversions → Export OpenSSH key) and paste the resulting PEM.";
+  }
+
+  if (
+    /^(?:ssh-(?:rsa|dss|ed25519)|ecdsa-sha2-[a-z0-9-]+|sk-(?:ssh-ed25519|ecdsa-sha2-[a-z0-9-]+)@openssh\.com)\s+\S/.test(
+      trimmed,
+    )
+  ) {
+    return "sshPrivateKey looks like a PUBLIC key. Paste the matching private key (the file without the .pub extension).";
+  }
+
+  const headerMatch = trimmed.match(/^-----BEGIN ([A-Z0-9 ]*)PRIVATE KEY-----/m);
+  if (!headerMatch) {
+    return "sshPrivateKey must be a PEM-encoded private key starting with a line like '-----BEGIN OPENSSH PRIVATE KEY-----'.";
+  }
+
+  const footerMatch = trimmed.match(/^-----END ([A-Z0-9 ]*)PRIVATE KEY-----\s*$/m);
+  if (!footerMatch) {
+    return "sshPrivateKey is missing its '-----END … PRIVATE KEY-----' footer. Make sure you copied the whole file, including the final line.";
+  }
+
+  const headerLabel = headerMatch[1].trim();
+  const footerLabel = footerMatch[1].trim();
+  if (headerLabel !== footerLabel) {
+    return `sshPrivateKey header/footer mismatch (BEGIN ${headerLabel || "(none)"} vs END ${footerLabel || "(none)"}). The file is likely truncated or two keys are concatenated.`;
+  }
+
+  const headerLineEnd = trimmed.indexOf("\n", headerMatch.index ?? 0);
+  const footerStart = trimmed.lastIndexOf(footerMatch[0]);
+  if (headerLineEnd < 0 || footerStart <= headerLineEnd) {
+    return "sshPrivateKey appears to be empty between its BEGIN and END markers.";
+  }
+
+  const bodyLines = trimmed
+    .slice(headerLineEnd + 1, footerStart)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  if (bodyLines.length === 0) {
+    return "sshPrivateKey appears to be empty between its BEGIN and END markers.";
+  }
+
+  // PEM bodies are base64 lines, optionally preceded by `Header: value` lines
+  // on encrypted PKCS#1 keys (`Proc-Type:`, `DEK-Info:`).
+  const base64Line = /^[A-Za-z0-9+/=]+$/;
+  const pemHeaderLine = /^[A-Za-z][A-Za-z0-9-]*:\s.+$/;
+  for (const line of bodyLines) {
+    if (!base64Line.test(line) && !pemHeaderLine.test(line)) {
+      return "sshPrivateKey body contains non-base64 characters. The key may have been corrupted by line-wrapping or copy-paste.";
+    }
+  }
+
+  return null;
+}
+
 function normalizeApiUrl(value: string | null): string {
   if (!value) return DEFAULT_API_URL;
   const trimmed = value.trim();
@@ -174,6 +247,7 @@ function parseDriverConfig(raw: Record<string, unknown>): ExeDevDriverConfig {
     apiKey: parseOptionalString(raw.apiKey),
     apiUrl: normalizeApiUrl(parseOptionalString(raw.apiUrl)),
     namePrefix: normalizeNamePrefix(parseOptionalString(raw.namePrefix)),
+    sourceVm: parseOptionalString(raw.sourceVm),
     image: parseOptionalString(raw.image),
     command: parseOptionalString(raw.command),
     cpu: parseOptionalInteger(raw.cpu),
@@ -241,10 +315,23 @@ function resolveSetupScript(config: ExeDevDriverConfig): string | null {
   return trimmed.length > 0 ? config.setupScript : null;
 }
 
+function buildCopyCommand(sourceVm: string, config: ExeDevDriverConfig, vmName: string): string {
+  return [
+    "cp",
+    shellQuote(sourceVm),
+    shellQuote(vmName),
+    "--json",
+    ...buildFlag("cpu", config.cpu),
+    ...buildFlag("memory", config.memory),
+    ...buildFlag("disk", config.disk),
+  ].join(" ");
+}
+
 function buildCreateCommand(
   config: ExeDevDriverConfig,
   vmName: string,
 ): string {
+  if (config.sourceVm) return buildCopyCommand(config.sourceVm, config, vmName);
   return [
     "new",
     "--json",
@@ -467,13 +554,14 @@ function buildLoginShellScript(input: {
   const finalLine = envArgs.length > 0
     ? `exec env ${envArgs.join(" ")} ${commandParts}`
     : `exec ${commandParts}`;
+  // Source the common login profiles before exec so the command runs with the
+  // interactive-shell PATH. The wrapper sources no `nvm.sh`; the sandbox image
+  // supplies node on the PATH.
   const lines = [
     'if [ -f /etc/profile ]; then . /etc/profile >/dev/null 2>&1 || true; fi',
     'if [ -f "$HOME/.profile" ]; then . "$HOME/.profile" >/dev/null 2>&1 || true; fi',
     'if [ -f "$HOME/.bash_profile" ]; then . "$HOME/.bash_profile" >/dev/null 2>&1 || true; elif [ -f "$HOME/.bashrc" ]; then . "$HOME/.bashrc" >/dev/null 2>&1 || true; fi',
     'if [ -f "$HOME/.zprofile" ]; then . "$HOME/.zprofile" >/dev/null 2>&1 || true; fi',
-    'export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"',
-    '[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" >/dev/null 2>&1 || true',
   ];
   if (input.cwd) {
     lines.push(`cd ${shellQuote(input.cwd)}`);
@@ -495,6 +583,13 @@ function formatSshFailure(
     return [
       `Failed to ${action} exe.dev VM ${vmName}: the Paperclip host SSH key is not registered with exe.dev.`,
       "Complete exe.dev's one-time SSH onboarding on this host by running `ssh exe.dev` and following the email verification prompt, then retry.",
+    ].join(" ");
+  }
+
+  if (EXE_DEV_SSH_INVALID_KEY_FORMAT.test(combinedOutput)) {
+    return [
+      `Failed to ${action} exe.dev VM ${vmName}: the configured SSH private key isn't an OpenSSH-format private key.`,
+      "Confirm the secret starts with `-----BEGIN … PRIVATE KEY-----` and isn't the `.pub` file or a PuTTY `.ppk` export.",
     ].join(" ");
   }
 
@@ -686,10 +781,31 @@ const plugin = definePlugin({
     ) {
       errors.push("strictHostKeyChecking cannot be empty.");
     }
+    if (config.sshPrivateKey && !isSecretRef(config.sshPrivateKey)) {
+      const sshKeyError = validateSshPrivateKey(config.sshPrivateKey);
+      if (sshKeyError) errors.push(sshKeyError);
+    }
 
     warnings.push(
       "The Paperclip host must have SSH access to the created exe.dev VM, and its SSH key must be registered with exe.dev. The API token only covers provisioning.",
     );
+    if (config.sourceVm) {
+      const ignored = Object.entries({
+        image: config.image,
+        command: config.command,
+        comment: config.comment,
+        env: Object.keys(config.env).length > 0,
+        integrations: config.integrations.length > 0,
+        tags: config.tags.length > 0,
+        setupScript: config.setupScript,
+        prompt: config.prompt,
+      }).filter(([, value]) => value).map(([key]) => key);
+      if (ignored.length > 0) {
+        errors.push(
+          `sourceVm copies an existing VM with \`exe.dev cp\`, which cannot apply ${ignored.join(", ")}. Clear these settings or clear sourceVm.`,
+        );
+      }
+    }
     if (config.reuseLease) {
       warnings.push("reuseLease keeps the VM alive between runs; this provider does not suspend retained VMs.");
     }

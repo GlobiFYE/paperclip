@@ -1,7 +1,8 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createPromptContextFixture } from "@paperclipai/adapter-utils/test-fixtures/prompt-context";
 
 const {
   runChildProcess,
@@ -87,6 +88,16 @@ vi.mock("@paperclipai/adapter-utils/execution-target", async () => {
   return {
     ...actual,
     startAdapterExecutionTargetPaperclipBridge,
+  };
+});
+
+vi.mock("./models.js", async () => {
+  const actual = await vi.importActual<typeof import("./models.js")>("./models.js");
+  return {
+    ...actual,
+    ensurePiModelConfiguredAndAvailable: vi.fn(async () => [
+      { id: "openai/gpt-5.4-mini", label: "openai/gpt-5.4-mini" },
+    ]),
   };
 });
 
@@ -214,6 +225,81 @@ describe("pi remote execution", () => {
     expect(call?.[3].remoteExecution?.remoteCwd).toBe(managedRemoteWorkspace);
     expect(startAdapterExecutionTargetPaperclipBridge).toHaveBeenCalledTimes(1);
     expect(restoreWorkspaceFromSshExecution).toHaveBeenCalledTimes(1);
+  });
+
+  it("ships the managed Pi agent config and repoints PI_CODING_AGENT_DIR when PAPERCLIP_PI_PROVIDERS is set", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-pi-remote-providers-"));
+    cleanupDirs.push(rootDir);
+    const workspaceDir = path.join(rootDir, "workspace");
+    const managedRemoteWorkspace = "/remote/workspace/.paperclip-runtime/runs/run-providers/workspace";
+    await mkdir(workspaceDir, { recursive: true });
+
+    const providers = {
+      tensorix: {
+        baseUrl: "http://gateway.example.svc.cluster.local:8080/anthropic",
+        apiKey: "{env:ANTHROPIC_API_KEY}",
+        api: "anthropic-messages",
+        models: [{ id: "deepseek/deepseek-chat-v3.1", name: "DeepSeek v3.1" }],
+      },
+    };
+
+    await execute({
+      runId: "run-providers",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Pi Builder",
+        adapterType: "pi_local",
+        adapterConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      config: {
+        command: "pi",
+        model: "tensorix/deepseek/deepseek-chat-v3.1",
+        env: {
+          PAPERCLIP_PI_PROVIDERS: JSON.stringify(providers),
+          ANTHROPIC_API_KEY: "sk-bf-REALVK",
+        },
+      },
+      context: {
+        paperclipWorkspace: {
+          cwd: workspaceDir,
+          source: "project_primary",
+        },
+      },
+      executionTransport: {
+        remoteExecution: {
+          host: "127.0.0.1",
+          port: 2222,
+          username: "fixture",
+          remoteWorkspacePath: "/remote/workspace",
+          remoteCwd: "/remote/workspace",
+          privateKey: "PRIVATE KEY",
+          knownHosts: "[127.0.0.1]:2222 ssh-ed25519 AAAA",
+          strictHostKeyChecking: true,
+        },
+      },
+      onLog: async () => {},
+    });
+
+    expect(syncDirectoryToSsh).toHaveBeenCalledWith(expect.objectContaining({
+      remoteDir: `${managedRemoteWorkspace}/.paperclip-runtime/pi/agentConfig`,
+    }));
+    const call = runChildProcess.mock.calls[0] as unknown as
+      | [string, string, string[], { env: Record<string, string> }]
+      | undefined;
+    expect(call?.[3].env.PI_CODING_AGENT_DIR).toBe(
+      `${managedRemoteWorkspace}/.paperclip-runtime/pi/agentConfig`,
+    );
+    expect(call?.[2]).toContain("--provider");
+    expect(call?.[2]).toContain("tensorix");
+    expect(call?.[2]).toContain("--model");
+    expect(call?.[2]).toContain("deepseek/deepseek-chat-v3.1");
   });
 
   it("resumes saved Pi sessions for remote SSH execution only when the identity matches", async () => {
@@ -483,8 +569,9 @@ describe("pi remote execution", () => {
         sessionDisplayId: "session-123",
         taskKey: null,
       },
-      config: { command: "pi", model: "openai/gpt-5.4-mini" },
+      config: { command: "pi", model: "openai/gpt-5.4-mini", bootstrapPromptTemplate: "BOOTSTRAP {{run.id}}" },
       context: {
+        ...createPromptContextFixture(),
         paperclipWorkspace: { cwd: workspaceDir, source: "project_primary" },
       },
       executionTransport: {
@@ -507,5 +594,187 @@ describe("pi remote execution", () => {
     expect(sessionIndex).toBeGreaterThanOrEqual(0);
     const usedSession = sessionIndex >= 0 ? call?.[2][sessionIndex + 1] : null;
     expect(usedSession).not.toBe("/remote/workspace/.paperclip-runtime/pi/sessions/session-123.jsonl");
+    const prompt = String(call?.[2].at(-1) ?? "");
+    expect(prompt).toContain("## Owned assignment");
+    expect(prompt).toContain("BOOTSTRAP run-ssh-head-failure");
+    expect(prompt).toContain("comment-scope");
+  });
+
+  it("delivers the owned assignment and ordered wake comments through Pi's prompt", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-pi-context-ownership-"));
+    cleanupDirs.push(rootDir);
+    await mkdir(rootDir, { recursive: true });
+    const fixture = createPromptContextFixture();
+    let deliveredPrompt = "";
+
+    await execute({
+      runId: "run-context-ownership",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Pi Builder",
+        adapterType: "pi_local",
+        adapterConfig: {},
+      },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: { command: "pi", model: "openai/gpt-5.4-mini", cwd: rootDir },
+      context: { ...fixture, paperclipWorkspace: { cwd: rootDir, source: "project_primary" } },
+      onLog: async () => {},
+    } as never);
+
+    const call = runChildProcess.mock.calls.at(-1) as unknown as [string, string, string[]] | undefined;
+    deliveredPrompt = String(call?.[2].at(-1) ?? "");
+    expect(deliveredPrompt).toContain(fixture.paperclipTaskMarkdownAssignment);
+    expect(deliveredPrompt.indexOf("Append the same ledger entry.")).toBeLessThan(
+      deliveredPrompt.lastIndexOf("Append the same ledger entry."),
+    );
+    expect(deliveredPrompt.indexOf("comment-first")).toBeLessThan(
+      deliveredPrompt.indexOf("comment-second"),
+    );
+    expect(deliveredPrompt.indexOf("comment-second")).toBeLessThan(
+      deliveredPrompt.indexOf("comment-scope"),
+    );
+    expect(deliveredPrompt).toContain("Change the final scope to the launch checklist.");
+  });
+
+  it("keeps the default Paperclip policy in the system carrier without duplicating it in user input", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-pi-default-policy-"));
+    cleanupDirs.push(rootDir);
+
+    await execute({
+      runId: "run-default-policy",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Pi Builder",
+        adapterType: "pi_local",
+        adapterConfig: {},
+      },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: { command: "pi", model: "openai/gpt-5.4-mini", cwd: rootDir },
+      context: {},
+      onLog: async () => {},
+    } as never);
+
+    const call = runChildProcess.mock.calls.at(-1) as unknown as [string, string, string[]] | undefined;
+    const args = call?.[2] ?? [];
+    const systemPrompt = args[args.indexOf("--append-system-prompt") + 1] ?? "";
+    const userPrompt = args.at(-1) ?? "";
+    expect(systemPrompt).toContain("You are agent agent-1 (Pi Builder).");
+    expect(userPrompt).not.toContain("You are agent agent-1 (Pi Builder).");
+  });
+
+  it("preserves custom prompt templates in both configured carriers", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-pi-custom-policy-"));
+    cleanupDirs.push(rootDir);
+
+    await execute({
+      runId: "run-custom-policy",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Pi Builder",
+        adapterType: "pi_local",
+        adapterConfig: {},
+      },
+      runtime: { sessionId: null, sessionParams: null, sessionDisplayId: null, taskKey: null },
+      config: {
+        command: "pi",
+        model: "openai/gpt-5.4-mini",
+        cwd: rootDir,
+        promptTemplate: "CUSTOM POLICY {{run.id}}",
+      },
+      context: {},
+      onLog: async () => {},
+    } as never);
+
+    const call = runChildProcess.mock.calls.at(-1) as unknown as [string, string, string[]] | undefined;
+    const args = call?.[2] ?? [];
+    const systemPrompt = args[args.indexOf("--append-system-prompt") + 1] ?? "";
+    const userPrompt = args.at(-1) ?? "";
+    expect(systemPrompt).toBe("CUSTOM POLICY run-custom-policy");
+    expect(userPrompt).toBe("CUSTOM POLICY run-custom-policy");
+  });
+
+  it("keeps resumed default identity and connection guidance in the system carrier", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-pi-resumed-policy-"));
+    cleanupDirs.push(rootDir);
+    const sessionPath = path.join(rootDir, "session.jsonl");
+    await writeFile(sessionPath, `${JSON.stringify({ type: "session", cwd: rootDir })}\n`, "utf8");
+
+    await execute({
+      runId: "run-resumed-policy",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Pi Builder",
+        adapterType: "pi_local",
+        adapterConfig: {},
+      },
+      runtime: {
+        sessionId: sessionPath,
+        sessionParams: { sessionId: sessionPath, cwd: rootDir },
+        sessionDisplayId: "session-resumed-policy",
+        taskKey: null,
+      },
+      config: { command: "pi", model: "openai/gpt-5.4-mini", cwd: rootDir },
+      context: createPromptContextFixture(),
+      onLog: async () => {},
+    } as never);
+
+    const call = runChildProcess.mock.calls.at(-1) as unknown as [string, string, string[]] | undefined;
+    const args = call?.[2] ?? [];
+    const systemPrompt = args[args.indexOf("--append-system-prompt") + 1] ?? "";
+    const userPrompt = args.at(-1) ?? "";
+    expect(systemPrompt).toContain("You are agent agent-1 (Pi Builder).");
+    expect(systemPrompt).toContain("Connection tools:");
+    expect(systemPrompt).not.toContain("Execution contract:");
+    expect(userPrompt).not.toContain("Execution contract:");
+  });
+
+  it("keeps default identity in system input when custom prompt uses loaded instructions", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-pi-instructions-policy-"));
+    cleanupDirs.push(rootDir);
+    const sessionPath = path.join(rootDir, "session.jsonl");
+    const instructionsPath = path.join(rootDir, "AGENTS.md");
+    await writeFile(sessionPath, `${JSON.stringify({ type: "session", cwd: rootDir })}\n`, "utf8");
+    await writeFile(instructionsPath, "Loaded instructions for this run.\n", "utf8");
+
+    await execute({
+      runId: "run-instructions-policy",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Pi Builder",
+        adapterType: "pi_local",
+        adapterConfig: {},
+      },
+      runtime: {
+        sessionId: sessionPath,
+        sessionParams: { sessionId: sessionPath, cwd: rootDir },
+        sessionDisplayId: "session-instructions-policy",
+        taskKey: null,
+      },
+      config: {
+        command: "pi",
+        model: "openai/gpt-5.4-mini",
+        cwd: rootDir,
+        instructionsFilePath: "AGENTS.md",
+        promptTemplate: "CUSTOM POLICY {{run.id}}",
+      },
+      context: createPromptContextFixture(),
+      onLog: async () => {},
+    } as never);
+
+    const call = runChildProcess.mock.calls.at(-1) as unknown as [string, string, string[]] | undefined;
+    const args = call?.[2] ?? [];
+    const systemPrompt = args[args.indexOf("--append-system-prompt") + 1] ?? "";
+    const userPrompt = args.at(-1) ?? "";
+    expect(systemPrompt).toContain("Loaded instructions for this run.");
+    expect(systemPrompt).toContain("You are agent agent-1 (Pi Builder).");
+    expect(systemPrompt).toContain("Connection tools:");
+    expect(systemPrompt).not.toContain("Execution contract:");
+    expect(userPrompt).not.toContain("CUSTOM POLICY run-instructions-policy");
+    expect(userPrompt).not.toContain("Execution contract:");
   });
 });
