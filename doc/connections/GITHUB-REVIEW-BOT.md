@@ -132,7 +132,9 @@ their verified account under **Reviewed authors**. Their pull request events
 start automatic reviews under the responsible member, with the same events and
 filters. A reviewed author gets no company membership and cannot mention or
 control the bot. Issues that they open do not start tasks. Their reviews are not
-quarantined as low-trust work, and gateway tools stay limited to the bot
+quarantined as low-trust work, so add only people you trust. The run never
+receives a person's or the host's GitHub credentials; only the agent's own
+GitHub account can be used, and gateway tools stay limited to the bot
 connection. When you remove the author, new admissions and tool calls stop.
 
 Choose automatic events and author filters in **Settings** to control which

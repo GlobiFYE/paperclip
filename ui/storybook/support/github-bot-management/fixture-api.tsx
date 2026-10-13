@@ -14,7 +14,7 @@ import {
   members,
 } from "./fixtures";
 
-export type FixtureState = "populated" | "empty" | "loading" | "error" | "long" | "many" | "setup" | "skills" | "guests" | "mentions";
+export type FixtureState = "populated" | "empty" | "loading" | "error" | "long" | "many" | "setup" | "skills" | "guests" | "mentions" | "reviewed";
 const reviewSkill = {
   id: "11111111-1111-4111-8111-111111111111", slug: "code-review", name: "Code review",
   key: "company/company-storybook/code-review", description: "Follow the team's review playbook.",
@@ -62,6 +62,7 @@ export function FixtureApi({
       instructions: `Use [/code-review](${buildSkillMentionHref(reviewSkill.id, reviewSkill.slug)}) when reviewing pull requests.`,
       invocation: "linked_authors",
     };
+    if (state === "reviewed") saved.configuration.reviewedAuthors = [{ githubUserId: "91", login: "frontend-teammate" }, { githubUserId: "92", login: "platform-teammate" }];
     if (state === "guests") saved.configuration.people.push({ kind: "guest", githubUserId: "99", login: "community-contributor", sponsorUserId: "user-board", permissionProfile: "restricted", automaticReviews: true });
     if (state === "mentions") { saved.configuration.memberAccess = "all_linked"; saved.configuration.defaults.invocation = "mentions_only"; }
     let repos = structuredClone(resources);
