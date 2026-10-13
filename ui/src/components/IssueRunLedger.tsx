@@ -41,6 +41,7 @@ type IssueRunLedgerProps = {
   childIssues: Issue[];
   agentMap: ReadonlyMap<string, Agent>;
   hasLiveRuns: boolean;
+  runs?: RunForIssue[];
   activityEvents?: ActivityEvent[];
   renderActivityEvent?: (event: ActivityEvent) => ReactNode;
   resolveUserLabel?: (userId: string) => string | null | undefined;
@@ -436,6 +437,7 @@ export function IssueRunLedger({
   childIssues,
   agentMap,
   hasLiveRuns,
+  runs: suppliedRuns,
   activityEvents,
   renderActivityEvent,
   resolveUserLabel,
@@ -450,13 +452,13 @@ export function IssueRunLedger({
     queryFn: () => accessApi.getCurrentBoardAccess(),
     retry: false,
   });
-  const { data: runs } = useQuery({
+  const { data: queriedRuns } = useQuery({
     queryKey: queryKeys.issues.runs(issueId),
     queryFn: () => activityApi.runsForIssue(issueId),
-    refetchInterval:
-      hasLiveRuns || issueStatus === "in_progress" ? 5000 : false,
+    enabled: suppliedRuns === undefined,
     placeholderData: keepPreviousDataForSameQueryTail<RunForIssue[]>(issueId),
   });
+  const runs = suppliedRuns ?? queriedRuns;
   const { data: liveRuns } = useQuery({
     queryKey: queryKeys.issues.liveRuns(issueId),
     queryFn: () => heartbeatsApi.liveRunsForIssue(issueId),

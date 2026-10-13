@@ -68,6 +68,17 @@ that slow workspace restoration does not turn the task Blocked. Try a later edit
 from the outgoing run and verify rejection. Repeat a board
 reassignment and confirm that the outgoing run still stops.
 
+Task history starts with bounded pages of 50 activity events and linked runs.
+Use **Load earlier history** to read older pages. Live polling reads active runs;
+history updates refresh only the newest page and preserve explicitly loaded older
+entries. [History tests](../../ui/src/lib/issue-history.test.ts) cover cursor
+continuity, navigation, retry, and large updates without growing an unopened
+historical view.
+
+Manual: Open a task with more than 100 activity events and runs. Confirm first
+requests use `limit=50`, read older entries, then observe a live update. Verify
+older pages are not requested again and remain reachable.
+
 Manual: Add a comment and edit authorized properties. Reload and verify history, actor, and values. Complete a disposable task and inspect its deliverable; reopen through an available action and confirm the next execution follows current policy.
 
 ## Gotchas

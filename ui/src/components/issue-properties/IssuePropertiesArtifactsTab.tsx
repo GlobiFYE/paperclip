@@ -1,7 +1,7 @@
 import { TextAttachmentContext } from "@/context/TextAttachmentContext";
 import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { ArtifactUploadContent, type ArtifactUploadEntry } from "@/components/artifacts/ArtifactUploadControls";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   AttachmentArtifactWorkProductMetadata,
   Issue,
@@ -18,6 +18,7 @@ import { Download, ExternalLink, FileText } from "lucide-react";
 import { ApiError } from "@/api/client";
 import { issuesApi } from "@/api/issues";
 import { activityApi } from "@/api/activity";
+import { heartbeatsApi } from "@/api/heartbeats";
 import { agentsApi } from "@/api/agents";
 import { queryKeys } from "@/lib/queryKeys";
 import { useIssueDocuments } from "@/hooks/useIssueDocuments";
@@ -368,6 +369,8 @@ export function IssuePropertiesArtifactsTab({
   onOpenDocument,
   uploadState,
 }: IssuePropertiesArtifactsTabProps) {
+  const [artifactPage, setArtifactPage] = useState({ issueId: issue.id, count: 50 });
+  const visibleArtifactCount = artifactPage.issueId === issue.id ? artifactPage.count : 50;
   const {
     data: attachments,
     isPending: attachmentsPending,
@@ -408,10 +411,9 @@ export function IssuePropertiesArtifactsTab({
     (documents ?? []).map((doc) => [doc.key, doc]),
   );
   const fileRows = selectArtifactAttachments(attachments, workProducts);
-  const runsById = useMemo(
-    () => new Map((runs ?? []).map((run) => [run.runId, run])),
-    [runs],
-  );
+  const runsById = useMemo(() => new Map<string, { startedAt: string | Date | null; agentId: string | null }>(
+    (runs ?? []).map((run) => [run.runId, { startedAt: run.startedAt, agentId: run.agentId }]),
+  ), [runs]);
   const agentsById = useMemo(
     () => new Map((agents ?? []).map((agent) => [agent.id, agent])),
     [agents],
@@ -492,6 +494,32 @@ export function IssuePropertiesArtifactsTab({
     }))
     .sort((a, b) => b.date.getTime() - a.date.getTime());
 
+  let remainingVisible = visibleArtifactCount;
+  const visibleGroups = groupedRows.flatMap((group) => {
+    const rows = group.rows.slice(0, remainingVisible);
+    remainingVisible -= rows.length;
+    return rows.length ? [{ ...group, rows }] : [];
+  });
+  const visibleRunIds = new Set(
+    visibleGroups.flatMap((group) => group.rows.flatMap((row) =>
+      row.kind === "work_product" && row.runId ? [row.runId] : [])),
+  );
+  const artifactRunQueries = useQueries({
+    queries: [...visibleRunIds]
+      .filter((runId) => !runsById.has(runId))
+      .map((runId) => ({
+        queryKey: ["heartbeat-runs", "detail", runId],
+        queryFn: () => heartbeatsApi.get(runId),
+        retry: false,
+      })),
+  });
+  for (const query of artifactRunQueries) {
+    if (query.data) runsById.set(query.data.id, {
+      startedAt: query.data.startedAt,
+      agentId: query.data.agentId,
+    });
+  }
+
   const loadError = attachmentsError || productsError || documentsError;
   const loading = attachmentsPending || productsPending || documentsPending;
   const feedback = loadError ? (
@@ -536,9 +564,9 @@ export function IssuePropertiesArtifactsTab({
   return withUploads(
     <div className="@container flex flex-col gap-3 py-2">
       {feedback}
-      {groupedRows.map((group) => {
+      {visibleGroups.map((group) => {
         const run = group.runId === "other" ? null : runsById.get(group.runId);
-        const agent = run ? agentsById.get(run.agentId) : null;
+        const agent = run?.agentId ? agentsById.get(run.agentId) : null;
         return (
           <section key={group.runId} className="flex flex-col gap-1.5">
             {group.runId !== "other" ? (
@@ -641,6 +669,18 @@ export function IssuePropertiesArtifactsTab({
           </section>
         );
       })}
+      {visibleArtifactCount < allRows.length ? (
+        <button
+          type="button"
+          className="self-start px-1 text-sm text-muted-foreground underline"
+          onClick={() => setArtifactPage((current) => ({
+            issueId: issue.id,
+            count: (current.issueId === issue.id ? current.count : 50) + 50,
+          }))}
+        >
+          Load more artifacts
+        </button>
+      ) : null}
     </div>
   );
 }

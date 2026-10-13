@@ -3,6 +3,18 @@ import { api, type RequestOptions } from "./client";
 
 export type { RunLivenessState } from "@paperclipai/shared";
 
+export const ISSUE_HISTORY_PAGE_SIZE = 50;
+export interface IssueHistoryOptions {
+  limit?: number;
+  before?: string;
+}
+
+function issueHistoryPath(issueId: string, kind: "activity" | "runs", options?: IssueHistoryOptions) {
+  const params = new URLSearchParams({ limit: String(options?.limit ?? ISSUE_HISTORY_PAGE_SIZE) });
+  if (options?.before) params.set("before", options.before);
+  return `/issues/${issueId}/${kind}?${params}`;
+}
+
 export interface RunForIssue {
   runId: string;
   execution?: ExecutionProjection | null;
@@ -78,7 +90,9 @@ export const activityApi = {
     const qs = params.toString();
     return api.get<ActivityEvent[]>(`/companies/${companyId}/activity${qs ? `?${qs}` : ""}`, options);
   },
-  forIssue: (issueId: string) => api.get<ActivityEvent[]>(`/issues/${issueId}/activity`),
-  runsForIssue: (issueId: string) => api.get<RunForIssue[]>(`/issues/${issueId}/runs`),
+  forIssue: (issueId: string, options?: IssueHistoryOptions) =>
+    api.get<ActivityEvent[]>(issueHistoryPath(issueId, "activity", options)),
+  runsForIssue: (issueId: string, options?: IssueHistoryOptions) =>
+    api.get<RunForIssue[]>(issueHistoryPath(issueId, "runs", options)),
   issuesForRun: (runId: string) => api.get<IssueForRun[]>(`/heartbeat-runs/${runId}/issues`),
 };

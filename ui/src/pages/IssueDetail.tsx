@@ -98,6 +98,7 @@ import {
 } from "../lib/issue-timeline-events";
 import { queryKeys } from "../lib/queryKeys";
 import { keepPreviousDataForSameQueryTail } from "../lib/query-placeholder-data";
+import { useIssueHistory } from "../hooks/useIssueHistory";
 import { useIssueWorkProducts } from "../hooks/useIssueWorkProducts";
 import {
   mergePendingIssueQueuedComments,
@@ -1458,17 +1459,21 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   const scrollLocation = useLocation();
   const scrollNavigationType = useNavigationType();
   const { pushToast } = useToastActions();
+  const activityHistory = useIssueHistory<ActivityEvent>({
+    queryKey: queryKeys.issues.activity(issueQueryRef),
+    fetchPage: (before) => before
+      ? activityApi.forIssue(issueQueryRef, { before })
+      : activityApi.forIssue(issueQueryRef),
+    getId: (event) => event.id,
+    getCreatedAt: (event) => event.createdAt,
+    enabled: !!issueId,
+  });
   const {
     data: activity,
     isPending: activityPending,
     isError: activityError,
     refetch: refetchActivity,
-  } = useQuery({
-    queryKey: queryKeys.issues.activity(issueQueryRef),
-    queryFn: () => activityApi.forIssue(issueQueryRef),
-    enabled: !!issueId,
-    placeholderData: keepPreviousDataForSameQueryTail<ActivityEvent[]>(issueQueryRef),
-  });
+  } = activityHistory;
   const {
     data: liveRuns,
     isFetched: liveRunsFetched,
@@ -1571,19 +1576,21 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
     setClassicQueuedDeliveryError(null);
   }, [issueId]);
   const hasLiveRuns = liveRunCount > 0 || !!resolvedActiveRun;
+  const runHistory = useIssueHistory<RunForIssue>({
+    queryKey: queryKeys.issues.runs(issueQueryRef),
+    fetchPage: (before) => before
+      ? activityApi.runsForIssue(issueQueryRef, { before })
+      : activityApi.runsForIssue(issueQueryRef),
+    getId: (run) => run.runId,
+    getCreatedAt: (run) => run.createdAt,
+    enabled: !!issueId,
+  });
   const {
     data: linkedRuns,
     isPending: linkedRunsPending,
     isError: linkedRunsError,
     refetch: refetchLinkedRuns,
-  } = useQuery({
-    queryKey: queryKeys.issues.runs(issueQueryRef),
-    queryFn: () => activityApi.runsForIssue(issueQueryRef),
-    enabled: !!issueId,
-    refetchInterval:
-      hasLiveRuns || issueStatus === "in_progress" ? 1000 : false,
-    placeholderData: keepPreviousDataForSameQueryTail<RunForIssue[]>(issueQueryRef),
-  });
+  } = runHistory;
   const resolvedActivity = activity ?? [];
   const resolvedLinkedRuns = linkedRuns ?? [];
   const retryFailedRun = useMutation({
@@ -2388,19 +2395,26 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
     [resolvedActivity],
   );
 
-  const loadOlderButton = hasOlderComments ? (
-    <div className="flex justify-center">
+  const historyLoadingOlder = commentsLoadingOlder || activityHistory.isLoadingOlder || runHistory.isLoadingOlder;
+  const hasOlderHistory = hasOlderComments || activityHistory.hasMore || runHistory.hasMore;
+  const loadOlderButton = hasOlderHistory ? (
+    <div className="flex flex-col items-center gap-2">
       <Button
         type="button"
         variant="outline"
         size="sm"
-        disabled={commentsLoadingOlder}
-        onClick={onLoadOlderComments}
+        disabled={historyLoadingOlder}
+        onClick={() => {
+          if (hasOlderComments) onLoadOlderComments();
+          void activityHistory.loadOlder();
+          void runHistory.loadOlder();
+        }}
       >
-        {commentsLoadingOlder
-          ? "Loading earlier comments..."
-          : "Load earlier comments"}
+        {historyLoadingOlder ? "Loading earlier history..." : "Load earlier history"}
       </Button>
+      {activityHistory.olderError || runHistory.olderError ? (
+        <p role="alert" className="text-sm text-destructive">Earlier history could not be loaded. Try again.</p>
+      ) : null}
     </div>
   ) : null;
 
@@ -2434,7 +2448,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
             onOpenSkill={onOpenSkill}
             browsers={browsers}
             onOpenBrowser={onOpenBrowser}
-            hasOlderComments={hasOlderComments}
+            hasOlderComments={hasOlderHistory}
             initialHistoryPending={!!issueId && (
               initialHistoryPending ||
               commentsInitialLoading ||
@@ -2646,16 +2660,20 @@ function IssueDetailActivityTab({
   handoffFocusSignal = 0,
   externalReferences,
 }: IssueDetailActivityTabProps) {
-  const { data: activity, isLoading: activityLoading } = useQuery({
+  const activityHistory = useIssueHistory<ActivityEvent>({
     queryKey: queryKeys.issues.activity(issueId),
-    queryFn: () => activityApi.forIssue(issueId),
-    placeholderData: keepPreviousDataForSameQueryTail<ActivityEvent[]>(issueId),
+    fetchPage: (before) => before ? activityApi.forIssue(issueId, { before }) : activityApi.forIssue(issueId),
+    getId: (event) => event.id,
+    getCreatedAt: (event) => event.createdAt,
   });
-  const { data: linkedRuns, isLoading: linkedRunsLoading } = useQuery({
+  const { data: activity, isLoading: activityLoading } = activityHistory;
+  const runHistory = useIssueHistory<RunForIssue>({
     queryKey: queryKeys.issues.runs(issueId),
-    queryFn: () => activityApi.runsForIssue(issueId),
-    placeholderData: keepPreviousDataForSameQueryTail<RunForIssue[]>(issueId),
+    fetchPage: (before) => before ? activityApi.runsForIssue(issueId, { before }) : activityApi.runsForIssue(issueId),
+    getId: (run) => run.runId,
+    getCreatedAt: (run) => run.createdAt,
   });
+  const { data: linkedRuns, isLoading: linkedRunsLoading } = runHistory;
   const { data: linkedApprovals } = useQuery({
     queryKey: queryKeys.issues.approvals(issueId),
     queryFn: () => issuesApi.listApprovals(issueId),
@@ -2791,7 +2809,7 @@ function IssueDetailActivityTab({
           ) : (
             <div className="space-y-1 text-xs text-muted-foreground tabular-nums">
               <div className="flex flex-wrap gap-3">
-                <span className="font-medium text-foreground">This task</span>
+                <span className="font-medium text-foreground">{runHistory.hasMore ? "Loaded runs" : "This task"}</span>
                 {issueCostSummary.hasCost ? (
                   <span className="font-medium text-foreground">
                     ${issueCostSummary.cost.toFixed(4)}
@@ -2861,6 +2879,7 @@ function IssueDetailActivityTab({
           childIssues={childIssues}
           agentMap={agentMap}
           hasLiveRuns={hasLiveRuns}
+          runs={linkedRuns ?? []}
           activityEvents={activity ?? []}
           resolveUserLabel={(userId) =>
             userProfileMap.get(userId)?.label ?? null
@@ -2937,6 +2956,25 @@ function IssueDetailActivityTab({
           }}
         />
       </div>
+      {activityHistory.hasMore || runHistory.hasMore ? (
+        <div className="mb-3 flex flex-col items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={activityHistory.isLoadingOlder || runHistory.isLoadingOlder}
+            onClick={() => {
+              void activityHistory.loadOlder();
+              void runHistory.loadOlder();
+            }}
+          >
+            {activityHistory.isLoadingOlder || runHistory.isLoadingOlder
+              ? "Loading earlier history..." : "Load earlier history"}
+          </Button>
+          {activityHistory.olderError || runHistory.olderError ? (
+            <p role="alert" className="text-sm text-destructive">Earlier history could not be loaded. Try again.</p>
+          ) : null}
+        </div>
+      ) : null}
       <IssueContinuationHandoff
         document={continuationHandoff}
         focusSignal={handoffFocusSignal}

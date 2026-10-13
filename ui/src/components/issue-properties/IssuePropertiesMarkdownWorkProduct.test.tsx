@@ -19,6 +19,8 @@ const mockIssuesApi = vi.hoisted(() => ({
 vi.mock("@/api/issues", () => ({ issuesApi: mockIssuesApi }));
 const mockActivityApi = vi.hoisted(() => ({ runsForIssue: vi.fn(async (): Promise<unknown[]> => []) }));
 vi.mock("@/api/activity", () => ({ activityApi: mockActivityApi }));
+const mockHeartbeatsApi = vi.hoisted(() => ({ get: vi.fn(async (_runId: string): Promise<unknown> => ({})) }));
+vi.mock("@/api/heartbeats", () => ({ heartbeatsApi: mockHeartbeatsApi }));
 const mockAgentsApi = vi.hoisted(() => ({ list: vi.fn(async (): Promise<unknown[]> => []) }));
 vi.mock("@/api/agents", () => ({ agentsApi: mockAgentsApi }));
 
@@ -221,6 +223,60 @@ describe("markdown work product review row", () => {
     expect(raw?.getAttribute("href")).toBe(`/api/attachments/${ATTACHMENT_ID}/content`);
     expect(raw?.getAttribute("target")).toBe("_blank");
     expect(download?.getAttribute("href")).toBe(`/api/attachments/${ATTACHMENT_ID}/content?download=1`);
+  });
+
+  it("loads only the referenced older run to retain its artifact author label", async () => {
+    const oldRunId = "22222222-2222-4222-8222-222222222222";
+    mockIssuesApi.listWorkProducts.mockResolvedValue([
+      makeMarkdownWorkProduct({ createdByRunId: oldRunId }),
+    ]);
+    mockHeartbeatsApi.get.mockResolvedValue({
+      id: oldRunId,
+      agentId: "agent-1",
+      startedAt: new Date("2026-08-01T11:00:00Z"),
+    });
+    mockAgentsApi.list.mockResolvedValue([{ id: "agent-1", name: "Older author" }]);
+
+    await renderTab();
+    await waitForAssertion(() => {
+      expect(mockHeartbeatsApi.get).toHaveBeenCalledWith(oldRunId);
+      expect(container.querySelector("h3")?.textContent).toBe("Older author");
+    });
+  });
+
+  it("loads legacy artifact run details only as artifact pages become visible", async () => {
+    const products = Array.from({ length: 65 }, (_, index) => {
+      const suffix = String(index + 1).padStart(12, "0");
+      return makeMarkdownWorkProduct({
+        id: `30000000-0000-4000-8000-${suffix}`,
+        createdByRunId: `40000000-0000-4000-8000-${suffix}`,
+        title: `Legacy artifact ${index + 1}`,
+      });
+    });
+    mockIssuesApi.listWorkProducts.mockResolvedValue(products);
+    mockHeartbeatsApi.get.mockImplementation(async (runId) => ({
+      id: runId,
+      agentId: null,
+      startedAt: new Date("2026-08-01T11:00:00Z"),
+    }));
+
+    await renderTab({}, "Legacy artifact 1");
+    await waitForAssertion(() => {
+      expect(container.querySelectorAll("article")).toHaveLength(50);
+      expect(mockHeartbeatsApi.get).toHaveBeenCalledTimes(50);
+    });
+    expect(mockHeartbeatsApi.get).not.toHaveBeenCalledWith(products[50].createdByRunId);
+
+    const loadMore = Array.from(container.querySelectorAll("button")).find(
+      (button) => button.textContent === "Load more artifacts",
+    );
+    expect(loadMore).toBeDefined();
+    await act(async () => loadMore?.click());
+    await waitForAssertion(() => {
+      expect(container.querySelectorAll("article")).toHaveLength(65);
+      expect(mockHeartbeatsApi.get).toHaveBeenCalledTimes(65);
+    });
+    expect(mockHeartbeatsApi.get).toHaveBeenCalledWith(products[50].createdByRunId);
   });
 
   it("shows saved artifacts while the first PR refresh is stalled", async () => {

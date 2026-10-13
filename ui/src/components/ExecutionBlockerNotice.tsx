@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ExecutionBlocker, Issue } from "@paperclipai/shared";
 import { WorkspaceFileRecovery } from "./WorkspaceFileRecovery";
 import { agentsApi } from "../api/agents";
-import { activityApi } from "../api/activity";
+import { heartbeatsApi } from "../api/heartbeats";
 import { queryKeys } from "../lib/queryKeys";
 import { Button } from "./ui/button";
 import { cn } from "../lib/utils";
@@ -18,12 +18,14 @@ export function ExecutionBlockerNotice({ companyId, issueId, issueStatus, canMan
   onRetried: () => void;
 }) {
   const queryClient = useQueryClient();
-  const { data: runs, error: runsError } = useQuery({
-    queryKey: queryKeys.issues.runs(issueId),
-    queryFn: () => activityApi.runsForIssue(issueId),
+  const { data: run, error: runError } = useQuery({
+    queryKey: ["heartbeat-runs", "detail", blocker.runId],
+    queryFn: () => heartbeatsApi.get(blocker.runId!),
+    enabled: Boolean(blocker.runId),
+    retry: false,
   });
-  const failedRun = runs?.find(run => run.runId === blocker.runId &&
-    ["failed", "timed_out"].includes(run.status));
+  const failedRun = run?.id === blocker.runId &&
+    ["failed", "timed_out"].includes(run.status) ? run : null;
   const modelRejected = failedRun?.errorCode === "native_provider_model_rejected";
   const requiresInspection = blocker.cause === "native_continuation_requires_reconciliation" ||
     blocker.cause === "native_session_cleanup_quarantined";
@@ -74,7 +76,7 @@ export function ExecutionBlockerNotice({ companyId, issueId, issueStatus, canMan
       {retry.isError && (
         <p role="alert" className="w-full text-destructive">{retry.error.message}</p>
       )}
-      {runsError && <p role="alert" className="w-full text-destructive">{runsError.message}</p>}
+      {runError && <p role="alert" className="w-full text-destructive">{runError.message}</p>}
       {issueStatus && <WorkspaceFileRecovery key={`${blocker.recoveryActionId}:${blocker.runId}`} issueId={issueId}
         issueStatus={issueStatus} blocker={blocker} canManage={canManage} onRecorded={onRetried} />}
     </div>

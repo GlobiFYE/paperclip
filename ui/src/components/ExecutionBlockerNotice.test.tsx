@@ -5,12 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ExecutionBlockerNotice } from "./ExecutionBlockerNotice";
 import { agentsApi } from "../api/agents";
-import { activityApi } from "../api/activity";
+import { heartbeatsApi } from "../api/heartbeats";
 vi.mock("../lib/router", () => ({
   Link: ({ to, ...props }: AnchorHTMLAttributes<HTMLAnchorElement> & { to: string }) => <a href={to} {...props} />,
 }));
 vi.mock("../api/agents", () => ({ agentsApi: { retryFailedRun: vi.fn() } }));
-vi.mock("../api/activity", () => ({ activityApi: { runsForIssue: vi.fn() } }));
+vi.mock("../api/heartbeats", () => ({ heartbeatsApi: { get: vi.fn() } }));
 
 describe("stopped task recovery notice", () => {
   let root: Root;
@@ -22,7 +22,10 @@ describe("stopped task recovery notice", () => {
     container = document.createElement("div"); document.body.append(container);
     root = createRoot(container);
     client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-    vi.mocked(activityApi.runsForIssue).mockResolvedValue([{ runId: "failed-run", agentId: "agent", status: "failed" }] as never);
+    vi.mocked(heartbeatsApi.get).mockImplementation(async (runId) => ({
+      id: runId,
+      status: runId === "cancelled-run" ? "cancelled" : "failed",
+    } as never));
     await act(async () => root.render(<QueryClientProvider client={client}>
       <ExecutionBlockerNotice companyId="company" issueId="task" onRetried={onRetried} blocker={{
         recoveryActionId: "recovery", runId: "failed-run", agentId: "agent", cause: "legacy_execution_requires_reconciliation",
@@ -129,8 +132,8 @@ describe("stopped task recovery notice", () => {
     "The 'gpt-6.1-sol' model is not supported when using Codex with a ChatGPT account.",
     "The selected model is not supported by the current ChatGPT connection. Choose a supported model or a compatible AI connection.",
   ])("shows the model rejection and repair action without expanding run logs: %s", async (runError) => {
-    vi.mocked(activityApi.runsForIssue).mockResolvedValue([{ runId: "model-run", agentId: "agent",
-      status: "failed", errorCode: "native_provider_model_rejected" }] as never);
+    vi.mocked(heartbeatsApi.get).mockResolvedValue({ id: "model-run", status: "failed",
+      errorCode: "native_provider_model_rejected" } as never);
     await act(async () => root.render(<QueryClientProvider client={client}>
       <ExecutionBlockerNotice companyId="company" issueId="model-task" onRetried={onRetried} blocker={{
         recoveryActionId: "recovery", runId: "model-run", agentId: "agent",
@@ -145,6 +148,23 @@ describe("stopped task recovery notice", () => {
     expect(container.textContent).toContain("clear the task's model override, then retry");
     expect(container.textContent).toContain("Inspect the original failure before continuing.");
     expect(container.querySelector("button")?.textContent).toBe("Retry");
+    expect(heartbeatsApi.get).toHaveBeenCalledWith("model-run");
+  });
+
+  it("keeps generic recovery guidance when the targeted run is not accessible", async () => {
+    vi.mocked(heartbeatsApi.get).mockRejectedValue(new Error("Heartbeat run not found"));
+    await act(async () => root.render(<QueryClientProvider client={client}>
+      <ExecutionBlockerNotice companyId="company" issueId="task" onRetried={onRetried} blocker={{
+        recoveryActionId: "recovery", runId: "unavailable-run", agentId: "agent",
+        cause: "native_continuation_requires_reconciliation", canRetry: true,
+        runError: "Previous run failed.", nextAction: "Inspect the original failure before continuing.",
+      }} />
+    </QueryClientProvider>));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(container.textContent).toContain("Recovery needed.");
+    expect(container.textContent).toContain("Previous run failed.");
+    expect(container.textContent).not.toContain("Model unavailable.");
+    expect(container.textContent).toContain("Heartbeat run not found");
   });
 
   it.each(["native_continuation_requires_reconciliation", "uncertain_external_action"])("offers Retry for a server-admitted native failure: %s", async cause => {
