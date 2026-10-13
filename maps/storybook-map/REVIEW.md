@@ -541,6 +541,17 @@ Review correction: backup retention already has shipped controls in
 keeps missing retention UI examples alongside separate CLI backup/restore proof;
 it is not a wholesale Storybook exemption. No existing story mounts those controls.
 
+## Verification-parent merge reconciliation — 2026-10-13
+
+Reconciled master `da9af67415` while preserving its catalog records and both
+review histories. Inspected the intervening recipe changes for Telegram
+maintenance, liveness/readiness and trusted instance-secret lifecycle, and the
+soft-warning versus hard-stop budget UI. Refreshed only dependent review
+fingerprints with notes naming those boundaries; classifications remain unchanged.
+The generated feature index reflects the current recipes. No new rendering,
+provider journey or whole-suite parity review is claimed. Catalog/map validation
+and all 27 catalog/generator/map tests pass with the pinned Storybook parser.
+
 ## Production-subject UI gap examples — 2026-10-13
 
 Step 3 adds 37 suites and 257 scenarios associated with the 49 UI capabilities
