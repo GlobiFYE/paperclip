@@ -438,8 +438,9 @@ describe.skipIf(!support.supported)('skill source persistence', () => {
   });
 
   async function removalFixture(mode: 'skills' | 'repository' = 'repository') {
-    files = { 'one/SKILL.md': md('one'), 'two/SKILL.md': md('two'),
-      'shared/check.sh': '#!/bin/sh\necho preserved', 'shared/image.png': Buffer.from([0, 255, 137, 80]) };
+    files = { 'one/SKILL.md': md('one') + '\nRead [reference](reference.md)', 'one/reference.md': 'Local reference',
+      'two/SKILL.md': md('two'), 'shared/check.sh': '#!/bin/sh\necho preserved',
+      'shared/image.png': Buffer.from([0, 255, 137, 80]) };
     commit = sha;
     return skillSourceService(db).create(companyId, { repositoryUrl: 'https://github.com/acme/skills',
       trackingRef: `remove-${randomUUID()}`, packageMode: mode, commitSha: sha, selectedPaths: ['one/SKILL.md', 'two/SKILL.md'] }, context);
@@ -475,6 +476,7 @@ describe.skipIf(!support.supported)('skill source persistence', () => {
     const copy = (await skills.detail(companyId, original.id))!;
     expect(copy).toMatchObject({ id: original.id, key: original.key, sourceType: 'local_path', sourceRef: null, editable: true });
     expect(copy.metadata?.skillSourceId).toBeUndefined();
+    expect((await skills.readFile(companyId, original.id, '.paperclip-repository/one/reference.md'))?.content).toBe('Local reference');
     const [personal] = await db.select().from(folders).where(eq(folders.id, copy.folderId!));
     expect(personal?.systemKey).toBe('my:board');
     expect((await skills.readFile(companyId, original.id, '.paperclip-repository/shared/image.png'))?.content).toBe(Buffer.from([0,255,137,80]).toString('base64'));

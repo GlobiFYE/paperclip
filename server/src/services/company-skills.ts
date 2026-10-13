@@ -7172,7 +7172,10 @@ export function companySkillService(db: Db) {
     if (!version) throw unprocessable(recovery);
     const files = await runtimeVersionInventory(companyId, version);
     const savedPaths = new Set(files.map(file => file.path));
-    if (!savedPaths.has("SKILL.md") || skill.fileInventory.some(file => !savedPaths.has(file.path))) {
+    const savedSkillPath = (relativePath: string) => version.repositorySnapshotId && version.repositorySkillPath
+      ? `${REPOSITORY_CONTENT_DIR}/${path.posix.join(path.posix.dirname(version.repositorySkillPath), relativePath)}`
+      : relativePath;
+    if (!savedPaths.has("SKILL.md") || skill.fileInventory.some(file => !savedPaths.has(savedSkillPath(file.path)))) {
       throw unprocessable(recovery);
     }
     const managedRoot = resolveManagedSkillsRoot(companyId);
