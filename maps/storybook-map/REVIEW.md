@@ -400,3 +400,19 @@ The gateway-token fixture needs separate review before advertising coverage:
 its token data may omit fields read by the production token panel. The missing
 lookup remains explicit. Rendering/interaction checks below cover selected
 association navigation, not all source-audited suites or production acceptance.
+
+Executed checks: 27 catalog/generator/map tests, catalog and map validation,
+token gates, skill validation, repository typecheck/build and Storybook build
+passed. The built index has 2,246 entries and loses none of the original 2,211.
+In the browser, the developer Design lookup opens the preserved primitive URL;
+company-service sections link the existing settings/history/journey suites.
+The decision SetupToHistory journey passed its 12 interaction steps and showed
+the simulated test receipt in history. Primary-agent ReplacePrimary passed its
+four interaction steps and displayed the replacement confirmation. No console
+errors were observed in those selected checks. No visual-baseline comparison.
+
+The broad local repository test run was interrupted before completion to merge
+new master changes; no full local suite pass is claimed. Fresh CI on the updated
+branch supplies repository-wide verification. The merge retains master’s native
+REST transport updates alongside the three new capability records; new live
+provider and agent-credential verification remains not run.
