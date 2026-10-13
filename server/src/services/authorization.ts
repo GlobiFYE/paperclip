@@ -92,6 +92,7 @@ export type AuthorizationAction =
   | "issue:mutate"
   | "issue:read"
   | "project:read"
+  | "project:write_workspace"
   | "runtime:manage"
   | "secrets:read"
   | "secrets:propose";
@@ -169,6 +170,7 @@ function companyIdForResource(resource: AuthorizationResource) {
 }
 
 function permissionForAction(action: AuthorizationAction): PermissionKey | null {
+  if (action === "project:write_workspace") return "tasks:assign";
   if (action === "agent_config:read" || action === "agent_config:update" || action === "agent_instructions:update" || action === "skill_config:update") {
     return null;
   }
@@ -1290,7 +1292,7 @@ export function authorizationService(db: Db | DbTransaction) {
       return lowTrustDeny("Issue is outside this low-trust boundary.");
     }
 
-    if (input.action === "tasks:assign") {
+    if (input.action === "tasks:assign" || input.action === "project:write_workspace") {
       if (input.resource.type !== "issue") {
         return lowTrustDeny("Low-trust task assignment is missing an issue resource.");
       }
@@ -1396,6 +1398,7 @@ export function authorizationService(db: Db | DbTransaction) {
       input.action === "agent:read" ||
       input.action === "agent:wake" ||
       input.action === "project:read" ||
+      input.action === "project:write_workspace" ||
       input.action === "runtime:manage" ||
       input.action === "secrets:read" ||
       input.action === "secrets:propose"
@@ -1466,6 +1469,7 @@ export function authorizationService(db: Db | DbTransaction) {
       input.action === "agent:read" ||
       input.action === "agent:wake" ||
       input.action === "project:read" ||
+      input.action === "project:write_workspace" ||
       input.action === "runtime:manage" ||
       input.action === "secrets:read" ||
       input.action === "secrets:propose" ||
@@ -1647,6 +1651,13 @@ export function authorizationService(db: Db | DbTransaction) {
   }): Promise<AuthorizationDecision> {
     const permissionKey = permissionForAction(input.action);
     const companyId = companyIdForResource(input.resource);
+    if (input.action === "project:write_workspace" && (input.resource.type !== "issue" || !input.resource.projectId)) {
+      return deny({ action: input.action, reason: "deny_unsupported_action", explanation: "Workspace writes require a source project and task context." });
+    }
+    const taskAssignmentAction = input.action === "tasks:assign" || input.action === "project:write_workspace";
+    const requestedAssignmentPolicy = () => input.action === "project:write_workspace" && input.resource.type === "issue"
+      ? loadProjectAuthorizationPolicy(companyId, input.resource.projectId!).then(policy => evaluateAuthorizationPolicyForAssignment(policy, "Target project"))
+      : assignmentPolicyEffect(input.resource);
 
     /**
      * Shared default-open decision for issue write-influence channels.
@@ -1934,7 +1945,7 @@ export function authorizationService(db: Db | DbTransaction) {
           explanation: "Board user id is required.",
         });
       }
-      if (input.action === "tasks:assign") {
+      if (taskAssignmentAction) {
         if (!(await assignmentTargetIsInCompany(input.resource))) {
           return deny({
             action: input.action,
@@ -1942,7 +1953,7 @@ export function authorizationService(db: Db | DbTransaction) {
             explanation: "Task assignment target agent is not active in the target company.",
           });
         }
-        const policyEffect = await assignmentPolicyEffect(input.resource);
+        const policyEffect = await requestedAssignmentPolicy();
         taskAssignmentPolicyEffect = policyEffect;
         const policyDeny = await denyForAssignmentPolicyIfNeeded(policyEffect);
         if (policyDeny) return policyDeny;
@@ -2054,10 +2065,10 @@ export function authorizationService(db: Db | DbTransaction) {
           explanation: `No board permission mapping exists for ${input.action}.`,
         });
       }
-      if (input.action === "tasks:assign") {
+      if (taskAssignmentAction) {
         const grantDecision = await decideWithTaskAssignmentGrants("user", input.actor.userId);
         if (grantDecision.allowed) return grantDecision;
-        const policyEffect = taskAssignmentPolicyEffect ?? await assignmentPolicyEffect(input.resource);
+        const policyEffect = taskAssignmentPolicyEffect ?? await requestedAssignmentPolicy();
         if (policyEffect.kind === "restricted") return denyRestrictedAssignmentPolicy(policyEffect);
         return grantDecision;
       }
@@ -2367,7 +2378,7 @@ export function authorizationService(db: Db | DbTransaction) {
       });
     }
 
-    if (input.action === "tasks:assign") {
+    if (taskAssignmentAction) {
       if (!isSimpleAssignableAgentStatus(actorAgent.status)) {
         return deny({
           action: input.action,
@@ -2382,7 +2393,7 @@ export function authorizationService(db: Db | DbTransaction) {
           explanation: "Task assignment target agent is not active in the target company.",
         });
       }
-      const policyEffect = await assignmentPolicyEffect(input.resource);
+      const policyEffect = await requestedAssignmentPolicy();
       const policyDeny = await denyForAssignmentPolicyIfNeeded(policyEffect);
       if (policyDeny) return policyDeny;
       if (policyEffect.kind === "restricted") {
