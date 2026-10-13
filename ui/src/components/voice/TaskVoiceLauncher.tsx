@@ -1,5 +1,6 @@
 import { useContext, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { queryKeys } from "@/lib/queryKeys";
 import { chatEndpointsApi } from "@/api/chatEndpoints";
 import { useChatConnectorsEnabled } from "@/hooks/useChatConnectorsEnabled";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,7 @@ export function TaskVoiceLauncher({ companyId, issueId, agentId, boundEndpointId
   const host = useContext(VoiceCallContext), previouslyActive = useRef(false);
   const { enabled } = useChatConnectorsEnabled();
   const [open, setOpen] = useState(false), [selected, setSelected] = useState("");
-  const connections = useQuery({ queryKey: ["task-voice-endpoints", companyId], queryFn: () => chatEndpointsApi.list(companyId), enabled: enabled && Boolean(agentId || boundEndpointId) });
+  const connections = useQuery({ queryKey: queryKeys.chatEndpoints.list(companyId), queryFn: () => chatEndpointsApi.list(companyId), enabled: enabled && Boolean(agentId || boundEndpointId) });
   useEffect(() => {
     if (previouslyActive.current && !host?.active && open) { setOpen(false); restoreFocus.current = true; }
     previouslyActive.current = Boolean(host?.active);

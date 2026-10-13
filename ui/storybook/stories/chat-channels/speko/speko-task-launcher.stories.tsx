@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, waitFor, within } from "storybook/test";
 import { VoiceCallContext } from "@/components/voice/VoiceCallContext";
 import { Button } from "@/components/ui/button";
+import { queryKeys } from "@/lib/queryKeys";
 import { TaskVoiceLauncher } from "@/components/voice/TaskVoiceLauncher";
 import { AgentChannelsPanel } from "@/components/chat/AgentChannelsPanel";
 import { ExternallyConnectedTaskBanner } from "@/components/chat/ExternallyConnectedTaskBanner";
@@ -44,7 +45,7 @@ function TaskConnectionFailure({ bound = false }: { bound?: boolean }) {
   useLayoutEffect(() => {
     const original = chatEndpointsApi.list;
     chatEndpointsApi.list = async () => [spekoEndpoint];
-    const queryKey = ["task-voice-endpoints", spekoCompanyId];
+    const queryKey = queryKeys.chatEndpoints.list(spekoCompanyId);
     client.removeQueries({ queryKey });
     client.setQueryDefaults(queryKey, { retryOnMount: false });
     client.getQueryCache().build(client, { queryKey }).setState({ status: "error", error: new Error("Fixture connection failure"), fetchStatus: "idle" });
@@ -84,5 +85,25 @@ export const PersonaAfterPanelClose: Story = {
     await waitFor(() => expect(canvas.getByRole("button", {name: `Talk to ${spekoAgent.name}`})).toHaveFocus());
     await userEvent.selectOptions(canvas.getByRole("combobox", {name: "Voice persona"}), "second");
     await expect(canvas.getByRole("combobox", {name: "Voice persona"})).toHaveValue("second");
+  },
+};
+
+function SharedConnectionState() {
+  const client = useQueryClient();
+  return <><TaskVoiceLauncher {...props} boundEndpointId={spekoEndpoint.id} />
+    <Button onClick={() => client.setQueryData(queryKeys.chatEndpoints.list(spekoCompanyId), [{...spekoEndpoint, status: "paused"}])}>Pause fixture connection</Button>
+    <Button onClick={() => client.setQueryData(queryKeys.chatEndpoints.list(spekoCompanyId), [spekoEndpoint])}>Resume fixture connection</Button>
+  </>;
+}
+export const SharedPauseResume: Story = {
+  render: () => <SpekoQueryFixture><SharedConnectionState /></SpekoQueryFixture>,
+  play: async ({canvasElement}) => {
+    const canvas = within(canvasElement);
+    await expect(canvas.getByRole("button", {name: `Talk to ${spekoAgent.name}`})).toBeVisible();
+    await userEvent.click(canvas.getByRole("button", {name: "Pause fixture connection"}));
+    await expect(canvas.getByText("Voice is unavailable. Check the Speko connection in Apps.")).toBeVisible();
+    await expect(canvas.queryByRole("button", {name: `Talk to ${spekoAgent.name}`})).not.toBeInTheDocument();
+    await userEvent.click(canvas.getByRole("button", {name: "Resume fixture connection"}));
+    await expect(canvas.getByRole("button", {name: `Talk to ${spekoAgent.name}`})).toBeVisible();
   },
 };
