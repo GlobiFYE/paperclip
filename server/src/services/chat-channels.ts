@@ -1380,7 +1380,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   const { handleTelegramSlashCommand } = createTelegramCommands({ runtime, runtimeFor, handleSdkMessage });
   const { stageGitHubWebhookIngress, githubIngressAcceptedResponse, processGitHubWebhookIngress, processFailedGitHubWebhookDeliveries, processPendingGitHubWebhookIngress } = createGitHubWebhookIngress(db, { endpointRecord, runtimeContextForRecord, resolveCredentialRefs, runtimeGeneration, credentialFingerprint, getWebhookPublicBaseUrl, redactError, handleWebhook, runtimeCallbackEndpoint, fetchImpl, persistence, withCredentialMutationLease, isShuttingDown: () => shuttingDown, get githubWebhookReplayBarrier() { return options.githubWebhookReplayBarrier; }, supportedWebhookEvents: SUPPORTED_GITHUB_WEBHOOK_EVENTS });
   const { stageSlackSessionStop, processSlackSessionStop, processPendingSlackSessionStops } = createSlackSessionStop(db, { runtimeCallbackEndpoint, lockCurrentPrincipalAuthorization, nonDirectDestinationAllowed, stageAuthorizedTaskControlPublication, getPublicBaseUrl, get heartbeat() { return options.heartbeat; }, redactError });
-  const { stageTelegramMaintenance, processTelegramMaintenance, processPendingTelegramMaintenance, processPendingTelegramActions, processTelegramSubscriptionDiscovery, hasTelegramStopSubscription, recordTelegramStopSubscription } = createTelegramMaintenance(db, { endpointRecord, runtimeContextForRecord, withCredentialMutationLease, resolveCredentials, clearCredentials, runtimeCallbackEndpoint, getWebhookPublicBaseUrl, fetchImpl, runtimeGeneration, credentialFingerprint, redactError, credentialCheckTimeoutMs: PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS });
+  const { stageTelegramMaintenance, processTelegramMaintenance, processPendingTelegramMaintenance, processPendingTelegramActions, processTelegramSubscriptionDiscovery, scheduleTelegramSubscriptionDiscovery, hasPendingTelegramSubscriptionDiscovery, hasTelegramStopSubscription, recordTelegramStopSubscription } = createTelegramMaintenance(db, { endpointRecord, runtimeContextForRecord, withCredentialMutationLease, resolveCredentials, clearCredentials, runtimeCallbackEndpoint, getWebhookPublicBaseUrl, fetchImpl, runtimeGeneration, credentialFingerprint, redactError, credentialCheckTimeoutMs: PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS });
   const { reconcileGitHubWebhookRepository, reconcileProviderResourceRows, listResources, listGitHubRepositories, replaceResources, toggleAllGitHubRepositories, hasNewerProcessedProviderLifecycleEffect, applyProviderAvailability } = createChatResourceReconciliation(db, { endpointRecord, withCredentialMutationLease, runtimeGeneration, maxErrorText: MAX_ERROR_TEXT });
   const { applyGitHubInstallationLifecycle } = createGitHubInstallationLifecycle(db, {
     endpointRecord, resolveCredentials, runtimeCallbackEndpoint, runtimeGeneration, credentialFingerprint,
@@ -1546,7 +1546,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
                   if (!current) return;
                   const connection = await tx.select().from(toolConnections).where(eq(toolConnections.id, current.connectionId)).then((rows) => rows[0]);
                   if (!connection?.enabled) throw new Error("Photon endpoint requires operator recovery");
-                  await notifyChatEndpointWork(tx);
+                  await notifyChatEndpointWork(tx, endpoint.connectionId);
                   await tx.update(chatEndpoints).set({ status: current.setup.step === "complete" ? "active" : "verifying", healthMessage: "Photon receiver connected", lastError: null, updatedAt: new Date() }).where(eq(chatEndpoints.id, endpoint.id));
                 });
               },
@@ -7856,6 +7856,8 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     processPendingChatMaintenance,
     processPendingTelegramActions,
     processTelegramSubscriptionDiscovery,
+    scheduleTelegramSubscriptionDiscovery,
+    hasPendingTelegramSubscriptionDiscovery,
     processPendingSlackBoardMessages,
     processPendingSlackTaskStarts,
     processPendingVerificationMessages: slackRegistration.processPendingVerificationMessages,
