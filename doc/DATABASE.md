@@ -140,11 +140,16 @@ DATABASE_APPLICATION_NAME=paperclip  # application_name in pg_stat_activity; def
 DATABASE_JIT_DISABLED=false          # re-enable PostgreSQL JIT; default: disabled (jit=off)
 ```
 
-One default differs from the driver: Paperclip's pool runs with PostgreSQL's
-LLVM JIT disabled (`jit = off`). Paperclip's workload is OLTP-shaped, and
-postgres.js replans every statement, so a broad query family can pay seconds
-of JIT compilation per execution to run in milliseconds once planned. Set
-`DATABASE_JIT_DISABLED=false` to restore JIT for analytics-shaped deployments.
+Paperclip's pool already overrides two driver defaults: idle pooled
+connections close after 60 seconds, and the pool reports
+`application_name = paperclip`. This default adds a third: sessions run with
+PostgreSQL's LLVM JIT disabled (`jit = off`). Paperclip's workload is
+OLTP-shaped, and postgres.js replans every statement, so a broad query family
+can pay seconds of JIT compilation per execution to run in milliseconds once
+planned. Set `DATABASE_JIT_DISABLED=false` to restore JIT for
+analytics-shaped deployments. JIT stays enabled when you connect through a
+transaction-mode pooler (`DATABASE_PREPARED_STATEMENTS=false`), because
+poolers reject unknown startup parameters.
 
 ### Push the schema
 

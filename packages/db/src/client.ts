@@ -163,6 +163,11 @@ export interface DatabaseClientOptions {
    * plans), so JIT compilation cost — tens of seconds on those queries — is
    * paid on every call. Defaults to `true` (JIT off); opt back in explicitly
    * for analytics-shaped deployments.
+   *
+   * Transaction-mode poolers (PgBouncer / Supavisor) reject unknown startup
+   * parameters, so the `jit` parameter is only sent when `prepare` is not
+   * explicitly disabled for the pool. Pooler deployments keep the driver's
+   * JIT behavior.
    */
   jitDisabled?: boolean;
 }
@@ -274,7 +279,9 @@ export function postgresJsOptions(options: DatabaseClientOptions): Record<string
   if (options.applicationName !== undefined) {
     connection.application_name = options.applicationName;
   }
-  if (options.jitDisabled) {
+  // Transaction-mode poolers reject unknown startup parameters, so only a
+  // direct connection (prepared statements available) gets the `jit` GUC.
+  if (options.jitDisabled && options.prepare !== false) {
     connection.jit = "off";
   }
   if (Object.keys(connection).length > 0) {

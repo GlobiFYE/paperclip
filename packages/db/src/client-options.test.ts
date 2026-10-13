@@ -111,6 +111,14 @@ describe("databaseClientOptionsFromEnv", () => {
       connection: { jit: "off" },
     });
   });
+
+  it("does not send the JIT parameter to transaction-mode poolers", () => {
+    expect(postgresJsOptions({ prepare: false, applicationName: "paperclip", jitDisabled: true })).toEqual({
+      prepare: false,
+      connection: { application_name: "paperclip" },
+    });
+    expect(postgresJsOptions({ prepare: false, jitDisabled: true })).toEqual({ prepare: false });
+  });
 });
 
 describe("resolveDatabaseClientOptions", () => {
