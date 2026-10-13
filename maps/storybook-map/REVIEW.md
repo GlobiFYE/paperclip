@@ -331,3 +331,23 @@ All 223 authored suites and 2,210 authored story IDs remain. Generated feature
 pages still cover 35 areas and 171 capabilities. Catalog/generator tests (16),
 catalog validation, map checks and token gates pass. This is source reconciliation,
 not a new visual or live production acceptance claim.
+
+## Slack DM mention exemption — 2026-10-13
+
+Scoped source review: Slack DMs no longer require an at-mention, while channel
+messages and channel thread replies retain the saved mention policy. Top-level
+DM replies remain linear. The production `ChatEndpointDetail` settings copy and
+the feature-map manual recipe now state this distinction.
+
+The Chat management story mounts that production settings page and merges
+endpoint PATCH values in its local fixture. GitHub bot management and Photon
+also reference the page, but do not render its Slack-only toggle. No story UI,
+fixture behavior, or story identity changed, and no browser proof is claimed.
+
+After rebasing onto master `60bc0d5fee`, the upstream catalog reconciliation
+supplies the reviewed baseline for the previously stale entries. Refreshed the
+fourteen entries affected by this change: all reference the updated chat recipe,
+and three also reference the Slack-only settings copy. Other source bytes and
+all classifications, fixture boundaries, story IDs and sidebar titles remain
+unchanged from that baseline. Catalog checks validate these references and
+fingerprints, not live Slack behavior.

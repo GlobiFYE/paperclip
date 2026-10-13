@@ -637,7 +637,7 @@
       "implementation": "production",
       "boundary": "fixtures",
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the added connection/destination-default recipe; these unchanged setup, identity or conversation examples do not establish default selection or new-task inheritance.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/chat-channels.md",
         "maps/feature-map/connection-setup.md",
@@ -646,7 +646,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/chat-channels/agentmail-onboarding.stories.tsx"
       ],
-      "fingerprint": "e25771274378d2ff2f2447b2841ff20b91319dba4e50f697c5b2c6cc74698b4b",
+      "fingerprint": "22c79d5f6a714efbaeaaa0023284707b696aa73cddbb66067d8c5a3dde116859",
       "stableId": "connections-agentmail-setup",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Connections/AgentMail setup"
     },
@@ -660,13 +660,13 @@
       "implementation": "production",
       "boundary": "fixtures",
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation: EmailEndpointSettings remains the mounted inbox subsection. The surrounding ChatEndpointDetail connection-default editor and its save/inheritance behavior are not represented here.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/chat-channels.md",
         "ui/src/pages/apps/chat/EmailEndpointSetup.tsx",
         "ui/storybook/stories/chat-channels/agentmail-settings.stories.tsx"
       ],
-      "fingerprint": "a57256936459ba14d7ad8e0a73ed494c0f269c294240a67c0d27af555e0c736d",
+      "fingerprint": "2fb050825b457f876fa18d08cd101093d19187f47d7cd8b5a51c871d28d7553e",
       "stableId": "connections-agentmail-settings",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Connections/AgentMail settings"
     },
@@ -690,7 +690,7 @@
         "ui/src/components/task-chat/presentation-mode.tsx",
         "ui/storybook/stories/chat-channels/agentmail.stories.tsx"
       ],
-      "fingerprint": "55ba1a896505c14b5f7531c5dcc2d870f981344a23fe806d25a90350a61a7f33",
+      "fingerprint": "5f4cd880d1c6baa0c88dc65bf5919cf451ea3c4bdd8b479ee2e3d2906ce1bd1c",
       "stableId": "connections-agentmail-tasks",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Connections/AgentMail tasks"
     },
@@ -1391,13 +1391,13 @@
       "implementation": "production",
       "boundary": "fixtures",
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the added connection/destination-default recipe; these unchanged setup, identity or conversation examples do not establish default selection or new-task inheritance.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/chat-channels.md",
         "ui/src/pages/apps/Browse.tsx",
         "ui/storybook/stories/chat-channels/chat-connection-actions.stories.tsx"
       ],
-      "fingerprint": "b5c4a820f42d7b3d5e665161b95056b80b5591f6100e6847488eea49b876d36d",
+      "fingerprint": "bd604a05920f1015bac52ede82ba83726bf4d79126b7f8f8c8afcd5aa4aca630",
       "stableId": "connections-chat-connection-actions",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Connections/Chat connection actions"
     },
@@ -1459,7 +1459,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/chat-channels/chat-management/chat-management.stories.tsx"
       ],
-      "fingerprint": "2fab3391785dd764f6c17819a6ac9f2a2388ffc4af0cbc2e4590580e3de21a09",
+      "fingerprint": "1b095845d727d6703d3cfb3b27120927c8ac8b8fd4f2950770c7c5f4aed44d3b",
       "stableId": "connections-chat-management",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Connections/Chat management"
     },
@@ -2551,7 +2551,7 @@
         "ui/storybook/support/github-bot-management/fixture-api.tsx",
         "ui/storybook/support/github-bot-management/fixtures.ts"
       ],
-      "fingerprint": "8dd50a9e507f68818ee119efaa9c90ea01ecf0ec82721abcf0e6f7d489de6cbb",
+      "fingerprint": "bc53bda552a9a7f4835d2c78ec0dc66492b5804db227b9adce191f4d6dc27c53",
       "stableId": "connectors-github-bot-management",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Connectors/GitHub bot management"
     },
@@ -2566,7 +2566,7 @@
       "implementation": "prototype",
       "boundary": "fixtures",
       "notes": "Historical wizard retained for original setup/access/review design; current GitHub setup is ui/src/pages/apps/chat/GitHubChatSetup.tsx. Task-workspace reconciliation reviewed the added connection/destination-default recipe; these unchanged setup, identity or conversation examples do not establish default selection or new-task inheritance.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/chat-channels.md",
         "ui/src/components/GitHubAgentTrustWarning.tsx",
@@ -2578,7 +2578,7 @@
         "ui/storybook/stories/chat-channels/github-chat.stories.tsx"
       ],
       "replacement": "ui/storybook/stories/chat-channels/github-connections.stories.tsx",
-      "fingerprint": "1b98e4a1e023630f9d27105f47ee8e04c7e49e31f1eb77430e55cf0518bca033",
+      "fingerprint": "efb2ea9851242dfd79874e3a3c9bc46b17b7728e2b10f6b2127a2437638f0499",
       "stableId": "historical-github-chat-prototypes",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Historical/GitHub chat prototypes"
     },
@@ -2593,7 +2593,7 @@
       "implementation": "production",
       "boundary": "fixtures",
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the added connection/destination-default recipe; these unchanged setup, identity or conversation examples do not establish default selection or new-task inheritance.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/chat-channels.md",
         "maps/feature-map/connection-setup.md",
@@ -2604,7 +2604,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/chat-channels/github-connections.stories.tsx"
       ],
-      "fingerprint": "1db66005c3710754f307003ce6907073e8eca0319074c323d57992c0b26d8b23",
+      "fingerprint": "53ef79816b0825618e15a4bbb501df31efea9a1fb62ccdf066a81e26c71a838c",
       "stableId": "connections-github-and-code-review-bot",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Connections/GitHub and Code Review Bot"
     },
@@ -2756,7 +2756,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/chat-channels/imessage-photon.stories.tsx"
       ],
-      "fingerprint": "002c59e80ccd20170b8ed432e8343395414df94b724c858006447735b0afc680",
+      "fingerprint": "c8ba561728c0c418b6b2083cf72cb09712b96415a66285267ec46abc9d7c26bc",
       "stableId": "connections-imessage-photon",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Connections/iMessage Photon"
     },
@@ -4832,7 +4832,7 @@
       "implementation": "production",
       "boundary": "fixtures",
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the added connection/destination-default recipe; these unchanged setup, identity or conversation examples do not establish default selection or new-task inheritance.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/chat-channels.md",
         "maps/feature-map/connection-setup.md",
@@ -4842,7 +4842,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/chat-channels/slack-automatic-setup.stories.tsx"
       ],
-      "fingerprint": "df0600372c76d7ff7eb15ccc14a7a5bf7f0b5f5d64a366013686b6aaf888ee00",
+      "fingerprint": "6d8c13f5ebed08a43b9f146f49a2506c9c5e1ac9305121b94e9cd5bb9c060476",
       "stableId": "connections-slack-automatic-setup",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Connections/Slack/Automatic setup"
     },
@@ -4856,7 +4856,7 @@
       "implementation": "production",
       "boundary": "fixtures",
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the added connection/destination-default recipe; these unchanged setup, identity or conversation examples do not establish default selection or new-task inheritance.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/chat-channels.md",
         "ui/src/pages/apps/chat/ChatCommunicationInstructions.tsx",
@@ -4864,7 +4864,7 @@
         "ui/storybook/prototypes/slack-avatar/SlackAvatarSettingsPreview.tsx",
         "ui/storybook/stories/chat-channels/slack-avatar-settings.stories.tsx"
       ],
-      "fingerprint": "725869cfc3280b8384899e0f692bcf17663368f389c38fe1a16ec34c27faf20d",
+      "fingerprint": "c6688ca3e157bbbd52554dff87cbe1842db9f993b78d07e810492372835d2f98",
       "stableId": "connections-slack-avatar-in-settings",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Connections/Slack/Avatar in Settings"
     },
@@ -4878,7 +4878,7 @@
       "implementation": "production",
       "boundary": "fixtures",
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the added connection/destination-default recipe; these unchanged setup, identity or conversation examples do not establish default selection or new-task inheritance.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/chat-channels.md",
         "ui/src/pages/apps/chat/ChatCommunicationInstructions.tsx",
@@ -4886,7 +4886,7 @@
         "ui/storybook/prototypes/slack-avatar/SlackAvatarSettingsPreview.tsx",
         "ui/storybook/stories/chat-channels/slack-communication-settings.stories.tsx"
       ],
-      "fingerprint": "f0d8df504be6e6e5a1ea09b868ee8a75e35d76041a792f48955dc1e834297cb6",
+      "fingerprint": "176a29291c7a696273dbbe50622c0dc845015adc119c9ae162dc1c957943a177",
       "stableId": "connections-slack-communication-in-settings",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Connections/Slack/Communication in Settings"
     },
@@ -4901,7 +4901,7 @@
       "implementation": "production",
       "boundary": "fixtures",
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the added connection/destination-default recipe; these unchanged setup, identity or conversation examples do not establish default selection or new-task inheritance.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/chat-channels.md",
         "maps/feature-map/connection-setup.md",
@@ -4911,7 +4911,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/chat-channels/slack-managed-setup.stories.tsx"
       ],
-      "fingerprint": "24e3f986568fad11d604fddc48db890e2c75091b8b7c0ff916c6d609dd4c033d",
+      "fingerprint": "59d4e5ebb276a491e22d6461fe9c9bab36778097d15ab2203d6cd95a4151e371",
       "stableId": "connections-slack-managed-setup",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Connections/Slack/Managed setup"
     },
@@ -4925,13 +4925,13 @@
       "implementation": "production",
       "boundary": "fixtures",
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the added connection/destination-default recipe; these unchanged setup, identity or conversation examples do not establish default selection or new-task inheritance.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/chat-channels.md",
         "ui/src/pages/apps/chat/SlackToolSettings.tsx",
         "ui/storybook/stories/chat-channels/slack-tools.stories.tsx"
       ],
-      "fingerprint": "9eaae8672c83f1be3d6bdea09e6a77fd62f2828ab410addfe82f9c08c3c34a4a",
+      "fingerprint": "20189b2032c2aecf3242e8d086fed9ca0b02d7adaa80aff9a69b60f1b23bce18",
       "stableId": "connections-slack-task-tools",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Connections/Slack/Task tools"
     },
