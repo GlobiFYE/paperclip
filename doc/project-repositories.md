@@ -51,6 +51,8 @@ New implicit Git workspace defaults record their project-source provenance.
 An untyped checkout binding from an older task is ambiguous and keeps the denial,
 including explicit checkout IDs and inherited parent sources. Admission rechecks
 the current binding rather than inferring a default from the selected checkout ID.
+Startup validation of these recorded defaults keeps the task's effective workspace
+strategy. It does not substitute the agent's shared strategy or grant project writes.
 Workspace close and reopen use the recorded isolated source. Both operations
 verify its company, task, repository URL, and separate Git storage before use.
 
