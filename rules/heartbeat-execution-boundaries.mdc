@@ -13,16 +13,56 @@ heartbeat-prefixed sibling services, and heartbeat regression tests. Keep the
 code organized so a reader can follow whether work may start, who owns the
 execution, and how its outcome and resources settle.
 
-## Structure
+## Folder structure and module responsibilities
 
-- Keep `heartbeat.ts` focused on composing services and coordinating the run
-  lifecycle. Put substantial domain behavior in a cohesive module under
-  `heartbeat/`; keep lifecycle ordering visible in the coordinator.
-- Maintain clear boundaries between admission/scheduling, preparation, provider
-  execution, completion, and recovery. Prefer an existing owner over a second
-  implementation of the same policy. The
-  [module map](../doc/DEVELOPING.md#heartbeat-service-extractions) describes the
-  current organization.
+`server/src/services/heartbeat.ts` is the public entry point and lifecycle
+coordinator. Heartbeat-specific modules and their focused `*.test.ts` tests belong
+in `server/src/services/heartbeat/`. Tests that exercise the assembled heartbeat
+service also live in `server/src/__tests__/heartbeat-*.test.ts`. Keep these roles
+distinct: the entry point should make the lifecycle readable, while modules own
+the behavior of a particular phase or domain.
+
+Use these existing boundaries when deciding where a change belongs. Paths below
+are relative to `server/src/services/heartbeat/`:
+
+| Modules | Responsibility |
+| --- | --- |
+| `queue.ts`, `scheduling.ts` | Queue admission, coalescing, and dispatch; timer and monitor scheduling. |
+| `run-preparation.ts`, `execution-configuration.ts` | Run context and tool access; effective execution configuration and credentials. |
+| `session-preparation.ts`, `run-state.ts` | Session selection and resume preparation; persisted run/session state and retrieval. |
+| `workspaces.ts`, `workspace-preparation.ts` | Workspace resolution, reuse, and validation; preparing the selected workspace and acquiring its environment. |
+| `environment-selection.ts`, `runtime-selection.ts` | Execution environment policy; selecting or restoring the execution runtime. |
+| `runtime-execution.ts` | Dispatching prepared work through the runtime and handling its execution result. |
+| `run-completion.ts`, `run-lifecycle.ts` | Success/failure settlement; shared status transitions, events, and completion handoffs. |
+| `run-control.ts`, `retries.ts`, `recovery.ts` | Stop and cancellation; retry scheduling; restart recovery and unfinished cleanup. |
+| `task-context.ts`, `task-markdown.ts` | Assembling task context and rendering assignment text. |
+| `run-output.ts`, `run-log.ts` | Per-run output handling; log formatting, redaction, and payload bounds. |
+
+This is a responsibility map, not an exhaustive API inventory. See the
+[developer module map](../doc/DEVELOPING.md#heartbeat-service-extractions) for
+additional modules and implementation context. Update these descriptions when
+ownership changes.
+
+## Keep the coordinator from growing back
+
+- Keep `heartbeat.ts` roughly stable or smaller as features are added. Small
+  wiring and lifecycle-ordering changes belong there; substantial new policy,
+  preparation, provider handling, or result processing belongs in a module.
+  Access to convenient local variables is not a reason to add another large
+  block to the coordinator.
+- Extend the existing module that owns the behavior before creating another.
+  If a new responsibility has no owner, add a clearly named module under
+  `heartbeat/`. Avoid generic `helpers.ts` or `utils.ts` buckets and a separate
+  file for every small function.
+- When a change would substantially grow the coordinator, extract the affected
+  responsibility in the same PR, backed by characterization tests. If an extracted
+  module begins accumulating unrelated responsibilities, split it at a cohesive
+  boundary too. Moving a large block into another file without clarifying its
+  contract is not enough.
+- Preserve visible lifecycle ordering and resource ownership across extractions.
+  Keep coupled decisions together when splitting them would obscure correctness;
+  explain that tradeoff when substantial growth is necessary. Size is a signal
+  to review the boundary, not a reason to split an otherwise cohesive operation.
 - Keep provider protocols and environment mechanics in their adapter/runtime
   services. Heartbeat should coordinate through their contracts. Small dispatch
   branches are appropriate; backend details should not spread into shared policy.
@@ -84,4 +124,6 @@ agent files. Assert execution and persisted outcomes, not only helper calls.
 Flag changes that give one policy competing owners, hide lifecycle ordering,
 weaken execution authority, lose recoverable work, or confuse completion with
 resource settlement. Explain the violated principle and the responsible boundary.
-Do not enforce the current variable names, helper layout, or file sizes as policy.
+Also flag substantial coordinator growth or modules collecting unrelated behavior;
+identify the existing owner or cohesive extraction that would keep the code
+tractable. Do not freeze current variable names or helper layouts as policy.
