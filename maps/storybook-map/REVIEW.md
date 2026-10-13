@@ -191,3 +191,123 @@ not production acceptance or visual-baseline comparison.
 Use `maintain-storybook` to correct drift and `review-storybook` to record separate
 source, render, interaction, visual-comparison, and production evidence. Both skills
 consume the feature map; neither changes its upstream contract.
+
+## Native runtime prerequisite: scoped source follow-up — 2026-10-12
+
+Source comparison: `9f59ff36cf2da963709ca19c06ab005510c835a6` against actual
+master `4b958ecbd8f33a7782fe6f29ec825f80f636b833`. The reviewed
+`maps/feature-map/runs-adapters.md` bytes have SHA-256
+`ca5aff86608b7d7987dc0ee814475a7b93e3faff1f99ce090429d2e932b7e16b`.
+
+Twenty-one entries in Runs, harnesses, and model accounts and Task creation and
+lifecycle had review-fingerprint drift. Their 117 unique declared sources have
+one changed input: the runs-adapters feature recipe. All 21 story files and the
+other 116 declared production subjects, wrappers and fixture sources are
+unchanged from master. The recipe adds bounded native startup and registration
+retirement controls. It separates those provider-free controls from real daemon
+and installed-provider proof; it changes no represented UI or fixture contract.
+
+Refreshed only those 21 reviewed fingerprints. No story, fixture, export, stable
+ID, title, capability reference or product/implementation/data classification
+changed. Existing mixed and unreviewed parity limitations remain. No fixture
+correction is needed for this scoped prerequisite; this does not establish full
+state parity for the affected suites.
+
+This follow-up is source inspection only. Rendering, play assertions, visual
+comparisons and production provider acceptance were not run. Native lifecycle
+behavior remains with the linked transport controls and their existing hosted
+CI fixtures. Catalog validation proves structure and reviewed dependency hashes,
+not that these live journeys passed.
+
+## Task workspace reconciliation — 2026-10-12
+
+Scope: the 26 declared-source entries affected by task-workspace work at
+`88b1d3a2`, compared with master `dabb8c5daf`, including subsequent comment-only
+cleanup and the fixture corrections below. This is a bounded source review,
+not a new review of all Storybook states. Reconciliation onto `b5046ec022`
+preserves its new feature folders, sidebar titles and explicit stable IDs, along
+with the existing exports, classification and simulation boundaries. Shared GitHub
+fixtures now live under `ui/storybook/support/github-bot-management/`.
+
+Twenty-one entries changed only through the expanded chat/workspace recipes.
+Their setup, identity, browser, artifact, picker and service examples are retained;
+the new recipe requirements do not become covered merely because they reference
+the same capability. Five entries also depend on changed production subjects:
+
+| Story file under `ui/storybook/stories/` | Source review and remaining scope |
+| --- | --- |
+| `chat-channels/chat-management/chat-management.stories.tsx` | Mounted endpoint includes connection/destination defaults. Added the missing selectable-workspace fixture response; existing endpoint PATCH and resource PUT retain defaults. No browser save, error, reload or inheritance proof in this pass. |
+| `chat-channels/github-bot-management/management.stories.tsx` | Mounted endpoint/repository editors include defaults. Fixed the endpoint mock to persist PATCH values instead of returning the original endpoint. Resource PUT already distinguishes omitted, null and concrete values. Project/workspace choices are intentionally empty fixtures. |
+| `chat-channels/imessage-photon.stories.tsx` | Existing scenarios mount setup/access and simulate task conversations. They do not exercise the newly added settings editor or its workspace-choice request. Kept unreviewed rather than claiming settings coverage. |
+| `projects/projects-goals-workspaces.stories.tsx` | Existing project-bound summaries still match the rendered components. New nullable project references and runtime invalidation branches have no projectless story scenario here. |
+| `workspaces/workspace-runtime-provisioning.stories.tsx` | The demonstrated status subcomponent is unchanged. Its local context row does not prove the full detail page's new projectless behavior. |
+
+The three endpoint-management entries now declare `ChatExecutionDefaults` and its
+API clients as review dependencies. AgentMail settings still demonstrates only
+the inbox subsection, not the surrounding endpoint defaults. Historical GitHub
+designs remain historical; existing unreviewed entries remain unreviewed. None of
+these fixture examples establishes source authorization, retained file privacy,
+pending workspace selection, sandbox admission or existing-conversation continuity.
+
+Executed: the GitHub fixture's two Vitest cases passed, including default save,
+subsequent GET, omitted-value preservation, explicit null clearing and fresh-mount
+reset. After the folder rebase, both fixture tests and all nine catalog checker
+tests passed again; token gates passed before the path-only reconciliation. After the final
+source freeze, only the 26 reviewed fingerprints were refreshed; catalog validation
+passed for all 223 files and all 2,210 source-parsed story IDs were unchanged.
+All 223 upstream file paths, explicit stable IDs and sidebar titles were preserved.
+Not run in this pass: Storybook build, browser rendering or `play`, screenshot
+comparisons, provider calls and live production acceptance. No new visual
+baselines were accepted. Fixture tests are boundary simulations, not server
+persistence or permission tests.
+
+## Workspace safety recipe follow-up — 2026-10-12
+
+Reviewed the twelve entries that depend on the workspace feature recipe: browser-use activity/footer/page, the three HTML-artifact suites, project execution strategy and project workspace summaries, searchable selection, workspace files, runtime provisioning and service controls. Their production subjects, fixtures, feature folders, sidebar titles and stable IDs are unchanged. The recipe now requires prospective child boundary checks, safe low-trust reopening, and coherent returned checkpoint ancestry. These backend safety contracts are not exercised by those fixtures. Each entry remains unreviewed for full production parity. Only the reviewed recipe fingerprints were refreshed; no browser render, play, screenshot baseline or production acceptance was run for this follow-up.
+
+
+## Remote provisioning recipe follow-up — 2026-10-13
+
+Reviewed the same twelve workspace-recipe-dependent entries after extending the controller-provisioning boundary to standard-trust sandbox and SSH selections. Their components, fixtures and stable IDs are unchanged. Project strategy stories demonstrate configuration fields with environment selection disabled; runtime provisioning stories demonstrate status values with a no-operation log handler. Browser, artifact, file and service-control fixtures do not execute source scripts or prove admission placement. The new recipe requires controller marker denial independent of source write grants while copying and dispatch remain available, including local copy-only selections, retained deny-only metadata and closed-worktree reopening. Implicit trusted local defaults remain separate positive controls. All twelve entries retain their unreviewed production classification. Refreshed only these recipe fingerprints after this source review; no browser render, play, screenshot, Storybook build or live runtime qualification is claimed.
+
+## Default-source recipe follow-up — 2026-10-13
+
+Reviewed the twelve unchanged workspace recipe subjects and fixtures after correcting implicit default selection. Task creation and controller classification now share configured-policy, primary, creation-time and ID precedence. Explicit choices and retained denial markers still suppress controller hooks. Project strategy fixtures show configuration, while runtime status and file/browser/artifact/service fixtures do not execute source scripts or prove this backend ordering. Refreshed only their reviewed recipe fingerprints and retained all classifications and stable IDs. No browser render, play, screenshot, Storybook build or live runtime acceptance was performed.
+
+
+## Inherited activity, inbox and recovery recipes — 2026-10-12
+
+Source comparison: master `e168512f7bdbb6af6ea01954c6d7ed80b91e903e`
+against previous master `f329b24ee12496e710ad17377ec7716e0eee22ef`,
+while reconciling the native-runtime prerequisite. All 25 affected catalog
+entries are identical to e168 master; their stale fingerprints were inherited.
+
+The 101 unique declared inputs have three changed feature recipes. The remaining 98 inputs, including all 25 story files, are unchanged
+between those masters and the merged worktree. They include 92 non-map
+story, subject, wrapper and fixture sources and six unchanged map files. The reviewed recipe
+bytes have these SHA-256 identities:
+
+- `maps/feature-map/activity.md`: `3867cc392c031cc5ca9ec61bfc4211d685da37e39fb36e9b152497b7cf970caf`.
+- `maps/feature-map/inbox-search.md`: `8ff5431ddfe54c0c288eecffb785f864d8bfeb38be50c66615999ffbbfba6863`.
+- `maps/feature-map/recovery.md`: `46fee5940f23a6d1483697e0b07817a78d993d4748b51121d2e113dd2a96173b`.
+
+The activity addition names issue-scoped activity authorization and sandbox
+bridge controls; company audit/display fixtures do not establish live sandbox
+agent access. The inbox recipe excludes automatic historical read cleanup from
+user participation while retaining explicit decisions; static inbox/decision
+examples do not execute that query or the newly required user/company journey.
+The recovery recipe retains native workspace-owner holds across task completion
+and repeated reads until exact operator retirement; recovery display fixtures
+do not establish ownership, copyback denial, action identity or live operator
+recovery. These backend acceptance requirements remain separate gaps.
+
+The proposed maintenance changes only those 25 reviewed dependency fingerprints.
+Retain the existing 24 unreviewed and one current classification, simulation
+boundaries, story exports, titles and stable IDs. No fixture or story correction
+is indicated by this declared-source comparison. This does not promote full
+state parity or coverage for the added backend requirements.
+
+Source inspection only: no browser rendering, play, visual baseline, provider
+run or live production acceptance was performed for this reconciliation. The
+existing catalog checker must run on the actual merged tree after synchronization;
+its result verifies structure and declared hashes, not these live journeys.
