@@ -2184,7 +2184,7 @@
         "ui/src/components/ExecutionBlockerNotice.tsx",
         "ui/storybook/stories/recovery/execution-blocker-notice.stories.tsx"
       ],
-      "fingerprint": "bee366ba1266e6692c8f0ee027c449fdda6b51762369ba431871a5af5ee018c6",
+      "fingerprint": "19fa3d95095bbcd67c5306d6ad3c8c00ae526bab9d8cbc49e69ca36c15a873c2",
       "stableId": "task-chat-recovery-notice",
       "sidebarTitle": "Projects and execution/Recovery/Task chat/Recovery notice"
     },
