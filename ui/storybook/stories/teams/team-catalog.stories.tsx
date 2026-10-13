@@ -66,7 +66,7 @@ function makeAgent(id: string, name: string, role: string): Agent {
   };
 }
 
-function makePreview(errors: string[] = []): CatalogTeamImportPreviewResult {
+export function makePreview(errors: string[] = []): CatalogTeamImportPreviewResult {
   return {
     team: baseTeam,
     portabilityPreview: {
@@ -139,6 +139,7 @@ function Frame({ children, width = "max-w-3xl" }: { children: React.ReactNode; w
 }
 
 const meta: Meta = {
+  excludeStories: ["makePreview"],
   parameters: { paperclip: {
       "capabilities": [
         "teams/preview",

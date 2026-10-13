@@ -2,6 +2,29 @@
 
 ## Current Codex merge checkpoint — 2026-10-13
 
+The reviewed fixture changes are published as
+`8d65fd7fc31d8170082f30a314b87c4779f91e8a`. Before a main CI merge checkout
+is created, master advances to `edcfcaf3f69abfda12fcbc63225f7346f53450aa`.
+Normal reconciliation retains its repository-skill preparation, signed idle wake
+deadlines, readiness errors, voice support and migrations 0341/0342. The sole
+text conflict preserves master's cancelled-lock return semantics and the PR's
+bounded error-code diagnostic. The dependency lock is completed for the existing
+server test dependencies and incoming voice dependency, without changing prior
+resolved versions or running install hooks. Frozen-lock validation, 29 existing
+native-authority/runtime-skill controls, E2E no-emit, maps and token gates pass.
+This combined server/UI/DB source requires new package and live qualification;
+literal 578 results below remain attributed to their actual source.
+
+The separate fresh Mac UI journey on installed 578 selects automatic native Codex,
+connects an API-key account, creates the first agent, and reaches the ordinary
+opening card. Accepting its proposal creates exactly one child task with a saved
+document and workspace file. A follow-up changes that existing document to
+revision two and edits the same file. Independent content, recorded execution,
+workspace, session-boundary and accounting inspection remains in progress.
+The failed managed eval is retained separately; this manual journey does not
+turn its failed oracle green. All paid work remains bounded by the new $100
+allowance, 180-second runs and single-provider concurrency, with prior holds kept.
+
 Canonical branch: `codex/codex-runner-default`. Delivery PR:
 [#15683](https://github.com/paperclipai/paperclip/pull/15683).
 The runtime/install prerequisite #16028 and release repair #16149 are merged.

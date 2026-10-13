@@ -12,7 +12,7 @@ Agent access: [companion](../agent-access-map/chat-channels.md).
 
 ## Sub-features
 
-- `providers`: configure the available Slack, Discord, Microsoft Teams, Telegram, GitHub, AgentMail, and experimental iMessage Photon paths; availability still depends on gates and provider support.
+- `providers`: configure the available Slack, Discord, Microsoft Teams, Telegram, GitHub, AgentMail, and experimental iMessage Photon and Speko paths; availability still depends on gates and provider support.
 - `identity`: link the external sender to the intended authorized Paperclip identity.
 - `conversation`: route inbound messages to the selected agent and send replies to the correct thread.
 - `attachments`: transfer supported files with inspectable delivery and failure states.
@@ -62,6 +62,16 @@ Configure optional project and workspace defaults at the connection and destinat
 levels. Start a new conversation and inspect its task workspace. Verify that
 inheritance, an explicit selection, and clearing a default remain distinct.
 Changing defaults must not move an existing conversation or interrupt its run.
+
+For experimental Speko, enable chat connectors, choose an agent during setup,
+and verify the provider credentials. On an assigned task, use **Talk to agent**
+to open browser voice controls. Check microphone denial, mute, end/restart,
+navigation during a call, and access revocation. Inspect transcripts and the
+connection's call history. Callback preferences, incoming phone configuration,
+and incoming-call approval are separate settings and authorization journeys.
+The [voice components](../../ui/src/components/voice/TaskVoiceLauncher.tsx)
+and fixture tests cover presentation; they do not establish live answer retrieval
+or telephone playback. Those provider outcomes remain explicit release gates.
 
 ## Gotchas
 

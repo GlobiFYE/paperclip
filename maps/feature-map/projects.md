@@ -56,6 +56,14 @@ Manual: Attach a small repository, save, and create a project task. Inspect the 
 - See [workspaces](./workspaces.md), [goals](./goals.md), and [budgets](./budgets-costs.md) for those features.
 - Do not assume a deleted or archived project should erase its historical task evidence.
 
+### Automatic repository skills
+
+Creating or attaching a GitHub repository enqueues skill import without another setup
+step. Check Skills → Sources and the installed library afterward. Ordinary edits to
+older projects do not adopt their repositories; explicit adoption belongs in Sources.
+Removing a repository retains installed skills and originating project access but stops
+its automatic tracking. Changing the ref does not retarget existing skill references.
+
 ### Documentation scope: Projects and execution workspaces
 
 Provider-specific provisioning, multi-repository/submodule edge cases, Git reconciliation variants, and all service exposure combinations require deeper recipes.
