@@ -11,9 +11,26 @@ describe("explicit diagnostic credential forms", () => {
 });
 import {
   REDACTED_COMMAND_TEXT_VALUE,
+  looksLikeCredentialJwt,
   redactDiagnosticText,
   redactCommandText,
 } from "./command-redaction.js";
+
+describe("looksLikeCredentialJwt", () => {
+  it("recognizes encoded headers even with short payloads and signatures", () => {
+    const header = Buffer.from('{"alg":"HS256"}').toString("base64url");
+    expect(looksLikeCredentialJwt(`${header}.e30.c2ln`)).toBe(true);
+  });
+
+  it.each([
+    "api.openai.com",
+    "bottybois.staging.paperclip.app",
+    "deployment.credentials.example.md",
+    "paperclip.native-model-envelope.v3",
+  ])("rejects public dotted identifiers: %s", (input) => {
+    expect(looksLikeCredentialJwt(input)).toBe(false);
+  });
+});
 
 describe("redactDiagnosticText", () => {
   it("preserves credential metadata and dotted identifiers", () => {
