@@ -165,6 +165,42 @@ describeEmbeddedPostgres("activity service", () => {
     expect(result.map((event) => event.action)).toEqual(["test.newest", "test.middle"]);
   });
 
+  it("finds the latest real agent assignment independently of the visible activity page", async () => {
+    const companyId = randomUUID();
+    const otherCompanyId = randomUUID();
+    const issueId = randomUUID();
+    const otherIssueId = randomUUID();
+    await db.insert(companies).values([
+      { id: companyId, name: "Assignment history", issuePrefix: `A${randomUUID().slice(0, 6)}` },
+      { id: otherCompanyId, name: "Other assignment history", issuePrefix: `B${randomUUID().slice(0, 6)}` },
+    ]);
+    await db.insert(issues).values([
+      { id: issueId, companyId, title: "Assigned task", assigneeUserId: "recipient" },
+      { id: otherIssueId, companyId, title: "Other task" },
+    ]);
+    const base = { companyId, actorType: "agent", actorId: "assigning-agent", entityType: "issue", entityId: issueId };
+    const assignment = { ...base, id: randomUUID(), action: "issue.reassigned", createdAt: new Date("2026-04-21T11:00:00Z"), details: { assigneeUserId: "recipient", changed: true, previousAssigneeUserId: null } };
+    await db.insert(activityLog).values([
+      assignment,
+      { ...base, action: "issue.created", createdAt: new Date("2026-04-21T10:00:00Z"), details: { assigneeUserId: "recipient" } },
+      ...Array.from({ length: 60 }, (_, index) => ({ ...base, action: "issue.updated", createdAt: new Date(Date.UTC(2026, 3, 21, 12, index)), details: { assigneeUserId: "recipient", _previous: { assigneeUserId: "recipient" } } })),
+      { ...base, action: "issue.updated", details: { assigneeUserId: "recipient" } },
+      { ...base, action: "issue.reassigned", details: { assigneeUserId: "recipient", changed: false, previousAssigneeUserId: null } },
+      { ...base, action: "issue.reassigned", details: { assigneeUserId: "recipient", changed: true } },
+      { ...base, action: "issue.reassigned", details: { assigneeUserId: "recipient", changed: true, previousAssigneeUserId: "recipient" } },
+      { ...base, actorType: "board", action: "issue.created", details: { assigneeUserId: "recipient" } },
+      { ...base, entityId: otherIssueId, action: "issue.created", details: { assigneeUserId: "recipient" } },
+      { ...base, companyId: otherCompanyId, action: "issue.created", details: { assigneeUserId: "recipient" } },
+    ]);
+    const service = activityService(db);
+    expect((await service.forIssue(issueId)).some(row => row.id === assignment.id)).toBe(false);
+    expect((await service.forIssue(issueId, { limit: 1, assignmentToUserId: "recipient" })).map(row => row.id)).toEqual([assignment.id]);
+    expect(await service.forIssue(issueId, { limit: 1, assignmentToUserId: "unrelated" })).toEqual([]);
+    const updatedAssignment = { ...base, id: randomUUID(), action: "issue.updated", details: { assigneeUserId: "recipient", _previous: { assigneeUserId: null } } };
+    await db.insert(activityLog).values(updatedAssignment);
+    expect((await service.forIssue(issueId, { limit: 1, assignmentToUserId: "recipient" })).map(row => row.id)).toEqual([updatedAssignment.id]);
+  });
+
   it("pages issue activity and runs stably through large histories and rejects foreign cursors", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();

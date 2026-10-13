@@ -411,7 +411,7 @@ export function IssuePropertiesArtifactsTab({
     (documents ?? []).map((doc) => [doc.key, doc]),
   );
   const fileRows = selectArtifactAttachments(attachments, workProducts);
-  const runsById = useMemo(() => new Map<string, { startedAt: string | Date | null; agentId: string | null }>(
+  const summaryRunsById = useMemo(() => new Map<string, { startedAt: string | Date | null; agentId: string | null }>(
     (runs ?? []).map((run) => [run.runId, { startedAt: run.startedAt, agentId: run.agentId }]),
   ), [runs]);
   const agentsById = useMemo(
@@ -475,7 +475,7 @@ export function IssuePropertiesArtifactsTab({
     [documentRows, fileRows, workProductRows],
   );
 
-  const groupedRows = [
+  const groupRows = (runMap: ReadonlyMap<string, { startedAt: string | Date | null; agentId: string | null }>) => [
     ...allRows.reduce((groups, row) => {
       const key = row.runId ?? "other";
       const group = groups.get(key) ?? [];
@@ -490,35 +490,43 @@ export function IssuePropertiesArtifactsTab({
       date:
         runId === "other"
           ? (rows[0]?.date ?? new Date(0))
-          : new Date(runsById.get(runId)?.startedAt ?? rows[0]?.date ?? 0),
+          : new Date(runMap.get(runId)?.startedAt ?? rows[0]?.date ?? 0),
     }))
     .sort((a, b) => b.date.getTime() - a.date.getTime());
-
-  let remainingVisible = visibleArtifactCount;
-  const visibleGroups = groupedRows.flatMap((group) => {
-    const rows = group.rows.slice(0, remainingVisible);
-    remainingVisible -= rows.length;
-    return rows.length ? [{ ...group, rows }] : [];
-  });
+  const visibleFromSummary = groupRows(summaryRunsById);
+  const selectVisibleGroups = (groups: ReturnType<typeof groupRows>) => {
+    let remainingVisible = visibleArtifactCount;
+    return groups.flatMap((group) => {
+      const rows = group.rows.slice(0, remainingVisible);
+      remainingVisible -= rows.length;
+      return rows.length ? [{ ...group, rows }] : [];
+    });
+  };
+  const requestGroups = selectVisibleGroups(visibleFromSummary);
   const visibleRunIds = new Set(
-    visibleGroups.flatMap((group) => group.rows.flatMap((row) =>
+    requestGroups.flatMap((group) => group.rows.flatMap((row) =>
       row.kind === "work_product" && row.runId ? [row.runId] : [])),
   );
   const artifactRunQueries = useQueries({
     queries: [...visibleRunIds]
-      .filter((runId) => !runsById.has(runId))
+      .filter((runId) => !summaryRunsById.has(runId))
       .map((runId) => ({
         queryKey: ["heartbeat-runs", "detail", runId],
         queryFn: () => heartbeatsApi.get(runId),
         retry: false,
       })),
   });
-  for (const query of artifactRunQueries) {
-    if (query.data) runsById.set(query.data.id, {
-      startedAt: query.data.startedAt,
-      agentId: query.data.agentId,
-    });
-  }
+  const runsById = useMemo(() => {
+    const byId = new Map(summaryRunsById);
+    for (const query of artifactRunQueries) {
+      if (query.data) byId.set(query.data.id, {
+        startedAt: query.data.startedAt,
+        agentId: query.data.agentId,
+      });
+    }
+    return byId;
+  }, [artifactRunQueries, summaryRunsById]);
+  const visibleGroups = selectVisibleGroups(groupRows(runsById));
 
   const loadError = attachmentsError || productsError || documentsError;
   const loading = attachmentsPending || productsPending || documentsPending;

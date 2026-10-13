@@ -244,6 +244,61 @@ describe("markdown work product review row", () => {
     });
   });
 
+  it("applies delayed run metadata to labels and group ordering without expanding detail requests", async () => {
+    const summaryRunId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const olderRunId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    let resolveOlderRun!: (run: unknown) => void;
+    const olderRun = new Promise<unknown>((resolve) => { resolveOlderRun = resolve; });
+    mockIssuesApi.listWorkProducts.mockResolvedValue([
+      makeMarkdownWorkProduct({
+        id: "22222222-2222-4222-8222-222222222222",
+        title: "Summary run artifact",
+        createdByRunId: summaryRunId,
+        createdAt: new Date("2026-08-01T12:00:00Z"),
+      }),
+      makeMarkdownWorkProduct({
+        id: "33333333-3333-4333-8333-333333333333",
+        title: "Older run artifact",
+        createdByRunId: olderRunId,
+        createdAt: new Date("2026-08-01T10:00:00Z"),
+      }),
+    ]);
+    mockActivityApi.runsForIssue.mockResolvedValue([
+      { runId: summaryRunId, agentId: "agent-1", startedAt: "2026-08-01T12:00:00Z" },
+    ]);
+    mockHeartbeatsApi.get.mockImplementation((runId) => {
+      expect(runId).toBe(olderRunId);
+      return olderRun;
+    });
+    mockAgentsApi.list.mockResolvedValue([
+      { id: "agent-1", name: "Summary author" },
+      { id: "agent-2", name: "Older author" },
+    ]);
+
+    await renderTab({}, "Summary author");
+    const groupHeaders = () => Array.from(container.querySelectorAll("section"));
+    expect(groupHeaders().map((section) => section.querySelector("h3")?.textContent)).toEqual([
+      "Summary author",
+      `Run ${olderRunId.slice(0, 8)}`,
+    ]);
+    expect(groupHeaders()[1]?.querySelector("time")?.getAttribute("datetime")).toBe("2026-08-01T10:00:00.000Z");
+    expect(mockHeartbeatsApi.get).toHaveBeenCalledTimes(1);
+
+    await act(async () => resolveOlderRun({
+      id: olderRunId,
+      agentId: "agent-2",
+      startedAt: new Date("2026-08-01T13:00:00Z"),
+    }));
+    await waitForAssertion(() => {
+      expect(groupHeaders().map((section) => section.querySelector("h3")?.textContent)).toEqual([
+        "Older author",
+        "Summary author",
+      ]);
+      expect(groupHeaders()[0]?.querySelector("time")?.getAttribute("datetime")).toBe("2026-08-01T13:00:00.000Z");
+    });
+    expect(mockHeartbeatsApi.get).toHaveBeenCalledTimes(1);
+  });
+
   it("loads legacy artifact run details only as artifact pages become visible", async () => {
     const products = Array.from({ length: 65 }, (_, index) => {
       const suffix = String(index + 1).padStart(12, "0");

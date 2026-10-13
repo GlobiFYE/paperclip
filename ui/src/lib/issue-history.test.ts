@@ -81,6 +81,12 @@ function pagedFetcher(dataset: readonly Item[], calls: Array<string | undefined>
   };
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => { resolve = settle; });
+  return { promise, resolve };
+}
+
 afterEach(() => {
   for (const unmount of mounted.splice(0)) unmount();
 });
@@ -319,4 +325,81 @@ it("resets local snapshots on task navigation without showing the prior task", a
   await act(async () => result.current.loadOlder());
   expect(secondCalls).toHaveLength(2);
   expect(firstCalls).toHaveLength(2);
+});
+
+it("clears a completed old-scope loading state before navigating back", async () => {
+  const datasetA = makeItems(0, 123);
+  const datasetB = makeItems(300, 80);
+  const olderA = deferred<Item[]>();
+  let beforeA: string | undefined;
+  const fetchA = async (before?: string) => {
+    if (before) {
+      beforeA = before;
+      return olderA.promise;
+    }
+    return pageFrom(datasetA);
+  };
+  const fetchB = pagedFetcher(datasetB, []);
+  const { result, rerender } = renderHook({ queryKey: ["history", "nav-a"], fetchPage: fetchA });
+  await act(async () => waitUntil(() => result.current.data?.length === 50));
+  let requestA!: Promise<void>;
+  act(() => { requestA = result.current.loadOlder(); });
+  expect(result.current.isLoadingOlder).toBe(true);
+
+  rerender({ queryKey: ["history", "nav-b"], fetchPage: fetchB });
+  await act(async () => waitUntil(() => result.current.data?.length === 50));
+  expect(result.current.isLoadingOlder).toBe(false);
+  await act(async () => {
+    olderA.resolve(pageFrom(datasetA, beforeA));
+    await requestA;
+  });
+  expect(result.current.isLoadingOlder).toBe(false);
+
+  rerender({ queryKey: ["history", "nav-a"], fetchPage: fetchA });
+  await act(async () => waitUntil(() => result.current.data?.length === 50));
+  expect(result.current.isLoadingOlder).toBe(false);
+});
+
+it("does not let an old A request clear or replace a newer A request after A-B-A navigation", async () => {
+  const datasetA = makeItems(0, 123);
+  const datasetB = makeItems(300, 80);
+  const olderA1 = deferred<Item[]>();
+  const olderA2 = deferred<Item[]>();
+  let beforeA: string | undefined;
+  let aOlderRequestCount = 0;
+  const fetchA = async (before?: string) => {
+    if (!before) return pageFrom(datasetA);
+    beforeA = before;
+    aOlderRequestCount += 1;
+    return aOlderRequestCount === 1 ? olderA1.promise : olderA2.promise;
+  };
+  const { result, rerender } = renderHook({ queryKey: ["history", "race-a"], fetchPage: fetchA });
+  await act(async () => waitUntil(() => result.current.data?.length === 50));
+  let requestA1!: Promise<void>;
+  act(() => { requestA1 = result.current.loadOlder(); });
+
+  rerender({ queryKey: ["history", "race-b"], fetchPage: pagedFetcher(datasetB, []) });
+  await act(async () => waitUntil(() => result.current.data?.length === 50));
+  rerender({ queryKey: ["history", "race-a"], fetchPage: fetchA });
+  await act(async () => waitUntil(() => result.current.data?.length === 50));
+  let requestA2!: Promise<void>;
+  act(() => { requestA2 = result.current.loadOlder(); });
+  expect(aOlderRequestCount).toBe(2);
+  expect(result.current.isLoadingOlder).toBe(true);
+
+  await act(async () => {
+    olderA1.resolve(pageFrom(datasetA, beforeA).map((item) => ({ ...item, value: "stale-response" })));
+    await requestA1;
+  });
+  expect(result.current.isLoadingOlder).toBe(true);
+  expect(result.current.data).toHaveLength(50);
+
+  await act(async () => {
+    olderA2.resolve(pageFrom(datasetA, beforeA).map((item) => ({ ...item, value: "current-response" })));
+    await requestA2;
+  });
+  expect(result.current.isLoadingOlder).toBe(false);
+  expect(result.current.data).toHaveLength(100);
+  expect(result.current.data?.find((item) => item.id === pageFrom(datasetA, beforeA)[0]?.id)?.value)
+    .toBe("current-response");
 });

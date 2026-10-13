@@ -108,6 +108,10 @@ const issueHistoryQuerySchema = z.object({
   before: z.string().uuid().optional(),
 });
 
+const issueActivityQuerySchema = issueHistoryQuerySchema.extend({
+  assignmentToUserId: z.string().min(1).max(256).optional(),
+});
+
 const agentActionAuditQuerySchema = z.object({
   actorScope: agentActionAuditActorScopeSchema.default("agents"),
   agentId: z.string().guid().optional(),
@@ -351,11 +355,12 @@ export function activityRoutes(db: Db) {
     const issue = await getAccessibleResource(req, res, resolveIssueByRef(rawId), "Issue not found");
     if (!issue) return;
     if (!(await assertIssueReadAllowed(req, res, issue))) return;
-    const parsedQuery = issueHistoryQuerySchema.safeParse(req.query);
+    const parsedQuery = issueActivityQuerySchema.safeParse(req.query);
     if (!parsedQuery.success) throw badRequest("Invalid issue activity query", parsedQuery.error.issues);
     const result = await svc.forIssue(issue.id, {
       limit: normalizeIssueHistoryLimit(parsedQuery.data.limit),
       before: parsedQuery.data.before,
+      ...(parsedQuery.data.assignmentToUserId ? { assignmentToUserId: parsedQuery.data.assignmentToUserId } : {}),
     });
     res.json(result);
   });

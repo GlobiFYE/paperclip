@@ -3889,8 +3889,8 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   );
 
   const { data: assignmentActivity } = useQuery({
-    queryKey: queryKeys.issues.activity(issueId!),
-    queryFn: () => activityApi.forIssue(issueId!),
+    queryKey: [...queryKeys.issues.activity(issueId!), "assignment", currentUserId],
+    queryFn: () => activityApi.forIssue(issueId!, { limit: 1, assignmentToUserId: currentUserId! }),
     enabled: Boolean(issueId && currentUserId && issue?.assigneeUserId === currentUserId),
   });
 

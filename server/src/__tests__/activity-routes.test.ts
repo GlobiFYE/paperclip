@@ -313,6 +313,15 @@ describe("activity routes", () => {
     expect(Array.isArray(res.body)).toBe(true);
   });
 
+  it("filters assignment history before its bounded read", async () => {
+    mockIssueService.getByIdentifier.mockResolvedValue({ id: "issue-uuid-1", companyId: "company-1" });
+    mockActivityService.forIssue.mockResolvedValue([]);
+    const app = await createApp();
+    const res = await requestApp(app, baseUrl => request(baseUrl).get("/api/issues/TEST-1/activity?limit=1&assignmentToUserId=user-1"));
+    expect(res.status).toBe(200);
+    expect(mockActivityService.forIssue).toHaveBeenCalledWith("issue-uuid-1", { limit: 1, before: undefined, assignmentToUserId: "user-1" });
+  });
+
   it("requires company access before creating activity events", async () => {
     const app = await createApp();
     const res = await requestApp(app, (baseUrl) => request(baseUrl)

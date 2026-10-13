@@ -124,6 +124,10 @@ viewer-specific. [Activity tests](../../server/src/__tests__/activity-service.te
 cover paging and foreign cursors; the [route tests](../../server/src/__tests__/activity-routes.test.ts)
 cover the bounded array contract.
 
+The activity read also accepts `assignmentToUserId` to filter actual agent-to-user
+assignments before pagination. The reply composer uses `limit=1` with this filter,
+independently of the visible history page. The normal task read permissions apply.
+
 Agent access: `available` — Native report_progress/comment_on_task/register_deliverable;
 REST / CLI / MCP.
 

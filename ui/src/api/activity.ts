@@ -9,9 +9,14 @@ export interface IssueHistoryOptions {
   before?: string;
 }
 
-function issueHistoryPath(issueId: string, kind: "activity" | "runs", options?: IssueHistoryOptions) {
+export interface IssueActivityOptions extends IssueHistoryOptions {
+  assignmentToUserId?: string;
+}
+
+function issueHistoryPath(issueId: string, kind: "activity" | "runs", options?: IssueActivityOptions) {
   const params = new URLSearchParams({ limit: String(options?.limit ?? ISSUE_HISTORY_PAGE_SIZE) });
   if (options?.before) params.set("before", options.before);
+  if (kind === "activity" && options?.assignmentToUserId) params.set("assignmentToUserId", options.assignmentToUserId);
   return `/issues/${issueId}/${kind}?${params}`;
 }
 
@@ -90,7 +95,7 @@ export const activityApi = {
     const qs = params.toString();
     return api.get<ActivityEvent[]>(`/companies/${companyId}/activity${qs ? `?${qs}` : ""}`, options);
   },
-  forIssue: (issueId: string, options?: IssueHistoryOptions) =>
+  forIssue: (issueId: string, options?: IssueActivityOptions) =>
     api.get<ActivityEvent[]>(issueHistoryPath(issueId, "activity", options)),
   runsForIssue: (issueId: string, options?: IssueHistoryOptions) =>
     api.get<RunForIssue[]>(issueHistoryPath(issueId, "runs", options)),

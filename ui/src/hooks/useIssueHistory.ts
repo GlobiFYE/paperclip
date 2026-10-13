@@ -13,6 +13,12 @@ type HistoryState<T> = {
   olderError: unknown | null;
 };
 
+type OlderRequest = {
+  id: number;
+  scope: string;
+  navigationId: number;
+};
+
 export type UseIssueHistoryOptions<T> = {
   queryKey: QueryKey;
   enabled?: boolean;
@@ -65,12 +71,15 @@ export function useIssueHistory<T>({
   });
   const [storedState, setStoredState] = useState<HistoryState<T>>(() => emptyState(scope));
   const state = storedState.scope === scope ? storedState : emptyState<T>(scope);
-  const activeScopeRef = useRef(scope);
-  activeScopeRef.current = scope;
+  const navigationRef = useRef({ scope, id: 0 });
+  if (navigationRef.current.scope !== scope) {
+    navigationRef.current = { scope, id: navigationRef.current.id + 1 };
+  }
   const headRef = useRef(query.data);
   headRef.current = query.data;
-  const loadingOlderScopeRef = useRef<string | null>(null);
-  const [loadingOlderScope, setLoadingOlderScope] = useState<string | null>(null);
+  const requestIdRef = useRef(0);
+  const activeOlderRequestRef = useRef<OlderRequest | null>(null);
+  const [loadingOlderRequest, setLoadingOlderRequest] = useState<OlderRequest | null>(null);
 
   useEffect(() => {
     if (!enabled || !query.data) return;
@@ -132,7 +141,13 @@ export function useIssueHistory<T>({
 
   const loadOlder = useCallback(async () => {
     const head = query.data;
-    if (!enabled || !head || loadingOlderScopeRef.current === scope) return;
+    const navigationId = navigationRef.current.id;
+    const activeRequest = activeOlderRequestRef.current;
+    if (
+      !enabled ||
+      !head ||
+      (activeRequest?.scope === scope && activeRequest.navigationId === navigationId)
+    ) return;
     const current = storedState.scope === scope ? storedState : emptyState<T>(scope);
     const headTail = head.length ? getId(head[head.length - 1]!) : null;
     const shiftedBeforeEffect = current.headBoundary !== null && current.headBoundary !== headTail;
@@ -148,14 +163,21 @@ export function useIssueHistory<T>({
         : current.hasMore;
     if (!before || !mayHaveOlder) return;
 
-    loadingOlderScopeRef.current = scope;
-    setLoadingOlderScope(scope);
+    const request: OlderRequest = { id: ++requestIdRef.current, scope, navigationId };
+    activeOlderRequestRef.current = request;
+    setLoadingOlderRequest(request);
     setStoredState((previous) => previous.scope === scope
       ? { ...previous, historyStarted: true, olderError: null }
       : previous);
     try {
       const page = await fetchPage(before);
-      if (activeScopeRef.current !== scope) return;
+      const currentRequest = activeOlderRequestRef.current;
+      const currentNavigation = navigationRef.current;
+      if (
+        currentRequest?.id !== request.id ||
+        currentNavigation.scope !== scope ||
+        currentNavigation.id !== navigationId
+      ) return;
       setStoredState((previous) => {
         if (previous.scope !== scope) return previous;
         const currentHead = headRef.current ?? head;
@@ -194,15 +216,21 @@ export function useIssueHistory<T>({
         };
       });
     } catch (error) {
-      if (activeScopeRef.current === scope) {
+      const currentRequest = activeOlderRequestRef.current;
+      const currentNavigation = navigationRef.current;
+      if (
+        currentRequest?.id === request.id &&
+        currentNavigation.scope === scope &&
+        currentNavigation.id === navigationId
+      ) {
         setStoredState((previous) => previous.scope === scope
           ? { ...previous, olderError: error }
           : previous);
       }
     } finally {
-      if (loadingOlderScopeRef.current === scope) {
-        loadingOlderScopeRef.current = null;
-        if (activeScopeRef.current === scope) setLoadingOlderScope(null);
+      if (activeOlderRequestRef.current?.id === request.id) {
+        activeOlderRequestRef.current = null;
+        setLoadingOlderRequest((current) => current?.id === request.id ? null : current);
       }
     }
   }, [enabled, fetchPage, getCreatedAt, getId, query.data, scope, storedState]);
@@ -232,7 +260,8 @@ export function useIssueHistory<T>({
     isError: query.isError,
     refetch: query.refetch,
     hasMore,
-    isLoadingOlder: loadingOlderScope === scope,
+    isLoadingOlder: loadingOlderRequest?.scope === scope &&
+      loadingOlderRequest.navigationId === navigationRef.current.id,
     loadOlder,
     olderError: state.olderError,
   };

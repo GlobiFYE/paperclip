@@ -75,6 +75,10 @@ entries. [History tests](../../ui/src/lib/issue-history.test.ts) cover cursor
 continuity, navigation, retry, and large updates without growing an unopened
 historical view.
 
+Reply suggestions read the latest actual agent assignment to the current user
+through a separate bounded activity query, even when that event is older than the
+visible history. Manual recipient choices keep their existing precedence.
+
 Manual: Open a task with more than 100 activity events and runs. Confirm first
 requests use `limit=50`, read older entries, then observe a live update. Verify
 older pages are not requested again and remain reachable.

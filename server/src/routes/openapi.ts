@@ -5991,6 +5991,7 @@ registry.registerPath({
     query: z.object({
       limit: z.coerce.number().int().optional().describe("Page size; defaults to 50 and is clamped to 1–100."),
       before: z.string().uuid().optional().describe("Last activity ID from the previous page; loads older entries."),
+      assignmentToUserId: z.string().min(1).max(256).optional().describe("Filter to agent events that actually assigned this task to the given user, before pagination."),
     }),
   },
   responses: { 200: r.ok(), 401: r.unauthorized },

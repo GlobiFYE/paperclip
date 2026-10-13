@@ -40,6 +40,10 @@ export interface IssueHistoryOptions {
   before?: string;
 }
 
+export interface IssueActivityOptions extends IssueHistoryOptions {
+  assignmentToUserId?: string;
+}
+
 const DEFAULT_ISSUE_HISTORY_LIMIT = 50;
 const MAX_ISSUE_HISTORY_LIMIT = 100;
 
@@ -410,7 +414,7 @@ export function activityService(db: Db) {
         .then((rows) => rows.map((r) => r.activityLog));
     },
 
-    forIssue: (issueId: string, options?: IssueHistoryOptions) => {
+    forIssue: (issueId: string, options?: IssueActivityOptions) => {
       if (options?.before && !isUuid(options.before)) return Promise.resolve([]);
       const limit = normalizeIssueHistoryLimit(options?.limit);
       const baseCondition = and(
@@ -435,7 +439,27 @@ export function activityService(db: Db) {
       return db
         .select()
         .from(activityLog)
-        .where(and(baseCondition, beforeCondition))
+        .where(and(baseCondition, beforeCondition, options?.assignmentToUserId ? and(
+          eq(activityLog.actorType, "agent"),
+          sql`${activityLog.actorId} <> ''`,
+          sql`${activityLog.details}->'assigneeUserId' = to_jsonb(${options.assignmentToUserId}::text)`,
+          or(
+            eq(activityLog.action, "issue.created"),
+            eq(activityLog.action, "issue.child_created"),
+            and(
+              eq(activityLog.action, "issue.reassigned"),
+              sql`${activityLog.details}->'changed' = 'true'::jsonb`,
+              sql`${activityLog.details} ? 'previousAssigneeUserId'`,
+              sql`${activityLog.details}->'previousAssigneeUserId' is distinct from to_jsonb(${options.assignmentToUserId}::text)`,
+            ),
+            and(
+              eq(activityLog.action, "issue.updated"),
+              sql`jsonb_typeof(${activityLog.details}->'_previous') = 'object'`,
+              sql`(${activityLog.details}->'_previous') ? 'assigneeUserId'`,
+              sql`${activityLog.details}->'_previous'->'assigneeUserId' is distinct from to_jsonb(${options.assignmentToUserId}::text)`,
+            ),
+          ),
+        ) : undefined))
         .orderBy(desc(activityLog.createdAt), desc(activityLog.id))
         .limit(limit);
     },
