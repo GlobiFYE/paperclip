@@ -35,6 +35,28 @@ New workflow versions merged into master then receive runner access without a
 separate SHA allowlist update. Dependabot leaves this first-party reference on
 master.
 
+Runner selection calls `ci-routing.yml@master` on the dedicated
+`paperclip-ci-routing-x64` AWS Fleet. The `paperclip-ci-routing` runner group
+admits only `paperclipai/paperclip/.github/workflows/ci-routing.yml@refs/heads/master`
+and repository ID `1170821064`. GitHub evaluates the canonical repository, author, and sender checks before
+allocating reserved capacity. The validated admission snapshot (`AWS_CI_ROUTING_USER_IDS_SOURCE` and
+`AWS_CI_ROUTING_USER_IDS`) must match `AWS_CI_TRUSTED_USER_IDS`. Refresh it through
+the runner-group configuration helper when the roster changes. Missing, stale,
+or malformed settings keep hosted routing available without evaluating JSON
+in the job's placement expression. Unapproved PRs use hosted metadata routing;
+approved manual canaries on master can use the reserved pool. The routing
+workflow reads GitHub metadata without checking out or executing PR code. Its author, sender, rerun actor,
+repository, head, and merge validation still decide whether tests can use AWS.
+Unapproved test workloads continue to use GitHub-hosted runners.
+
+The routing Fleet has two warm On-Demand runners and a four-runner ceiling.
+Test fleets cannot consume its runner slots. Hosted test queues therefore do
+not block AWS runner selection. A manual dispatch of `ci-routing.yml` on master
+checks placement without launching the test matrix; its non-PR event returns
+the hosted test-runner output. Configure and verify the group and Fleet before
+merging this caller. To roll back, restore the hosted gate and retain the routing
+workflow authorization until assigned jobs finish.
+
 Keep the `.github/**` rule in `.github/CODEOWNERS` and the active master ruleset's
 code-owner review requirement enabled. This covers the caller, the trusted
 workflow, and CODEOWNERS itself. Existing administrator pull-request bypasses
@@ -101,6 +123,20 @@ API responses and MCP transports keep their existing compression behavior.
 ## Storybook
 
 The board UI Storybook keeps stories and Storybook config under `ui/storybook/` so component review files stay out of the app source routes.
+
+Stories are grouped in `ui/storybook/stories/<feature-area>/` and the sidebar follows
+the feature map's sections and feature names. Shared fixtures live in
+`ui/storybook/support/`. Keep each suite's explicit meta `id` and catalog `stableId`
+when changing titles or locations so existing review links remain valid.
+
+Start from the downstream [Storybook feature index](../maps/storybook-map/INDEX.md)
+to find existing stories by capability. Its [contract](../maps/storybook-map/README.md)
+separates production subjects, prototype implementations, simulated data, and
+source-review status. Use `maintain-storybook` to reconcile stories/fixtures with
+the feature map, and `review-storybook` to exercise them with existing tools.
+Run `node scripts/storybook-catalog.mjs` after affected story or review-source
+changes; review drift before updating fingerprints, then regenerate with `--write`.
+The feature map remains an upstream input and needs no Storybook-specific fields.
 
 **Chat & Comments → Human identity** covers other-human names and avatars on
 left-aligned task messages alongside agents; only the viewer’s own messages are blue/right-aligned. Its review guide explains the data flow; the task journey uses representative
@@ -495,10 +531,16 @@ npx paperclipai allowed-hostname dotta-macbook-pro
 
 ## Test Commands
 
-The [feature map](../feature-map/README.md) is an optional reference for user
+The [feature map](../maps/feature-map/README.md) is an optional reference for user
 entry points, targeted tests, manual verification recipes, and coverage gaps.
 Its page inventory is a source snapshot. The documented journeys have separate
 verification steps and do not run automatically from the map.
+
+The sibling [agent access map](../maps/agent-access-map/README.md) describes API
+and agent reachability for the same capabilities. The [map contract](../maps/README.md)
+defines synchronization, permissions and evidence. After map edits, run
+`node scripts/check-maps.mjs` for structural/reference checks; it does not start an
+instance or qualify access as an agent.
 
 Use the cheap local default unless you are specifically working on browser flows:
 
@@ -559,6 +601,41 @@ failure on the template path (root checks, build, copy, start, or publish)
 falls back to the fresh path automatically, so the cache can make a suite
 slower but never fail it or skip it: a migration that cannot apply still fails
 the suite on the fresh path.
+
+#### Reused Runner build in the server build
+
+The server build vendors `packages/paperclip-runner/dist`, so its
+`prepare:runner-vendor` step has to make sure that directory is a current
+build. It used to run the Runner's full `build` every time. Now the Runner's
+`build` brackets itself with `scripts/record-build-inputs.mjs`: `--begin`, its
+first step, forgets the previous stamp and records a digest of the build's
+inputs (every file under `packages/paperclip-runner` except `dist`,
+`dist-browser`, `runner/target`, `node_modules` and dot-directories; every
+file under `packages/paperclip-eval-kernel` except `dist` and `node_modules`;
+every file under the root `patches` directory, which the acpx profile check
+hashes and the provider entrypoint bundler copies into `dist`; and the root
+`package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml` and
+`tsconfig.base.json`). `--finish`, its last step, recomputes the digest and
+writes the stamp
+`packages/paperclip-runner/node_modules/.cache/paperclip-runner-build-inputs.json`
+only if the inputs are still the ones the build began with, together with the
+path and size of every file under `dist`. An edit that lands while the build
+runs leaves no stamp, so the next consumer rebuilds.
+`node server/scripts/prepare-runner-vendor.mjs` reuses the build when the
+stamp is for this platform, every recorded output is still there at its
+recorded size, and the current digest matches. Anything else (no stamp, a
+changed input, a deleted or truncated output, a stamp from another platform)
+runs `pnpm --filter @paperclipai/paperclip-runner build` exactly as before, so
+a standalone `pnpm --filter @paperclipai/server build` on a fresh checkout
+still builds the Runner itself. Inside `pnpm build` the Runner has just been
+built by the same command, and the step skips a 12-16s rebuild. The step
+prints one `paperclip.runner-vendor.timing.v1` line saying which it did.
+
+Set `PAPERCLIP_RUNNER_VENDOR_REBUILD=1` to rebuild regardless of the stamp. A
+stamp is only written after a Runner build that passed every step, and both
+the Runner's first build step and the prepare step remove any existing stamp
+before a rebuild starts, so a build that stops partway never leaves a stamp
+that vouches for it.
 
 ### Task search evaluation
 
@@ -2198,3 +2275,20 @@ Chromium. The test starts its own loopback Vite server and mocks API responses;
 it needs no running Paperclip instance or provider credentials. The same spec lives
 in the default `test:e2e` discovery tree, so the existing Chrome CI shards run it
 on pull requests.
+
+### Workspace feature checks (2026-10-09)
+
+Task files, personal agent state (`AGENT_HOME`), and provider home are distinct. New filesystem tasks without an explicit source use a stable company/task directory. Debug workspace placement through the task workspace API rather than inferring it from organizational project or agent identity.
+
+Focused coverage lives in `task-workspace-binding.test.ts`, `task-workspace-repositories*.test.ts`, `task-workspace-tools.test.ts`, channel integration tests, and adapter-utils checkpoint/native persistence tests. Full handoff still requires the repository typecheck, test, and build commands. Remote transport fixtures establish protocol behavior; they do not qualify production provider throughput.
+
+Channel defaults can be configured in Apps connection settings and per destination. They affect new conversations only. A queued selection or repository request is applied on the next normal admission; configuration changes do not interrupt a live run. See [the architecture](plans/2026-10-09-task-workspaces.md).
+
+### Slack provisioning paths
+
+Self-hosted development continues to use independent Slack app setup. Managed
+Slack installation is a disabled-by-default Cloud feature that also requires the
+companion broker profile and Slack approval. Do not add manager client credentials
+to a local `.env` or an open-source deployment. See
+[Slack setup and Cloud qualification](connections/slack-setup.md) for the gates,
+recovery behavior, and production-component stories.
