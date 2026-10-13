@@ -1,3 +1,11 @@
+import type { VerifiedProviderIdentity } from "./chat-channels/runtime-types.js";
+import { verifySlackCredentials } from "./chat-channels/slack/credentials.js";
+import { verifyDiscordCredentials } from "./chat-channels/discord/credentials.js";
+import { verifyTelegramCredentials } from "./chat-channels/telegram/credentials.js";
+import { verifyGitHubCredentials, REQUIRED_GITHUB_EVENTS, UNAVOIDABLE_GITHUB_EVENTS } from "./chat-channels/github/credentials.js";
+import { verifySpekoCredentials } from "./chat-channels/speko/credentials.js";
+import { verifyTeamsCredentials } from "./chat-channels/microsoft-teams/credentials.js";
+import { createPhotonCredentialChecks } from "./chat-channels/imessage-photon/credentials.js";
 import { slackTestMessageService } from "./connectors/slack/test-message.js";
 import type { SlackSetupOptions } from "./connectors/slack/setup/registration.js";
 import { isProvisionedSlackSetup } from "@paperclipai/shared";
@@ -88,7 +96,7 @@ import { chatCredentialMutationLease, CREDENTIAL_MUTATION_LEASE_TTL_MS, type Cre
 import type { AgentAvatarRequest } from "./agent-avatars.js";
 import { slackChatRegistrationService, slackRegistrationProjection } from "./chat-slack-registration.js";
 import { chatSlackRegistrations } from "@paperclipai/db";
-import { SLACK_CHAT_BOT_SCOPES } from "@paperclipai/shared";
+
 import { canActorReadIssuePrivacy, canPublishIssueToChatAudience } from "./authorization.js";
 import { withSlackBoardLease } from "./slack-board-lease.js";
 import { mirrorSlackBoardComment, slackBoardReplyBindings } from "./slack-board-messages.js";
@@ -135,7 +143,7 @@ import { PhotonState } from "./photon/state.js";
 import { nativePhotonInteraction, publishPhotonPrompt, type PhotonPromptReceipt, type PhotonInteractionBinding } from "./photon/interactions.js";
 
 
-import { PhotonCloudClient, PhotonError, photonSharedIdentity, photonSharedScope } from "./photon/cloud.js";
+import { PhotonError, photonSharedIdentity, photonSharedScope } from "./photon/cloud.js";
 import { PhotonChatAdapter, photonReplyReference } from "./photon/adapter.js";
 import { photonChannelConfigurationSchema } from "@paperclipai/shared";
 
@@ -328,7 +336,6 @@ import { discoverDedicatedGitHubAppInstallation, getSlackBotChannel, listGitHubI
 import {
   discordMarkdownRequiresAttachment,
   listDiscordBotChannels,
-  verifyDiscordBot,
 } from "./chat-discord.js";
 import {
   renderPublicationTransportText,
@@ -559,25 +566,6 @@ const REQUIRED_CREDENTIALS: Record<
   telegram: ["botToken"],
 };
 
-const REQUIRED_SLACK_BOT_SCOPES = SLACK_CHAT_BOT_SCOPES;
-
-const REQUIRED_GITHUB_EVENTS = [
-  "issue_comment",
-  "pull_request_review_comment",
-] as const;
-
-const REQUIRED_GITHUB_PERMISSIONS = {
-  issues: "write",
-  metadata: "read",
-  pull_requests: "write",
-} as const;
-
-const UNAVOIDABLE_GITHUB_EVENTS = [
-  "github_app_authorization",
-  "installation",
-  "installation_repositories",
-] as const;
-
 const SUPPORTED_GITHUB_WEBHOOK_EVENTS = new Set<string>([
   "issues",
   "pull_request",
@@ -639,15 +627,6 @@ const INGRESS_REORDER_WINDOW_MS: Partial<Record<ChatProvider, number>> = {
   telegram: 750,
 };
 type ResourceRow = typeof chatEndpointResources.$inferSelect;
-type VerifiedProviderIdentity = {
-  githubOwnerType?: "personal" | "organization";
-  githubOwnerLogin?: string;
-  providerAccountId?: string | null;
-  providerAccountLabel?: string | null;
-  botExternalId?: string | null;
-  botUsername?: string | null;
-  botLabel?: string | null;
-};
 
 function runtimeGeneration(setup: ChatEndpointSetupState): number {
   const value = Number((setup as InternalSetupState).runtimeGeneration ?? 0);
@@ -1435,6 +1414,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   >();
   const persistence = createChatSdkStatePersistence(db);
   const fetchImpl = options.fetch ?? globalThis.fetch;
+  const { inspectPhotonCredentials, verifyPhotonCredentials } = createPhotonCredentialChecks(fetchImpl);
   const configuredPublicBaseUrl = absoluteBaseUrl(options.publicBaseUrl);
   const configuredWebhookPublicBaseUrl = parseChatWebhookPublicBaseUrl(options.webhookPublicBaseUrl);
   // A warm Cloud instance is constructed before it receives its signed claim.
@@ -2507,229 +2487,13 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     provider: ChatProvider,
     credentials: Record<string, string>,
   ): Promise<VerifiedProviderIdentity> {
-    if (provider === "imessage-photon") {
-      const inspection = await inspectPhotonCredentials(credentials.projectId, credentials.projectSecret);
-      if (inspection.allocation !== (credentials.allocation ?? "dedicated")) throw unprocessable("Photon allocation changed; inspect the project again");
-      if (inspection.allocation === "shared") {
-        if (!inspection.eligible) throw unprocessable("Photon shared project is unavailable");
-        return { providerAccountId: inspection.projectId, providerAccountLabel: inspection.projectName, botExternalId: photonSharedIdentity(inspection.projectId), botUsername: null, botLabel: `${inspection.projectName} (DM only)` };
-      }
-      const line = inspection.lines.find((candidate) => candidate.lineId === credentials.lineId && candidate.eligible);
-      if (!line || !inspection.eligible) throw unprocessable("Select an eligible dedicated Photon line");
-      return { providerAccountId: inspection.projectId, providerAccountLabel: inspection.projectName, botExternalId: line.phoneNumber, botUsername: line.phoneNumber, botLabel: line.phoneNumber };
-    }
-    if (provider === "slack") {
-      const response = await fetchImpl("https://slack.com/api/auth.test", {
-        method: "POST",
-        signal: AbortSignal.timeout(PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS),
-        headers: {
-          authorization: `Bearer ${credentials.botToken}`,
-          "content-type": "application/x-www-form-urlencoded",
-        },
-        body: "",
-      });
-      const result = (await response.json()) as {
-        ok?: boolean;
-        error?: string;
-        team_id?: string;
-        team?: string;
-        user_id?: string;
-        user?: string;
-      };
-      if (!response.ok || !result.ok)
-        throw unprocessable(
-          `Slack rejected the bot token: ${result.error ?? response.status}`,
-        );
-      const grantedScopes = new Set(
-        (response.headers.get("x-oauth-scopes") ?? "")
-          .split(",")
-          .map((scope) => scope.trim())
-          .filter(Boolean),
-      );
-      const missingScopes = REQUIRED_SLACK_BOT_SCOPES.filter(
-        (scope) => !grantedScopes.has(scope),
-      );
-      if (missingScopes.length > 0) {
-        throw unprocessable(
-          `Slack app is missing required bot scopes: ${missingScopes.join(", ")}`,
-          {
-            code: "chat_provider_permissions_missing",
-            provider: "slack",
-            missingScopes,
-          },
-        );
-      }
-      return {
-        providerAccountId: result.team_id,
-        providerAccountLabel: result.team,
-        botExternalId: result.user_id,
-        botUsername: result.user,
-        botLabel: result.user,
-      };
-    }
-    if (provider === "discord") {
-      const identity = await verifyDiscordBot({
-        applicationId: credentials.applicationId,
-        botToken: credentials.botToken,
-        fetch: fetchImpl,
-        guildId: credentials.guildId,
-      }).catch((error) => {
-        throw unprocessable(redactError(error), {
-          code: "chat_provider_permissions_missing",
-          provider: "discord",
-        });
-      });
-      return identity;
-    }
-    if (provider === "telegram") {
-      const response = await fetchImpl(
-        `https://api.telegram.org/bot${encodeURIComponent(credentials.botToken)}/getMe`,
-        { signal: AbortSignal.timeout(PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS) },
-      );
-      const result = (await response.json()) as {
-        ok?: boolean;
-        description?: string;
-        result?: { id?: number; username?: string; first_name?: string };
-      };
-      if (!response.ok || !result.ok)
-        throw unprocessable(
-          `Telegram rejected the bot token: ${result.description ?? response.status}`,
-        );
-      return {
-        providerAccountId: String(result.result?.id ?? ""),
-        botExternalId: String(result.result?.id ?? ""),
-        botUsername: result.result?.username,
-        botLabel: result.result?.first_name,
-      };
-    }
-    if (provider === "github") {
-      const token = githubAppJwt(credentials.appId, credentials.privateKey);
-      const response = await fetchImpl("https://api.github.com/app", {
-        signal: AbortSignal.timeout(PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS),
-        headers: {
-          accept: "application/vnd.github+json",
-          authorization: `Bearer ${token}`,
-          "x-github-api-version": "2022-11-28",
-        },
-      });
-      const result = (await response.json()) as {
-        id?: number;
-        login?: string;
-        slug?: string;
-        name?: string;
-        message?: string;
-        owner?: { login?: string; type?: string };
-        permissions?: Record<string, string>;
-        events?: string[];
-      };
-      if (!response.ok)
-        throw unprocessable(
-          `GitHub rejected the app credentials: ${result.message ?? response.status}`,
-        );
-      const missingPermissions = Object.entries(REQUIRED_GITHUB_PERMISSIONS)
-        .filter(
-          ([permission, access]) => result.permissions?.[permission] !== access,
-        )
-        .map(([permission]) => permission);
-      const excessivePermissions = Object.keys(result.permissions ?? {}).filter(
-        (permission) => !(permission in REQUIRED_GITHUB_PERMISSIONS) && !((permission === "contents" && result.permissions?.contents === "read") || (permission === "checks" && result.permissions?.checks === "write")),
-      );
-      const configuredEvents = new Set(result.events ?? []);
-      const missingEvents = REQUIRED_GITHUB_EVENTS.filter(
-        (event) => !configuredEvents.has(event),
-      );
-      const allowedEvents = new Set<string>([
-        ...REQUIRED_GITHUB_EVENTS,
-        ...UNAVOIDABLE_GITHUB_EVENTS,
-        "pull_request",
-        "pull_request_review",
-        "issues",
-      ]);
-      const excessiveEvents = [...configuredEvents].filter(
-        (event) => !allowedEvents.has(event),
-      );
-      if (
-        missingPermissions.length > 0 ||
-        excessivePermissions.length > 0 ||
-        missingEvents.length > 0 ||
-        excessiveEvents.length > 0
-      ) {
-        throw unprocessable(
-          [
-            missingPermissions.length > 0
-              ? `GitHub App needs the documented minimum access for: ${missingPermissions.join(", ")}`
-              : null,
-            excessivePermissions.length > 0
-              ? `GitHub App has broader permissions than Paperclip needs: ${excessivePermissions.join(", ")}`
-              : null,
-            missingEvents.length > 0
-              ? `GitHub App must subscribe to: ${missingEvents.join(", ")}`
-              : null,
-            excessiveEvents.length > 0
-              ? `GitHub App subscribes to broader events than Paperclip needs: ${excessiveEvents.join(", ")}`
-              : null,
-          ]
-            .filter(Boolean)
-            .join(". "),
-          {
-            code: "chat_provider_permissions_missing",
-            provider: "github",
-            missingPermissions,
-            excessivePermissions,
-            missingEvents,
-            excessiveEvents,
-          },
-        );
-      }
-      return {
-        githubOwnerType: result.owner?.type === "Organization" ? "organization" : result.owner?.type === "User" ? "personal" : undefined,
-        githubOwnerLogin: result.owner?.login,
-        providerAccountId: result.owner?.login,
-        providerAccountLabel: result.owner?.login ?? result.name,
-        // The App registration id is the stable, immutable endpoint identity.
-        // The adapter discovers the separate bot-user id while initializing.
-        botExternalId:
-          typeof result.id === "number" && Number.isFinite(result.id)
-            ? String(result.id)
-            : undefined,
-        botUsername: result.slug ? `${result.slug}[bot]` : undefined,
-        botLabel: result.name ?? result.slug,
-      };
-    }
-    if (provider === "speko") {
-      if (!/^whsec_[A-Za-z0-9+/]{43}=$/.test(credentials.signingSecret ?? "")) throw unprocessable("Speko requires a Standard Webhooks signing secret");
-      const identity = await createSpekoProvider(credentials.apiKey, fetchImpl).verifyAgent(credentials.agentId);
-      return { providerAccountId: identity.organizationId, providerAccountLabel: "Speko workspace", botExternalId: identity.id, botLabel: identity.name };
-    }
-    const teamsCredentials = normalizeMicrosoftTeamsCredentialIds(credentials);
-    const body = new URLSearchParams({
-      client_id: teamsCredentials.clientId,
-      client_secret: teamsCredentials.clientSecret,
-      grant_type: "client_credentials",
-      scope: "https://api.botframework.com/.default",
-    });
-    const response = await fetchImpl(
-      `https://login.microsoftonline.com/${encodeURIComponent(teamsCredentials.tenantId)}/oauth2/v2.0/token`,
-      {
-        method: "POST",
-        signal: AbortSignal.timeout(PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS),
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body,
-      },
-    );
-    const result = (await response.json()) as {
-      access_token?: string;
-      error_description?: string;
-    };
-    if (!response.ok || !result.access_token)
-      throw unprocessable(
-        `Microsoft rejected the app credentials: ${result.error_description ?? response.status}`,
-      );
-    return {
-      providerAccountId: teamsCredentials.tenantId,
-      providerAccountLabel: teamsCredentials.tenantId,
-      botExternalId: teamsCredentials.clientId,
-    };
+    if (provider === "imessage-photon") return verifyPhotonCredentials(credentials);
+    if (provider === "slack") return verifySlackCredentials(credentials, fetchImpl, PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS);
+    if (provider === "discord") return verifyDiscordCredentials(credentials, fetchImpl, redactError);
+    if (provider === "telegram") return verifyTelegramCredentials(credentials, fetchImpl, PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS);
+    if (provider === "github") return verifyGitHubCredentials(credentials, fetchImpl, PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS);
+    if (provider === "speko") return verifySpekoCredentials(credentials, fetchImpl);
+    return verifyTeamsCredentials(credentials, fetchImpl, PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS);
   }
 
   function nativeBotIdentityKey(
@@ -4008,27 +3772,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       ownedElsewhere,
       failed,
     };
-  }
-
-  async function inspectPhotonCredentials(projectId: string, projectSecret: string) {
-    try {
-      return await new PhotonCloudClient(fetchImpl).inspect(projectId, projectSecret);
-    } catch (error) {
-      if (!(error instanceof PhotonError)) throw error;
-      // Only credentials/allocation failures mean the setup input needs repair.
-      // Preserve safe provider messages while distinguishing outages and bad
-      // upstream responses from validation errors. Never return response bodies.
-      const status = error.code === "credentials" || error.code === "line_unavailable"
-        ? 422
-        : error.code === "quota"
-          ? 429
-          : error.code === "network"
-            ? 503
-            : 502;
-      throw new HttpError(status, error.message, {
-        code: `photon_${error.code}`,
-      });
-    }
   }
 
   async function inspectPhoton(

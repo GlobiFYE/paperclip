@@ -50,3 +50,13 @@ export type InternalSetupState = ChatEndpointSetupState & {
     Record<SlackCallbackSurface, SlackCallbackObservation>
   >;
 };
+
+export type VerifiedProviderIdentity = {
+  githubOwnerType?: "personal" | "organization";
+  githubOwnerLogin?: string;
+  providerAccountId?: string | null;
+  providerAccountLabel?: string | null;
+  botExternalId?: string | null;
+  botUsername?: string | null;
+  botLabel?: string | null;
+};
