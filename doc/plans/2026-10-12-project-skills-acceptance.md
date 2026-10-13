@@ -437,3 +437,11 @@ remain independent. The picker warned that another connection could not load;
 the selected Acceptance GitHub connection successfully listed and attached the
 repository. This is an additional real attachment check, not another model run.
 The screenshot is retained in the inspectable evidence gallery.
+
+A later master merge introduced 0340_open_warlock. All unmerged feature schema
+changes were regenerated together as 0341_abnormal_bucky through pnpm db:generate,
+with the same preview replay safeguards and five newest snapshots. Agent setup
+now pins only a GitHub connection/grant already authorized in the persisted active
+run identity. Responsibility remains attributable but does not authorize searching
+the person's other connections. Missing run selection and legacy agent sources
+require an explicit human connection repair before unattended reads.

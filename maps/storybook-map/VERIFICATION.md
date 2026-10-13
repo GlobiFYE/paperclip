@@ -1,18 +1,79 @@
-# Verification routes for Storybook gaps
+# Verification routes for Storybook capabilities
 
-Original classification reviewed 2026-10-13 against source commit `5e8e992df2b3d71f82091b7bbf29fd482854d9f5` (merged #16154, including #16153 task notifications).
+Updated 2026-10-13. Production source is reconciled with master `252d9b5077`; step-3 story and fixture changes are recorded in the catalog fingerprints.
 
-The catalog has 227 authored suites, 2,252 authored story IDs and 175 feature-map capabilities. Of those capabilities, 59 have no associated example suite: **48 need authored UI examples**, **8 need CLI/operator verification**, and **3 primarily need real browser verification**. Generated Overview pages and guides do not count as examples.
+The catalog has 262 authored suites, 2,485 authored story IDs and 175 feature-map capabilities. The 37 new production-subject suites add 257 scenarios and associate all 49 UI capabilities identified in step 2. **11 capabilities remain without authored examples: 8 CLI/operator operations and 3 real-browser concerns.** Generated Overview pages and guides do not count as examples. Existing suites and story IDs are retained. The four retained-file recovery states are preserved alongside the new examples from master `c8efdbfba43`; this inventory update does not claim an additional production verification run.
 
-This is step 2 of the Storybook reconciliation: choose and record the verification surface. It is a source classification of the 59 unassociated capabilities, not a full parity review of all suites or a live verification pass. All execution in this inventory is **not run**; test links identify existing starting points, not new passing evidence or exhaustive coverage. The 116 capabilities with example links still need production tests for their non-visual contracts.
+These associations provide initial isolated UI coverage, not complete parity with every feature recipe. The original scenario inventory below stays as a maintenance checklist; an association does not mark every listed variant complete. In particular, import examples cover preview, organization archival examples cover the list/restoration side, and custom-image examples cover metadata/configuration rather than a real setup terminal. Existing unreviewed suites remain unreviewed.
 
-A story can establish component rendering, mock contract and asserted interaction. It cannot establish real authentication, permissions, persisted changes, run continuation, provider delivery or installation. Never classify a mixed capability as CLI/API-only merely because its backend needs those checks.
+A story can establish component rendering, fixture shape and asserted interaction. It cannot establish real authentication, permissions, persisted changes, run continuation, provider delivery or installation. **The production journeys listed below have not been run as part of this Storybook pass.** Existing test links identify starting points, not exhaustive or passing production acceptance evidence.
 
-## UI examples to add in step 3
+## New example suites
 
-These 48 capabilities need shipped-component examples with realistic mocked boundaries. Cover loading, empty, failure, permission and successful states where meaningful; do not invent unsupported controls. Display-first rows still retain the listed production checks. Story creation and full existing-suite review are subsequent work.
+All subjects use shipped components. APIs, socket messages, callbacks and storage seeds are simulated. Review results and source limitations are recorded in the catalog; the focused browser command is:
 
-| Capability | Missing isolated UI evidence | Separate production evidence | Source and existing test starting points |
+```sh
+pnpm build-storybook
+node scripts/serve-storybook-static.mjs --port 6136
+# In a second terminal:
+pnpm exec playwright test --config tests/storybook-visual/feature-gap-stories.config.ts
+```
+
+The static server must be an owned process serving this checkout. Override the browser target with `PAPERCLIP_GAP_STORYBOOK_URL` when using another owned port. The browser suite asserts each non-interactive story's expected content, skeleton or documented fallback and waits for declared play assertions; it also checks reset when switching token and uncertain-draft stories in one browser. This is not the pinned Linux visual-baseline comparison.
+
+| Suite | Capability associations | Scenarios / play functions |
+| --- | --- | --- |
+| [Getting started and access/Login, invitations, and access/CLI authorization](../../ui/storybook/stories/access/cli-authorization.stories.tsx) | `access/cli-auth` | 9 / 5 |
+| [Getting started and access/Login, invitations, and access/Organization membership](../../ui/storybook/stories/access/membership.stories.tsx) | `access/membership` | 7 / 2 |
+| [Getting started and access/Login, invitations, and access/Sign in](../../ui/storybook/stories/access/sign-in.stories.tsx) | `access/login` | 6 / 3 |
+| [Oversight and operation/Dashboards and audit trails/Execution history](../../ui/storybook/stories/activity/run-audit.stories.tsx) | `activity/runs` | 6 / 4 |
+| [Tasks and conversations/Agent conversations and project handoff/Conference Room](../../ui/storybook/stories/agent-chat/conference-room.stories.tsx) | `agent-chat/conference-room` | 5 / 4 |
+| [Apps, channels, and extensions/App access and action permissions/Review newly discovered actions](../../ui/storybook/stories/app-permissions/catalog-review.stories.tsx) | `app-permissions/catalog-change` | 7 / 2 |
+| [Oversight and operation/Costs and budgets/Resolve a budget incident](../../ui/storybook/stories/budgets-costs/budget-resolution.stories.tsx) | `budgets-costs/resolution` | 10 / 6 |
+| [Automation and structured work/Cases/Browse and hierarchy](../../ui/storybook/stories/cases/case-browse.stories.tsx) | `cases/browse` | 5 / 1 |
+| [Automation and structured work/Cases/Structure, history and task links](../../ui/storybook/stories/cases/case-detail.stories.tsx) | `cases/structure`, `cases/history`, `cases/task-links` | 8 / 4 |
+| [Apps, channels, and extensions/External chat and email/Task-linked files](../../ui/storybook/stories/chat-channels/channel-attachments.stories.tsx) | `chat-channels/attachments` | 5 / 2 |
+| [Getting started and access/Companies and portability/Import preview](../../ui/storybook/stories/companies/company-import.stories.tsx) | `companies/portability` | 6 / 5 |
+| [Getting started and access/Companies and portability/Selection and archived organizations](../../ui/storybook/stories/companies/company-selection.stories.tsx) | `companies/selection`, `companies/archive` | 7 / 2 |
+| [Tasks and conversations/Documents, attachments, and work products/Document revisions](../../ui/storybook/stories/documents-artifacts/document-revisions.stories.tsx) | `documents-artifacts/documents` | 9 / 4 |
+| [Projects and execution/Execution environments/Custom images](../../ui/storybook/stories/execution-environments/custom-images.stories.tsx) | `execution-environments/images` | 6 / 3 |
+| [Projects and execution/Execution environments/Configuration, capabilities, and probes](../../ui/storybook/stories/execution-environments/environment-states.stories.tsx) | `execution-environments/configuration`, `execution-environments/capabilities`, `execution-environments/probe` | 10 / 4 |
+| [Apps, channels, and extensions/Tool gateways and access profiles/Named gateway tokens](../../ui/storybook/stories/gateways-profiles/gateway-tokens.stories.tsx) | `gateways-profiles/tokens` | 8 / 5 |
+| [Projects and execution/Goals and work alignment/Aligned work and navigation](../../ui/storybook/stories/goals/goal-alignment.stories.tsx) | `goals/alignment`, `goals/navigation` | 6 / 2 |
+| [Tasks and conversations/Inbox, decisions, and search/Personal task views](../../ui/storybook/stories/inbox-search/inbox-views.stories.tsx) | `inbox-search/views` | 8 / 0 |
+| [Tasks and conversations/Inbox, decisions, and search/Personal task notifications](../../ui/storybook/stories/inbox-search/personal-task-toasts.stories.tsx) | `inbox-search/toasts` | 4 / 4 |
+| [Oversight and operation/Instance operations/Backup retention](../../ui/storybook/stories/instance-operations/backup-retention.stories.tsx) | `instance-operations/backup`, `instance-operations/configuration` | 6 / 6 |
+| [Oversight and operation/Navigation, profile, and announcements/Sidebar preferences](../../ui/storybook/stories/navigation-preferences/sidebar-preferences.stories.tsx) | `navigation-preferences/preferences` | 5 / 1 |
+| [Getting started and access/Onboarding and first work/Resume a saved draft](../../ui/storybook/stories/onboarding/resume-draft.stories.tsx) | `onboarding/resume` | 4 / 3 |
+| [Automation and structured work/Pipelines, review queues, and learnings/Learnings](../../ui/storybook/stories/pipelines/learnings.stories.tsx) | `pipelines/learnings` | 5 / 1 |
+| [Automation and structured work/Pipelines, review queues, and learnings/Items](../../ui/storybook/stories/pipelines/pipeline-board.stories.tsx) | `pipelines/items` | 5 / 1 |
+| [Automation and structured work/Pipelines, review queues, and learnings/Review queue](../../ui/storybook/stories/pipelines/review-queue.stories.tsx) | `pipelines/review` | 7 / 3 |
+| [Automation and structured work/Pipelines, review queues, and learnings/Stage settings](../../ui/storybook/stories/pipelines/stage-settings.stories.tsx) | `pipelines/stages` | 5 / 2 |
+| [Apps, channels, and extensions/Plugins/Configuration](../../ui/storybook/stories/plugins/plugin-configuration.stories.tsx) | `plugins/configuration` | 6 / 3 |
+| [Apps, channels, and extensions/Plugins/Contributed routes](../../ui/storybook/stories/plugins/plugin-contributions.stories.tsx) | `plugins/contributions` | 4 / 1 |
+| [Apps, channels, and extensions/Plugins/Installation and lifecycle](../../ui/storybook/stories/plugins/plugin-management.stories.tsx) | `plugins/installation`, `plugins/lifecycle` | 10 / 5 |
+| [Projects and execution/Recovery/Exhaustion and user decisions](../../ui/storybook/stories/recovery/recovery-gap-states.stories.tsx) | `recovery/exhaustion`, `recovery/unknown-outcome` | 7 / 7 |
+| [Automation and structured work/Routines, schedules, and triggers/Run now](../../ui/storybook/stories/routines/run-now.stories.tsx) | `routines/run-now` | 8 / 4 |
+| [Apps, channels, and extensions/Secrets and proposals/Proposal review](../../ui/storybook/stories/secrets/proposal-review.stories.tsx) | `secrets/proposals` | 7 / 3 |
+| [Agents and reusable capabilities/Skills and Skill Studio/Test runs](../../ui/storybook/stories/skills/skill-test-runs.stories.tsx) | `skills/testing` | 9 / 1 |
+| [Automation and structured work/Status cards/Authoring, updates and archive](../../ui/storybook/stories/status-cards/status-card-states.stories.tsx) | `status-cards/authoring`, `status-cards/generation`, `status-cards/inspection`, `status-cards/archive` | 17 / 10 |
+| [Tasks and conversations/Steering and queued messages/Draft recovery](../../ui/storybook/stories/steering/composer-draft-recovery.stories.tsx) | `steering/drafts` | 6 / 3 |
+| [Tasks and conversations/Steering and queued messages/Accepted response delivery](../../ui/storybook/stories/steering/durable-response-queue.stories.tsx) | `steering/approval-queue`, `recovery/user-continuation` | 7 / 6 |
+| [Projects and execution/Workspaces, services, and files/Close readiness](../../ui/storybook/stories/workspaces/workspace-close.stories.tsx) | `workspaces/closure` | 7 / 7 |
+
+## Production UI limitations exposed
+
+- Plugin contribution discovery errors remain on “Loading…”. The named DiscoveryFailure story exposes this shipped behavior; it does not claim a useful failure state.
+- The document section and execution-environment list lack dedicated read-error/loading presentation. Cases and Inbox also fall back to empty views after list errors. Their stories retain the real fallback behavior. Custom-image metadata has its own loading and error states.
+- GoalDetail displays aligned projects and children. The current UI has no project goal-assignment control. The stories do not invent one.
+- Accepted queued responses disappear optimistically while delivery is pending; the shipped component has no separate visible progress indicator. The Delivering story asserts this presentation.
+- Conference Room maps a denied stream to its generic assistant-unavailable message. Real permission enforcement belongs to the separate route verification.
+
+## UI scenarios and separate production contracts
+
+These 49 capabilities now have initial shipped-component examples. Keep the requested scenarios below as the target for continued maintenance. Loading, empty, failure, permission and successful states are appropriate only when the production subject supports them. The separate production contracts remain required.
+
+| Capability | UI scenarios to maintain | Separate production evidence | Source and existing test starting points |
 | --- | --- | --- | --- |
 | [`onboarding/resume`](../feature-map/onboarding.md) | Restored incomplete wizard; invalid or unauthorized saved company; temporarily withheld draft; account switch; storage failure. | Reload company-prefixed onboarding without duplicating company; restore only authorized account/company draft and retain input after recoverable loading failure. | Source: [OnboardingWizard.tsx](../../ui/src/components/OnboardingWizard.tsx), [onboarding-state.ts](../../ui/src/lib/onboarding-state.ts). Tests: [OnboardingWizard.test.tsx](../../ui/src/components/OnboardingWizard.test.tsx), [onboarding-state.test.ts](../../ui/src/lib/onboarding-state.test.ts), [onboarding.spec.ts](../../tests/e2e/onboarding.spec.ts) |
 | [`access/login`](../feature-map/access.md) | Sign-in form, pending and invalid credentials, deployment-mode claim gate, expired claim. | Authenticate and reload company deep link; sign out and confirm session enforcement; reject invalid bootstrap claim. | Source: [Auth.tsx](../../ui/src/pages/Auth.tsx), [BoardClaim.tsx](../../ui/src/pages/BoardClaim.tsx), [board-claim.ts](../../server/src/board-claim.ts). Tests: [Auth.test.tsx](../../ui/src/pages/Auth.test.tsx), [auth-session-route.test.ts](../../server/src/__tests__/auth-session-route.test.ts), [board-claim.test.ts](../../server/src/__tests__/board-claim.test.ts) |
@@ -46,6 +107,7 @@ These 48 capabilities need shipped-component examples with realistic mocked boun
 | [`plugins/configuration`](../feature-map/plugins.md) | Mount PluginSettings valid/invalid schema inputs, saved configuration, pending/failure and unavailable plugin. | GET/POST /plugins/{id}/config and POST config/test must preserve validation/company scope and deliver saved config to real plugin worker/startup. | Source: [PluginSettings.tsx](../../ui/src/pages/PluginSettings.tsx), [plugins.ts](../../server/src/routes/plugins.ts), [plugin-config-validator.ts](../../server/src/services/plugin-config-validator.ts). Tests: [PluginSettings.test.tsx](../../ui/src/pages/PluginSettings.test.tsx), [plugin-config-startup-delivery.test.ts](../../server/src/__tests__/plugin-config-startup-delivery.test.ts), [plugin-routes-authz.test.ts](../../server/src/__tests__/plugin-routes-authz.test.ts) |
 | [`plugins/contributions`](../feature-map/plugins.md) | Mount PluginPage and CompanySettingsPluginPage contributed routes/tabs, loading, missing/unavailable plugin and action failures with a known fixture plugin. | Serve real static plugin UI; enforce bridge data/action host capabilities and company boundaries; exercise a harmless action and cold deep link. | Source: [PluginPage.tsx](../../ui/src/pages/PluginPage.tsx), [CompanySettingsPluginPage.tsx](../../ui/src/pages/CompanySettingsPluginPage.tsx), [plugins.ts](../../server/src/routes/plugins.ts), [plugin-ui-static.ts](../../server/src/routes/plugin-ui-static.ts). Tests: [PluginPage.test.tsx](../../ui/src/pages/PluginPage.test.tsx), [CompanySettingsPluginPage.test.tsx](../../ui/src/pages/CompanySettingsPluginPage.test.tsx), [plugin-ui-static.test.ts](../../server/src/__tests__/plugin-ui-static.test.ts), [plugin-tenant-isolation.test.ts](../../server/src/__tests__/plugin-tenant-isolation.test.ts) |
 | [`plugins/lifecycle`](../feature-map/plugins.md) | Mount PluginManager active/disabled/uninstall/upgrade pending and failures; distinguish operator controls from developer watcher reload. | POST enable/disable and DELETE /plugins/{id} must stop worker/tool/managed-resource activity and clean owned resources; verify disposable restart/uninstall and developer watcher separately. | Source: [PluginManager.tsx](../../ui/src/pages/PluginManager.tsx), [plugins.ts](../../server/src/routes/plugins.ts), [plugin-lifecycle.ts](../../server/src/services/plugin-lifecycle.ts), [plugin-dev-watcher.ts](../../server/src/services/plugin-dev-watcher.ts). Tests: [plugin-lifecycle-restart.test.ts](../../server/src/__tests__/plugin-lifecycle-restart.test.ts), [plugin-routes-authz.test.ts](../../server/src/__tests__/plugin-routes-authz.test.ts), [plugin-dev-watcher.test.ts](../../server/src/__tests__/plugin-dev-watcher.test.ts) |
+| [`routines/run-now`](../feature-map/routines.md) | Mount RoutineRunVariablesDialog through actual RoutineDetail with required/default inputs, project/workspace overrides, pending, blocked and failed submission. RunButton-only no-op examples do not supply/run inputs. | POST /routines/{id}/run must validate variables, create one attributed execution/task and obey pause/access/budget gates; inspect actual task outcome separately. | Source: [RoutineRunVariablesDialog.tsx](../../ui/src/components/RoutineRunVariablesDialog.tsx), [RoutineDetail.tsx](../../ui/src/pages/RoutineDetail.tsx), [routines.ts](../../server/src/routes/routines.ts). Tests: [RoutineRunVariablesDialog.test.tsx](../../ui/src/components/RoutineRunVariablesDialog.test.tsx), [routines-service.test.ts](../../server/src/__tests__/routines-service.test.ts), [routines-e2e.test.ts](../../server/src/__tests__/routines-e2e.test.ts) |
 | [`pipelines/stages`](../feature-map/pipelines.md) | Mount PipelineSettings ordered stages, automation assignees/env, invalid transitions, unsaved state, saving and failed save. | POST/PATCH stages and PUT /pipelines/{id}/transitions must persist valid order/configuration, enforce ownership and reject invalid transitions; actual automation execution remains separate. | Source: [PipelineSettings.tsx](../../ui/src/pages/PipelineSettings.tsx), [pipelines.ts](../../server/src/routes/pipelines.ts). Tests: [PipelineSettings.test.ts](../../ui/src/pages/PipelineSettings.test.ts), [pipelines-service.test.ts](../../server/src/__tests__/pipelines-service.test.ts), [pipelines-routes.test.ts](../../server/src/__tests__/pipelines-routes.test.ts) |
 | [`pipelines/items`](../feature-map/pipelines.md) | Mount Pipelines/PipelineItemDetailView board grouping, item creation/details, stage/health/work references, empty/loading and failed transition. | GET/POST /pipelines/{id}/cases and POST /cases/{id}/transition must maintain company scope, valid stage changes and linked work; fixture stage state does not prove automation. | Source: [Pipelines.tsx](../../ui/src/pages/Pipelines.tsx), [PipelineWorkReferences.tsx](../../ui/src/components/PipelineWorkReferences.tsx), [pipelines.ts](../../server/src/routes/pipelines.ts). Tests: [Pipelines.test.tsx](../../ui/src/pages/Pipelines.test.tsx), [pipelines-service.test.ts](../../server/src/__tests__/pipelines-service.test.ts), [pipelines-routes.test.ts](../../server/src/__tests__/pipelines-routes.test.ts), [pipelines-tutorial-flow.spec.ts](../../tests/e2e/pipelines-tutorial-flow.spec.ts) |
 | [`pipelines/review`](../feature-map/pipelines.md) | Mount ReviewQueue and item review pending output/revision, accept/reject/request-changes, bulk selection, stale/conflicting submission and errors. | POST /cases/{id}/review and /companies/{id}/review-cases/bulk must authorize reviewer, persist correct outcome/transition and reject stale or invalid input. | Source: [Pipelines.tsx](../../ui/src/pages/Pipelines.tsx), [pipelines.ts](../../server/src/routes/pipelines.ts). Tests: [Pipelines.test.tsx](../../ui/src/pages/Pipelines.test.tsx), [pipelines-routes.test.ts](../../server/src/__tests__/pipelines-routes.test.ts), [pipelines-service.test.ts](../../server/src/__tests__/pipelines-service.test.ts), [pipelines-tutorial-flow.spec.ts](../../tests/e2e/pipelines-tutorial-flow.spec.ts) |
@@ -90,14 +152,14 @@ These three capabilities principally require the real browser, router or measure
 
 ## Association revisit and retained gaps
 
-The original baseline found no further justified associations among its 60 gaps. Project-skills reconciliation adds the association described below. Existing lookalikes remain unlinked for concrete reasons:
+No further justified associations were found in this revisit of the 60 gaps. Existing lookalikes remain unlinked for concrete reasons:
 
 - `inbox-search/toasts`: `DismissUndoToast` is a dismissal receipt; `StopWithoutToasts` is local visible-task suppression. Neither demonstrates persisted personal participation/mention eligibility. The upstream notification capability is newly mapped by #16153, not an overlooked notification suite.
 - `gateways-profiles/tokens`: assistant OAuth revocation is a different credential. Existing Gateway-tab token fixtures omit current fields such as `allowedActions`; inspect and repair their drift before advertising token coverage.
 - `app-permissions/catalog-change`: automatically allowing new actions with an empty quarantine does not demonstrate review/quarantine.
 - `documents-artifacts/documents`: the annotation edit mock increments a revision while returning unchanged body; it does not demonstrate saved edits or restoration.
 - `steering/drafts`: mounting after clearing and seeding storage does not demonstrate draft recovery across task switching or reload.
-- `budgets-costs/resolution`: supplied dialogs/cards and no-op callbacks are useful presentation references, but do not yet provide the action/result scenarios for these capability links.
+- `routines/run-now` and `budgets-costs/resolution`: supplied dialogs/cards and no-op callbacks are useful presentation references, but do not yet provide the action/result scenarios for these capability links.
 
 These are retained examples and explicit limits, not reasons to delete suites. The prior association corrections remain intact. No suite classifications are promoted by this inventory.
 
@@ -108,16 +170,3 @@ This downstream record is maintained with [maintain-storybook](../../.agents/ski
 Use the [feature recipes](../feature-map/README.md) and [agent access companions](../agent-access-map/README.md) for authoritative journeys, actor restrictions and allowed/denied assertions. This record does not create a new API schema, alter access policy or redefine those maps. Record executed evidence separately in [REVIEW.md](REVIEW.md).
 
 For this pass, regenerate the downstream feature index for `inbox-search/toasts` and inspect its diff. The five inbox-suite fingerprints changed only through the inspected upstream recipe; the guide/shared fingerprints also follow the regenerated index and upstream README. Those inventory refreshes retain story IDs and `unreviewed` statuses.
-
-## Project-skills reconciliation — 2026-10-13
-
-Recomputed associations while integrating master 252d9b5077 with project-skills
-source caaad9eecc. The production RoutineDetail project-skills journey supplies
-Run actions and simulated immutable-version results, so `routines/run-now` now
-has a justified partial example. Required/default variable-dialog states and
-project/workspace override matrices still need broader examples. Its production
-obligations remain: POST /routines/{id}/run must validate inputs, create one
-attributed execution/task, and obey pause/access/budget gates. Existing
-RoutineRunVariablesDialog, routines-service, routines-e2e and the separately
-recorded eight live project-skill executions are distinct starting points/evidence.
-The remaining 59 gap rows retain their classifications and unexecuted status.

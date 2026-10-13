@@ -2371,29 +2371,15 @@
     {
       "idx": 340,
       "version": "7",
-      "when": 1791912055586,
-      "tag": "0340_salty_vance_astro",
+      "when": 1791911743153,
+      "tag": "0340_open_warlock",
       "breakpoints": true
     },
     {
       "idx": 341,
       "version": "7",
-      "when": 1791912074332,
-      "tag": "0341_marvelous_texas_twister",
-      "breakpoints": true
-    },
-    {
-      "idx": 342,
-      "version": "7",
-      "when": 1791912102529,
-      "tag": "0342_naive_gwen_stacy",
-      "breakpoints": true
-    },
-    {
-      "idx": 343,
-      "version": "7",
-      "when": 1791916137988,
-      "tag": "0343_lush_blockbuster",
+      "when": 1791919024567,
+      "tag": "0341_abnormal_bucky",
       "breakpoints": true
     }
   ]

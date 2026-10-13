@@ -42,6 +42,20 @@ describe.skipIf(!support.supported)('automatic project skill sources', () => {
     process.env.PAPERCLIP_HOME = home;
     await db.insert(companies).values({ id: companyId, name: 'Project skills', issuePrefix: 'PSK' });
   }, 30000);
+  it('requires explicit repair before an agent-created repository can search a person’s GitHub grants', async () => {
+    const row = await workspace('agent-repair', 'open');
+    const binding = await enqueueProjectSkillSource(db, row);
+    const [agent] = await db.insert(agents).values({ companyId, name: 'Agent repository setup', adapterType: 'codex_local', status: 'idle' }).returning();
+    await db.update(projectSkillSources).set({ refreshUserId: 'local-board', refreshAgentId: agent!.id, refreshLocalTrusted: true }).where(eq(projectSkillSources.id, binding!.id));
+    const provider = vi.spyOn(globalThis, 'fetch');
+    try {
+      await skillSourceSyncService(db).tick();
+      const [saved] = await db.select().from(projectSkillSources).where(eq(projectSkillSources.id, binding!.id));
+      expect(saved!.lastError).toMatch(/Choose a GitHub connection/);
+      expect(saved!.active).toBe(false);
+      expect(provider).not.toHaveBeenCalled();
+    } finally { provider.mockRestore(); }
+  });
   afterAll(async () => {
     if (oldHome === undefined) delete process.env.PAPERCLIP_HOME; else process.env.PAPERCLIP_HOME = oldHome;
     await testDb?.cleanup();

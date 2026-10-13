@@ -64,3 +64,15 @@ ALTER TABLE "company_skill_sources" DROP CONSTRAINT IF EXISTS "company_skill_sou
 ALTER TABLE "project_skill_sources" DROP CONSTRAINT IF EXISTS "project_skill_sources_refresh_agent_id_agents_id_fk";
 --> statement-breakpoint
 ALTER TABLE "project_skill_sources" DROP CONSTRAINT IF EXISTS "project_skill_sources_connection_id_tool_connections_id_fk";
+
+--> statement-breakpoint
+ALTER TABLE "company_skill_sources" ADD COLUMN IF NOT EXISTS "removed_at" timestamp with time zone;
+--> statement-breakpoint
+DROP INDEX IF EXISTS "company_skill_sources_repository_ref_idx";--> statement-breakpoint
+DROP INDEX IF EXISTS "company_skill_sources_identity_ref_idx";--> statement-breakpoint
+CREATE UNIQUE INDEX "company_skill_sources_repository_ref_idx" ON "company_skill_sources" USING btree ("company_id","repository_url","tracking_ref") WHERE "company_skill_sources"."removed_at" is null;--> statement-breakpoint
+CREATE UNIQUE INDEX "company_skill_sources_identity_ref_idx" ON "company_skill_sources" USING btree ("company_id","repository_id","tracking_ref") WHERE "company_skill_sources"."removed_at" is null;
+--> statement-breakpoint
+ALTER TABLE "company_skill_sources" ADD COLUMN IF NOT EXISTS "last_scan_tree_sha" text;--> statement-breakpoint
+ALTER TABLE "company_skill_sources" ADD COLUMN IF NOT EXISTS "automatic_budget_bytes" integer DEFAULT 536870912 NOT NULL;--> statement-breakpoint
+ALTER TABLE "company_skill_sources" ADD COLUMN IF NOT EXISTS "automatic_budget_at" timestamp with time zone DEFAULT now() NOT NULL;

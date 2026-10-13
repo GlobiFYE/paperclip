@@ -31,7 +31,7 @@ describePostgres("project skill source migration replay", () => {
       const skill = () => sql`SELECT * FROM company_skills WHERE id = ${skillId}`;
       const relations = () => sql`SELECT oid::text, relname FROM pg_class WHERE relname IN ('company_skill_sources', 'project_skill_sources', 'company_skills') ORDER BY relname`;
       const before = { source: await source(), binding: await binding(), skill: await skill(), relations: await relations() };
-      const migration = await readFile(new URL("./migrations/0340_salty_vance_astro.sql", import.meta.url), "utf8");
+      const migration = await readFile(new URL("./migrations/0341_abnormal_bucky.sql", import.meta.url), "utf8");
       for (let attempt = 0; attempt < 2; attempt++) {
         for (const statement of migration.split("--> statement-breakpoint")) {
           if (statement.trim()) await sql.unsafe(statement);

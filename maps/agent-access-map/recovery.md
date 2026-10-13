@@ -79,6 +79,17 @@ retry and some operator controls require board. Completion or cancellation of a
 task does not clear its exact unresolved native workspace owner hold. Physical
 owner release still requires the [operator stop-verification procedure](../../doc/native-workspace-finalization-recovery.md).
 
+For a resolved legacy action that retains a file hold, the same resolution API
+supports source-only file repair. Board runtime management and recovery-resolution
+authority are required. The request identifies the exact source action/run and
+records recovered-file evidence; the server verifies the original stop receipt.
+It preserves the current task status and does not wake or replay the agent. The
+task form fails closed without permission or source bindings. Agent Chat retains
+the file diagnosis while this hold exists. The
+[repair route regressions](../../server/src/__tests__/workspace-restore-repair-route.test.ts)
+and [file form](../../ui/src/components/WorkspaceFileRecovery.test.tsx) cover the
+local contract; they do not independently recover files or qualify a live provider.
+
 Evidence: `source-only` — [implementation](../../server/src/routes/issues.ts#L9478) at
 the reviewed commit above. Exact owner hold retention in the
 [recovery state helper](../../server/src/services/native-runtime/native-workspace-finalization-recovery-state.ts)

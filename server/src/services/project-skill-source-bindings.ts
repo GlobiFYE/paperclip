@@ -8,15 +8,22 @@ import { forbidden } from '../errors.js';
 
 export async function projectSkillSetupIdentity(db: Db, companyId: string, actor = currentSkillActor()) {
   let userId = actor?.type === 'board' ? actor.userId ?? null : null;
+  let connectionId: string | null = null, refreshGrantId: string | null = null;
   if (actor?.type === 'agent' && actor.source === 'agent_jwt') {
     if (!actor.runId || !actor.agentId || actor.companyId !== companyId) throw forbidden('Project skill setup requires an authenticated agent run.');
     const identity = await captureRunIdentity(db, { companyId, agentId: actor.agentId, runId: actor.runId });
     userId = identity.run.responsibleUserId;
+    // Only reuse the connection already authorized by managed GitHub delivery
+    // for this active run. Responsibility alone cannot discover another grant.
+    if (identity.context?.github?.status === 'available') {
+      connectionId = identity.context.github.connectionId ?? null;
+      refreshGrantId = identity.context.github.grantId ?? null;
+    }
   }
   // An API key can attach repositories, but cannot supply a setup person.
   // Keep the durable job so an authorized person can adopt it from Sources.
   return { refreshUserId: userId, refreshAgentId: actor?.type === 'agent' ? actor.agentId ?? null : null,
-    refreshLocalTrusted: actor?.source === 'local_implicit' || userId === 'local-board' };
+    refreshLocalTrusted: actor?.source === 'local_implicit' || userId === 'local-board', connectionId, refreshGrantId };
 }
 
 export function projectSkillRepository(workspace: Pick<typeof projectWorkspaces.$inferSelect, 'repoUrl' | 'defaultRef' | 'repoRef'>) {

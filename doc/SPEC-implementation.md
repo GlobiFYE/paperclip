@@ -2266,3 +2266,9 @@ additional repository bindings remain durable and are admitted automatically
 when capacity frees. Project workspace create/update/delete use the existing
 workspace-write authorization evaluator. Policy-denied initial jobs await explicit
 adoption/repair rather than repeatedly scanning.
+
+Agent-created project sources may reuse only the GitHub connection and grant
+already authorized in the persisted active run identity. The responsible person
+is recorded for attribution; that identity alone does not permit searching other
+personal connections. Without a selected run grant, Sources requires an explicit
+human connection repair before background import or update.

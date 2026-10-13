@@ -168,3 +168,7 @@ do not retry automatically. Deferred jobs remain durable behind per-project and
 company admission limits. Scheduled refresh compares immutable tree identity and
 uses a persistent work allowance; manual refresh still requires its existing
 policy/access checks. These limits grant no content or execution access.
+
+Agent repository setup preserves the active run's selected GitHub connection/grant
+IDs. Missing selections require human repair; the worker never searches the
+responsible person's other grants for an agent-created source.

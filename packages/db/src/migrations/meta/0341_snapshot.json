@@ -1,6 +1,6 @@
 {
-  "id": "7ccc728c-085f-4f7b-9e58-7f4b80a5582e",
-  "prevId": "b031b263-ae02-40f3-9aa9-1dcef2a05bc7",
+  "id": "927d7532-059b-4a4f-846a-5e3445a81891",
+  "prevId": "b32fa655-79c7-4793-a021-22258b6c369c",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -17182,6 +17182,26 @@
           "primaryKey": false,
           "notNull": false
         },
+        "last_scan_tree_sha": {
+          "name": "last_scan_tree_sha",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "automatic_budget_bytes": {
+          "name": "automatic_budget_bytes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 536870912
+        },
+        "automatic_budget_at": {
+          "name": "automatic_budget_at",
+          "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
         "last_error": {
           "name": "last_error",
           "type": "text",
@@ -17232,6 +17252,7 @@
             }
           ],
           "isUnique": true,
+          "where": "\"company_skill_sources\".\"removed_at\" is null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -17259,6 +17280,7 @@
             }
           ],
           "isUnique": true,
+          "where": "\"company_skill_sources\".\"removed_at\" is null",
           "concurrently": false,
           "method": "btree",
           "with": {}
@@ -46534,7 +46556,7 @@
         },
         "resource_lifecycle_events_action_check": {
           "name": "resource_lifecycle_events_action_check",
-          "value": "\"resource_lifecycle_events\".\"action\" = 'create' OR (\"resource_lifecycle_events\".\"resource_type\" = 'project' AND \"resource_lifecycle_events\".\"action\" IN ('update', 'archive')) OR (\"resource_lifecycle_events\".\"resource_type\" = 'agent' AND \"resource_lifecycle_events\".\"action\" IN ('pause', 'resume', 'terminate'))"
+          "value": "\"resource_lifecycle_events\".\"action\" = 'create' OR (\"resource_lifecycle_events\".\"resource_type\" = 'project' AND \"resource_lifecycle_events\".\"action\" IN ('update', 'archive', 'delete')) OR (\"resource_lifecycle_events\".\"resource_type\" = 'agent' AND \"resource_lifecycle_events\".\"action\" IN ('pause', 'resume', 'terminate'))"
         }
       },
       "isRLSEnabled": false

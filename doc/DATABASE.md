@@ -716,7 +716,7 @@ not revoke grants used by other bots. See [Slack setup](connections/slack-setup.
 
 ## Transaction-aware delivery work signals
 
-Five existing delivery queues use process-local work signals to avoid empty
+Durable delivery queues, including plugin resource lifecycle events, use process-local work signals to avoid empty
 polling. Register work **before** writing a queue row, on that row's transaction:
 
 ```ts
@@ -766,7 +766,7 @@ Removing a project source hides tracking using `company_skill_sources.removed_at
 while retaining its access identity for editable copies and forks. Bindings become
 inactive and refresh leases are invalidated transactionally. Reattachment preserves
 removal; explicit adoption creates or joins an active source with a separate identity.
-Migration 0342 limits repository/ref uniqueness to active sources. Removed sources
+Migration 0341 limits repository/ref uniqueness to active sources. Removed sources
 retain their original project audience; editable forks capture independent retained
 provenance so later attachments cannot expose their local edits. Membership and
 project visibility are still evaluated dynamically.
@@ -832,7 +832,7 @@ as its Git command directory, including when metadata sits inside another reposi
 
 No migration scans or copies existing agent home directories. Keep admitted native descriptors and recovery references until compatible controllers finish their persistence obligations. See [the architecture rollout contract](plans/2026-10-09-task-workspaces.md).
 
-Migration 0343 stores the last scanned Git tree and a durable automatic-refresh
+Migration 0341 stores the last scanned Git tree and a durable automatic-refresh
 work allowance. The allowance starts at 512 MiB, refills at 512 MiB/hour, and
 reserves the existing 128 MiB upper bound before automatic downloads. Completed
 small scans refund unused capacity; interrupted/failed work keeps its bounded

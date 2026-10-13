@@ -44,7 +44,7 @@ checkpoint.
 
 - Repository implementation and verification paths inspected; worktree started clean.
 - Persistence, attachment jobs, background checks, manual refresh, project access, runtime snapshots and Sources UI implemented; integration review remains.
-- Initial preview migration was `0336_lovely_bloodstorm.sql`; master reconciliation replaces preview migrations with replay-safe generated `0340_salty_vance_astro.sql`.
+- Initial preview migration was `0336_lovely_bloodstorm.sql`; master reconciliation replaces preview migrations with replay-safe generated `0341_abnormal_bucky.sql`.
 - Focused source persistence tests passed (13 existing cases); new project source tests passed (3 lifecycle/access cases).
 - Source API/UI regression tests passed: 69 tests. Runtime-skill regression suite also passed.
 - UI/server direct TypeScript checks passed after building workspace dependencies; repeat after latest changes.

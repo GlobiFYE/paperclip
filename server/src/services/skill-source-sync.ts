@@ -97,6 +97,7 @@ async function setupContext(db: Db, setup: Setup): Promise<SkillSourceContext> {
     const [agent] = await db.select({ status: agents.status }).from(agents).where(and(eq(agents.companyId, setup.companyId), eq(agents.id, setup.refreshAgentId)));
     if (!agent || agent.status === 'terminated') throw forbidden('The agent who connected this source is unavailable. Choose a GitHub connection.');
   }
+  if (setup.refreshAgentId && (!setup.connectionId || !setup.refreshGrantId)) throw forbidden('Choose a GitHub connection to authorize this agent-created repository.');
   const readerActor: AuthorizationActor = { type: 'board', userId: setup.refreshUserId,
     source: setup.refreshLocalTrusted ? 'local_implicit' : 'session', companyIds: [setup.companyId] };
   const actor = setupActor(setup);
