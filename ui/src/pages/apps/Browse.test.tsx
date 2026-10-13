@@ -5,6 +5,7 @@ import { createRoot } from "react-dom/client";
 import { focusManager, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Browse } from "./Browse";
+import { AiConnectionField } from "@/components/ai-connections/AiConnectionField";
 import { aiConnectionRouterAppDefinition, getAppStoreDefinition } from "@paperclipai/shared";
 import { queryKeys } from "@/lib/queryKeys";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -33,6 +34,7 @@ vi.mock("@paperclipai/shared/aggregator-app-catalog", async (importOriginal) => 
 vi.mock("@/context/DialogContext", () => ({ useDialogActions: () => ({ openNewIssue: openNewIssueMock }) }));
 
 const accountIdentity = vi.hoisted(() => ({ userId: "board-user" as string | null, settled: true, failed: false }));
+const companyState = vi.hoisted(() => ({ selectedCompanyId: "company-1", selectedCompany: { id: "company-1", name: "Paperclip" } }));
 vi.mock("@/api/companies-query", () => ({ useAccountIdentity: () => accountIdentity }));
 
 const poolListMock = vi.hoisted(() => vi.fn());
@@ -47,6 +49,8 @@ const listApplicationsMock = vi.hoisted(() => vi.fn());
 const listConnectionsMock = vi.hoisted(() => vi.fn());
 const listUserDirectoryMock = vi.hoisted(() => vi.fn());
 const archiveConnectionMock = vi.hoisted(() => vi.fn());
+const listAiConnectionsMock = vi.hoisted(() => vi.fn());
+vi.mock("@/api/ai-connections", () => ({ aiConnectionsApi: { list: listAiConnectionsMock } }));
 const pushToastMock = vi.hoisted(() => vi.fn());
 const navigateMock = vi.hoisted(() => vi.fn());
 const setBreadcrumbsMock = vi.hoisted(() => vi.fn());
@@ -93,10 +97,7 @@ vi.mock("@/lib/router", () => ({
 }));
 
 vi.mock("@/context/CompanyContext", () => ({
-  useCompany: () => ({
-    selectedCompanyId: "company-1",
-    selectedCompany: { id: "company-1", name: "Paperclip" },
-  }),
+  useCompany: () => companyState,
 }));
 
 vi.mock("@/context/BreadcrumbContext", () => ({
@@ -181,6 +182,8 @@ describe("Connectors landing page", () => {
   let root: ReturnType<typeof createRoot>;
 
   beforeEach(() => {
+    companyState.selectedCompanyId = "company-1";
+    companyState.selectedCompany = { id: "company-1", name: "Paperclip" };
     accountIdentity.userId = "board-user"; accountIdentity.settled = true;
     assistantConnectionsMock.mockReset().mockResolvedValue([]);
     syncComposioAppsMock.mockReset().mockImplementation((...args) => listComposioAppsMock(...args));
@@ -220,6 +223,7 @@ describe("Connectors landing page", () => {
     listConnectionsMock.mockResolvedValue({ connections: [] });
     listUserDirectoryMock.mockResolvedValue({ users: [] });
     archiveConnectionMock.mockResolvedValue(connection({ status: "archived" }));
+    listAiConnectionsMock.mockReset().mockResolvedValue({ currentUserId: "board-user", canManageConnections: true, connections: [] });
     container = document.createElement("div");
     document.body.appendChild(container);
   });
@@ -232,15 +236,18 @@ describe("Connectors landing page", () => {
     vi.clearAllMocks();
   });
 
-  async function renderBrowse(allCatalog = true) {
+  async function renderBrowse(allCatalog = true, withAgentField = false) {
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     });
+    if (withAgentField) client.setQueryDefaults(["ai-connections"], { staleTime: Infinity });
     root = createRoot(container);
     await act(async () => {
       root.render(
         <QueryClientProvider client={client}>
           <TooltipProvider><Browse /></TooltipProvider>
+          {withAgentField && <AiConnectionField companyId="company-1" agentId="agent-1" agentName="Test agent" adapterType="claude_local"
+            value={{ provider: "anthropic", method: "api_key", mode: "shared", connectionId: "conn-claude", grantId: "grant-claude" }} onChange={() => {}} />}
         </QueryClientProvider>,
       );
     });
@@ -250,6 +257,102 @@ describe("Connectors landing page", () => {
     }
     return client;
   }
+
+  it("#15947 reproduces a Claude account visible to the agent but hidden under an archived provider", async () => {
+    listGalleryMock.mockResolvedValue({ apps: [getAppStoreDefinition("anthropic")] });
+    const provider = application({ id: "app-claude", name: "Claude", applicationKey: "app-gallery:anthropic", metadata: { sourceTemplateKey: "anthropic" }, status: "archived" });
+    const saved = connection({ id: "conn-claude", applicationId: "app-claude", name: "Hidden Claude account", connectionPurpose: "ai", transport: "runtime_auth", credentialPolicy: "shared",
+      config: { sourceTemplateKey: "anthropic", ai: { provider: "anthropic", method: "api_key" } } });
+    listApplicationsMock.mockResolvedValue({ applications: [provider] });
+    listConnectionsMock.mockResolvedValue({ connections: [saved] });
+    listAiConnectionsMock.mockResolvedValue({ currentUserId: "board-user", canManageConnections: true, connections: [{
+      id: "conn-claude", grantId: "grant-claude", companyId: "company-1", name: "Hidden Claude account", provider: "anthropic", method: "api_key", ownership: "shared", status: "connected", isDefault: false,
+    }] });
+    const client = await renderBrowse(false, true);
+    const providerRow = container.querySelector('[data-app-slug="anthropic"]')!;
+    expect(providerRow.textContent).not.toContain("Hidden Claude account");
+    expect(container.querySelector('[role="combobox"][aria-label="Connection"]')?.textContent).toContain("Hidden Claude account");
+
+    await act(() => { client.setQueryData(queryKeys.tools.applications("company-1"), { applications: [{ ...provider, status: "active", archivedAt: null }] }); });
+    await flushReact();
+    expect(container.querySelector('[data-app-slug="anthropic"]')?.textContent).toContain("Hidden Claude account");
+    expect(container.querySelector('button[aria-label="Manage Hidden Claude account connection"]')).not.toBeNull();
+  });
+
+  it("#15947 refreshes an already mounted agent connection field after removing a Claude account", async () => {
+    listGalleryMock.mockResolvedValue({ apps: [getAppStoreDefinition("anthropic")] });
+    listApplicationsMock.mockResolvedValue({ applications: [application({ id: "app-claude", name: "Claude", applicationKey: "app-gallery:anthropic", metadata: { sourceTemplateKey: "anthropic" } })] });
+    let removed = false;
+    const saved = connection({ id: "conn-claude", applicationId: "app-claude", name: "Delete Claude account", connectionPurpose: "ai", transport: "runtime_auth", credentialPolicy: "shared",
+      config: { sourceTemplateKey: "anthropic", ai: { provider: "anthropic", method: "api_key" } } });
+    listConnectionsMock.mockImplementation(async () => ({ connections: removed ? [] : [saved] }));
+    listAiConnectionsMock.mockImplementation(async () => ({ currentUserId: "board-user", canManageConnections: true, connections: removed ? [] : [{
+      id: "conn-claude", grantId: "grant-claude", companyId: "company-1", name: "Delete Claude account", provider: "anthropic", method: "api_key", ownership: "shared", status: "connected", isDefault: false,
+    }] }));
+    archiveConnectionMock.mockImplementation(async () => { removed = true; return { ...saved, status: "archived" }; });
+    await renderBrowse(false, true);
+    expect(container.querySelector('[role="combobox"][aria-label="Connection"]')?.textContent).toContain("Delete Claude account");
+    await act(() => { container.querySelector('button[aria-label="Manage Delete Claude account connection"]')!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); });
+    await flushReact();
+    await act(() => { Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(item => item.textContent?.trim() === "Remove connection")!.click(); });
+    await flushReact();
+    await act(() => { Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.trim() === "Remove connection")!.click(); });
+    await flushReact();
+    await vi.waitFor(() => expect(container.querySelector('button[aria-label="Manage Delete Claude account connection"]')).toBeNull());
+    await vi.waitFor(() => expect(container.querySelector('[role="combobox"][aria-label="Connection"]')?.textContent).toContain("Unavailable connection"));
+    expect(container.textContent).toContain("This connection is unavailable");
+  });
+
+  it("#15947 refreshes the originating company's AI cache when deletion finishes after a company switch", async () => {
+    listApplicationsMock.mockImplementation(async (id: string) => ({ applications: id === "company-1" ? [application()] : [] }));
+    listConnectionsMock.mockImplementation(async (id: string) => ({ connections: id === "company-1" ? [connection()] : [] }));
+    let complete!: () => void;
+    archiveConnectionMock.mockImplementation(() => new Promise<void>(resolve => { complete = resolve; }));
+    const client = await renderBrowse();
+    const original = ["ai-connections", "company-1", "agent-1"];
+    const other = ["ai-connections", "company-2", "agent-2"];
+    client.setQueryData(original, { connections: [{ id: "conn-notion" }] });
+    client.setQueryData(other, { connections: [{ id: "other-account" }] });
+    await act(() => { container.querySelector('button[aria-label="Manage devinfoley@gmail.com connection"]')!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); });
+    await flushReact();
+    await act(() => { Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(item => item.textContent?.trim() === "Remove connection")!.click(); });
+    await flushReact();
+    await act(() => { Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(button => button.textContent?.trim() === "Remove connection")!.click(); });
+    await flushReact();
+    expect(complete).toBeTypeOf("function");
+    companyState.selectedCompanyId = "company-2";
+    companyState.selectedCompany = { id: "company-2", name: "Other company" };
+    await act(() => { root.render(<QueryClientProvider client={client}><TooltipProvider><Browse /></TooltipProvider></QueryClientProvider>); });
+    await flushReact();
+    complete();
+    await flushReact();
+    await vi.waitFor(() => expect(client.getQueryState(original)?.isInvalidated).toBe(true));
+    expect(client.getQueryState(other)?.isInvalidated).toBe(false);
+  });
+
+  it("#15947 discards an old company's pool removal lookup before showing confirmation", async () => {
+    const app = aiConnectionRouterAppDefinition("example.pool", { name: "AI connection pool", description: "Use saved connections" });
+    listGalleryMock.mockResolvedValue({ apps: [app] });
+    listApplicationsMock.mockResolvedValue({ applications: [application({ name: app.name, metadata: { sourceTemplateKey: app.slug } })] });
+    listConnectionsMock.mockResolvedValue({ connections: [connection({ name: "Research", config: { aiRouter: { pluginKey: "example.pool" } } })] });
+    let complete!: (pools: Array<{ id: string; name: string; revision: number }>) => void;
+    poolListMock.mockImplementation(() => new Promise(resolve => { complete = resolve; }));
+    const client = await renderBrowse();
+    await act(() => { container.querySelector('button[aria-label="Manage Research connection"]')!.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); });
+    await flushReact();
+    await act(() => { Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(item => item.textContent?.trim() === "Remove connection")!.click(); });
+    await flushReact();
+    expect(complete).toBeTypeOf("function");
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    companyState.selectedCompanyId = "company-2";
+    companyState.selectedCompany = { id: "company-2", name: "Other company" };
+    await act(() => { root.render(<QueryClientProvider client={client}><TooltipProvider><Browse /></TooltipProvider></QueryClientProvider>); });
+    await flushReact();
+    complete([{ id: "conn-notion", name: "Research", revision: 7 }]);
+    await flushReact();
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(poolRemoveMock).not.toHaveBeenCalled();
+  });
 
   it("shows provider catalog rows and splits legacy gateway accounts by API format", async () => {
     const slugs = ["notion", "openrouter", "bedrock", "google", "responses-api", "messages-api", "chat-completions-api", "local"];

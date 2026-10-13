@@ -6767,6 +6767,14 @@ export function toolAccessService(
       .returning({ id: connectionTokenIssuances.id });
 
     const archived = await db.transaction(async (tx) => {
+      // Lock the application before the connection. A concurrent AI connect
+      // locks the same row, so the remaining-connection check below sees a
+      // connection that it attached, and the connect sees this archive.
+      await tx
+        .select({ id: toolApplications.id })
+        .from(toolApplications)
+        .where(eq(toolApplications.id, connection.applicationId))
+        .for("update");
       const [updatedConnection] = await tx
         .update(toolConnections)
         .set({ status: "archived", enabled: false, updatedAt: now })
@@ -17770,7 +17778,9 @@ export function toolAccessService(
         .set({
           name: input.name ?? existing.name,
           description: input.description ?? existing.description,
-          status: input.status ?? existing.status,
+          // Metadata edits must not replay state read before concurrent recovery
+          // or removal. Only explicit status changes supersede automatic archival.
+          ...(input.status !== undefined ? { status: input.status, archivedAt: null } : {}),
           pluginId: input.pluginId ?? existing.pluginId,
           ownerAgentId: input.ownerAgentId ?? existing.ownerAgentId,
           ownerUserId: input.ownerUserId ?? existing.ownerUserId,
