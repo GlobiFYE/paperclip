@@ -674,6 +674,23 @@ const MAX_RUN_EVENT_PAYLOAD_DEPTH = 6;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_DEFAULT = AGENT_DEFAULT_MAX_CONCURRENT_RUNS;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_MIN = 1;
 const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = 50;
+// Fleet-wide admission ceiling (TOP-253). When the operator sets
+// HEARTBEAT_GLOBAL_MAX_CONCURRENT_RUNS to a positive integer, at most that
+// many heartbeat runs may be `running` across the whole instance at once,
+// regardless of per-agent `heartbeat.maxConcurrentRuns`. Runs beyond the cap
+// stay `queued` and are promoted by the periodic recovery sweep (or the next
+// per-agent promotion) once a slot frees. Unset, empty, zero, or invalid
+// values disable the cap so existing deployments keep their behavior.
+export const HEARTBEAT_GLOBAL_MAX_CONCURRENT_RUNS_ENV =
+  "HEARTBEAT_GLOBAL_MAX_CONCURRENT_RUNS";
+export function parseGlobalMaxConcurrentRuns(
+  raw: string | number | undefined | null,
+): number | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return Math.floor(parsed);
+}
 const LIVENESS_BOOKKEEPING_ACTIVITY_ACTIONS = [
   "environment.lease_acquired",
   "environment.lease_released",
@@ -823,6 +840,21 @@ function isTransientWorkspaceGitScanCode(code: string | null | undefined): boole
 }
 const BOUNDED_TRANSIENT_HEARTBEAT_RETRY_MAX_ATTEMPTS =
   BOUNDED_TRANSIENT_HEARTBEAT_RETRY_DELAYS_MS.length;
+// Process-loss recovery lane (TOP-253). A reaped child during host memory
+// pressure is expected to be transient: the run gets more than the generic
+// transient budget would allow, on escalating delays that give swap pressure
+// time to clear instead of re-spawning into the same thrash. Attempts still
+// share the durable failure-retry counter with transient retries, so process
+// loss never opens a second retry budget — only a taller ceiling and slower
+// cadence for this failure family.
+export const PROCESS_LOSS_RETRY_DELAYS_MS = [
+  30_000, 120_000, 300_000,
+] as const;
+export const PROCESS_LOSS_RETRY_MAX_ATTEMPTS =
+  PROCESS_LOSS_RETRY_DELAYS_MS.length;
+const PROCESS_LOSS_ERROR_CODE = "process_lost";
+const PROCESS_LOSS_RETRY_REASON = "process_lost";
+const PROCESS_LOSS_RETRY_WAKE_REASON = "process_lost_retry";
 export {
   INTERACTION_CONTINUATION_INFRA_RETRY_REASON,
   INTERACTION_CONTINUATION_INFRA_WAKE_REASON,
@@ -14429,7 +14461,24 @@ export function heartbeatService(
     // transient retries; process loss must not open a second retry budget.
     if (run.runtimeMode === "native" || legacyExecutionNeedsReconciliation(run))
       return null;
-    const scheduled = await scheduleBoundedRetryForRun(run, agent, { now });
+    // The process-loss lane keeps sharing the durable failure-retry counter
+    // (see PROCESS_LOSS_RETRY_DELAYS_MS) but reschedules on escalating delays
+    // with a taller ceiling than the generic transient lane, so a child reaped
+    // by host memory pressure reschedules instead of stranding the agent.
+    // Only a genuinely reaped child (errorCode `process_lost`) rides that lane.
+    // Other interruption families — notably graceful shutdown drains — keep
+    // the generic transient lane and its tighter ceiling, so a spent budget
+    // stays spent across restarts (TOP-253).
+    const scheduled =
+      run.errorCode === PROCESS_LOSS_ERROR_CODE
+        ? await scheduleBoundedRetryForRun(run, agent, {
+            now,
+            retryReason: PROCESS_LOSS_RETRY_REASON,
+            wakeReason: PROCESS_LOSS_RETRY_WAKE_REASON,
+            maxAttempts: PROCESS_LOSS_RETRY_MAX_ATTEMPTS,
+            retryDelaysMs: PROCESS_LOSS_RETRY_DELAYS_MS,
+          })
+        : await scheduleBoundedRetryForRun(run, agent, { now });
     return scheduled.outcome === "scheduled" ? scheduled.run : null;
   }
 
@@ -15304,6 +15353,9 @@ export function heartbeatService(
       wakeReason?: string;
       maxAttempts?: number;
       delayMs?: number;
+      /** Attempt-indexed delays for a dedicated retry lane; absent entries
+       * beyond the array end mean the lane has no schedule left. */
+      retryDelaysMs?: readonly number[];
     },
   ) {
     if (Array.isArray(run.contextSnapshot?.chatCompletionDeliveryIds) &&
@@ -15324,6 +15376,7 @@ export function heartbeatService(
     );
     const consumedAttempts = executionRetryAttemptCount(run, retryReason);
     const nextAttempt = consumedAttempts + 1;
+    const laneDelayMs = opts?.retryDelaysMs?.[nextAttempt - 1];
     const computedBaseSchedule =
       opts?.delayMs != null
         ? nextAttempt <= maxAttempts
@@ -15337,13 +15390,25 @@ export function heartbeatService(
               maxAttempts,
             }
           : null
-        : nextAttempt <= maxAttempts
-          ? computeBoundedTransientHeartbeatRetrySchedule(
-              nextAttempt,
-              now,
-              opts?.random,
-            )
-          : null;
+        : opts?.retryDelaysMs
+          ? nextAttempt <= maxAttempts && typeof laneDelayMs === "number"
+            ? {
+                attempt: nextAttempt,
+                baseDelayMs: Math.max(0, Math.floor(laneDelayMs)),
+                delayMs: Math.max(0, Math.floor(laneDelayMs)),
+                dueAt: new Date(
+                  now.getTime() + Math.max(0, Math.floor(laneDelayMs)),
+                ),
+                maxAttempts,
+              }
+            : null
+          : nextAttempt <= maxAttempts
+            ? computeBoundedTransientHeartbeatRetrySchedule(
+                nextAttempt,
+                now,
+                opts?.random,
+              )
+            : null;
     const baseSchedule = computedBaseSchedule
       ? { ...computedBaseSchedule, maxAttempts }
       : null;
@@ -16991,6 +17056,18 @@ export function heartbeatService(
           eq(heartbeatRuns.status, "running"),
         ),
       );
+    return Number(count ?? 0);
+  }
+
+  // Instance-wide `running` count for the fleet-wide admission ceiling
+  // (HEARTBEAT_GLOBAL_MAX_CONCURRENT_RUNS). Heartbeat runs are host processes,
+  // so the cap is instance-wide rather than company-scoped: it protects the
+  // shared host from concurrency bursts that trigger OS-level process reaping.
+  async function countRunningRuns() {
+    const [{ count }] = await db
+      .select({ count: sql<number>`count(*)` })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.status, "running"));
     return Number(count ?? 0);
   }
 
@@ -19333,6 +19410,10 @@ export function heartbeatService(
         (!monitorNextCheckAt || monitorNextCheckAt.getTime() <= now.getTime());
       const shouldRetry =
         (run.processLossRetryCount ?? 0) < 1 &&
+        // The process-loss lane shares the durable failure-retry counter; only
+        // announce a retry when the lane still has an attempt left to schedule.
+        executionRetryAttemptCount(run, PROCESS_LOSS_RETRY_REASON) <
+          PROCESS_LOSS_RETRY_MAX_ATTEMPTS &&
         ((tracksLegacyLocalChild &&
           (!!run.processPid || !!run.processGroupId)) ||
           monitorDispatchLostWithoutFutureWake);
@@ -19340,12 +19421,15 @@ export function heartbeatService(
       const baseMessage = buildProcessLossMessage(run);
       const conversationContinuationEligible = await runUsedConversationAdapter(db, run);
 
+      const failureMessage = shouldRetry
+        ? `${baseMessage}; scheduling a process-loss retry`
+        : baseMessage;
       const failureWrite = await setRunStatusFromLive(
         run.id,
         "failed",
         ["running"],
         {
-          error: shouldRetry ? `${baseMessage}; retrying once` : baseMessage,
+          error: failureMessage,
           errorCode: "process_lost",
           finishedAt: now,
           resultJson: (() => {
@@ -19356,9 +19440,7 @@ export function heartbeatService(
                 conversationContinuationEligible,
                 resultJson: parseObject(run.resultJson),
                 errorCode: "process_lost",
-                errorMessage: shouldRetry
-                  ? `${baseMessage}; retrying once`
-                  : baseMessage,
+                errorMessage: failureMessage,
               },
             );
             return result;
@@ -19370,7 +19452,7 @@ export function heartbeatService(
         failureWrite.run;
       await setWakeupStatus(run.wakeupRequestId, "failed", {
         finishedAt: now,
-        error: shouldRetry ? `${baseMessage}; retrying once` : baseMessage,
+        error: failureMessage,
       });
       if (!finalizedRun) finalizedRun = await getRun(run.id);
       if (!finalizedRun) continue;
@@ -19426,6 +19508,11 @@ export function heartbeatService(
 
       await finalizeAgentStatus(run.agentId, "failed", baseMessage, {
         wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
+        // A scheduled retry is live continuation, not a dead agent: keep the
+        // agent idle so a transiently reaped child reschedules without the
+        // agent page surfacing `error` between attempts (TOP-253). Only a
+        // terminal, un-retried process loss marks the agent error.
+        keepIdleOnFailure: Boolean(retriedRun),
       });
       await startNextQueuedRunForAgent(run.agentId);
       runningProcesses.delete(run.id);
@@ -19960,10 +20047,22 @@ export function heartbeatService(
       }
       const policy = parseHeartbeatPolicy(agent);
       const runningCount = await countRunningRunsForAgent(agentId);
-      const availableSlots = Math.max(
-        0,
-        policy.maxConcurrentRuns - runningCount,
+      let availableSlots = Math.max(0, policy.maxConcurrentRuns - runningCount);
+      // Fleet-wide cap (TOP-253): bound this agent's free slots by the
+      // instance-wide room left under HEARTBEAT_GLOBAL_MAX_CONCURRENT_RUNS.
+      // Over-cap runs stay `queued`; the periodic recovery sweep and per-run
+      // promotion re-drive them once global slots free (worst case one
+      // scheduler tick of extra queue latency).
+      const globalMaxConcurrentRuns = parseGlobalMaxConcurrentRuns(
+        runtimeEnv[HEARTBEAT_GLOBAL_MAX_CONCURRENT_RUNS_ENV],
       );
+      if (globalMaxConcurrentRuns !== null && availableSlots > 0) {
+        const globalRunningCount = await countRunningRuns();
+        availableSlots = Math.min(
+          availableSlots,
+          Math.max(0, globalMaxConcurrentRuns - globalRunningCount),
+        );
+      }
       if (availableSlots <= 0) return [];
 
       const queuedRuns = await db

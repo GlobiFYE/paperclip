@@ -213,6 +213,8 @@ vi.mock("../adapters/index.ts", async () => {
 import {
   INTERACTION_CONTINUATION_INFRA_RETRY_REASON,
   INTERACTION_CONTINUATION_INFRA_WAKE_REASON,
+  PROCESS_LOSS_RETRY_DELAYS_MS,
+  PROCESS_LOSS_RETRY_MAX_ATTEMPTS,
   heartbeatService,
   parseSandboxProviderPluginNotReadyFailureMessage,
   redactDetectedSuccessfulRunProgressSummaryForBoard,
@@ -2535,6 +2537,122 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     );
     // Terminal run cleanup releases the checkout lock so future checkout 409s only mean a live owner exists.
     expect(checkoutReleasedIssue?.checkoutRunId).toBeNull();
+  });
+
+  it("schedules a process-loss retry and keeps the agent idle when a reaped child is retried", async () => {
+    const { agentId, runId } = await seedRunFixture({
+      adapterType: "hermes_local",
+      agentStatus: "running",
+      processPid: 999_999_999,
+    });
+    const heartbeat = heartbeatService(db);
+
+    const result = await heartbeat.reapOrphanedRuns();
+    expect(result.reaped).toBe(1);
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    const failedRun = runs.find((row) => row.id === runId);
+    const retryRun = runs.find((row) => row.retryOfRunId === runId);
+    expect(failedRun).toMatchObject({ status: "failed", errorCode: "process_lost" });
+    expect(failedRun?.error).toContain("scheduling a process-loss retry");
+    expect(retryRun).toMatchObject({
+      status: "scheduled_retry",
+      scheduledRetryAttempt: 1,
+      scheduledRetryReason: "process_lost",
+    });
+    if (!retryRun?.scheduledRetryAt) throw new Error("expected a scheduled retry run");
+    const retryDueMs = new Date(retryRun.scheduledRetryAt).getTime() - Date.now();
+    expect(retryDueMs).toBeLessThanOrEqual(PROCESS_LOSS_RETRY_DELAYS_MS[0] + 1_000);
+    expect(retryDueMs).toBeGreaterThan(PROCESS_LOSS_RETRY_DELAYS_MS[0] - 20_000);
+
+    const wakeup = retryRun.wakeupRequestId
+      ? await db
+          .select()
+          .from(agentWakeupRequests)
+          .where(eq(agentWakeupRequests.id, retryRun.wakeupRequestId))
+          .then((rows) => rows[0] ?? null)
+      : null;
+    expect(wakeup?.reason).toBe("process_lost_retry");
+
+    // A retrying agent is idle between attempts, not error (TOP-253).
+    const agent = await db
+      .select()
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .then((rows) => rows[0] ?? null);
+    expect(agent?.status).toBe("idle");
+    expect(agent?.errorReason).toBeNull();
+  });
+
+  it("continues the process-loss retry chain on its escalating delays", async () => {
+    const { agentId, runId } = await seedRunFixture({
+      adapterType: "hermes_local",
+      agentStatus: "idle",
+      processPid: 999_999_999,
+      contextSnapshot: {
+        executionRetryAccounting: {
+          version: 1,
+          failureRetries: 1,
+          maxTurnContinuations: 0,
+        },
+      },
+    });
+    const heartbeat = heartbeatService(db);
+
+    await heartbeat.reapOrphanedRuns();
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    const retryRun = runs.find((row) => row.retryOfRunId === runId);
+    expect(retryRun).toMatchObject({
+      status: "scheduled_retry",
+      scheduledRetryAttempt: 2,
+      scheduledRetryReason: "process_lost",
+    });
+    if (!retryRun?.scheduledRetryAt) throw new Error("expected a scheduled retry run");
+    const retryDueMs = new Date(retryRun.scheduledRetryAt).getTime() - Date.now();
+    expect(retryDueMs).toBeLessThanOrEqual(PROCESS_LOSS_RETRY_DELAYS_MS[1] + 1_000);
+    expect(retryDueMs).toBeGreaterThan(PROCESS_LOSS_RETRY_DELAYS_MS[1] - 20_000);
+  });
+
+  it("stops process-loss retries at the lane ceiling and marks the agent error", async () => {
+    const { agentId, runId } = await seedRunFixture({
+      adapterType: "hermes_local",
+      agentStatus: "idle",
+      processPid: 999_999_999,
+      contextSnapshot: {
+        executionRetryAccounting: {
+          version: 1,
+          failureRetries: PROCESS_LOSS_RETRY_MAX_ATTEMPTS,
+          maxTurnContinuations: 0,
+        },
+      },
+    });
+    const heartbeat = heartbeatService(db);
+
+    await heartbeat.reapOrphanedRuns();
+
+    const runs = await db
+      .select()
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ id: runId, status: "failed", errorCode: "process_lost" });
+    expect(runs[0]?.error).not.toContain("scheduling a process-loss retry");
+
+    // No retry remains, so a terminal process loss is what marks the agent error.
+    const agent = await db
+      .select()
+      .from(agents)
+      .where(eq(agents.id, agentId))
+      .then((rows) => rows[0] ?? null);
+    expect(agent?.status).toBe("error");
+    expect(agent?.errorReason).toContain("Process lost");
   });
 
   it("requires reconciliation for a lost monitor whose provider outcomes are unknown", async () => {
