@@ -477,3 +477,16 @@ worker recreation/refill, small-import refunds and completed large measured
 jobs retaining their charge. These are simulated download sizes with real DB
 transactions, not new oversized live downloads. Generated migration and final
 qualification results are recorded on the PR.
+
+The initial-budget commit passes all 251 qualified Node 24 database/source/setup
+cases across 54 files. The final refill review reproduced a backwards timestamp
+from interleaved older/newer sweeps. Both initial-import and source-refresh
+reservations now clamp time to the persisted budget timestamp. The real database
+regression fails before correction and verifies no repeated refill afterward.
+Focused final verification and current-head CI/review are recorded on the PR.
+
+Qualified Node 24 reproduced the earlier timestamp assertion failure, then passed
+all 57 affected cases on the corrected source with no skips or deadline changes.
+The macOS reproduction timed out in native DB setup; its broader attempt hit a
+privacy-test deadline. Those failures are retained separately from the qualified
+pass. Recursive typecheck and production build pass after the correction.

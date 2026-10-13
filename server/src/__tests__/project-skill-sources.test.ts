@@ -1,3 +1,4 @@
+import { reserveInitialSkillWork } from '../services/skill-source-import-budget.js';
 import { admitDeferredSkillImports, lockSkillImportQueue, MAX_COMPANY_PENDING_SKILL_IMPORTS, MAX_PROJECT_PENDING_SKILL_IMPORTS, SKILL_IMPORT_CAPACITY_WAIT } from '../services/skill-source-import-queue.js';
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
@@ -252,6 +253,27 @@ describe.skipIf(!support.supported)('automatic project skill sources', () => {
       const [budget] = await db.select().from(companySkillImportBudgets).where(eq(companySkillImportBudgets.companyId, budgetCompany));
       expect(budget!.availableBytes).toBe(0);
     } finally { await db.update(companies).set({ status: 'archived' }).where(eq(companies.id, budgetCompany)); }
+  });
+
+  it('never counts refill time twice when an older sweep reserves after a newer one', async () => {
+    const row = await workspace('monotonic-initial-work');
+    const binding = await enqueueProjectSkillSource(db, row);
+    const token = randomUUID();
+    await db.update(projectSkillSources).set({ leaseToken: token }).where(eq(projectSkillSources.id, binding!.id));
+    await db.delete(companySkillImportBudgets).where(eq(companySkillImportBudgets.companyId, companyId));
+    const older = new Date(), newer = new Date(older.getTime() + 15 * 60_000);
+    try {
+      await reserveInitialSkillWork(db, binding!, token, newer);
+      await reserveInitialSkillWork(db, binding!, token, older);
+      const [afterOlder] = await db.select().from(companySkillImportBudgets).where(eq(companySkillImportBudgets.companyId, companyId));
+      expect(afterOlder!.updatedAt).toEqual(newer);
+      await reserveInitialSkillWork(db, binding!, token, newer);
+      const [saved] = await db.select().from(companySkillImportBudgets).where(eq(companySkillImportBudgets.companyId, companyId));
+      expect(saved!.availableBytes).toBe(128 * 1024 * 1024);
+    } finally {
+      await detachProjectSkillSource(db, companyId, row.id);
+      await db.delete(companySkillImportBudgets).where(eq(companySkillImportBudgets.companyId, companyId));
+    }
   });
 
   it('does not read GitHub or retry an initial job denied by import policy', async () => {

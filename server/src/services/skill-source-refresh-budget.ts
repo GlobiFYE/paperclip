@@ -18,14 +18,15 @@ export function automaticSkillWorkRefund(work: { downloadBytes?: number; scanByt
 
 /** The refresh lease serializes this durable token bucket across workers/restarts. */
 export async function reserveAutomaticSkillWork(db: Db, source: typeof companySkillSources.$inferSelect, token: string, now: Date) {
-  const available = automaticSkillWorkAvailable(source.automaticBudgetBytes, source.automaticBudgetAt, now);
+  const effectiveNow = new Date(Math.max(now.getTime(), source.automaticBudgetAt.getTime()));
+  const available = automaticSkillWorkAvailable(source.automaticBudgetBytes, source.automaticBudgetAt, effectiveNow);
   if (available < AUTOMATIC_SKILL_WORK_RESERVATION_BYTES) {
     throw tooManyRequests('Automatic refresh is temporarily limited. Use Refresh now, or wait for automatic updates to resume.', {
       code: 'skill_source_automatic_work_limited',
       retryAfterSeconds: Math.ceil((AUTOMATIC_SKILL_WORK_RESERVATION_BYTES - available) * REFILL_WINDOW_MS / AUTOMATIC_SKILL_WORK_CAPACITY_BYTES / 1000),
     });
   }
-  const changed = await db.update(companySkillSources).set({ automaticBudgetAt: now,
+  const changed = await db.update(companySkillSources).set({ automaticBudgetAt: effectiveNow,
     automaticBudgetBytes: available - AUTOMATIC_SKILL_WORK_RESERVATION_BYTES })
     .where(and(eq(companySkillSources.companyId, source.companyId), eq(companySkillSources.id, source.id),
       eq(companySkillSources.leaseToken, token))).returning({ id: companySkillSources.id });
