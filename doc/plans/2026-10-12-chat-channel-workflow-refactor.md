@@ -55,3 +55,17 @@ The same 62 public-path interaction cases pass before and after. Seven supportin
 suites pass all 70 cases. Server typecheck and module boundaries pass. AST checks
 cover nine moved declarations, three provider bodies, and retained service order.
 Fault barriers remain live getters. No assertion or timeout changed.
+
+## Second extraction
+
+Endpoint configuration and provider setup reduce the service to 14,241 lines and
+580,227 bytes. Shared modules own endpoint records, credential identity/persistence,
+and the credential-leased configuration state machine. Channel folders own Telegram
+registration, GitHub repair, Speko tool installation, Photon configuration and
+inspection, and Slack setup projection. Registration dependencies remain live.
+
+All 1,278 chat cases passed on the first PR before this move. The final setup wiring
+passes 268 selected integration cases, server typecheck, and module boundaries.
+AST checks cover 25 declarations and nine provider bodies. One final test attempt
+could not start PostgreSQL because this Mac exhausted IPC slots; after reclaiming
+one unused zero-attachment segment with a dead creator, the same suite passed.
