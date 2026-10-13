@@ -40,7 +40,7 @@ function PageFixture({ path, agents = [spekoAgent] }: { path: string; agents?: (
   </div></QueryClientProvider>;
 }
 const meta: Meta = {
-  ...voiceStoryLifecycle, id: "connections-speko-pages", title: "Apps, channels, and extensions/External chat and email/Speko/Pages", parameters: { layout: "fullscreen" },
+  ...voiceStoryLifecycle, id: "connections-speko-pages", title: "Apps, channels, and extensions/External chat and email/Speko/Pages", parameters: { layout: "fullscreen", paperclip: {"capabilities": ["chat-channels/providers", "chat-channels/lifecycle", "connection-setup/channel-setup", "connection-setup/draft-recovery"], "status": "current", "implementation": "production", "boundary": "fixtures", "notes": "Production setup and endpoint pages with fixture company, agent, session and credential responses. No provider verification, real billing or permission proof."} },
   beforeEach(context) {
     const cleanup = voiceStoryLifecycle.beforeEach(), original = window.fetch;
     const state = (context.parameters.speko ?? {}) as State;

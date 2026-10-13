@@ -37,7 +37,7 @@ function Fixture({ longConversation = false }: { longConversation?: boolean }) {
     </div>
   </VoiceCallProvider></StrictMode>;
 }
-const meta: Meta<typeof VoiceCallProvider> = { ...voiceStoryLifecycle, id: "connections-speko-call-provider", title: "Apps, channels, and extensions/External chat and email/Speko/Call provider", component: VoiceCallProvider, render: () => <Fixture />, parameters: { layout: "padded" } };
+const meta: Meta<typeof VoiceCallProvider> = { ...voiceStoryLifecycle, id: "connections-speko-call-provider", title: "Apps, channels, and extensions/External chat and email/Speko/Call provider", component: VoiceCallProvider, render: () => <Fixture />, parameters: { layout: "padded", paperclip: {"capabilities": ["chat-channels/conversation", "chat-channels/lifecycle"], "status": "current", "implementation": "production", "boundary": "fixtures", "notes": "Production route-persistent call host with fixture client/media. Demonstrates navigation and cleanup presentation, not live media or provider hangup."} } };
 export default meta;
 type Story = StoryObj<typeof meta>;
 const start: NonNullable<Story["play"]> = async ({ canvasElement }) => {

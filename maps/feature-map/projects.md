@@ -1,3 +1,7 @@
+---
+navigation: {"section":"Projects and execution","sectionOrder":40,"order":10}
+---
+
 # Projects and repositories
 
 People group tasks into projects, attach goals and repositories, and configure the context and defaults used by project work.
@@ -51,3 +55,7 @@ Manual: Attach a small repository, save, and create a project task. Inspect the 
 - Project repository configuration and a provisioned execution workspace are different records.
 - See [workspaces](./workspaces.md), [goals](./goals.md), and [budgets](./budgets-costs.md) for those features.
 - Do not assume a deleted or archived project should erase its historical task evidence.
+
+### Documentation scope: Projects and execution workspaces
+
+Provider-specific provisioning, multi-repository/submodule edge cases, Git reconciliation variants, and all service exposure combinations require deeper recipes.

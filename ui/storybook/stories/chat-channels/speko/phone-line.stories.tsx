@@ -5,7 +5,7 @@ import { SpekoPhoneLineForm } from "@/components/voice/SpekoPhoneLine";
 import type { VoicePhoneConfiguration } from "@paperclipai/shared";
 import { voiceStoryLifecycle } from "../../../support/speko/voiceStoryLifecycle";
 const configuration: VoicePhoneConfiguration = { number: null, inventory: [{id: "number", phoneNumber: "+12015550123", label: "Company front desk", available: true, inboundReady: true, outboundReady: true, issues: []}] };
-const meta = {...voiceStoryLifecycle, id: "connections-speko-incoming-phone-line", title: "Apps, channels, and extensions/External chat and email/Speko/Incoming phone line", component: SpekoPhoneLineForm, args: {onRefresh: () => {}, onSave: () => {}}, parameters: {layout: "padded"}} satisfies Meta<typeof SpekoPhoneLineForm>;
+const meta = {...voiceStoryLifecycle, id: "connections-speko-incoming-phone-line", title: "Apps, channels, and extensions/External chat and email/Speko/Incoming phone line", component: SpekoPhoneLineForm, args: {onRefresh: () => {}, onSave: () => {}}, parameters: { layout: "padded", paperclip: {"capabilities": ["chat-channels/providers", "chat-channels/identity", "chat-channels/lifecycle"], "status": "current", "implementation": "production", "boundary": "fixtures", "notes": "Production phone-line settings with fixture numbers, verification, credits and sandbox choices. No real number provisioning or incoming calls."} }} satisfies Meta<typeof SpekoPhoneLineForm>;
 export default meta;
 type Story = StoryObj<typeof meta>;
 export const Initial: Story = {args: {configuration}};

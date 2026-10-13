@@ -9,7 +9,7 @@ import {issuesApi} from "@/api/issues";
 import {storybookIssues} from "../../../fixtures/paperclipData";
 import {SpekoQueryFixture, spekoCompanyId, spekoEndpoint, spekoAgent} from "../../../support/speko/spekoNative";
 const call: VoiceInboundCall = {id: "incoming", state: "awaiting_approval", approvalCode: "123456", createdAt: "2026-10-07T17:00:00Z", expiresAt: "2026-10-07T17:02:00Z", sessionId: null};
-const meta = {...voiceStoryLifecycle, id: "connections-speko-live-phone-approval", title: "Apps, channels, and extensions/External chat and email/Speko/Live phone approval", component: SpekoIncomingCallCard, args: {call, onDecide: () => {}}, parameters: {layout: "padded"}} satisfies Meta<typeof SpekoIncomingCallCard>;
+const meta = {...voiceStoryLifecycle, id: "connections-speko-live-phone-approval", title: "Apps, channels, and extensions/External chat and email/Speko/Live phone approval", component: SpekoIncomingCallCard, args: {call, onDecide: () => {}}, parameters: { layout: "padded", paperclip: {"capabilities": ["chat-channels/identity", "chat-channels/conversation"], "status": "current", "implementation": "production", "boundary": "fixtures", "notes": "Production incoming-call approval states and task selection with fixture callbacks. No live caller authentication, permission enforcement or guest execution proof."} }} satisfies Meta<typeof SpekoIncomingCallCard>;
 export default meta;
 type Story = StoryObj<typeof meta>;
 export const AwaitingApproval: Story = {};
