@@ -121,6 +121,18 @@ The recovery-card suite covers workspace divergence, reissue, reconcile, and
 confirmation. [Workspace export](../../ui/src/components/WorkspaceExportRecovery.test.tsx)
 covers quiet restoration, legacy/operator assistance and resolved states.
 
+For a retained legacy file hold, open the source task after its recovery action
+has resolved but its files still need recovery. An authorized board operator can
+record the verified recovered files and backup link without changing the current
+task status or starting another run. The server must independently validate the
+original stopped-execution receipt. Agent Chat must show the file hold rather than
+suggesting another message. The [file recovery form](../../ui/src/components/WorkspaceFileRecovery.test.tsx),
+[notice](../../ui/src/components/ExecutionBlockerNotice.test.tsx), and
+[repair route](../../server/src/__tests__/workspace-restore-repair-route.test.ts)
+cover evidence/confirmation, read-only access, stale or missing stop proof,
+source-only repair, and preserved task status. These tests use fixtures; separately
+verify original files and their attached artifact before recording a real repair.
+
 For an abandoned native copyback owner, the harness verifies the exact stopped
 deployment and the reconciler restores saved work automatically. Task users see
 no process details or shutdown form. The documented operator API handles older

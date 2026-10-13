@@ -581,3 +581,97 @@ fixture to its review sources, and refreshed only those inspected fingerprints.
 The entries retain their unreviewed full-parity classification. This reconciliation
 is source inspection and structural validation; it does not add browser, provider
 or live production acceptance evidence.
+## Production-subject UI gap examples — 2026-10-13
+
+Step 3 adds 37 suites and 257 scenarios associated with the 49 UI capabilities
+from [VERIFICATION.md](VERIFICATION.md). Subjects are shipped pages/components;
+API replies, sockets, callbacks and storage seeds remain simulated. Source
+review uses production snapshot `a9ef9e8ebc1f41bb7047142704655d08b3e47be7`;
+the story revision is `36689fc8149c31858d0b4c6f7839ecc663404073` plus the review
+corrections in this commit. Catalog fingerprints identify the tested source bytes.
+Existing suite classifications and all 2,248 prior built entry IDs are preserved;
+the new built index has 2,505 entries. Existing unreviewed suites remain unreviewed.
+
+Executed the focused browser suite against this checkout's static build on macOS
+Chromium at 1280 × 900 with reduced motion: **260 checks passed**. Every new story
+was exercised: 129 declared play functions passed; the remaining 128 scenarios
+have explicit subject-content, skeleton, editable-control or documented fallback
+assertions. The only intentionally empty root is the zero-entry durable-response
+queue, whose shipped component returns null. Additional checks verified token
+fixture reset through sidebar navigation and backup retention at 390 × 844 in
+light and dark themes. No browser page errors were observed. The test names
+identify each story ID; rerun with the command in VERIFICATION.md. Selected
+screenshots are inspection captures, not pinned Linux visual-baseline comparisons.
+
+Review corrections give empty stage settings zero stages and assert its message,
+make failed reads return HTTP 500 rather than the service-warmup HTTP 503,
+provide Inbox dependencies and actual plugin redirect destinations, use distinct
+attachment paths and a valid uncertain-submission UUID, and select Interactions
+before play starts so the browser harness does not steal input/menu focus.
+
+Repository typecheck/build, the UI Vitest suite (730 files, 8,208 tests),
+four fixture-boundary tests, 27 catalog/generator/map tests, token gates and
+Storybook build passed. The full local repository test command could not complete:
+embedded PostgreSQL exhausted host shared-memory allocation, and native-runner
+tests reported timeouts. No host settings or other jobs were changed.
+
+Production acceptance and pinned Linux visual comparisons were not run. The
+scenario inventory retains outstanding recipe variants and real authorization,
+persistence and provider contracts. Examples expose existing read-error/loading
+fallbacks rather than inventing feedback; those limits are named in VERIFICATION.md.
+
+## Step-3 merge reconciliation — 2026-10-13
+
+Merged current master `da9af67415` through the verification parent. Preserved
+upstream story additions, review notes and classifications and all 37 new suites.
+Compared changed catalog inputs with the reviewed step-2 snapshot: five feature
+recipes, the generated feature index, BudgetIncidentCard/Costs, Inbox and the
+recovery notice wiring changed. The two preview-hook lines remain as reviewed.
+The new budget fixtures explicitly use hard thresholds; their action labels and
+callbacks are retained. Inbox fixtures use human-created tasks; unrelated
+automation discovery remains outside their asserted scope. Recovery fixtures use
+generic exhaustion/unknown-outcome causes, not the newly gated native-owner path.
+Recipe additions concern Telegram maintenance, liveness versus readiness, trusted
+instance-secret lifecycle and native copyback verification, which these isolated
+UI stories do not establish. Reviewed those differences, refreshed affected
+fingerprints with scoped notes, and retained all statuses. No new live acceptance
+or rendering evidence is claimed for the merge; the earlier 260-check pass names
+its tested revision. Catalog/map validation and 27 targeted tests pass.
+
+## Draft-fixture isolation correction before merge — 2026-10-13
+
+After #16167 merged as `252d9b5077`, retained the step-3 catalog and scenarios
+while reconciling its squash-merged verification file. Review found that
+`clearDraft` correctly refuses to clear a retained submission without its
+matching attempt ID. Story setup/cleanup now passes that ID for the two
+Storybook-owned draft keys before reseeding them. Production draft guards are
+unchanged. The new same-browser check switches from UncertainSubmission to
+Empty, SentClearsDraft and SendFailedKeepsDraft; it asserts the warning disappears
+and the expected empty or retained draft is shown, with declared play passing.
+All six draft stories plus that switching regression passed (seven browser
+checks) on the owned macOS Chromium development preview after cold dependency
+optimization. UI typecheck, 16 existing draft-persistence tests and the 27
+catalog/generator/map tests passed. No whole-suite browser rerun, production
+submission journey or visual-baseline comparison is claimed for this narrow fix.
+
+Static merge verification: Storybook build passed after restoring the checkout's
+renderer dependencies. All 2,248 original built IDs remain in the 2,517-entry
+index. The 25 budget/inbox/recovery examples affected by upstream source changes,
+six draft examples and same-browser reset check passed on the static preview
+(32 checks). The reset check uses the sidebar for Empty and reloads send stories
+within the same browser/storage context, so it cannot read the prior story's
+completed play status while the new play starts. No isolated-context substitute
+is used for the retained-submission regression. The unchanged GitHub bot-management
+suite also passed locally (34 tests) after its CI assertion failed; a separate
+server job reported cancellation. Those CI jobs require a fresh passing run.
+
+## Named play-result assertions — 2026-10-13
+
+Strengthened four review cases: UnavailableCompanyDraft waits for the visible
+wizard and an empty agent-name input before rejecting the foreign draft; Probing
+asserts a disabled Testing button; FilterNoMatches asserts the filtered empty
+message and absence of the seeded run; Delivering asserts the queue's optimistic
+removal after clicking a loaded row. The shipped queue returns null while that
+delivery remains pending, so this story records the missing visible progress
+presentation rather than inventing it. All four browser cases passed on the
+owned preview, as did UI typecheck and 27 catalog/generator/map tests.
