@@ -822,7 +822,7 @@
         "activity/activity",
         "gateways-profiles/activity"
       ],
-      "purpose": "Apps/App detail \u00b7 Activity (lifecycle)",
+      "purpose": "Apps/App detail · Activity (lifecycle)",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -836,8 +836,8 @@
         "ui/storybook/stories/activity/app-activity-lifecycle.stories.tsx"
       ],
       "fingerprint": "6c813a16621d93fe9f817b1b01d451a35b4b552727976168e938409d100b26e9",
-      "stableId": "apps-app-detail-\u00b7-activity-lifecycle",
-      "sidebarTitle": "Oversight and operation/Dashboards and audit trails/Apps/App detail \u00b7 Activity (lifecycle)"
+      "stableId": "apps-app-detail-·-activity-lifecycle",
+      "sidebarTitle": "Oversight and operation/Dashboards and audit trails/Apps/App detail · Activity (lifecycle)"
     },
     {
       "file": "ui/storybook/stories/connection-setup/apps-catalog-source-selection.stories.tsx",
@@ -2525,7 +2525,7 @@
       "capabilities": [
         "skills/authoring"
       ],
-      "purpose": "Product/Skill Studio \u00b7 FrontmatterPanel",
+      "purpose": "Product/Skill Studio · FrontmatterPanel",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -2537,8 +2537,8 @@
         "ui/storybook/stories/skills/frontmatter-panel.stories.tsx"
       ],
       "fingerprint": "3ce86c6fc5abd40ab68ce9e6ea45c2ed8891af8f88fe5a7f8b82e32cd9d68657",
-      "stableId": "product-skill-studio-\u00b7-frontmatterpanel",
-      "sidebarTitle": "Agents and reusable capabilities/Skills and Skill Studio/Product/Skill Studio \u00b7 FrontmatterPanel"
+      "stableId": "product-skill-studio-·-frontmatterpanel",
+      "sidebarTitle": "Agents and reusable capabilities/Skills and Skill Studio/Product/Skill Studio · FrontmatterPanel"
     },
     {
       "file": "ui/storybook/stories/gateways-profiles/gateways-tab.stories.tsx",
@@ -4003,7 +4003,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings. Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Project-skill source review: maps/feature-map/projects.md. This dependency review does not add executed story coverage. Master source review preserves nullable project references and task workspace links. No new rendering or runtime proof.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings. Reviewed the project-skill recipe addition: repository attachment queues skills, legacy adoption stays explicit, and detach retains provenance. This source reconciliation adds no rendering or provider proof.",
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/projects.md",
@@ -4012,7 +4012,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/projects/project-execution-workspace-strategy.stories.tsx"
       ],
-      "fingerprint": "89c541df010f3ea0dafa6ed29e02882ffbbecca1aaa90a2606176ffe6b8f9f4d",
+      "fingerprint": "87d85153d4bfe64174bfc61a79a0c5b16e0db91fe23671eb099908d1a0073d4e",
       "stableId": "workspaces-project-runtime-provision-command",
       "sidebarTitle": "Projects and execution/Projects and repositories/Workspaces/Project runtime provision command"
     },
@@ -4056,7 +4056,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed nullable project references and guarded runtime invalidations. Existing summaries remain project-bound and retain their routes; null-project execution workspace rendering and controls remain a coverage gap. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings. Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed nullable project references and guarded runtime invalidations. Existing summaries remain project-bound and retain their routes; null-project execution workspace rendering and controls remain a coverage gap. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Project-skill source review: maps/feature-map/projects.md. This dependency review does not add executed story coverage. Master source review preserves nullable project references and task workspace links. No new rendering or runtime proof.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed nullable project references and guarded runtime invalidations. Existing summaries remain project-bound and retain their routes; null-project execution workspace rendering and controls remain a coverage gap. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings. Reviewed the project-skill recipe addition: repository attachment queues skills, legacy adoption stays explicit, and detach retains provenance. This source reconciliation adds no rendering or provider proof.",
       "reviewedAt": "2026-10-12",
       "sources": [
         "maps/feature-map/goals.md",
@@ -4072,7 +4072,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/projects/projects-goals-workspaces.stories.tsx"
       ],
-      "fingerprint": "e7330baf164a462aaef557989a6334fd61e9b1f378dd6674f34f4e7bbe8f03bb",
+      "fingerprint": "32c95ce9c9ca7f34c4cbdfba0ca14e49a38991243fdae77109fee23cc4c855e2",
       "stableId": "product-projects-goals-workspaces",
       "sidebarTitle": "Projects and execution/Projects and repositories/Product/Projects Goals Workspaces"
     },
@@ -4537,7 +4537,7 @@
         "routines/management",
         "activity/routine-audit"
       ],
-      "purpose": "Product/Routines \u00b7 Detail (variation C)",
+      "purpose": "Product/Routines · Detail (variation C)",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -4556,8 +4556,8 @@
         "maps/feature-map/activity.md"
       ],
       "fingerprint": "b5e7e977d5e44f9ec4bf90ec391bdcd765a3f566a608929bf5b3a0613a5c1d90",
-      "stableId": "product-routines-\u00b7-detail-variation-c",
-      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines \u00b7 Detail (variation C)"
+      "stableId": "product-routines-·-detail-variation-c",
+      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines · Detail (variation C)"
     },
     {
       "file": "ui/storybook/stories/routines/routine-secrets.stories.tsx",
@@ -4565,7 +4565,7 @@
         "routines/definition",
         "secrets/runtime-delivery"
       ],
-      "purpose": "Product/Routines \u00b7 Secrets tab",
+      "purpose": "Product/Routines · Secrets tab",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -4580,8 +4580,8 @@
         "ui/storybook/stories/routines/routine-secrets.stories.tsx"
       ],
       "fingerprint": "687a62628237816d0442e7cede0426290ab89f758d06e3662be814b83414faf3",
-      "stableId": "product-routines-\u00b7-secrets-tab",
-      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines \u00b7 Secrets tab"
+      "stableId": "product-routines-·-secrets-tab",
+      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines · Secrets tab"
     },
     {
       "file": "ui/storybook/stories/routines/routine-webhooks-ux.stories.tsx",
@@ -4646,7 +4646,7 @@
         "routines/definition",
         "routines/management"
       ],
-      "purpose": "Product/Routines \u00b7 List (grouped cards)",
+      "purpose": "Product/Routines · List (grouped cards)",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -4658,8 +4658,8 @@
         "ui/storybook/stories/routines/routines-list-groups.stories.tsx"
       ],
       "fingerprint": "957265bdf3d24fe7c5939c452efa40818be97c6e000b5f3896ffb6b87512048f",
-      "stableId": "product-routines-\u00b7-list-grouped-cards",
-      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines \u00b7 List (grouped cards)"
+      "stableId": "product-routines-·-list-grouped-cards",
+      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines · List (grouped cards)"
     },
     {
       "file": "ui/storybook/stories/tasks/runner-activity.stories.tsx",
