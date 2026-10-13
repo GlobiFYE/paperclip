@@ -14,13 +14,20 @@ export interface AgentModelGroup<A extends AgentModelGroupInput> {
   models: { model: string; agents: A[] }[];
 }
 
-const HERMES_PROVIDERS: Record<string, string> = {
+// Provider ids as adapters persist them (hermes `provider`, paperclip_runner
+// `provider`, Pi/OpenCode `provider/model` prefixes), mapped to display names.
+const PROVIDER_NAMES: Record<string, string> = {
   xiaomi: "MiMo",
   minimax: "MiniMax",
   nvidia: "NVIDIA",
   gemini: "Gemini",
   xai: "Grok",
   anthropic: "Claude",
+  claude: "Claude",
+  claude_managed: "Claude",
+  codex: "Codex",
+  opencode: "OpenCode",
+  grok: "Grok",
   openai: "OpenAI",
   openrouter: "OpenRouter",
 };
@@ -40,6 +47,9 @@ const ADAPTER_PROVIDERS: Record<string, string> = {
   pi_local: "Pi",
   openclaw_gateway: "OpenClaw",
   hermes_gateway: "Hermes gateway",
+  hermes_local: "Hermes",
+  hermes: "Hermes",
+  paperclip_runner: "Paperclip runner",
   process: "Process (no model)",
   http: "HTTP",
 };
@@ -50,21 +60,22 @@ function text(value: unknown): string | null {
 
 export function agentProvider(agent: AgentModelGroupInput): string {
   const config = agent.adapterConfig ?? {};
-  if (agent.adapterType === "hermes_local" || agent.adapterType === "hermes") {
-    const provider = text(config.provider);
-    if (!provider) return "Hermes (default provider)";
-    return HERMES_PROVIDERS[provider.toLowerCase()] ?? `Hermes · ${provider}`;
-  }
+  const client = ADAPTER_PROVIDERS[agent.adapterType] ?? agent.adapterType;
+  // Any adapter that persists a provider id (hermes, paperclip_runner, ...) is grouped by it.
+  const provider = text(config.provider);
+  if (provider) return PROVIDER_NAMES[provider.toLowerCase()] ?? `${client} · ${provider}`;
   if (PREFIXED_MODEL_ADAPTERS.has(agent.adapterType)) {
     const model = text(config.model);
     const slash = model?.indexOf("/") ?? -1;
     if (model && slash > 0) {
       const prefix = model.slice(0, slash).trim().toLowerCase();
-      return HERMES_PROVIDERS[prefix] ?? prefix;
+      return PROVIDER_NAMES[prefix] ?? prefix;
     }
-    return `${ADAPTER_PROVIDERS[agent.adapterType]} (default provider)`;
   }
-  return ADAPTER_PROVIDERS[agent.adapterType] ?? agent.adapterType;
+  if (agent.adapterType === "hermes_local" || agent.adapterType === "hermes" || PREFIXED_MODEL_ADAPTERS.has(agent.adapterType) || agent.adapterType === "paperclip_runner") {
+    return `${client} (default provider)`;
+  }
+  return client;
 }
 
 export function agentModel(agent: AgentModelGroupInput): string {

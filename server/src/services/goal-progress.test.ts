@@ -1,11 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { computeGoalProgress } from "./goal-progress.js";
+import { computeGoalProgress, type ProgressIssueInput } from "./goal-progress.js";
 
 const goal = (id: string, level: string, parentId: string | null = null, status = "active") => ({
   id, title: id, level, status, parentId, ownerAgentId: null,
 });
-const issue = (id: string, status: string, goalId: string | null, assigneeAgentId: string | null = null, identifier: string | null = `TOP-${id}`) => ({
-  id, identifier, title: `task ${id}`, status, goalId, assigneeAgentId,
+const issue = (
+  id: string,
+  status: string,
+  goalId: string | null,
+  assigneeAgentId: string | null = null,
+  extra: Partial<ProgressIssueInput> = {},
+): ProgressIssueInput => ({
+  id, identifier: `TOP-${id}`, title: `task ${id}`, status, goalId, assigneeAgentId, projectId: null, parentId: null, ...extra,
 });
 
 describe("computeGoalProgress", () => {
@@ -48,6 +54,27 @@ describe("computeGoalProgress", () => {
     expect(byId.t.percent).toBe(50);
   });
 
+  it("falls back to the parent task's goal, then the project's goal, when a task has none", () => {
+    const out = computeGoalProgress({
+      goals: [goal("m1", "task"), goal("m2", "task")],
+      projects: [{ id: "p1", goalId: "m1" }, { id: "p-nogoal", goalId: null }],
+      issues: [
+        issue("1", "done", null, null, { projectId: "p1" }),
+        issue("2", "todo", null, "agent-a", { parentId: "1" }),
+        issue("3", "in_progress", "m2", null, { projectId: "p1" }),
+        issue("4", "todo", null, null, { projectId: "p-nogoal" }),
+        issue("5", "todo", null, null, { parentId: "6" }),
+        issue("6", "todo", null, null, { parentId: "5" }),
+      ],
+      agents: [{ id: "agent-a", name: "Ann", status: "idle" }],
+    });
+    const byId = Object.fromEntries(out.goals.map((g) => [g.id, g]));
+    expect(byId.m1.counts).toEqual({ done: 1, inProgress: 0, inReview: 0, blocked: 0, todo: 1, total: 2 });
+    expect(byId.m2.counts.total).toBe(1);
+    expect(out.unlinkedOpenTasks).toBe(3);
+    expect(out.agents[0]).toMatchObject({ name: "Ann", identifier: "TOP-2", goalId: "m1", goalTitle: "m1" });
+  });
+
   it("counts open tasks with no goal and never crashes on a goal cycle", () => {
     const out = computeGoalProgress({
       goals: [goal("a", "team", "b"), goal("b", "team", "a")],
@@ -67,7 +94,7 @@ describe("computeGoalProgress", () => {
         issue("3", "backlog", null, "agent-b"),
         issue("4", "in_review", null, "agent-c"),
         issue("5", "done", "m1", "agent-d"),
-        issue("6", "blocked", "m1", "agent-e", null),
+        issue("6", "blocked", "m1", "agent-e", { identifier: null }),
       ],
       agents: [
         { id: "agent-a", name: "Zed", status: "running" },

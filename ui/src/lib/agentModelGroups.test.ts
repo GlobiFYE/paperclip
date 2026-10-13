@@ -7,6 +7,11 @@ describe("agentModelGroups", () => {
     expect(agentProvider({ id: "2", adapterType: "grok_local", adapterConfig: { model: "grok-4.7" } })).toBe("Grok");
     expect(agentProvider({ id: "3", adapterType: "process", adapterConfig: {} })).toBe("Process (no model)");
     expect(agentProvider({ id: "4", adapterType: "hermes_local", adapterConfig: { provider: "zzz" } })).toBe("Hermes · zzz");
+    expect(agentProvider({ id: "4b", adapterType: "hermes_local", adapterConfig: {} })).toBe("Hermes (default provider)");
+    // paperclip_runner persists its provider id too.
+    expect(agentProvider({ id: "9", adapterType: "paperclip_runner", adapterConfig: { provider: "claude_managed", model: "claude-opus-5-5" } })).toBe("Claude");
+    expect(agentProvider({ id: "10", adapterType: "paperclip_runner", adapterConfig: { provider: "codex" } })).toBe("Codex");
+    expect(agentProvider({ id: "11", adapterType: "paperclip_runner", adapterConfig: {} })).toBe("Paperclip runner (default provider)");
     expect(agentModel({ id: "3", adapterType: "process" })).toBe("—");
     expect(agentModel({ id: "5", adapterType: "claude_local", adapterConfig: {} })).toBe("default model");
     // Pi and OpenCode write provider/model: group by the AI provider, not the client.

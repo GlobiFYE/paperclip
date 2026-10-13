@@ -684,6 +684,8 @@ const HEARTBEAT_MAX_CONCURRENT_RUNS_MAX = 50;
 // values disable the cap so existing deployments keep their behavior.
 export const HEARTBEAT_GLOBAL_MAX_CONCURRENT_RUNS_ENV =
   "HEARTBEAT_GLOBAL_MAX_CONCURRENT_RUNS";
+const FLEET_CAP_EXEMPT_ADAPTERS = new Set(["process", "grok_local"]);
+
 export function parseGlobalMaxConcurrentRuns(
   raw: string | number | undefined | null,
 ): number | null {
@@ -20058,8 +20060,10 @@ export function heartbeatService(
         runtimeEnv[HEARTBEAT_GLOBAL_MAX_CONCURRENT_RUNS_ENV],
       );
       // `process` agents (e.g. the job router) run a short local script, not a model session, so they never
-      // wait behind the fleet-wide model-run ceiling; their per-agent limit still applies.
-      if (globalMaxConcurrentRuns !== null && availableSlots > 0 && agent.adapterType !== "process") {
+      // wait behind the fleet-wide model-run ceiling; their per-agent limit still applies. `grok_local` is the
+      // oversight seat (Chief Audit Officer): one agent on the owner's subscription that must not sit behind the
+      // workforce it audits.
+      if (globalMaxConcurrentRuns !== null && availableSlots > 0 && !FLEET_CAP_EXEMPT_ADAPTERS.has(agent.adapterType)) {
         const globalRunningCount = await countRunningRuns();
         availableSlots = Math.min(
           availableSlots,

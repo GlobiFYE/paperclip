@@ -1,7 +1,6 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { agents, goals, issues } from "@paperclipai/db";
-import { executionIssueCondition } from "./issue-visibility.js";
+import { agents, goals, issues, projectGoals, projects } from "@paperclipai/db";
 import type {
   GoalProgressAgent,
   GoalProgressCounts,
@@ -9,6 +8,7 @@ import type {
   GoalProgressResponse,
   GoalProgressStage,
 } from "@paperclipai/shared";
+import { executionIssueCondition } from "./issue-visibility.js";
 
 export interface ProgressGoalInput {
   id: string;
@@ -25,7 +25,15 @@ export interface ProgressIssueInput {
   title: string;
   status: string;
   goalId: string | null;
+  projectId: string | null;
+  parentId: string | null;
   assigneeAgentId: string | null;
+}
+
+export interface ProgressProjectInput {
+  id: string;
+  /** The project's primary goal: `projects.goalId`, else its earliest `project_goals` link. */
+  goalId: string | null;
 }
 
 export interface ProgressAgentInput {
@@ -35,7 +43,7 @@ export interface ProgressAgentInput {
 }
 
 const OPEN_STATUSES = new Set(["backlog", "todo", "in_progress", "in_review", "blocked"]);
-// The agent's "current" task is the one furthest along; ties go to the newest id order.
+// The agent's "current" task is the one furthest along.
 const STAGE_RANK: Record<GoalProgressStage, number> = { in_progress: 4, in_review: 3, blocked: 2, todo: 1, done: 0 };
 
 function emptyCounts(): GoalProgressCounts {
@@ -74,11 +82,17 @@ function round1(value: number): number {
  * Rolls task status up the goal tree. A goal with child goals scores the mean
  * of its live children (equal weight per milestone); a leaf goal scores
  * done / total over its own tasks; an achieved goal is 100 regardless.
+ *
+ * A task's goal is its own goalId, else the nearest ancestor task's goal, else
+ * its project's primary goal: projects linked to a goal after their tasks were
+ * created never get a per-task backfill, so the fallback keeps that work on the
+ * board instead of calling it "no goal".
  */
 export function computeGoalProgress(input: {
   goals: ProgressGoalInput[];
   issues: ProgressIssueInput[];
   agents: ProgressAgentInput[];
+  projects?: ProgressProjectInput[];
 }): GoalProgressResponse {
   const own = new Map<string, GoalProgressCounts>();
   const children = new Map<string, string[]>();
@@ -86,9 +100,29 @@ export function computeGoalProgress(input: {
     own.set(goal.id, emptyCounts());
     if (goal.parentId) children.set(goal.parentId, [...(children.get(goal.parentId) ?? []), goal.id]);
   }
+
+  const projectGoal = new Map<string, string | null>((input.projects ?? []).map((project) => [project.id, project.goalId]));
+  const issueById = new Map(input.issues.map((issue) => [issue.id, issue]));
+  const effective = new Map<string, string | null>();
+  const resolveGoal = (issue: ProgressIssueInput, trail = new Set<string>()): string | null => {
+    if (effective.has(issue.id)) return effective.get(issue.id)!;
+    let goalId: string | null = issue.goalId && own.has(issue.goalId) ? issue.goalId : null;
+    if (!goalId && issue.parentId && !trail.has(issue.id)) {
+      const parent = issueById.get(issue.parentId);
+      if (parent) goalId = resolveGoal(parent, new Set(trail).add(issue.id));
+    }
+    if (!goalId && issue.projectId) {
+      const fromProject = projectGoal.get(issue.projectId) ?? null;
+      goalId = fromProject && own.has(fromProject) ? fromProject : null;
+    }
+    effective.set(issue.id, goalId);
+    return goalId;
+  };
+
   let unlinkedOpenTasks = 0;
   for (const issue of input.issues) {
-    if (issue.goalId && own.has(issue.goalId)) addIssue(own.get(issue.goalId)!, issue.status);
+    const goalId = resolveGoal(issue);
+    if (goalId) addIssue(own.get(goalId)!, issue.status);
     else if (OPEN_STATUSES.has(issue.status)) unlinkedOpenTasks += 1;
   }
 
@@ -149,6 +183,7 @@ export function computeGoalProgress(input: {
   const agentsOut: GoalProgressAgent[] = [...current.entries()]
     .map(([agentId, issue]) => {
       const agent = agentById.get(agentId)!;
+      const goalId = resolveGoal(issue);
       return {
         agentId,
         name: agent.name,
@@ -157,8 +192,8 @@ export function computeGoalProgress(input: {
         identifier: issue.identifier,
         title: issue.title,
         stage: stageOf(issue.status),
-        goalId: issue.goalId,
-        goalTitle: issue.goalId ? goalTitle.get(issue.goalId) ?? null : null,
+        goalId,
+        goalTitle: goalId ? goalTitle.get(goalId) ?? null : null,
       };
     })
     .sort((a, b) => STAGE_RANK[b.stage] - STAGE_RANK[a.stage] || a.name.localeCompare(b.name));
@@ -169,18 +204,38 @@ export function computeGoalProgress(input: {
 export function goalProgressService(db: Db) {
   return {
     summary: async (companyId: string): Promise<GoalProgressResponse> => {
-      const [goalRows, issueRows, agentRows] = await Promise.all([
+      const [goalRows, issueRows, agentRows, projectRows] = await Promise.all([
         db
           .select({ id: goals.id, title: goals.title, level: goals.level, status: goals.status, parentId: goals.parentId, ownerAgentId: goals.ownerAgentId })
           .from(goals)
           .where(eq(goals.companyId, companyId)),
         db
-          .select({ id: issues.id, identifier: issues.identifier, title: issues.title, status: issues.status, goalId: issues.goalId, assigneeAgentId: issues.assigneeAgentId })
+          .select({
+            id: issues.id, identifier: issues.identifier, title: issues.title, status: issues.status,
+            goalId: issues.goalId, projectId: issues.projectId, parentId: issues.parentId, assigneeAgentId: issues.assigneeAgentId,
+          })
           .from(issues)
           .where(and(eq(issues.companyId, companyId), executionIssueCondition())),
         db.select({ id: agents.id, name: agents.name, status: agents.status }).from(agents).where(eq(agents.companyId, companyId)),
+        db.select({ id: projects.id, goalId: projects.goalId }).from(projects).where(eq(projects.companyId, companyId)),
       ]);
-      return computeGoalProgress({ goals: goalRows, issues: issueRows, agents: agentRows });
+      const projectIds = projectRows.map((project) => project.id);
+      const linkRows = projectIds.length === 0
+        ? []
+        : await db
+            .select({ projectId: projectGoals.projectId, goalId: projectGoals.goalId, createdAt: projectGoals.createdAt })
+            .from(projectGoals)
+            .where(inArray(projectGoals.projectId, projectIds));
+      const earliestLink = new Map<string, { goalId: string; createdAt: Date }>();
+      for (const link of linkRows) {
+        const existing = earliestLink.get(link.projectId);
+        if (!existing || link.createdAt < existing.createdAt) earliestLink.set(link.projectId, { goalId: link.goalId, createdAt: link.createdAt });
+      }
+      const projectInputs: ProgressProjectInput[] = projectRows.map((project) => ({
+        id: project.id,
+        goalId: project.goalId ?? earliestLink.get(project.id)?.goalId ?? null,
+      }));
+      return computeGoalProgress({ goals: goalRows, issues: issueRows, agents: agentRows, projects: projectInputs });
     },
   };
 }
