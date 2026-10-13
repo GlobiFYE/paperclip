@@ -69,6 +69,10 @@ The current issue model includes stable issue identifiers, parent/sub-issues, bl
 
 Filtered task lists continue loading pages while their rows do not fill the viewport. A visible Load more tasks action also lets an operator request another page without scrolling. The empty state waits for remaining pages before saying there are no matches.
 
+When a task is assigned to the current human, the message composer defaults to
+the latest agent that assigned it to them. If no assignment is available, it uses
+the latest other commenter, or leaves the recipient empty. A manual recipient
+choice stays selected while task data refreshes.
 
 ### Company Skills and Policy
 
