@@ -170,6 +170,12 @@ and launcher preparation, run output initialization, workspace validation,
 runtime services, instruction files, and runtime selection. Database and HTTP
 instrumentation can attach child spans during each awaited operation.
 
+Each phase starts a new root trace and links to the active trigger span when
+one exists. An unsampled HTTP request must not suppress diagnostics for the
+background run it starts. Root traces still follow the operator's configured
+sampler. The trigger's trace remains unchanged, and overlapping runs keep
+their own phase and child contexts.
+
 These spans exist before provider dispatch, including setup failures. Each has
 only the existing `paperclip.task.run.run_id` attribute: the first 12 hexadecimal
 characters of the run UUID's SHA-256 hash. Failed operations set error status
