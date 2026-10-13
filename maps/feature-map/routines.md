@@ -55,6 +55,10 @@ Manual: Set a near-term disposable schedule or authorized test webhook, verify o
 - Saving a schedule does not prove the scheduler invoked it.
 - Timezone, overlap/concurrency rules, and plugin ownership affect behavior.
 - A routine run’s task must still respect pause, access, and budget gates.
+- Managed idle hosts may use the [routine wake protocol](../../doc/idle-sleep-safety.md#scheduled-routine-wake-protocol)
+  to sleep between supported future runs. The host must save a durable alarm
+  and verify the same generation before stopping. Local execution and catch-up
+  remain unchanged. Unsupported triggers and other pending work keep it awake.
 
 ### Storybook verification
 

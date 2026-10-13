@@ -65,6 +65,14 @@ Gaps: No dedicated production trigger-management binding; generic `call_api`
 provides the permitted REST path. Credential replies use inline delivery and encrypted
 mutation receipts rather than shared response assets.
 
+The host-only `GET /api/instance/task-drain?idleSleepSafety=1&scheduledWake=1`
+extension reports the earliest supported future routine deadline under an owned
+idle hold. It requires signed Cloud control authority; company agents and tenant
+admin tokens cannot use it. It does not grant routine management or execution
+authority. See the [hosting protocol](../../doc/idle-sleep-safety.md#scheduled-routine-wake-protocol)
+and [route authorization tests](../../server/src/__tests__/instance-settings-routes.test.ts).
+These are local contract checks, not a live provider sleep/wake qualification.
+
 ## `run-now`
 
 Review: `baseline`.
