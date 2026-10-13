@@ -440,7 +440,7 @@ fingerprints, not live Slack behavior.
 
 Source classification against merged master `5e8e992df2`: [VERIFICATION.md](VERIFICATION.md)
 accounts for all 60 capabilities without non-guide example associations. It
-records 48 UI example gaps with separate production contracts, nine CLI/operator
+records 49 UI example gaps with separate production contracts, eight CLI/operator
 operations and three browser verification boundaries. Existing tests are starting
 points; no new live journey, rendering, interaction or visual evidence is claimed.
 The targeted association revisit found no further justified links. This does not
@@ -457,3 +457,8 @@ Catalog/map checks, 27 catalog/generator/map tests and maintenance-skill validat
 passed. The 60-row inventory and all local links were checked against current
 source. Repository-wide typecheck/tests/build and Storybook build are not run for
 this documentation and generated-data pass; runtime behavior is unchanged.
+
+Review correction: backup retention already has shipped controls in
+`InstanceGeneralSettings`, embedded in `CompanySettings`. The backup row therefore
+keeps missing retention UI examples alongside separate CLI backup/restore proof;
+it is not a wholesale Storybook exemption. No existing story mounts those controls.
