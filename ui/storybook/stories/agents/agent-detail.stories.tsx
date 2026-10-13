@@ -205,7 +205,16 @@ function AgentDetailScenario(options: AgentDetailScenarioOptions) {
 const meta: Meta = {
   id: "pages-agent-detail",
   title: "Agents and reusable capabilities/Hiring, configuration, and organization/Pages/Agent Detail",
-  parameters: { layout: "fullscreen", a11y: { test: "off" } },
+  parameters: { layout: "fullscreen", a11y: { test: "off" },
+    paperclip: {
+      "capabilities": [
+        "agents/lifecycle",
+        "agents/instructions"
+      ],
+      "implementation": "production",
+      "boundary": "fixtures"
+    },
+  },
 };
 export default meta;
 type Story = StoryObj;

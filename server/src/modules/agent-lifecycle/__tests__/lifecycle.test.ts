@@ -81,8 +81,12 @@ const support = await getEmbeddedPostgresTestSupport();
       { companyId, actorType: "agent", actorId: randomUUID(), action: "agent.hire_created", entityType: "agent", entityId: byAgent.id },
       { companyId: otherCompanyId, actorType: "user", actorId: "foreign-user", action: "agent.created", entityType: "agent", entityId: foreign.id },
     ]);
-    const migration = readFileSync(new URL("../../../../../packages/db/src/migrations/0339_lucky_yellow_claw.sql", import.meta.url), "utf8");
-    await db.execute(sql.raw(migration.slice(migration.indexOf('UPDATE "agents"'))));
+    const migration = readFileSync(new URL("../../../../../packages/db/src/migrations/0343_new_mentor.sql", import.meta.url), "utf8");
+    for (let pass = 0; pass < 2; pass++) {
+      for (const statement of migration.split("--> statement-breakpoint")) {
+        await db.execute(sql.raw(statement));
+      }
+    }
     expect((await current(byUser.id)).createdByUserId).toBe("first-user");
     expect((await current(byAgent.id)).createdByUserId).toBeNull();
     expect((await current(foreign.id)).createdByUserId).toBeNull();
@@ -507,7 +511,7 @@ const support = await getEmbeddedPostgresTestSupport();
     await db.update(pluginCompanySettings).set({ enabled: true }).where(eq(pluginCompanySettings.pluginId, pluginId));
     expect(await driver.runPlugin(snapshot, pluginId)).toBe("complete");
     expect(call).toHaveBeenCalledWith(pluginId, "agentLifecycle", { companyId, agentId: agent.id,
-      operationId: snapshot.lifecycleOperation!.id, version: snapshot.lifecycleVersion, phase: "paused" }, 30_000);
+      operationId: snapshot.lifecycleOperation!.id, version: snapshot.lifecycleVersion, phase: "paused", instanceSecrets: {} }, 30_000);
     call.mockResolvedValueOnce({ operationId: "stale", version: snapshot.lifecycleVersion, status: "complete" });
     await expect(driver.runPlugin(snapshot, pluginId)).rejects.toThrow("Invalid lifecycle result");
   });

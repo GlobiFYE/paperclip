@@ -2,7 +2,9 @@
 
 Product map: [Execution workspaces, services, and files](../feature-map/workspaces.md).
 
-Review date: 2026-10-12. Source commit: `f981fa3cc10cb8663a87dec60345fbff46d54d0a`.
+Review date: 2026-10-12. Source commit: `58e16dbddfc9c8d0cf60867f9d9847f0feda055b`.
+Native REST transport reconciled in this change; see the
+[shared transport contract](README.md#native-rest-transport).
 
 This is a source-reviewed baseline of representative operations and known gaps.
 Each capability needs operation-level review before its entire scope can be
@@ -37,6 +39,24 @@ workspace write authority. Accepting a new pending choice advances its binding
 revision; superseded retries fail while current-choice retries remain idempotent.
 Binding revisions and request keys fence retries;
 selection applies at the next normal admission without interrupting a live run.
+
+Fresh standard-trust tasks with an implicit repository default can use an owned
+remote clone when the shared default source fails the restricted-task workspace
+guard. This does not grant access to the private local checkout or its Git metadata.
+The normal admitted Git identity must already authorize the configured remote.
+Creation of a fallback source is unavailable for explicit, parent/channel, reused
+or low-trust selections, or branch templates without a task-derived placeholder;
+an existing verified owned source remains reusable. Literal branch selections
+retain the original denial without cloning or replacing their unpublished commits.
+New implicit Git defaults record project-source provenance. Untyped explicit,
+inherited and older ambiguous checkout bindings retain the denial; admission reads
+the current company-scoped binding before considering the fallback.
+Local paths, unsupported transports and credential-bearing URLs are not fallback
+sources. Company/task/remote bindings, real paths, Git storage and the exact origin
+are revalidated for reuse, cleanup and reopening. A failed save removes only the
+owned task worktree. The [isolated-source service](../../server/src/services/isolated-remote-workspace-source.ts)
+and its local regression tests establish source and lifecycle boundaries; live
+agent/provider qualification remains separate.
 Writable aliases must also be compatible with current and retained physical
 source projects' trust boundaries. Incompatible choices are rejected before
 dispatch; a projectless alias cannot bypass required sandbox containment.
@@ -119,8 +139,8 @@ API: `present` — representative operation IDs:
 
 - `POST /api/execution-workspaces/{id}/runtime-services/{action}`.
 
-Agent access: `partial` — Authorized agent REST / CLI workspace runtime-service /
-existing stdio MCP controls.
+Agent access: `available` — Authorized agent REST / native `call_api` / CLI runtime
+service controls and existing stdio MCP controls.
 
 Policy: Company/project/workspace visibility and runtime authority; active run, trust
 preset and task ownership where required.
@@ -134,8 +154,9 @@ credentials/run context; inspect its result and applicable persistence/attributi
 Assert the relevant denied actor, owner, company or mode from Policy. Review the
 remaining operations before qualifying the whole capability.
 
-Gaps: Native call_api blocks runtime-service mutation; control_workspace_service is not
-in the production authority set. Optional MCP availability must be recorded.
+Gaps: No dedicated production control_workspace_service binding. Generic native
+calls retain runtime trust and workspace/task scope checks. Optional MCP availability
+must be recorded.
 
 ## `files-git`
 
