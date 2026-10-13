@@ -1378,20 +1378,32 @@ export function createToolGatewayService(
         (connection.transport === "local_stdio" &&
           application.type === "mcp_stdio")),
     );
-    const baseNames = eligibleRows.map(
-      ({ catalogEntry, connection, application }) => {
-        const applicationKey = application.applicationKey ?? null;
-        const connectionNamespace = `${slugSegment(applicationKey ?? connection.name ?? application.name, "mcp")}-${shortStableId(connection.id)}`;
-        const toolSlug = slugSegment(catalogEntry.toolName, "tool");
-        return `${connection.transport === "rest_api" ? "app" : "mcp"}.${connectionNamespace}:${toolSlug}`;
-      },
+    const connectionSlugs = new Map(
+      eligibleRows.map(({ connection, application }) => [
+        connection.id,
+        slugSegment(connection.name.split("(")[0], slugSegment(application.name, "mcp"))
+          .slice(0, 24)
+          .replace(/-+$/, ""),
+      ]),
     );
+    const connectionSlugCounts = new Map<string, number>();
+    for (const slug of connectionSlugs.values()) {
+      connectionSlugCounts.set(slug, (connectionSlugCounts.get(slug) ?? 0) + 1);
+    }
+    const baseNames = eligibleRows.map(({ catalogEntry, connection }) => {
+      const slug = connectionSlugs.get(connection.id)!;
+      const connectionNamespace =
+        connectionSlugCounts.get(slug)! > 1
+          ? `${slug}-${shortStableId(connection.id)}`
+          : slug;
+      return `${connectionNamespace}:${slugSegment(catalogEntry.toolName, "tool")}`;
+    });
     const baseNameCounts = baseNames.reduce<Map<string, number>>(
       (counts, name) => {
         counts.set(name, (counts.get(name) ?? 0) + 1);
         return counts;
       },
-      new Map(),
+      new Map(allTools().map((tool) => [tool.name, 1])),
     );
 
     return eligibleRows.map(

@@ -229,7 +229,7 @@ async function createRemoteMcpTool(
   const [connection] = await db.insert(toolConnections).values({
     companyId,
     applicationId: application.id,
-    name: input.connectionName ?? `Remote connection ${randomUUID()}`,
+    name: input.connectionName ?? `Remote ${randomUUID()}`,
     uid: `test/${randomUUID()}`,
     transport: "mcp_remote",
     status: input.connectionStatus ?? "active",
@@ -366,7 +366,7 @@ rl.on("line", (line) => {
   const [connection] = await db.insert(toolConnections).values({
     companyId,
     applicationId: application!.id,
-    name: input.connectionName ?? `Local stdio connection ${randomUUID()}`,
+    name: input.connectionName ?? `Local stdio ${randomUUID()}`,
     uid: `test/${randomUUID()}`,
     transport: "local_stdio",
     status: input.connectionStatus ?? "active",
@@ -423,20 +423,14 @@ rl.on("line", (line) => {
   return { application: application!, connection: connection!, catalogEntry: catalogEntry!, templateKey };
 }
 
-function expectedConnectedToolName(input: { applicationKey: string | null; connectionId: string; toolName: string }) {
-  const applicationSegment = (input.applicationKey ?? "mcp")
+function expectedConnectedToolName(input: { connectionName: string; toolName: string }) {
+  const slug = (value: string) => value
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64) || "mcp";
-  const toolSegment = input.toolName
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 64) || "tool";
-  return `mcp.${applicationSegment}-${input.connectionId.replace(/-/g, "").slice(0, 8)}:${toolSegment}`;
+    .replace(/^-+|-+$/g, "");
+  const namespace = slug(input.connectionName.split("(")[0]!).slice(0, 24).replace(/-+$/, "");
+  return `${namespace}:${slug(input.toolName).slice(0, 64) || "tool"}`;
 }
 
 function expectGatewayError(error: unknown, status: number, reasonCode: string) {
@@ -603,8 +597,7 @@ describeEmbeddedPostgres("tool gateway acceptance", () => {
         inputSchema: { type: "object", properties: {}, additionalProperties: false },
       }).where(eq(toolCatalogEntries.id, catalogEntry.id));
       const toolName = expectedConnectedToolName({
-        applicationKey: application.applicationKey,
-        connectionId: connection.id,
+        connectionName: connection.name,
         toolName: catalogEntry.toolName,
       });
       const [profile] = await db.insert(toolProfiles).values({
@@ -670,8 +663,7 @@ describeEmbeddedPostgres("tool gateway acceptance", () => {
         riskLevel: "read",
       });
       const gatewayToolName = expectedConnectedToolName({
-        applicationKey: application.applicationKey,
-        connectionId: connection.id,
+        connectionName: connection.name,
         toolName: catalogEntry.toolName,
       });
       const [profile] = await db.insert(toolProfiles).values({
@@ -815,13 +807,11 @@ describeEmbeddedPostgres("tool gateway acceptance", () => {
       riskLevel: "read",
     });
     const assignedToolName = expectedConnectedToolName({
-      applicationKey: assigned.application.applicationKey,
-      connectionId: assigned.connection.id,
+      connectionName: assigned.connection.name,
       toolName: assigned.catalogEntry.toolName,
     });
     const unassignedToolName = expectedConnectedToolName({
-      applicationKey: unassigned.application.applicationKey,
-      connectionId: unassigned.connection.id,
+      connectionName: unassigned.connection.name,
       toolName: unassigned.catalogEntry.toolName,
     });
     const [gatewayProfile] = await db.insert(toolProfiles).values({
@@ -1212,8 +1202,7 @@ describeEmbeddedPostgres("tool gateway acceptance", () => {
         riskLevel: "read",
       });
       const gatewayToolName = expectedConnectedToolName({
-        applicationKey: application.applicationKey,
-        connectionId: connection.id,
+        connectionName: connection.name,
         toolName: catalogEntry.toolName,
       });
       const [profile] = await db.insert(toolProfiles).values({
@@ -1500,7 +1489,7 @@ describeEmbeddedPostgres("tool gateway acceptance", () => {
     const tools = await gateway.listToolsForSession(session.token);
     const connectedTool = tools.find((tool) => tool.providerType === "mcp_remote_http");
     expect(connectedTool).toMatchObject({
-      name: expect.stringMatching(/^mcp\.kv-demo-[0-9a-f]{8}:kv-set$/),
+      name: "kv-demo:kv-set",
       displayName: "Set KV value",
       providerType: "mcp_remote_http",
       risk: "write",
@@ -1566,8 +1555,7 @@ describeEmbeddedPostgres("tool gateway acceptance", () => {
       title: "Local echo",
     });
     const expectedName = expectedConnectedToolName({
-      applicationKey: "local-demo",
-      connectionId: localTool.connection.id,
+      connectionName: localTool.connection.name,
       toolName: "echo",
     });
     const profile = await allowToolsForAgent(db, company.id, agent.id, []);
@@ -1689,8 +1677,7 @@ rl.on("line", (line) => {
 `,
       });
       const expectedName = expectedConnectedToolName({
-        applicationKey: "local-env-demo",
-        connectionId: localTool.connection.id,
+        connectionName: localTool.connection.name,
         toolName: "inspect_env",
       });
       const profile = await allowToolsForAgent(db, company.id, agent.id, []);
@@ -2071,10 +2058,68 @@ rl.on("line", (line) => {
       second.catalogEntry.id,
     ].sort());
     expect(new Set(connectedTools.map((tool) => tool.name)).size).toBe(2);
-    expect(connectedTools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
-      expect.stringMatching(new RegExp(`^mcp\\.kv-demo-${first.connection.id.replace(/-/g, "").slice(0, 8)}:kv-set$`)),
-      expect.stringMatching(new RegExp(`^mcp\\.kv-demo-${second.connection.id.replace(/-/g, "").slice(0, 8)}:kv-set$`)),
-    ]));
+    expect(connectedTools.map((tool) => tool.name).sort()).toEqual([
+      "kv-demo-primary:kv-set",
+      "kv-demo-secondary:kv-set",
+    ]);
+  });
+
+  it("names connected tools by connection name and adds the connection id only when two connections share a name", async () => {
+    const company = await createCompany(db);
+    const agent = await createAgent(db, company.id);
+    const { run } = await createIssueAndRun(db, company.id, agent.id);
+    const linkKey = (id: string) => `app-gallery:link:${id}`;
+    const jira = await createRemoteMcpTool(db, company.id, {
+      applicationKey: linkKey(randomUUID()),
+      connectionName: "Jira",
+      toolName: "search_issues",
+      title: "Search issues",
+    });
+    const jiraSecond = await createRemoteMcpTool(db, company.id, {
+      applicationKey: linkKey(randomUUID()),
+      connectionName: "Jira (2)",
+      toolName: "search_issues",
+      title: "Search issues",
+    });
+    const notion = await createRemoteMcpTool(db, company.id, {
+      applicationKey: linkKey(randomUUID()),
+      connectionName: "Notion (Engineering workspace)",
+      toolName: "notion-search",
+      title: "Search",
+    });
+    const [notionDuplicate] = await db.insert(toolCatalogEntries).values({
+      ...notion.catalogEntry,
+      id: randomUUID(),
+      name: `notion_search-${randomUUID()}`,
+      toolName: "notion_search",
+    }).returning();
+    const fixture = await createRemoteMcpTool(db, company.id, {
+      applicationKey: linkKey(randomUUID()),
+      connectionName: "MCP Remote Fixture",
+      toolName: "echo",
+      title: "Echo",
+    });
+    await allowAllToolsForAgent(db, company.id, agent.id);
+    const gateway = createTestToolGatewayService(db);
+    const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id });
+    const listNames = async () => Object.fromEntries((await gateway.listToolsForSession(session.token))
+      .filter((tool) => tool.providerType === "mcp_remote_http")
+      .map((tool) => [tool.catalogEntryId, tool.name]));
+
+    const names = await listNames();
+    const shortId = (id: string) => id.replace(/-/g, "").slice(0, 8);
+    expect(names).toEqual({
+      [jira.catalogEntry.id]: `jira-${shortId(jira.connection.id)}:search-issues`,
+      [jiraSecond.catalogEntry.id]: `jira-${shortId(jiraSecond.connection.id)}:search-issues`,
+      [notion.catalogEntry.id]: `notion:notion-search-${shortId(notion.catalogEntry.id)}`,
+      [notionDuplicate!.id]: `notion:notion-search-${shortId(notionDuplicate!.id)}`,
+      [fixture.catalogEntry.id]: `mcp-remote-fixture:echo-${shortId(fixture.catalogEntry.id)}`,
+    });
+    for (const name of Object.values(names)) {
+      expect(name).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/);
+      expect(name).not.toContain("app-gallery");
+    }
+    await expect(listNames()).resolves.toEqual(names);
   });
 
   it("dispatches a bounded alias to the original long upstream tool name", async () => {
@@ -2428,7 +2473,7 @@ rl.on("line", (line) => {
       const listed = await request(app).post(endpoint).set("authorization", `Bearer ${runtime[0]!.token}`)
         .send({ jsonrpc: "2.0", id: "list", method: "tools/list" }).expect(200);
       const tool = listed.body.result.tools.find((entry: { name: string }) => entry.name === expectedConnectedToolName({
-        applicationKey: application.applicationKey, connectionId: connection.id, toolName: catalogEntry.toolName,
+        connectionName: connection.name, toolName: catalogEntry.toolName,
       }));
       expect(tool).toBeDefined();
       const call = () => request(app).post(endpoint).set("authorization", `Bearer ${runtime[0]!.token}`)
@@ -2981,8 +3026,7 @@ rl.on("line", (line) => {
         .set({ config: { url: fake.url, onDemandTools: { enabled: true } } })
         .where(eq(toolConnections.id, remoteTool.connection.id));
       const targetToolName = expectedConnectedToolName({
-        applicationKey: remoteTool.application.applicationKey,
-        connectionId: remoteTool.connection.id,
+        connectionName: remoteTool.connection.name,
         toolName: remoteTool.catalogEntry.toolName,
       });
       await allowToolsForAgent(db, company.id, agent.id, [targetToolName]);
@@ -3192,8 +3236,7 @@ rl.on("line", (line) => {
         },
       });
       const toolName = expectedConnectedToolName({
-        applicationKey: remoteTool.application.applicationKey,
-        connectionId: remoteTool.connection.id,
+        connectionName: remoteTool.connection.name,
         toolName: remoteTool.catalogEntry.toolName,
       });
       await allowToolsForAgent(db, company.id, agent.id, [toolName]);
@@ -3305,8 +3348,7 @@ rl.on("line", (line) => {
         },
       });
       const toolName = expectedConnectedToolName({
-        applicationKey: remoteTool.application.applicationKey,
-        connectionId: remoteTool.connection.id,
+        connectionName: remoteTool.connection.name,
         toolName: remoteTool.catalogEntry.toolName,
       });
       await allowToolsForAgent(db, company.id, agent.id, [toolName]);
@@ -3519,8 +3561,7 @@ rl.on("line", (line) => {
         url: fake.url,
       });
       const denyToolName = expectedConnectedToolName({
-        applicationKey: denyTool.application.applicationKey,
-        connectionId: denyTool.connection.id,
+        connectionName: denyTool.connection.name,
         toolName: denyTool.catalogEntry.toolName,
       });
 
@@ -3565,8 +3606,7 @@ rl.on("line", (line) => {
       });
       await allowToolsForAgent(db, company.id, agent.id, [
         expectedConnectedToolName({
-          applicationKey: approvalTool.application.applicationKey,
-          connectionId: approvalTool.connection.id,
+          connectionName: approvalTool.connection.name,
           toolName: approvalTool.catalogEntry.toolName,
         }),
       ]);
@@ -3776,8 +3816,7 @@ rl.on("line", (line) => {
       });
       await allowToolsForAgent(db, company.id, agent.id, [
         expectedConnectedToolName({
-          applicationKey: rejectedTool.application.applicationKey,
-          connectionId: rejectedTool.connection.id,
+          connectionName: rejectedTool.connection.name,
           toolName: rejectedTool.catalogEntry.toolName,
         }),
       ]);
@@ -3830,8 +3869,7 @@ rl.on("line", (line) => {
       });
       await allowToolsForAgent(db, company.id, agent.id, [
         expectedConnectedToolName({
-          applicationKey: rateTool.application.applicationKey,
-          connectionId: rateTool.connection.id,
+          connectionName: rateTool.connection.name,
           toolName: rateTool.catalogEntry.toolName,
         }),
       ]);
@@ -3931,8 +3969,7 @@ rl.on("line", (line) => {
         url: fake.url,
       });
       const remoteToolName = expectedConnectedToolName({
-        applicationKey: remoteTool.application.applicationKey,
-        connectionId: remoteTool.connection.id,
+        connectionName: remoteTool.connection.name,
         toolName: remoteTool.catalogEntry.toolName,
       });
       await allowToolsForAgent(db, company.id, agent.id, [remoteToolName]);
@@ -4029,8 +4066,7 @@ rl.on("line", (line) => {
         url: fake.url,
       });
       const remoteToolName = expectedConnectedToolName({
-        applicationKey: remoteTool.application.applicationKey,
-        connectionId: remoteTool.connection.id,
+        connectionName: remoteTool.connection.name,
         toolName: remoteTool.catalogEntry.toolName,
       });
       await allowToolsForAgent(db, company.id, agent.id, [remoteToolName]);
@@ -4134,8 +4170,7 @@ rl.on("line", (line) => {
         url: fake.url,
       });
       const remoteToolName = expectedConnectedToolName({
-        applicationKey: remoteTool.application.applicationKey,
-        connectionId: remoteTool.connection.id,
+        connectionName: remoteTool.connection.name,
         toolName: remoteTool.catalogEntry.toolName,
       });
       await allowToolsForAgent(db, company.id, agent.id, [remoteToolName]);
@@ -4252,8 +4287,7 @@ rl.on("line", (line) => {
         }],
       });
       const remoteToolName = expectedConnectedToolName({
-        applicationKey: remoteTool.application.applicationKey,
-        connectionId: remoteTool.connection.id,
+        connectionName: remoteTool.connection.name,
         toolName: remoteTool.catalogEntry.toolName,
       });
       await allowToolsForAgent(db, company.id, agent.id, [remoteToolName]);
