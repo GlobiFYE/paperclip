@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { MAX_ISSUE_REQUEST_DEPTH } from "../index.js";
 import {
   addIssueCommentSchema,
+  createChildIssueSchema,
+  createIssueInputSchema,
+  paperclipQuestionSetPayloadSchema,
   issueCommentMetadataSchema,
   createIssueSchema,
   issueBlockedInboxAttentionSchema,
@@ -15,6 +18,21 @@ import {
 import { createAgentSchema } from "./agent.js";
 
 describe("issue validators", () => {
+  it("preserves the exact expected execution policy snapshot without defaults", () => {
+    const snapshot = { mode: "normal", stages: [], monitor: { nextCheckAt: "2026-10-10T12:00:00Z" } };
+    expect(updateIssueSchema.parse({ expectedExecutionPolicy: snapshot }).expectedExecutionPolicy).toEqual(snapshot);
+    expect(updateIssueSchema.parse({ expectedExecutionPolicy: null }).expectedExecutionPolicy).toBeNull();
+    expect(updateIssueSchema.parse({}).expectedExecutionPolicy).toBeUndefined();
+    expect(updateIssueSchema.safeParse({ expectedExecutionPolicy: [] }).success).toBe(false);
+  });
+  it("accepts private visibility without adding defaults to updates", () => {
+    expect(createIssueSchema.parse({ title: "Private", visibility: "private" }).visibility).toBe("private");
+    expect(createIssueSchema.parse({ title: "Open" }).visibility).toBe("open");
+    expect(updateIssueSchema.parse({}).visibility).toBeUndefined();
+    expect(updateIssueSchema.parse({ visibility: "private" }).visibility).toBe("private");
+    expect(updateIssueSchema.safeParse({ visibility: "secret" }).success).toBe(false);
+  });
+
   it("validates the typed recovery display snapshot while retaining older metadata", () => {
     const metadata = { version: 1, sections: [{ rows: [{ type: "text", text: "Details" }] }] };
     const recovery = { kind: "disposition_repair_escalated", actionId: "9af8228f-0be7-45ae-a104-6fbe0af6f1d3", attemptCount: 2, maxAttempts: 2, reason: "unchanged_source_state_exhausted", assigneeAgentId: null };
@@ -97,11 +115,20 @@ describe("issue validators", () => {
     expect(updateIssueSchema.safeParse({ title: tooLong }).success).toBe(false);
     expect(createIssueSchema.safeParse({ title: "x".repeat(240) }).success).toBe(true);
     expect(createIssueSchema.safeParse({ title: "字".repeat(3000) }).success).toBe(false);
+    expect(createIssueInputSchema.safeParse({ title: tooLong }).success).toBe(false);
+    expect(createChildIssueSchema.safeParse({ title: tooLong }).success).toBe(false);
+    expect(createIssueSchema.safeParse({ title: tooLong, description: "Prompt" }).success).toBe(false);
   });
 
   it("trims issue titles and rejects blank ones", () => {
     expect(createIssueSchema.parse({ title: "  Follow up PR  " }).title).toBe("Follow up PR");
     expect(createIssueSchema.safeParse({ title: "   " }).success).toBe(false);
+    expect(updateIssueSchema.safeParse({ title: "   " }).success).toBe(false);
+  });
+
+  it("treats a blank title on a prompt-only task as missing", () => {
+    const parsed = createIssueSchema.parse({ title: "   ", description: "Draft the release notes" });
+    expect(parsed.title).toBe("");
   });
 
   it("accepts null and omitted optional multiline issue fields", () => {
@@ -164,6 +191,17 @@ describe("issue validators", () => {
     });
 
     expect(parsed.comment).toBe("Done\n\n- Verified the route");
+  });
+
+  it("preserves literal escapes in multiline issue descriptions and comments", () => {
+    const content = `${"0123456789abcdef".repeat(2)}\n`;
+    const description = ["Write the exact JSON content.", "```json", JSON.stringify({ content }), "```"].join("\n");
+    expect(createIssueSchema.parse({ title: "Native memory", description }).description).toBe(description);
+    expect(updateIssueSchema.parse({ description, comment: description }).description).toBe(description);
+    expect(updateIssueSchema.parse({ comment: description }).comment).toBe(description);
+    const storedJson = createIssueSchema.parse({ title: "Native memory", description }).description!.split("\n")[2]!;
+    expect(JSON.parse(storedJson).content).toBe(content);
+    expect(Buffer.byteLength(JSON.parse(storedJson).content, "utf8")).toBe(33);
   });
 
   it("validates structured unblock descriptors", () => {
@@ -318,6 +356,20 @@ describe("issue validators", () => {
         sourceIssueStatus: "todo",
       }).success,
     ).toBe(false);
+  });
+
+  it.each(["backlog", "in_progress", "blocked", "cancelled"])("requires workspace evidence to record a repair at unchanged %s status", sourceIssueStatus => {
+    const input = { outcome: "restored", sourceIssueStatus };
+    expect(resolveIssueRecoveryActionSchema.safeParse(input).success).toBe(false);
+    expect(resolveIssueRecoveryActionSchema.safeParse({ ...input, executionReconciliation: {
+      runId: "11111111-1111-4111-8111-111111111111", providerStopped: true, actionOutcome: "mixed",
+      outcomeEvidence: "Observed and reconciled the source run action outcomes.",
+    } }).success).toBe(false);
+    expect(resolveIssueRecoveryActionSchema.safeParse({ ...input, executionReconciliation: {
+      runId: "11111111-1111-4111-8111-111111111111", providerStopped: true, actionOutcome: "mixed",
+      outcomeEvidence: "Observed and reconciled the source run action outcomes.",
+      workspaceRepairEvidence: "Copied the retained source files and verified the restored files.",
+    } }).success).toBe(true);
   });
 
   it("allows cancelled recovery resolutions to atomically restore the source issue status", () => {
@@ -644,5 +696,29 @@ describe("issue validators", () => {
     });
 
     expect(parsed.success).toBe(false);
+  });
+});
+
+
+describe("persisted canonical question initial text", () => {
+  const question = { id: "draft", prompt: "Edit", required: true, answerMode: "text" };
+  const input = (patch: Record<string, unknown>) => ({ schema: "paperclip.question_set.v1", questions: [{ ...question, ...patch }] });
+  it("retains exact editable content through the server payload validator", () => {
+    for (const initialText of ["", "  Draft\n漢字\n", "x".repeat(100_000)]) {
+      expect(paperclipQuestionSetPayloadSchema.parse(input({ initialText }))).toEqual(input({ initialText }));
+    }
+  });
+  it("counts mixed BMP and astral draft text like JSON Schema", () => {
+    for (const codePoints of [100_000, 100_001]) {
+      const initialText = "a".repeat(codePoints - 1) + "😀";
+      expect(Buffer.byteLength(JSON.stringify(input({ initialText })))).toBeLessThan(196 * 1024);
+      expect(paperclipQuestionSetPayloadSchema.safeParse(input({ initialText })).success).toBe(codePoints === 100_000);
+    }
+  });
+  it("rejects non-text modes and unbounded or nonstring defaults", () => {
+    for (const initialText of [null, 1, "x".repeat(100_001), "a".repeat(100_000) + "😀"]) {
+      expect(paperclipQuestionSetPayloadSchema.safeParse(input({ initialText })).success).toBe(false);
+    }
+    expect(paperclipQuestionSetPayloadSchema.safeParse(input({ answerMode: "single_select", options: [{ id: "a", label: "A" }], initialText: "a" })).success).toBe(false);
   });
 });

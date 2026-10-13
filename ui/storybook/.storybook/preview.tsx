@@ -1,9 +1,11 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useLayoutEffect, useState, type ReactNode } from "react";
 import type { Preview } from "@storybook/react-vite";
 import { MINIMAL_VIEWPORTS } from "storybook/viewport";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   CONNECTABLE_APP_DEFINITIONS,
+  instanceExperimentalSettingsSchema,
+  instanceGeneralSettingsSchema,
   type WorkTimelineResult,
 } from "@paperclipai/shared";
 import { MemoryRouter } from "@/lib/router";
@@ -152,15 +154,13 @@ function installStorybookApiFixtures() {
       });
     }
 
+    const experimentalSettings = () => instanceExperimentalSettingsSchema.parse({
+      enableIsolatedWorkspaces: true,
+      autoRestartDevServerWhenIdle: false,
+      enableManagedSandboxOnly: onboardingFixtureState.environments !== "local",
+    });
     if (url.pathname === "/api/instance/settings/experimental") {
-      return Response.json({
-        enableIsolatedWorkspaces: true,
-        autoRestartDevServerWhenIdle: false,
-        // The cloud-tenant shape, and what the onboarding connect step resolves
-        // its login environment through: without it the step looks for a local
-        // default and never finds the managed sandbox.
-        enableManagedSandboxOnly: onboardingFixtureState.environments !== "local",
-      });
+      return Response.json(experimentalSettings());
     }
 
     if (url.pathname === "/api/health") {
@@ -168,7 +168,15 @@ function installStorybookApiFixtures() {
     }
 
     if (url.pathname === "/api/instance/settings") {
-      return Response.json({});
+      // Full app-shell stories render pages that read these nested settings.
+      return Response.json({
+        id: "00000000-0000-4000-8000-000000000001",
+        defaultEnvironmentId: null,
+        general: instanceGeneralSettingsSchema.parse({}),
+        experimental: experimentalSettings(),
+        createdAt: "2026-10-08T00:00:00.000Z",
+        updatedAt: "2026-10-08T00:00:00.000Z",
+      });
     }
 
     // The connect step's provider sign-in is gated on a *sandbox* environment
@@ -734,9 +742,13 @@ function applyStorybookTheme(theme: "light" | "dark") {
 function StorybookProviders({
   children,
   theme,
+  initialViewportWidth,
+  initialEntries,
 }: {
   children: ReactNode;
   theme: "light" | "dark";
+  initialViewportWidth?: number;
+  initialEntries?: string[];
 }) {
   const [queryClient] = useState(
     () =>
@@ -754,14 +766,37 @@ function StorybookProviders({
     installStorybookApiFixtures();
   }
 
-  useEffect(() => {
+  const [viewportReady, setViewportReady] = useState(() => !initialViewportWidth || window.parent === window || window.innerWidth === initialViewportWidth);
+  useLayoutEffect(() => {
+    if (viewportReady) return;
+    const checkViewport = () => {
+      if (window.innerWidth === initialViewportWidth) setViewportReady(true);
+    };
+    checkViewport();
+    window.addEventListener("resize", checkViewport);
+    // A custom viewport, browser zoom, or unavailable manager must never leave
+    // a story blank indefinitely. Mount at the actual size after a bounded wait.
+    const fallback = window.setTimeout(() => setViewportReady(true), 500);
+    return () => { window.removeEventListener("resize", checkViewport); window.clearTimeout(fallback); };
+  }, [initialViewportWidth, viewportReady]);
+
+  const [themeReady, setThemeReady] = useState(false);
+  useLayoutEffect(() => {
     applyStorybookTheme(theme);
+    setThemeReady(true);
   }, [theme]);
+
+  // ThemeProvider reads the document on mount. Prepare it before mounting any
+  // app providers so they cannot paint the previous story's color mode.
+  // Fixed-viewport page stories should mount their responsive providers after
+  // the manager sizes the iframe, rather than briefly showing desktop navigation.
+  // Standalone iframe URLs use their actual browser width immediately.
+  if (!themeReady || !viewportReady) return null;
 
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <MemoryRouter initialEntries={["/PAP/storybook"]}>
+        <MemoryRouter initialEntries={initialEntries ?? ["/PAP/storybook"]}>
           <CompanyProvider>
             <EditorAutocompleteProvider>
               <ToastProvider>
@@ -787,8 +822,13 @@ const preview: Preview = {
   decorators: [
     (Story, context) => {
       const theme = context.globals.theme === "light" ? "light" : "dark";
+      const viewport = context.globals.viewport;
+      const styles = context.parameters.viewport?.options?.[viewport?.value]?.styles;
+      const width = styles?.[viewport?.isRotated ? "height" : "width"];
+      const initialViewportWidth = context.parameters.waitForViewport && typeof width === "string" && /^\d+px$/.test(width)
+        ? Number.parseInt(width, 10) : undefined;
       return (
-        <StorybookProviders key={`${context.id}:${theme}`} theme={theme}>
+        <StorybookProviders key={`${context.id}:${theme}`} theme={theme} initialViewportWidth={initialViewportWidth} initialEntries={context.parameters.initialEntries}>
           <Story />
         </StorybookProviders>
       );
@@ -810,6 +850,73 @@ const preview: Preview = {
     },
   },
   parameters: {
+    options: {
+      storySort: {
+        order: [
+          "Overview",
+          "Getting started and access",
+          [
+            "Onboarding and first work", ["Overview", "*"],
+            "Login, invitations, and access", ["Overview", "*"],
+            "Companies and portability", ["Overview", "*"]
+          ],
+          "Tasks and conversations",
+          [
+            "Task creation and lifecycle", ["Overview", "*"],
+            "Delegation, dependencies, and signoff", ["Overview", "*"],
+            "Inbox, decisions, and search", ["Overview", "*"],
+            "Agent conversations and project handoff", ["Overview", "*"],
+            "Questions and approvals", ["Overview", "*"],
+            "Steering and queued messages", ["Overview", "*"],
+            "Documents, attachments, and work products", ["Overview", "*"]
+          ],
+          "Agents and reusable capabilities",
+          [
+            "Hiring, configuration, and organization", ["Overview", "*"],
+            "Runs, harnesses, and model accounts", ["Overview", "*"],
+            "Skills and Skill Studio", ["Overview", "*"],
+            "Team packages and installation", ["Overview", "*"]
+          ],
+          "Projects and execution",
+          [
+            "Projects and repositories", ["Overview", "*"],
+            "Goals and work alignment", ["Overview", "*"],
+            "Workspaces, services, and files", ["Overview", "*"],
+            "Execution environments", ["Overview", "*"],
+            "Recovery", ["Overview", "*"]
+          ],
+          "Apps, channels, and extensions",
+          [
+            "Connection setup", ["Overview", "*"],
+            "App access and action permissions", ["Overview", "*"],
+            "External chat and email", ["Overview", "*"],
+            "Tool gateways and access profiles", ["Overview", "*"],
+            "Secrets and proposals", ["Overview", "*"],
+            "Plugins", ["Overview", "*"]
+          ],
+          "Automation and structured work",
+          [
+            "Routines, schedules, and triggers", ["Overview", "*"],
+            "Pipelines, review queues, and learnings", ["Overview", "*"],
+            "Cases", ["Overview", "*"],
+            "Status cards", ["Overview", "*"]
+          ],
+          "Oversight and operation",
+          [
+            "Costs and budgets", ["Overview", "*"],
+            "Dashboards and audit trails", ["Overview", "*"],
+            "Navigation, profile, and announcements", ["Overview", "*"],
+            "Instance operations", ["Overview", "*"],
+            "CLI, API and local worktrees", ["Overview", "*"]
+          ],
+          "Contributor surfaces",
+          [
+            "Developer previews and diagnostic labs", ["Overview", "*"]
+          ],
+          "Foundations"
+        ],
+      },
+    },
     actions: { argTypesRegex: "^on[A-Z].*" },
     a11y: {
       test: "error",

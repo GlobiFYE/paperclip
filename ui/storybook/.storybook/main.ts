@@ -16,8 +16,8 @@ const paperclipInstanceOrigin = (() => {
 })();
 
 const config: StorybookConfig = {
-  stories: ["../stories/**/*.stories.@(ts|tsx|mdx)"],
-  staticDirs: ["../../public"],
+  stories: ["../stories/**/*.stories.@(ts|tsx|mdx)", "../generated/features/*.stories.tsx"],
+  staticDirs: ["../../public", "../public"],
   addons: ["@storybook/addon-docs", "@storybook/addon-a11y"],
   framework: {
     name: "@storybook/react-vite",

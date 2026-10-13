@@ -74,10 +74,7 @@ pnpm dev
 1. Keep changes company-scoped.
 Every domain entity should be scoped to a company and company boundaries must be enforced in routes/services.
 
-Explicit exceptions: personal keyboard shortcut enablement is stored on the
-authenticated user and applies across companies, like the user profile. Only
-that user can read or change it; writes validate company membership for their
-audit context. Announcement dismissals are instance-wide user preferences,
+Explicit exception: announcement dismissals are instance-wide user preferences,
 keyed by user and announcement so they persist across companies. Their audit
 context must still validate company membership. The announcement publication-ID
 registry is instance-level feed metadata; it contains no company or user data.
@@ -154,6 +151,22 @@ Notes:
 - `pnpm db:generate` compiles `packages/db` first
 
 ## 7. Verification Before Hand-off
+
+[maps/feature-map/README.md](maps/feature-map/README.md) is an optional reference for user
+entry points, verification recipes, and coverage gaps. The map records coverage
+scope, not proof that a live journey passed.
+
+The sibling [agent access map](maps/agent-access-map/README.md) records APIs,
+agent entry points and permission boundaries using the same capability IDs.
+Follow [the map contract](maps/README.md): update affected entries when mapped
+behavior or access changes, and run `node scripts/check-maps.mjs` after map edits.
+Its structural checks do not prove live behavior or authorization.
+
+Storybook has a downstream [feature catalog](maps/storybook-map/README.md).
+Use `maintain-storybook` for story/fixture drift and `review-storybook` for browser
+evidence. Keep the feature-map skills independent of this catalog. After story
+or declared review-source changes, reconcile affected entries and run
+`node scripts/storybook-catalog.mjs`; its checks are not production acceptance.
 
 Default local/agent test path:
 
