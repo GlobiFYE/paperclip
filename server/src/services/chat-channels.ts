@@ -2729,6 +2729,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     if (
       current.endpoint.provider === "slack" &&
       current.endpoint.requireAtMention &&
+      !current.conversation.isDirectMessage &&
       current.delivery.normalizedEvent.trigger !== "mention" &&
       (current.delivery.normalizedEvent.message as { mentionedBot?: boolean } | undefined)?.mentionedBot !== true
     ) {
@@ -4227,6 +4228,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         const mentionStillAllowed =
           currentEndpoint.provider !== "slack" ||
           !currentEndpoint.requireAtMention ||
+          thread.isDM ||
           trigger === "mention" ||
           message.isMention === true;
         if (

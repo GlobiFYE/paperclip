@@ -168,6 +168,7 @@ export function createInboundAdmission(db: Db, options: InboundAdmissionOptions)
       const mentionRequired =
         endpoint.provider === "slack" &&
         currentEndpoint.requireAtMention &&
+        !thread.isDM &&
         trigger !== "mention" &&
         message.isMention !== true;
       // GitHub sends the same comment to every installed App. Subscribed
