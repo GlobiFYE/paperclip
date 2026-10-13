@@ -242,6 +242,7 @@ export function DecisionCard({
   const [inputValues, setInputValues] = useState<Record<string, string>>({});
   const [confirmOptionId, setConfirmOptionId] = useState<string | null>(null);
   const [confirmText, setConfirmText] = useState("");
+  const [selectedOptionId, setSelectedOptionId] = useState<string | null>(null);
 
   const open = decision.status === "open";
   const dismissed =
@@ -449,12 +450,9 @@ export function DecisionCard({
             const confirmToken = confirmRef?.identifier ?? confirmRef?.id ?? cancelTree?.targetIssueId ?? "";
             return (
               <div key={option.id} className="space-y-2">
-                <button
-                  type="button"
-                  disabled={disabled}
-                  onClick={() => runOption(option)}
+                <label
                   className={cn(
-                    "w-full rounded-sm border px-4 py-3 text-left transition-colors outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50",
+                    "block w-full rounded-sm border px-4 py-3 text-left transition-colors focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/50",
                     disabled && "cursor-not-allowed opacity-60",
                     destructive
                       ? "border-rose-500/70 bg-rose-500/5 text-foreground hover:border-rose-500 hover:bg-rose-500/10"
@@ -462,6 +460,14 @@ export function DecisionCard({
                   )}
                 >
                   <div className="flex items-center justify-between gap-2">
+                    <input
+                      type="radio"
+                      name={`decision-${decision.id}`}
+                      checked={selectedOptionId === option.id}
+                      disabled={disabled}
+                      onChange={() => { setSelectedOptionId(option.id); setConfirmOptionId(null); setConfirmText(""); }}
+                      className="shrink-0 accent-primary"
+                    />
                     <span className={cn("text-sm font-medium", destructive && "text-rose-700 dark:text-rose-300")}>
                       {option.label}
                     </span>
@@ -490,7 +496,11 @@ export function DecisionCard({
                       ))}
                     </ul>
                   )}
-                </button>
+                </label>
+
+                {selectedOptionId === option.id && !confirming && (
+                  <Button disabled={disabled} onClick={() => runOption(option)}>Confirm choice</Button>
+                )}
 
                 {/* Destructive cancel-tree confirm gate */}
                 {confirming && cancelTree && (

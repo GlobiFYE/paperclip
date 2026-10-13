@@ -6,6 +6,8 @@ import { useNavigate, useSearchParams } from "@/lib/router";
 import { attentionApi } from "../api/attention";
 import { agentsApi } from "../api/agents";
 import { authApi } from "../api/auth";
+import { accessApi } from "../api/access";
+import { buildCompanyUserLabelMap } from "../lib/company-members";
 import { decisionsApi } from "../api/decisions";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -47,6 +49,7 @@ import { DecisionQueueRail } from "../components/DecisionQueueRail";
 import { DecisionDateChips, type AttentionCustomRange } from "../components/DecisionDateChips";
 import { DecisionResolver } from "../components/DecisionResolver";
 import { IssueGroupHeader } from "../components/IssueGroupHeader";
+import { BulkConfirm } from "../components/BulkConfirm";
 
 /** Curtain rows never expand; module-level so memoized rows see one identity. */
 const noopToggleExpand = () => {};
@@ -191,6 +194,15 @@ export function WhatNeedsMe() {
     queryFn: () => authApi.getSession(),
   });
   const currentUserId = session?.user?.id ?? session?.session?.userId ?? null;
+  const { data: companyMembers } = useQuery({
+    queryKey: queryKeys.access.companyUserDirectory(selectedCompanyId!),
+    queryFn: () => accessApi.listUserDirectory(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+  const userLabelMap = useMemo(() => buildCompanyUserLabelMap(
+    companyMembers?.users.filter((member) => member.user?.name?.trim() || member.user?.email?.trim()
+      || member.principalId === "local-board"),
+  ), [companyMembers?.users]);
 
   const agentMap = useMemo(() => {
     const map = new Map<string, Agent>();
@@ -262,6 +274,7 @@ export function WhatNeedsMe() {
   }, [deskItems, filters, sortOrder, groupBy, now]);
 
   const visibleCount = useMemo(() => groups.reduce((sum, group) => sum + group.items.length, 0), [groups]);
+  const bulkVisibleItems = useMemo(() => groups.flatMap((group) => group.items), [groups]);
   const keyboardItems = useMemo(
     () => groups.filter((group) => group.label === null || !collapsedGroupKeys.has(group.key)).flatMap((group) => group.items),
     [collapsedGroupKeys, groups],
@@ -408,6 +421,25 @@ export function WhatNeedsMe() {
       return next;
     });
   };
+  const selectIndividualAnswer = (item: AttentionItem) => {
+    setSelectedAttentionId(item.id);
+    setSelectionFromKeyboard(true);
+    setExpandedId(item.id);
+    const group = groups.find((entry) => entry.items.some((row) => row.id === item.id));
+    if (group) setCollapsedGroupKeys((previous) => {
+      const next = new Set(previous);
+      next.delete(group.key);
+      return next;
+    });
+    // Selection also extends the incremental rendering budget before focus.
+    requestAnimationFrame(() => {
+      const row = document.getElementById(`attention-row-${item.id}`);
+      if (!row) return;
+      row.tabIndex = -1;
+      row.focus({ preventScroll: true });
+      row.scrollIntoView({ block: "nearest" });
+    });
+  };
 
   // All row callbacks are stable (deps are setState functions, stable hook
   // callbacks, and the stable `pushToast`) so the memoized rows only re-render
@@ -531,6 +563,9 @@ export function WhatNeedsMe() {
           onSortOrderChange={updateSortOrder}
         />
       </div>
+
+      <BulkConfirm key={selectedCompanyId} companyId={selectedCompanyId} items={bulkVisibleItems} agentMap={agentMap}
+        currentUserId={currentUserId} userLabelMap={userLabelMap} onSelectIndividual={selectIndividualAnswer} />
 
       {/* Queue quicklinks + date-range chips (§4.1–§4.2). The rail self-hides
           when the company has no queues; the chips filter the desk server-side. */}

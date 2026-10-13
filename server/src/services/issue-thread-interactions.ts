@@ -1,3 +1,4 @@
+import { interactionBulkEligibility, type BulkEligibilityIssueContext } from "./interaction-bulk-eligibility.js";
 import {
   currentContinuationOrigins,
   deliveredContinuationCommentIds,
@@ -646,8 +647,9 @@ function parseStoredInteractionResult<S extends z.ZodTypeAny>(
   return null;
 }
 
-function hydrateInteraction(
+export function hydrateInteraction(
   row: IssueThreadInteractionRow,
+  parentIssue?: BulkEligibilityIssueContext | null,
 ): IssueThreadInteraction {
   const storedRequestedResolverPolicy =
     row.requestedResolverPolicy as IssueThreadInteractionResolverPolicy;
@@ -671,6 +673,7 @@ function hydrateInteraction(
   );
   const base = {
     ...row,
+    bulkEligibility: interactionBulkEligibility(row, parentIssue),
     idempotencyKey: row.idempotencyKey ?? null,
     addresseeAgentId: row.addresseeAgentId ?? null,
     addresseeUserId: row.addresseeUserId ?? null,
@@ -2983,7 +2986,7 @@ export function issueThreadInteractionService(
       };
     },
     listForIssue: async (issueId: string) => {
-      const [rows, issueStatus] = await Promise.all([
+      const [rows, parentIssue] = await Promise.all([
         db
           .select()
           .from(issueThreadInteractions)
@@ -2993,16 +2996,16 @@ export function issueThreadInteractionService(
             asc(issueThreadInteractions.id),
           ),
         db
-          .select({ status: issues.status })
+          .select({ status: issues.status, workMode: issues.workMode })
           .from(issues)
           .where(eq(issues.id, issueId))
-          .then((issueRows) => issueRows[0]?.status ?? null),
+          .then((issueRows) => issueRows[0] ?? null),
       ]);
 
       return rows.map((row) =>
         hydrateInteraction(
-          issueStatus &&
-            isTerminalIssueStatus(issueStatus) &&
+          parentIssue &&
+            isTerminalIssueStatus(parentIssue.status) &&
             row.status === "pending"
             ? {
                 ...row,
@@ -3011,6 +3014,7 @@ export function issueThreadInteractionService(
                 resolvedAt: row.updatedAt,
               }
             : row,
+          parentIssue,
         ),
       );
     },
@@ -3757,7 +3761,7 @@ export function issueThreadInteractionService(
       if (superseded.length > 0) {
         await emitResolvedInteractionsTelemetry(
           db,
-          superseded.map(hydrateInteraction),
+          superseded.map((row) => hydrateInteraction(row)),
         );
       }
       const interaction = hydrateInteraction(created);
@@ -4474,7 +4478,7 @@ export function issueThreadInteractionService(
                 ),
               )
               .returning();
-            const interactions = updatedRows.map(hydrateInteraction);
+            const interactions = updatedRows.map((row) => hydrateInteraction(row));
             for (const interaction of interactions) {
               await enqueueTerminalIssueInteractionChatPublications(
                 tx as unknown as Db,
@@ -4512,7 +4516,7 @@ export function issueThreadInteractionService(
                 ),
               )
               .returning();
-            const interactions = updatedRows.map(hydrateInteraction);
+            const interactions = updatedRows.map((row) => hydrateInteraction(row));
             for (const interaction of interactions) {
               await enqueueTerminalIssueInteractionChatPublications(
                 tx as unknown as Db,
