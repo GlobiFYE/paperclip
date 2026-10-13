@@ -10,7 +10,47 @@ saved-agent preservation, exact-candidate installation and required checks, then
 a normal protected merge. Production deployment and default promotion remain
 outside this merge campaign.
 
-Current published candidate `57881c607fcea782ac30f601b768b2142fc2184b`
+Reconciled head `d68f1facf0e174a4f8a771a2055e02c72a47c289` receives a fresh
+5/5 review with all 28 threads resolved. Its required E2E check passes, but the
+aggregate verification check fails two test shards. A retained company fixture
+collides because it truncates random UUIDs to six characters; full-UUID seed
+treatment passes 255 existing PostgreSQL controls with zero skips. The existing
+Runner durable-progress case lacks the diagnostic evidence needed to identify
+its failure. Bounded failure diagnostics retain the original error, all deadlines,
+usage, recovery and deduplication assertions. One exact local case passes;
+controlled delayed-save and early-admission failures show why that pass cannot
+prove the original cause. Independent review approves these two test-only edits.
+The next published head still requires its own CI and review.
+
+Literal 578 remote qualification now passes all four producers and the maintained
+Linux, Apple Silicon, Intel Mac and Linux ARM64 install scopes. All 18 tarballs,
+source manifests and binary hashes match; no Codex payload is bundled. Native
+consumer reports cover zero-turn open/close and cleanup, not paid ARM execution.
+Fresh local installation/native/CLI controls pass. Its fresh DB helper fails
+before migration with missing bootstrap stderr; its original cause remains unknown.
+The ordinary existing-data restart separately reports exhausted Mac shared-memory
+IDs. Releasing exactly two dead, unattached task-owned fixture segments restores
+the app without changing host settings or other services. Installed 578 applies
+migration 0340, reaches recovery ready and preserves three full agent execution
+configurations, eight recorded run identities and safe account summaries, with
+zero provider work. This proves upgrade preservation, not fresh initialization.
+A separate ordinary installed CLI entry then starts with a new isolated home
+and empty data, applies all 339 packaged migrations including 0340 and reaches
+recovery ready with zero companies and provider actions. This proves fresh
+startup after the owned resource cleanup; the original test-helper failure and
+its missing cause remain recorded.
+
+The original managed child-task failure remains red. Explicit first-task skill
+invocation and delivery source are recorded, but the retained trace cannot prove
+the model received the child-rule bytes or the complete dynamic-tool schema.
+Two rejected human-input calls recover through the ordinary API; their rejected
+argument shapes are not retained. Causality remains provisional. The fresh staging
+image and protected check pass at literal 578; deployment is blocked by an already
+active workspace deployment, with no campaign started by this QA request. Wait
+for that operation before any explicit normal deployment retry. No production
+or provisioning-default action is authorized.
+
+Historical literal candidate `57881c607fcea782ac30f601b768b2142fc2184b`
 passes all required checks: 53 successful checks, two conditional Storybook skips,
 fresh 5/5 automated review and 28 resolved review threads. The existing hosted Linux
 login/reload case passes against its recorded CI merge. The previous failed
@@ -28,7 +68,7 @@ The isolated GitHub review-heading change and Storybook build preparation retain
 their incoming master source. Fresh published-head CI/review is still required.
 
 Literal 578 [remote package qualification](https://github.com/paperclipai/paperclip/actions/runs/38464237723)
-is in progress. The [single managed onboarding attempt](https://github.com/paperclipai/paperclip/actions/runs/38464212481)
+has completed successfully. The [single managed onboarding attempt](https://github.com/paperclipai/paperclip/actions/runs/38464212481)
 passes automatic selection, saved environment qualification, native authentication,
 hire and reload, then completes two successful native runs with session continuity.
 It fails the accepted-child assertion: the model puts its document/file on the
