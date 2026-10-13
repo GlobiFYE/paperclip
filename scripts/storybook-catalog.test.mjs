@@ -4,7 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { capabilities, fingerprint, renderIndex, scanStories, validateCatalog } from "./storybook-catalog.mjs";
+import { fingerprint, reconcileCatalog, renderIndex, scanStories, validateCatalog } from "./storybook-catalog.mjs";
+import { featureIndex, reconcileFeatureArtifacts } from "./storybook-feature-index.mjs";
 
 function fixture(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), "storybook-catalog-"));
@@ -81,6 +82,31 @@ test("feature organization rejects wrong folders, sidebar homes and unstable met
   assert.match(validateCatalog(f.root, f.catalog, f.stories).join("\n"), /sidebar title/);
 });
 
+test("shared foundations cross-list capabilities without moving their canonical home or IDs", t => {
+  const f = fixture(t);
+  const entry = f.catalog.entries[0];
+  const file = "ui/storybook/stories/foundations/task.stories.tsx";
+  f.write(file, "// shared control example\n");
+  entry.file = file;
+  entry.home = "foundations";
+  entry.exception = "Shared control with related product examples.";
+  entry.sidebarTitle = "Foundations/Task";
+  entry.sources = [file, "ui/src/Task.tsx"];
+  entry.fingerprint = fingerprint(f.root, entry.sources);
+  f.stories[0] = { ...f.stories[0], file, title: entry.sidebarTitle };
+  assert.deepEqual(validateCatalog(f.root, f.catalog, f.stories), []);
+  const index = renderIndex(f.catalog, f.stories, featureIndex(f.root));
+  assert.match(index, /### Tasks[\s\S]*?No primary story suite/);
+  assert.match(index, /### Shared foundations and guides[\s\S]*?\[Foundations\/Task\]/);
+  assert.match(index, /`tasks\/create`: \[Foundations\/Task\]/);
+  assert.deepEqual(f.stories[0].ids, ["tasks-create--empty"]);
+  entry.home = "tasks";
+  assert.match(validateCatalog(f.root, f.catalog, f.stories).join("\n"), /only shared foundations/);
+  entry.home = "foundations";
+  delete entry.exception;
+  assert.match(validateCatalog(f.root, f.catalog, f.stories).join("\n"), /foundation home needs an explicit reason/);
+});
+
 test("production and shared fixture drift invalidate review fingerprints", t => {
   const f = fixture(t);
   f.write("ui/src/Task.tsx", "// changed contract\n");
@@ -99,7 +125,7 @@ test("missing and escaping source references cannot certify a review", t => {
 test("cross-capability lookup retains one canonical file and honest status", t => {
   const f = fixture(t);
   f.catalog.entries[0].status = "historical";
-  const index = renderIndex(f.catalog, f.stories, capabilities(f.root));
+  const index = renderIndex(f.catalog, f.stories, featureIndex(f.root));
   assert.match(index, /tasks\/create.*\(historical\)/);
   assert.match(index, /tasks\/discussion.*\(historical\)/);
   assert.match(index, /1 story files; 1 indexed stories/);
@@ -110,6 +136,46 @@ test("duplicate story IDs cannot silently collapse distinct examples", t => {
   const f = fixture(t);
   f.stories[0].ids.push(f.stories[0].ids[0]);
   assert.match(validateCatalog(f.root, f.catalog, f.stories).join("\n"), /Duplicate story IDs/);
+});
+
+test("feature index keeps empty homes and cross-feature references in map order", t => {
+  const f = fixture(t);
+  f.write("maps/feature-map/README.md", "### Work\n| [Goals](./goals.md) | Align work. |\n| [Tasks](./tasks.md) | Create work. |\n");
+  f.write("maps/feature-map/goals.md", "## Sub-features\n- `hierarchy`: Link goals.\n## Gotchas\n");
+  f.catalog.entries[0].capabilities.push("goals/hierarchy");
+  const index = renderIndex(f.catalog, f.stories, featureIndex(f.root));
+  assert.ok(index.indexOf("### Goals") < index.indexOf("### Tasks"));
+  assert.match(index, /### Goals[\s\S]*?No primary story suite/);
+  assert.match(index, /`goals\/hierarchy`: \[Tasks and conversations\/Tasks\/Create\]/);
+});
+
+test("authored stories cannot collide with generated overview IDs", t => {
+  const f = fixture(t);
+  f.stories[0].ids = ["feature-map-tasks--overview"];
+  assert.match(validateCatalog(f.root, f.catalog, f.stories).join("\n"), /Duplicate story IDs/);
+});
+
+test("regeneration reports review drift from its own writes without refreshing fingerprints", t => {
+  const f = fixture(t);
+  f.write("ui/storybook/.storybook/preview.tsx", "export default { parameters: { options: { storySort: { order: [],\n}, } } };\n");
+  reconcileFeatureArtifacts(f.root, featureIndex(f.root), true);
+  f.write("maps/storybook-map/INDEX.md", "");
+  const generatedSource = "ui/storybook/generated/feature-index.json";
+  f.catalog.sharedReview.sources.push(generatedSource);
+  f.catalog.entries[0].sources.push(generatedSource);
+  f.catalog.sharedReview.fingerprint = fingerprint(f.root, f.catalog.sharedReview.sources);
+  f.catalog.entries[0].fingerprint = fingerprint(f.root, f.catalog.entries[0].sources);
+  assert.deepEqual(reconcileCatalog(f.root, f.catalog, f.stories, true), []);
+  const reviewed = f.catalog.sharedReview.fingerprint;
+  f.write("maps/feature-map/tasks.md", "## Sub-features\n- `create`: Updated description.\n- `discussion`: discuss\n## Gotchas\n");
+  const errors = reconcileCatalog(f.root, f.catalog, f.stories, true);
+  assert.equal(errors.filter(error => error.includes("source changed; review")).length, 2);
+  assert.equal(f.catalog.sharedReview.fingerprint, reviewed);
+  assert.notEqual(fingerprint(f.root, f.catalog.sharedReview.sources), reviewed);
+  f.catalog.sharedReview.fingerprint = fingerprint(f.root, f.catalog.sharedReview.sources);
+  f.catalog.entries[0].fingerprint = fingerprint(f.root, f.catalog.entries[0].sources);
+  assert.deepEqual(reconcileCatalog(f.root, f.catalog, f.stories, true), []);
+  assert.deepEqual(reconcileCatalog(f.root, f.catalog, f.stories), []);
 });
 
 test("Storybook parser discovers nested files, filters helpers, preserves explicit IDs and counts play functions", t => {

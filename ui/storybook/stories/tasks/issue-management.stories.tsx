@@ -1,5 +1,7 @@
+import { PaginatedTaskFixture } from "../../support/task-pagination";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { creationVisibilityStories } from "../../support/issue-creation-visibility";
 import type { Issue, IssueLabel, Project } from "@paperclipai/shared";
 import type { RunForIssue } from "@/api/activity";
 import { useQueryClient } from "@tanstack/react-query";
@@ -594,7 +596,7 @@ function OpenFiltersPopover() {
           projects={storybookProjects.map((project) => ({ id: project.id, name: project.name }))}
           labels={storybookIssueLabels.map((label) => ({ id: label.id, name: label.name, color: label.color }))}
           currentUserId="user-board"
-          enableRoutineVisibilityFilter
+          enableAgentCreatedVisibilityFilter
           buttonVariant="outline"
           creators={[
             { id: "user:user-board", label: "Riley Board", kind: "user", searchText: "board user human" },
@@ -771,7 +773,7 @@ function IssueManagementStories() {
               viewStateKey={issueListViewKey}
               onUpdateIssue={() => undefined}
               createIssueLabel="issue"
-              enableRoutineVisibilityFilter
+              enableAgentCreatedVisibilityFilter
             />
           </Section>
 
@@ -957,38 +959,29 @@ function PaginatedTaskStorybookData({ children }: { children: React.ReactNode })
 
 
 export const PaginatedTaskLoadMore: Story = {
-  render: () => (
-    <PaginatedTaskStorybookData>
-      <div className="paperclip-story p-6">
-        <IssuesList issues={storybookIssues.slice(0, 2)} agents={storybookAgents} projects={storybookProjects}
-          viewStateKey="storybook:paginated-tasks:more" rowPresentation="task" toolbarPresentation="collection"
-          hasMoreIssues onLoadMoreIssues={() => undefined} onUpdateIssue={() => undefined} />
-      </div>
-    </PaginatedTaskStorybookData>
-  ),
+  render: () => <PaginatedTaskStorybookData><PaginatedTaskFixture state="more" /></PaginatedTaskStorybookData>,
 };
 
 export const PaginatedTaskLoadingEmpty: Story = {
-  render: () => (
-    <PaginatedTaskStorybookData>
-      <div className="paperclip-story p-6">
-        <IssuesList issues={[]} agents={storybookAgents} projects={storybookProjects}
-          viewStateKey="storybook:paginated-tasks:loading" rowPresentation="task" toolbarPresentation="collection"
-          hasMoreIssues isLoadingMoreIssues onLoadMoreIssues={() => undefined} onUpdateIssue={() => undefined} />
-      </div>
-    </PaginatedTaskStorybookData>
-  ),
+  render: () => <PaginatedTaskStorybookData><PaginatedTaskFixture state="loading" /></PaginatedTaskStorybookData>,
 };
 
 export const PaginatedTaskRetry: Story = {
-  render: () => (
-    <PaginatedTaskStorybookData>
-      <div className="paperclip-story p-6">
-        <IssuesList issues={[]} agents={storybookAgents} projects={storybookProjects}
-          viewStateKey="storybook:paginated-tasks:retry" rowPresentation="task" toolbarPresentation="collection"
-          hasMoreIssues error={new Error("Could not load the next task page")}
-          onLoadMoreIssues={() => undefined} onUpdateIssue={() => undefined} />
-      </div>
-    </PaginatedTaskStorybookData>
-  ),
+  render: () => <PaginatedTaskStorybookData><PaginatedTaskFixture state="retry" /></PaginatedTaskStorybookData>,
+};
+
+export const AgentCreatedTasksHidden: Story = {
+  ...creationVisibilityStories.hidden,
+  name: "Agent-created tasks — hidden by default",
+  play: creationVisibilityStories.hidden.play,
+};
+export const AgentCreatedTasksIncluded: Story = {
+  ...creationVisibilityStories.included,
+  name: "Agent-created tasks — explicit opt-in",
+  play: creationVisibilityStories.included.play,
+};
+export const AgentCreatedTasksFilter: Story = {
+  ...creationVisibilityStories.filter,
+  name: "Agent-created tasks — filter control",
+  play: creationVisibilityStories.filter.play,
 };
