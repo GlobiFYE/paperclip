@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { HarnessDriverBackend } from "../vendor/paperclip-runner/index.js";
+import { HarnessDriverBackend } from "../../../packages/paperclip-runner/src/backends/harness-driver-backend.js";
 import { FakeCodexTransport, makeDriver, result, WORKSPACE } from "../../../packages/paperclip-runner/src/drivers/codex/codex-app-server-driver.test-support.js";
 import { redactRunnerApiPayloads } from "../services/native-runtime/runner-api-log-redaction.js";
 
