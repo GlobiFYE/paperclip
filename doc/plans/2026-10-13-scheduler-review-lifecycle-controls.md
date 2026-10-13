@@ -19,3 +19,9 @@ Local isolated PostgreSQL tests passed for repeated dependency-ready recovery, a
 The limited local source archive did not include CLI sources required by the repository-wide boundary checker. Its missing-source error is not a PASS. The complete-checkout hosted workflow remains the gate for module boundaries, frozen-lockfile tests, server build/typecheck and UI typecheck on the published SHA.
 
 The prior scheduler-only workflow passed 63 tests but did not cover these cross-cutting contracts. Broader upstream checks, independent review, production PostgreSQL/runtime compatibility, backup/rollback and rollout approval remain separate gates. No production deployment is implied by this document.
+
+## Cancellation receipt follow-up
+
+The guarded agent cancellation update can legitimately change fewer rows than the initial candidate query when another controller promotes work first. Count the IDs returned by the UPDATE, not the candidates selected earlier. Preserve all guards.
+
+A deterministic fixture-only PostgreSQL trigger suppresses one cancellation update, producing the same zero-updated-row outcome without relying on timing. The new assertion failed on the previous implementation (reported one cancellation when zero rows changed). It also checks that a subsequent ordinary cancellation reports one and that the previously suppressed wake remains pending. This tests receipt accuracy; it is not presented as a complete concurrent-promotion interleaving test. No production triggers or data are involved.

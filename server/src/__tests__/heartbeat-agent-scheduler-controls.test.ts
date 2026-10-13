@@ -189,6 +189,32 @@ describePostgres("heartbeat parked work lifecycle controls", () => {
     expect(provider.execute).not.toHaveBeenCalled();
   });
 
+  it("reports only wakes actually cancelled when a selected update changes no rows", async () => {
+    const scope = await fixture(); const target = await parked(scope);
+    // A fixture-only trigger deterministically suppresses the UPDATE. This
+    // exercises the same zero-row outcome as a concurrent promotion winning
+    // the guarded write, without relying on timing or weakening the guard.
+    await db.execute(sql.raw(`create function scheduler_fixture_skip_cancel() returns trigger language plpgsql as $$
+      begin
+        if old.id = '${target.id}'::uuid and new.status = 'cancelled' then return null; end if;
+        return new;
+      end $$`));
+    try {
+      await db.execute(sql`create trigger scheduler_fixture_skip_cancel before update on agent_wakeup_requests
+        for each row execute function scheduler_fixture_skip_cancel()`);
+      const receipt = await heartbeat.cancelInvocationsForAgents([scope.agentId], "fixture guarded cancellation");
+      expect(receipt.wakeupsCancelled).toBe(0);
+      expect((await state(target.id)).status).toBe("agent_runnable");
+      expect(provider.execute).not.toHaveBeenCalled();
+    } finally {
+      await db.execute(sql`drop trigger if exists scheduler_fixture_skip_cancel on agent_wakeup_requests`);
+      await db.execute(sql`drop function scheduler_fixture_skip_cancel()`);
+    }
+    const retried = await heartbeat.cancelInvocationsForAgents([scope.agentId], "fixture normal cancellation");
+    expect(retried.wakeupsCancelled).toBe(1);
+    expect((await state(target.id)).status).toBe("cancelled");
+  });
+
   it("subtree cancellation covers parked root and child wakes without cancelling siblings", async () => {
     const scope = await fixture();
     const [root] = await db.insert(issues).values({ companyId: scope.companyId, title: "root", status: "todo" }).returning();
