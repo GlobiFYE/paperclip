@@ -11,7 +11,7 @@ import type {
 
 type GitHubMessageProvenanceOptions = {
   githubManualMessages: WeakMap<object, { policy: GitHubReviewPolicy; revision: number; event: "mention" | "comment" }>;
-  githubAutomaticMessages: WeakMap<object, { context: GitHubReviewEventContext; revision: number; policy: GitHubReviewPolicy }>;
+  githubAutomaticMessages: WeakMap<object, { context: GitHubReviewEventContext; revision: number; policy: GitHubReviewPolicy; reviewedAuthor?: boolean }>;
   githubIssueMessages: WeakMap<object, { context: GitHubIssueEventContext; revision: number; policy: GitHubReviewPolicy }>;
 };
 export function createGitHubMessageProvenance(options: GitHubMessageProvenanceOptions) {
@@ -21,7 +21,7 @@ const githubManual = delivery.normalizedEvent.githubManual;
     if (endpointRuntime.provider === "github" && githubManual && typeof githubManual === "object") githubManualMessages.set(message, githubManual as { policy: GitHubReviewPolicy; revision: number; event: "mention" | "comment" });
     const githubAutomatic = delivery.normalizedEvent.githubAutomatic;
     if (endpointRuntime.provider === "github" && githubAutomatic && typeof githubAutomatic === "object") {
-      githubAutomaticMessages.set(message, githubAutomatic as { context: GitHubReviewEventContext; revision: number; policy: GitHubReviewPolicy });
+      githubAutomaticMessages.set(message, githubAutomatic as { context: GitHubReviewEventContext; revision: number; policy: GitHubReviewPolicy; reviewedAuthor?: boolean });
     }
     const githubIssue = delivery.normalizedEvent.githubIssue;
     if (endpointRuntime.provider === "github" && githubIssue && typeof githubIssue === "object") {

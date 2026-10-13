@@ -585,7 +585,9 @@ export function GitHubAccessEditor({
   const company = useOptionalCompany()?.companies.find((item) => item.id === companyId);
   const accountLink = useRef<HTMLAnchorElement>(null);
   const [linkCopied, setLinkCopied] = useState(false);
-  const [dialog, setDialog] = useState<"member" | "guest" | null>(null);
+  const [dialog, setDialog] = useState<
+    "member" | "guest" | "reviewed" | null
+  >(null);
   const members = useQuery({
     queryKey: ["github-members", companyId],
     queryFn: () => accessApi.listMembers(companyId),
@@ -622,6 +624,11 @@ export function GitHubAccessEditor({
   const guests = configuration.people.filter(
     (person) => person.kind === "guest",
   );
+  const reviewedAuthors = configuration.reviewedAuthors ?? [];
+  const alreadyListed = (githubUserId: string) =>
+    configuration.people.some((p) => p.githubUserId === githubUserId) ||
+    linkedAccounts.some((link) => link.githubUserId === githubUserId) ||
+    reviewedAuthors.some((author) => author.githubUserId === githubUserId);
   // Preserve configured members whose identity link was revoked; show why they cannot run.
   const memberRows = [
     ...configuration.people.filter((person) => person.kind === "member"),
@@ -886,6 +893,55 @@ export function GitHubAccessEditor({
           />
         )}
       </section>
+      <section
+        className="space-y-2 border-t border-border pt-6"
+        aria-label="Reviewed authors"
+      >
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h3 className="text-sm font-semibold">Reviewed authors</h3>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setDialog("reviewed");
+              setLookupError("");
+            }}
+          >
+            <Plus className="size-4" />
+            Add reviewed author
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Pull requests from these GitHub users get automatic reviews under the
+          responsible member. They need no company membership and cannot mention
+          or control the bot. Reviews use only this bot’s GitHub connection.
+        </p>
+        <div className="divide-y divide-border">
+          {reviewedAuthors.map((author) => (
+            <div
+              key={author.githubUserId}
+              className="flex items-center justify-between gap-4 py-4"
+            >
+              <p className="break-words text-sm font-medium">@{author.login}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Remove @${author.login} from reviewed authors`}
+                onClick={() =>
+                  onChange({
+                    ...configuration,
+                    reviewedAuthors: reviewedAuthors.filter(
+                      (entry) => entry.githubUserId !== author.githubUserId,
+                    ),
+                  })
+                }
+              >
+                Remove
+              </Button>
+            </div>
+          ))}
+        </div>
+      </section>
       <GitHubSettingsDisclosure title="Automatic task responsibility">
         <div className="space-y-2">
           {activeMembers.length === 1 && responsible ? (
@@ -961,12 +1017,16 @@ export function GitHubAccessEditor({
             <DialogTitle>
               {dialog === "member"
                 ? "Link a company member"
-                : "Add external contributor"}
+                : dialog === "guest"
+                  ? "Add external contributor"
+                  : "Add reviewed author"}
             </DialogTitle>
             <DialogDescription>
               {dialog === "member"
                 ? "Each member confirms their own GitHub identity. Share this link with an existing company member, or link your own account."
-                : "Allow a GitHub user to mention this bot. A company member must sponsor their restricted access."}
+                : dialog === "guest"
+                  ? "Allow a GitHub user to mention this bot. A company member must sponsor their restricted access."
+                  : "Review every pull request from a GitHub user automatically. They cannot mention or control the bot."}
             </DialogDescription>
           </DialogHeader>
           {dialog === "member" ? (
@@ -1041,34 +1101,33 @@ export function GitHubAccessEditor({
                   </Button>
                 </div>
               </div>
-              <div className="space-y-2">
-                <Label htmlFor="github-guest-sponsor">Sponsor</Label>
-                <select
-                  id="github-guest-sponsor"
-                  className={githubSelectClass}
-                  value={sponsor}
-                  onChange={(e) => setSponsor(e.target.value)}
-                >
-                  {!activeMembers.some(
-                    (member) => member.principalId === sponsor,
-                  ) && <option value={sponsor}>Select a member</option>}
-                  {activeMembers.map((member) => (
-                    <option key={member.principalId} value={member.principalId}>
-                      {member.user?.name ?? member.principalId}
-                    </option>
-                  ))}
-                </select>
-              </div>
+              {dialog === "guest" && (
+                <div className="space-y-2">
+                  <Label htmlFor="github-guest-sponsor">Sponsor</Label>
+                  <select
+                    id="github-guest-sponsor"
+                    className={githubSelectClass}
+                    value={sponsor}
+                    onChange={(e) => setSponsor(e.target.value)}
+                  >
+                    {!activeMembers.some(
+                      (member) => member.principalId === sponsor,
+                    ) && <option value={sponsor}>Select a member</option>}
+                    {activeMembers.map((member) => (
+                      <option key={member.principalId} value={member.principalId}>
+                        {member.user?.name ?? member.principalId}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               {candidate && (
                 <p role="status" className="text-sm">
-                  {configuration.people.some(
-                    (p) => p.githubUserId === candidate.githubUserId,
-                  ) ||
-                  linkedAccounts.some(
-                    (link) => link.githubUserId === candidate.githubUserId,
-                  )
+                  {alreadyListed(candidate.githubUserId)
                     ? `@${candidate.login} is already listed in People.`
-                    : `Found @${candidate.login}. They will be able to mention the bot after you save.`}
+                    : dialog === "guest"
+                      ? `Found @${candidate.login}. They will be able to mention the bot after you save.`
+                      : `Found @${candidate.login}. Their pull requests will be reviewed after you save.`}
                 </p>
               )}
               {lookupError && (
@@ -1083,31 +1142,32 @@ export function GitHubAccessEditor({
                 <Button
                   disabled={
                     !candidate ||
-                    !activeMembers.some(
-                      (member) => member.principalId === sponsor,
-                    ) ||
-                    configuration.people.some(
-                      (p) => p.githubUserId === candidate.githubUserId,
-                    ) ||
-                    linkedAccounts.some(
-                      (link) => link.githubUserId === candidate.githubUserId,
-                    )
+                    (dialog === "guest" &&
+                      !activeMembers.some(
+                        (member) => member.principalId === sponsor,
+                      )) ||
+                    alreadyListed(candidate.githubUserId)
                   }
                   onClick={() => {
-                    if (candidate) {
+                    if (!candidate) return;
+                    if (dialog === "reviewed")
+                      onChange({
+                        ...configuration,
+                        reviewedAuthors: [...reviewedAuthors, candidate],
+                      });
+                    else
                       updatePerson({
                         ...candidate,
                         kind: "guest",
                         sponsorUserId: sponsor,
                         permissionProfile: "restricted",
                       });
-                      setDialog(null);
-                      setCandidate(null);
-                      setLogin("");
-                    }
+                    setDialog(null);
+                    setCandidate(null);
+                    setLogin("");
                   }}
                 >
-                  Add contributor
+                  {dialog === "guest" ? "Add contributor" : "Add this account"}
                 </Button>
               </DialogFooter>
             </>

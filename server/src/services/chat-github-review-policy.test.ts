@@ -244,6 +244,29 @@ describe("GitHub review authorization and scheduling", () => {
     config.repositories["12"] = { events: [] };
     expect(decide(config).reason).toBe("event_disabled");
   });
+  it("reviews listed authors automatically but never lets them invoke the bot", () => {
+    const config = configuration();
+    config.reviewedAuthors = [{ githubUserId: "42", login: "author" }];
+    const unlinked = { linkedMemberUserId: null };
+    expect(decide(config, unlinked)).toMatchObject({
+      allowed: true,
+      responsibleUserId: "owner",
+      guest: true,
+      reviewedAuthor: true,
+    });
+    expect(decide(config, { ...unlinked, manual: true }).reason).toBe(
+      "person_not_authorized",
+    );
+    expect(
+      decide(config, { ...unlinked, context: { ...context, draft: true } })
+        .reason,
+    ).toBe("draft");
+    config.defaults.invocation = "mentions_only";
+    expect(decide(config, unlinked).reason).toBe("mentions_only");
+    config.defaults.invocation = "linked_authors";
+    config.reviewedAuthors = [];
+    expect(decide(config, unlinked).reason).toBe("person_not_authorized");
+  });
 });
 describe("GitHub issue intake authorization", () => {
   const issue: GitHubIssueEventContext = {
@@ -259,6 +282,12 @@ describe("GitHub issue intake authorization", () => {
     expect(decide(config, { context: issue })).toMatchObject({ allowed: true, reason: "automatic_issue" });
     config.repositories["12"] = { issueOpened: false };
     expect(decide(config, { context: issue }).reason).toBe("event_disabled");
+  });
+  it("does not open issue tasks for reviewed authors", () => {
+    const config = configuration();
+    config.defaults.issueOpened = true;
+    config.reviewedAuthors = [{ githubUserId: "42", login: "author" }];
+    expect(decide(config, { context: issue, linkedMemberUserId: null }).reason).toBe("person_not_authorized");
   });
   it("retains repository, member and responsible-user gates without per-person automatic flags", () => {
     const config = configuration();
