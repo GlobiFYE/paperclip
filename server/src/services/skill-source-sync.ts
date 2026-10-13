@@ -1,3 +1,4 @@
+import { admitDeferredSkillImports, SKILL_IMPORT_CAPACITY_WAIT } from './skill-source-import-queue.js';
 import { randomUUID } from 'node:crypto';
 import { skillSourceRetryAt } from './skill-source-retry.js';
 import { and, asc, eq, inArray, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
@@ -36,7 +37,7 @@ export async function projectSkillRepositories(db: Db, companyId: string, actor:
     if (!allowed.has(project.id)) allowed.set(project.id, (await access.decide({ actor, action: 'project:read',
       resource: { type: 'project', companyId, projectId: project.id } })).allowed);
     if (!allowed.get(project.id)) continue;
-    const binding = bindings.find(item => item.active && item.workspaceId === workspace.id && item.repositoryUrl === repo.repositoryUrl && item.trackingRef === repo.trackingRef);
+    const binding = bindings.find(item => (item.active || (!item.sourceId && item.lastError !== null)) && item.workspaceId === workspace.id && item.repositoryUrl === repo.repositoryUrl && item.trackingRef === repo.trackingRef);
     result.push({ projectId: project.id, projectName: project.name, projectVisibility: project.visibility as 'open' | 'private',
       workspaceId: workspace.id, ...repo, bindingId: binding?.id ?? null, sourceId: binding?.sourceId && !removed.has(binding.sourceId) ? binding.sourceId : null,
       status: binding?.sourceId && removed.has(binding.sourceId) ? 'available' : binding?.status ?? 'available', lastError: binding?.lastError ?? null });
@@ -67,7 +68,7 @@ export async function adoptProjectSkillRepository(db: Db, companyId: string, wor
     }
     const binding = await enqueueProjectSkillSource(database, workspace);
     if (!binding) throw notFound('Project repository not found');
-    if (!binding.sourceId) await tx.update(projectSkillSources).set({ status: 'pending', nextSyncAt: new Date(), failureCount: 0, lastError: null,
+    if (!binding.sourceId) await tx.update(projectSkillSources).set({ status: 'pending', nextSyncAt: new Date(), failureCount: 0, lastError: binding.lastError === SKILL_IMPORT_CAPACITY_WAIT ? SKILL_IMPORT_CAPACITY_WAIT : null,
       ...await projectSkillSetupIdentity(database, companyId),
     }).where(eq(projectSkillSources.id, binding.id));
     const { publication } = await persistActivity(database, { companyId, actorType: actor.type === 'agent' ? 'agent' : 'user',
@@ -176,6 +177,7 @@ export function skillSourceSyncService(db: Db, options: { context?: (setup: Setu
         if (!(await authorizationService(db).decide({ actor, action: 'project:read', resource: { type: 'project', companyId: binding.companyId, projectId: binding.projectId } })).allowed) throw forbidden('Project access changed. Choose an authorized GitHub connection to retry.');
       }
       const context = await contextFor(binding);
+      await context.authorize('skills.import', { sourceType: 'git', sourceLocator: binding.repositoryUrl });
       const reader = context.read(binding.connectionId);
       const scan = await scanGitHubSkillsWithPackageFallback({ repositoryUrl: binding.repositoryUrl, trackingRef: binding.trackingRef, packageMode: 'repository' }, reader, { signal: shutdown.signal });
       const [existing] = await db.select().from(companySkillSources).where(and(eq(companySkillSources.companyId, binding.companyId),
@@ -211,6 +213,7 @@ export function skillSourceSyncService(db: Db, options: { context?: (setup: Setu
     } catch (error) {
       const message = shutdown.signal.aborted ? binding.lastError : error instanceof Error && 'status' in error ? error.message : 'Skill import failed. Retry from Skills.';
       await db.update(projectSkillSources).set({ status: shutdown.signal.aborted ? 'pending' : 'error', lastError: message, leaseToken: null, leaseExpiresAt: null,
+        ...(error instanceof Error && 'status' in error && error.status === 403 ? { active: false } : {}),
         failureCount: shutdown.signal.aborted ? binding.failureCount : binding.failureCount + 1, nextSyncAt: shutdown.signal.aborted ? now : skillSourceRetryAt(error, binding.failureCount, now) })
         .where(and(eq(projectSkillSources.id, binding.id), eq(projectSkillSources.leaseToken, token)));
       return false;
@@ -221,6 +224,7 @@ export function skillSourceSyncService(db: Db, options: { context?: (setup: Setu
     const activeCompanies = await db.select({ id: companies.id }).from(companies).where(eq(companies.status, 'active'));
     const ids = activeCompanies.map(company => company.id);
     if (!ids.length) return { imported: 0, checked: 0 };
+    for (const id of ids) await admitDeferredSkillImports(db, id, now);
     const pending = await db.select().from(projectSkillSources).where(and(inArray(projectSkillSources.companyId, ids),
       eq(projectSkillSources.active, true), isNull(projectSkillSources.sourceId), lte(projectSkillSources.nextSyncAt, now),
       or(isNull(projectSkillSources.leaseToken), lte(projectSkillSources.leaseExpiresAt, now))))
@@ -244,7 +248,7 @@ export function skillSourceSyncService(db: Db, options: { context?: (setup: Setu
             throw forbidden('The person who connected this source no longer has project access. Choose another GitHub connection.');
           }
         }
-        await sources.refresh(source.companyId, source.id, context, undefined, undefined, { checkCommit: true, signal: shutdown.signal });
+        await sources.refresh(source.companyId, source.id, context, undefined, undefined, { checkCommit: true, automatic: true, now, signal: shutdown.signal });
         checked++;
       } catch (error) {
         if (error instanceof Error && 'status' in error && error.status === 409) continue;

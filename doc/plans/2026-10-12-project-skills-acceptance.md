@@ -413,3 +413,27 @@ built-browser qualification. The verification inventory now records 59 remaining
 gaps and preserves variable-dialog and production obligations for the partially
 covered routine-run journey. Catalog/map checks pass without treating source
 classification or test presence as additional execution proof.
+
+The final resource review adds generated migration 0343 and durable automatic
+refresh credits: unchanged Git trees require no download, including empty commits;
+512 MiB of scan/download allowance refills per hour, with conservative reservations
+and refunds for small repositories. Manual Refresh remains available. Initial
+imports admit 20 jobs per project and 100 per company; overflow remains durable
+and is admitted as capacity frees. Repository attachment requires workspace-write
+permission, and skill-import policy is checked before provider reads. Policy denials
+stop automatic retries until an explicit repair/adoption. These changes passed
+all 61 qualified Node 24 files and 397 tests without skips or deadline changes.
+The final PUT-route and legacy-tree-learning follow-up passed all 48 affected
+cases; recursive typecheck and production build pass afterward.
+
+The final running checkout (32c5cdc4ee plus the recorded PUT-route/tree-learning
+follow-up) also passed isolated runtime doctor. Through the real board UI at
+127.0.0.1:3107, a new disposable project was created without repositories, then
+the approved private acceptance repository was attached through Configuration.
+The saved workspace persisted after reload. Sources showed both skills imported
+automatically under the new default-branch source without Refresh or adoption.
+The earlier projects track main explicitly, so their existing source and versions
+remain independent. The picker warned that another connection could not load;
+the selected Acceptance GitHub connection successfully listed and attached the
+repository. This is an additional real attachment check, not another model run.
+The screenshot is retained in the inspectable evidence gallery.

@@ -17,7 +17,7 @@ export interface GitHubRead {
   readonly grantId?: string | null;
 }
 export type DiscoveredSkill = SkillSourceCandidate & { files: CompanySkillVersionFileInventoryEntry[] };
-export type ScannedSkillSource = SkillSourceDiscovery & { skills: DiscoveredSkill[]; defaultBranch: string; repositoryFiles?: CompanySkillVersionFileInventoryEntry[] };
+export type ScannedSkillSource = SkillSourceDiscovery & { skills: DiscoveredSkill[]; defaultBranch: string; treeSha?: string; downloadBytes?: number; scanBytes?: number; repositoryFiles?: CompanySkillVersionFileInventoryEntry[] };
 const MAX_FILE_BYTES = 1024 * 1024;
 const MAX_SCAN_BYTES = 100 * 1024 * 1024;
 const MAX_SCAN_PACKAGES = 1_000;
@@ -272,7 +272,9 @@ async function scanRepository(input: SkillScanInput, providerRead: GitHubRead, o
         if (skill.inspection) skill.inspection.references = skill.inspection.references.filter(ref => !included.has(ref.resolvedPath));
       }
     }
-    return { ...(input.packageMode ? { packageMode: input.packageMode } : {}), ...(repositoryPackage ? { repositoryPackage } : {}),
+    return { treeSha: snapshot.treeSha, downloadBytes: snapshot.downloadBytes,
+      scanBytes: Math.min(MAX_SCAN_BYTES, snapshot.entries.reduce((sum, entry) => sum + (entry.type === 'blob' ? entry.size ?? MAX_SCAN_BYTES : 0), 0)),
+      ...(input.packageMode ? { packageMode: input.packageMode } : {}), ...(repositoryPackage ? { repositoryPackage } : {}),
       ...(repositoryFiles && options.retainFiles !== false ? { repositoryFiles } : {}),
       connectionId: providerRead.connectionId ?? null, repositoryId: String(repo.id), repositoryUrl: `https://github.com/${repo.full_name.toLowerCase()}`, fullName: repo.full_name, trackingRef, commitSha: commit.sha,
       defaultBranch: repo.default_branch, candidates: skills.map(({ files: _files, ...candidate }) => candidate), warnings, skills };

@@ -1,3 +1,4 @@
+import { lockSkillImportQueue, MAX_COMPANY_PENDING_SKILL_IMPORTS, MAX_PROJECT_PENDING_SKILL_IMPORTS, SKILL_IMPORT_CAPACITY_WAIT } from './skill-source-import-queue.js';
 import { and, eq, ne } from 'drizzle-orm';
 import { projectSkillSources, type Db, projectWorkspaces } from '@paperclipai/db';
 import { parseGitHubSkillRepositoryUrl } from '@paperclipai/shared';
@@ -27,22 +28,30 @@ export function projectSkillRepository(workspace: Pick<typeof projectWorkspaces.
 
 /** Called inside the workspace mutation transaction; no provider calls here. */
 export async function enqueueProjectSkillSource(db: Db, workspace: typeof projectWorkspaces.$inferSelect) {
-  const repository = projectSkillRepository(workspace);
-  await db.update(projectSkillSources).set({ active: false })
-    .where(and(eq(projectSkillSources.companyId, workspace.companyId), eq(projectSkillSources.workspaceId, workspace.id),
-      ...(repository ? [ne(projectSkillSources.trackingRef, repository.trackingRef)] : [])));
-  if (!repository) return null;
-  const setup = await projectSkillSetupIdentity(db, workspace.companyId);
-  await db.update(projectSkillSources).set({ active: false })
-    .where(and(eq(projectSkillSources.companyId, workspace.companyId), eq(projectSkillSources.workspaceId, workspace.id), ne(projectSkillSources.repositoryUrl, repository.repositoryUrl)));
-  const [binding] = await db.insert(projectSkillSources).values({
-    companyId: workspace.companyId, projectId: workspace.projectId, workspaceId: workspace.id, ...repository, nextSyncAt: new Date(),
-    ...setup,
-  }).onConflictDoUpdate({ target: [projectSkillSources.workspaceId, projectSkillSources.repositoryUrl, projectSkillSources.trackingRef],
-    set: { active: true } }).returning();
-  return binding!;
+  return db.transaction(async tx => {
+    const db = tx as unknown as Db;
+    const repository = projectSkillRepository(workspace);
+    const setup = repository ? await projectSkillSetupIdentity(db, workspace.companyId) : undefined;
+    const pending = await lockSkillImportQueue(db, workspace.companyId);
+    await db.update(projectSkillSources).set({ active: false, lastError: null })
+      .where(and(eq(projectSkillSources.companyId, workspace.companyId), eq(projectSkillSources.workspaceId, workspace.id),
+        ...(repository ? [ne(projectSkillSources.trackingRef, repository.trackingRef)] : [])));
+    if (!repository) return null;
+    await db.update(projectSkillSources).set({ active: false, lastError: null })
+      .where(and(eq(projectSkillSources.companyId, workspace.companyId), eq(projectSkillSources.workspaceId, workspace.id), ne(projectSkillSources.repositoryUrl, repository.repositoryUrl)));
+    const [existing] = await db.select().from(projectSkillSources).where(and(eq(projectSkillSources.workspaceId, workspace.id),
+      eq(projectSkillSources.repositoryUrl, repository.repositoryUrl), eq(projectSkillSources.trackingRef, repository.trackingRef)));
+    const available = Boolean(existing?.sourceId || pending.some(row => row.id === existing?.id))
+      || (pending.length < MAX_COMPANY_PENDING_SKILL_IMPORTS && pending.filter(row => row.projectId === workspace.projectId).length < MAX_PROJECT_PENDING_SKILL_IMPORTS);
+    const [binding] = await db.insert(projectSkillSources).values({
+      companyId: workspace.companyId, projectId: workspace.projectId, workspaceId: workspace.id, ...repository, nextSyncAt: new Date(),
+      ...setup, active: available, lastError: available ? null : SKILL_IMPORT_CAPACITY_WAIT,
+    }).onConflictDoUpdate({ target: [projectSkillSources.workspaceId, projectSkillSources.repositoryUrl, projectSkillSources.trackingRef],
+      set: { active: available, lastError: available ? existing?.lastError === SKILL_IMPORT_CAPACITY_WAIT ? null : existing?.lastError : SKILL_IMPORT_CAPACITY_WAIT } }).returning();
+    return binding!;
+  });
 }
 
 export async function detachProjectSkillSource(db: Db, companyId: string, workspaceId: string) {
-  await db.update(projectSkillSources).set({ active: false }).where(and(eq(projectSkillSources.companyId, companyId), eq(projectSkillSources.workspaceId, workspaceId)));
+  await db.update(projectSkillSources).set({ active: false, lastError: null }).where(and(eq(projectSkillSources.companyId, companyId), eq(projectSkillSources.workspaceId, workspaceId)));
 }

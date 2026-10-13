@@ -169,6 +169,16 @@ export function projectRoutes(db: Db) {
     return false;
   }
 
+  async function assertProjectWorkspaceWriteAllowed(req: Request, res: Response, project: { id: string; companyId: string }) {
+    const assigneeAgentId = req.actor.type === "agent" ? req.actor.agentId ?? null : null;
+    const decision = await access.decide({ actor: req.actor, action: "project:write_workspace",
+      resource: { type: "issue", companyId: project.companyId, projectId: project.id, assigneeAgentId },
+      scope: { projectId: project.id, assigneeAgentId } });
+    if (decision.allowed) return true;
+    res.status(403).json({ error: decision.explanation });
+    return false;
+  }
+
   async function assertCanManageProjectPrivacy(req: Request, res: Response, project: {
     companyId: string; privacyOwnerUserId?: string | null; personalOwnerUserId?: string | null;
   }) {
@@ -288,6 +298,8 @@ export function projectRoutes(db: Db) {
     assertBoard(req);
     const project = await getAccessibleResource(req, res, svc.getById(req.params.id as string), "Project not found");
     if (!project) return;
+    if (!(await assertProjectReadAllowed(req, res, project))) return;
+    if (!(await assertProjectWorkspaceWriteAllowed(req, res, project))) return;
     const repositories = await selectedRepositories(req, project.companyId, req.body.repositoryIds, project.workspaces);
     const updated = await svc.replaceRepositories(project.id, repositories);
     const actor = getActorInfo(req);
@@ -602,6 +614,7 @@ export function projectRoutes(db: Db) {
     const existing = await getAccessibleResource(req, res, svc.getById(id), "Project not found");
     if (!existing) return;
     if (!(await assertProjectReadAllowed(req, res, existing))) return;
+    if (!(await assertProjectWorkspaceWriteAllowed(req, res, existing))) return;
     assertNoAgentHostWorkspaceCommandMutation(
       req,
       collectProjectWorkspaceCommandPaths(req.body),
@@ -642,6 +655,7 @@ export function projectRoutes(db: Db) {
       const existing = await getAccessibleResource(req, res, svc.getById(id), "Project not found");
       if (!existing) return;
       if (!(await assertProjectReadAllowed(req, res, existing))) return;
+    if (!(await assertProjectWorkspaceWriteAllowed(req, res, existing))) return;
       assertNoAgentHostWorkspaceCommandMutation(
         req,
         collectProjectWorkspaceCommandPaths(req.body),
@@ -964,6 +978,7 @@ export function projectRoutes(db: Db) {
     const existing = await getAccessibleResource(req, res, svc.getById(id), "Project not found");
     if (!existing) return;
     if (!(await assertProjectReadAllowed(req, res, existing))) return;
+    if (!(await assertProjectWorkspaceWriteAllowed(req, res, existing))) return;
     const workspace = await svc.removeWorkspace(id, workspaceId);
     if (!workspace) {
       res.status(404).json({ error: "Project workspace not found" });

@@ -2255,3 +2255,14 @@ Project-derived editable forks retain the project audience present when created.
 Later repository attachments do not grant access to those edits. Re-adopting a
 removed source uses a separate active tracking identity; retained copies keep
 their original provenance. Project membership and visibility remain dynamic.
+
+Automatic skill checks compare tree identity as well as commit identity, so
+empty commits do not download or rescan content. Automatic scan work uses a
+durable per-source 512 MiB allowance with 512 MiB/hour refill; installed versions
+remain usable when it is temporarily limited, and authorized manual Refresh
+remains available. Initial imports authorize skills.import before provider work.
+At most 20 jobs per project and 100 per company enter the active initial queue;
+additional repository bindings remain durable and are admitted automatically
+when capacity frees. Project workspace create/update/delete use the existing
+workspace-write authorization evaluator. Policy-denied initial jobs await explicit
+adoption/repair rather than repeatedly scanning.

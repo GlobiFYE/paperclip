@@ -162,3 +162,9 @@ for automatic refresh. Authenticated agent runs derive the setup person from
 the persisted active run. Legacy agent activity without a matching run cannot
 recover a refresh person. Route and database tests cover these distinctions;
 this addition makes no new live-provider acceptance claim.
+
+Initial project imports check skills.import before provider reads; denied jobs
+do not retry automatically. Deferred jobs remain durable behind per-project and
+company admission limits. Scheduled refresh compares immutable tree identity and
+uses a persistent work allowance; manual refresh still requires its existing
+policy/access checks. These limits grant no content or execution access.

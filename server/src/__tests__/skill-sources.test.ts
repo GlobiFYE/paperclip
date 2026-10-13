@@ -37,6 +37,88 @@ describe.skipIf(!support.supported)('skill source persistence', () => {
     if (originalHome === undefined) delete process.env.PAPERCLIP_HOME; else process.env.PAPERCLIP_HOME = originalHome;
     await testDb?.cleanup(); if (home) await fs.rm(home, { recursive: true, force: true });
   });
+  it('checks a new commit with an unchanged tree without downloading or replacing versions', async () => {
+    const originalFiles = files, originalCommit = commit;
+    try {
+    const service = skillSourceService(db);
+    files = { 'tree/SKILL.md': md('tree') }; commit = '3'.repeat(40);
+    const created = await service.create(companyId, { repositoryUrl: 'https://github.com/acme/skills', trackingRef: 'tree-only', commitSha: commit, selectedPaths: ['tree/SKILL.md'] }, context);
+    const skillId = created.source.entries[0]!.skillId!;
+    const previous = (await companySkillService(db).getById(companyId, skillId))!.currentVersionId;
+    await db.update(companySkillSources).set({ lastScanTreeSha: null }).where(eq(companySkillSources.id, created.source.id));
+    const currentReader = context.read(null), currentOpen = vi.spyOn(currentReader, 'openSnapshot');
+    await service.refresh(companyId, created.source.id, { ...context, read: () => currentReader }, undefined, undefined, { checkCommit: true });
+    expect(currentOpen).not.toHaveBeenCalled();
+    const [remembered] = await db.select().from(companySkillSources).where(eq(companySkillSources.id, created.source.id));
+    expect(remembered!.lastScanTreeSha).toMatch(/^[a-f0-9]{40}$/);
+    commit = '4'.repeat(40);
+    const reader = context.read(null), open = vi.spyOn(reader, 'openSnapshot');
+    const result = await service.refresh(companyId, created.source.id, { ...context, read: () => reader }, undefined, undefined, { checkCommit: true });
+    expect(open).not.toHaveBeenCalled();
+    expect(result.source.lastScanCommit).toBe(commit);
+    expect((await companySkillService(db).getById(companyId, skillId))!.currentVersionId).toBe(previous);
+    files['tree/SKILL.md'] = md('tree changed'); commit = '5'.repeat(40);
+    const changed = context.read(null), changedOpen = vi.spyOn(changed, 'openSnapshot');
+    await service.refresh(companyId, created.source.id, { ...context, read: () => changed }, undefined, undefined, { checkCommit: true });
+    expect(changedOpen).toHaveBeenCalledTimes(1);
+    expect((await companySkillService(db).getById(companyId, skillId))!.currentVersionId).not.toBe(previous);
+    } finally { files = originalFiles; commit = originalCommit; }
+  });
+
+  it('persists automatic work limits, refills capacity, and allows explicit refresh', async () => {
+    const originalFiles = files, originalCommit = commit;
+    try {
+      files = { 'budget/SKILL.md': md('budget') }; commit = '6'.repeat(40);
+      let downloads = 0;
+      const budgetContext: SkillSourceContext = { ...context, read: () => {
+        const reader = context.read(null), open = reader.openSnapshot;
+        reader.openSnapshot = async (...args) => { downloads++; return { ...await open(...args), downloadBytes: 128 * 1024 * 1024 }; };
+        return reader;
+      } };
+      const service = skillSourceService(db);
+      const created = await service.create(companyId, { repositoryUrl: 'https://github.com/acme/skills', trackingRef: 'work-budget', commitSha: commit, selectedPaths: ['budget/SKILL.md'] }, budgetContext);
+      const start = new Date();
+      for (let index = 0; index < 4; index++) {
+        files['budget/SKILL.md'] = md(`budget revision ${index}`); commit = (7 + index).toString(16).repeat(40);
+        await service.refresh(companyId, created.source.id, budgetContext, undefined, undefined, { checkCommit: true, automatic: true, now: start });
+      }
+      const skillId = created.source.entries[0]!.skillId!;
+      const version = (await companySkillService(db).getById(companyId, skillId))!.currentVersionId;
+      files['budget/SKILL.md'] = md('budget next'); commit = 'b'.repeat(40);
+      const before = downloads;
+      await expect(skillSourceService(db).refresh(companyId, created.source.id, budgetContext, undefined, undefined,
+        { checkCommit: true, automatic: true, now: start })).rejects.toThrow(/temporarily limited/);
+      expect(downloads).toBe(before);
+      expect((await companySkillService(db).getById(companyId, skillId))!.currentVersionId).toBe(version);
+      await service.refresh(companyId, created.source.id, budgetContext, undefined, undefined, { checkCommit: true });
+      expect(downloads).toBe(before + 1);
+      const [budgetRow] = await db.select().from(companySkillSources).where(eq(companySkillSources.id, created.source.id));
+      expect(budgetRow!.automaticBudgetAt.getTime()).toBe(start.getTime());
+      expect(budgetRow!.automaticBudgetBytes).toBe(0);
+      files['budget/SKILL.md'] = md('budget refilled'); commit = 'c'.repeat(40);
+      await skillSourceService(db).refresh(companyId, created.source.id, budgetContext, undefined, undefined,
+        { checkCommit: true, automatic: true, now: new Date(start.getTime() + 15 * 60_000) });
+      expect(downloads).toBe(before + 2);
+      expect((await companySkillService(db).getById(companyId, skillId))!.currentVersionId).not.toBe(version);
+    } finally { files = originalFiles; commit = originalCommit; }
+  });
+
+  it('refunds unused automatic capacity for small repositories', async () => {
+    const originalFiles = files, originalCommit = commit;
+    try {
+      files = { 'small/SKILL.md': md('small') }; commit = 'd'.repeat(40);
+      const service = skillSourceService(db);
+      const created = await service.create(companyId, { repositoryUrl: 'https://github.com/acme/skills', trackingRef: 'small-budget', commitSha: commit, selectedPaths: ['small/SKILL.md'] }, context);
+      const now = new Date();
+      for (let index = 0; index < 6; index++) {
+        files['small/SKILL.md'] = md(`small revision ${index}`); commit = String(index + 1).repeat(40);
+        await service.refresh(companyId, created.source.id, context, undefined, undefined, { checkCommit: true, automatic: true, now });
+      }
+      const [stored] = await db.select().from(companySkillSources).where(eq(companySkillSources.id, created.source.id));
+      expect(stored!.automaticBudgetBytes).toBeGreaterThan(500 * 1024 * 1024);
+    } finally { files = originalFiles; commit = originalCommit; }
+  });
+
   it('imports duplicate names independently, stores complete snapshots and refreshes without duplicates', async () => {
     const sources = skillSourceService(db), skills = companySkillService(db);
     const result = await sources.create(companyId, { repositoryUrl: 'https://github.com/acme/skills', commitSha: sha, selectedPaths: ['deep/one/SKILL.md', 'elsewhere/one/SKILL.md'] }, context);

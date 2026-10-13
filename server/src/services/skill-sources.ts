@@ -1,3 +1,4 @@
+import { reserveAutomaticSkillWork, settleAutomaticSkillWork } from './skill-source-refresh-budget.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { skillSourceRetryAt } from './skill-source-retry.js';
 import path from 'node:path';
@@ -36,7 +37,7 @@ export function skillSourceService(db: Db) {
   }
   async function detail(companyId: string, id: string, database: Db | Tx = db): Promise<SkillSource> {
     await skillAccessService(database as Db).assertSource(companyId, id);
-    const { leaseToken, leaseExpiresAt, createdAt: _created, removedAt: _removed, refreshUserId: _user, refreshAgentId: _agent, refreshLocalTrusted: _local, refreshGrantId: _grant, failureCount: _failures, nextSyncAt: _next, ...source } = await row(companyId, id, database);
+    const { leaseToken, leaseExpiresAt, createdAt: _created, removedAt: _removed, refreshUserId: _user, refreshAgentId: _agent, refreshLocalTrusted: _local, refreshGrantId: _grant, failureCount: _failures, nextSyncAt: _next, lastScanTreeSha: _tree, automaticBudgetBytes: _bytes, automaticBudgetAt: _budgetAt, ...source } = await row(companyId, id, database);
     const permitted = await skillAccessService(database as Db).projectIds(companyId, id);
     const associated = await database.select({ id: projects.id, name: projects.name, visibility: projects.visibility, active: projectSkillSources.active })
       .from(projectSkillSources).innerJoin(projects, eq(projects.id, projectSkillSources.projectId))
@@ -64,7 +65,7 @@ export function skillSourceService(db: Db) {
   }
   async function discover(input: SkillSourceDiscoveryRequest, context: SkillSourceContext, options?: SkillScanOptions) {
     await context.authorize('skills.import', { sourceType: 'git', sourceLocator: input.repositoryUrl });
-    const { skills: _files, repositoryFiles: _repositoryFiles, defaultBranch: _defaultBranch, ...result } = await scanGitHubSkills(input, context.read(input.connectionId ?? null), { ...options, retainFiles: false });
+    const { skills: _files, repositoryFiles: _repositoryFiles, defaultBranch: _defaultBranch, treeSha: _tree, downloadBytes: _download, scanBytes: _scan, ...result } = await scanGitHubSkills(input, context.read(input.connectionId ?? null), { ...options, retainFiles: false });
     return result;
   }
   async function preview(input: SkillSourcePreviewRequest, context: SkillSourceContext) {
@@ -188,7 +189,7 @@ export function skillSourceService(db: Db) {
       .where(and(eq(projectSkillSources.companyId, source.companyId), eq(projectSkillSources.sourceId, source.id), eq(projectSkillSources.trackingRef, 'HEAD'))).limit(1) : [];
     await tx.update(sources).set({ repositoryId: scan.repositoryId, repositoryUrl: scan.repositoryUrl, fullName: scan.fullName,
       packageMode: mode, repositoryPackage: scan.repositoryPackage ?? null,
-      trackingRef: existingBranch || defaultBinding || (source.accessScope === 'projects' && source.trackingRef === 'HEAD') ? 'HEAD' : scan.trackingRef, excludedFolders, lastSuccessAt: new Date(), lastScanCommit: scan.commitSha, lastError: null,
+      trackingRef: existingBranch || defaultBinding || (source.accessScope === 'projects' && source.trackingRef === 'HEAD') ? 'HEAD' : scan.trackingRef, excludedFolders, lastSuccessAt: new Date(), lastScanCommit: scan.commitSha, lastScanTreeSha: scan.treeSha ?? null, lastError: null,
       revision: source.revision + 1, leaseToken: null, leaseExpiresAt: null, failureCount: 0, nextSyncAt: new Date(Date.now() + 5 * 60_000) }).where(scope(source.companyId, source.id));
     await context.audit(tx, source.id, 'company.skill_source_refreshed', { commit: scan.commitSha, importedCount: imported.length, updatedCount: updated.length, unchanged, warningCount: warnings.length });
     return { imported, updated, unchanged, warnings: [...new Set(warnings)] };
@@ -223,7 +224,7 @@ export function skillSourceService(db: Db) {
     context.publishCommittedActivity?.();
     return published;
   }
-  async function refresh(companyId: string, id: string, context: SkillSourceContext, selection?: SkillSourceSelectionRequest, staged?: ScannedSkillSource, options: { checkCommit?: boolean; signal?: AbortSignal } = {}) {
+  async function refresh(companyId: string, id: string, context: SkillSourceContext, selection?: SkillSourceSelectionRequest, staged?: ScannedSkillSource, options: { checkCommit?: boolean; automatic?: boolean; now?: Date; signal?: AbortSignal } = {}) {
     let source = await row(companyId, id);
     if (!source.enabled && !selection) throw conflict('This source is disconnected. Save its selection to reconnect.');
     await context.authorize(selection ? 'skills.edit' : 'skills.update', { sourceType: 'git', sourceLocator: source.repositoryUrl });
@@ -241,13 +242,15 @@ export function skillSourceService(db: Db) {
         const repo = await reader(`/repos/${source.fullName}`, options.signal) as { id: number; default_branch: string };
         if (String(repo.id) !== source.repositoryId) throw conflict('The repository at this URL has changed identity. Add it as a new source.');
         const ref = source.trackingRef === 'HEAD' ? repo.default_branch : source.trackingRef;
-        const head = await reader(`/repos/${source.fullName}/commits/${encodeURIComponent(ref)}`, options.signal) as { sha: string };
-        if (head.sha === source.lastScanCommit) {
+        const head = await reader(`/repos/${source.fullName}/commits/${encodeURIComponent(ref)}`, options.signal) as { sha: string; commit?: { tree?: { sha?: string } } };
+        const rawTreeSha = head.commit?.tree?.sha;
+        const treeSha = rawTreeSha && /^[a-f0-9]{40}$/i.test(rawTreeSha) ? rawTreeSha.toLowerCase() : null;
+        if (head.sha === source.lastScanCommit || (treeSha && treeSha === source.lastScanTreeSha)) {
           await db.transaction(async tx => {
             const [locked] = await tx.select().from(sources).where(scope(companyId, id)).for('update');
             if (!locked || locked.leaseToken !== token || locked.revision !== source.revision) throw conflict('Source refresh changed. Try again.');
-            await context.audit(tx, id, 'company.skill_source_checked', { commit: head.sha });
-            await tx.update(sources).set({ leaseToken: null, leaseExpiresAt: null, lastError: null, lastSuccessAt: new Date(), failureCount: 0,
+            await context.audit(tx, id, 'company.skill_source_checked', { commit: head.sha, unchangedTree: head.sha !== source.lastScanCommit });
+            await tx.update(sources).set({ leaseToken: null, leaseExpiresAt: null, lastError: null, lastSuccessAt: new Date(), failureCount: 0, lastScanCommit: head.sha, lastScanTreeSha: treeSha ?? source.lastScanTreeSha,
               connectionId: reader.connectionId ?? source.connectionId, refreshGrantId: reader.grantId ?? source.refreshGrantId,
               nextSyncAt: new Date(Date.now() + 5 * 60_000) }).where(scope(companyId, id));
           });
@@ -256,7 +259,10 @@ export function skillSourceService(db: Db) {
         }
       }
       const packageMode = selection?.packageMode ?? (source.accessScope === 'projects' ? 'repository' : source.packageMode);
+      if (options.automatic) await reserveAutomaticSkillWork(db, source, token, options.now ?? new Date());
       const scan = staged ?? await scanGitHubSkills({ repositoryUrl: source.repositoryUrl, trackingRef: source.trackingRef, packageMode }, reader, { signal: options.signal });
+      if (options.automatic) await settleAutomaticSkillWork(db, companyId, id, token,
+        packageMode === 'repository' && scan.packageMode === 'skills' ? {} : scan);
       // A project source may already be in package-only mode after initial fallback.
       if (source.accessScope === 'projects' && scan.packageMode === 'skills') rejectIncompleteSkillPackages(scan);
       if (source.repositoryId && source.repositoryId !== scan.repositoryId) throw conflict('The repository at this URL has changed identity. Add it as a new source.');

@@ -831,3 +831,9 @@ source captures leave no new records. Worktree realization uses a verified check
 as its Git command directory, including when metadata sits inside another repository.
 
 No migration scans or copies existing agent home directories. Keep admitted native descriptors and recovery references until compatible controllers finish their persistence obligations. See [the architecture rollout contract](plans/2026-10-09-task-workspaces.md).
+
+Migration 0343 stores the last scanned Git tree and a durable automatic-refresh
+work allowance. The allowance starts at 512 MiB, refills at 512 MiB/hour, and
+reserves the existing 128 MiB upper bound before automatic downloads. Completed
+small scans refund unused capacity; interrupted/failed work keeps its bounded
+reservation. These internal fields do not appear in source responses.

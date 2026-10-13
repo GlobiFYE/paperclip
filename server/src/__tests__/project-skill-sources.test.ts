@@ -1,3 +1,4 @@
+import { admitDeferredSkillImports, MAX_COMPANY_PENDING_SKILL_IMPORTS, MAX_PROJECT_PENDING_SKILL_IMPORTS, SKILL_IMPORT_CAPACITY_WAIT } from '../services/skill-source-import-queue.js';
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
@@ -15,7 +16,7 @@ import { companySkillService } from '../services/company-skills.js';
 import { projectService } from '../services/projects.js';
 import { skillAccessService, withSkillActor } from '../services/skill-access.js';
 import type { AuthorizationActor } from '../services/authorization.js';
-import { unprocessable } from '../errors.js';
+import { forbidden, unprocessable } from '../errors.js';
 
 const support = await getEmbeddedPostgresTestSupport();
 describe.skipIf(!support.supported)('automatic project skill sources', () => {
@@ -54,6 +55,61 @@ describe.skipIf(!support.supported)('automatic project skill sources', () => {
   }
   const actor = (userId: string): AuthorizationActor => ({ type: 'board', userId, source: 'session', companyIds: [companyId], ignoreInstanceAdmin: true });
 
+  it('bounds per-project pending imports and admits deferred work after capacity frees', async () => {
+    await db.update(projectSkillSources).set({ active: false, lastError: null });
+    const root = await workspace('quota-root');
+    const rows = [];
+    for (let index = 0; index <= MAX_PROJECT_PENDING_SKILL_IMPORTS; index++) {
+      const [row] = await db.insert(projectWorkspaces).values({ companyId, projectId: root.projectId, name: `Repository ${index}`,
+        repoUrl: root.repoUrl, defaultRef: `project-quota-${index}` }).returning();
+      rows.push(row!); await enqueueProjectSkillSource(db, row!);
+    }
+    const pending = await db.select().from(projectSkillSources).where(eq(projectSkillSources.projectId, root.projectId));
+    expect(pending.filter(row => row.active)).toHaveLength(MAX_PROJECT_PENDING_SKILL_IMPORTS);
+    expect(pending.filter(row => !row.active)).toEqual([expect.objectContaining({ status: 'pending', lastError: SKILL_IMPORT_CAPACITY_WAIT })]);
+    await detachProjectSkillSource(db, companyId, rows[0]!.id);
+    await admitDeferredSkillImports(db, companyId, new Date());
+    const [admitted] = await db.select().from(projectSkillSources).where(eq(projectSkillSources.workspaceId, rows.at(-1)!.id));
+    expect(admitted).toMatchObject({ active: true, lastError: null });
+    const [extra] = await db.insert(projectWorkspaces).values({ companyId, projectId: root.projectId, name: 'Detached waiting repository', repoUrl: root.repoUrl, defaultRef: 'quota-detached' }).returning();
+    await enqueueProjectSkillSource(db, extra!);
+    await detachProjectSkillSource(db, companyId, extra!.id);
+    await detachProjectSkillSource(db, companyId, rows[1]!.id);
+    await admitDeferredSkillImports(db, companyId, new Date());
+    const [detached] = await db.select().from(projectSkillSources).where(eq(projectSkillSources.workspaceId, extra!.id));
+    expect(detached!.active).toBe(false);
+    await db.update(projectSkillSources).set({ active: false, lastError: null });
+  });
+
+  it('bounds the company pending queue across projects without losing deferred provenance', async () => {
+    const projectsToInsert = Array.from({ length: MAX_COMPANY_PENDING_SKILL_IMPORTS + 1 }, (_, index) => ({ id: randomUUID(), companyId, name: `Quota project ${index}` }));
+    await db.insert(projects).values(projectsToInsert);
+    const workspaces = await db.insert(projectWorkspaces).values(projectsToInsert.map((project, index) => ({ companyId, projectId: project.id,
+      name: 'Repository', repoUrl: 'https://github.com/acme/skills', defaultRef: `company-quota-${index}` }))).returning();
+    for (const row of workspaces) await enqueueProjectSkillSource(db, row);
+    const pending = await db.select().from(projectSkillSources).where(and(eq(projectSkillSources.companyId, companyId), eq(projectSkillSources.active, true)));
+    expect(pending.filter(row => !row.sourceId)).toHaveLength(MAX_COMPANY_PENDING_SKILL_IMPORTS);
+    const deferred = await db.select().from(projectSkillSources).where(eq(projectSkillSources.lastError, SKILL_IMPORT_CAPACITY_WAIT));
+    expect(deferred).toHaveLength(1);
+    expect(deferred[0]!.workspaceId).toBeTruthy();
+    await db.update(projectSkillSources).set({ active: false, lastError: null });
+  });
+
+  it('does not read GitHub or retry an initial job denied by import policy', async () => {
+    await db.update(companySkillSources).set({ automaticUpdates: false });
+    const row = await workspace('denied-preflight');
+    await enqueueProjectSkillSource(db, row);
+    const read = vi.fn(context.read);
+    const worker = skillSourceSyncService(db, { context: async () => ({ ...context, read,
+      authorize: async () => { throw forbidden('Skill import denied by policy.'); } }) });
+    expect((await worker.tick()).imported).toBe(0);
+    expect(read).not.toHaveBeenCalled();
+    const [blocked] = await db.select().from(projectSkillSources).where(eq(projectSkillSources.workspaceId, row.id));
+    expect(blocked).toMatchObject({ active: false, status: 'error', sourceId: null });
+    await worker.tick(new Date(Date.now() + 60 * 60_000));
+    expect(read).not.toHaveBeenCalled();
+  });
+
   it('does not add readers when an import overlaps private source removal', async () => {
     files = { 'race/SKILL.md': md('race workflow') };
     const originalWorkspace = await workspace('removal-race', 'private');
@@ -65,9 +121,9 @@ describe.skipIf(!support.supported)('automatic project skill sources', () => {
     const skillId = source.entries[0]!.skillId!;
     const pendingWorkspace = await workspace('removal-race', 'open');
     await enqueueProjectSkillSource(db, pendingWorkspace);
-    let removed = false;
+    let removed = false, authorizations = 0;
     const racingContext = { ...context, authorize: async () => {
-      if (removed) return;
+      if (++authorizations !== 2 || removed) return;
       removed = true;
       await sources.disconnect(companyId, source.id, context, { revision: source.revision, skills: 'copy' });
       await skills.updateFile(companyId, skillId, 'SKILL.md', md('Restricted race edits'));

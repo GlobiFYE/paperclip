@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { RequestHandler } from 'express';
-import { and, eq, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { activityLog, companySkills, companySkillSources, projectSkillSources, projects, type Db } from '@paperclipai/db';
 import { authorizationService, projectReadSqlCondition, type AuthorizationActor } from './authorization.js';
 import { notFound } from '../errors.js';
@@ -23,7 +23,7 @@ export function skillAccessService(db: Db, actor = currentSkillActor()) {
   }
   async function projectIds(companyId: string, sourceId?: string) {
     const bindings = await db.select({ sourceId: projectSkillSources.sourceId, projectId: projectSkillSources.projectId })
-      .from(projectSkillSources).where(and(eq(projectSkillSources.companyId, companyId),
+      .from(projectSkillSources).where(and(eq(projectSkillSources.companyId, companyId), isNotNull(projectSkillSources.sourceId),
         ...(sourceId ? [eq(projectSkillSources.sourceId, sourceId)] : [])));
     if (!actor) return bindings;
     const access = authorizationService(db);
