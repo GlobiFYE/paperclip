@@ -3,14 +3,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createHeartbeatPreparationTiming } from "./preparation-timing.js";
 
 const handles = vi.hoisted(() => ({ spans: [] as Array<{ setStatus: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> }> }));
-const startActiveSpan = vi.hoisted(() => vi.fn((_name, _options, callback) => {
+const startActiveSpan = vi.hoisted(() => vi.fn((_name, _options, _context, callback) => {
   const span = { setStatus: vi.fn(), end: vi.fn() };
   handles.spans.push(span);
   return callback(span);
 }));
 vi.mock("@opentelemetry/api", () => ({
   SpanStatusCode: { ERROR: 2 },
-  trace: { getTracer: () => ({ startActiveSpan }) },
+  ROOT_CONTEXT: "root-context",
+  trace: { getTracer: () => ({ startActiveSpan }), getActiveSpan: () => undefined },
 }));
 
 describe("heartbeat preparation timing", () => {
@@ -23,7 +24,7 @@ describe("heartbeat preparation timing", () => {
     await expect(time("instructions", async () => result)).resolves.toBe(result);
     expect(startActiveSpan).toHaveBeenCalledExactlyOnceWith("heartbeat.prepare.instructions", {
       attributes: { "paperclip.task.run.run_id": createHash("sha256").update(runId).digest("hex").slice(0, 12) },
-    }, expect.any(Function));
+    }, "root-context", expect.any(Function));
     expect(handles.spans[0].end).toHaveBeenCalledOnce();
     expect(handles.spans[0].setStatus).not.toHaveBeenCalled();
   });

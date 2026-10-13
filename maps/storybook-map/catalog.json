@@ -6362,7 +6362,7 @@
       "status": "current",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "TaskChatComposer uses owned task-keyed browser drafts, uncertain submission fence, switch/restore and failed/accepted send callbacks. API receipt authority and real submission durability remain separate.",
+      "notes": "TaskChatComposer uses owned task-keyed browser drafts, uncertain submission fence, switch/restore and failed/accepted send callbacks. API receipt authority and real submission durability remain separate. Storybook-owned draft keys are reset using the matching retained submission ID on setup and cleanup; same-browser uncertain-to-empty/send switching is covered separately.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/steering.md",
@@ -6375,7 +6375,7 @@
       ],
       "stableId": "feature-composer-draft-recovery",
       "sidebarTitle": "Tasks and conversations/Steering and queued messages/Draft recovery",
-      "fingerprint": "3cc7aa7f7ca1d3248cf92173cc8c0f1f80d1da2d086053e0e92a1aafe00a2a91"
+      "fingerprint": "1c242e44746a80add5d9d54ea46611fe58ec43aac42e9d8c61027495c7fa4279"
     },
     {
       "file": "ui/storybook/stories/inbox-search/personal-task-toasts.stories.tsx",

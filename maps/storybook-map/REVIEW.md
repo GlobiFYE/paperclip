@@ -608,3 +608,19 @@ UI stories do not establish. Reviewed those differences, refreshed affected
 fingerprints with scoped notes, and retained all statuses. No new live acceptance
 or rendering evidence is claimed for the merge; the earlier 260-check pass names
 its tested revision. Catalog/map validation and 27 targeted tests pass.
+
+## Draft-fixture isolation correction before merge — 2026-10-13
+
+After #16167 merged as `252d9b5077`, retained the step-3 catalog and scenarios
+while reconciling its squash-merged verification file. Review found that
+`clearDraft` correctly refuses to clear a retained submission without its
+matching attempt ID. Story setup/cleanup now passes that ID for the two
+Storybook-owned draft keys before reseeding them. Production draft guards are
+unchanged. The new same-browser check switches from UncertainSubmission to
+Empty, SentClearsDraft and SendFailedKeepsDraft; it asserts the warning disappears
+and the expected empty or retained draft is shown, with declared play passing.
+All six draft stories plus that switching regression passed (seven browser
+checks) on the owned macOS Chromium development preview after cold dependency
+optimization. UI typecheck, 16 existing draft-persistence tests and the 27
+catalog/generator/map tests passed. No whole-suite browser rerun, production
+submission journey or visual-baseline comparison is claimed for this narrow fix.

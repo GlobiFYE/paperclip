@@ -105,6 +105,44 @@ test("token fixtures reset when switching stories in one browser", async ({
   );
 });
 
+test("draft fixtures reset when switching away from uncertain submission", async ({
+  page,
+}) => {
+  await page.goto(
+    "/?path=/story/feature-composer-draft-recovery--uncertain-submission&addonPanel=storybook/interactions/panel",
+  );
+  const frame = page.frameLocator("#storybook-preview-iframe");
+  const warning = frame.getByRole("alert").filter({
+    hasText: "We couldn’t confirm whether this comment was saved.",
+  });
+  const editor = frame.getByRole("textbox");
+  await expect(warning).toContainText(
+    "We couldn’t confirm whether this comment was saved.",
+  );
+  await page.getByRole("link", { name: "Empty", exact: true }).click();
+  await expect(warning).toHaveCount(0);
+  await expect(editor).toHaveText("");
+  for (const story of ["Sent Clears Draft", "Send Failed Keeps Draft"]) {
+    await page
+      .getByRole("link", { name: "Uncertain Submission", exact: true })
+      .click();
+    await expect(warning).toContainText(
+      "We couldn’t confirm whether this comment was saved.",
+    );
+    await page.getByRole("link", { name: story, exact: true }).click();
+    await expect(warning).toHaveCount(0);
+    await expect(page.locator('[aria-label^="Story status:"]')).toHaveAttribute(
+      "aria-label",
+      "Story status: Pass",
+    );
+    await expect(editor).toHaveText(
+      story === "Sent Clears Draft"
+        ? ""
+        : "Review the release before publishing.",
+    );
+  }
+});
+
 for (const theme of ["light", "dark"]) {
   test(`backup retention renders on mobile in ${theme}`, async ({
     page,

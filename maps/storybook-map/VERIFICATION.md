@@ -1,6 +1,6 @@
 # Verification routes for Storybook capabilities
 
-Updated 2026-10-13. Production source is reconciled with master `da9af67415`; step-3 story and fixture changes are recorded in the catalog fingerprints.
+Updated 2026-10-13. Production source is reconciled with master `252d9b5077`; step-3 story and fixture changes are recorded in the catalog fingerprints.
 
 The catalog has 262 authored suites, 2,481 authored story IDs and 175 feature-map capabilities. The 37 new production-subject suites add 257 scenarios and associate all 49 UI capabilities identified in step 2. **11 capabilities remain without authored examples: 8 CLI/operator operations and 3 real-browser concerns.** Generated Overview pages and guides do not count as examples. Existing suites and story IDs are retained.
 
@@ -19,7 +19,7 @@ node scripts/serve-storybook-static.mjs --port 6136
 pnpm exec playwright test --config tests/storybook-visual/feature-gap-stories.config.ts
 ```
 
-The static server must be an owned process serving this checkout. Override the browser target with `PAPERCLIP_GAP_STORYBOOK_URL` when using another owned port. The browser suite asserts each non-interactive story's expected content, skeleton or documented fallback and waits for declared play assertions; it also checks reset when switching token stories in one browser. This is not the pinned Linux visual-baseline comparison.
+The static server must be an owned process serving this checkout. Override the browser target with `PAPERCLIP_GAP_STORYBOOK_URL` when using another owned port. The browser suite asserts each non-interactive story's expected content, skeleton or documented fallback and waits for declared play assertions; it also checks reset when switching token and uncertain-draft stories in one browser. This is not the pinned Linux visual-baseline comparison.
 
 | Suite | Capability associations | Scenarios / play functions |
 | --- | --- | --- |

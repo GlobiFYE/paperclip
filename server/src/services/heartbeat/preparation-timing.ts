@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { isSpanContextValid, ROOT_CONTEXT, SpanStatusCode, trace } from "@opentelemetry/api";
 
 type PreparationPhase = "environment_selection" | "execution_configuration" | "session"
   | "workspace" | "github_environment" | "github_launchers" | "run_output"
@@ -7,10 +7,15 @@ type PreparationPhase = "environment_selection" | "execution_configuration" | "s
 
 export function createHeartbeatPreparationTiming(runId: string) {
   const runIdHash = createHash("sha256").update(runId).digest("hex").slice(0, 12);
-  return <T>(phase: PreparationPhase, work: () => Promise<T>): Promise<T> =>
-    trace.getTracer("paperclip.heartbeat-preparation").startActiveSpan(
+  return <T>(phase: PreparationPhase, work: () => Promise<T>): Promise<T> => {
+    const trigger = trace.getActiveSpan()?.spanContext();
+    return trace.getTracer("paperclip.heartbeat-preparation").startActiveSpan(
       `heartbeat.prepare.${phase}`,
-      { attributes: { "paperclip.task.run.run_id": runIdHash } },
+      {
+        attributes: { "paperclip.task.run.run_id": runIdHash },
+        ...(trigger && isSpanContextValid(trigger) ? { links: [{ context: trigger }] } : {}),
+      },
+      ROOT_CONTEXT,
       async (span) => {
         try {
           return await work();
@@ -22,4 +27,5 @@ export function createHeartbeatPreparationTiming(runId: string) {
         }
       },
     );
+  };
 }

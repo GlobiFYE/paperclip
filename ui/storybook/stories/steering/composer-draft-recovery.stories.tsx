@@ -7,10 +7,14 @@ import {
   loadDraft,
   clearDraft,
   saveDraftSubmission,
+  loadDraftSubmission,
 } from "@/lib/composer-draft";
 import { expect, userEvent, within, waitFor } from "storybook/test";
 const first = "paperclip:storybook:gap-draft-a",
   second = "paperclip:storybook:gap-draft-b";
+function resetFixtureDraft(key: string) {
+  clearDraft(key, loadDraftSubmission(key)?.attemptId);
+}
 function Drafts({ fail = false }: { fail?: boolean }) {
   const [task, setTask] = useState(first);
   return (
@@ -35,8 +39,8 @@ const meta = {
   component: Drafts,
   parameters: { layout: "padded" },
   beforeEach: ({ parameters }) => {
-    clearDraft(first);
-    clearDraft(second);
+    resetFixtureDraft(first);
+    resetFixtureDraft(second);
     if (!parameters.empty)
       saveDraft(first, "Review the release before publishing.");
     saveDraft(second, "Check provider qualification.");
@@ -46,8 +50,8 @@ const meta = {
         reviewed: false,
       });
     return () => {
-      clearDraft(first);
-      clearDraft(second);
+      resetFixtureDraft(first);
+      resetFixtureDraft(second);
     };
   },
 } satisfies Meta<typeof Drafts>;
