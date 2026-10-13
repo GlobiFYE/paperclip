@@ -213,12 +213,6 @@ function Setup({
     queryKey: queryKeys.adapters.all,
     queryFn: () => adaptersApi.list(),
   });
-  // PAPERCLIP_PI_PROVIDERS routes the declared models server-side, so Pi needs no per-agent key for them.
-  const serverModels =
-    brandType === "pi_local" &&
-    Boolean(adapterInventory.data?.some((adapter) => adapter.type === adapterType && adapter.declaredModels));
-  const provider = providerChoice ?? (serverModels ? SERVER_PROVIDER : "openrouter");
-  const serverProvider = provider === SERVER_PROVIDER;
   const agents = useQuery({
     queryKey: queryKeys.agents.list(companyId),
     queryFn: () => agentsApi.list(companyId),
@@ -249,6 +243,25 @@ function Setup({
     enabled: Boolean(brandType) && showModel && !connectionModels,
     retry: false,
   });
+  // PAPERCLIP_PI_PROVIDERS routes these models server-side. Declared models of key-based providers still need a key.
+  const serverModelIds = new Set(
+    brandType === "pi_local" &&
+    adapterInventory.data?.some((adapter) => adapter.type === adapterType && adapter.declaredModels)
+      ? (models.data ?? [])
+          .map((option) => option.id)
+          .filter((id) => !PROVIDER_ENV_KEYS[id.split("/")[0]])
+      : [],
+  );
+  const serverModels = serverModelIds.size > 0;
+  const provider = providerChoice ?? (serverModels ? SERVER_PROVIDER : "openrouter");
+  const serverProvider = provider === SERVER_PROVIDER;
+  const autoServerProvider = providerChoice === null && serverModels;
+  useEffect(() => {
+    if (!autoServerProvider) return;
+    setApiKey("");
+    setProviderBinding(null);
+    resetTest();
+  }, [autoServerProvider]);
   const companySecrets = useQuery({
     queryKey: queryKeys.secrets.list(companyId),
     queryFn: () => secretsApi.list(companyId),
@@ -462,7 +475,7 @@ function Setup({
     if (aiBinding || nextConnection?.aiConnection) return {};
     return {
       ...nextConnection?.credentials,
-      ...(hasCredentialField && apiKey.trim()
+      ...(hasCredentialField && !serverProvider && apiKey.trim()
         ? { [envKey]: apiKey.trim() }
         : {}),
     };
@@ -925,7 +938,7 @@ function Setup({
                                     setEffort("");
                                   const prefix = value.split("/")[0];
                                   const nextProvider =
-                                    serverModels && models.data?.some((option) => option.id === value)
+                                    serverModelIds.has(value)
                                       ? SERVER_PROVIDER
                                       : PROVIDER_ENV_KEYS[prefix]
                                         ? prefix
