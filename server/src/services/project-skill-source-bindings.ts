@@ -34,11 +34,11 @@ export function projectSkillRepository(workspace: Pick<typeof projectWorkspaces.
 }
 
 /** Called inside the workspace mutation transaction; no provider calls here. */
-export async function enqueueProjectSkillSource(db: Db, workspace: typeof projectWorkspaces.$inferSelect) {
+export async function enqueueProjectSkillSource(db: Db, workspace: typeof projectWorkspaces.$inferSelect, setupIdentity?: Awaited<ReturnType<typeof projectSkillSetupIdentity>>) {
   return db.transaction(async tx => {
     const db = tx as unknown as Db;
     const repository = projectSkillRepository(workspace);
-    const setup = repository ? await projectSkillSetupIdentity(db, workspace.companyId) : undefined;
+    const setup = repository ? setupIdentity ?? await projectSkillSetupIdentity(db, workspace.companyId) : undefined;
     const pending = await lockSkillImportQueue(db, workspace.companyId);
     await db.update(projectSkillSources).set({ active: false, lastError: null })
       .where(and(eq(projectSkillSources.companyId, workspace.companyId), eq(projectSkillSources.workspaceId, workspace.id),

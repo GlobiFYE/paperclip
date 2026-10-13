@@ -461,3 +461,11 @@ and its catalog notes; the catalog conflict preserves both sets of stable IDs
 and classifications. Its affected workspace tests and final CI/review are
 recorded on the PR. No new feature canvas or provider run is inferred from
 this source reconciliation.
+
+A subsequent queue review reproduced two database failures: adoption held the
+binding while waiting for the company lock, and 100 deferred rows from a full
+project hid another project's work. Both regressions fail on the previous head.
+Adoption now captures run identity and takes the company queue lock before
+source/binding locks, reusing that validated setup while enqueueing. Admission
+excludes full projects before its bounded waiting-row selection. Verification
+and current-head gates are recorded on the PR.

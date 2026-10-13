@@ -1,10 +1,10 @@
-import { admitDeferredSkillImports, MAX_COMPANY_PENDING_SKILL_IMPORTS, MAX_PROJECT_PENDING_SKILL_IMPORTS, SKILL_IMPORT_CAPACITY_WAIT } from '../services/skill-source-import-queue.js';
+import { admitDeferredSkillImports, lockSkillImportQueue, MAX_COMPANY_PENDING_SKILL_IMPORTS, MAX_PROJECT_PENDING_SKILL_IMPORTS, SKILL_IMPORT_CAPACITY_WAIT } from '../services/skill-source-import-queue.js';
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { activityLog, agents, authUsers, companies, companyMemberships, companySkillSources, companySkills, createDb, projects,
   projectWorkspaces, projectSkillSources, projectAccessMembers } from '@paperclipai/db';
 import { startEmbeddedPostgresTestDatabase, getEmbeddedPostgresTestSupport } from './helpers/embedded-postgres.js';
@@ -136,6 +136,46 @@ describe.skipIf(!support.supported)('automatic project skill sources', () => {
     expect(deferred).toHaveLength(1);
     expect(deferred[0]!.workspaceId).toBeTruthy();
     await db.update(projectSkillSources).set({ active: false, lastError: null });
+  });
+
+  it('admits another project beyond a full project’s oldest waiting batch', async () => {
+    const full = await workspace('full-admission-project');
+    const other = await workspace('other-admission-project');
+    const rows = await db.insert(projectWorkspaces).values(Array.from({ length: 120 }, (_, index) => ({ companyId, projectId: full.projectId,
+      name: `Queued ${index}`, repoUrl: full.repoUrl, defaultRef: `starvation-${index}` }))).returning();
+    await db.insert(projectSkillSources).values(rows.map((row, index) => ({ companyId, projectId: row.projectId, workspaceId: row.id,
+      repositoryUrl: row.repoUrl!, trackingRef: row.defaultRef!, active: index < 20,
+      lastError: index < 20 ? null : SKILL_IMPORT_CAPACITY_WAIT, createdAt: new Date(0) })));
+    const [waiting] = await db.insert(projectSkillSources).values({ companyId, projectId: other.projectId, workspaceId: other.id,
+      repositoryUrl: other.repoUrl!, trackingRef: other.defaultRef!, active: false, lastError: SKILL_IMPORT_CAPACITY_WAIT }).returning();
+    await admitDeferredSkillImports(db, companyId, new Date());
+    const [saved] = await db.select().from(projectSkillSources).where(eq(projectSkillSources.id, waiting!.id));
+    expect(saved!.active).toBe(true);
+    await db.update(projectSkillSources).set({ active: false, lastError: null });
+  });
+
+  it('adoption waits for the company queue before taking repository binding locks', async () => {
+    const row = await workspace('adoption-lock-order');
+    const binding = await enqueueProjectSkillSource(db, row);
+    const [source] = await db.insert(companySkillSources).values({ companyId, repositoryUrl: row.repoUrl!, fullName: 'acme/skills', trackingRef: row.defaultRef! }).returning();
+    await db.update(projectSkillSources).set({ sourceId: source!.id }).where(eq(projectSkillSources.id, binding!.id));
+    let unlock!: () => void, locked!: () => void;
+    const release = new Promise<void>(resolve => { unlock = resolve; });
+    const ready = new Promise<void>(resolve => { locked = resolve; });
+    let editTx!: typeof db;
+    const edit = db.transaction(async tx => { editTx = tx as unknown as typeof db; await lockSkillImportQueue(editTx, companyId); locked(); await release; });
+    await ready;
+    const adoption = withSkillActor({ type: 'board', source: 'local_implicit', companyIds: [companyId] },
+      () => adoptProjectSkillRepository(db, companyId, row.id, context.authorize));
+    try {
+      await vi.waitFor(async () => {
+        const result = await db.execute(sql`select 1 from pg_stat_activity where wait_event_type = 'Lock' and query ilike '%companies%for no key update%'`);
+        expect(result.length).toBeGreaterThan(0);
+      });
+      // A repository edit holding the company lock must still be able to lock
+      // this binding. The old inverse adoption order fails with lock_not_available.
+      await editTx.execute(sql`select id from project_skill_sources where id = ${binding!.id} for update nowait`);
+    } finally { unlock(); await edit; await adoption; }
   });
 
   it('does not read GitHub or retry an initial job denied by import policy', async () => {

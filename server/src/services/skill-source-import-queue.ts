@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull, isNotNull } from 'drizzle-orm';
+import { and, asc, eq, isNull, isNotNull, notInArray } from 'drizzle-orm';
 import { companies, projectSkillSources, projectWorkspaces, type Db } from '@paperclipai/db';
 
 export const MAX_COMPANY_PENDING_SKILL_IMPORTS = 100;
@@ -21,11 +21,13 @@ export async function admitDeferredSkillImports(db: Db, companyId: string, now: 
     const perProject = new Map<string, number>();
     for (const row of pending) perProject.set(row.projectId, (perProject.get(row.projectId) ?? 0) + 1);
     if (count >= MAX_COMPANY_PENDING_SKILL_IMPORTS) return;
+    const fullProjects = [...perProject].filter(([, count]) => count >= MAX_PROJECT_PENDING_SKILL_IMPORTS).map(([id]) => id);
     const waiting = await tx.select({ id: projectSkillSources.id, projectId: projectSkillSources.projectId })
       .from(projectSkillSources).innerJoin(projectWorkspaces, eq(projectWorkspaces.id, projectSkillSources.workspaceId))
       .where(and(eq(projectSkillSources.companyId, companyId), eq(projectSkillSources.active, false),
         isNull(projectSkillSources.sourceId), eq(projectSkillSources.status, 'pending'),
-        eq(projectSkillSources.lastError, SKILL_IMPORT_CAPACITY_WAIT)))
+        eq(projectSkillSources.lastError, SKILL_IMPORT_CAPACITY_WAIT),
+        ...(fullProjects.length ? [notInArray(projectSkillSources.projectId, fullProjects)] : [])))
       .orderBy(asc(projectSkillSources.createdAt)).limit(MAX_COMPANY_PENDING_SKILL_IMPORTS);
     for (const row of waiting) {
       if (count >= MAX_COMPANY_PENDING_SKILL_IMPORTS) break;

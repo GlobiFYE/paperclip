@@ -1,4 +1,4 @@
-import { admitDeferredSkillImports, SKILL_IMPORT_CAPACITY_WAIT } from './skill-source-import-queue.js';
+import { admitDeferredSkillImports, lockSkillImportQueue, SKILL_IMPORT_CAPACITY_WAIT } from './skill-source-import-queue.js';
 import { randomUUID } from 'node:crypto';
 import { skillSourceRetryAt } from './skill-source-retry.js';
 import { and, asc, eq, inArray, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
@@ -55,6 +55,9 @@ export async function adoptProjectSkillRepository(db: Db, companyId: string, wor
   await authorize('skills.import', { sourceType: 'git', sourceLocator: repository.repositoryUrl });
   return db.transaction(async tx => {
     const database = tx as unknown as Db;
+    // Match attachment ordering: run identity, company queue, source/binding.
+    const setup = await projectSkillSetupIdentity(database, companyId);
+    await lockSkillImportQueue(database, companyId);
     const [previous] = await tx.select({ bindingId: projectSkillSources.id, removedAt: companySkillSources.removedAt })
       .from(projectSkillSources).innerJoin(companySkillSources, eq(companySkillSources.id, projectSkillSources.sourceId))
       .where(and(eq(projectSkillSources.companyId, companyId), eq(projectSkillSources.workspaceId, workspace.id),
@@ -66,10 +69,10 @@ export async function adoptProjectSkillRepository(db: Db, companyId: string, wor
       await tx.update(projectSkillSources).set({ workspaceId: null, active: false })
         .where(eq(projectSkillSources.id, previous.bindingId));
     }
-    const binding = await enqueueProjectSkillSource(database, workspace);
+    const binding = await enqueueProjectSkillSource(database, workspace, setup);
     if (!binding) throw notFound('Project repository not found');
     if (!binding.sourceId) await tx.update(projectSkillSources).set({ status: 'pending', nextSyncAt: new Date(), failureCount: 0, lastError: binding.lastError === SKILL_IMPORT_CAPACITY_WAIT ? SKILL_IMPORT_CAPACITY_WAIT : null,
-      ...await projectSkillSetupIdentity(database, companyId),
+      ...setup,
     }).where(eq(projectSkillSources.id, binding.id));
     const { publication } = await persistActivity(database, { companyId, actorType: actor.type === 'agent' ? 'agent' : 'user',
       actorId: actor.agentId ?? actor.userId ?? 'board', agentId: actor.agentId, runId: actor.runId,
