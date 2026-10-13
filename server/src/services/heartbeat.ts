@@ -19667,7 +19667,12 @@ export function heartbeatService(
     }
 
     const queuedRuns = await db
-      .select({ agentId: heartbeatRuns.agentId })
+      .select({
+        agentId: heartbeatRuns.agentId,
+        oldestCreatedAt: sql<string>`min(${heartbeatRuns.createdAt})`.as(
+          "oldestCreatedAt",
+        ),
+      })
       .from(heartbeatRuns)
       .innerJoin(companies, eq(companies.id, heartbeatRuns.companyId))
       .where(
@@ -19676,9 +19681,19 @@ export function heartbeatService(
           eq(companies.status, "active"),
           cutoff ? gte(heartbeatRuns.createdAt, cutoff) : undefined,
         ),
-      );
+      )
+      .groupBy(heartbeatRuns.agentId);
 
-    const agentIds = [...new Set(queuedRuns.map((r) => r.agentId))];
+    // Admit agents holding the oldest queued work first so scarce fleet-wide
+    // concurrency slots go to the longest-waiting runs instead of an arbitrary
+    // scan order (TOP-417 oldest-first-within-priority fairness).
+    const agentIds = [...queuedRuns]
+      .sort(
+        (left, right) =>
+          new Date(left.oldestCreatedAt).getTime() -
+          new Date(right.oldestCreatedAt).getTime(),
+      )
+      .map((r) => r.agentId);
     for (const agentId of agentIds) {
       await startNextQueuedRunForAgent(agentId);
     }
@@ -20136,21 +20151,14 @@ export function heartbeatService(
           : true;
         const leftIssue = leftIssueId ? issueById.get(leftIssueId) : null;
         const rightIssue = rightIssueId ? issueById.get(rightIssueId) : null;
-        const leftRank = leftIssueId
-          ? leftReady
-            ? leftIssue?.status === "in_progress"
-              ? 0
-              : 1
-            : 3
-          : 2;
-        const rightRank = rightIssueId
-          ? rightReady
-            ? rightIssue?.status === "in_progress"
-              ? 0
-              : 1
-            : 3
-          : 2;
-        if (leftRank !== rightRank) return leftRank - rightRank;
+        // Dependency-blocked runs must never dispatch ahead of ready runs, so
+        // they sort last. Among ready runs (in_progress, ready-todo, or no
+        // issue) dispatch is oldest-first within priority: age dominates so a
+        // long-queued run is not starved by a freshly created in_progress run
+        // when fleet-wide concurrency slots are scarce (TOP-417).
+        const leftBlocked = !leftReady;
+        const rightBlocked = !rightReady;
+        if (leftBlocked !== rightBlocked) return leftBlocked ? 1 : -1;
         const leftPriorityRank = issueRunPriorityRank(leftIssue?.priority);
         const rightPriorityRank = issueRunPriorityRank(rightIssue?.priority);
         if (leftPriorityRank !== rightPriorityRank)
