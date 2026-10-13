@@ -85,6 +85,25 @@ describe("computeGoalProgress", () => {
     expect(out.goals).toHaveLength(2);
   });
 
+  it("gives cyclic goals the same counts and percent whatever the input order", () => {
+    const run = (order: string[]) => {
+      const defs: Record<string, ReturnType<typeof goal>> = { a: goal("a", "team", "b"), b: goal("b", "team", "a"), c: goal("c", "task", "b") };
+      const out = computeGoalProgress({
+        goals: order.map((id) => defs[id]),
+        issues: [issue("1", "done", "a"), issue("2", "todo", "b"), issue("3", "done", "c"), issue("4", "todo", "c")],
+        agents: [],
+      });
+      return Object.fromEntries(out.goals.map((g) => [g.id, { total: g.counts.total, done: g.counts.done, percent: g.percent }]));
+    };
+    const forward = run(["a", "b", "c"]);
+    const reversed = run(["c", "b", "a"]);
+    expect(forward).toEqual(reversed);
+    // a reaches b and c; b reaches a and c: every goal in the cycle sees all 4 tasks once.
+    expect(forward.a).toEqual({ total: 4, done: 2, percent: 50 });
+    expect(forward.b).toEqual({ total: 4, done: 2, percent: 50 });
+    expect(forward.c).toEqual({ total: 2, done: 1, percent: 50 });
+  });
+
   it("reports each agent's furthest-along open task with its goal", () => {
     const out = computeGoalProgress({
       goals: [goal("m1", "task")],

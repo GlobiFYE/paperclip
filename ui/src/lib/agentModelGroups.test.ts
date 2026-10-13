@@ -12,6 +12,11 @@ describe("agentModelGroups", () => {
     expect(agentProvider({ id: "9", adapterType: "paperclip_runner", adapterConfig: { provider: "claude_managed", model: "claude-opus-5-5" } })).toBe("Claude");
     expect(agentProvider({ id: "10", adapterType: "paperclip_runner", adapterConfig: { provider: "codex" } })).toBe("Codex");
     expect(agentProvider({ id: "11", adapterType: "paperclip_runner", adapterConfig: {} })).toBe("Paperclip runner (default provider)");
+    // A native runner on the opencode backend routes like opencode_local: provider/model.
+    expect(agentProvider({ id: "12", adapterType: "paperclip_runner", adapterConfig: { provider: "opencode", model: "openai/gpt-5" } })).toBe("OpenAI");
+    expect(agentModel({ id: "12", adapterType: "paperclip_runner", adapterConfig: { provider: "opencode", model: "openai/gpt-5" } })).toBe("gpt-5");
+    expect(agentProvider({ id: "13", adapterType: "paperclip_runner", adapterConfig: { provider: "opencode" } })).toBe("Paperclip runner (default provider)");
+    expect(agentProvider({ id: "14", adapterType: "opencode_local", adapterConfig: { model: "openai/gpt-5" } })).toBe("OpenAI");
     expect(agentModel({ id: "3", adapterType: "process" })).toBe("—");
     expect(agentModel({ id: "5", adapterType: "claude_local", adapterConfig: {} })).toBe("default model");
     // Pi and OpenCode write provider/model: group by the AI provider, not the client.
@@ -19,6 +24,16 @@ describe("agentModelGroups", () => {
     expect(agentModel({ id: "6", adapterType: "pi_local", adapterConfig: { model: "anthropic/claude-sonnet-4" } })).toBe("claude-sonnet-4");
     expect(agentProvider({ id: "7", adapterType: "opencode_local", adapterConfig: { model: "openai/gpt-5" } })).toBe("OpenAI");
     expect(agentProvider({ id: "8", adapterType: "pi_local", adapterConfig: {} })).toBe("Pi (default provider)");
+  });
+
+  it("treats prototype-named providers and adapters as plain unknown strings", () => {
+    for (const weird of ["__proto__", "constructor", "hasOwnProperty"]) {
+      expect(agentProvider({ id: "p", adapterType: "hermes_local", adapterConfig: { provider: weird } })).toBe(`Hermes · ${weird}`);
+      expect(agentProvider({ id: "q", adapterType: weird, adapterConfig: {} })).toBe(weird);
+      const groups = groupAgentsByModel([{ id: "r", adapterType: weird, adapterConfig: { provider: weird, model: weird } }]);
+      expect(groups).toHaveLength(1);
+      expect(typeof groups[0].provider).toBe("string");
+    }
   });
 
   it("groups by provider then model, biggest groups first", () => {

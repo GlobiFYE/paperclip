@@ -1,6 +1,7 @@
 // Groups agents by the AI provider and model they run on, for the Agents
 // "By model" tab. Derived only from adapterType and the non-secret
 // adapterConfig.provider / adapterConfig.model fields; env is never read.
+// Lookups use Maps so a persisted provider like "__proto__" is just unknown.
 
 export interface AgentModelGroupInput {
   id: string;
@@ -16,74 +17,93 @@ export interface AgentModelGroup<A extends AgentModelGroupInput> {
 
 // Provider ids as adapters persist them (hermes `provider`, paperclip_runner
 // `provider`, Pi/OpenCode `provider/model` prefixes), mapped to display names.
-const PROVIDER_NAMES: Record<string, string> = {
-  xiaomi: "MiMo",
-  minimax: "MiniMax",
-  nvidia: "NVIDIA",
-  gemini: "Gemini",
-  xai: "Grok",
-  anthropic: "Claude",
-  claude: "Claude",
-  claude_managed: "Claude",
-  codex: "Codex",
-  opencode: "OpenCode",
-  grok: "Grok",
-  openai: "OpenAI",
-  openrouter: "OpenRouter",
-};
+const PROVIDER_NAMES = new Map<string, string>([
+  ["xiaomi", "MiMo"],
+  ["minimax", "MiniMax"],
+  ["nvidia", "NVIDIA"],
+  ["gemini", "Gemini"],
+  ["google", "Gemini"],
+  ["xai", "Grok"],
+  ["grok", "Grok"],
+  ["anthropic", "Claude"],
+  ["claude", "Claude"],
+  ["claude_managed", "Claude"],
+  ["codex", "Codex"],
+  ["openai", "OpenAI"],
+  ["openrouter", "OpenRouter"],
+]);
 
-// Adapters whose `model` is written as `provider/model` (their execute.ts parseModelProvider).
+// Clients that route to a separate AI provider and write `model` as `provider/model`
+// (pi-local / opencode-local execute.ts parseModelProvider; the native runner's
+// opencode profile keeps the same form).
 const PREFIXED_MODEL_ADAPTERS = new Set(["pi_local", "opencode_local"]);
+const PREFIXED_MODEL_PROVIDER_IDS = new Set(["opencode", "pi"]);
 
-const ADAPTER_PROVIDERS: Record<string, string> = {
-  claude_local: "Claude",
-  codex_local: "Codex",
-  grok_local: "Grok",
-  gemini_local: "Gemini",
-  cursor_local: "Cursor",
-  cursor_cloud: "Cursor",
-  kimi_local: "Kimi",
-  opencode_local: "OpenCode",
-  pi_local: "Pi",
-  openclaw_gateway: "OpenClaw",
-  hermes_gateway: "Hermes gateway",
-  hermes_local: "Hermes",
-  hermes: "Hermes",
-  paperclip_runner: "Paperclip runner",
-  process: "Process (no model)",
-  http: "HTTP",
-};
+const ADAPTER_NAMES = new Map<string, string>([
+  ["claude_local", "Claude"],
+  ["codex_local", "Codex"],
+  ["grok_local", "Grok"],
+  ["gemini_local", "Gemini"],
+  ["cursor_local", "Cursor"],
+  ["cursor_cloud", "Cursor"],
+  ["kimi_local", "Kimi"],
+  ["opencode_local", "OpenCode"],
+  ["pi_local", "Pi"],
+  ["openclaw_gateway", "OpenClaw"],
+  ["hermes_gateway", "Hermes gateway"],
+  ["hermes_local", "Hermes"],
+  ["hermes", "Hermes"],
+  ["paperclip_runner", "Paperclip runner"],
+  ["process", "Process (no model)"],
+  ["http", "HTTP"],
+]);
+
+// Clients that have a default provider when none is configured.
+const ROUTING_ADAPTERS = new Set(["hermes_local", "hermes", "pi_local", "opencode_local", "paperclip_runner"]);
 
 function text(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
 }
 
+function clientName(adapterType: string): string {
+  return ADAPTER_NAMES.get(adapterType) ?? adapterType;
+}
+
+function providerId(agent: AgentModelGroupInput): string | null {
+  return text(agent.adapterConfig?.provider)?.toLowerCase() ?? null;
+}
+
+function usesPrefixedModel(agent: AgentModelGroupInput): boolean {
+  const id = providerId(agent);
+  return PREFIXED_MODEL_ADAPTERS.has(agent.adapterType) || (id !== null && PREFIXED_MODEL_PROVIDER_IDS.has(id));
+}
+
+function splitPrefixedModel(agent: AgentModelGroupInput): { provider: string; model: string } | null {
+  const model = text(agent.adapterConfig?.model);
+  if (!model || !usesPrefixedModel(agent)) return null;
+  const slash = model.indexOf("/");
+  if (slash <= 0) return null;
+  const provider = model.slice(0, slash).trim().toLowerCase();
+  const rest = model.slice(slash + 1).trim();
+  return provider && rest ? { provider, model: rest } : null;
+}
+
 export function agentProvider(agent: AgentModelGroupInput): string {
-  const config = agent.adapterConfig ?? {};
-  const client = ADAPTER_PROVIDERS[agent.adapterType] ?? agent.adapterType;
-  // Any adapter that persists a provider id (hermes, paperclip_runner, ...) is grouped by it.
-  const provider = text(config.provider);
-  if (provider) return PROVIDER_NAMES[provider.toLowerCase()] ?? `${client} · ${provider}`;
-  if (PREFIXED_MODEL_ADAPTERS.has(agent.adapterType)) {
-    const model = text(config.model);
-    const slash = model?.indexOf("/") ?? -1;
-    if (model && slash > 0) {
-      const prefix = model.slice(0, slash).trim().toLowerCase();
-      return PROVIDER_NAMES[prefix] ?? prefix;
-    }
-  }
-  if (agent.adapterType === "hermes_local" || agent.adapterType === "hermes" || PREFIXED_MODEL_ADAPTERS.has(agent.adapterType) || agent.adapterType === "paperclip_runner") {
-    return `${client} (default provider)`;
-  }
+  const client = clientName(agent.adapterType);
+  const prefixed = splitPrefixedModel(agent);
+  if (prefixed) return PROVIDER_NAMES.get(prefixed.provider) ?? prefixed.provider;
+  const id = providerId(agent);
+  // The client itself (opencode / pi) is not an AI provider: without a prefixed model it is the default.
+  if (id && !PREFIXED_MODEL_PROVIDER_IDS.has(id)) return PROVIDER_NAMES.get(id) ?? `${client} · ${text(agent.adapterConfig?.provider)}`;
+  if (ROUTING_ADAPTERS.has(agent.adapterType)) return `${client} (default provider)`;
   return client;
 }
 
 export function agentModel(agent: AgentModelGroupInput): string {
   if (agent.adapterType === "process") return "—";
-  const model = text(agent.adapterConfig?.model);
-  if (!model) return "default model";
-  if (PREFIXED_MODEL_ADAPTERS.has(agent.adapterType) && model.includes("/")) return model.slice(model.indexOf("/") + 1).trim() || model;
-  return model;
+  const prefixed = splitPrefixedModel(agent);
+  if (prefixed) return prefixed.model;
+  return text(agent.adapterConfig?.model) ?? "default model";
 }
 
 export function groupAgentsByModel<A extends AgentModelGroupInput>(agents: A[]): AgentModelGroup<A>[] {

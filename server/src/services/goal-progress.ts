@@ -127,28 +127,53 @@ export function computeGoalProgress(input: {
   }
 
   const byId = new Map(input.goals.map((goal) => [goal.id, goal]));
-  const subtree = new Map<string, GoalProgressCounts>();
-  const percent = new Map<string, number>();
-  const visiting = new Set<string>();
-  const resolve = (id: string): void => {
-    if (subtree.has(id) || visiting.has(id)) return;
-    visiting.add(id);
-    const goal = byId.get(id)!;
-    const counts = { ...own.get(id)! };
-    const live = (children.get(id) ?? []).filter((childId) => byId.get(childId)?.status !== "cancelled");
-    for (const childId of children.get(id) ?? []) {
-      resolve(childId);
-      mergeCounts(counts, subtree.get(childId) ?? emptyCounts());
+  // Every goal reachable below `id` through child links, each exactly once. A
+  // goal tree can hold a cycle (parent updates are not cycle-checked), so this
+  // never caches a partial traversal: counts are the same whatever the input order.
+  const descendants = new Map<string, Set<string>>();
+  const reach = (id: string): Set<string> => {
+    const cached = descendants.get(id);
+    if (cached) return cached;
+    const seen = new Set<string>();
+    const stack = [...(children.get(id) ?? [])];
+    while (stack.length > 0) {
+      const next = stack.pop()!;
+      if (seen.has(next)) continue;
+      seen.add(next);
+      stack.push(...(children.get(next) ?? []));
     }
-    let score: number;
-    if (goal.status === "achieved") score = 100;
-    else if (live.length > 0) score = live.reduce((sum, childId) => sum + (percent.get(childId) ?? 0), 0) / live.length;
-    else score = counts.total > 0 ? (counts.done / counts.total) * 100 : 0;
-    subtree.set(id, counts);
-    percent.set(id, round1(score));
-    visiting.delete(id);
+    descendants.set(id, seen);
+    return seen;
   };
-  for (const goal of input.goals) resolve(goal.id);
+  const subtree = new Map<string, GoalProgressCounts>();
+  for (const goal of input.goals) {
+    const counts = { ...own.get(goal.id)! };
+    for (const id of reach(goal.id)) if (id !== goal.id) mergeCounts(counts, own.get(id)!);
+    subtree.set(goal.id, counts);
+  }
+  // Percent: achieved = 100; a goal with live children = mean of its children,
+  // except a child that leads back to this goal (a cycle), which is skipped so
+  // the score is deterministic; otherwise the leaf rule over subtree counts.
+  const percent = new Map<string, number>();
+  const score = (id: string, stack: Set<string>): number => {
+    const cached = percent.get(id);
+    if (cached !== undefined) return cached;
+    const goal = byId.get(id)!;
+    const counts = subtree.get(id)!;
+    let value: number;
+    if (goal.status === "achieved") value = 100;
+    else {
+      const live = (children.get(id) ?? []).filter((childId) => byId.get(childId)?.status !== "cancelled" && !stack.has(childId) && !reach(childId).has(id));
+      if (live.length > 0) {
+        const inner = new Set(stack).add(id);
+        value = live.reduce((sum, childId) => sum + score(childId, inner), 0) / live.length;
+      } else value = counts.total > 0 ? (counts.done / counts.total) * 100 : 0;
+    }
+    const rounded = round1(value);
+    percent.set(id, rounded);
+    return rounded;
+  };
+  for (const goal of input.goals) score(goal.id, new Set());
 
   const goalsOut: GoalProgressGoal[] = input.goals.map((goal) => ({
     id: goal.id,
