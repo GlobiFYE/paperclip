@@ -122,14 +122,36 @@ describePostgres("heartbeat execution configuration through adapter dispatch", (
       expect(JSON.parse(await readFile(path.join(providerHome, "auth.json"), "utf8"))).toEqual({ OPENAI_API_KEY: f.credential });
       await input.onMeta?.({ adapterType, command: "fixture", env, prompt: "fixture" });
     });
-    const { finished, input } = await execute(f);
-    expect(finished.status, finished.error ?? undefined).toBe("succeeded");
-    expect(input?.context.aiConnection).toMatchObject({ accountName: "Fixture account", provider: "openai" });
-    expect(providerHome).toEqual(expect.any(String));
-    await expect(access(providerHome!)).rejects.toMatchObject({ code: "ENOENT" });
-    const events = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, finished.id));
-    expect(events.some(event => event.eventType === "adapter.invoke")).toBe(true);
-    expect(JSON.stringify(events)).not.toContain(f.credential);
+    const exporter = new InMemorySpanExporter();
+    const provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
+    expect(trace.setGlobalTracerProvider(provider)).toBe(true);
+    try {
+      const { finished, input } = await execute(f);
+      expect(finished.status, finished.error ?? undefined).toBe("succeeded");
+      expect(input?.context.aiConnection).toMatchObject({ accountName: "Fixture account", provider: "openai" });
+      expect(providerHome).toEqual(expect.any(String));
+      await expect(access(providerHome!)).rejects.toMatchObject({ code: "ENOENT" });
+      const events = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, finished.id));
+      expect(events.some(event => event.eventType === "adapter.invoke")).toBe(true);
+      expect(JSON.stringify(events)).not.toContain(f.credential);
+      await provider.forceFlush();
+      const runIdHash = createHash("sha256").update(finished.id).digest("hex").slice(0, 12);
+      const steps = exporter.getFinishedSpans().filter(span => span.name.startsWith("heartbeat.prepare.configuration_")
+        && span.attributes["paperclip.task.run.run_id"] === runIdHash);
+      expect(steps.map(span => span.name)).toEqual([
+        "configuration_mentions", "configuration_github_identity", "configuration_secrets", "configuration_ai_runtime",
+        "configuration_skills", "configuration_connector_assignments", "configuration_connector_skills",
+        "configuration_connector_delivery", "configuration_connection_instructions", "configuration_agent_identity",
+      ].map(step => `heartbeat.prepare.${step}`));
+      for (const span of steps) {
+        expect(span.status).toEqual({ code: 0 });
+        expect(span.attributes).toEqual({ "paperclip.task.run.run_id": runIdHash });
+        expect(span.events).toEqual([]);
+      }
+    } finally {
+      trace.disable();
+      await provider.shutdown();
+    }
   });
 
   it("cleans acquired credentials and redacts diagnostics when later skill preparation fails", async () => {
