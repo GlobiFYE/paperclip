@@ -16,7 +16,7 @@ export function VoiceTranscript({ entries, agentName, unavailable = false }: Voi
         <li key={entry.id} className="flex min-w-0 flex-col gap-1">
           <span className="text-xs font-medium text-muted-foreground break-words">
             {entry.source === "user" ? "You" : entry.source === "application" ? "Paperclip" : agentName}
-            {!entry.final && <span> · Speaking</span>}
+            {!entry.final && !entry.interrupted && <span> · Speaking</span>}
             {entry.interrupted && <span> · Interrupted</span>}
           </span>
           <p className="whitespace-pre-wrap break-words text-sm">{entry.text}</p>

@@ -1,5 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, userEvent, waitFor, within } from "storybook/test";
+import { VoiceCallContext } from "@/components/voice/VoiceCallContext";
+import { Button } from "@/components/ui/button";
 import { TaskVoiceLauncher } from "@/components/voice/TaskVoiceLauncher";
 import { AgentChannelsPanel } from "@/components/chat/AgentChannelsPanel";
 import { ExternallyConnectedTaskBanner } from "@/components/chat/ExternallyConnectedTaskBanner";
@@ -62,5 +64,25 @@ export const BoundConnectionRecovery: Story = {
     await expect(canvas.getByRole("button", { name: `Talk to ${spekoAgent.name}` })).toBeVisible();
     await expect(canvas.queryByRole("alert")).not.toBeInTheDocument();
     await waitFor(() => expect(canvas.getByRole("button", { name: `Talk to ${spekoAgent.name}` })).toHaveFocus());
+  },
+};
+
+function PersonaRecovery() {
+  const [active, setActive] = useState(false);
+  return <VoiceCallContext.Provider value={{active, open: () => setActive(true)}}>
+    <TaskVoiceLauncher {...props} />
+    {active && <Button onClick={() => setActive(false)}>Close voice panel</Button>}
+  </VoiceCallContext.Provider>;
+}
+export const PersonaAfterPanelClose: Story = {
+  render: () => <SpekoQueryFixture endpoints={[spekoEndpoint, {...spekoEndpoint, id: "second", botLabel: "Second persona"}]}><PersonaRecovery /></SpekoQueryFixture>,
+  play: async ({canvasElement}) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole("button", {name: `Talk to ${spekoAgent.name}`}));
+    await userEvent.click(canvas.getByRole("button", {name: "Start voice"}));
+    await userEvent.click(canvas.getByRole("button", {name: "Close voice panel"}));
+    await waitFor(() => expect(canvas.getByRole("button", {name: `Talk to ${spekoAgent.name}`})).toHaveFocus());
+    await userEvent.selectOptions(canvas.getByRole("combobox", {name: "Voice persona"}), "second");
+    await expect(canvas.getByRole("combobox", {name: "Voice persona"})).toHaveValue("second");
   },
 };

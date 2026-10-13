@@ -1,20 +1,26 @@
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { chatEndpointsApi } from "@/api/chatEndpoints";
 import { useChatConnectorsEnabled } from "@/hooks/useChatConnectorsEnabled";
 import { Button } from "@/components/ui/button";
+import { VoiceCallContext } from "./VoiceCallContext";
 import { NativeVoiceConversation } from "./NativeVoiceConversation";
 
 export function TaskVoiceLauncher({ companyId, issueId, agentId, boundEndpointId }: { companyId: string; issueId: string; agentId?: string | null; boundEndpointId?: string }) {
   const launcher = useRef<HTMLButtonElement>(null), restoreFocus = useRef(false);
+  const host = useContext(VoiceCallContext), previouslyActive = useRef(false);
   const { enabled } = useChatConnectorsEnabled();
   const [open, setOpen] = useState(false), [selected, setSelected] = useState("");
   const connections = useQuery({ queryKey: ["task-voice-endpoints", companyId], queryFn: () => chatEndpointsApi.list(companyId), enabled: enabled && Boolean(agentId || boundEndpointId) });
   useEffect(() => {
+    if (previouslyActive.current && !host?.active && open) { setOpen(false); restoreFocus.current = true; }
+    previouslyActive.current = Boolean(host?.active);
+  }, [host?.active, open]);
+  useEffect(() => {
     if (restoreFocus.current && !connections.isFetching && !connections.isError && launcher.current) {
       restoreFocus.current = false; launcher.current.focus();
     }
-  }, [connections.data, connections.isFetching, connections.isError]);
+  }, [connections.data, connections.isFetching, connections.isError, open]);
   if (!enabled) return null;
   const candidates = (connections.data ?? []).filter((endpoint) => endpoint.provider === "speko" && endpoint.status === "active" && (boundEndpointId ? endpoint.id === boundEndpointId : endpoint.assignedAgentId === agentId));
   const endpoint = candidates.find((entry) => entry.id === selected) ?? candidates[0];

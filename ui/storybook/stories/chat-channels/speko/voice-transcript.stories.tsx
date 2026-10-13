@@ -1,4 +1,5 @@
 import { voiceStoryLifecycle } from "../../../support/speko/voiceStoryLifecycle";
+import { expect, within } from "storybook/test";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { VoiceTranscript } from "@/components/voice/VoiceTranscript";
 
@@ -15,7 +16,11 @@ export const FinalSpeech: Story = { args: { entries: [{ id: "a", source: "user",
 export const OverlappingUpdates: Story = { args: { entries: [
   { id: "a", source: "agent", text: "The order is scheduled for", final: false, interrupted: true },
   { id: "b", source: "user", text: "Please check the revised address too.", final: true },
-] } };
+] }, play: async ({ canvasElement }) => {
+  const canvas = within(canvasElement);
+  await expect(canvas.getByText("· Interrupted")).toBeVisible();
+  await expect(canvas.queryByText("· Speaking")).not.toBeInTheDocument();
+} };
 export const DelayedResult: Story = { args: { entries: [
   { id: "a", source: "agent", text: "I’m checking that now.", final: true },
   { id: "notification", source: "application", text: "A task update is available.", final: true },

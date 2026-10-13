@@ -120,7 +120,7 @@ describe("voice media session lifecycle", () => {
     x.callbacks().onMessage({ source: "agent", text: "An interrupted answer, delayed fragment", segmentId: "old-answer", isFinal: false });
     await vi.advanceTimersByTimeAsync(1_500);
     expect(x.media.sendChatMessage).toHaveBeenCalledOnce();
-    expect(x.controller.getSnapshot().transcript[0]?.final).toBe(false);
+    expect(x.controller.getSnapshot().transcript[0]).toMatchObject({ final: false, interrupted: true });
   });
   it("clears queued hints when a call ends during the quiet period", async () => {
     vi.useFakeTimers();

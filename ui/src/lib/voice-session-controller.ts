@@ -122,7 +122,7 @@ export function createVoiceSessionController(dependencies: VoiceSessionDependenc
               segmentId = fallback.id;
               fallbackSegments.set(update.source, { id: segmentId, final: fallback.final || update.isFinal, text: update.text });
             }
-            const transcript = updateVoiceTranscript(snapshot.transcript, { ...update, segmentId }, segmentId);
+            let transcript = updateVoiceTranscript(snapshot.transcript, { ...update, segmentId }, segmentId);
             const entry = transcript.find((item) => item.id === `${update.source}:${segmentId}`);
             const previous = snapshot.transcript.find((item) => item.id === entry?.id);
             // Active-speaker silence can occur in the middle of a streamed
@@ -132,6 +132,7 @@ export function createVoiceSessionController(dependencies: VoiceSessionDependenc
             if (update.source === "user") {
               for (const id of unfinishedAgentSegments) interruptedAgentSegments.add(id);
               unfinishedAgentSegments.clear();
+              transcript = transcript.map(item => item.source === "agent" && interruptedAgentSegments.has(item.id.slice("agent:".length)) ? { ...item, interrupted: true } : item);
             } else if (entry?.final || interruptedAgentSegments.has(segmentId)) unfinishedAgentSegments.delete(segmentId);
             else unfinishedAgentSegments.add(segmentId);
             noteActivity();

@@ -3,6 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { VoiceCallContext } from "./VoiceCallContext";
 import { TaskVoiceLauncher } from "./TaskVoiceLauncher";
 import { spekoEndpoint } from "../../../storybook/support/speko/spekoNative";
 const mocks = vi.hoisted(() => ({ list: vi.fn() }));
@@ -17,8 +18,8 @@ describe("task voice connection failures", () => {
     root = createRoot(container); client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   });
   afterEach(async () => { await act(async () => root.unmount()); client.clear(); container.remove(); });
-  async function render(bound = false) {
-    await act(async () => root.render(<QueryClientProvider client={client}><TaskVoiceLauncher companyId="company" issueId="issue" agentId={spekoEndpoint.assignedAgentId} boundEndpointId={bound ? spekoEndpoint.id : undefined} /></QueryClientProvider>));
+  async function render(bound = false, active?: boolean) {
+    await act(async () => root.render(<QueryClientProvider client={client}><VoiceCallContext.Provider value={active === undefined ? null : { active, open: vi.fn() }}><TaskVoiceLauncher companyId="company" issueId="issue" agentId={spekoEndpoint.assignedAgentId} boundEndpointId={bound ? spekoEndpoint.id : undefined} /></VoiceCallContext.Provider></QueryClientProvider>));
   }
   it.each([false, true])("shows a retryable request failure for bound=%s instead of a missing connection", async bound => {
     mocks.list.mockRejectedValueOnce(new Error("Offline")).mockResolvedValue([spekoEndpoint]); await render(bound);
@@ -29,6 +30,22 @@ describe("task voice connection failures", () => {
     await vi.waitFor(() => expect(container.textContent).toContain(`Talk to ${spekoEndpoint.assignedAgentName}`));
     expect(container.querySelector('[role="alert"]')).toBeNull();
     expect(document.activeElement).toBe(container.querySelector('button'));
+  });
+  it("restores persona selection and keyboard focus after the hosted panel closes", async () => {
+    mocks.list.mockResolvedValue([spekoEndpoint, {...spekoEndpoint, id: "second", botLabel: "Second persona"}]);
+    await render(false, false);
+    await vi.waitFor(() => expect(container.querySelector('select')).not.toBeNull());
+    await act(async () => container.querySelector('button')!.click());
+    expect(container.querySelector('select')).toBeNull();
+    await render(false, true);
+    await render(false, false);
+    await vi.waitFor(() => expect(container.querySelector('select')).not.toBeNull());
+    expect(document.activeElement).toBe(container.querySelector('button'));
+    await act(async () => {
+      const select = container.querySelector('select')!; select.value = "second";
+      select.dispatchEvent(new Event("change", {bubbles: true}));
+    });
+    expect(container.querySelector('select')?.value).toBe("second");
   });
   it("keeps active controls mounted when a background connection refresh fails", async () => {
     mocks.list.mockResolvedValue([spekoEndpoint]); await render();
