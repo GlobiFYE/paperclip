@@ -7663,6 +7663,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
           <ExternallyConnectedTaskBanner
             className={cn(shellSectionClass, "mt-3")}
             key={issue.id}
+            assigneeAgentId={issue.assigneeAgentId}
             attachments={attachments ?? []}
             companyId={issue.companyId}
             issueId={issue.id}
