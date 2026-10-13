@@ -57,6 +57,12 @@ and selected-environment dispatch still work. Repeat an explicit local isolated
 source choice: copying remains available but controller scripts must stay absent,
 including after binding or metadata changes and closed-worktree reopening. An
 implicit trusted local project default remains a positive provisioning control.
+Repeat with a newer configured default overriding an older primary source, then
+with a newer primary overriding an older nonprimary source. Both configured and
+built-in hooks must run for the implicit local default. Task creation and controller
+classification share configured-default, primary, creation-time and ID precedence.
+Explicit choices and saved copy-only markers still suppress hooks; changing the
+default must not rotate an existing binding or clear its marker.
 SSH keeps its explicit remote provision-command path; these checks
 do not claim a new sandbox provision transport.
 Low-trust closed-worktree reopening, including a board-comment reopen of a projectless task, must also suppress both kinds of host provision script. Returned checkpoints must reject file, symlink or missing parents before host writes, even if a nested file is marked unchanged. The retained host file and recovery evidence must survive rejection. These are automated safety contracts, not new live runtime acceptance.

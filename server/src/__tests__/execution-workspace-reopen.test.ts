@@ -302,8 +302,9 @@ describeEmbeddedPostgres("reopen archived isolated execution workspace", () => {
           .where(eq(issues.id, issueId));
       }
       if (restriction === "nondefault") {
+        await db.update(projectWorkspaces).set({ isPrimary: false }).where(eq(projectWorkspaces.id, projectWorkspaceId));
         await db.insert(projectWorkspaces).values({ companyId, projectId, name: "Earlier default",
-          sourceType: "local_path", cwd: base, createdAt: new Date(0) });
+          sourceType: "local_path", cwd: base, isPrimary: true, createdAt: new Date(0) });
       }
       if (restriction === "foreign-source-task") {
         const sourceIssueId = await seedIssue({ companyId, projectId, workspaceId, issueNumber: 4198 });

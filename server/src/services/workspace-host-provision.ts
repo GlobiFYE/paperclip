@@ -1,6 +1,8 @@
 import { projectWorkspaces, type Db } from "@paperclipai/db";
 import type { TaskWorkspaceIntent } from "@paperclipai/shared";
-import { and, asc, eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
+
+import { resolveProjectDefaultWorkspaceId } from "./project-default-workspace.js";
 
 export const CONTROLLER_PROVISION_COPY_ONLY = "_controllerProvisionCopyOnly";
 
@@ -20,8 +22,11 @@ export async function workspaceRequiresCopyOnlyProvisioning(db: Db | Parameters<
   if (input.boundWorkspace?.sourceIssueId && input.boundWorkspace.sourceIssueId !== task.id) return true;
   if (intent?.source === "operator_cwd" && !input.sourceProjectId && !input.sourceWorkspaceId) return false;
   if (!input.sourceProjectId || input.sourceProjectId !== task.projectId || !input.sourceWorkspaceId) return true;
-  const [defaultSource] = await db.select({ id: projectWorkspaces.id }).from(projectWorkspaces)
-    .where(and(eq(projectWorkspaces.companyId, input.companyId), eq(projectWorkspaces.projectId, input.sourceProjectId)))
-    .orderBy(asc(projectWorkspaces.createdAt), asc(projectWorkspaces.id)).limit(1);
-  return !defaultSource || defaultSource.id !== input.sourceWorkspaceId;
+  const defaultSourceId = await resolveProjectDefaultWorkspaceId(db, {
+    companyId: input.companyId, projectId: input.sourceProjectId,
+  });
+  if (defaultSourceId !== input.sourceWorkspaceId) return true;
+  const [source] = await db.select({ id: projectWorkspaces.id }).from(projectWorkspaces)
+    .where(and(eq(projectWorkspaces.companyId, input.companyId), eq(projectWorkspaces.projectId, input.sourceProjectId), eq(projectWorkspaces.id, defaultSourceId))).limit(1);
+  return !source;
 }

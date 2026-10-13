@@ -19,6 +19,7 @@ import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } fro
 import { heartbeatService } from "../services/heartbeat.ts";
 import { createHeartbeatWorkspaceResolver } from "../services/heartbeat/workspaces.js";
 import { resolveManagedProjectWorkspaceDir, resolvePaperclipInstanceRoot } from "../home-paths.js";
+import { issueService } from "../services/issues.js";
 import { accessService } from "../services/access.js";
 import { assertExecutionWorkspaceRootWriteAccess } from "../services/execution-workspace-repositories.js";
 import { instanceSettingsService } from "../services/instance-settings.ts";
@@ -146,8 +147,11 @@ suite("heartbeat physical workspace source trust", () => {
     ["configured", "both", "local"], ["builtin", "both", "local"],
     ["configured", "none", "local"], ["builtin", "none", "local"],
     ["configured", "both", "local_default"], ["builtin", "both", "local_default"],
+    ["configured", "both", "local_new_default"], ["builtin", "both", "local_new_default"],
+    ["configured", "both", "local_new_primary"], ["builtin", "both", "local_new_primary"],
   ] as const)("places standard source %s provisioning with %s grants on %s", async (provisionKind, grants, placement) => {
-    const implicitDefault = placement === "local_default";
+    const implicitDefault = placement.startsWith("local_");
+    const newerDefault = placement === "local_new_default" || placement === "local_new_primary";
     const companyId = randomUUID(), projectId = randomUUID(), sourceId = randomUUID(), agentId = randomUUID(), issueId = randomUUID();
     await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: true });
     const cwd = path.join(root, companyId, "read-only-source");
@@ -163,14 +167,21 @@ suite("heartbeat physical workspace source trust", () => {
     await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "owner" });
     await db.insert(projects).values({ id: projectId, companyId, name: "Protected source", executionWorkspacePolicy: {
       authorizationPolicy: { assignmentPolicy: { mode: "protected" } },
+      ...(placement === "local_new_default" ? { defaultProjectWorkspaceId: sourceId } : {}),
     } });
-    await db.insert(projectWorkspaces).values({ id: sourceId, companyId, projectId, name: "Source", sourceType: "local_path", cwd, repoUrl: pathToFileURL(cwd).href, isPrimary: true });
+    if (newerDefault) await db.insert(projectWorkspaces).values({ id: randomUUID(), companyId, projectId, name: "Older source", sourceType: "local_path", cwd: path.join(root, companyId, "older-source"), isPrimary: placement === "local_new_default", createdAt: new Date(0) });
+    await db.insert(projectWorkspaces).values({ id: sourceId, companyId, projectId, name: "Source", sourceType: "local_path", cwd, repoUrl: pathToFileURL(cwd).href, isPrimary: placement !== "local_new_default" });
     await db.insert(agents).values({ id: agentId, companyId, name: "Reader", status: "idle", adapterType: "codex_local", adapterConfig: { fullAuto: grants === "both" }, permissions: {} });
     await db.insert(companyMemberships).values({ companyId, principalType: "agent", principalId: agentId, status: "active", membershipRole: "member" });
-    await db.insert(issues).values({ id: issueId, companyId, projectId: implicitDefault ? projectId : null, title: "Read-only isolated source", status: "todo", assigneeAgentId: agentId,
+    const taskInput = { id: issueId, companyId, projectId: implicitDefault ? projectId : null, title: "Read-only isolated source", status: "todo" as const, assigneeAgentId: agentId,
       projectWorkspaceId: sourceId, executionWorkspaceSettings: { mode: "isolated_workspace", workspaceStrategy: { type: "git_worktree",
         worktreeParentDir: path.join(root, companyId, "worktrees"), ...(provisionKind === "configured" ? { provisionCommand: `printf host-script-ran > '${marker}'` } : {}) } },
-      workspaceSelection: implicitDefault ? null : { version: 1, source: "explicit", selection: { kind: "configured_source", projectWorkspaceId: sourceId, mode: "managed_isolated" } } });
+      workspaceSelection: implicitDefault ? null : { version: 1 as const, source: "explicit" as const, selection: { kind: "configured_source" as const, projectWorkspaceId: sourceId, mode: "managed_isolated" as const } } };
+    if (newerDefault) {
+      const { projectWorkspaceId: _source, workspaceSelection: _selection, ...createInput } = taskInput;
+      const created = await issueService(db).create(companyId, createInput);
+      expect(created.projectWorkspaceId).toBe(sourceId);
+    } else await db.insert(issues).values(taskInput);
     if (grants !== "none") await db.insert(principalPermissionGrants).values({ companyId, principalType: "agent", principalId: agentId,
       permissionKey: "tasks:assign_scope", scope: { projectId, assigneeAgentId: agentId } });
     if (grants === "both") await db.insert(principalPermissionGrants).values({ companyId, principalType: "user", principalId: "responsible-user",

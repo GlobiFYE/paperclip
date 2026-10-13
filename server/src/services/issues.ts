@@ -1,3 +1,4 @@
+import { resolveProjectDefaultWorkspaceId } from "./project-default-workspace.js";
 import { type AuthorizationActor, executionWorkspaceReadSqlCondition, projectReadSqlCondition } from "./authorization.js";
 import { assertTaskWorkspaceAccess, assertTaskWorkspaceSourceProjectAccess } from "./task-workspace-source-access.js";
 import { type TaskWorkspaceSelection, type TaskWorkspaceIntent } from "@paperclipai/shared";
@@ -10244,24 +10245,9 @@ export function issueService(db: Db) {
           const projectPolicy = parseProjectExecutionWorkspacePolicy(
             project?.executionWorkspacePolicy,
           );
-          projectWorkspaceId = projectPolicy?.defaultProjectWorkspaceId ?? null;
-          if (!projectWorkspaceId) {
-            projectWorkspaceId = await tx
-              .select({ id: projectWorkspaces.id })
-              .from(projectWorkspaces)
-              .where(
-                and(
-                  eq(projectWorkspaces.projectId, issueData.projectId),
-                  eq(projectWorkspaces.companyId, companyId),
-                ),
-              )
-              .orderBy(
-                desc(projectWorkspaces.isPrimary),
-                asc(projectWorkspaces.createdAt),
-                asc(projectWorkspaces.id),
-              )
-              .then((rows) => rows[0]?.id ?? null);
-          }
+          projectWorkspaceId = await resolveProjectDefaultWorkspaceId(tx, {
+            companyId, projectId: issueData.projectId, policy: projectPolicy,
+          });
         }
         if (projectWorkspaceId && workspaceSelectionActor) {
           const [readableSource] = await tx.select({ id: projectWorkspaces.id, projectId: projectWorkspaces.projectId, executionWorkspacePolicy: projects.executionWorkspacePolicy }).from(projectWorkspaces)
@@ -10593,25 +10579,9 @@ export function issueService(db: Db) {
           const policy = parseProjectExecutionWorkspacePolicy(
             projectRow?.executionWorkspacePolicy,
           );
-          let defaultProjectWorkspaceId =
-            policy?.defaultProjectWorkspaceId ?? null;
-          if (!defaultProjectWorkspaceId) {
-            defaultProjectWorkspaceId = await tx
-              .select({ id: projectWorkspaces.id })
-              .from(projectWorkspaces)
-              .where(
-                and(
-                  eq(projectWorkspaces.projectId, projectId),
-                  eq(projectWorkspaces.companyId, companyId),
-                ),
-              )
-              .orderBy(
-                desc(projectWorkspaces.isPrimary),
-                asc(projectWorkspaces.createdAt),
-                asc(projectWorkspaces.id),
-              )
-              .then((r) => r[0]?.id ?? null);
-          }
+          const defaultProjectWorkspaceId = await resolveProjectDefaultWorkspaceId(tx, {
+            companyId, projectId, policy,
+          });
           const defaultExecutionWorkspaceSettings =
             defaultIssueExecutionWorkspaceSettingsForProject(
               gateProjectExecutionWorkspacePolicy(
