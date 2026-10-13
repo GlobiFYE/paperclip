@@ -505,3 +505,11 @@ owner claim. Missing proof remains operator-required. The new unavailable-proof
 story covers a platform-bound receipt without progress; confirmed and queued
 stories retain the quiet status. Updated only the two affected fingerprints.
 This is component/fixture evidence, not deployed harness acceptance.
+
+### Latest master reconciliation
+
+Retained master’s task-creation visibility scenarios, source-review notes and
+unreviewed classifications. Seven overlapping entries differ from master only
+in the already reviewed recovery recipe or task-detail recovery notice wiring.
+Refreshed those combined-source fingerprints and regenerated the index. No new
+creation-visibility acceptance or visual baseline is claimed.
