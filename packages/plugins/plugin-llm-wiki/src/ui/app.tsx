@@ -155,6 +155,11 @@ type ManagedRoutine = {
   } | null;
 };
 
+type ManagedRoutineDefaultDrift = NonNullable<ManagedRoutine["defaultDrift"]>;
+type ManagedRoutinesListItemWithDrift = ManagedRoutinesListItem & {
+  defaultDrift?: ManagedRoutineDefaultDrift | null;
+};
+
 type ManagedSkill = {
   status: string;
   skillId?: string | null;
@@ -5438,7 +5443,6 @@ function DistillationSettingsPanel({ context, settings }: { context: { companyId
   const counts = data?.counts ?? { cursors: 0, runningRuns: 0, failedRuns24h: 0, reviewRequired: 0 };
   const isConfigured = cursors.length > 0;
   const autoApplyRestriction = settings.distillationPolicy?.autoApplyRestriction ?? null;
-  const [useCheapPath, setUseCheapPath] = useState(true);
 
   const projectsCovered = useMemo(() => {
     const set = new Set<string>();
@@ -5458,7 +5462,6 @@ function DistillationSettingsPanel({ context, settings }: { context: { companyId
     try {
       await distillNow({
         companyId: context.companyId,
-        useCheapModelProfile: useCheapPath,
         idempotencyKey: `manual:company:${Date.now()}`,
       });
       toast({
@@ -5510,7 +5513,6 @@ function DistillationSettingsPanel({ context, settings }: { context: { companyId
         companyId: context.companyId,
         projectId: target.projectId ?? undefined,
         rootIssueId: target.rootIssueId ?? undefined,
-        useCheapModelProfile: useCheapPath,
       });
       toast({ tone: "success", title: "Backfill queued", body: target.projectName ?? target.rootIssueIdentifier ?? "Selected scope" });
       overview.refresh();
@@ -5602,8 +5604,7 @@ function DistillationSettingsPanel({ context, settings }: { context: { companyId
           </div>
         </div>
         <Tiny style={{ marginTop: 6 }}>
-          Distillation runs on the assigned Wiki Maintainer agent and writes only into the default
-          space. Use the cheap path option when the agent exposes a cheap model profile.
+          Distillation runs on the assigned Wiki Maintainer agent and writes only into the default space.
         </Tiny>
       </Callout>
 
@@ -5664,13 +5665,6 @@ function DistillationSettingsPanel({ context, settings }: { context: { companyId
                   ? `${settings.managedAgent.details.name} · ${adapterTypeLabel(settings.managedAgent.details.adapterType)}`
                   : "No maintainer agent resolved"}
               </div>
-            </SettingField>
-            <SettingField label="Cheap path" hint="When enabled, manual distill and backfill operation issues request assigneeAdapterOverrides.modelProfile = cheap.">
-              <CheckboxRow
-                label="Request the assigned agent's cheap model profile for distillation tasks"
-                checked={useCheapPath}
-                onChange={setUseCheapPath}
-              />
             </SettingField>
           </div>
         </CardBody>
@@ -5905,7 +5899,7 @@ function SettingsBody({ context, initialSection = "root" }: { context: { company
   const effectiveSelectedProjectId = selectedProjectId || data.managedProject.projectId || "";
   const currentProjectOption = projectOptions.find((project) => project.id === effectiveSelectedProjectId) ?? projectFallbackOption;
   const currentEventPolicy = eventPolicy ?? data.eventIngestion;
-  const managedRoutineItems: ManagedRoutinesListItem[] = managedRoutines.map((routine) => {
+  const managedRoutineItems: ManagedRoutinesListItemWithDrift[] = managedRoutines.map((routine) => {
     const fallback = routineFallbackFor(routine);
     const key = routine.resourceKey ?? routine.routineId ?? fallback.title;
     const status = managedRoutineStatus(routine);
@@ -6132,7 +6126,7 @@ function SettingsBody({ context, initialSection = "root" }: { context: { company
 
   async function resetManagedRoutineToDefaults(routine: ManagedRoutinesListItem) {
     if (!context.companyId || !routine.resourceKey) return;
-    const changedFields = routine.defaultDrift?.changedFields ?? [];
+    const changedFields = (routine as ManagedRoutinesListItemWithDrift).defaultDrift?.changedFields ?? [];
     const fieldList = changedFields.length > 0 ? changedFields.join(", ") : "managed defaults";
     const confirmed = typeof window === "undefined" || window.confirm(
       `Update "${routine.title}" to the current LLM Wiki plugin defaults? This replaces ${fieldList}. Cancel to keep the current custom routine text.`,
