@@ -25,6 +25,9 @@ const HERMES_PROVIDERS: Record<string, string> = {
   openrouter: "OpenRouter",
 };
 
+// Adapters whose `model` is written as `provider/model` (their execute.ts parseModelProvider).
+const PREFIXED_MODEL_ADAPTERS = new Set(["pi_local", "opencode_local"]);
+
 const ADAPTER_PROVIDERS: Record<string, string> = {
   claude_local: "Claude",
   codex_local: "Codex",
@@ -52,12 +55,24 @@ export function agentProvider(agent: AgentModelGroupInput): string {
     if (!provider) return "Hermes (default provider)";
     return HERMES_PROVIDERS[provider.toLowerCase()] ?? `Hermes · ${provider}`;
   }
+  if (PREFIXED_MODEL_ADAPTERS.has(agent.adapterType)) {
+    const model = text(config.model);
+    const slash = model?.indexOf("/") ?? -1;
+    if (model && slash > 0) {
+      const prefix = model.slice(0, slash).trim().toLowerCase();
+      return HERMES_PROVIDERS[prefix] ?? prefix;
+    }
+    return `${ADAPTER_PROVIDERS[agent.adapterType]} (default provider)`;
+  }
   return ADAPTER_PROVIDERS[agent.adapterType] ?? agent.adapterType;
 }
 
 export function agentModel(agent: AgentModelGroupInput): string {
   if (agent.adapterType === "process") return "—";
-  return text(agent.adapterConfig?.model) ?? "default model";
+  const model = text(agent.adapterConfig?.model);
+  if (!model) return "default model";
+  if (PREFIXED_MODEL_ADAPTERS.has(agent.adapterType) && model.includes("/")) return model.slice(model.indexOf("/") + 1).trim() || model;
+  return model;
 }
 
 export function groupAgentsByModel<A extends AgentModelGroupInput>(agents: A[]): AgentModelGroup<A>[] {

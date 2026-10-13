@@ -4,8 +4,8 @@ import { computeGoalProgress } from "./goal-progress.js";
 const goal = (id: string, level: string, parentId: string | null = null, status = "active") => ({
   id, title: id, level, status, parentId, ownerAgentId: null,
 });
-const issue = (id: string, status: string, goalId: string | null, assigneeAgentId: string | null = null) => ({
-  id, identifier: `TOP-${id}`, title: `task ${id}`, status, goalId, assigneeAgentId,
+const issue = (id: string, status: string, goalId: string | null, assigneeAgentId: string | null = null, identifier: string | null = `TOP-${id}`) => ({
+  id, identifier, title: `task ${id}`, status, goalId, assigneeAgentId,
 });
 
 describe("computeGoalProgress", () => {
@@ -67,17 +67,20 @@ describe("computeGoalProgress", () => {
         issue("3", "backlog", null, "agent-b"),
         issue("4", "in_review", null, "agent-c"),
         issue("5", "done", "m1", "agent-d"),
+        issue("6", "blocked", "m1", "agent-e", null),
       ],
       agents: [
         { id: "agent-a", name: "Zed", status: "running" },
         { id: "agent-b", name: "Bea", status: "idle" },
         { id: "agent-c", name: "Cal", status: "idle" },
         { id: "agent-d", name: "Dee", status: "idle" },
+        { id: "agent-e", name: "Eve", status: "idle" },
       ],
     });
     expect(out.agents.map((a) => [a.name, a.identifier, a.stage, a.goalTitle])).toEqual([
       ["Zed", "TOP-2", "in_progress", "m1"],
       ["Cal", "TOP-4", "in_review", null],
+      ["Eve", null, "blocked", "m1"],
     ]);
   });
 });

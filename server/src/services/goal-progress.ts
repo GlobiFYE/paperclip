@@ -1,6 +1,7 @@
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agents, goals, issues } from "@paperclipai/db";
+import { executionIssueCondition } from "./issue-visibility.js";
 import type {
   GoalProgressAgent,
   GoalProgressCounts,
@@ -20,7 +21,7 @@ export interface ProgressGoalInput {
 
 export interface ProgressIssueInput {
   id: string;
-  identifier: string;
+  identifier: string | null;
   title: string;
   status: string;
   goalId: string | null;
@@ -176,7 +177,7 @@ export function goalProgressService(db: Db) {
         db
           .select({ id: issues.id, identifier: issues.identifier, title: issues.title, status: issues.status, goalId: issues.goalId, assigneeAgentId: issues.assigneeAgentId })
           .from(issues)
-          .where(eq(issues.companyId, companyId)),
+          .where(and(eq(issues.companyId, companyId), executionIssueCondition())),
         db.select({ id: agents.id, name: agents.name, status: agents.status }).from(agents).where(eq(agents.companyId, companyId)),
       ]);
       return computeGoalProgress({ goals: goalRows, issues: issueRows, agents: agentRows });

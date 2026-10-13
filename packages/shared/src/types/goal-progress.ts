@@ -29,7 +29,8 @@ export interface GoalProgressAgent {
   name: string;
   agentStatus: string;
   issueId: string;
-  identifier: string;
+  /** Null for tasks that never got an identifier; link by issueId then. */
+  identifier: string | null;
   title: string;
   stage: GoalProgressStage;
   goalId: string | null;

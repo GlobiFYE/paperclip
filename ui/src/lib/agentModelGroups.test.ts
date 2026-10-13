@@ -9,6 +9,11 @@ describe("agentModelGroups", () => {
     expect(agentProvider({ id: "4", adapterType: "hermes_local", adapterConfig: { provider: "zzz" } })).toBe("Hermes · zzz");
     expect(agentModel({ id: "3", adapterType: "process" })).toBe("—");
     expect(agentModel({ id: "5", adapterType: "claude_local", adapterConfig: {} })).toBe("default model");
+    // Pi and OpenCode write provider/model: group by the AI provider, not the client.
+    expect(agentProvider({ id: "6", adapterType: "pi_local", adapterConfig: { model: "anthropic/claude-sonnet-4" } })).toBe("Claude");
+    expect(agentModel({ id: "6", adapterType: "pi_local", adapterConfig: { model: "anthropic/claude-sonnet-4" } })).toBe("claude-sonnet-4");
+    expect(agentProvider({ id: "7", adapterType: "opencode_local", adapterConfig: { model: "openai/gpt-5" } })).toBe("OpenAI");
+    expect(agentProvider({ id: "8", adapterType: "pi_local", adapterConfig: {} })).toBe("Pi (default provider)");
   });
 
   it("groups by provider then model, biggest groups first", () => {

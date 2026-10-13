@@ -77,8 +77,8 @@ function AgentRow({ agent }: { agent: GoalProgressAgent }) {
     <li className="flex min-w-0 flex-col gap-1 py-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3" data-testid="goal-progress-agent">
       <div className="flex min-w-0 flex-col">
         <span className="truncate text-sm font-medium">{agent.name}</span>
-        <Link to={`/issues/${agent.identifier}`} className="truncate text-xs text-muted-foreground hover:underline">
-          {agent.identifier} · {agent.title}
+        <Link to={`/issues/${agent.identifier ?? agent.issueId}`} className="truncate text-xs text-muted-foreground hover:underline">
+          {agent.identifier ? `${agent.identifier} · ` : ""}{agent.title}
         </Link>
       </div>
       <div className="flex shrink-0 flex-wrap items-center gap-1.5">

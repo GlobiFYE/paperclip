@@ -208,7 +208,8 @@ export function Agents({ initialView = "list" }: { initialView?: AgentsView } = 
   const requestedTab: FilterTab = isFilterTab(pathSegment) ? pathSegment : "all";
   const [view, setView] = useState<AgentsView>(() => streamlinedUiEnabled ? initialView : "org");
   const forceListView = !streamlinedUiEnabled && isMobile;
-  const effectiveView: AgentsView = forceListView ? "list" : view;
+  // "By model" is a grouped list; the org chart cannot show it.
+  const effectiveView: AgentsView = forceListView || requestedTab === "bymodel" ? "list" : view;
 
   useEffect(() => {
     setView(streamlinedUiEnabled ? initialView : "org");
@@ -494,7 +495,7 @@ export function Agents({ initialView = "list" }: { initialView?: AgentsView } = 
           />
         </Tabs>
         <div className="flex items-center gap-2">
-          {!forceListView ? <div className="flex items-center overflow-hidden rounded-md border border-border" role="group" aria-label="Agent view">
+          {!forceListView && tab !== "bymodel" ? <div className="flex items-center overflow-hidden rounded-md border border-border" role="group" aria-label="Agent view">
               <Button
                 type="button"
                 size="icon-sm"
