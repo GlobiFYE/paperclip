@@ -1,3 +1,4 @@
+import { createTelegramAttachmentFailure } from "./chat-channels/telegram/attachment-failure.js";
 import { createSlackCommands, slackCommandForAgent } from "./chat-channels/slack/commands.js";
 import { createTelegramCommands, telegramGuidanceCommand } from "./chat-channels/telegram/commands.js";
 import { createTeamsFileDelivery } from "./chat-channels/microsoft-teams/file-delivery.js";
@@ -247,7 +248,6 @@ import {
   LOW_TRUST_REVIEW_RAW_OUTPUT_DISPOSITION,
 } from "@paperclipai/shared";
 import {
-  formatAttachmentSize,
   MAX_ATTACHMENT_BYTES,
   normalizeContentType,
 } from "../attachment-types.js";
@@ -2854,6 +2854,9 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   const { stageProviderEffect, processProviderEffect, processPendingProviderEffects } = createProviderEffects(db, { endpointRecord, runtimeCallbackEndpoint, withCredentialMutationLease, runtimeFor, invalidateRuntime, lockCurrentPrincipalAuthorization, redactError, MAX_ERROR_TEXT, nonDirectDestinationAllowed, lockTelegramCallbackNoticeAuthority });
   const { publicationFiles } = createOutboundAttachments(db, { get storage() { return options.storage; } });
   const { ingestAttachments, attachmentOmissionDetail } = createInboundAttachments(db, { authorizeInboundWakeup, lifecycleRuntimeFence, sanitizeFilename, issuesSvc, isExternalActionAuthorizationChange, redactError, get storage() { return options.storage; } });
+  const { settleTelegramAttachmentOnlyFailure } = createTelegramAttachmentFailure(db, {
+    attachmentOmissionDetail, runtimeContextForRecord, endpointRecord, stageProviderEffect, scheduleProviderEffect,
+  });
   const { handleReaction, processPendingReactionDeliveries } = createInboundReactions(db, { lockCurrentPrincipalAuthorization, runtimeCallbackRecord, runtimeCallbackEndpoint, ensurePrincipal, durableExternalThreadIdentity, recordCurrentMicrosoftTeamsRoute, lifecycleRuntimeFence, deliveryReady, redactError, nonDirectDestinationAllowed, reactionLinkPreflightBarrier: () => options.reactionLinkPreflightBarrier?.() ?? Promise.resolve(), reactionReplayEndpointLockBarrier: () => options.reactionReplayEndpointLockBarrier?.() ?? Promise.resolve(), reactionReplayConversationLockBarrier: () => options.reactionReplayConversationLockBarrier?.() ?? Promise.resolve() });
   const { addReceiptReaction, processReceiptReaction, processPendingReceiptReactions } = createReceiptReactions(db, { endpointRecord, runtimeContextForRecord, withCredentialMutationLease, runtimeFor, fetchImpl, runtime, runtimeGeneration, credentialFingerprint, redactError, MAX_ERROR_TEXT, receiptReactionTransportBarrier: () => options.receiptReactionTransportBarrier?.() ?? Promise.resolve() });
   const { admitDiscordRootMention, discordRootThreadPending, reconcileDiscordRootThread } = createDiscordRootThreads(db, { ensureDiscordGatewayRuntimeIsCurrent, withCredentialMutationLease, runtimeCallbackEndpoint, lockCurrentPrincipalAuthorization, processMessage, redactError, scheduleConversationDrain, lifecycleRuntimeFence, runtimeFor, DISCORD_ROOT_THREAD_CONFIRMATION_DELAY_MS, discordRootThreadTransportBarrier: () => options.discordRootThreadTransportBarrier?.() ?? Promise.resolve() });
@@ -4707,113 +4710,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       })
       .returning();
     return resource;
-  }
-
-  async function settleTelegramAttachmentOnlyFailure(input: {
-    activeDelivery: DeliveryRow;
-    attachmentResult: {
-      storedIds: string[];
-      omissionReasons: Record<string, number>;
-    };
-    commentId: string;
-    conversationId: string;
-    endpoint: EndpointRow;
-    message: Message;
-    principalId: string | null;
-    resourceId: string | null;
-    runtimeContext?: InboundRuntimeContext;
-    thread: Thread;
-  }): Promise<boolean> {
-    if (
-      input.endpoint.provider !== "telegram" ||
-      input.message.text.trim().length > 0 ||
-      input.message.attachments.length === 0 ||
-      input.attachmentResult.storedIds.length > 0
-    ) {
-      return false;
-    }
-    const diagnostic =
-      attachmentOmissionDetail(input.attachmentResult) ??
-      "The Telegram attachment could not be imported";
-    const visibleFailure = `Paperclip could not safely import the attached Telegram file. Please resend it as a supported file under ${formatAttachmentSize(MAX_ATTACHMENT_BYTES)} or include text describing the request.`;
-    const effectContext =
-      input.runtimeContext ??
-      runtimeContextForRecord(
-        (await endpointRecord(input.endpoint.id)) ??
-          (() => {
-            throw new Error("Chat endpoint is unavailable");
-          })(),
-      );
-    const effect = await db.transaction(async (tx) => {
-      // Replace the optimistic attachment placeholder with an explicit safe
-      // Paperclip-visible failure. The message link stays authoritative for
-      // exact provider redelivery, while no agent wakeup is enqueued for an
-      // empty turn that contains no usable bytes.
-      await tx
-        .update(issueComments)
-        .set({ body: visibleFailure, updatedAt: new Date() })
-        .where(
-          and(
-            eq(issueComments.id, input.commentId),
-            eq(issueComments.companyId, input.endpoint.companyId),
-          ),
-        );
-      await tx
-        .update(chatActions)
-        .set({
-          status: "failed",
-          result: { code: "inbound_wakeup_attachment_unavailable" },
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(chatActions.deliveryId, input.activeDelivery.id),
-            eq(chatActions.kind, "inbound_wakeup"),
-            eq(chatActions.status, "preparing"),
-          ),
-        );
-      const staged = await stageProviderEffect(tx, {
-        endpoint: input.endpoint,
-        deliveryId: input.activeDelivery.id,
-        conversationId: input.conversationId,
-        principalId: input.principalId,
-        providerActionId: `provider_effect:attachment-ingest-failure:${input.activeDelivery.id}`,
-        payload: {
-          version: 1,
-          authorizationMode: "safe_notice",
-          effect: "thread_message",
-          threadId: input.thread.id,
-          text: visibleFailure,
-          settleDelivery: false,
-          ...(input.resourceId ? { resourceId: input.resourceId } : {}),
-        },
-        runtimeContext: effectContext,
-      });
-      await notifyChatDeliveryWork(tx);
-      await tx
-        .update(chatDeliveries)
-        .set({
-          conversationId: input.conversationId,
-          state: "processed",
-          processedAt: new Date(),
-          nextAttemptAt: null,
-          redactedError: diagnostic,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(chatDeliveries.id, input.activeDelivery.id),
-            eq(chatDeliveries.state, "processing"),
-          ),
-        );
-      return staged;
-    });
-    if (!effect) throw new Error("Attachment failure notice was not persisted");
-    // Posting the safe notice is its own durable outbox operation. A provider
-    // outage must not turn the already-settled, deliberately unwoken inbound
-    // delivery back into a replayable attachment message.
-    scheduleProviderEffect(effect.id, input.thread);
-    return true;
   }
 
   async function stageInboundWakeup(
