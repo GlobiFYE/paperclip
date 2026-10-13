@@ -268,6 +268,8 @@ export type {
   PipelineCaseOutputsResponse,
   PipelineCaseWorkProductOutputItem,
   PipelineStageAutomation,
+  PipelineExecutionWorkspaceScope,
+  PipelineCaseWorkspaceRef,
 } from "./types/pipeline.js";
 export {
   analyzeFrontmatterBlock,
@@ -2284,6 +2286,8 @@ export {
   updateRoutineTriggerSchema,
   routineVariableSchema,
   runRoutineSchema,
+  PIPELINE_EXECUTION_WORKSPACE_SCOPES,
+  pipelineExecutionWorkspaceScopeSchema,
   pipelineAutomationRetryCleanupOptionsSchema,
   pipelineAutomationRetryRequestSchema,
   pipelineAutomationRetryScopeSchema,
