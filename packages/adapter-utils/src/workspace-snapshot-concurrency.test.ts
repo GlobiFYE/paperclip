@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { promises as fs } from "node:fs";
+import { createReadStream, promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setImmediate } from "node:timers/promises";
@@ -10,6 +10,12 @@ import {
   type SnapshotEntry,
 } from "./workspace-restore-merge.js";
 
+vi.mock("node:fs", async importOriginal => {
+  const original = await importOriginal<typeof import("node:fs")>();
+  return { ...original, createReadStream: vi.fn(original.createReadStream) };
+});
+
+const originalFs = await vi.importActual<typeof import("node:fs")>("node:fs");
 const roots: string[] = [];
 
 async function fixture() {
@@ -20,6 +26,7 @@ async function fixture() {
 
 afterEach(async () => {
   vi.restoreAllMocks();
+  vi.mocked(createReadStream).mockImplementation(originalFs.createReadStream);
   await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true })));
 });
 
@@ -69,18 +76,18 @@ describe("bounded workspace snapshot reads", () => {
       await Promise.all(Array.from({ length: 35 }, (_, index) =>
         fs.writeFile(path.join(root, directory, `file-${index}`), String(index))));
     }
-    const lstat = fs.lstat.bind(fs);
     let active = 0;
     let peak = 0;
-    vi.spyOn(fs, "lstat").mockImplementation(async (...args: Parameters<typeof fs.lstat>) => {
+    vi.mocked(createReadStream).mockImplementation((...args) => {
+      const stream = originalFs.createReadStream(...args);
+      stream.pause();
       active++;
       peak = Math.max(peak, active);
-      try {
-        await setImmediate();
-        return await lstat(...args);
-      } finally {
-        active--;
-      }
+      const settled = () => { active--; };
+      stream.once("end", settled);
+      stream.once("error", settled);
+      setTimeout(() => stream.resume(), 10);
+      return stream;
     });
     const snapshot = await captureDirectorySnapshot(root, { diskBacked: true });
     try {
@@ -93,7 +100,7 @@ describe("bounded workspace snapshot reads", () => {
     }
   });
 
-  it("settles started reads before propagating a peer failure", async () => {
+  it("settles started metadata reads before propagating a peer failure", async () => {
     const root = await fixture();
     await fs.writeFile(path.join(root, "denied"), "denied");
     await fs.writeFile(path.join(root, "pending"), "pending");
@@ -125,6 +132,45 @@ describe("bounded workspace snapshot reads", () => {
       release();
     }
     expect(await result).toMatchObject({ code: "EACCES" });
+    expect(active).toBe(0);
+  });
+
+  it("settles delayed peer content reads before returning a content failure", async () => {
+    const root = await fixture();
+    await fs.writeFile(path.join(root, "failed"), "failed");
+    await fs.writeFile(path.join(root, "pending"), "pending bytes");
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let pending = false;
+    let failed = false;
+    let active = 0;
+    vi.mocked(createReadStream).mockImplementation((...args) => {
+      const stream = originalFs.createReadStream(...args);
+      stream.pause();
+      active++;
+      stream.once("end", () => { active--; });
+      stream.once("error", () => { active--; failed = true; });
+      if (String(args[0]) === path.join(root, "failed")) {
+        void setImmediate().then(() => stream.destroy(Object.assign(new Error("read failed"), { code: "EIO" })));
+      } else {
+        pending = true;
+        void gate.then(() => stream.resume());
+      }
+      return stream;
+    });
+    let settled = false;
+    const result = captureDirectorySnapshot(root, { diskBacked: true }).then(
+      () => { settled = true; return null; },
+      error => { settled = true; return error; },
+    );
+    try {
+      await vi.waitFor(() => expect(failed && pending).toBe(true));
+      expect(settled).toBe(false);
+      expect(active).toBe(1);
+    } finally {
+      release();
+    }
+    expect(await result).toMatchObject({ code: "EIO" });
     expect(active).toBe(0);
   });
 });
