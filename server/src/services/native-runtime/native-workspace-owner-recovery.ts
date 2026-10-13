@@ -25,9 +25,9 @@ export async function resumeNativeWorkspaceAfterOwnerStop(input: {
     // and then apply a confirmation that described an earlier owner.
     const locks = await tx.execute(sql`select pg_try_advisory_xact_lock(hashtextextended(${`native-workspace-finalization:${input.companyId}:${input.runId}`}, 0)) as acquired`);
     if (locks[0]?.acquired !== true) throw conflict("Workspace copyback is still active. Wait for it to stop before confirming recovery.");
-    // Match the status arbiter's issue -> coordinator -> run lock order.
-    const [issue] = await tx.select().from(issues).where(and(eq(issues.companyId, input.companyId), eq(issues.id, input.issueId))).for("update");
+    // Match the status arbiter's coordinator -> issue -> run lock order.
     const [coordinator] = await tx.select().from(nativeRunFinalizations).where(and(eq(nativeRunFinalizations.companyId, input.companyId), eq(nativeRunFinalizations.issueId, input.issueId), eq(nativeRunFinalizations.runId, input.runId))).for("update");
+    const [issue] = await tx.select().from(issues).where(and(eq(issues.companyId, input.companyId), eq(issues.id, input.issueId))).for("update");
     const [run] = await tx.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.companyId, input.companyId), eq(heartbeatRuns.nativeIssueId, input.issueId), eq(heartbeatRuns.id, input.runId))).for("update");
     const [action] = await tx.select().from(issueRecoveryActions).where(and(eq(issueRecoveryActions.companyId, input.companyId), eq(issueRecoveryActions.sourceIssueId, input.issueId), eq(issueRecoveryActions.id, input.actionId))).for("update");
     if (!issue || !run || !coordinator || !action || action.evidence?.runId !== run.id
