@@ -1,3 +1,4 @@
+import { createAgentLifecycle } from "./agent-lifecycle.js";
 import { agentAppearanceSchema } from "@paperclipai/shared";
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
@@ -79,6 +80,7 @@ import { accessService } from "./access.js";
 import { agentService } from "./agents.js";
 import { agentInstructionsBundleMode, agentInstructionsService } from "./agent-instructions.js";
 import { assetService } from "./assets.js";
+import { isRunnerApiResponseAsset } from "./asset-content-access.js";
 import { generateReadme } from "./company-export-readme.js";
 import { renderOrgChartPng, type OrgNode } from "../routes/org-chart-svg.js";
 import { companySkillService } from "./company-skills.js";
@@ -3083,6 +3085,16 @@ function readAgentSkillRefs(frontmatter: Record<string, unknown>) {
   ));
 }
 
+/** Uploaded avatars belong to one company/agent; portable packages retain the preset fallback. */
+function portableAgentAppearance(value: unknown, warnings: string[], slug: string) {
+  const appearance = agentAppearanceSchema.parse(value);
+  if (appearance.customAvatarAssetId) {
+    delete appearance.customAvatarAssetId;
+    warnings.push(`Agent ${slug} uploaded avatar was omitted because image assets are instance-local. Upload it again after import.`);
+  }
+  return appearance;
+}
+
 function buildManifestFromPackageFiles(
   files: Record<string, CompanyPortabilityFileEntry>,
   opts?: { sourceLabel?: { companyId: string; companyName: string } | null },
@@ -3241,7 +3253,7 @@ function buildManifestFromPackageFiles(
       role: asString(extension.role) ?? asString(frontmatter.role) ?? "agent",
       title,
       icon: asString(extension.icon),
-      appearance: extension.appearance == null ? undefined : agentAppearanceSchema.parse(extension.appearance),
+      appearance: extension.appearance == null ? undefined : portableAgentAppearance(extension.appearance, warnings, slug),
       capabilities: asString(extension.capabilities),
       reportsToSlug: asString(frontmatter.reportsTo) ?? asString(extension.reportsTo),
       reportsToExistingAgentId: asString(extension.reportsToExistingAgentId),
@@ -3549,6 +3561,7 @@ export function parseGitHubSourceUrl(rawUrl: string) {
 export function companyPortabilityService(db: Db, storage?: StorageService) {
   const companies = companyService(db);
   const agents = agentService(db);
+  const agentsLifecycle = createAgentLifecycle(db);
   const assetRecords = assetService(db);
   const instructions = agentInstructionsService(db);
   const access = accessService(db);
@@ -4104,6 +4117,8 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         const logoAsset = await assetRecords.getById(company.logoAssetId);
         if (!logoAsset) {
           warnings.push(`Skipped company logo ${company.logoAssetId} because the asset record was not found.`);
+        } else if (await isRunnerApiResponseAsset(db, logoAsset)) {
+          warnings.push("Skipped private API response snapshot used as a company logo.");
         } else {
           try {
             const object = await storage.getObject(company.id, logoAsset.objectKey);
@@ -4262,7 +4277,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         const extension = stripEmptyValues({
           role: agent.role !== "agent" ? agent.role : undefined,
           icon: agent.icon ?? null,
-          appearance: agent.appearance,
+          appearance: agent.appearance == null ? undefined : portableAgentAppearance(agent.appearance, warnings, slug),
           capabilities: agent.capabilities ?? null,
           adapter: {
             type: agent.adapterType,
@@ -4647,7 +4662,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         // Embedded references only pull bytes for assets owned by the
         // exporting company: a crafted URL naming another company's asset id
         // must not leak that asset's bytes into the bundle.
-        if (!asset || asset.companyId !== companyId) {
+        if (!asset || asset.companyId !== companyId || await isRunnerApiResponseAsset(db, asset)) {
           unownedEmbeddedAssetRefCount += 1;
           continue;
         }
@@ -4678,8 +4693,8 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     }
     if (unownedEmbeddedAssetRefCount > 0) {
       warnings.push(unownedEmbeddedAssetRefCount === 1
-        ? "1 embedded image reference points at an asset that does not belong to this company or no longer exists; its image was not exported."
-        : `${unownedEmbeddedAssetRefCount} embedded image references point at assets that do not belong to this company or no longer exist; their images were not exported.`);
+        ? "1 embedded image reference points at an asset that is unavailable for export (missing, outside this company, or a private API response snapshot); its image was not exported."
+        : `${unownedEmbeddedAssetRefCount} embedded image references point at assets that are unavailable for export (missing, outside this company, or private API response snapshots); their images were not exported.`);
     }
 
     const paperclipExtensionPath = ".paperclip.yaml";
@@ -5609,7 +5624,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
             role: manifestAgent.role,
             title: manifestAgent.title,
             icon: manifestAgent.icon,
-            ...(manifestAgent.appearance ? { appearance: manifestAgent.appearance } : {}),
+            ...(manifestAgent.appearance ? { appearance: portableAgentAppearance(manifestAgent.appearance, warnings, manifestAgent.slug) } : {}),
             capabilities: manifestAgent.capabilities,
             reportsTo: null,
             adapterType: normalizedAdapter.adapterType,
@@ -5632,9 +5647,9 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
             : {};
 
           if (planAgent.action === "update" && planAgent.existingAgentId) {
+            if (pauseAutomations) await agentsLifecycle.pauseAgent(planAgent.existingAgentId, "import");
             let updated = await agents.update(planAgent.existingAgentId, {
               ...patch,
-              ...automationPausePatch,
             });
             if (!updated) {
               warnings.push(`Skipped update for missing agent ${planAgent.existingAgentId}.`);
@@ -5680,7 +5695,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
             continue;
           }
 
-          let created = await agents.create(targetCompany.id, {
+          let created = await agentsLifecycle.requestHire(targetCompany.id, {
             ...patch,
             ...automationPausePatch,
             status: pauseAutomations ? "paused" : "idle",

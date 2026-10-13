@@ -8,7 +8,10 @@ import { agentApiKeys, companyMemberships, instanceUserRoles, heartbeatRuns, iss
 import type { DeploymentMode, LiveEvent } from "@paperclipai/shared";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { logger } from "../middleware/logger.js";
+import { activityToastIdentity } from "./activity-toast-identity.js";
+import { taskToastEligible } from "./task-toast-eligibility.js";
 import { subscribeCompanyLiveEvents } from "../services/live-events.js";
+import { trackIdleWork } from "../services/task-admission.js";
 
 interface WsSocket {
   readyState: number;
@@ -272,7 +275,13 @@ export function setupLiveEventsWebSocketServer(
 
     const access = authorizationService(db);
     async function visibleEvent(event: LiveEvent): Promise<LiveEvent | null> {
-      if (context!.actor.source === "local_implicit") return event;
+      if (context!.actor.source === "local_implicit") {
+        if (event.type === "activity.logged" && event.payload.entityType === "issue") {
+          return { ...event, payload: { ...event.payload,
+            ...await activityToastIdentity(db, event.companyId, event.payload) } };
+        }
+        return event;
+      }
       if (context!.apiKeyId) {
         const active = await db.select({ id: agentApiKeys.id }).from(agentApiKeys)
           .where(and(eq(agentApiKeys.id, context!.apiKeyId), isNull(agentApiKeys.revokedAt))).limit(1);
@@ -312,6 +321,8 @@ export function setupLiveEventsWebSocketServer(
       // clients obtain details through viewer-filtered HTTP reads.
       if (event.type === "activity.logged") return { ...event, payload: {
         action: payload.action, entityType: payload.entityType, entityId: payload.entityId,
+        // The task read check above authorizes attribution, but not arbitrary details.
+        ...(issueId ? await activityToastIdentity(db, event.companyId, payload) : {}),
       } };
       if (event.type === "agent.status") return { ...event, payload: { agentId: payload.agentId, status: payload.status } };
       if (event.type === "external_object.updated") return { ...event, payload: { externalObjectId: payload.externalObjectId } };
@@ -328,7 +339,18 @@ export function setupLiveEventsWebSocketServer(
         // Check at delivery time, including after a grant is revoked while the
         // subscription remains open. Never cache successful privacy decisions.
         const visible = await visibleEvent(event);
-        if (visible && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(visible));
+        if (visible) {
+          // Relevance is independent of authorization and cache delivery. A
+          // failed relevance lookup must keep the authorized update flowing.
+          let toastEligible = false;
+          try {
+            toastEligible = await taskToastEligible(db, visible,
+              context.actor.type === "board" ? context.actor.userId ?? null : null);
+          } catch (err) {
+            logger.warn({ err, companyId: context.companyId }, "task toast eligibility failed");
+          }
+          if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ ...visible, toastEligible }));
+        }
       }).catch(err => logger.warn({ err, companyId: context.companyId }, "live event authorization failed"))
         .finally(() => { pending -= 1; });
     });
@@ -384,7 +406,9 @@ export function setupLiveEventsWebSocketServer(
       return;
     }
 
-    void authorizeUpgrade(db, req, companyId, url, {
+    // Upgrade admission precedes this async authentication. An idle hold or
+    // socket close must not make its accepted database writes disappear.
+    void trackIdleWork(authorizeUpgrade(db, req, companyId, url, {
       deploymentMode: opts.deploymentMode,
       resolveSessionFromHeaders: opts.resolveSessionFromHeaders,
       resolveCloudActor: opts.resolveCloudActor,
@@ -411,7 +435,7 @@ export function setupLiveEventsWebSocketServer(
       .catch((err) => {
         logger.error({ err, path: req.url }, "failed websocket upgrade authorization");
         rejectUpgrade(socket, "500 Internal Server Error", "upgrade failed");
-      });
+      }));
   });
 
   return wss;

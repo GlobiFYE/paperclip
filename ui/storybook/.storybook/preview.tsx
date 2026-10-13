@@ -4,6 +4,8 @@ import { MINIMAL_VIEWPORTS } from "storybook/viewport";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   CONNECTABLE_APP_DEFINITIONS,
+  instanceExperimentalSettingsSchema,
+  instanceGeneralSettingsSchema,
   type WorkTimelineResult,
 } from "@paperclipai/shared";
 import { MemoryRouter } from "@/lib/router";
@@ -152,15 +154,13 @@ function installStorybookApiFixtures() {
       });
     }
 
+    const experimentalSettings = () => instanceExperimentalSettingsSchema.parse({
+      enableIsolatedWorkspaces: true,
+      autoRestartDevServerWhenIdle: false,
+      enableManagedSandboxOnly: onboardingFixtureState.environments !== "local",
+    });
     if (url.pathname === "/api/instance/settings/experimental") {
-      return Response.json({
-        enableIsolatedWorkspaces: true,
-        autoRestartDevServerWhenIdle: false,
-        // The cloud-tenant shape, and what the onboarding connect step resolves
-        // its login environment through: without it the step looks for a local
-        // default and never finds the managed sandbox.
-        enableManagedSandboxOnly: onboardingFixtureState.environments !== "local",
-      });
+      return Response.json(experimentalSettings());
     }
 
     if (url.pathname === "/api/health") {
@@ -168,7 +168,15 @@ function installStorybookApiFixtures() {
     }
 
     if (url.pathname === "/api/instance/settings") {
-      return Response.json({});
+      // Full app-shell stories render pages that read these nested settings.
+      return Response.json({
+        id: "00000000-0000-4000-8000-000000000001",
+        defaultEnvironmentId: null,
+        general: instanceGeneralSettingsSchema.parse({}),
+        experimental: experimentalSettings(),
+        createdAt: "2026-10-08T00:00:00.000Z",
+        updatedAt: "2026-10-08T00:00:00.000Z",
+      });
     }
 
     // The connect step's provider sign-in is gated on a *sandbox* environment
@@ -842,6 +850,73 @@ const preview: Preview = {
     },
   },
   parameters: {
+    options: {
+      storySort: {
+        order: [
+          "Overview",
+          "Getting started and access",
+          [
+            "Onboarding and first work", ["Overview", "*"],
+            "Login, invitations, and access", ["Overview", "*"],
+            "Companies and portability", ["Overview", "*"]
+          ],
+          "Tasks and conversations",
+          [
+            "Task creation and lifecycle", ["Overview", "*"],
+            "Delegation, dependencies, and signoff", ["Overview", "*"],
+            "Inbox, decisions, and search", ["Overview", "*"],
+            "Agent conversations and project handoff", ["Overview", "*"],
+            "Questions and approvals", ["Overview", "*"],
+            "Steering and queued messages", ["Overview", "*"],
+            "Documents, attachments, and work products", ["Overview", "*"]
+          ],
+          "Agents and reusable capabilities",
+          [
+            "Hiring, configuration, and organization", ["Overview", "*"],
+            "Runs, harnesses, and model accounts", ["Overview", "*"],
+            "Skills and Skill Studio", ["Overview", "*"],
+            "Team packages and installation", ["Overview", "*"]
+          ],
+          "Projects and execution",
+          [
+            "Projects and repositories", ["Overview", "*"],
+            "Goals and work alignment", ["Overview", "*"],
+            "Workspaces, services, and files", ["Overview", "*"],
+            "Execution environments", ["Overview", "*"],
+            "Recovery", ["Overview", "*"]
+          ],
+          "Apps, channels, and extensions",
+          [
+            "Connection setup", ["Overview", "*"],
+            "App access and action permissions", ["Overview", "*"],
+            "External chat and email", ["Overview", "*"],
+            "Tool gateways and access profiles", ["Overview", "*"],
+            "Secrets and proposals", ["Overview", "*"],
+            "Plugins", ["Overview", "*"]
+          ],
+          "Automation and structured work",
+          [
+            "Routines, schedules, and triggers", ["Overview", "*"],
+            "Pipelines, review queues, and learnings", ["Overview", "*"],
+            "Cases", ["Overview", "*"],
+            "Status cards", ["Overview", "*"]
+          ],
+          "Oversight and operation",
+          [
+            "Costs and budgets", ["Overview", "*"],
+            "Dashboards and audit trails", ["Overview", "*"],
+            "Navigation, profile, and announcements", ["Overview", "*"],
+            "Instance operations", ["Overview", "*"],
+            "CLI, API and local worktrees", ["Overview", "*"]
+          ],
+          "Contributor surfaces",
+          [
+            "Developer previews and diagnostic labs", ["Overview", "*"]
+          ],
+          "Foundations"
+        ],
+      },
+    },
     actions: { argTypesRegex: "^on[A-Z].*" },
     a11y: {
       test: "error",
