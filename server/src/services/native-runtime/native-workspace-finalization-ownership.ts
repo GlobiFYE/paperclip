@@ -3,8 +3,8 @@ import { nativeSha256 } from "./canonical.js";
 import { NATIVE_WORKSPACE_OWNER_UNVERIFIED } from "./native-workspace-finalization-recovery-state.js";
 import { randomUUID } from "node:crypto";
 import os from "node:os";
-import { and, eq, sql } from "drizzle-orm";
-import { heartbeatRuns, workspaceOperations, withDedicatedDbConnection, type Db } from "@paperclipai/db";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { heartbeatRuns, issueRecoveryActions, workspaceOperations, withDedicatedDbConnection, type Db } from "@paperclipai/db";
 import {
   currentNativeControllerIdentity,
   evaluateNativeControllerTakeover,
@@ -76,10 +76,19 @@ export async function withNativeWorkspaceFinalizationOwnership<T>(
       if (rawPrior != null) {
         const requireStopVerification = async () => {
           const fingerprint = nativeSha256({ runId: input.runId, owner: rawPrior });
+          const nextAction = "Verify the previous controller and its workspace-copyback processes have stopped, then release only this exact workspace owner receipt using doc/native-workspace-finalization-recovery.md. Resume workspace finalization without another provider turn.";
           const recovery = issueRecoveryActionService(input.db);
           const existing = run.issueId ? await recovery.getActiveForIssue(input.companyId, run.issueId) : null;
           // Rechecking the same physical owner is not a new recovery attempt.
           if (existing?.cause === NATIVE_WORKSPACE_OWNER_UNVERIFIED && existing.fingerprint === fingerprint) {
+            if (!existing.evidence?.workspaceOwnerStop && existing.nextAction !== nextAction) {
+              await input.db.update(issueRecoveryActions).set({ nextAction, updatedAt: new Date() }).where(and(
+                eq(issueRecoveryActions.companyId, input.companyId), eq(issueRecoveryActions.id, existing.id),
+                eq(issueRecoveryActions.fingerprint, fingerprint), eq(issueRecoveryActions.cause, NATIVE_WORKSPACE_OWNER_UNVERIFIED),
+                inArray(issueRecoveryActions.status, ["active", "escalated"]),
+                sql`${issueRecoveryActions.evidence}->'workspaceOwnerStop' is null`,
+              ));
+            }
             return { acquired: false } as const;
           }
           if (run.issueId) await recovery.upsertSourceScoped({
@@ -88,7 +97,7 @@ export async function withNativeWorkspaceFinalizationOwnership<T>(
             cause: NATIVE_WORKSPACE_OWNER_UNVERIFIED,
             fingerprint,
             evidence: { runId: input.runId, owner: rawPrior },
-            nextAction: "Verify the previous controller and its workspace-copyback processes have stopped, then release only this exact workspace owner receipt using doc/native-workspace-finalization-recovery.md. Resume workspace finalization without another provider turn.",
+            nextAction,
             wakePolicy: null, maxAttempts: 1, supersedeOnIdentityChange: true,
           });
           return { acquired: false } as const;
