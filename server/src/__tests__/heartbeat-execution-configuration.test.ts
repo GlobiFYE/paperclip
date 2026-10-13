@@ -1,4 +1,6 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { trace } from "@opentelemetry/api";
+import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from "@opentelemetry/sdk-trace";
 import { access, readFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -142,18 +144,36 @@ describePostgres("heartbeat execution configuration through adapter dispatch", (
       await access(acquiredHome!);
       return runtime;
     });
-    const { finished, input } = await execute(f);
-    expect(finished.status).toBe("failed");
-    expect(input).toBeUndefined();
-    expect(acquiredHome).toEqual(expect.any(String));
-    await expect(access(acquiredHome!)).rejects.toMatchObject({ code: "ENOENT" });
-    expect(finished.error).toContain("Invalid fixture skill configuration");
-    // The diagnostic reporter redacts runtime values before the external sink.
-    // The legacy local run.error field does not apply this value-based redaction.
-    await waitForPendingRunFailureReports();
-    expect(capturedFailure).toHaveBeenCalled();
-    expect(JSON.stringify(capturedFailure.mock.calls)).toContain("Invalid fixture skill configuration");
-    expect(JSON.stringify(capturedFailure.mock.calls)).not.toContain(f.credential);
+    const exporter = new InMemorySpanExporter();
+    const provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
+    expect(trace.setGlobalTracerProvider(provider)).toBe(true);
+    try {
+      const { finished, input } = await execute(f);
+      expect(finished.status).toBe("failed");
+      expect(input).toBeUndefined();
+      expect(acquiredHome).toEqual(expect.any(String));
+      await expect(access(acquiredHome!)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(finished.error).toContain("Invalid fixture skill configuration");
+      await waitForPendingRunFailureReports();
+      expect(capturedFailure).toHaveBeenCalled();
+      expect(JSON.stringify(capturedFailure.mock.calls)).toContain("Invalid fixture skill configuration");
+      expect(JSON.stringify(capturedFailure.mock.calls)).not.toContain(f.credential);
+      await provider.forceFlush();
+      const runIdHash = createHash("sha256").update(finished.id).digest("hex").slice(0, 12);
+      const steps = exporter.getFinishedSpans().filter(span => span.name.startsWith("heartbeat.prepare.configuration_")
+        && span.attributes["paperclip.task.run.run_id"] === runIdHash);
+      expect(steps.find(span => span.name === "heartbeat.prepare.configuration_ai_runtime")?.status.code).toBe(0);
+      expect(steps.find(span => span.name === "heartbeat.prepare.configuration_skills")?.status).toEqual({ code: 2 });
+      expect(steps.some(span => span.name === "heartbeat.prepare.configuration_connector_assignments")).toBe(false);
+      for (const span of steps) {
+        expect(span.attributes).toEqual({ "paperclip.task.run.run_id": runIdHash });
+        expect(span.events).toEqual([]);
+      }
+      expect(JSON.stringify(steps.map(span => ({ name: span.name, status: span.status, attributes: span.attributes, events: span.events })))).not.toContain(f.credential);
+    } finally {
+      trace.disable();
+      await provider.shutdown();
+    }
   });
 
   it("defers a busy account without dispatch and preserves its scheduled retry", async () => {
