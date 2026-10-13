@@ -42,7 +42,13 @@ Reusing, closing and reopening that task must retain the company/task-bound sour
 a failed workspace save must clean up only its owned checkout. Explicit workspace,
 parent/channel selections, literal or task-independent branch templates, low-trust
 tasks, and local or credential-bearing remote
-URLs must not use this fallback. The [remote-source tests](../../server/src/services/isolated-remote-workspace-source.test.ts)
+URLs must not use this fallback. A selected checkout requires recorded default
+provenance. Create tasks
+through the task service with an explicit checkout ID or an inherited parent
+source but no typed selection; verify denial, no clone or environment acquisition,
+and preservation of unpublished branch commits. Older ambiguous bindings and
+source choices changed during preparation must retain the denial. The
+[remote-source tests](../../server/src/services/isolated-remote-workspace-source.test.ts)
 and [preparation tests](../../server/src/services/heartbeat/workspace-preparation.test.ts)
 exercise the real Git isolation and lifecycle guards. They do not qualify live
 remote credentials or a provider deployment.

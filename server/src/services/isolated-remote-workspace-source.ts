@@ -60,6 +60,7 @@ export function canIsolateRemoteWorkspaceSource(input: {
   repoUrl: string | null;
   reuseExisting: boolean;
   hasExistingWorkspace: boolean;
+  selectedProjectWorkspaceId: string | null;
   selection: TaskWorkspaceIntent | null | undefined;
   strategy: Record<string, unknown>;
   trustPresetKind: string;
@@ -70,7 +71,9 @@ export function canIsolateRemoteWorkspaceSource(input: {
     && !/\{\{\s*(?:issue\.(?:id|identifier|title)|slug)\s*\}\}/.test(branchTemplate);
   if (input.trustPresetKind !== "standard" || error?.status !== 403 || error.message !== "Task workspace access is no longer available"
     || input.reuseExisting || input.hasExistingWorkspace || input.strategy.existingBranch || selectsFixedBranch
-    || (input.selection && !["project", "task_default", "legacy"].includes(input.selection.source))) return false;
+    || (input.selection && !["project", "task_default"].includes(input.selection.source))
+    || (input.selectedProjectWorkspaceId && (input.selection?.selection.kind !== "configured_source"
+      || input.selection.selection.projectWorkspaceId !== input.selectedProjectWorkspaceId))) return false;
   if (!input.repoUrl) return false;
   try {
     const url = new URL(input.repoUrl);

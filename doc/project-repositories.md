@@ -47,6 +47,10 @@ branches, or repositories that only exist on the local filesystem.
 Configured branch templates must derive the branch from the task identifier, ID,
 title, or slug. Literal or task-independent templates retain the source denial,
 so a fresh clone cannot replace a selected local branch with a new empty branch.
+New implicit Git workspace defaults record their project-source provenance.
+An untyped checkout binding from an older task is ambiguous and keeps the denial,
+including explicit checkout IDs and inherited parent sources. Admission rechecks
+the current binding rather than inferring a default from the selected checkout ID.
 Workspace close and reopen use the recorded isolated source. Both operations
 verify its company, task, repository URL, and separate Git storage before use.
 

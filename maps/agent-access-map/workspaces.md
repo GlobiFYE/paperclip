@@ -48,7 +48,10 @@ Creation of a fallback source is unavailable for explicit, parent/channel, reuse
 or low-trust selections, or branch templates without a task-derived placeholder;
 an existing verified owned source remains reusable. Literal branch selections
 retain the original denial without cloning or replacing their unpublished commits.
-local paths, unsupported transports and credential-bearing URLs are not fallback
+New implicit Git defaults record project-source provenance. Untyped explicit,
+inherited and older ambiguous checkout bindings retain the denial; admission reads
+the current company-scoped binding before considering the fallback.
+Local paths, unsupported transports and credential-bearing URLs are not fallback
 sources. Company/task/remote bindings, real paths, Git storage and the exact origin
 are revalidated for reuse, cleanup and reopening. A failed save removes only the
 owned task worktree. The [isolated-source service](../../server/src/services/isolated-remote-workspace-source.ts)

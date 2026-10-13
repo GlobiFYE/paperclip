@@ -7,6 +7,7 @@ const allowed = {
   repoUrl: "https://example.test/company/repository.git",
   reuseExisting: false,
   hasExistingWorkspace: false,
+  selectedProjectWorkspaceId: null,
   selection: null,
   strategy: { type: "git_worktree" },
   trustPresetKind: "standard",
@@ -20,6 +21,7 @@ describe("isolated remote source admission", () => {
   it.each([
     { reuseExisting: true },
     { hasExistingWorkspace: true },
+    { selectedProjectWorkspaceId: "chosen-source" },
     { strategy: { type: "git_worktree", existingBranch: "unpublished-work" } },
     { strategy: { type: "git_worktree", branchTemplate: "feature/literal-pin" } },
     { strategy: { type: "git_worktree", branchTemplate: "feature/{{unknown}}" } },
@@ -41,10 +43,17 @@ describe("isolated remote source admission", () => {
     expect(canIsolateRemoteWorkspaceSource({ ...allowed, strategy: { type: "git_worktree", branchTemplate } })).toBe(true);
   });
 
-  it.each(["explicit", "parent", "channel", "operator_cwd"] as const)("preserves %s source intent", source => {
+  it.each(["explicit", "parent", "channel", "operator_cwd", "legacy"] as const)("preserves %s source intent", source => {
     expect(canIsolateRemoteWorkspaceSource({ ...allowed, selection: {
       version: 1, source, selection: { kind: "configured_source", projectWorkspaceId: "source", mode: "managed_isolated" },
     } })).toBe(false);
+  });
+
+  it("requires a recorded default to match the selected source", () => {
+    const selection = { version: 1 as const, source: "project" as const,
+      selection: { kind: "configured_source" as const, projectWorkspaceId: "source", mode: "managed_isolated" as const } };
+    expect(canIsolateRemoteWorkspaceSource({ ...allowed, selectedProjectWorkspaceId: "source", selection })).toBe(true);
+    expect(canIsolateRemoteWorkspaceSource({ ...allowed, selectedProjectWorkspaceId: "other-source", selection })).toBe(false);
   });
 });
 

@@ -22,6 +22,7 @@ import { prepareHeartbeatWorkspace, type HeartbeatWorkspacePreparationInput } fr
 import * as managedRepositoryCheckout from "../managed-repository-checkout.js";
 import { isolatedRemoteSourcePath } from "../isolated-remote-workspace-source.js";
 import { cleanupExecutionWorkspaceArtifacts } from "../workspace-runtime.js";
+import { issueService } from "../issues.js";
 
 const execFile = promisify(execFileCallback);
 const support = await getEmbeddedPostgresTestSupport();
@@ -119,8 +120,35 @@ describe.skipIf(!support.supported)("heartbeat workspace preparation boundary", 
     expect(input.controllerLease.assertOwned).toHaveBeenCalledTimes(2);
   });
 
-  it.each(["create", "failed-save", "shared-retry-after-failed-save", "literal-branch"] as const)("preserves restricted source isolation during %s", async scenario => {
-    const { input, source, issue } = await fixture(true);
+  it.each(["create", "failed-save", "shared-retry-after-failed-save", "literal-branch", "legacy-explicit-source", "inherited-source", "legacy-untyped-source", "changed-source-intent", "context-source"] as const)("preserves restricted source isolation during %s", async scenario => {
+    const { input, source, issue: originalIssue } = await fixture(true);
+    await db.update(companies).set({ issueCounter: 1 }).where(eq(companies.id, originalIssue.companyId));
+    const issue = await issueService(db).create(originalIssue.companyId, {
+      title: "Prepare the selected source", projectId: originalIssue.projectId,
+      assigneeAgentId: input.agent.id, executionWorkspaceSettings: { mode: "isolated_workspace" },
+      ...(scenario === "legacy-explicit-source" ? { projectWorkspaceId: originalIssue.projectWorkspaceId } : {}),
+      ...(scenario === "inherited-source" ? { parentId: originalIssue.id } : {}),
+      workspaceSelectionActor: { type: "agent", source: "agent_jwt", companyId: originalIssue.companyId, agentId: input.agent.id },
+    });
+    input.task.issueRef = issue;
+    input.task.issueId = issue.id;
+    input.task.context.issueId = issue.id;
+    input.task.workspaceSelection = issue.workspaceSelection ?? null;
+    await db.update(heartbeatRuns).set({ status: "succeeded" }).where(eq(heartbeatRuns.id, input.run.id));
+    const [run] = await db.insert(heartbeatRuns).values({ companyId: issue.companyId, agentId: input.agent.id,
+      issueId: issue.id, scopeKind: "issue", status: "running", runtimeMode: "legacy" }).returning();
+    input.run = run;
+    if (scenario === "legacy-untyped-source") {
+      await db.update(issues).set({ workspaceSelection: null }).where(eq(issues.id, issue.id));
+      input.task.workspaceSelection = null;
+    } else if (scenario === "changed-source-intent") {
+      await db.update(issues).set({ workspaceSelection: { ...issue.workspaceSelection!, source: "explicit" } }).where(eq(issues.id, issue.id));
+    } else if (scenario === "context-source") {
+      await db.update(issues).set({ projectWorkspaceId: null, workspaceSelection: null }).where(eq(issues.id, issue.id));
+      input.task.issueRef = { ...issue, projectWorkspaceId: null };
+      input.task.workspaceSelection = null;
+      input.task.context.projectWorkspaceId = issue.projectWorkspaceId;
+    }
     const remoteUrl = "https://example.test/public/repository.git";
     await db.update(projectWorkspaces).set({ repoUrl: remoteUrl }).where(eq(projectWorkspaces.id, issue.projectWorkspaceId!));
     const publishedSource = join(home, `published-${issue.id}`);
@@ -146,29 +174,33 @@ describe.skipIf(!support.supported)("heartbeat workspace preparation boundary", 
       return { cwd, warning: null };
     });
     const isolatedSource = isolatedRemoteSourcePath(issue.companyId, issue.id);
-    if (scenario === "literal-branch") {
-      await execFile("git", ["-C", source, "checkout", "-b", "feature/literal-pin"]);
+    if (["literal-branch", "legacy-explicit-source", "inherited-source", "legacy-untyped-source", "changed-source-intent", "context-source"].includes(scenario)) {
+      const selectedBranch = scenario === "literal-branch" ? "feature/literal-pin" : `test-${issue.identifier}`;
+      await execFile("git", ["-C", source, "checkout", "-b", selectedBranch]);
       await writeFile(join(source, "selected-work.txt"), "Selected unpublished branch work\n");
       await execFile("git", ["-C", source, "add", "selected-work.txt"]);
       await execFile("git", ["-C", source, "commit", "-m", "Selected branch work"]);
       const branchTip = (await execFile("git", ["-C", source, "rev-parse", "HEAD"])).stdout.trim();
       await execFile("git", ["-C", source, "checkout", "main"]);
-      input.config.mergedConfig = { workspaceStrategy: { type: "git_worktree", baseRef: "main", branchTemplate: "feature/literal-pin" } };
+      if (scenario === "literal-branch") input.config.mergedConfig = { workspaceStrategy: { type: "git_worktree", baseRef: "main", branchTemplate: "feature/literal-pin" } };
       const acquire = vi.spyOn(input.services.envOrchestrator, "acquireForRun");
       await expect(prepareHeartbeatWorkspace(db, input)).rejects.toThrow("Task workspace access is no longer available");
       expect(clone).not.toHaveBeenCalled();
       expect(acquire).not.toHaveBeenCalled();
       expect((await readIssue(issue.id)).executionWorkspaceId).toBeNull();
-      expect((await execFile("git", ["-C", source, "rev-parse", "refs/heads/feature/literal-pin"])).stdout.trim()).toBe(branchTip);
+      expect((await execFile("git", ["-C", source, "rev-parse", `refs/heads/${selectedBranch}`])).stdout.trim()).toBe(branchTip);
       await expect(access(isolatedSource)).rejects.toMatchObject({ code: "ENOENT" });
       return;
     }
+    expect(issue.workspaceSelection).toMatchObject({ source: "project", selection: {
+      kind: "configured_source", projectWorkspaceId: issue.projectWorkspaceId, mode: "managed_isolated",
+    } });
     if (scenario === "failed-save" || scenario === "shared-retry-after-failed-save") {
       vi.spyOn(input.services.executionWorkspacesSvc, "create").mockRejectedValueOnce(new Error("Workspace persistence failed"));
       await expect(prepareHeartbeatWorkspace(db, input)).rejects.toThrow("Workspace persistence failed");
       const worktrees = (await execFile("git", ["-C", isolatedSource, "worktree", "list", "--porcelain"])).stdout;
       expect(worktrees.match(/^worktree /gm)).toHaveLength(1);
-      await expect(execFile("git", ["-C", isolatedSource, "rev-parse", "--verify", "refs/heads/test-WSP-1"])).rejects.toBeDefined();
+      await expect(execFile("git", ["-C", isolatedSource, "rev-parse", "--verify", `refs/heads/test-${issue.identifier}`])).rejects.toBeDefined();
       expect((await readIssue(issue.id)).executionWorkspaceId).toBeNull();
       expect(await readFile(join(privateCwd, "confidential.txt"), "utf8")).toBe("Private source must not be copied");
       if (scenario === "shared-retry-after-failed-save") {

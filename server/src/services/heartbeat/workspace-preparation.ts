@@ -19,7 +19,7 @@ import path from "node:path";
 import { CONTROLLER_PROVISION_COPY_ONLY, workspaceRequiresCopyOnlyProvisioning } from "../workspace-host-provision.js";
 import { and, asc, eq } from "drizzle-orm";
 import { type ExecutionWorkspace } from "@paperclipai/shared";
-import { heartbeatRuns, projectWorkspaces } from "@paperclipai/db";
+import { heartbeatRuns, issues, projectWorkspaces } from "@paperclipai/db";
 import { getStartupTracer } from "../../instrumentation.js";
 import { createHostDuplexObservabilityRecorder } from "../duplex-observability-recorder.js";
 import { incrementToolRuntimeMetricCounter } from "../tool-runtime-metrics.js";
@@ -495,9 +495,16 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
         companyId: agent.companyId, sourceCwd: executionWorkspaceBase.baseCwd, actor: isolatedWorkspaceSourceActor,
       });
     } catch (error) {
+      const [sourceChoice] = await db.select({ projectWorkspaceId: issues.projectWorkspaceId,
+        executionWorkspaceId: issues.executionWorkspaceId,
+        selection: issues.workspaceSelection }).from(issues)
+        .where(and(eq(issues.id, issueId), eq(issues.companyId, agent.companyId)));
+      if (!sourceChoice || sourceChoice.executionWorkspaceId
+        || (sourceChoice.projectWorkspaceId && sourceChoice.projectWorkspaceId !== resolvedWorkspace.workspaceId)) throw error;
       if (!canIsolateRemoteWorkspaceSource({ error, repoUrl: executionWorkspaceBase.repoUrl,
         reuseExisting: requestedShouldReuseExisting, hasExistingWorkspace: Boolean(existingExecutionWorkspace),
-        selection: input.task.workspaceSelection, strategy: parseObject(hostExecutionWorkspaceConfig.workspaceStrategy),
+        selectedProjectWorkspaceId: sourceChoice.projectWorkspaceId ?? readNonEmptyString(context.projectWorkspaceId),
+        selection: sourceChoice.selection, strategy: parseObject(hostExecutionWorkspaceConfig.workspaceStrategy),
         trustPresetKind: trustPreset.kind })) throw error;
       const cwd = await materializeIsolatedRemoteWorkspaceSource({ companyId: agent.companyId,
         issueId, repoUrl: executionWorkspaceBase.repoUrl!, resolveGitAuth: workspaceGitAuthProvider });
