@@ -287,7 +287,8 @@ describe("durable Grok routine qualification", () => {
         await vi.waitFor(async () => {
           const result = await db.execute(sql`select exists (select 1 from pg_stat_activity where datname = current_database()
             and pid <> pg_backend_pid() and wait_event_type = 'Lock' and query like '%dot_agent_bindings%') as waiting`);
-          expect(result.rows[0]?.waiting).toBe(true);
+          const row = Array.isArray(result) ? result[0] : result.rows[0];
+          expect(row?.waiting).toBe(true);
         }, { timeout: 5000 });
         await tx.execute(sql`set local lock_timeout = '2s'`);
         // A reverse-order recovery holds this row while waiting for our binding.
