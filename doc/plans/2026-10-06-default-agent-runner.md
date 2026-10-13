@@ -2,6 +2,29 @@
 
 ## Current Codex merge checkpoint — 2026-10-13
 
+Published `2902b72c330d37ddff5d59e07927716dc3e1517c` is blocked before
+main CI by the repository's tracked-lock policy and another master conflict.
+The generated dependency lock is retained as build evidence; the branch restores
+master's exact tracked lock, using the existing scripts-disabled CI resolution
+path instead of bypassing the gate. Normal reconciliation with
+`e0f30a4c7186498b71b2637f253b3399997dac7d` preserves controller-loss
+attribution, creator identity and migration 0343, voice qualification and Apps
+connection controls. Both test conflicts retain the Codex runner checks and
+incoming controls. All 45 built-in and 44 controller/run-state controls pass;
+maps and token gates remain clean. This source requires fresh CI/review and
+appropriate installed/live qualification. Cancellation is requested for the
+obsolete 2902 managed workflow before a paid test job is observed; terminal cancellation and unknown
+remote costs still need confirmation. No unchanged paid test is retried.
+
+Independent inspection verifies the literal 578 fresh Mac journey below: exactly
+one child, one document revised from one to two, and the same workspace file
+changed from Saturday to Sunday with both required markers. Five executed runs
+succeed with no interval overlap; one terminal-child wake is cancelled before
+starting. Parent session continuity and the separate child session in the same
+workspace are recorded. Estimated run cost is $1.820721600; setup usage and
+settlement remain unknown. Reload preserves the completed task and revision.
+This manual evidence does not relabel the original managed failure or newer source.
+
 The reviewed fixture changes are published as
 `8d65fd7fc31d8170082f30a314b87c4779f91e8a`. Before a main CI merge checkout
 is created, master advances to `edcfcaf3f69abfda12fcbc63225f7346f53450aa`.
