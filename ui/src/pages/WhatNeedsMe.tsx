@@ -145,11 +145,13 @@ export function AllDecisions({ onlyItemIds }: { onlyItemIds?: ReadonlySet<string
     setBreadcrumbs([{ label: "Decisions" }]);
   }, [setBreadcrumbs]);
 
+  const scoped = !!onlyItemIds;
   // Re-hydrate per-company preferences when the company changes.
   useEffect(() => {
-    setFilters(loadAttentionFilters(selectedCompanyId));
+    // The scoped "Needs a closer look" view shows exactly its items: saved All-view filters must not hide them.
+    setFilters(scoped ? defaultAttentionFilterState : loadAttentionFilters(selectedCompanyId));
     setCollapsedGroupKeys(loadCollapsedAttentionGroupKeys(selectedCompanyId));
-  }, [selectedCompanyId]);
+  }, [selectedCompanyId, scoped]);
 
   const {
     data: feed,
@@ -416,7 +418,7 @@ export function AllDecisions({ onlyItemIds }: { onlyItemIds?: ReadonlySet<string
   };
   const updateFilters = (next: AttentionFilterState) => {
     setFilters(next);
-    saveAttentionFilters(selectedCompanyId, next);
+    if (!scoped) saveAttentionFilters(selectedCompanyId, next);
   };
   const toggleGroupCollapse = (key: string) => {
     setCollapsedGroupKeys((prev) => {

@@ -141,3 +141,9 @@ it("does not pin a default from a stale cached feed while it refreshes", async (
   expect(ui().getByRole("tab", { name: "Hiring 1" }).getAttribute("aria-selected")).toBe("true");
   expect(ui().getByTestId("location").textContent).toBe("?tab=hiring");
 });
+
+it("closer look shows its items even when a saved All-view filter would hide them", async () => {
+  localStorage.setItem("paperclip:attention:filters:company-1", JSON.stringify({ sourceKinds: ["issue_thread_interaction"] }));
+  await mount("/ACME/decisions?tab=closer_look");
+  expect(ui().getByText("Full controls: Question budget")).toBeTruthy();
+});
