@@ -3,7 +3,7 @@ import { z } from "zod";
 /** Value-free routing stored on the connection, never supplied by an agent binding. */
 export const aiProviderRoutingSchema = z
   .object({
-    kind: z.enum(["openrouter", "bedrock", "gateway", "local"]),
+    kind: z.enum(["openrouter", "bedrock", "gateway", "local", "litellm"]),
     protocol: z.enum(["responses", "messages", "chat", "bedrock"]),
     baseUrl: z.string().trim().max(2048).optional(),
     auth: z
@@ -49,9 +49,14 @@ export const aiProviderRoutingSchema = z
       (route.baseUrl || route.auth !== "bearer")
     )
       invalid("OpenRouter uses its official endpoint and an API key.");
+    if (
+      route.kind === "litellm" &&
+      (route.protocol !== "chat" || route.auth === "api_key")
+    )
+      invalid("LiteLLM uses its proxy URL and a virtual key or no authentication.");
     if (route.auth === "api_key" && route.protocol !== "messages")
       invalid("API-key header authentication requires Anthropic Messages.");
-    if (route.kind === "gateway" || route.kind === "local") {
+    if (route.kind === "gateway" || route.kind === "local" || route.kind === "litellm") {
       try {
         const url = new URL(route.baseUrl ?? "");
         const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(
@@ -101,7 +106,7 @@ export function isAiRoutingCompatible(
   harness: string,
 ): boolean {
   if (route.kind === "bedrock") return harness === "claude_local";
-  if (route.kind === "openrouter")
+  if (route.kind === "openrouter" || route.kind === "litellm")
     return [
       "claude_local",
       "codex_local",
@@ -116,9 +121,12 @@ export function aiRoutingBaseUrl(
   route: AiProviderRouting,
   harness: string,
 ): string {
-  return route.kind === "openrouter"
-    ? `https://openrouter.ai/api${harness === "claude_local" ? "" : "/v1"}`
-    : (route.baseUrl ?? "").replace(/\/+$/, "");
+  if (route.kind === "openrouter")
+    return `https://openrouter.ai/api${harness === "claude_local" ? "" : "/v1"}`;
+  const baseUrl = (route.baseUrl ?? "").replace(/\/+$/, "");
+  if (route.kind !== "litellm") return baseUrl;
+  const root = baseUrl.replace(/\/v1$/, "");
+  return harness === "claude_local" ? root : `${root}/v1`;
 }
 
 /** OpenCode names models with a provider prefix; other harnesses use the raw ID. */
@@ -143,7 +151,7 @@ export function aiConnectionCatalogSlug(provider: string, routing?: Pick<AiProvi
 
 /** Direct catalog setup presets; legacy gateway links still open their existing setup. */
 export function aiProviderSetupPreset(source: string | null): {
-  provider: "openrouter" | "bedrock" | "gateway" | "local" | "google";
+  provider: "openrouter" | "bedrock" | "gateway" | "local" | "litellm" | "google";
   protocol?: AiProviderRouting["protocol"];
   label?: string;
 } | undefined {
@@ -152,7 +160,7 @@ export function aiProviderSetupPreset(source: string | null): {
     case "messages-api": return { provider: "gateway", protocol: "messages", label: "Messages API" };
     case "chat-completions-api": return { provider: "gateway", protocol: "chat", label: "Chat Completions API" };
     case "google-ai": return { provider: "google" };
-    case "google": case "openrouter": case "bedrock": case "gateway": case "local": return { provider: source };
+    case "google": case "openrouter": case "bedrock": case "gateway": case "local": case "litellm": return { provider: source };
     default: return undefined;
   }
 }
