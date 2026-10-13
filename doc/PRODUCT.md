@@ -75,8 +75,9 @@ choice stays selected while task data refreshes.
 ### Task collection creation filters
 
 Tasks and project lists hide agent-created and system-created tasks by default.
-The Filters menu's **Show agent-created tasks** checkbox includes routine runs,
-recovery/watchdog tasks, and other automation. The choice is saved per company
+The Filters menu's **show agent-created tasks** checkbox includes routine runs,
+recovery/watchdog tasks, chat-channel tasks, and other automation. Channel tasks
+remain bot-created for this filter even when a human starts the conversation. The choice is saved per company
 and collection; Clear filters restores the hidden default. Nested lists preserve
 ancestors and expandable subtasks as context without promoting unrelated automated
 work to independent results. Agent profiles, routine histories, and task-detail

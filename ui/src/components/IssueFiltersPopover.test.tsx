@@ -108,8 +108,8 @@ describe("IssueFiltersPopover", () => {
     // Status section still renders, Priority section is gated off (PAP-411).
     expect(popoverContent?.textContent).toContain("Status");
     expect(popoverContent?.textContent).not.toContain("Priority");
-    const creationToggle = Array.from(popoverContent?.querySelectorAll("label") ?? []).find((label) => label.textContent?.includes("Show agent-created tasks"));
-    expect(creationToggle?.textContent).toContain("Includes routine runs and system-created tasks.");
+    const creationToggle = Array.from(popoverContent?.querySelectorAll("label") ?? []).find((label) => label.textContent?.includes("show agent-created tasks"));
+    expect(creationToggle?.textContent).toBe("show agent-created tasks");
     expect(creationToggle?.querySelector("input")?.checked).toBe(false);
   });
 

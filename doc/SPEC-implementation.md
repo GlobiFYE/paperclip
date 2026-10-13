@@ -2191,13 +2191,12 @@ Companies may configure an optional shared API connection and model for short ac
 ### Task collection creation visibility (2026-10-13)
 
 Tasks and project collections default to hiding agent/system-created tasks and
-provide a saved **Show agent-created tasks** filter. Classify creation using
+provide a saved **show agent-created tasks** filter. Classify creation using
 creator identity and origin; assignee/responsible users do not imply human
 authorship. Routine executions remain automated even when manually triggered.
-Creator-less ordinary tasks are system-created. Inbound channel conversations
-can identify a human request through their origin without a local user account;
-outbound tool-created email conversations remain automated. Human ordinary,
-channel, and onboarding tasks remain visible. Apply collection creation filters before search limits and
+Creator-less ordinary tasks are system-created. All chat-channel tasks count as
+bot-created for this filter, including human-initiated inbound conversations.
+Human ordinary and onboarding tasks remain visible. Apply collection creation filters before search limits and
 pagination, and retrieve hierarchy context separately under existing access checks.
 Context does not count as independent results or board cards. Bounded context
 reads retain loaded rows while users reveal more of the tree.

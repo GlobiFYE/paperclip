@@ -23,6 +23,7 @@ function hydrateStorybookQueries(queryClient: ReturnType<typeof useQueryClient>)
 const creationVisibilityTasks = [
   createIssue({ id: "visibility-human", identifier: "PAP-1701", title: "Human request", createdByUserId: "user-board", createdByAgentId: null }),
   createIssue({ id: "visibility-agent", identifier: "PAP-1702", title: "Agent root task", createdByUserId: null, createdByAgentId: "agent-codex" }),
+  createIssue({ id: "visibility-channel", identifier: "PAP-1707", title: "Chat channel task", originKind: "chat_channel", createdByUserId: "user-board", createdByAgentId: null }),
   createIssue({ id: "visibility-routine", identifier: "PAP-1703", title: "Scheduled routine run", originKind: "routine_execution", createdByUserId: null, createdByAgentId: null, responsibleUserId: "user-board" }),
   createIssue({ id: "visibility-child", identifier: "PAP-1704", title: "Agent subtask", parentId: "visibility-human", createdByUserId: null, createdByAgentId: "agent-codex" }),
   createIssue({ id: "visibility-ancestor", identifier: "PAP-1705", title: "Agent ancestor", createdByUserId: null, createdByAgentId: "agent-codex" }),
@@ -72,6 +73,7 @@ const hidden: Story = {
     await expect(canvas.getByText("Agent ancestor")).toBeVisible();
     await expect(canvas.queryByText("Agent root task")).not.toBeInTheDocument();
     await expect(canvas.queryByText("Scheduled routine run")).not.toBeInTheDocument();
+    await expect(canvas.queryByText("Chat channel task")).not.toBeInTheDocument();
   },
 };
 
@@ -82,6 +84,7 @@ const included: Story = {
     const canvas = within(canvasElement);
     await expect(await canvas.findByText("Agent root task")).toBeVisible();
     await expect(canvas.getByText("Scheduled routine run")).toBeVisible();
+    await expect(canvas.getByText("Chat channel task")).toBeVisible();
   },
 };
 
@@ -93,7 +96,7 @@ const filter: Story = {
     await expect(await canvas.findByText("Human request")).toBeVisible();
     canvas.getByTitle("Filter").click();
     const page = within(canvasElement.ownerDocument.body);
-    await expect(await page.findByRole("checkbox", { name: /Show agent-created tasks/ })).not.toBeChecked();
+    await expect(await page.findByRole("checkbox", { name: /show agent-created tasks/ })).not.toBeChecked();
   },
 };
 

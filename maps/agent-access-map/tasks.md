@@ -45,6 +45,9 @@ visibility exception. Company/private-task access checks still apply. Collection
 preferences and hierarchy presentation are browser state, not additional authority.
 Source-reviewed behavior; live agent access verification remains separate.
 
+All `chat_channel` origins count as bot-created for creation visibility, including
+human-initiated conversations. Existing inbox participation remains independent.
+
 Review: `baseline`.
 
 API: `present` — representative operation IDs:

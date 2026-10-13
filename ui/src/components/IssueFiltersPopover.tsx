@@ -526,7 +526,7 @@ export function IssueFiltersPopover({
                       checked={state.showAgentCreatedTasks}
                       onCheckedChange={(checked) => onChange({ showAgentCreatedTasks: checked === true })}
                     />
-                    <span className="space-y-1"><span className="block text-sm">Show agent-created tasks</span><span className="block text-xs text-muted-foreground">Includes routine runs and system-created tasks.</span></span>
+                    <span className="text-sm">show agent-created tasks</span>
                   </label>
                 ) : null}
               </div>
