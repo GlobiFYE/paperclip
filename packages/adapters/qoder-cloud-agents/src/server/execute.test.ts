@@ -1,3 +1,6 @@
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AdapterExecutionContext } from "@paperclipai/adapter-utils";
 import { createPromptContextFixture } from "@paperclipai/adapter-utils/test-fixtures/prompt-context";
@@ -198,6 +201,19 @@ describe("qoder_cloud_agents execute", () => {
     expect(result.errorMessage).toContain("QODER_ACCESS_TOKEN is required");
     expect(qoder.calls).toHaveLength(0);
   });
+
+  it.each(["http://api.qoder.com", "api.qoder.com", "ftp://api.qoder.com"])(
+    "refuses to send the access token to the non-https apiBaseUrl %j",
+    async (apiBaseUrl) => {
+      const calls: string[] = [];
+      const ctx = createContext();
+      ctx.config.apiBaseUrl = apiBaseUrl;
+      const result = await execute(ctx, { fetchImpl: async (url) => { calls.push(url); return json({}); } });
+      expect(result.exitCode).toBe(1);
+      expect(result.errorMessage).toContain("https apiBaseUrl");
+      expect(calls).toHaveLength(0);
+    },
+  );
 
   it("rejects repository URLs Qoder cannot clone", async () => {
     const qoder = createFakeQoder();
@@ -443,14 +459,18 @@ describe("qoder_cloud_agents execute", () => {
     ["model", (config: Record<string, any>) => { config.model = "performance"; }],
     ["configured agent", (config: Record<string, any>) => { config.qoderAgentId = "agent_other"; }],
     ["configured environment", (config: Record<string, any>) => { config.environmentId = "env_other"; }],
+    ["environment setting, cleared back to the default", null],
     ["repository token", (config: Record<string, any>) => { config.env = { ...config.env, QODER_REPO_TOKEN: "ghp_rotated_secret" }; }],
   ])("does not reuse a stored session after the %s changed", async (_label, mutate) => {
-    const sessionParams = await storedSessionParams(createContext());
+    const before = createContext();
+    // The cleared-environment case starts from a session pinned to an explicit environment.
+    if (!mutate) before.config.environmentId = "env_self_hosted";
+    const sessionParams = await storedSessionParams(before);
     const qoder = createFakeQoder();
     const ctx = createContext({
       runtime: { sessionId: SESSION_ID, sessionParams, sessionDisplayId: SESSION_ID, taskKey: null },
     });
-    mutate(ctx.config);
+    mutate?.(ctx.config);
     const result = await execute(ctx, { fetchImpl: qoder.fetchImpl });
     expect(result.exitCode).toBe(0);
     expect(qoder.calls.filter((call) => call.method === "POST" && call.path === "/sessions")).toHaveLength(1);
@@ -626,16 +646,133 @@ describe("qoder_cloud_agents execute", () => {
     expect(result.errorMessage).toBe("Model overloaded");
   });
 
-  it("fails the run when the stream is lost while the turn is still running", async () => {
+  it("stops the remote turn before failing a run whose stream was lost mid-turn", async () => {
+    const running = () => json({ id: SESSION_ID, status: "running", archived_at: null });
+    const idle = () => json({ id: SESSION_ID, status: "idle", archived_at: null });
     const qoder = createFakeQoder({
       "GET /sessions/:id/events/stream": () => { throw new Error("socket hang up"); },
-      "GET /sessions/:id": () => json({ id: SESSION_ID, status: "running", archived_at: null }),
+      // Still running when the stream is given up; idle once the cancel lands.
+      "GET /sessions/:id": [running, running, idle],
     });
     const result = await execute(createContext(), { fetchImpl: qoder.fetchImpl, sleep: noSleep });
     expect(result.exitCode).toBe(1);
     expect(result.errorMessage).toContain("Lost the Qoder event stream");
     expect(result.errorMessage).toContain("socket hang up");
+    expect(result.errorMessage).not.toContain("could not confirm");
     expect(result.sessionId).toBe(SESSION_ID);
+    expect(qoder.find("POST", `/sessions/${SESSION_ID}/cancel`)).toHaveLength(1);
+    expect(result.resultJson).toMatchObject({ qoderTurnStopped: true });
+  });
+
+  it("says so when a failed run's remote turn cannot be confirmed stopped", async () => {
+    const qoder = createFakeQoder({
+      "GET /sessions/:id/events/stream": () => { throw new Error("socket hang up"); },
+      "GET /sessions/:id": () => json({ id: SESSION_ID, status: "running", archived_at: null }),
+    });
+    const ctx = createContext();
+    const result = await execute(ctx, { fetchImpl: qoder.fetchImpl, sleep: noSleep });
+    expect(result.exitCode).toBe(1);
+    expect(result.errorMessage).toContain("Lost the Qoder event stream");
+    expect(result.errorMessage).toContain("could not confirm");
+    expect(result.resultJson).toMatchObject({ qoderTurnStopped: false });
+    expect(qoder.find("POST", `/sessions/${SESSION_ID}/cancel`)).toHaveLength(1);
+    expect(stdoutEvents(ctx).at(-1)).toMatchObject({ status: "error" });
+  });
+
+  it("does not try to cancel when the failure is an auth error it cannot act on", async () => {
+    const qoder = createFakeQoder({
+      "POST /sessions/:id/events": () => apiError(401, "authentication_error", "Invalid token."),
+    });
+    const result = await execute(createContext(), { fetchImpl: qoder.fetchImpl });
+    expect(result.exitCode).toBe(1);
+    expect(qoder.find("POST", `/sessions/${SESSION_ID}/cancel`)).toHaveLength(0);
+    expect(result.resultJson).not.toHaveProperty("qoderTurnStopped");
+  });
+
+  const runtimeTools = (baseUrl: string) => ({
+    version: 1 as const,
+    guidance: "Use connection tools.",
+    mcpEndpoint: `${baseUrl}/mcp/runtime-tools`,
+    rest: {
+      connectionsSearch: `${baseUrl}/runtime-tools/connections/search`,
+      connectionRequest: `${baseUrl}/runtime-tools/connections/request`,
+    },
+    bearerToken: "runtime-tools-secret-token",
+    expiresAt: "2026-01-01T01:00:00.000Z",
+    tools: ["connections_search", "connection_request"] as const,
+  });
+
+  it("sends run-scoped connection tools in the prompt and keeps the token out of the run log", async () => {
+    const qoder = createFakeQoder();
+    const ctx = createContext({ runtimeTools: runtimeTools("https://paperclip.example.com/api") });
+    const result = await execute(ctx, { fetchImpl: qoder.fetchImpl });
+    expect(result.exitCode).toBe(0);
+    const prompt = sentPrompt(qoder);
+    expect(prompt).toContain("POST https://paperclip.example.com/api/runtime-tools/connections/search");
+    expect(prompt).toContain("POST https://paperclip.example.com/api/runtime-tools/connections/request");
+    expect(prompt).toContain("Authorization: Bearer runtime-tools-secret-token");
+    expect(String(ctx.meta[0].prompt)).toContain("Authorization: Bearer [redacted]");
+    expect(JSON.stringify(ctx.meta)).not.toContain("runtime-tools-secret-token");
+    expect(JSON.stringify(ctx.logs)).not.toContain("runtime-tools-secret-token");
+    expect(JSON.stringify(result)).not.toContain("runtime-tools-secret-token");
+    const createdSession = qoder.calls.find((call) => call.method === "POST" && call.path === "/sessions")?.body;
+    expect(JSON.stringify(createdSession)).not.toContain("runtime-tools-secret-token");
+  });
+
+  it("reads connection tools from the invocation context and never echoes the prompt event to the log", async () => {
+    const qoder = createFakeQoder({
+      "GET /sessions/:id/events/stream": () => sse([
+        { id: "evt_user", type: "user.message", content: [{ type: "text", text: "Bearer runtime-tools-secret-token" }] },
+        ...DEFAULT_TURN,
+      ]),
+    });
+    const ctx = createContext();
+    ctx.context = { ...ctx.context, paperclipRuntimeTools: runtimeTools("https://paperclip.example.com/api") };
+    const result = await execute(ctx, { fetchImpl: qoder.fetchImpl });
+    expect(result.exitCode).toBe(0);
+    expect(sentPrompt(qoder)).toContain("Authorization: Bearer runtime-tools-secret-token");
+    expect(JSON.stringify(ctx.logs)).not.toContain("runtime-tools-secret-token");
+  });
+
+  it.each(["http://localhost:3100/api", "http://127.0.0.1:3100/api", "http://[::1]:3100/api"])(
+    "does not expose the connection token when Paperclip is only reachable at %s",
+    async (baseUrl) => {
+      const qoder = createFakeQoder();
+      const ctx = createContext({ runtimeTools: runtimeTools(baseUrl) });
+      const result = await execute(ctx, { fetchImpl: qoder.fetchImpl });
+      expect(result.exitCode).toBe(0);
+      expect(sentPrompt(qoder)).not.toContain("runtime-tools-secret-token");
+      expect((ctx.meta[0].commandNotes as string[]).join("\n")).toContain("loopback address Qoder cannot reach");
+    },
+  );
+
+  it("inlines the other instructions bundle files instead of pointing at a host path", async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "qoder-instructions-"));
+    try {
+      await fs.mkdir(path.join(dir, "playbooks"));
+      await fs.mkdir(path.join(dir, ".hidden"));
+      await fs.writeFile(path.join(dir, "AGENTS.md"), "Entry instructions. See SOUL.md and playbooks/review.md.");
+      await fs.writeFile(path.join(dir, "SOUL.md"), "Soul file body.");
+      await fs.writeFile(path.join(dir, "playbooks", "review.md"), "Review playbook body.");
+      await fs.writeFile(path.join(dir, "logo.png"), "not text");
+      await fs.writeFile(path.join(dir, ".hidden", "secret.md"), "hidden body");
+      await fs.writeFile(path.join(dir, "huge.md"), "x".repeat(130_000));
+      const qoder = createFakeQoder();
+      const ctx = createContext();
+      ctx.config.instructionsFilePath = path.join(dir, "AGENTS.md");
+      const result = await execute(ctx, { fetchImpl: qoder.fetchImpl });
+      expect(result.exitCode).toBe(0);
+      const prompt = sentPrompt(qoder);
+      expect(prompt).toContain("Entry instructions.");
+      expect(prompt).toContain('<file path="SOUL.md">\nSoul file body.\n</file>');
+      expect(prompt).toContain('<file path="playbooks/review.md">\nReview playbook body.\n</file>');
+      expect(prompt).toContain("too large to include: huge.md");
+      expect(prompt).not.toContain("not text");
+      expect(prompt).not.toContain("hidden body");
+      expect(prompt).not.toContain(dir);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
   });
 
   it("explains an expired or wrong-region token", async () => {

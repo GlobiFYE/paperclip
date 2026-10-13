@@ -5,7 +5,7 @@ import type {
 } from "@paperclipai/adapter-utils";
 import { asString, parseObject } from "@paperclipai/adapter-utils/server-utils";
 import { DEFAULT_QODER_API_BASE_URL } from "../index.js";
-import { createQoderClient, normalizeQoderApiBaseUrl, type QoderFetch } from "./client.js";
+import { createQoderClient, isHttpsUrl, normalizeQoderApiBaseUrl, type QoderFetch } from "./client.js";
 import { parseHttpRepoUrl } from "./repo-url.js";
 
 function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentTestResult["status"] {
@@ -65,7 +65,18 @@ export async function testEnvironment(
         });
   }
 
-  if (token) {
+  const secureApiBaseUrl = isHttpsUrl(apiBaseUrl);
+  if (!secureApiBaseUrl) {
+    checks.push({
+      code: "qoder_cloud_agents_api_base_url_insecure",
+      level: "error",
+      message: "apiBaseUrl must be an https URL.",
+      detail: apiBaseUrl,
+      hint: "Paperclip does not send the Qoder access token over an unencrypted connection.",
+    });
+  }
+
+  if (token && secureApiBaseUrl) {
     const client = createQoderClient({
       apiBaseUrl,
       token,

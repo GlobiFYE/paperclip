@@ -34,6 +34,15 @@ export function normalizeQoderApiBaseUrl(raw: string, fallback: string): string 
   return value.replace(/\/+$/, "").replace(/\/api\/v1\/cloud$/, "");
 }
 
+/** Every request carries the access token, so anything but TLS would expose it. */
+export function isHttpsUrl(value: string): boolean {
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 export type QoderClient = ReturnType<typeof createQoderClient>;
 
 export function createQoderClient(input: {

@@ -8,6 +8,7 @@ describe("qoderCloudAgents sessionCodec", () => {
       qoderAgentId: "agent_1",
       managedAgent: true,
       environmentId: "env_1",
+      environmentAutoSelected: true,
       apiBaseUrl: "https://api.qoder.com",
       model: "ultimate",
       repoUrl: "https://github.com/paperclipai/paperclip.git",
@@ -22,6 +23,7 @@ describe("qoderCloudAgents sessionCodec", () => {
       qoderSessionId: "sess_1",
       qoderAgentId: "agent_1",
       managedAgent: true,
+      environmentAutoSelected: true,
       environmentId: "env_1",
       apiBaseUrl: "https://api.qoder.com",
       model: "ultimate",
@@ -39,6 +41,7 @@ describe("qoderCloudAgents sessionCodec", () => {
     expect(sessionCodec.deserialize({ sessionId: "sess_legacy" })).toEqual({
       qoderSessionId: "sess_legacy",
       managedAgent: false,
+      environmentAutoSelected: false,
     });
     expect(sessionCodec.deserialize({ qoderAgentId: "agent_1" })).toBeNull();
     expect(sessionCodec.deserialize(null)).toBeNull();

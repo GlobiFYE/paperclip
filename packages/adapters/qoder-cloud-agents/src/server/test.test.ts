@@ -84,6 +84,17 @@ describe("qoder_cloud_agents testEnvironment", () => {
     },
   );
 
+  it("refuses to send the token to a non-https apiBaseUrl", async () => {
+    const fake = fakeFetch({});
+    const result = await testEnvironment({
+      ...baseCtx,
+      config: { env: { QODER_ACCESS_TOKEN: "pt-secret" }, apiBaseUrl: "http://api.qoder.com" },
+    }, { fetchImpl: fake.fetchImpl });
+    expect(result.status).toBe("fail");
+    expect(result.checks.map((check) => check.code)).toEqual(["qoder_cloud_agents_api_base_url_insecure"]);
+    expect(fake.urls).toHaveLength(0);
+  });
+
   it("warns when the configured environment is self-hosted", async () => {
     const fake = fakeFetch({
       "/agents": () => json({ data: [] }),

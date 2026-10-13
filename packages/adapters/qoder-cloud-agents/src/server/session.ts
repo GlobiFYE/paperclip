@@ -27,6 +27,7 @@ function normalize(raw: unknown): Record<string, unknown> | null {
     qoderSessionId,
     ...(qoderAgentId ? { qoderAgentId } : {}),
     managedAgent: record.managedAgent === true,
+    environmentAutoSelected: record.environmentAutoSelected === true,
     ...(environmentId ? { environmentId } : {}),
     ...(apiBaseUrl ? { apiBaseUrl } : {}),
     ...(model ? { model } : {}),

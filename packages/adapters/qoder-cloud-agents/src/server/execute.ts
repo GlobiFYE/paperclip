@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { AdapterExecutionContext, AdapterExecutionResult, AdapterInvocationMeta } from "@paperclipai/adapter-utils";
+import type {
+  AdapterExecutionContext,
+  AdapterExecutionResult,
+  AdapterInvocationMeta,
+  AdapterRuntimeToolAccess,
+} from "@paperclipai/adapter-utils";
 import {
   DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   DEFAULT_PAPERCLIP_CONVERSATION_PROMPT_TEMPLATE,
@@ -22,6 +27,7 @@ import { DEFAULT_QODER_API_BASE_URL, DEFAULT_QODER_CLOUD_AGENTS_MODEL } from "..
 import {
   QoderApiError,
   createQoderClient,
+  isHttpsUrl,
   normalizeQoderApiBaseUrl,
   type QoderClient,
   type QoderFetch,
@@ -39,6 +45,8 @@ type QoderCloudAgentsSession = {
   qoderAgentId: string;
   managedAgent: boolean;
   environmentId: string;
+  /** True when Paperclip picked the environment because none was configured. */
+  environmentAutoSelected: boolean;
   apiBaseUrl: string;
   model?: string;
   repoUrl?: string;
@@ -74,6 +82,11 @@ const MAX_STREAM_RECONNECTS = 5;
 const STREAM_RECONNECT_BASE_DELAY_MS = 1_000;
 const CANCEL_CONFIRM_TIMEOUT_MS = 30_000;
 const CANCEL_CONFIRM_POLL_INTERVAL_MS = 1_000;
+const CANCEL_CONFIRM_MAX_POLLS = CANCEL_CONFIRM_TIMEOUT_MS / CANCEL_CONFIRM_POLL_INTERVAL_MS;
+const INSTRUCTION_BUNDLE_EXTENSIONS = new Set([".md", ".mdx", ".txt", ".json", ".yaml", ".yml", ".toml"]);
+const INSTRUCTION_BUNDLE_MAX_FILES = 50;
+const INSTRUCTION_BUNDLE_MAX_CHARS = 120_000;
+const REDACTED = "[redacted]";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
@@ -235,6 +248,69 @@ function buildRunContextNote(ctx: AdapterExecutionContext, sessionEnv: Record<st
   return lines.join("\n");
 }
 
+async function readInstructionBundleFiles(
+  entryPath: string,
+): Promise<{ files: Array<{ relativePath: string; text: string }>; omitted: string[] }> {
+  const dir = path.dirname(entryPath);
+  const entries = await fs.readdir(dir, { recursive: true, withFileTypes: true }).catch(() => []);
+  const candidates = entries
+    .filter((entry) => entry.isFile() && INSTRUCTION_BUNDLE_EXTENSIONS.has(path.extname(entry.name).toLowerCase()))
+    .map((entry) => path.join(entry.parentPath, entry.name))
+    .filter((filePath) => path.resolve(filePath) !== path.resolve(entryPath))
+    .map((filePath) => ({ filePath, relativePath: path.relative(dir, filePath).split(path.sep).join("/") }))
+    .filter((file) => !file.relativePath.split("/").some((part) => part.startsWith(".") || part === "node_modules"))
+    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
+
+  const files: Array<{ relativePath: string; text: string }> = [];
+  const omitted: string[] = [];
+  let chars = 0;
+  for (const candidate of candidates) {
+    const text = await fs.readFile(candidate.filePath, "utf8").catch(() => null);
+    if (text === null) continue;
+    if (files.length >= INSTRUCTION_BUNDLE_MAX_FILES || chars + text.length > INSTRUCTION_BUNDLE_MAX_CHARS) {
+      omitted.push(candidate.relativePath);
+      continue;
+    }
+    files.push({ relativePath: candidate.relativePath, text });
+    chars += text.length;
+  }
+  return { files, omitted };
+}
+
+function isLoopbackUrl(raw: string): boolean {
+  try {
+    const host = new URL(raw).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    return host === "localhost" || host.endsWith(".localhost") || host === "::1" || host === "0.0.0.0" || /^127\./.test(host);
+  } catch {
+    return true;
+  }
+}
+
+function readRuntimeTools(ctx: AdapterExecutionContext): AdapterRuntimeToolAccess | null {
+  const tools = asRecord(ctx.runtimeTools ?? ctx.context.paperclipRuntimeTools);
+  const rest = asRecord(tools?.rest);
+  if (!tools || !rest) return null;
+  if (!trimNullable(tools.bearerToken) || !trimNullable(rest.connectionsSearch) || !trimNullable(rest.connectionRequest)) {
+    return null;
+  }
+  return tools as unknown as AdapterRuntimeToolAccess;
+}
+
+/**
+ * Run-scoped connection tools cannot live in the session env, which Qoder
+ * fixes at creation, so each turn carries them in its prompt.
+ */
+function buildRuntimeToolsNote(tools: AdapterRuntimeToolAccess): string {
+  return [
+    "Paperclip connection tools for this run:",
+    `- connections_search: POST ${tools.rest.connectionsSearch}`,
+    `- connection_request: POST ${tools.rest.connectionRequest}`,
+    ...(trimNullable(tools.mcpEndpoint) ? [`- MCP endpoint: ${tools.mcpEndpoint}`] : []),
+    `Send the header "Authorization: Bearer ${tools.bearerToken}" with each request.`,
+    `The token is valid for this run only${trimNullable(tools.expiresAt) ? ` and expires at ${tools.expiresAt}` : ""}. Do not write it to files or output.`,
+  ].join("\n");
+}
+
 async function buildInstructionsPrefix(
   config: Record<string, unknown>,
   onLog: AdapterExecutionContext["onLog"],
@@ -246,14 +322,33 @@ async function buildInstructionsPrefix(
 
   try {
     const contents = await fs.readFile(instructionsFilePath, "utf8");
-    const instructionsDir = `${path.dirname(instructionsFilePath)}/`;
-    const prefix = `${contents.trim()}\n\nThe above agent instructions were loaded from ${instructionsFilePath}. Resolve any relative file references from ${instructionsDir}.\n`;
+    const entryName = path.basename(instructionsFilePath);
+    // The remote container cannot read the Paperclip host, so the rest of the
+    // bundle travels in the prompt instead of as a host path to resolve.
+    const bundle = await readInstructionBundleFiles(instructionsFilePath);
+    const sections = [
+      contents.trim(),
+      `The above agent instructions were loaded from ${entryName}. This session runs in a remote container that cannot read the Paperclip host filesystem.`,
+    ];
+    if (bundle.files.length > 0) {
+      sections.push(
+        "The other files of the instructions bundle follow. Resolve relative file references against them.",
+        ...bundle.files.map((file) => `<file path="${file.relativePath}">\n${file.text.trim()}\n</file>`),
+      );
+    }
+    if (bundle.omitted.length > 0) {
+      sections.push(`These bundle files were too large to include: ${bundle.omitted.join(", ")}.`);
+    }
+    const prefix = `${sections.join("\n\n")}\n`;
     return {
       prefix,
       chars: prefix.length,
       notes: [
         `Loaded agent instructions from ${instructionsFilePath}`,
-        `Prepended instructions + path directive to prompt (relative references from ${instructionsDir}).`,
+        bundle.files.length > 0
+          ? `Inlined ${bundle.files.length} more instructions bundle file(s): ${bundle.files.map((file) => file.relativePath).join(", ")}`
+          : "Prepended instructions to prompt.",
+        ...(bundle.omitted.length > 0 ? [`Instructions bundle files not inlined (size limit): ${bundle.omitted.join(", ")}`] : []),
       ],
     };
   } catch (err) {
@@ -291,6 +386,7 @@ function readSession(params: Record<string, unknown> | null): QoderCloudAgentsSe
     qoderAgentId,
     managedAgent: record.managedAgent === true,
     environmentId,
+    environmentAutoSelected: record.environmentAutoSelected === true,
     apiBaseUrl,
     ...(model ? { model } : {}),
     ...(repoUrl ? { repoUrl } : {}),
@@ -323,7 +419,12 @@ function sessionMatches(
     // A Qoder session pins its agent snapshot, so a model change needs a new session.
     if (!session.managedAgent || session.model !== expected.model) return false;
   }
-  if (expected.configuredEnvironmentId && session.environmentId !== expected.configuredEnvironmentId) return false;
+  if (expected.configuredEnvironmentId) {
+    if (session.environmentId !== expected.configuredEnvironmentId) return false;
+  } else if (!session.environmentAutoSelected) {
+    // Clearing environmentId must leave a session that was pinned to an explicit environment.
+    return false;
+  }
   return (session.repoUrl ?? null) === (expected.repo?.url ?? null)
     && (session.repoRef ?? null) === (expected.repo?.ref ?? null)
     && (session.repoMountPath ?? null) === (expected.repo?.mountPath ?? null);
@@ -496,6 +597,8 @@ async function streamTurn(input: {
         // Delta frames are stream-only previews of a buffered event that follows.
         if (!event || !type || type === "event_start" || type === "event_delta") continue;
         reconnects = 0;
+        // The prompt is already in the invocation metadata, with run-scoped credentials redacted.
+        if (type === "user.message") continue;
         await onLog("stdout", eventLine({ type: "qoder_cloud_agents.event", event }));
         if (type === "agent.message") {
           lastMessage = contentText(event.content) || lastMessage;
@@ -609,6 +712,11 @@ export async function execute(
   }
 
   const apiBaseUrl = normalizeQoderApiBaseUrl(asString(config.apiBaseUrl, ""), DEFAULT_QODER_API_BASE_URL);
+  if (!isHttpsUrl(apiBaseUrl)) {
+    return configError(
+      `qoder_cloud_agents requires an https apiBaseUrl; refusing to send QODER_ACCESS_TOKEN to "${apiBaseUrl}".`,
+    );
+  }
   const configuredAgentId = trimNullable(config.qoderAgentId);
   const configuredEnvironmentId = trimNullable(config.environmentId);
   const model = asString(config.model, "").trim() || DEFAULT_QODER_CLOUD_AGENTS_MODEL;
@@ -674,11 +782,12 @@ export async function execute(
     const confirmSignal = AbortSignal.timeout(CANCEL_CONFIRM_TIMEOUT_MS);
     try {
       await client.cancelSession(sessionId);
-      for (;;) {
+      for (let poll = 0; poll < CANCEL_CONFIRM_MAX_POLLS; poll += 1) {
         const status = trimNullable((await client.getSession(sessionId, confirmSignal)).status);
         if (!status || !BUSY_SESSION_STATUSES.has(status)) return true;
         await sleep(CANCEL_CONFIRM_POLL_INTERVAL_MS, confirmSignal);
       }
+      throw new Error("the session still reports a running turn");
     } catch (err) {
       await onLog(
         "stderr",
@@ -732,6 +841,9 @@ export async function execute(
       (canReuseSession && wakePrompt.length > 0) || isPaperclipRecoveryWakePayload(context.paperclipWake)
         ? ""
         : renderTemplate(promptTemplate, templateData).trim();
+    const runtimeTools = readRuntimeTools(ctx);
+    // A loopback Paperclip URL is unreachable from Qoder, so the token would be exposed for nothing.
+    const runtimeToolsReachable = Boolean(runtimeTools && !isLoopbackUrl(runtimeTools.rest.connectionsSearch));
     const prompt = joinPromptSections([
       selectInitialCommunicationGuidance(context, { resumedSession: canReuseSession }),
       instructions.prefix,
@@ -739,6 +851,7 @@ export async function execute(
       wakePrompt,
       taskContextNote,
       buildRunContextNote(ctx, sessionEnv, repo),
+      runtimeTools && runtimeToolsReachable ? buildRuntimeToolsNote(runtimeTools) : "",
       renderedPrompt,
     ]);
     const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
@@ -762,8 +875,14 @@ export async function execute(
           `Qoder API: ${apiBaseUrl}`,
           repo ? `Repository: ${repo.url}${repo.ref ? ` @ ${repo.ref}` : ""} -> ${repo.mountPath}` : "Repository: none",
           ...(droppedEnvKeys.length > 0 ? [`Env vars not forwarded: ${droppedEnvKeys.join(", ")}`] : []),
+          ...(runtimeTools
+            ? [runtimeToolsReachable
+                ? "Paperclip connection tools: sent in the prompt for this run"
+                : "Paperclip connection tools: not sent, because the Paperclip API URL is a loopback address Qoder cannot reach"]
+            : []),
         ],
-        prompt: finalPrompt,
+        // The run log must not keep the run-scoped connection token.
+        prompt: runtimeTools ? finalPrompt.split(runtimeTools.bearerToken).join(REDACTED) : finalPrompt,
         promptMetrics: {
           promptChars: finalPrompt.length,
           instructionsChars: instructions.chars,
@@ -810,6 +929,7 @@ export async function execute(
         qoderAgentId,
         managedAgent: !configuredAgentId,
         environmentId,
+        environmentAutoSelected: !configuredEnvironmentId,
         apiBaseUrl,
         ...(configuredAgentId ? {} : { model }),
         ...(repo ? { repoUrl: repo.url, repoMountPath: repo.mountPath, ...(repo.ref ? { repoRef: repo.ref } : {}) } : {}),
@@ -933,10 +1053,17 @@ export async function execute(
     const reason = err instanceof QoderApiError && err.status === 401
       ? `${error} Check that QODER_ACCESS_TOKEN is valid for ${apiBaseUrl}; service account tokens expire after at most 12 hours.`
       : error;
+    // Paperclip stops collecting here, so the remote turn must not keep running
+    // tools and spending credits. An auth or missing-session error cannot be cancelled.
+    const cancellable = !(err instanceof QoderApiError && [401, 403, 404].includes(err.status));
+    const remoteStopped = turnPossiblyAccepted && cancellable ? await cancelRemoteTurn() : true;
+    const message = remoteStopped
+      ? reason
+      : `${reason} Paperclip could not confirm that the turn on Qoder session ${session?.qoderSessionId ?? "unknown"} stopped.`;
     if (turnStarted) {
-      await onLog("stdout", eventLine({ type: "qoder_cloud_agents.result", status: "error", error: reason }));
+      await onLog("stdout", eventLine({ type: "qoder_cloud_agents.result", status: "error", error: message }));
     }
-    return failure(reason);
+    return failure(message, turnPossiblyAccepted && cancellable ? { resultJson: { qoderTurnStopped: remoteStopped } } : {});
   } finally {
     if (timeoutTimer) clearTimeout(timeoutTimer);
     ctx.signal?.removeEventListener("abort", onRunCancelled);
