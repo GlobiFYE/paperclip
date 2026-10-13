@@ -1,3 +1,6 @@
+import { prepareSlackInventory, createSlackInventory } from "./chat-channels/slack/inventory.js";
+import { prepareGitHubInventory } from "./chat-channels/github/inventory.js";
+import { prepareDiscordInventory } from "./chat-channels/discord/inventory.js";
 import type { VerifiedProviderIdentity } from "./chat-channels/runtime-types.js";
 import { verifySlackCredentials } from "./chat-channels/slack/credentials.js";
 import { verifyDiscordCredentials } from "./chat-channels/discord/credentials.js";
@@ -332,10 +335,9 @@ import {
   restoreGitHubAttachmentLimitOmissions,
 } from "./chat-github-attachments.js";
 import { getExternalChannelBindingSummary } from "./chat-channel-binding.js";
-import { discoverDedicatedGitHubAppInstallation, getSlackBotChannel, listGitHubInstallationRepositories, listSlackBotChannels, type ChatProviderInventoryResult } from "./chat-provider-inventory.js";
+import { type ChatProviderInventoryResult } from "./chat-provider-inventory.js";
 import {
   discordMarkdownRequiresAttachment,
-  listDiscordBotChannels,
 } from "./chat-discord.js";
 import {
   renderPublicationTransportText,
@@ -1415,6 +1417,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   const persistence = createChatSdkStatePersistence(db);
   const fetchImpl = options.fetch ?? globalThis.fetch;
   const { inspectPhotonCredentials, verifyPhotonCredentials } = createPhotonCredentialChecks(fetchImpl);
+  const { hydrateSlackResourceLabel } = createSlackInventory(db, { endpointRecord, resolveCredentials, fetchImpl });
   const configuredPublicBaseUrl = absoluteBaseUrl(options.publicBaseUrl);
   const configuredWebhookPublicBaseUrl = parseChatWebhookPublicBaseUrl(options.webhookPublicBaseUrl);
   // A warm Cloud instance is constructed before it receives its signed claim.
@@ -3167,44 +3170,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     );
   }
 
-  async function hydrateSlackResourceLabel(
-    endpointId: string,
-    providerResourceId: string,
-  ): Promise<void> {
-    const record = await endpointRecord(endpointId);
-    if (
-      !record ||
-      record.endpoint.provider !== "slack" ||
-      record.endpoint.status === "archived" ||
-      record.endpoint.status === "revoked"
-    ) {
-      return;
-    }
-    const credentials = await resolveCredentials(record.endpoint);
-    const resource = await getSlackBotChannel({
-      botToken: credentials.botToken,
-      channelId: providerResourceId,
-      fetch: fetchImpl,
-    });
-    if (
-      !resource ||
-      slackResourceLabelIsFallback(providerResourceId, resource.label)
-    )
-      return;
-    await db
-      .update(chatEndpointResources)
-      .set({ label: resource.label, updatedAt: new Date() })
-      .where(
-        and(
-          eq(chatEndpointResources.companyId, record.endpoint.companyId),
-          eq(chatEndpointResources.endpointId, endpointId),
-          eq(chatEndpointResources.type, "channel"),
-          eq(chatEndpointResources.providerResourceId, providerResourceId),
-          eq(chatEndpointResources.availability, "available"),
-        ),
-      );
-  }
-
   async function prepareProviderInventory(
     endpoint: EndpointRow,
     credentials: Record<string, string>,
@@ -3214,70 +3179,9 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     managementUrl?: string;
   }> {
     try {
-      if (endpoint.provider === "slack") {
-        return {
-          credentials,
-          inventory: await listSlackBotChannels({
-            botToken: credentials.botToken,
-            fetch: fetchImpl,
-          }),
-        };
-      }
-      if (endpoint.provider === "github") {
-        const appJwt = githubAppJwt(credentials.appId, credentials.privateKey);
-        const installation = await discoverDedicatedGitHubAppInstallation({
-          appJwt,
-          fetch: fetchImpl,
-        });
-        const preparedCredentials = {
-          ...credentials,
-          installationId: installation.installationId,
-        };
-        const inventory = await listGitHubInstallationRepositories({
-          appJwt,
-          installationId: installation.installationId,
-          fetch: fetchImpl,
-        });
-        return {
-          credentials: preparedCredentials,
-          managementUrl: installation.accountType === "Organization" && installation.accountLabel
-            ? `https://github.com/organizations/${encodeURIComponent(installation.accountLabel)}/settings/installations/${installation.installationId}`
-            : `https://github.com/settings/installations/${installation.installationId}`,
-          inventory: {
-            ...inventory,
-            resources: inventory.resources.map((resource) => {
-              const fullName =
-                typeof resource.metadata?.fullName === "string"
-                  ? resource.metadata.fullName
-                  : resource.label.includes("/")
-                    ? resource.label
-                    : null;
-              return fullName
-                ? {
-                    ...resource,
-                    providerResourceId: fullName.toLowerCase(),
-                    metadata: {
-                      ...resource.metadata,
-                      providerRepositoryId: resource.providerResourceId,
-                      fullName,
-                    },
-                  }
-                : resource;
-            }),
-          },
-        };
-      }
-      if (endpoint.provider === "discord") {
-        return {
-          credentials,
-          inventory: await listDiscordBotChannels({
-            botUserId: credentials.applicationId,
-            botToken: credentials.botToken,
-            fetch: fetchImpl,
-            guildId: credentials.guildId,
-          }),
-        };
-      }
+      if (endpoint.provider === "slack") return prepareSlackInventory(credentials, fetchImpl);
+      if (endpoint.provider === "github") return prepareGitHubInventory(credentials, fetchImpl);
+      if (endpoint.provider === "discord") return prepareDiscordInventory(credentials, fetchImpl);
       return { credentials, inventory: null };
     } catch (error) {
       throw unprocessable(redactError(error), {

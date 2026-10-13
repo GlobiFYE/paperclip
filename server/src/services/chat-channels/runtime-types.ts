@@ -60,3 +60,9 @@ export type VerifiedProviderIdentity = {
   botUsername?: string | null;
   botLabel?: string | null;
 };
+
+export type PreparedProviderInventory = {
+  credentials: Record<string, string>;
+  inventory: import("../chat-provider-inventory.js").ChatProviderInventoryResult | null;
+  managementUrl?: string;
+};
