@@ -64,12 +64,12 @@ export function FeatureMapIndex() {
       const related = entries.filter(entry => entry.capabilities.some(ref => ref.startsWith(`${feature.id}/`)));
       return [section.title, feature.title, feature.id, feature.description,
         ...feature.capabilities.flatMap(capability => [capability.id, capability.label, capability.description]),
-        ...related.flatMap(entry => [entry.purpose, entry.status, entry.implementation]),
+        ...related.flatMap(entry => [entry.file, entry.purpose, entry.status, entry.implementation]),
       ].join(" ").toLowerCase().includes(search);
     }),
   })).filter(section => section.features.length), [search]);
   const foundations = examples.filter(entry => !entry.capabilities.length
-    && ["Shared foundations", entry.purpose, entry.status, entry.implementation, entry.boundary].join(" ").toLowerCase().includes(search));
+    && ["Shared foundations", entry.file, entry.purpose, entry.status, entry.implementation, entry.boundary].join(" ").toLowerCase().includes(search));
   return (
     <main className="paperclip-story__inner space-y-6 p-6">
       <header className="space-y-3">

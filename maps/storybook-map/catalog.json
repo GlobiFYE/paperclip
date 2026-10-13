@@ -10,7 +10,7 @@
       "ui/storybook/generated/feature-index.json",
       "ui/storybook/support/feature-map/FeatureOverview.tsx"
     ],
-    "fingerprint": "79c2cf9c8c81c4bea76ae463617af356a4b3cd0cf02b9d876eb0db08ac4a1c8d"
+    "fingerprint": "8454a7897e390c824f7bd2120009a8454ae60eeae5f4d562f556f8839b716daf"
   },
   "entries": [
     {
@@ -3328,7 +3328,7 @@
         "ui/storybook/generated/feature-index.json"
       ],
       "exception": "Shared foundations or contributor guide; no single business capability owns this suite.",
-      "fingerprint": "fea4476f006e60bdce756ca01e6348fe0e13234e461bbac3a0cd712300c17135",
+      "fingerprint": "e8dad5fdfca60cad92af994a3d9defbe847894610c368a0edbd1900837c03743",
       "stableId": "overview-storybook-guide",
       "sidebarTitle": "Overview/Storybook Guide"
     },
