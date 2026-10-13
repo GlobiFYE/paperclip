@@ -4693,8 +4693,8 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
     }
     if (unownedEmbeddedAssetRefCount > 0) {
       warnings.push(unownedEmbeddedAssetRefCount === 1
-        ? "1 embedded image reference points at an asset that does not belong to this company or no longer exists; its image was not exported."
-        : `${unownedEmbeddedAssetRefCount} embedded image references point at assets that do not belong to this company or no longer exist; their images were not exported.`);
+        ? "1 embedded image reference points at an asset that is unavailable for export (missing, outside this company, or a private API response snapshot); its image was not exported."
+        : `${unownedEmbeddedAssetRefCount} embedded image references point at assets that are unavailable for export (missing, outside this company, or private API response snapshots); their images were not exported.`);
     }
 
     const paperclipExtensionPath = ".paperclip.yaml";
