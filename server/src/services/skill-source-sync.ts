@@ -1,3 +1,4 @@
+import { lockProjectRootMutation } from './projects.js';
 import { reserveInitialSkillWork, settleInitialSkillWork } from './skill-source-import-budget.js';
 import { admitDeferredSkillImports, lockSkillImportQueue, SKILL_IMPORT_CAPACITY_WAIT } from './skill-source-import-queue.js';
 import { randomUUID } from 'node:crypto';
@@ -56,7 +57,18 @@ export async function adoptProjectSkillRepository(db: Db, companyId: string, wor
   await authorize('skills.import', { sourceType: 'git', sourceLocator: repository.repositoryUrl });
   return db.transaction(async tx => {
     const database = tx as unknown as Db;
-    // Match attachment ordering: run identity, company queue, source/binding.
+    // Follow the editor: root provenance, project, workspace, then queue/binding.
+    const project = await lockProjectRootMutation(tx, workspace.projectId);
+    if (!project || project.companyId !== companyId) throw notFound('Project repository not found');
+    const [currentWorkspace] = await tx.select().from(projectWorkspaces).where(and(
+      eq(projectWorkspaces.companyId, companyId), eq(projectWorkspaces.projectId, project.id), eq(projectWorkspaces.id, workspaceId))).for('update');
+    if (!currentWorkspace) throw notFound('Project repository not found');
+    const currentRepository = projectSkillRepository(currentWorkspace);
+    if (!currentRepository || currentRepository.repositoryUrl !== repository.repositoryUrl || currentRepository.trackingRef !== repository.trackingRef) {
+      throw conflict('Project repository changed. Reload Sources and try again.');
+    }
+    if (!(await authorizationService(database).decide({ actor, action: 'project:read', resource: { type: 'project', companyId, projectId: project.id } })).allowed) throw notFound('Project repository not found');
+    // Capture the setup before the company queue, consistently with attachment.
     const setup = await projectSkillSetupIdentity(database, companyId);
     await lockSkillImportQueue(database, companyId);
     const [previous] = await tx.select({ bindingId: projectSkillSources.id, removedAt: companySkillSources.removedAt })
@@ -70,7 +82,7 @@ export async function adoptProjectSkillRepository(db: Db, companyId: string, wor
       await tx.update(projectSkillSources).set({ workspaceId: null, active: false })
         .where(eq(projectSkillSources.id, previous.bindingId));
     }
-    const binding = await enqueueProjectSkillSource(database, workspace, setup);
+    const binding = await enqueueProjectSkillSource(database, currentWorkspace, setup);
     if (!binding) throw notFound('Project repository not found');
     if (!binding.sourceId) await tx.update(projectSkillSources).set({ status: 'pending', nextSyncAt: new Date(), failureCount: 0, lastError: binding.lastError === SKILL_IMPORT_CAPACITY_WAIT ? SKILL_IMPORT_CAPACITY_WAIT : null,
       ...setup,

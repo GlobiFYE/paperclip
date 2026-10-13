@@ -276,6 +276,21 @@ describe.skipIf(!support.supported)('automatic project skill sources', () => {
     }
   });
 
+  it('does not adopt a stale repository after an editor commits a new selection', async () => {
+    const row = await workspace('adoption-stale-selection');
+    await enqueueProjectSkillSource(db, row);
+    try {
+      await withSkillActor({ type: 'board', source: 'local_implicit', companyIds: [companyId] }, async () => {
+        await expect(adoptProjectSkillRepository(db, companyId, row.id, async () => {
+          await projectService(db).updateWorkspace(row.projectId, row.id, { repoUrl: 'https://github.com/acme/skills-next', defaultRef: 'edited-branch' });
+        })).rejects.toThrow(/repository changed/i);
+      });
+      const saved = await db.select().from(projectSkillSources).where(eq(projectSkillSources.workspaceId, row.id));
+      expect(saved.find(binding => binding.trackingRef === 'edited-branch')!.active).toBe(true);
+      expect(saved.find(binding => binding.trackingRef === row.defaultRef)!.active).toBe(false);
+    } finally { await detachProjectSkillSource(db, companyId, row.id); }
+  });
+
   it('does not read GitHub or retry an initial job denied by import policy', async () => {
     await db.update(companySkillSources).set({ automaticUpdates: false });
     const row = await workspace('denied-preflight');

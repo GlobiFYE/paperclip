@@ -500,3 +500,18 @@ all explicit meta IDs and exports. Both feature recipes and master's verificatio
 sections are retained. The deleted aggregate catalog/review ledger stays deleted.
 Map/generator validation passes; rebuilt browser and final-head gates are recorded
 on the PR. This structural migration is separate from the earlier live receipts.
+
+The final catalog-merge CI attempt lost eight jobs to the same runner shutdown;
+the logs show cancellation rather than failed assertions. Greptile separately
+reproduced adoption restoring a stale workspace selection. Adoption now shares
+the editor's root-provenance/project/workspace lock order, re-reads the selected
+repository, rechecks project access and rejects a changed selection before queue
+mutations. Its real edit-interleaving regression fails before correction. Final
+focused results and fresh CI/review are recorded on the PR.
+
+The stale-adoption correction passes all 61 affected Node 24 cases across four
+suites with no skipped tests or changed deadlines. The macOS broader attempt
+timed out starting two native databases; it did not establish a code failure.
+Recursive typecheck and production build pass. The final rebuilt Storybook
+publication 38464595162 pins 60537b0695 and contains all eight live receipts;
+the adoption-only correction leaves its controls and fixtures unchanged.

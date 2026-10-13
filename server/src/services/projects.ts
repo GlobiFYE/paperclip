@@ -42,7 +42,7 @@ import { lockExecutionWorkspaceRootProvenance, preserveConfiguredProjectWorkspac
 
 type ProjectTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 
-async function lockProjectRootMutation(tx: ProjectTransaction, projectId: string) {
+export async function lockProjectRootMutation(tx: ProjectTransaction, projectId: string) {
   const [identity] = await tx.select({ companyId: projects.companyId }).from(projects).where(eq(projects.id, projectId));
   if (!identity) return null;
   await lockExecutionWorkspaceRootProvenance(tx, identity.companyId);
