@@ -1,3 +1,5 @@
+import { createSlackSetupServices } from "./chat-channels/slack/setup-services.js";
+import { isSupportedTelegramWebhookBaseUrl } from "./chat-channels/telegram/setup.js";
 import { initializeGitHubWebhookRuntime } from "./chat-channels/github/webhook-runtime.js";
 import { githubInboundTaskTitle, githubInboundCommentText, githubAssignedAgentRequiresLowTrust, retainGitHubDeliveryAuthority, retainGitHubReviewReceipt } from "./chat-channels/github/task-preparation.js";
 import { applyChatTaskReviewContainment } from "./chat-channels/inbound/task-trust.js";
@@ -63,8 +65,6 @@ import { createSlackInventory } from "./chat-channels/slack/inventory.js";
 import { REQUIRED_GITHUB_EVENTS, UNAVOIDABLE_GITHUB_EVENTS } from "./chat-channels/github/credentials.js";
 
 import { createPhotonCredentialChecks } from "./chat-channels/imessage-photon/credentials.js";
-import { slackTestMessageService } from "./connectors/slack/test-message.js";
-import type { SlackSetupOptions } from "./connectors/slack/setup/registration.js";
 
 import { createSetupProbes } from "./chat-channels/setup-probes.js";
 import { createChatActivity } from "./chat-channels/activity.js";
@@ -80,7 +80,6 @@ import { createInboundReactions } from "./chat-channels/reactions.js";
 import { createReceiptReactions } from "./chat-channels/receipt-reactions.js";
 import { createDiscordRootThreads } from "./chat-channels/discord/root-threads.js";
 import { createDiscordGatewayEvents } from "./chat-channels/discord/gateway-events.js";
-import { createSlackCallbackVerification } from "./chat-channels/slack/callback-verification.js";
 import { createTeamsFileAuthority } from "./chat-channels/microsoft-teams/file-transfer-authority.js";
 import { createPhotonEvents } from "./chat-channels/imessage-photon/events.js";
 import { createTelegramPublicationDrafts } from "./chat-channels/telegram/publication-drafts.js";
@@ -125,7 +124,6 @@ import { fastResponseService, fastResponseSourceCurrent } from "./fast-responses
 import { fastResponseRequests } from "@paperclipai/db";
 import { chatCredentialMutationLease } from "./chat-credential-mutation-lease.js";
 import type { AgentAvatarRequest } from "./agent-avatars.js";
-import { slackChatRegistrationService } from "./chat-slack-registration.js";
 
 import { canPublishIssueToChatAudience } from "./authorization.js";
 
@@ -494,18 +492,6 @@ function absoluteBaseUrl(value: string | null | undefined): string | null {
       : null;
   } catch {
     return null;
-  }
-}
-
-const TELEGRAM_WEBHOOK_PORTS = new Set(["", "80", "88", "443", "8443"]);
-
-function isSupportedTelegramWebhookBaseUrl(value: string | null): boolean {
-  if (!value) return false;
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" && TELEGRAM_WEBHOOK_PORTS.has(url.port);
-  } catch {
-    return false;
   }
 }
 
@@ -3518,92 +3504,13 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     get nativeBotIdentityClaimBarrier() { return options.nativeBotIdentityClaimBarrier; },
     get allowLocalVoiceBoard() { return options.allowLocalVoiceBoard; },
   });
-  const linkSlackAccount: SlackSetupOptions["linkInstaller"] = async (endpointId, user, actor, lease) => {
-    const record = await endpointRecord(endpointId);
-    if (!record || record.endpoint.provider !== "slack" || record.endpoint.providerAccountId !== user.team_id) throw conflict("Slack setup changed");
-    const { principal } = await ensurePrincipal(record.endpoint, {
-      userId: String(user.id), userName: typeof user.name === "string" ? user.name : String(user.id),
-      fullName: typeof user.real_name === "string" ? user.real_name : String(user.id), isBot: false, isMe: false,
-    });
-    await db.transaction(async tx => {
-      await lease.assertOwned(tx);
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`chat-identity:${record.endpoint.companyId}:${principal.id}`}, 0))`);
-      const membership = (await tx.select().from(companyMemberships).where(and(eq(companyMemberships.companyId, record.endpoint.companyId), eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, actor.userId))).for("update"))[0];
-      if (membership?.status !== "active" || membership.membershipRole === "viewer") throw forbidden("The signed-in Paperclip account cannot use this connection");
-      const links = await tx.select().from(chatIdentityLinks).where(and(eq(chatIdentityLinks.companyId, record.endpoint.companyId), eq(chatIdentityLinks.principalId, principal.id))).for("update");
-      if (links.some(link => link.status === "linked" && link.paperclipUserId !== actor.userId) || links.some(link => link.endpointId === endpointId && link.status === "revoked")) throw conflict("This Slack account has an existing link", { code: "chat_identity_link_conflict" });
-      if (links.some(link => link.endpointId === endpointId && link.status === "linked")) return;
-      await tx.insert(chatIdentityLinks).values({ companyId: record.endpoint.companyId, endpointId, principalId: principal.id,
-        paperclipUserId: actor.userId, status: "linked", confirmedAt: new Date() })
-        .onConflictDoUpdate({ target: [chatIdentityLinks.endpointId, chatIdentityLinks.principalId], set: {
-          paperclipUserId: actor.userId, status: "linked", confirmationTokenHash: null, expiresAt: null, confirmedAt: new Date(), revokedAt: null, updatedAt: new Date(),
-        } });
-      await lease.assertOwned(tx);
-    });
-  };
-
-  const slackRegistration = slackChatRegistrationService(db, {
-    publicOrigin: getPublicBaseUrl, webhookOrigin: getWebhookPublicBaseUrl, fetch: fetchImpl, renderAvatar: options.renderSlackAvatar, managed: options.slackManaged,
-    withLock: async (endpointId, work) => {
-      const record = await endpointRecord(endpointId);
-      if (!record) throw notFound("Chat endpoint not found");
-      return withCredentialMutationLease(record.endpoint, work);
-    },
-    runtimeSigningSecret: async endpointId => {
-      const record = await endpointRecord(endpointId);
-      if (!record) throw notFound("Chat endpoint not found");
-      return (await resolveCredentials(record.endpoint)).signingSecret;
-    },
-    runtimeBotToken: async endpointId => {
-      const record = await endpointRecord(endpointId);
-      if (!record) throw notFound("Chat endpoint not found");
-      return (await resolveCredentials(record.endpoint)).botToken;
-    },
-    canWelcome: async (endpointId, account) => {
-      const record = await endpointRecord(endpointId);
-      if (!record || !["verifying", "active"].includes(record.endpoint.status) || !record.endpoint.allowDirectMessages) return false;
-      const [connection] = await db.select({ status: toolConnections.status, enabled: toolConnections.enabled }).from(toolConnections)
-        .where(and(eq(toolConnections.id, record.endpoint.connectionId), eq(toolConnections.companyId, record.endpoint.companyId)));
-      if (!connection || connection.status !== "active" || !connection.enabled) return false;
-      const [link] = await db.select({ id: chatIdentityLinks.id }).from(chatIdentityLinks)
-        .innerJoin(chatExternalPrincipals, and(eq(chatExternalPrincipals.id, chatIdentityLinks.principalId), eq(chatExternalPrincipals.companyId, chatIdentityLinks.companyId)))
-        .innerJoin(companyMemberships, and(eq(companyMemberships.companyId, chatIdentityLinks.companyId), eq(companyMemberships.principalType, "user"), eq(companyMemberships.principalId, account.paperclipUserId), eq(companyMemberships.status, "active"), ne(companyMemberships.membershipRole, "viewer")))
-        .where(and(eq(chatIdentityLinks.companyId, record.endpoint.companyId), eq(chatIdentityLinks.endpointId, endpointId), eq(chatIdentityLinks.status, "linked"), eq(chatIdentityLinks.paperclipUserId, account.paperclipUserId), eq(chatExternalPrincipals.externalId, account.externalUserId), eq(chatExternalPrincipals.providerAccountId, record.endpoint.providerAccountId!)));
-      return Boolean(link);
-    },
-    linkInstaller: linkSlackAccount,
-    configure: async (endpointId, credentials, actor, lease) => {
-      const record = await endpointRecord(endpointId);
-      if (!record) throw notFound("Chat endpoint not found");
-      return configureWithCredentialLease(endpointId, {
-        action: record.endpoint.botExternalId ? "reconnect" : "configure", credentials,
-      }, lease, actor.userId);
-    },
+  const { slackRegistration, verifySlackRequestUrl, sendSlackTestMessage } = createSlackSetupServices(db, {
+    endpointRecord, ensurePrincipal, withCredentialMutationLease, resolveCredentials,
+    resolveCredentialRefs, configureWithCredentialLease, createLinkIntent,
+    getPublicBaseUrl, getWebhookPublicBaseUrl, fetchImpl, scheduleMessageProcessing,
+    renderSlackAvatar: options.renderSlackAvatar, slackManaged: options.slackManaged,
   });
-  const { verifySlackRequestUrl } = createSlackCallbackVerification(db, { resolveCredentialRefs, getWebhookPublicBaseUrl, scheduleMessageProcessing, slackRegistration });
-
-  const sendSlackTestMessage = slackTestMessageService(db, {
-    fetch: fetchImpl,
-    withLock: async (endpointId, work) => {
-      const record = await endpointRecord(endpointId);
-      if (!record) throw notFound("Chat endpoint not found");
-      return withCredentialMutationLease(record.endpoint, work);
-    },
-    runtimeBotToken: async endpointId => {
-      const record = await endpointRecord(endpointId);
-      if (!record) throw notFound("Chat endpoint not found");
-      return (await resolveCredentials(record.endpoint)).botToken;
-    },
-    linkInstaller: linkSlackAccount,
-    ensureAccount: async (endpointId, user) => {
-      const record = await endpointRecord(endpointId);
-      if (!record) throw notFound("Chat endpoint not found");
-      const { principal } = await ensurePrincipal(record.endpoint, { userId: String(user.id), userName: String(user.name ?? user.id), fullName: String(user.real_name ?? user.id), isBot: false, isMe: false });
-      return principal.id;
-    },
-    createLinkIntent,
-  });
-  const { storeGitHubApp, githubRegistration, refreshGitHubRepositories, githubWizard, unregisterGitHubCloudIngress } = createGitHubAppSetup(db, {
+  const { storeGitHubApp, githubRegistration, refreshGitHubRepositories, githubWizard, unregisterGitHubCloudIngress, saveGitHubSetupProgress } = createGitHubAppSetup(db, {
     endpointRecord, withCredentialMutationLease, normalizedCredentials, verifyCredentials, nativeBotIdentityMatches,
     assertNativeBotIdentityAvailable, isNativeBotIdentityUniqueViolation, nativeBotIdentityConflict,
     persistCredentials, resolveCredentials, fetchImpl, get, getPublicBaseUrl, getWebhookPublicBaseUrl,
@@ -3693,12 +3600,7 @@ return {
     authorizeFastResponse,
     slackRegistration,
     sendSlackTestMessage,
-    saveGitHubSetupProgress: async (endpointId: string, stage: NonNullable<ChatEndpointSetupState["github"]>["stage"]) => {
-      const record = await endpointRecord(endpointId);
-      if (!record || record.endpoint.provider !== "github") throw notFound("GitHub bot not found");
-      await db.update(chatEndpoints).set({ setup: sql`jsonb_set(${chatEndpoints.setup}, '{github}', coalesce(${chatEndpoints.setup}->'github', '{}'::jsonb) || ${JSON.stringify({ stage })}::jsonb)`, updatedAt: new Date() }).where(eq(chatEndpoints.id, endpointId));
-      return get(endpointId);
-    },
+    saveGitHubSetupProgress,
     githubWizard,
     startGitHubRegistration: githubRegistration.start,
     completeGitHubRegistration: githubRegistration.complete,
