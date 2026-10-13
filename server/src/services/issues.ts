@@ -11687,6 +11687,29 @@ export function issueService(db: Db) {
       });
 
       const now = new Date();
+      const bindCheckoutRunSourceIssue = async () => {
+        if (!checkoutRunId) return;
+        await db
+          .update(heartbeatRuns)
+          .set({
+            contextSnapshot: sql<Record<string, unknown>>`jsonb_set(
+              coalesce(${heartbeatRuns.contextSnapshot}, '{}'::jsonb),
+              '{issueId}',
+              to_jsonb(${id}::text),
+              true
+            )`,
+            updatedAt: now,
+          })
+          .where(and(
+            eq(heartbeatRuns.id, checkoutRunId),
+            eq(heartbeatRuns.companyId, issueCompany.companyId),
+            eq(heartbeatRuns.agentId, agentId),
+            sql`coalesce(
+              nullif(btrim(${heartbeatRuns.contextSnapshot}->>'issueId'), ''),
+              nullif(btrim(${heartbeatRuns.contextSnapshot}->>'taskId'), '')
+            ) is null`,
+          ));
+      };
       const activePauseHold = await treeControlSvc.getActivePauseHoldGate(
         issueCompany.companyId,
         id,
@@ -11777,6 +11800,7 @@ export function issueService(db: Db) {
         .then((rows) => rows[0] ?? null);
 
       if (updated) {
+        await bindCheckoutRunSourceIssue();
         const [enriched] = await withIssueLabels(db, [updated]);
         return enriched;
       }
@@ -11824,7 +11848,10 @@ export function issueService(db: Db) {
           )
           .returning()
           .then((rows) => rows[0] ?? null);
-        if (adopted) return adopted;
+        if (adopted) {
+          await bindCheckoutRunSourceIssue();
+          return adopted;
+        }
       }
 
       if (
@@ -11847,6 +11874,7 @@ export function issueService(db: Db) {
             .where(eq(issues.id, id))
             .then((rows) => rows[0] ?? null);
           if (!row) throw notFound("Issue not found");
+          await bindCheckoutRunSourceIssue();
           const [enriched] = await withIssueLabels(db, [row]);
           return enriched;
         }
@@ -11895,6 +11923,7 @@ export function issueService(db: Db) {
             .returning()
             .then((rows) => rows[0] ?? null);
           if (adopted) {
+            await bindCheckoutRunSourceIssue();
             const [enriched] = await withIssueLabels(db, [adopted]);
             return enriched;
           }
@@ -11913,6 +11942,7 @@ export function issueService(db: Db) {
           .where(eq(issues.id, id))
           .then((rows) => rows[0] ?? null);
         if (!row) throw notFound("Issue not found");
+        await bindCheckoutRunSourceIssue();
         const [enriched] = await withIssueLabels(db, [row]);
         return enriched;
       }

@@ -45,6 +45,7 @@ import {
   issueService,
   readIssueCommentRunLogText,
 } from "../services/issues.ts";
+import { observeCrossIssueInfluence } from "../services/cross-issue-influence-limit.ts";
 import { getRunLogStore } from "../services/run-log-store.js";
 import {
   WORKSPACE_WORKTREE_REQUIRES_PROJECT_CODE,
@@ -6098,6 +6099,84 @@ describeEmbeddedPostgres("issueService.clearExecutionRunIfTerminal", () => {
       .where(eq(issues.id, issueId))
       .then((rows) => rows[0]);
     expect(row).toEqual({ executionRunId: null, executionLockedAt: null });
+  });
+
+  it("binds a timer run to its checked-out issue for cross-issue writes", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const sourceIssueId = randomUUID();
+    const targetIssueId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "CodexCoder",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      status: "running",
+      invocationSource: "timer",
+      contextSnapshot: { source: "timer" },
+    });
+    await db.insert(issues).values([
+      {
+        id: sourceIssueId,
+        companyId,
+        title: "Routine execution",
+        status: "todo",
+        priority: "medium",
+        assigneeAgentId: agentId,
+      },
+      {
+        id: targetIssueId,
+        companyId,
+        title: "Cross-issue target",
+        status: "todo",
+        priority: "medium",
+      },
+    ]);
+
+    await svc.checkout(sourceIssueId, agentId, ["todo"], runId);
+
+    const run = await db
+      .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0]);
+    expect(run?.contextSnapshot).toMatchObject({
+      issueId: sourceIssueId,
+      source: "timer",
+    });
+
+    await expect(observeCrossIssueInfluence(db, {
+      companyId,
+      runId,
+      agentId,
+      targetIssueId,
+      kind: "update",
+    })).resolves.toMatchObject({ allowed: true, count: 1 });
+    await expect(observeCrossIssueInfluence(db, {
+      companyId,
+      runId,
+      agentId,
+      targetIssueId,
+      kind: "interaction_resolution",
+    })).resolves.toMatchObject({ allowed: true, count: 2 });
   });
 
   it("does not clear checkout locks when a different execution run is live", async () => {
