@@ -52,6 +52,7 @@ import {
 import type { InspectDatabaseBackupHealthOptions } from "./services/database-backup-health.js";
 import type { StorageService } from "./storage/types.js";
 import { httpLogger, errorHandler } from "./middleware/index.js";
+import { skillAccessRequestContext } from "./services/skill-access.js";
 import { actorMiddleware } from "./middleware/auth.js";
 import { boardMutationGuard } from "./middleware/board-mutation-guard.js";
 import {
@@ -191,6 +192,7 @@ import {
 import { subscribeAllCompanyLiveEvents } from "./services/live-events.js";
 import { heartbeatService } from "./services/heartbeat.js";
 import { pluginLifecycleManager } from "./services/plugin-lifecycle.js";
+import { registerPluginLifecycleDelivery } from "./services/plugin-lifecycle-delivery.js";
 import { createPluginJobCoordinator } from "./services/plugin-job-coordinator.js";
 import {
   buildHostServices,
@@ -654,6 +656,7 @@ export async function createApp(
   // REPLACES whatever actor the request otherwise resolved to, and only on
   // the one endpoint it authorizes (see the middleware for the contract).
   app.use(cloudControlMiddleware());
+  app.use(skillAccessRequestContext);
   app.use("/api/auth", authRoutes(db));
   if (opts.betterAuthHandler) {
     app.all("/api/auth/{*authPath}", opts.betterAuthHandler);
@@ -1251,6 +1254,7 @@ export async function createApp(
     onError: (err, queue) => logger.error({ err, queue }, "Delivery reconciliation failed"),
   });
   app.locals.deliveryWork = deliveryWork;
+  const resourceLifecycleDelivery = registerPluginLifecycleDelivery(deliveryWork, db, workerManager, lifecycle);
   if (opts.feedbackExportService) {
     deliveryWork.register(DELIVERY_QUEUES.feedback, {
       retryMs: FEEDBACK_EXPORT_FLUSH_INTERVAL_MS,
@@ -1409,7 +1413,7 @@ export async function createApp(
       logger.error({ err }, "Failed to load ready plugins on startup");
     });
   app.locals.bundledPluginsStartup = trackIdleWork(bundledPluginsStartup);
-  void bundledPluginsStartup.then(() => { lifecyclePluginsReady = true; return agentLifecycle.sweep(); }).catch(() => logger.warn("Agent lifecycle recovery failed; retrying."));
+  void bundledPluginsStartup.then(() => { lifecyclePluginsReady = true; resourceLifecycleDelivery.wake(); return agentLifecycle.sweep(); }).catch(() => logger.warn("Agent lifecycle recovery failed; retrying."));
   // The shutdown hook runs at most once. It caches the in-flight promise, so a
   // second caller (for example the `exit` handler) awaits the same completion
   // instead of starting a second teardown.
@@ -1424,6 +1428,7 @@ export async function createApp(
       await publicMcpEvents?.stop();
       await dotMcpEvents?.stop();
       jobCoordinator.stop();
+      resourceLifecycleDelivery.dispose();
       await deliveryWork.stop();
       unsubscribeChatPublicationSignals();
       chatReconciliation.stop();

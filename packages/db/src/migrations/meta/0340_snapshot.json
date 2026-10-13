@@ -1,5 +1,5 @@
 {
-  "id": "77c764ae-30f4-40ba-8664-8d60cd58ac7d",
+  "id": "b32fa655-79c7-4793-a021-22258b6c369c",
   "prevId": "045fe4f7-1636-4e1b-b304-11b6128fefcf",
   "version": "7",
   "dialect": "postgresql",
@@ -33712,12 +33712,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "auth_source": {
-          "name": "auth_source",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
         "created_by_run_id": {
           "name": "created_by_run_id",
           "type": "uuid",
@@ -46206,7 +46200,7 @@
         },
         "resource_lifecycle_events_action_check": {
           "name": "resource_lifecycle_events_action_check",
-          "value": "\"resource_lifecycle_events\".\"action\" = 'create' OR (\"resource_lifecycle_events\".\"resource_type\" = 'project' AND \"resource_lifecycle_events\".\"action\" IN ('update', 'archive')) OR (\"resource_lifecycle_events\".\"resource_type\" = 'agent' AND \"resource_lifecycle_events\".\"action\" IN ('pause', 'resume', 'terminate'))"
+          "value": "\"resource_lifecycle_events\".\"action\" = 'create' OR (\"resource_lifecycle_events\".\"resource_type\" = 'project' AND \"resource_lifecycle_events\".\"action\" IN ('update', 'archive', 'delete')) OR (\"resource_lifecycle_events\".\"resource_type\" = 'agent' AND \"resource_lifecycle_events\".\"action\" IN ('pause', 'resume', 'terminate'))"
         }
       },
       "isRLSEnabled": false

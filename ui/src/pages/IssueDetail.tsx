@@ -7652,6 +7652,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
           <ExternallyConnectedTaskBanner
             className={cn(shellSectionClass, "mt-3")}
             key={issue.id}
+            assigneeAgentId={issue.assigneeAgentId}
             attachments={attachments ?? []}
             companyId={issue.companyId}
             issueId={issue.id}
@@ -7664,7 +7665,9 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
               action={issue.activeRecoveryAction ?? null} />
           )}
           {resolvedDetailTab === "chat" && issue.executionBlocker && (
-            <ExecutionBlockerNotice className={shellSectionClass} companyId={issue.companyId} issueId={issue.id} blocker={issue.executionBlocker} onRetried={invalidateIssueDetail} />
+            <ExecutionBlockerNotice className={shellSectionClass} companyId={issue.companyId} issueId={issue.id}
+              issueStatus={issue.status} canManage={canManageBoardRuntime && canResolveBoardRecoveryAction}
+              blocker={issue.executionBlocker} onRetried={invalidateIssueDetail} />
           )}
 
           {issue.status === "in_review" && issue.externalConversationState === "waiting" && (

@@ -1,3 +1,7 @@
+---
+navigation: {"section":"Projects and execution","sectionOrder":40,"order":50}
+---
+
 # Recovery
 
 People can see why a task stopped, who owns the next action, and whether a safe
@@ -121,6 +125,18 @@ The recovery-card suite covers workspace divergence, reissue, reconcile, and
 confirmation. [Workspace export](../../ui/src/components/WorkspaceExportRecovery.test.tsx)
 covers quiet restoration, legacy/operator assistance and resolved states.
 
+For a retained legacy file hold, open the source task after its recovery action
+has resolved but its files still need recovery. An authorized board operator can
+record the verified recovered files and backup link without changing the current
+task status or starting another run. The server must independently validate the
+original stopped-execution receipt. Agent Chat must show the file hold rather than
+suggesting another message. The [file recovery form](../../ui/src/components/WorkspaceFileRecovery.test.tsx),
+[notice](../../ui/src/components/ExecutionBlockerNotice.test.tsx), and
+[repair route](../../server/src/__tests__/workspace-restore-repair-route.test.ts)
+cover evidence/confirmation, read-only access, stale or missing stop proof,
+source-only repair, and preserved task status. These tests use fixtures; separately
+verify original files and their attached artifact before recording a real repair.
+
 For an abandoned native copyback owner, the harness verifies the exact stopped
 deployment and the reconciler restores saved work automatically. Task users see
 no process details or shutdown form. The documented operator API handles older
@@ -193,3 +209,26 @@ only. Separately inspect the underlying execution if it is still stuck.
   restart continuity. Use the appropriate runtime suite for that claim.
 - See [execution semantics](../../doc/execution-semantics.md) for the governing
   recovery contract and [steering](./steering.md) for saved follow-ups.
+
+### Storybook verification
+
+#### `exhaustion`
+
+Scope: ui
+Storybook: Exhausted/overdue attempts, operator retry pending/error, blocked authority/gate and specific escalation.
+Production: Inspect durable attempt bounds and actual eligible retry/repair; acknowledgment alone does not prove continued execution.
+Sources: Source: [IssueRecoveryActionCard.tsx](../../ui/src/components/IssueRecoveryActionCard.tsx), [DispositionRecoveryNotice.tsx](../../ui/src/components/DispositionRecoveryNotice.tsx), [issue-recovery-actions.ts](../../server/src/services/issue-recovery-actions.ts). Tests: [IssueRecoveryActionCard.test.tsx](../../ui/src/components/IssueRecoveryActionCard.test.tsx), [DispositionRecoveryNotice.test.tsx](../../ui/src/components/DispositionRecoveryNotice.test.tsx), [issue-recovery-actions.test.ts](../../server/src/__tests__/issue-recovery-actions.test.ts), [recovery.spec.ts](../../tests/e2e/execution-recovery/recovery.spec.ts)
+
+#### `unknown-outcome`
+
+Scope: ui
+Storybook: Uncertain external outcome, required inspection/evidence and explicit permitted operator decision.
+Production: Corroborate provider outcome before authorization; enforce no automatic external side-effect replay and reject stale/unauthorized decisions.
+Sources: Source: [IssueRecoveryActionCard.tsx](../../ui/src/components/IssueRecoveryActionCard.tsx), [issue-recovery-actions.ts](../../server/src/services/issue-recovery-actions.ts). Tests: [IssueRecoveryActionCard.test.tsx](../../ui/src/components/IssueRecoveryActionCard.test.tsx), [issue-recovery-actions.test.ts](../../server/src/__tests__/issue-recovery-actions.test.ts), [recovery.spec.ts](../../tests/e2e/execution-recovery/recovery.spec.ts)
+
+#### `user-continuation`
+
+Scope: ui
+Storybook: Saved follow-up waiting on stop cleanup, pause/budget gate, one eligible continuation and result/failure.
+Production: Confirm previous execution stopped before delivery, preserve message, avoid duplicate wakes and honor actual task/ancestor/budget gate in separate legacy/native paths.
+Sources: Source: [TaskChatQueuedMessages.tsx](../../ui/src/components/task-chat/TaskChatQueuedMessages.tsx), [legacy-continuation.ts](../../server/src/services/recovery/legacy-continuation.ts), [native-restart-recovery.ts](../../server/src/services/native-runtime/native-restart-recovery.ts). Tests: [legacy-continuation.test.ts](../../server/src/services/recovery/legacy-continuation.test.ts), [native-restart-recovery.test.ts](../../server/src/services/native-runtime/native-restart-recovery.test.ts), [issue-queued-comments-routes.test.ts](../../server/src/__tests__/issue-queued-comments-routes.test.ts), [legacy-failure-continuation.spec.ts](../../tests/e2e/legacy-failure-continuation.spec.ts)
