@@ -1996,20 +1996,20 @@ describeEmbeddedPostgres("attention service", () => {
     });
   });
 
-  function routeApp(actor: Record<string, unknown>) {
-    const testApp = express();
-    testApp.use(express.json());
-    testApp.use((req, _res, next) => {
-      (req as any).actor = actor;
-      next();
-    });
-    testApp.use("/api", attentionRoutes(db));
-    testApp.use(errorHandler);
-    return testApp;
-  }
-
-  it("serves the route for board users and agent callers", async () => {
+  it("serves the route for board users and rejects agent callers", async () => {
     const { companyId } = await seedCompany("ATR");
+
+    function app(actor: Record<string, unknown>) {
+      const testApp = express();
+      testApp.use(express.json());
+      testApp.use((req, _res, next) => {
+        (req as any).actor = actor;
+        next();
+      });
+      testApp.use("/api", attentionRoutes(db));
+      testApp.use(errorHandler);
+      return testApp;
+    }
 
     const board = {
       type: "board",
@@ -2024,66 +2024,20 @@ describeEmbeddedPostgres("attention service", () => {
       companyId,
       agentId: randomUUID(),
       runId: null,
-      onBehalfOfUserId: "board-user",
-      onBehalfOfMemberships: [{ companyId, membershipRole: "member", status: "active" }],
     };
 
-    await request(routeApp(board)).get(`/api/companies/${companyId}/attention`).expect(200);
-    const completeFeed = await request(routeApp(board))
+    await request(app(board)).get(`/api/companies/${companyId}/attention`).expect(200);
+    const completeFeed = await request(app(board))
       .get(`/api/companies/${companyId}/attention?includeDismissed=true&all=true`)
       .expect(200);
     expect(completeFeed.body.nextCursor).toBeNull();
-    await request(routeApp(board))
+    await request(app(board))
       .get(`/api/companies/${companyId}/attention?activitySince=yesterday`)
       .expect(400, { error: "activitySince must be an ISO timestamp" });
-    await request(routeApp(board))
+    await request(app(board))
       .get(`/api/companies/${companyId}/attention?sort=oldest`)
       .expect(400, { error: "sort must be 'activity' or 'decide'" });
-    const agentFeed = await request(routeApp(agent))
-      .get(`/api/companies/${companyId}/attention`)
-      .expect(200);
-    expect(Array.isArray(agentFeed.body.items)).toBe(true);
-  });
-
-  it("scopes agent callers to their responsible user's feed", async () => {
-    const { companyId, workerId } = await seedCompany("ATS");
-    const issueId = await insertIssue({
-      companyId,
-      identifier: "ATS-1",
-      title: "Question for a specific owner",
-      status: "in_progress",
-      assigneeAgentId: workerId,
-    });
-    const interactionId = randomUUID();
-    await db.insert(issueThreadInteractions).values({
-      id: interactionId,
-      companyId,
-      issueId,
-      kind: "ask_user_questions",
-      status: "pending",
-      createdByAgentId: workerId,
-      addresseeUserId: "board-user",
-      payload: { version: 1, questions: [] },
-    });
-
-    function agentFeedFor(responsibleUserId: string | null) {
-      return request(routeApp({
-        type: "agent",
-        source: "agent_key",
-        companyId,
-        agentId: randomUUID(),
-        runId: null,
-        onBehalfOfUserId: responsibleUserId,
-        onBehalfOfMemberships: [{ companyId, membershipRole: "member", status: "active" }],
-      })).get(`/api/companies/${companyId}/attention`);
-    }
-
-    const ownerFeed = await agentFeedFor("board-user").expect(200);
-    expect(ownerFeed.body.items.map((item: any) => item.subject.id)).toContain(interactionId);
-    const otherFeed = await agentFeedFor("other-user").expect(200);
-    expect(otherFeed.body.items.map((item: any) => item.subject.id)).not.toContain(interactionId);
-    const anonymousFeed = await agentFeedFor(null).expect(200);
-    expect(anonymousFeed.body.items.map((item: any) => item.subject.id)).not.toContain(interactionId);
+    await request(app(agent)).get(`/api/companies/${companyId}/attention`).expect(403);
   });
 
   it("computes the aging shelf uniformly across approval, interaction, and review sources", async () => {

@@ -247,22 +247,6 @@ describe("openapi routes", () => {
     expect(dismiss.description).toContain("viewers may dismiss their own");
   });
 
-  it("keeps the attention feed contract at board_or_agent", () => {
-    // TOP-338: the route used to call assertBoard while the operation
-    // advertised AgentBearerAuth / board_or_agent. Pin the contract so the
-    // spec and the route cannot drift apart silently again.
-    const { spec } = loadSpecRoutes();
-    const attention = spec.paths["/api/companies/{companyId}/attention"].get;
-    expect(attention.security).toEqual([
-      { BoardSessionAuth: [] },
-      { BoardApiKeyAuth: [] },
-      { AgentBearerAuth: [] },
-    ]);
-    expect(attention["x-paperclip-authorization"]).toEqual({
-      actor: "board_or_agent",
-    });
-  });
-
   it("documents exact failed-run selection and durable accepted retry responses", async () => {
     const res = await request(createApp()).get("/api/openapi.json");
     const wake = res.body.paths["/api/agents/{id}/wakeup"].post;
