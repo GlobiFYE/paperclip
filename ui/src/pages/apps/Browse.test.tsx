@@ -1187,6 +1187,27 @@ describe("Connectors landing page", () => {
     expect(notion.textContent).toContain("draft@example.com");
   });
 
+  it.each(["provider_setup", "identity_link", undefined, "complete"])(
+    "keeps unfinished verifying chat setup visible for step %s", async (step) => {
+      chatListMock.mockResolvedValue([
+        { id: "chat-active", provider: "slack", status: "active", assignedAgentName: "Active agent" },
+        { id: "chat-verifying", provider: "slack", status: "verifying", assignedAgentName: "Setup agent",
+          setup: step === undefined ? undefined : { step } },
+      ]);
+      await renderBrowse();
+      const slack = container.querySelector<HTMLElement>('[data-app-slug="slack"]')!;
+      const trigger = slack.querySelector('[data-slot="collapsible-trigger"]')!;
+      const unfinished = step !== "complete";
+      expect(trigger.getAttribute("aria-expanded")).toBe(String(unfinished));
+      expect(slack.textContent?.includes("1 needs attention")).toBe(unfinished);
+      expect(slack.textContent?.includes("Finish setup")).toBe(unfinished);
+      if (unfinished) {
+        await clickButton("Finish setup", slack);
+        expect(navigateMock).toHaveBeenLastCalledWith("/apps/chat/connect?provider=slack&purpose=chat&resume=chat-verifying");
+      }
+    },
+  );
+
   it("sorts connected providers first and shows account, owner, status actions, and edit menus inline", async () => {
     listApplicationsMock.mockResolvedValue({ applications: [application()] });
     listConnectionsMock.mockResolvedValue({

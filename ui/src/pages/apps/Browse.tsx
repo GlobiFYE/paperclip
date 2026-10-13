@@ -237,6 +237,11 @@ function connectionState(connection: ToolConnection): ConnectionState {
 
 type UpstreamAppSnapshot = NonNullable<ConnectorRowModel["upstreamApps"]>[number];
 
+function chatEndpointNeedsSetup(endpoint: ChatEndpoint): boolean {
+  return endpoint.status === "draft"
+    || (endpoint.status === "verifying" && endpoint.setup?.step !== "complete");
+}
+
 function upstreamAccountState(connection: ToolConnection, snapshot: UpstreamAppSnapshot, account: UpstreamAppSnapshot["accounts"][number]): ConnectionState {
   const gatewayState = connectionState(connection);
   return gatewayState.kind !== "connected" ? gatewayState
@@ -1121,7 +1126,7 @@ export function ConnectorCard({
   const connectionCount = row.connections.length + listedUpstreamAccounts.length + row.chatEndpoints.length;
   const attentionCount = row.connections.filter(connection => ["attention", "draft"].includes(connectionState(connection).kind)).length
     + listedUpstreamAccounts.filter(({ connection, snapshot, account }) => ["attention", "draft"].includes(upstreamAccountState(connection, snapshot, account).kind)).length
-    + row.chatEndpoints.filter(endpoint => ["attention", "revoked", "draft"].includes(endpoint.status)).length;
+    + row.chatEndpoints.filter(endpoint => ["attention", "revoked"].includes(endpoint.status) || chatEndpointNeedsSetup(endpoint)).length;
   // A single connection stays inline; longer lists fold behind a "N connections" toggle,
   // but start open when an account needs action so setup and reconnect stay visible.
   const collapsible = connectionCount > 1;
@@ -1284,7 +1289,7 @@ export function ConnectorCard({
                     {["paused", "attention", "revoked"].includes(endpoint.status) && <span className="text-xs text-muted-foreground">
                       {endpoint.status === "attention" ? "Needs attention" : endpoint.status === "revoked" ? "Access revoked" : "Paused"}
                     </span>}
-                    {endpoint.status === "draft" ? (
+                    {chatEndpointNeedsSetup(endpoint) ? (
                       <Button
                         size="sm"
                         variant="outline"

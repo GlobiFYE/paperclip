@@ -67,7 +67,7 @@ const meta = {
       status: "current",
       implementation: "production",
       boundary: "fixtures",
-      notes: "Uses ConnectorCard with local account fixtures. Covers collapsed, expanded, needs-attention, search, single-account and overview states. Navigation and account mutation callbacks are simulated; provider access and persistence are not exercised.",
+      notes: "Uses ConnectorCard with local account fixtures. Covers collapsed, expanded, needs-attention, unfinished chat setup, search, single-account and overview states. Navigation and account mutation callbacks are simulated; provider access and persistence are not exercised.",
     },
   },
 } satisfies Meta<typeof ConnectionCountToggleReview>;
@@ -90,6 +90,23 @@ export const NeedsAttention: Story = {
 };
 
 export const SearchMatch: Story = { args: { rows: Collapsed.args.rows, defaultExpanded: true } };
+
+export const UnfinishedChatSetup: Story = {
+  args: { rows: [{
+    ...providerRow("slack", []),
+    chatEndpoints: [
+      { id: "slack-active", companyId: "company-storybook", provider: "slack", status: "active",
+        assignedAgentId: "active-agent", assignedAgentName: "Active agent", allowUnlinkedPeople: false },
+      { id: "slack-verifying", companyId: "company-storybook", provider: "slack", status: "verifying",
+        assignedAgentId: "setup-agent", assignedAgentName: "Setup agent", allowUnlinkedPeople: false,
+        setup: { step: "provider_setup" } },
+    ],
+  }] },
+  play: async ({ canvasElement }) => {
+    await expect(within(canvasElement).getByRole("button", { name: /2 connections/ })).toHaveAttribute("aria-expanded", "true");
+    await expect(within(canvasElement).getByRole("button", { name: "Finish setup" })).toBeVisible();
+  },
+};
 
 export const SingleConnection: Story = {
   args: { rows: [providerRow("anthropic", [aiConnection("dotta-claude", "Dotta’s Claude", "user-dotta", "anthropic", "subscription", false)])] },
