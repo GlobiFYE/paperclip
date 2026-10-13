@@ -1,3 +1,5 @@
+import { createGitHubInstallationLifecycle } from "./chat-channels/github/installation-lifecycle.js";
+import { createGitHubAppSetup } from "./chat-channels/github/app-setup.js";
 import { createSlackTaskAuthorityRegistration } from "./chat-channels/slack/task-authority.js";
 import { createGitHubPublicationPolicy } from "./chat-channels/github/publication-policy.js";
 import { createTelegramAttachmentFailure } from "./chat-channels/telegram/attachment-failure.js";
@@ -131,13 +133,13 @@ import {
   githubMessageAddressesAnotherBot,
 } from "./chat-github-events.js";
 import { githubReviewPrompt, githubManualMessagePrompt, GITHUB_CONFIGURED_SKILL_GUIDANCE } from "./chat-github-review-policy.js";
-import { chatGitHubConfigurations, chatGitHubRegistrations, chatGitHubReviews } from "@paperclipai/db";
+import { chatGitHubConfigurations, chatGitHubReviews } from "@paperclipai/db";
 import type { GitHubReviewEventContext, GitHubIssueEventContext, GitHubAutomaticEventContext, GitHubReviewPolicy } from "@paperclipai/shared";
 import { githubChatReviewService } from "./chat-github-reviews.js";
 import { githubResponseCommentService } from "./chat-github-response-comments.js";
-import { githubChatWizardService } from "./chat-github-wizard.js";
-import { registerGitHubBotCloudIngress } from "./chat-github-cloud-ingress.js";
-import { githubChatRegistrationService } from "./chat-github-registration.js";
+
+
+
 import { githubChatPrincipalAccess } from "./chat-github-access.js";
 import { githubAppJwt } from "./chat-github-client.js";
 import { resumeExternalConversation } from "./slack-conversation-state.js";
@@ -329,8 +331,6 @@ import { projectSafeChatPublication } from "./chat-publication-projection.js";
 import { safeChatTaskUrl } from "./chat-task-url.js";
 import {
   resyncGitHubAppWebhook,
-  listGitHubAppWebhookDeliveries,
-  requestGitHubAppWebhookRedelivery,
 } from "./chat-github-webhook-config.js";
 import {
   githubAttachmentLimitOmissions,
@@ -2877,6 +2877,12 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   const { stageSlackSessionStop, processSlackSessionStop, processPendingSlackSessionStops } = createSlackSessionStop(db, { runtimeCallbackEndpoint, lockCurrentPrincipalAuthorization, nonDirectDestinationAllowed, stageAuthorizedTaskControlPublication, getPublicBaseUrl, get heartbeat() { return options.heartbeat; }, redactError });
   const { stageTelegramMaintenance, processTelegramMaintenance, processPendingTelegramMaintenance, hasTelegramStopSubscription, recordTelegramStopSubscription } = createTelegramMaintenance(db, { endpointRecord, runtimeContextForRecord, withCredentialMutationLease, resolveCredentials, clearCredentials, runtimeCallbackEndpoint, getWebhookPublicBaseUrl, fetchImpl, runtimeGeneration, credentialFingerprint, redactError, credentialCheckTimeoutMs: PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS });
   const { reconcileGitHubWebhookRepository, reconcileProviderResourceRows, listResources, listGitHubRepositories, replaceResources, toggleAllGitHubRepositories, hasNewerProcessedProviderLifecycleEffect, applyProviderAvailability } = createChatResourceReconciliation(db, { endpointRecord, withCredentialMutationLease, runtimeGeneration, maxErrorText: MAX_ERROR_TEXT });
+  const { applyGitHubInstallationLifecycle } = createGitHubInstallationLifecycle(db, {
+    endpointRecord, resolveCredentials, runtimeCallbackEndpoint, runtimeGeneration, credentialFingerprint,
+    verifyCredentials, legacyGitHubLabelsMatchVerifiedCredentials, nativeBotIdentityMatches, assertNativeBotIdentityAvailable,
+    prepareProviderInventory, persistCredentials, reconcileProviderResourceRows, redactError,
+    normalizedLifecycleWithRuntimeFence, MAX_ERROR_TEXT,
+  });
 
   async function prepareProviderInventory(
     endpoint: EndpointRow,
@@ -12984,402 +12990,15 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         }
 
         if (currentEndpoint.provider === "github") {
-          try {
-            const currentCredentials =
-              await resolveCredentials(currentEndpoint);
-            const lifecycleInstallationId =
-              effect.kind === "endpoint" &&
-              typeof effect.metadata?.installationId === "string"
-                ? effect.metadata.installationId
-                : null;
-            const removesCurrentInstallation =
-              effect.kind === "endpoint" &&
-              effect.availability === "revoked" &&
-              lifecycleInstallationId !== null &&
-              lifecycleInstallationId === currentCredentials.installationId;
-            const currentInstallationRemovalReason =
-              removesCurrentInstallation && effect.kind === "endpoint"
-                ? effect.reason
-                : null;
-            if (removesCurrentInstallation) {
-              // A signed deletion for the installation currently bound to
-              // this endpoint is authoritative provider truth. Inventory now
-              // correctly contains zero active installations, so treating its
-              // empty result as a transient discovery failure would strand the
-              // endpoint in attention and ask GitHub to redeliver forever.
-              // Keep the App key and webhook secret so a later installation
-              // event can recover this same immutable bot identity.
-              const revoked = await db.transaction(async (tx) => {
-                await credentialLease.assertOwned(tx);
-                const current = await runtimeCallbackEndpoint(
-                  tx,
-                  currentEndpoint.id,
-                  admittedRuntimeContext,
-                  ["verifying", "active", "attention", "revoked"],
-                );
-                const revokedAt = new Date();
-                if (!current) {
-                  await notifyChatDeliveryWork(tx);
-                  const [filtered] = await tx
-                    .update(chatDeliveries)
-                    .set({
-                      state: "filtered",
-                      processedAt: revokedAt,
-                      nextAttemptAt: null,
-                      redactedError:
-                        "GitHub installation deletion belonged to a superseded runtime",
-                      updatedAt: revokedAt,
-                    })
-                    .where(
-                      and(
-                        eq(chatDeliveries.id, claimed.id),
-                        eq(chatDeliveries.state, "processing"),
-                        eq(chatDeliveries.attempts, candidate.attempts + 1),
-                      ),
-                    )
-                    .returning({ id: chatDeliveries.id });
-                  if (!filtered) {
-                    throw new Error(
-                      "GitHub installation deletion ownership changed before stale settlement",
-                    );
-                  }
-                  await credentialLease.assertOwned(tx);
-                  return false;
-                }
-                const reason = redactSensitiveText(
-                  currentInstallationRemovalReason ??
-                    "GitHub App installation was removed",
-                ).slice(0, MAX_ERROR_TEXT);
-                await tx
-                  .update(chatEndpoints)
-                  .set({
-                    status: "revoked",
-                    healthMessage: reason,
-                    lastError: reason,
-                    lastEventAt: revokedAt,
-                    setup: {
-                      ...current.setup,
-                      runtimeGeneration: runtimeGeneration(current.setup) + 1,
-                    } as InternalSetupState,
-                    updatedAt: revokedAt,
-                  })
-                  .where(eq(chatEndpoints.id, current.id));
-                await tx
-                  .update(toolConnections)
-                  .set({
-                    status: "disabled",
-                    enabled: false,
-                    healthStatus: "failed",
-                    healthMessage: reason,
-                    lastError: reason,
-                    healthCheckedAt: revokedAt,
-                    updatedAt: revokedAt,
-                  })
-                  .where(eq(toolConnections.id, current.connectionId));
-                await tx
-                  .update(chatEndpointResources)
-                  .set({ availability: "unavailable", updatedAt: revokedAt })
-                  .where(
-                    and(
-                      eq(chatEndpointResources.companyId, current.companyId),
-                      eq(chatEndpointResources.endpointId, current.id),
-                    ),
-                  );
-                await tx
-                  .update(chatConversations)
-                  .set({ state: "unavailable", updatedAt: revokedAt })
-                  .where(
-                    and(
-                      eq(chatConversations.companyId, current.companyId),
-                      eq(chatConversations.endpointId, current.id),
-                      inArray(chatConversations.state, ["active", "waiting"]),
-                    ),
-                  );
-                await notifyChatDeliveryWork(tx);
-                const [processed] = await tx
-                  .update(chatDeliveries)
-                  .set({
-                    state: "processed",
-                    processedAt: revokedAt,
-                    redactedError: null,
-                    nextAttemptAt: null,
-                    updatedAt: revokedAt,
-                  })
-                  .where(
-                    and(
-                      eq(chatDeliveries.id, claimed.id),
-                      eq(chatDeliveries.state, "processing"),
-                      eq(chatDeliveries.attempts, candidate.attempts + 1),
-                    ),
-                  )
-                  .returning({ id: chatDeliveries.id });
-                if (!processed) {
-                  throw new Error(
-                    "GitHub installation deletion ownership changed before revocation settlement",
-                  );
-                }
-                await credentialLease.assertOwned(tx);
-                return true;
-              });
-              stopRuntimeAfterLifecycle = revoked;
-              return;
-            }
-            const identity = await verifyCredentials(
-              "github",
-              currentCredentials,
-            );
-            const upgradingLegacyIdentity =
-              !currentEndpoint.botExternalId &&
-              legacyGitHubLabelsMatchVerifiedCredentials(
-                currentEndpoint,
-                identity,
-              );
-            if (
-              !upgradingLegacyIdentity &&
-              !nativeBotIdentityMatches("github", currentEndpoint, identity)
-            ) {
-              throw conflict(
-                "The GitHub App identity changed while reconciling this connection",
-                {
-                  code: "chat_bot_identity_changed",
-                },
-              );
-            }
-            await assertNativeBotIdentityAvailable(currentEndpoint, identity);
-            if (upgradingLegacyIdentity) {
-              await db.transaction(async (tx) => {
-                await credentialLease.assertOwned(tx);
-                await tx
-                  .update(chatEndpoints)
-                  .set({
-                    botExternalId: identity.botExternalId,
-                    updatedAt: new Date(),
-                  })
-                  .where(eq(chatEndpoints.id, currentEndpoint.id));
-                await credentialLease.assertOwned(tx);
-              });
-            }
-
-            // GitHub lifecycle payloads are wake-up signals, not provider
-            // truth. Re-read the one active App installation and its complete
-            // repository inventory while the credential lease excludes secret
-            // rotation and every other lifecycle callback for this endpoint.
-            const prepared = await prepareProviderInventory(
-              currentEndpoint,
-              currentCredentials,
-            );
-            if (
-              prepared.credentials.installationId !==
-              currentCredentials.installationId
-            ) {
-              await persistCredentials(
-                currentEndpoint,
-                prepared.credentials,
-                credentialLease,
-              );
-              refreshRuntimeAfterLifecycle = true;
-            }
-            if (prepared.inventory)
-              await reconcileProviderResourceRows(
-                currentEndpoint,
-                prepared.inventory,
-                credentialLease,
-              );
-
-            const canonical = await endpointRecord(currentEndpoint.id);
-            if (!canonical) throw notFound("Chat endpoint not found");
-            const now = new Date();
-            const intentionallyUnavailable =
-              canonical.endpoint.status === "paused" ||
-              canonical.endpoint.status === "archived" ||
-              !canonical.endpoint.setup.webhookVerifiedAt;
-            const advanceRuntimeGeneration =
-              refreshRuntimeAfterLifecycle ||
-              !canonical.endpoint.setup.webhookVerifiedAt;
-            await db.transaction(async (tx) => {
-              await credentialLease.assertOwned(tx);
-              if (intentionallyUnavailable) {
-                await tx
-                  .update(chatEndpoints)
-                  .set({
-                    ...(advanceRuntimeGeneration
-                      ? {
-                          setup: {
-                            ...canonical.endpoint.setup,
-                            runtimeGeneration:
-                              runtimeGeneration(canonical.endpoint.setup) + 1,
-                          } as InternalSetupState,
-                        }
-                      : {}),
-                    lastEventAt: now,
-                    updatedAt: now,
-                  })
-                  .where(eq(chatEndpoints.id, canonical.endpoint.id));
-              } else {
-                const status =
-                  canonical.endpoint.setup.step === "complete"
-                    ? "active"
-                    : "verifying";
-                await tx
-                  .update(chatEndpoints)
-                  .set({
-                    status,
-                    healthMessage:
-                      status === "active"
-                        ? "Connected"
-                        : "Waiting for a test conversation",
-                    lastError: null,
-                    lastEventAt: now,
-                    ...(advanceRuntimeGeneration
-                      ? {
-                          setup: {
-                            ...canonical.endpoint.setup,
-                            runtimeGeneration:
-                              runtimeGeneration(canonical.endpoint.setup) + 1,
-                          } as InternalSetupState,
-                        }
-                      : {}),
-                    updatedAt: now,
-                  })
-                  .where(eq(chatEndpoints.id, canonical.endpoint.id));
-                await tx
-                  .update(toolConnections)
-                  .set({
-                    status: "active",
-                    enabled: true,
-                    healthStatus: "healthy",
-                    healthMessage: "Connected",
-                    lastError: null,
-                    healthCheckedAt: now,
-                    updatedAt: now,
-                  })
-                  .where(
-                    eq(toolConnections.id, canonical.endpoint.connectionId),
-                  );
-              }
-              await notifyChatDeliveryWork(tx);
-              await tx
-                .update(chatDeliveries)
-                .set({
-                  state: "processed",
-                  processedAt: now,
-                  redactedError: null,
-                  nextAttemptAt: null,
-                  updatedAt: now,
-                })
-                .where(
-                  and(
-                    eq(chatDeliveries.id, claimed.id),
-                    eq(chatDeliveries.state, "processing"),
-                    eq(chatDeliveries.attempts, candidate.attempts + 1),
-                  ),
-                );
-              await credentialLease.assertOwned(tx);
-            });
-            if (!canonical.endpoint.setup.webhookVerifiedAt) {
-              stopRuntimeAfterLifecycle = true;
-            }
-          } catch (error) {
-            const latest = await endpointRecord(currentEndpoint.id);
-            const preserveIntentionalState =
-              !latest ||
-              latest.endpoint.status === "paused" ||
-              latest.endpoint.status === "archived" ||
-              !latest.endpoint.setup.webhookVerifiedAt;
-            if (!preserveIntentionalState) {
-              const failedAt = new Date();
-              const failure = redactError(error);
-              const nextGeneration =
-                runtimeGeneration(latest.endpoint.setup) + 1;
-              const retryRuntimeContext: LifecycleRuntimeFence = {
-                credentialFingerprint: credentialFingerprint(
-                  latest.credentialSecretRefs,
-                ),
-                generation: nextGeneration,
-              };
-              const terminal = candidate.attempts + 1 >= 5;
-              await db.transaction(async (tx) => {
-                await credentialLease.assertOwned(tx);
-                await tx
-                  .update(chatEndpoints)
-                  .set({
-                    status: "attention",
-                    healthMessage:
-                      "GitHub App credentials, permissions, events, or identity need attention",
-                    lastError: failure,
-                    lastEventAt: failedAt,
-                    setup: {
-                      ...latest.endpoint.setup,
-                      runtimeGeneration: nextGeneration,
-                    } as InternalSetupState,
-                    updatedAt: failedAt,
-                  })
-                  .where(eq(chatEndpoints.id, currentEndpoint.id));
-                await tx
-                  .update(toolConnections)
-                  .set({
-                    status: "disabled",
-                    enabled: false,
-                    healthStatus: "degraded",
-                    healthMessage:
-                      "GitHub App credentials, permissions, events, or identity need attention",
-                    lastError: failure,
-                    healthCheckedAt: failedAt,
-                    updatedAt: failedAt,
-                  })
-                  .where(eq(toolConnections.id, currentEndpoint.connectionId));
-                await tx
-                  .update(chatEndpointResources)
-                  .set({ availability: "unavailable", updatedAt: failedAt })
-                  .where(
-                    and(
-                      eq(
-                        chatEndpointResources.companyId,
-                        currentEndpoint.companyId,
-                      ),
-                      eq(chatEndpointResources.endpointId, currentEndpoint.id),
-                    ),
-                  );
-                await tx
-                  .update(chatConversations)
-                  .set({ state: "unavailable", updatedAt: failedAt })
-                  .where(
-                    and(
-                      eq(
-                        chatConversations.companyId,
-                        currentEndpoint.companyId,
-                      ),
-                      eq(chatConversations.endpointId, currentEndpoint.id),
-                      inArray(chatConversations.state, ["active", "waiting"]),
-                    ),
-                  );
-                await notifyChatDeliveryWork(tx);
-                await tx
-                  .update(chatDeliveries)
-                  .set({
-                    state: terminal ? "failed" : "retry",
-                    normalizedEvent: normalizedLifecycleWithRuntimeFence(
-                      candidate,
-                      retryRuntimeContext,
-                    ),
-                    redactedError: failure,
-                    nextAttemptAt: terminal ? null : failedAt,
-                    updatedAt: failedAt,
-                  })
-                  .where(
-                    and(
-                      eq(chatDeliveries.id, claimed.id),
-                      eq(chatDeliveries.state, "processing"),
-                      eq(chatDeliveries.attempts, candidate.attempts + 1),
-                    ),
-                  );
-                await credentialLease.assertOwned(tx);
-              });
+          const outcome = await applyGitHubInstallationLifecycle({
+            currentEndpoint, effect, credentialLease, admittedRuntimeContext, claimed, candidate,
+            onFailurePersisted: () => {
               stopRuntimeAfterFailure = true;
               lifecycleFailurePersisted = true;
-            }
-            throw error;
-          }
+            },
+          });
+          refreshRuntimeAfterLifecycle = outcome.refreshRuntimeAfterLifecycle;
+          stopRuntimeAfterLifecycle = outcome.stopRuntimeAfterLifecycle;
           return;
         }
 
@@ -19319,83 +18938,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       : null;
   }
 
-  async function storeGitHubApp(endpointId: string, userId: string, credentials: Record<string, string>, source: "manifest" | "existing_app" = "existing_app") {
-    const initial = await endpointRecord(endpointId);
-    if (!initial || initial.endpoint.provider !== "github") throw notFound("GitHub bot not found");
-    await withCredentialMutationLease(initial.endpoint, async credentialLease => {
-      const record = await endpointRecord(endpointId);
-      if (!record || ["archived", "active", "paused"].includes(record.endpoint.status)) throw conflict("Use the reconnect flow for an existing active bot");
-      const normalized = await normalizedCredentials(record.endpoint, credentials);
-      const identity = await verifyCredentials("github", normalized);
-      if (record.endpoint.botExternalId && !nativeBotIdentityMatches("github", record.endpoint, identity)) throw conflict("This App belongs to a different bot. Create a new connection instead.");
-      await assertNativeBotIdentityAvailable(record.endpoint, identity);
-      // Claim the globally unique App identity before writing credentials.
-      // A losing concurrent registration must never persist usable secrets.
-      if (!record.endpoint.botExternalId) {
-        try {
-          await db.transaction(async tx => {
-            await credentialLease.assertOwned(tx);
-            const [current] = await tx.select({ setup: chatEndpoints.setup }).from(chatEndpoints).where(eq(chatEndpoints.id, endpointId)).for("update");
-            const [resource] = await tx.select({ id: chatEndpointResources.id }).from(chatEndpointResources).where(eq(chatEndpointResources.endpointId, endpointId)).limit(1);
-            // A fresh manual App has no registration session. Record its first
-            // import before vault writes so interrupted credential storage can resume.
-            const initialImport = !current?.setup.github?.repositorySelectionSaved && !resource;
-            const claimed = await tx.update(chatEndpoints).set({ status: "attention", botExternalId: identity.botExternalId, botUsername: identity.botUsername, providerAccountId: identity.providerAccountId, providerAccountLabel: identity.providerAccountLabel,
-              setup: sql`jsonb_set(${chatEndpoints.setup}, '{github}', coalesce(${chatEndpoints.setup}->'github', '{}'::jsonb) || ${JSON.stringify({ initialSetupPending: true, ...(initialImport ? { initialRepositoryImportPending: true } : {}) })}::jsonb)`,
-              healthMessage: "Complete GitHub App setup", updatedAt: new Date() }).where(and(eq(chatEndpoints.id, endpointId), isNull(chatEndpoints.botExternalId))).returning({ id: chatEndpoints.id });
-            if (claimed.length !== 1) throw conflict("The bot changed during registration");
-          });
-        } catch (error) {
-          if (isNativeBotIdentityUniqueViolation(error)) throw nativeBotIdentityConflict("github");
-          throw error;
-        }
-      }
-      await persistCredentials(record.endpoint, normalized, credentialLease, userId);
-      const slug = identity.botUsername?.replace(/\[bot\]$/, "");
-      if (!slug || !/^[a-z0-9-]+$/.test(slug)) throw unprocessable("GitHub did not identify this App");
-      await db.transaction(async tx => {
-        await credentialLease.assertOwned(tx);
-        const [current] = await tx.select({ setup: chatEndpoints.setup, status: chatEndpoints.status }).from(chatEndpoints).where(eq(chatEndpoints.id, endpointId)).for("update");
-        if (!current || ["archived", "active", "paused"].includes(current.status)) throw conflict("Use the reconnect flow for an existing active bot");
-        await tx.update(chatEndpoints).set({
-          status: "attention", botExternalId: identity.botExternalId, botUsername: identity.botUsername,
-          botDisplayName: identity.botLabel, providerAccountId: identity.providerAccountId, providerAccountLabel: identity.providerAccountLabel,
-          setup: { ...current.setup, github: { ...current.setup.github, appOwnerType: identity.githubOwnerType, appOwnerLogin: identity.githubOwnerLogin, stage: "install", appSlug: slug, installationUrl: `https://github.com/apps/${slug}/installations/new`, registrationStatus: "completed" } },
-          healthMessage: "Install the App on GitHub to continue", updatedAt: new Date(),
-        }).where(eq(chatEndpoints.id, endpointId));
-        if (source === "existing_app") {
-          // Explicit recovery uses the existing-App identity path. Only drop the
-          // manifest requirement after the same App's credentials are vaulted;
-          // leave registration incomplete so advance repairs and verifies delivery.
-          await tx.update(chatGitHubRegistrations).set({
-            handoff: sql`${chatGitHubRegistrations.handoff} - 'manifestClaimId'`,
-          }).where(and(
-            eq(chatGitHubRegistrations.companyId, record.endpoint.companyId),
-            eq(chatGitHubRegistrations.endpointId, endpointId),
-            eq(chatGitHubRegistrations.userId, userId),
-            inArray(chatGitHubRegistrations.status, ["pending", "exchanging", "failed"]),
-            sql`${chatGitHubRegistrations.handoff} ? 'manifestClaimId'`,
-          ));
-        }
-        await logActivity(tx as unknown as Db, { companyId: record.endpoint.companyId, actorType: "user", actorId: userId, action: "chat_github.app_connected", entityType: "tool_connection", entityId: record.endpoint.connectionId, details: { endpointId, appId: identity.botExternalId } });
-      });
-    });
-    // Manifest registration can send its ping before the credential exchange
-    // returns. Request a provider-signed replay after vaulting the secret.
-    const stored = await endpointRecord(endpointId);
-    const credentialsNow = await resolveCredentials(stored!.endpoint);
-    try {
-      const appToken = githubAppJwt(credentialsNow.appId, credentialsNow.privateKey);
-      const history = await listGitHubAppWebhookDeliveries({ fetch: fetchImpl, appToken });
-      const ping = history.deliveries.find(delivery => delivery.event === "ping");
-      if (ping) await requestGitHubAppWebhookRedelivery({ fetch: fetchImpl, appToken, deliveryId: ping.id });
-    } catch {
-      // Registration succeeded. The verify screen exposes signed-delivery
-      // recovery rather than reporting credentials as failed or exchanging again.
-    }
-    return get(endpointId);
-  }
-
   const linkSlackAccount: SlackSetupOptions["linkInstaller"] = async (endpointId, user, actor, lease) => {
     const record = await endpointRecord(endpointId);
     if (!record || record.endpoint.provider !== "slack" || record.endpoint.providerAccountId !== user.team_id) throw conflict("Slack setup changed");
@@ -19481,77 +19023,13 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     },
     createLinkIntent,
   });
-
-  const githubRegistration = githubChatRegistrationService(db, {
-    publicOrigin: () => getPublicBaseUrl(), webhookOrigin: () => getWebhookPublicBaseUrl(), fetch: fetchImpl,
-    storeApp: async (endpointId, userId, app) => { await storeGitHubApp(endpointId, userId, { appId: app.appId, privateKey: app.privateKey, webhookSecret: app.webhookSecret, ...(app.clientId ? { clientId: app.clientId } : {}), ...(app.clientSecret ? { clientSecret: app.clientSecret } : {}) }, "manifest"); },
+  const { storeGitHubApp, githubRegistration, refreshGitHubRepositories, githubWizard, unregisterGitHubCloudIngress } = createGitHubAppSetup(db, {
+    endpointRecord, withCredentialMutationLease, normalizedCredentials, verifyCredentials, nativeBotIdentityMatches,
+    assertNativeBotIdentityAvailable, isNativeBotIdentityUniqueViolation, nativeBotIdentityConflict,
+    persistCredentials, resolveCredentials, fetchImpl, get, getPublicBaseUrl, getWebhookPublicBaseUrl,
+    prepareProviderInventory, reconcileProviderResourceRows, listResources, replaceResources, update, configure, test, handleWebhook,
+    get githubWizardOrigin() { return options.githubWizardOrigin; },
   });
-
-  async function refreshGitHubRepositories(endpointId: string, userId: string) {
-    const initial = await endpointRecord(endpointId);
-    if (!initial || initial.endpoint.provider !== "github") throw notFound("GitHub bot not found");
-    await withCredentialMutationLease(initial.endpoint, async lease => {
-      const record = await endpointRecord(endpointId);
-      if (!record) throw notFound("GitHub bot not found");
-      const credentials = await resolveCredentials(record.endpoint);
-      const prepared = await prepareProviderInventory(record.endpoint, credentials);
-      if (prepared.credentials.installationId !== credentials.installationId) await persistCredentials(record.endpoint, prepared.credentials, lease, userId);
-      if (prepared.inventory) await reconcileProviderResourceRows(record.endpoint, prepared.inventory, lease);
-      await lease.assertOwned();
-      await db.update(chatEndpoints).set({ setup: { ...record.endpoint.setup, github: { ...record.endpoint.setup.github, stage: "repositories", managementUrl: prepared.managementUrl } }, updatedAt: new Date() }).where(eq(chatEndpoints.id, endpointId));
-    });
-    return listResources(endpointId);
-  }
-
-  const githubWizard = githubChatWizardService(db, {
-    origin: () => getPublicBaseUrl() ?? options.githubWizardOrigin ?? null, fetch: fetchImpl, startDirect: githubRegistration.start, completeDirect: githubRegistration.complete, resumeDirect: githubRegistration.resumeRegistration,
-    storeApp: (id, userId, credentials) => storeGitHubApp(id, userId, credentials, "manifest"),
-    storeCredentials: async (id, userId, additional) => {
-      const record = await endpointRecord(id);
-      if (!record || record.endpoint.provider !== "github") throw notFound("GitHub bot not found");
-      await withCredentialMutationLease(record.endpoint, async lease => {
-        const current = await endpointRecord(id);
-        if (!current || ["archived", "revoked", "paused"].includes(current.endpoint.status)) throw conflict("GitHub App is unavailable");
-        const credentials = await resolveCredentials(current.endpoint);
-        await persistCredentials(current.endpoint, { ...credentials, ...additional }, lease, userId);
-      });
-    },
-    refreshRepositories: refreshGitHubRepositories, resources: listResources, replaceResources,
-    configure: async (id, userId) => {
-      await update(id, { allowGroupChats: true }, userId);
-      return configure(id, { action: "configure" }, userId);
-    },
-    finish: (id, userId) => test(id, { optionalSlackTestForUser: userId }),
-  });
-  const unregisterGitHubCloudIngress = registerGitHubBotCloudIngress(
-    db,
-    async (endpoint, request) => {
-      const record = await endpointRecord(endpoint.id);
-      if (
-        !record ||
-        record.endpoint.companyId !== endpoint.companyId ||
-        record.endpoint.connectionId !== endpoint.connectionId ||
-        record.endpoint.assignedAgentId !== endpoint.assignedAgentId ||
-        record.endpoint.setup.github?.cloudRegistrationId !==
-          endpoint.setup.github?.cloudRegistrationId
-      )
-        throw forbidden("GitHub Cloud event binding changed");
-      // A manifest ping may arrive before its webhook verifier reaches the vault.
-      // Keep the sealed delivery queued until the stack can authenticate it.
-      if (!record.credentialSecretRefs.some((ref) => ref.configPath === "credentials.webhookSecret"))
-        throw conflict("GitHub webhook credentials are not ready");
-      // Preserve the exact provider payload and signature. Authentication, lifecycle
-      // checks and durable admission all run in the stack's canonical ingress.
-      const response = await handleWebhook(
-        record.endpoint.publicId,
-        "github",
-        request,
-      );
-      if ([400, 401, 403, 404, 413, 422].includes(response.status)) return; // Discard hostile transport without retrying it indefinitely.
-      if (!response.ok)
-        throw conflict("GitHub Cloud ingress could not be durably accepted");
-    },
-  );
   const { unregisterSlackTaskAuthority } = createSlackTaskAuthorityRegistration(db, { authorizeInboundWakeup, resolveCredentials });
 
   return {
