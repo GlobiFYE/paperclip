@@ -1,3 +1,4 @@
+import { activatePreparedFixtures } from "../support/capability-gaps/api";
 import { useLayoutEffect, useState, type ReactNode } from "react";
 import type { Preview } from "@storybook/react-vite";
 import { MINIMAL_VIEWPORTS } from "storybook/viewport";
@@ -764,6 +765,7 @@ function StorybookProviders({
 
   if (typeof window !== "undefined") {
     installStorybookApiFixtures();
+    activatePreparedFixtures();
   }
 
   const [viewportReady, setViewportReady] = useState(() => !initialViewportWidth || window.parent === window || window.innerWidth === initialViewportWidth);
@@ -850,6 +852,73 @@ const preview: Preview = {
     },
   },
   parameters: {
+    options: {
+      storySort: {
+        order: [
+          "Overview",
+          "Getting started and access",
+          [
+            "Onboarding and first work", ["Overview", "*"],
+            "Login, invitations, and access", ["Overview", "*"],
+            "Companies and portability", ["Overview", "*"]
+          ],
+          "Tasks and conversations",
+          [
+            "Task creation and lifecycle", ["Overview", "*"],
+            "Delegation, dependencies, and signoff", ["Overview", "*"],
+            "Inbox, decisions, and search", ["Overview", "*"],
+            "Agent conversations and project handoff", ["Overview", "*"],
+            "Questions and approvals", ["Overview", "*"],
+            "Steering and queued messages", ["Overview", "*"],
+            "Documents, attachments, and work products", ["Overview", "*"]
+          ],
+          "Agents and reusable capabilities",
+          [
+            "Hiring, configuration, and organization", ["Overview", "*"],
+            "Runs, harnesses, and model accounts", ["Overview", "*"],
+            "Skills and Skill Studio", ["Overview", "*"],
+            "Team packages and installation", ["Overview", "*"]
+          ],
+          "Projects and execution",
+          [
+            "Projects and repositories", ["Overview", "*"],
+            "Goals and work alignment", ["Overview", "*"],
+            "Workspaces, services, and files", ["Overview", "*"],
+            "Execution environments", ["Overview", "*"],
+            "Recovery", ["Overview", "*"]
+          ],
+          "Apps, channels, and extensions",
+          [
+            "Connection setup", ["Overview", "*"],
+            "App access and action permissions", ["Overview", "*"],
+            "External chat and email", ["Overview", "*"],
+            "Tool gateways and access profiles", ["Overview", "*"],
+            "Secrets and proposals", ["Overview", "*"],
+            "Plugins", ["Overview", "*"]
+          ],
+          "Automation and structured work",
+          [
+            "Routines, schedules, and triggers", ["Overview", "*"],
+            "Pipelines, review queues, and learnings", ["Overview", "*"],
+            "Cases", ["Overview", "*"],
+            "Status cards", ["Overview", "*"]
+          ],
+          "Oversight and operation",
+          [
+            "Costs and budgets", ["Overview", "*"],
+            "Dashboards and audit trails", ["Overview", "*"],
+            "Navigation, profile, and announcements", ["Overview", "*"],
+            "Instance operations", ["Overview", "*"],
+            "CLI, API and local worktrees", ["Overview", "*"]
+          ],
+          "Contributor surfaces",
+          [
+            "Developer previews and diagnostic labs", ["Overview", "*"]
+          ],
+          "Foundations"
+        ],
+      },
+    },
     actions: { argTypesRegex: "^on[A-Z].*" },
     a11y: {
       test: "error",

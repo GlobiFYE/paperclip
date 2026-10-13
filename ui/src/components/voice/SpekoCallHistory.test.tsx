@@ -5,7 +5,7 @@ import { MemoryRouter } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SpekoCallHistory } from "./SpekoCallHistory";
-import { callHistoryFixture } from "../../../storybook/fixtures/spekoCallHistory";
+import { callHistoryFixture } from "../../../storybook/support/speko/spekoCallHistory";
 const mocks = vi.hoisted(() => ({list: vi.fn(), incoming: vi.fn(), end: vi.fn()}));
 vi.mock("@/api/voiceHistory", () => ({voiceHistoryApi: {list: mocks.list}}));
 vi.mock("@/api/voicePhone", () => ({voicePhoneApi: {history: mocks.incoming}}));
