@@ -7,6 +7,7 @@ import { notifyChatPublicationWork } from "./chat-work-notifications.js";
 import { recordChatHandoff, recordChatCompletion, existingChatCompletionReply, acknowledgeChatCompletionReply } from "./chat-completion-delivery.js";
 import { mirrorSlackBoardComment, slackBoardReplyBindings } from "./slack-board-messages.js";
 import { assertAgentRunWriteAllowed } from "../agent-run-cancellation.js";
+import { assertLegacyRunTaskOwnership } from "../legacy-run-task-ownership.js";
 import { retryIdempotentDatabaseOperation } from "../database-retry.js";
 import { externalConversationStateSql, nonIdleSlackIssueCondition, resumeSlackConversation } from "./slack-conversation-state.js";
 import { documentService } from "./documents.js";
@@ -2842,6 +2843,16 @@ const ISSUE_USER_PARTICIPATION_ACTIVITY_ACTIONS = [
   "issue.work_product_updated",
 ] as const;
 
+// Old read projections attributed this automatic cleanup to the reader. Keep
+// the audit rows, but do not count them as participation or issue activity.
+function automaticReadRecoveryCleanupCondition() {
+  return sql<boolean>`(
+    ${activityLog.action} = 'issue.recovery_action_resolved'
+    AND COALESCE(${activityLog.details}->>'source', '') = 'source_revalidation'
+    AND COALESCE(${activityLog.details}->>'trigger', '') = 'read_projection'
+  )`;
+}
+
 function touchedByUserCondition(companyId: string, userId: string) {
   return sql<boolean>`
     (
@@ -2855,6 +2866,7 @@ function touchedByUserCondition(companyId: string, userId: string) {
           AND ${activityLog.companyId} = ${companyId}
           AND ${activityLog.actorType} = 'user'
           AND ${activityLog.actorId} = ${userId}
+          AND NOT ${automaticReadRecoveryCleanupCondition()}
           AND ${activityLog.action} IN (${sql.join(
             ISSUE_USER_PARTICIPATION_ACTIVITY_ACTIONS.map(
               (action) => sql`${action}`,
@@ -2960,6 +2972,7 @@ function issueLatestLogAtExpr(companyId: string) {
       WHERE ${activityLog.companyId} = ${companyId}
         AND ${activityLog.entityType} = 'issue'
         AND ${activityLog.entityId} = ${issues.id}::text
+        AND NOT ${automaticReadRecoveryCleanupCondition()}
         AND ${activityLog.action} NOT IN (${sql.join(
           ISSUE_LOCAL_INBOX_ACTIVITY_ACTIONS.map((action) => sql`${action}`),
           sql`, `,
@@ -5138,6 +5151,7 @@ async function lastActivityStatsForIssues(
             eq(activityLog.companyId, companyId),
             eq(activityLog.entityType, "issue"),
             inArray(activityLog.entityId, issueIdChunk),
+            sql`NOT ${automaticReadRecoveryCleanupCondition()}`,
             sql`${activityLog.action} NOT IN (${sql.join(
               ISSUE_LOCAL_INBOX_ACTIVITY_ACTIONS.map(
                 (action) => sql`${action}`,
@@ -11181,9 +11195,10 @@ export function issueService(db: Db) {
         if (actorAgentId && actorRunId) {
           // Recheck under a run lock: a request admitted before Stop must not
           // commit a late Done after cancellation revoked its credentials.
-          await assertAgentRunWriteAllowed(tx, receiptExisting.companyId, {
+          const actorRun = await assertAgentRunWriteAllowed(tx, receiptExisting.companyId, {
             agentId: actorAgentId, runId: actorRunId, stopId: actorRunStopId,
           });
+          assertLegacyRunTaskOwnership(actorRun, receiptExisting);
         }
         if (actorAgentId && patch.status === "done") {
           const [review] = await tx.select({ id: toolActionRequests.id }).from(toolActionRequests).where(and(eq(toolActionRequests.companyId, existing.companyId), eq(toolActionRequests.issueId, id), inArray(toolActionRequests.status, ["pending", "approved", "executing"]))).limit(1);

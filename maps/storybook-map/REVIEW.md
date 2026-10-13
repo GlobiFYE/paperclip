@@ -159,6 +159,33 @@ Use `maintain-storybook` to correct drift and `review-storybook` to record separ
 source, render, interaction, visual-comparison, and production evidence. Both skills
 consume the feature map; neither changes its upstream contract.
 
+## Native runtime prerequisite: scoped source follow-up — 2026-10-12
+
+Source comparison: `9f59ff36cf2da963709ca19c06ab005510c835a6` against actual
+master `4b958ecbd8f33a7782fe6f29ec825f80f636b833`. The reviewed
+`maps/feature-map/runs-adapters.md` bytes have SHA-256
+`ca5aff86608b7d7987dc0ee814475a7b93e3faff1f99ce090429d2e932b7e16b`.
+
+Twenty-one entries in Runs, harnesses, and model accounts and Task creation and
+lifecycle had review-fingerprint drift. Their 117 unique declared sources have
+one changed input: the runs-adapters feature recipe. All 21 story files and the
+other 116 declared production subjects, wrappers and fixture sources are
+unchanged from master. The recipe adds bounded native startup and registration
+retirement controls. It separates those provider-free controls from real daemon
+and installed-provider proof; it changes no represented UI or fixture contract.
+
+Refreshed only those 21 reviewed fingerprints. No story, fixture, export, stable
+ID, title, capability reference or product/implementation/data classification
+changed. Existing mixed and unreviewed parity limitations remain. No fixture
+correction is needed for this scoped prerequisite; this does not establish full
+state parity for the affected suites.
+
+This follow-up is source inspection only. Rendering, play assertions, visual
+comparisons and production provider acceptance were not run. Native lifecycle
+behavior remains with the linked transport controls and their existing hosted
+CI fixtures. Catalog validation proves structure and reviewed dependency hashes,
+not that these live journeys passed.
+
 ## Task workspace reconciliation — 2026-10-12
 
 Scope: the 26 declared-source entries affected by task-workspace work at
@@ -213,3 +240,41 @@ Reviewed the same twelve workspace-recipe-dependent entries after extending the 
 ## Default-source recipe follow-up — 2026-10-13
 
 Reviewed the twelve unchanged workspace recipe subjects and fixtures after correcting implicit default selection. Task creation and controller classification now share configured-policy, primary, creation-time and ID precedence. Explicit choices and retained denial markers still suppress controller hooks. Project strategy fixtures show configuration, while runtime status and file/browser/artifact/service fixtures do not execute source scripts or prove this backend ordering. Refreshed only their reviewed recipe fingerprints and retained all classifications and stable IDs. No browser render, play, screenshot, Storybook build or live runtime acceptance was performed.
+
+
+## Inherited activity, inbox and recovery recipes — 2026-10-12
+
+Source comparison: master `e168512f7bdbb6af6ea01954c6d7ed80b91e903e`
+against previous master `f329b24ee12496e710ad17377ec7716e0eee22ef`,
+while reconciling the native-runtime prerequisite. All 25 affected catalog
+entries are identical to e168 master; their stale fingerprints were inherited.
+
+The 101 unique declared inputs have three changed feature recipes. The remaining 98 inputs, including all 25 story files, are unchanged
+between those masters and the merged worktree. They include 92 non-map
+story, subject, wrapper and fixture sources and six unchanged map files. The reviewed recipe
+bytes have these SHA-256 identities:
+
+- `maps/feature-map/activity.md`: `3867cc392c031cc5ca9ec61bfc4211d685da37e39fb36e9b152497b7cf970caf`.
+- `maps/feature-map/inbox-search.md`: `8ff5431ddfe54c0c288eecffb785f864d8bfeb38be50c66615999ffbbfba6863`.
+- `maps/feature-map/recovery.md`: `46fee5940f23a6d1483697e0b07817a78d993d4748b51121d2e113dd2a96173b`.
+
+The activity addition names issue-scoped activity authorization and sandbox
+bridge controls; company audit/display fixtures do not establish live sandbox
+agent access. The inbox recipe excludes automatic historical read cleanup from
+user participation while retaining explicit decisions; static inbox/decision
+examples do not execute that query or the newly required user/company journey.
+The recovery recipe retains native workspace-owner holds across task completion
+and repeated reads until exact operator retirement; recovery display fixtures
+do not establish ownership, copyback denial, action identity or live operator
+recovery. These backend acceptance requirements remain separate gaps.
+
+The proposed maintenance changes only those 25 reviewed dependency fingerprints.
+Retain the existing 24 unreviewed and one current classification, simulation
+boundaries, story exports, titles and stable IDs. No fixture or story correction
+is indicated by this declared-source comparison. This does not promote full
+state parity or coverage for the added backend requirements.
+
+Source inspection only: no browser rendering, play, visual baseline, provider
+run or live production acceptance was performed for this reconciliation. The
+existing catalog checker must run on the actual merged tree after synchronization;
+its result verifies structure and declared hashes, not these live journeys.

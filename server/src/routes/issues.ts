@@ -1,6 +1,8 @@
 import { parseObject } from "../adapters/utils.js";
+import { assertLegacyRunTaskOwnership } from "../legacy-run-task-ownership.js";
 import { enqueueFastResponse } from "../services/fast-responses.js";
 import { hasRequiredWorkspaceRecovery, LEGACY_WORKSPACE_RECOVERY_SCHEMA } from "../services/workspace-restore-recovery-state.js";
+import { hasUnverifiedNativeWorkspaceFinalizationOwner } from "../services/native-runtime/native-workspace-finalization-recovery-state.js";
 import { monitorPoliciesEqual, applyActorMonitorScheduledBy, assertCanManageIssueMonitor, summarizeIssueMonitor } from "../services/issue-monitors.js";
 import type { IssuePrivacyConstraints } from "@paperclipai/shared";
 import { canActorReadHeartbeatRun } from "../services/heartbeat-run-privacy.js";
@@ -660,7 +662,7 @@ const attachmentArtifactMetadataInputSchema = z
   .passthrough();
 
 function buildCreateIssueActivityStatusDetails(
-  issue: { assigneeAgentId: string | null; status: string },
+  issue: { assigneeAgentId: string | null; assigneeUserId: string | null; status: string },
   res: Response,
 ) {
   const statusDefault = res.locals.createIssueStatusDefault as
@@ -668,6 +670,8 @@ function buildCreateIssueActivityStatusDetails(
   const assignmentWakeSkipped =
     !issue.assigneeAgentId || issue.status === "backlog";
   return {
+    assigneeAgentId: issue.assigneeAgentId,
+    assigneeUserId: issue.assigneeUserId,
     status: issue.status,
     statusDefaulted: statusDefault?.defaulted ?? false,
     statusDefaultReason: statusDefault?.reason ?? "explicit",
@@ -4344,6 +4348,10 @@ export function issueRoutes(
         : input.activeRecoveryAction;
     if (!activeRecoveryAction) return null;
 
+    if (await hasUnverifiedNativeWorkspaceFinalizationOwner(db, activeRecoveryAction)) {
+      return activeRecoveryAction;
+    }
+
     const resolutionNote = await classifySourceRecoveryRevalidation(input);
     if (!resolutionNote) return activeRecoveryAction;
 
@@ -4357,13 +4365,12 @@ export function issueRoutes(
     });
     if (!resolved) return activeRecoveryAction;
 
-    const actor = input.actor;
     await logActivity(db, {
       companyId: input.issue.companyId,
-      actorType: actor?.actorType ?? "system",
-      actorId: actor?.actorId ?? "system",
-      agentId: actor?.agentId ?? null,
-      runId: actor?.runId ?? null,
+      actorType: "system",
+      actorId: "recovery",
+      agentId: null,
+      runId: input.actor?.runId ?? null,
       action: "issue.recovery_action_resolved",
       entityType: "issue",
       entityId: input.issue.id,
@@ -5627,6 +5634,11 @@ export function issueRoutes(
     if (!actorAgentId) {
       res.status(403).json({ error: "Agent authentication required" });
       return false;
+    }
+    if (req.actor.source === "agent_jwt" && req.actor.runId &&
+        issue.assigneeAgentId === null && issue.assigneeUserId) {
+      const run = await heartbeat.getRun(req.actor.runId);
+      if (run?.agentId === actorAgentId) assertLegacyRunTaskOwnership(run, issue);
     }
     // Task-watchdog runs receive a scoped *grant* to mutate issues inside the
     // watched subtree. This must be evaluated before the base assignee-ownership
@@ -14237,7 +14249,18 @@ export function issueRoutes(
           agentId: existing.assigneeAgentId,
         });
         const runToStopForReassignment = await resolveActiveIssueRun(existing);
-        if (runToStopForReassignment) {
+        const isHumanSelfHandoff =
+          req.actor.type === "agent" &&
+          req.actor.source === "agent_jwt" &&
+          nextAssigneeAgentId === null &&
+          typeof nextAssigneeUserId === "string" &&
+          req.actor.agentId === existing.assigneeAgentId &&
+          runToStopForReassignment?.runtimeMode === "legacy" &&
+          runToStopForReassignment.id === req.actor.runId &&
+          runToStopForReassignment.agentId === req.actor.agentId &&
+          runToStopForReassignment.companyId === existing.companyId &&
+          runToStopForReassignment.contextSnapshot?.issueId === existing.id;
+        if (runToStopForReassignment && !isHumanSelfHandoff) {
           const cancelled = await heartbeat.cancelRun(
             runToStopForReassignment.id,
             "Cancelled before issue reassignment",
