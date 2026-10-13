@@ -216,6 +216,33 @@ else if(m.id!==undefined) send({id:m.id,result:{}});
     expect((await fetch(`${fixture.apiUrl}/api/agents/me/secrets/${secret.key}/value`, { method: "POST", headers: { Authorization: `Bearer ${token}`, "X-Paperclip-Run-Id": peerRun.id } })).status).toBe(403);
   });
 
+  it.each([
+    ["POST /api/companies/{companyId}/exports", 1],
+    ["POST /api/companies/{companyId}/export", 2500],
+  ])("keeps authorized company export credentials private and replayable for %s", async (operationId, repeats) => {
+    const fixture = await server.fixture();
+    await server.db.update(agents).set({ role: "ceo" }).where(eq(agents.id, fixture.agentId));
+    const credential = "disposable-export-credential-".repeat(repeats);
+    const [httpAgent] = await server.db.insert(agents).values({
+      companyId: fixture.companyId, name: "Exported HTTP fixture", adapterType: "http",
+      adapterConfig: { url: "https://fixture.invalid", headers: { Authorization: credential } },
+    }).returning();
+    const call = { tool: "call_api", callId: "private-export", arguments: {
+      operationId, body: { include: { agents: true }, agents: [httpAgent.id] },
+    } };
+    const result = await fixture.authority.execute(call) as any;
+    expect(result).toMatchObject({ ok: true, status: 200 });
+    expect(JSON.stringify(result.data)).toContain(credential);
+    expect(result).not.toHaveProperty("artifact");
+    expect(await fixture.authority.execute(call)).toEqual(result);
+    const snapshot = await fixture.snapshot();
+    expect(snapshot.assets.filter(asset => asset.objectKey.includes("/runner-api/"))).toEqual([]);
+    expect(snapshot.activity.filter(row => row.action === "runner.api_called")).toHaveLength(1);
+    const [run] = await server.db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, fixture.runId));
+    expect(JSON.stringify(run.resultJson)).not.toContain(credential);
+    expect(Object.values((run.resultJson as any).apiToolReceipts)[0]).toHaveProperty("encryptedResult");
+  });
+
   it("preserves the REST skill-test credential scope after a task mode edit", async () => {
     const fixture = await server.fixture();
     await server.db.update(heartbeatRuns).set({ contextSnapshot: { issueId: fixture.issueId,
