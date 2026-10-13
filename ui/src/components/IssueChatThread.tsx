@@ -37,7 +37,6 @@ import {
   type ReactNode,
 } from "react";
 import { Link, useLocation } from "@/lib/router";
-import { createUuid } from "@/lib/uuid";
 import type {
   Agent,
   FeedbackDataSharingPreference,
@@ -5052,7 +5051,7 @@ const IssueChatComposer = forwardRef<
         setBody(trimmed);
         return;
       }
-      attemptId = createUuid();
+      attemptId = crypto.randomUUID();
       if (draftKey) {
         saveDraft(draftKey, trimmed);
         saveDraftSubmission(draftKey, { attemptId, reviewed: false });
