@@ -71,6 +71,7 @@
                 ./pnpm-workspace.yaml
                 ./tsconfig.base.json
                 ./tsconfig.json
+                ./announcements
                 ./cli
                 ./packages
                 ./patches
