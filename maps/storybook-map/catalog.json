@@ -795,7 +795,7 @@
         "activity/activity",
         "gateways-profiles/activity"
       ],
-      "purpose": "Apps/App detail \u00b7 Activity (lifecycle)",
+      "purpose": "Apps/App detail · Activity (lifecycle)",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -809,8 +809,8 @@
         "ui/storybook/stories/activity/app-activity-lifecycle.stories.tsx"
       ],
       "fingerprint": "1642f6a6692ccd3ac058d1841f388607b3379c683711bbe558aad3cc79ffc077",
-      "stableId": "apps-app-detail-\u00b7-activity-lifecycle",
-      "sidebarTitle": "Oversight and operation/Dashboards and audit trails/Apps/App detail \u00b7 Activity (lifecycle)"
+      "stableId": "apps-app-detail-·-activity-lifecycle",
+      "sidebarTitle": "Oversight and operation/Dashboards and audit trails/Apps/App detail · Activity (lifecycle)"
     },
     {
       "file": "ui/storybook/stories/connection-setup/apps-catalog-source-selection.stories.tsx",
@@ -2184,7 +2184,7 @@
         "ui/src/components/ExecutionBlockerNotice.tsx",
         "ui/storybook/stories/recovery/execution-blocker-notice.stories.tsx"
       ],
-      "fingerprint": "19fa3d95095bbcd67c5306d6ad3c8c00ae526bab9d8cbc49e69ca36c15a873c2",
+      "fingerprint": "bee366ba1266e6692c8f0ee027c449fdda6b51762369ba431871a5af5ee018c6",
       "stableId": "task-chat-recovery-notice",
       "sidebarTitle": "Projects and execution/Recovery/Task chat/Recovery notice"
     },
@@ -2480,7 +2480,7 @@
       "capabilities": [
         "skills/authoring"
       ],
-      "purpose": "Product/Skill Studio \u00b7 FrontmatterPanel",
+      "purpose": "Product/Skill Studio · FrontmatterPanel",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -2492,8 +2492,8 @@
         "ui/storybook/stories/skills/frontmatter-panel.stories.tsx"
       ],
       "fingerprint": "e7b2ffabdadc43d7fa2f564465792539d25f15da54fb4f7fec31cc4a2f0aec76",
-      "stableId": "product-skill-studio-\u00b7-frontmatterpanel",
-      "sidebarTitle": "Agents and reusable capabilities/Skills and Skill Studio/Product/Skill Studio \u00b7 FrontmatterPanel"
+      "stableId": "product-skill-studio-·-frontmatterpanel",
+      "sidebarTitle": "Agents and reusable capabilities/Skills and Skill Studio/Product/Skill Studio · FrontmatterPanel"
     },
     {
       "file": "ui/storybook/stories/gateways-profiles/gateways-tab.stories.tsx",
@@ -4471,7 +4471,7 @@
         "routines/definition",
         "routines/management"
       ],
-      "purpose": "Product/Routines \u00b7 Detail (variation C)",
+      "purpose": "Product/Routines · Detail (variation C)",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -4489,8 +4489,8 @@
         "ui/storybook/stories/routines/routine-detail-c.stories.tsx"
       ],
       "fingerprint": "c07544c830cd35d90c553d9388e2a9479e42f69460a6c506e1c541cea78607d4",
-      "stableId": "product-routines-\u00b7-detail-variation-c",
-      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines \u00b7 Detail (variation C)"
+      "stableId": "product-routines-·-detail-variation-c",
+      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines · Detail (variation C)"
     },
     {
       "file": "ui/storybook/stories/routines/routine-secrets.stories.tsx",
@@ -4498,7 +4498,7 @@
         "routines/definition",
         "secrets/runtime-delivery"
       ],
-      "purpose": "Product/Routines \u00b7 Secrets tab",
+      "purpose": "Product/Routines · Secrets tab",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -4513,8 +4513,8 @@
         "ui/storybook/stories/routines/routine-secrets.stories.tsx"
       ],
       "fingerprint": "03c05c0cca01d220885ea96f13495bcc185121eecbbeb00918511b4d7de26016",
-      "stableId": "product-routines-\u00b7-secrets-tab",
-      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines \u00b7 Secrets tab"
+      "stableId": "product-routines-·-secrets-tab",
+      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines · Secrets tab"
     },
     {
       "file": "ui/storybook/stories/routines/routine-webhooks-ux.stories.tsx",
@@ -4576,7 +4576,7 @@
         "routines/definition",
         "routines/management"
       ],
-      "purpose": "Product/Routines \u00b7 List (grouped cards)",
+      "purpose": "Product/Routines · List (grouped cards)",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
@@ -4588,8 +4588,8 @@
         "ui/storybook/stories/routines/routines-list-groups.stories.tsx"
       ],
       "fingerprint": "02a433aeee5be2ecc3284f0a27c45c4222e3abf05cbd478e55bfb7462a301d19",
-      "stableId": "product-routines-\u00b7-list-grouped-cards",
-      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines \u00b7 List (grouped cards)"
+      "stableId": "product-routines-·-list-grouped-cards",
+      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines · List (grouped cards)"
     },
     {
       "file": "ui/storybook/stories/tasks/runner-activity.stories.tsx",
@@ -5616,7 +5616,7 @@
         "ui/storybook/stories/recovery/workspace-finalization-recovery/01-notice.stories.tsx",
         "ui/storybook/support/workspace-finalization-recovery/fixtures.tsx"
       ],
-      "fingerprint": "2e50fc0b40026add72f4bbdde2c3f79a568488c1190b4c011cae1d24fc4f4583",
+      "fingerprint": "09ab0280b6ed9ae6e5cbef1c67c672dcb8a7acd7a7d1a0138615dd17794e4234",
       "stableId": "workspace-finalization-recovery-01-notice",
       "sidebarTitle": "Projects and execution/Recovery/Workspace finalization recovery/01 Notice"
     },

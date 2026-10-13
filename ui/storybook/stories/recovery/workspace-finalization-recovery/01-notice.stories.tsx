@@ -9,7 +9,7 @@ const meta = {
   title: "Projects and execution/Recovery/Workspace finalization recovery/01 Notice",
   component: WorkspaceExportRecovery,
   args: { issueId, action: recoveryAction, canManage: true, onQueued: () => {} },
-  parameters: { layout: "fullscreen", docs: { description: { component: "The production recovery notice from PR #15824. Record platform stop evidence and confirm the exact previous controller and all copyback processes stopped, then resume the saved result. API responses are simulated; these examples do not modify staging." } } },
+  parameters: { layout: "fullscreen", docs: { story: { inline: false }, description: { component: "The production recovery notice from PR #15824. Record platform stop evidence and confirm the exact previous controller and all copyback processes stopped, then resume the saved result. API responses are simulated; these examples do not modify staging." } } },
   decorators: [(Story, context) => <RecoveryApiFixture response={context.parameters.recoveryResponse ?? "success"}><div className="mx-auto max-w-2xl p-4 sm:p-8"><Story /></div></RecoveryApiFixture>],
 } satisfies Meta<typeof WorkspaceExportRecovery>;
 export default meta;
