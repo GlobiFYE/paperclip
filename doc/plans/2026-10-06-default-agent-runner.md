@@ -1,5 +1,76 @@
 # Runner defaults: staged delivery
 
+## Current qualification and repair checkpoint — 2026-10-13
+
+Canonical branch: `codex/codex-runner-default`. Delivery:
+[#15683](https://github.com/paperclipai/paperclip/pull/15683).
+The published baseline `ea6c8eb5e16d61111968f633a66748b397b64a3e` has
+53 successful hosted checks, two conditional Storybook skips, required verify
+and E2E passes, fresh 5/5 review and 30 resolved threads. Its
+[package qualification](https://github.com/paperclipai/paperclip/actions/runs/38478290686)
+passes all four native producers and clean Apple Silicon, Intel Mac and Linux
+ARM64 consumers. All 18 package source manifests and binary hashes match; no
+Codex payload is bundled. The isolated Apple Silicon install and zero-turn native
+startup pass, and fresh installed JavaScript applies all 342 migrations through
+0343 with confirmed owned cleanup. These are literal baseline results, not proof
+of the new repairs. Linux remains GNU libc 2.39 or newer on x64/AArch64; Windows,
+Alpine and 32-bit ARM stay deferred. No warm-cache speedup or paid ARM task is
+claimed. Docker, Cargo and native builds remain remote.
+
+The [single baseline managed attempt](https://github.com/paperclipai/paperclip/actions/runs/38478333712)
+fails completion reporting and the physical child-file assertion; its
+[existing report](https://d1p6rlowie26tp.cloudfront.net/runner-e2e/campaigns/gha-38478333712-1/index.html)
+remains red. Two runs execute provider turns. A third callback is falsely marked
+successful during startup, before any provider turn, because its onboarding
+parent is already Done. One unstarted child wake is cancelled. Recovery now
+reuses the existing completed-onboarding handoff validator before applying the
+issue-terminal backstop. Company, parent origin/status, assignee, completed child
+and remaining children must match. Process-death and ownership checks remain.
+Three reproduced baseline failures become 103 passing PostgreSQL controls across
+the existing recovery suites, with canonical server typecheck passing. Owned
+test clusters stop and release their slot. The native file tool correctly remains
+bound to its current task: the original run saved a child document but attached
+the file to the parent. First-task instructions now send file-producing work
+through the child's own execution, dependency and block handoff, then verify and
+link the child's result. Document-only and plan-only paths retain their scope.
+Two reproduced instruction-contract failures become 15 passing existing asset
+and greeting controls; these static checks do not prove model compliance.
+
+All seven baseline managed lease rows are released or expired with successful
+cleanup records, and prior company environment settings are restored. A separate
+owned-server supervisor reports incomplete descendant cleanup after server exit;
+its missing nested cause remains unresolved. Lease records do not prove physical
+deletion or settle unknown charges. Existing cost and cleanup holds remain.
+Revised-source live acceptance must still check actual turn events, the child's
+downloaded physical file, source-correlated completion, follow-up and continuity.
+Do not rerun the known failing baseline or weaken its assertions.
+
+The normal staging preparation and exact baseline Core image build complete, but
+the deployment check rejects `fleet_campaign_staging_requires_master`. Current
+Cloud policy admits only actual master source ancestry, including preview DB
+artifacts; a pinned, owned single target has no exception. No staging campaign
+starts and no serving-candidate claim is made. A human sequencing decision is
+pending: complete Mac and signed managed acceptance before a normal squash,
+then qualify the actual merged revision on the owned staging stack, or use a
+separate branch-friendly test environment before merge. Do not bypass this gate
+or change merge method to preserve preview ancestry. The preview Core image has
+verified content identity but no verified signature; the managed image signature
+is separately verified. Actual private Cloud composition and fresh warm/cold
+signup remain required production-readiness evidence after merge.
+
+Next action: independent matching-source review, affected map checks and publish
+the two scoped repairs in one source commit. Freeze that head, require fresh full
+CI and 5/5 review, then repeat the existing package/install and single managed
+journeys on admitted artifacts. Upgrade the idle local app with full saved
+configuration, account and recorded-run-profile comparisons; preserve its data.
+Use a fresh ordinary installed instance for automatic first-agent task/follow-up.
+The new $100 QA ceiling permits bounded messages with paid concurrency one and
+180-second runs; prior unknown-charge and cleanup holds remain separate.
+Existing runners never migrate. Normal protected merge is authorized once
+applicable gates and the sequencing decision are satisfied. No production or
+provisioning-default promotion, local heavy build, new timer or archive is
+authorized. Earlier checkpoints below retain their historical source attribution.
+
 ## Current Codex merge checkpoint — 2026-10-13
 
 Current published `1173a859baa78af1d382058aa89c25920da25c3d` passes

@@ -180,6 +180,16 @@ for active/recovered runs. Explicit runner changes use revisions and session
 invalidation. Verify saved configuration, current versus historical run identity,
 restart and follow-up without granting session-reset authority to an agent.
 
+Scoped source review: 2026-10-13, the recovery correction against
+`ea6c8eb5e16d61111968f633a66748b397b64a3e` reuses
+[completed onboarding handoff validation](../../server/src/services/chat-completion-delivery.ts)
+before applying the issue-terminal backstop. The company, parent origin/status,
+assignee, completed child and remaining children must match. Only that backstop
+is suppressed for the validated report; process-death and controller/native
+ownership checks still apply. No agent gains session or recovery control.
+PostgreSQL regressions cover valid native/Legacy callbacks and rejected bindings;
+revised live execution and actor authorization remain `not-run`.
+
 Scoped Evidence: `source-only` — the
 [native transport](../../packages/paperclip-runner/src/live/runnerd-codex-transport.ts)
 joins owned startup before certifying cleanup. Rejected duplicates cannot replace

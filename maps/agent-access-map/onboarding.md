@@ -172,6 +172,17 @@ The Codex first-task fixture's operator cost guard uses the existing board
 agent-configuration PATCH before admitting work. This is not evidence of agent
 permission to update its runtime; the listed agent-context checks remain not-run.
 
+Scoped source review: 2026-10-13, the first-task asset correction against
+`ea6c8eb5e16d61111968f633a66748b397b64a3e`. The existing
+[first-task instructions](../../server/src/onboarding-assets/first-task/skills/first-task/SKILL.md)
+send file-producing work through the child's own execution and existing
+dependency/block controls. Native `register_deliverable` retains its current-task
+binding; this adds no cross-task file-registration authority or permission.
+Document-only work may use the existing child-document API inline, and plan-only
+approval does not authorize implementation. The existing asset tests check
+wording only. The literal baseline live attempt failed child-file delivery and
+completion reporting; revised live authorization and execution remain `not-run`.
+
 ## `resume`
 
 Review: `baseline`.

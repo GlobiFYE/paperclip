@@ -95,8 +95,21 @@ continuity. Setup evidence must correlate both lease IDs with the same company,
 environment and provider; missing responses or unmatched rows keep cost coverage
 unknown. Run this cell only on an eligible target with separately authorized
 provider, runtime and cleanup reservations. Its source and mock controls are
-prepared; live execution remains unverified. Local cases and automatic selection
-remain unchanged.
+prepared. The literal `ea6c8eb5e16d61111968f633a66748b397b64a3e` live attempt
+failed: the child document existed, but the physical file was attached to the
+parent, and recovery stopped the completion callback before a provider turn.
+The failed report remains evidence; the revised source still needs live proof.
+Local cases and automatic selection remain unchanged.
+
+For accepted file-producing work, verify exactly one self-assigned child with a
+self-contained description. The onboarding run must yield through the existing
+dependency/block disposition so the child's own execution can publish its file.
+Native file registration remains bound to the executing task. On completion,
+the original conversation must receive the actual child and downloadable file
+links. Document-only child work may finish inline; a plan-only request must not
+start implementation. Existing first-task asset controls check the instructions,
+not model compliance. Inspect the child's execution, document, downloaded file
+and source-correlated completion reply in the real journey.
 
 Leave and resume during harness/runner setup. Confirm the draft retains the
 explicit choice and compatible account bindings, old native Codex setup links

@@ -98,6 +98,14 @@ retain their recorded execution configuration; do not infer their runner from a
 later edit to the agent. Account/harness branding and execution identity are
 different observations, both required in the evidence.
 
+For an onboarding child-completion callback, verify actual session/turn events
+and the source-correlated reply. A `succeeded` row alone is insufficient: the
+literal `ea6c8eb5e16d61111968f633a66748b397b64a3e` managed attempt was marked
+successful during startup without a provider turn. The recovery correction
+preserves the existing validated Done-parent handoff; process-death and ownership
+checks remain active. Its PostgreSQL controls are separate from the required
+revised-source live onboarding and follow-up proof.
+
 ## Gotchas
 
 - Model accounts are managed in Apps and inline agent account controls.
