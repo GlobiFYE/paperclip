@@ -829,3 +829,29 @@ The existing catalog generator/checker, all 27 catalog/generator/map controls an
 the 35-area/175-capability map check pass. This is source inventory and structural
 verification only: no additional rendering, play, visual baseline, paid provider
 call or live production acceptance was performed.
+
+## Draft reload and retained-file recovery reconciliation — 2026-10-13
+
+Reconciled candidate `12046f522bca29ded24425be71b856993b4997f7` with master
+`393d1c410862aa93561548e0a39feec3b89df6ff`. Retained every authored suite, stable
+ID, classification, capability association and both review histories. The catalog
+contains 263 files and 2,503 authored story IDs, including the four incoming
+retained-file recovery states. Combined five notes that changed on both branches
+so neither the Codex nor recovery limitations were discarded.
+
+Reviewed the fixed OnboardingWizard opening/draft logic and the onboarding and
+managed-credential verification recipes before refreshing 33 affected source
+fingerprints. The wizard component controls cover authorized reload, delayed
+company context, explicit opening and foreign-company isolation; they do not
+close the recorded managed first-task reload failure. The merged IssueDetail
+passes the current task status and board runtime/recovery authority to the
+retained-file form. Its fixture stories do not verify real recovered files,
+provider shutdown or saved-account cleanup. Shared setup is unchanged.
+
+This reconciliation records source inventory only. Existing rendering, play and
+production results retain their literal tested revisions; no new browser run,
+visual baseline, provider call or live acceptance is claimed.
+
+The maintained catalog/index checker, all 27 catalog/generator/map controls and
+the 35-area/175-capability structural map check pass. No unowned generated
+artifacts or authored story files changed during this reconciliation.

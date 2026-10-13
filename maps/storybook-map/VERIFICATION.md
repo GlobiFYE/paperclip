@@ -1,8 +1,8 @@
 # Verification routes for Storybook capabilities
 
-Updated 2026-10-13. Production source is reconciled with master `252d9b5077`; step-3 story and fixture changes are recorded in the catalog fingerprints.
+Updated 2026-10-13. Source inventory is reconciled from candidate `12046f522b` and master `393d1c4108`; the authorized draft reload fix, retained-file recovery states and inspected recipe changes are recorded in the catalog fingerprints.
 
-The catalog has 262 authored suites, 2,481 authored story IDs and 175 feature-map capabilities. The 37 new production-subject suites add 257 scenarios and associate all 49 UI capabilities identified in step 2. **11 capabilities remain without authored examples: 8 CLI/operator operations and 3 real-browser concerns.** Generated Overview pages and guides do not count as examples. Existing suites and story IDs are retained.
+The catalog has 263 authored suites, 2,503 authored story IDs and 175 feature-map capabilities. The 37 new production-subject suites add 257 scenarios and associate all 49 UI capabilities identified in step 2. **11 capabilities remain without authored examples: 8 CLI/operator operations and 3 real-browser concerns.** Generated Overview pages and guides do not count as examples. Existing suites and story IDs are retained. The four retained-file recovery states from master `393d1c4108` are preserved alongside the Codex suite and examples previously merged from master `c8efdbfba43`; this inventory update does not claim an additional production verification run.
 
 These associations provide initial isolated UI coverage, not complete parity with every feature recipe. The original scenario inventory below stays as a maintenance checklist; an association does not mark every listed variant complete. In particular, import examples cover preview, organization archival examples cover the list/restoration side, and custom-image examples cover metadata/configuration rather than a real setup terminal. Existing unreviewed suites remain unreviewed.
 

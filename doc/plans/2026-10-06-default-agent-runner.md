@@ -35,9 +35,16 @@ passes69 setup controls and12 unchanged lower controls, server no-emit and
 independent source review. Private copies retire only after confirmed cleanup;
 an uncertain close retains owned state and remains a failure.
 
-Next action: integrate exact master
-`393d1c410862aa93561548e0a39feec3b89df6ff` with its migration0340 and plugin lifecycle
-changes, preserve the Storybook catalog, and freeze one candidate. Require fresh
+The reviewed fix commit is `12046f522bca29ded24425be71b856993b4997f7`.
+The normal merge retains exact master `393d1c410862aa93561548e0a39feec3b89df6ff`,
+including migration0340, shared/plugin lifecycle contracts and file recovery.
+Independent source inspection confirms all four reviewed fix hashes and the
+incoming executable changes. Storybook reconciliation retains263 suites and2503
+authored IDs, both review histories and all four incoming recovery states. Its
+27 existing controls, maintained catalog check and35-area/175-ID map check pass.
+Only JavaScript dependencies are prepared locally; native/image builds stay remote.
+
+Next action: finish focused combined-source checks and freeze one candidate. Require fresh
 CI/review, affected installed-package and managed first-task proof before ready
 or merge. Historical receipts keep their literal sources. The following
 checkpoints are retained history, not the current merge state.
