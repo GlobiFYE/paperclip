@@ -444,7 +444,7 @@ records 48 UI example gaps with separate production contracts, nine CLI/operator
 operations and three browser verification boundaries. Existing tests are starting
 points; no new live journey, rendering, interaction or visual evidence is claimed.
 The targeted association revisit found no further justified links. This does not
-complete parity review of the 184 suites still classified `unreviewed`.
+complete parity review of the 184 example suites still classified `unreviewed`.
 
 Master includes #16153's personal task-toast capability. Its upstream README and
 recipe were inspected; reconstructing the five inbox-suite and shared fingerprints
