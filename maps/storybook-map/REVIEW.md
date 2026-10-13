@@ -481,3 +481,17 @@ Five remaining errors have unchanged source bytes and metadata inherited from
 master: shared setup, decision-card, decisions-desk, search and what-needs-me.
 These require a separate review; no hashes or visual baselines were accepted for
 them. The earlier 71-error count above describes the pre-merge baseline.
+
+### Inherited index metadata follow-up
+
+The current master's personal-toast recipe also left shared setup and four inbox
+suites with stale metadata. Reviewed the recipe's added toast capability and
+verification limits: decision-card, decisions-desk and search still demonstrate
+their existing isolated subjects; what-needs-me's toast fixture does not prove
+viewer eligibility. Their subject and fixture bytes are unchanged from master;
+retained all unreviewed classifications and fixture boundaries. The generator
+adds the missing toast capability and description to the existing inbox feature,
+without changing feature order or IDs. Reviewed that generated diff and refreshed
+these four entries, the shared setup and Overview fingerprints. No toast behavior,
+new browser acceptance or visual baseline is claimed. Global catalog validation
+now passes. This supersedes the five inherited-error count above.
