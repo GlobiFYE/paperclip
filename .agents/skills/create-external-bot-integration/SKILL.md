@@ -1,11 +1,9 @@
 ---
 name: create-external-bot-integration
 description: >-
-  Build and qualify bidirectional integrations between Paperclip and externally
-  hosted agents such as Dot, including invitation, identity, wakeup, Runner
-  lifecycle, native tools, recovery, and Cloud delivery. Use for a new external
-  bot integration or completing a partial one; ordinary CLI adapters and
-  app-only MCP connectors use their existing authoring workflows.
+  Build and qualify external bots such as Dot in Paperclip. Use for two-way work,
+  invitation, identity, wakeup, Runner lifecycle, native tools, recovery, and
+  Cloud delivery. CLI adapters and app-only connectors use their existing skills.
 ---
 
 # Create an External Bot Integration
