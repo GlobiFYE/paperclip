@@ -540,3 +540,14 @@ Review correction: backup retention already has shipped controls in
 `InstanceGeneralSettings`, embedded in `CompanySettings`. The backup row therefore
 keeps missing retention UI examples alongside separate CLI backup/restore proof;
 it is not a wholesale Storybook exemption. No existing story mounts those controls.
+
+## Verification-parent merge reconciliation — 2026-10-13
+
+Reconciled master `da9af67415` while preserving its catalog records and both
+review histories. Inspected the intervening recipe changes for Telegram
+maintenance, liveness/readiness and trusted instance-secret lifecycle, and the
+soft-warning versus hard-stop budget UI. Refreshed only dependent review
+fingerprints with notes naming those boundaries; classifications remain unchanged.
+The generated feature index reflects the current recipes. No new rendering,
+provider journey or whole-suite parity review is claimed. Catalog/map validation
+and all 27 catalog/generator/map tests pass with the pinned Storybook parser.
