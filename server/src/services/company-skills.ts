@@ -7163,11 +7163,18 @@ export function companySkillService(db: Db) {
     companyId: string, skillId: string, actor: SkillActor, folderId: string | null,
     database: DbOrTransaction, createdDirectories: string[],
   ) {
-    const skill = await getById(companyId, skillId, database);
-    if (!skill) throw notFound("Skill not found");
+    const [locked] = await database.select({ id: companySkills.id }).from(companySkills)
+      .where(and(eq(companySkills.companyId, companyId), eq(companySkills.id, skillId))).for("update");
+    if (!locked) throw conflict("An imported skill changed. Reload before disconnecting.");
+    const skill = (await getById(companyId, skillId, database))!;
     const version = await getCurrentVersion(skill);
-    if (!version) throw unprocessable("Installed skill version is unavailable.");
+    const recovery = `Cannot keep "${skill.name}" because its saved files are incomplete. Refresh the source before keeping editable copies, or choose Delete skills.`;
+    if (!version) throw unprocessable(recovery);
     const files = await runtimeVersionInventory(companyId, version);
+    const savedPaths = new Set(files.map(file => file.path));
+    if (!savedPaths.has("SKILL.md") || skill.fileInventory.some(file => !savedPaths.has(file.path))) {
+      throw unprocessable(recovery);
+    }
     const managedRoot = resolveManagedSkillsRoot(companyId);
     await fs.mkdir(managedRoot, { recursive: true });
     const directory = await fs.mkdtemp(path.join(managedRoot, `${skill.slug}-copy-`));
@@ -7178,7 +7185,7 @@ export function companySkillService(db: Db) {
       await fs.mkdir(path.dirname(target), { recursive: true });
       await fs.writeFile(target, skillFileBytes(file), { mode: file.executable ? 0o755 : 0o644 });
     }
-    await database.update(companySkills).set({
+    const updated = await database.update(companySkills).set({
       sourceType: "local_path", sourceLocator: directory, sourceRef: null, folderId,
       fileInventory: files.map(({ path, kind }) => ({ path, kind })),
       metadata: {
@@ -7188,7 +7195,8 @@ export function companySkillService(db: Db) {
         forkedByAgentId: actor.type === "agent" ? actor.agentId ?? null : null,
       },
       updatedAt: new Date(),
-    }).where(and(eq(companySkills.companyId, companyId), eq(companySkills.id, skillId)));
+    }).where(and(eq(companySkills.companyId, companyId), eq(companySkills.id, skillId))).returning({ id: companySkills.id });
+    if (updated.length !== 1) throw conflict("An imported skill changed. Reload before disconnecting.");
   }
 
   async function deleteSkills(

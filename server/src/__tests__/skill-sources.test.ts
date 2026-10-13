@@ -187,10 +187,35 @@ describe.skipIf(!support.supported)('skill source persistence', () => {
     const provider = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('Existing reference'));
     try { expect((await skills.readFile(legacyCompany, legacy!.id, 'reference.md'))?.content).toBe('Existing reference'); }
     finally { provider.mockRestore(); }
+    const revision = (await service.detail(legacyCompany, adopted[0]!.id)).revision;
+    await expect(service.disconnect(legacyCompany, adopted[0]!.id, context, { revision, skills: 'copy' })).rejects.toThrow(/saved files are incomplete.*Refresh the source/);
+    expect((await skills.getById(legacyCompany, legacy!.id))?.sourceType).toBe('github');
+    expect((await service.detail(legacyCompany, adopted[0]!.id)).revision).toBe(revision);
+    await db.update(companySkills).set({ currentVersionId: null }).where(eq(companySkills.id, legacy!.id));
+    await expect(service.disconnect(legacyCompany, adopted[0]!.id, context, { revision, skills: 'copy' })).rejects.toThrow(/saved files are incomplete/);
+    await db.update(companySkills).set({ currentVersionId: partial!.id }).where(eq(companySkills.id, legacy!.id));
     files = { 'legacy/SKILL.md': md('updated name') };
     const refreshed = await service.refresh(legacyCompany, adopted[0]!.id, context);
     expect(refreshed.updated[0]).toMatchObject({ id: legacy!.id, key: legacy!.key, slug: legacy!.slug });
     expect((await db.select().from(companySkills).where(eq(companySkills.companyId, legacyCompany))).filter(skill => skill.key === legacy!.key)).toHaveLength(1);
+  });
+
+  it('does not report a copy when an imported skill is deleted before publication', async () => {
+    files = { 'SKILL.md': md('copy-race') }; commit = sha;
+    const service = skillSourceService(db), skills = companySkillService(db);
+    const created = await service.create(companyId, { repositoryUrl: 'https://github.com/acme/skills', trackingRef: 'copy-race', commitSha: sha, selectedPaths: ['SKILL.md'] }, context);
+    let release!: () => void, entered!: () => void;
+    const started = new Promise<void>(resolve => { entered = resolve; });
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const pending = service.disconnect(companyId, created.source.id, { ...context, authorize: async action => {
+      if (action === 'skills.create') { entered(); await blocked; }
+    } }, { revision: created.source.revision, skills: 'copy' });
+    await started;
+    await skills.deleteSkill(companyId, created.imported[0]!.id);
+    release();
+    await expect(pending).rejects.toThrow(/imported skill changed/);
+    expect((await service.detail(companyId, created.source.id)).id).toBe(created.source.id);
+    expect(await skills.getById(companyId, created.imported[0]!.id)).toBeNull();
   });
 
   it('resolves legacy commit-only imports to the default branch without duplicating skills', async () => {

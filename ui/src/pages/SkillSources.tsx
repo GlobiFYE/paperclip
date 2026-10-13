@@ -8,6 +8,7 @@ import { useCompany } from '@/context/CompanyContext';
 import { useBreadcrumbs } from '@/context/BreadcrumbContext';
 import { queryKeys } from '@/lib/queryKeys';
 import { skillSourcesApi } from '@/api/skillSources';
+import { ApiError } from '@/api/client';
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from '@/components/ui/command';
 import { appSourceConnectHref } from './apps/app-connect-policy';
 import { Button } from '@/components/ui/button';
@@ -51,6 +52,14 @@ export function SkillSources() {
       setDisconnectSource(null);
     },
   });
+  const reloadRemoval = useMutation({
+    mutationFn: async () => {
+      const result = await query.refetch({ throwOnError: true });
+      return result.data?.find(source => source.id === disconnectSource?.id) ?? null;
+    },
+    onSuccess: source => { setDisconnectSource(source); disconnect.reset(); },
+  });
+  const staleRemoval = disconnect.error instanceof ApiError && disconnect.error.status === 409;
   const activeSource = query.data?.find(source => source.id === sourceId);
   if (!companyId) return <p className="p-6 text-sm text-muted-foreground">Select a company to manage skill sources.</p>;
   return <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-4 md:p-6">
@@ -81,7 +90,7 @@ export function SkillSources() {
               <DropdownMenuContent align="end">
                 <DropdownMenuItem disabled={!source.enabled || refresh.isPending} onSelect={() => refresh.mutate(source.id)}>{refresh.isPending && refresh.variables === source.id ? 'Refreshing…' : 'Refresh'}</DropdownMenuItem>
                 <DropdownMenuItem onSelect={() => navigate(`/skills/sources/${source.id}`)}>Select skills</DropdownMenuItem>
-                <DropdownMenuItem variant="destructive" disabled={disconnect.isPending} onSelect={() => { disconnect.reset(); setDisconnectSource(source); }}>{source.enabled ? 'Disconnect source' : 'Remove source'}</DropdownMenuItem>
+                <DropdownMenuItem variant="destructive" disabled={disconnect.isPending} onSelect={() => { disconnect.reset(); reloadRemoval.reset(); setDisconnectSource(source); }}>{source.enabled ? 'Disconnect source' : 'Remove source'}</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -102,8 +111,9 @@ export function SkillSources() {
         </section>;
       })}
     </div>
-    {disconnectSource && <DisconnectSourceDialog key={disconnectSource.id} source={disconnectSource}
-      pending={disconnect.isPending} error={disconnect.error?.message} onChoiceChange={() => disconnect.reset()}
+    {disconnectSource && <DisconnectSourceDialog key={`${disconnectSource.id}:${disconnectSource.revision}`} source={disconnectSource}
+      pending={disconnect.isPending || reloadRemoval.isPending} error={reloadRemoval.error?.message ?? disconnect.error?.message}
+      stale={staleRemoval} onReload={() => reloadRemoval.mutate()} onChoiceChange={() => { if (!staleRemoval) disconnect.reset(); }}
       onClose={() => setDisconnectSource(null)}
       onConfirm={skills => disconnect.mutate({ source: disconnectSource, skills })} />}
     {sourceId && (sourceId === 'new' || activeSource) && <SourceDialog key={`${companyId}:${sourceId}`} companyId={companyId} source={activeSource} onClose={() => navigate('/skills/sources')} onSaved={async result => {
@@ -113,8 +123,8 @@ export function SkillSources() {
   </div>;
 }
 
-function DisconnectSourceDialog({ source, pending, error, onClose, onConfirm, onChoiceChange }: {
-  source: SkillSource; pending: boolean; error?: string; onClose: () => void;
+function DisconnectSourceDialog({ source, pending, error, stale, onReload, onClose, onConfirm, onChoiceChange }: {
+  source: SkillSource; pending: boolean; error?: string; stale: boolean; onReload: () => void; onClose: () => void;
   onConfirm: (skills: SkillSourceDisconnectRequest['skills']) => void; onChoiceChange: () => void;
 }) {
   const count = new Set(source.entries.flatMap(entry => entry.skillId ? [entry.skillId] : [])).size;
@@ -133,10 +143,12 @@ function DisconnectSourceDialog({ source, pending, error, onClose, onConfirm, on
           { value: 'delete', title: 'Delete skills', description: 'Remove them from the library. Detach skills used by agents first.' },
         ]} />}
 
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
+      {error && <div role="alert" className="text-sm text-destructive">{error}
+        {stale && <Button variant="ghost" size="sm" disabled={pending} onClick={onReload}>Reload source</Button>}
+      </div>}
       <div className="flex items-center justify-between gap-3">
         <Button variant="outline" disabled={pending} onClick={onClose}>Cancel</Button>
-        <Button variant={choice === 'delete' ? 'destructive' : 'default'} disabled={pending || Boolean(count && !choice)} onClick={() => onConfirm(choice || 'copy')}>
+        <Button variant={choice === 'delete' ? 'destructive' : 'default'} disabled={pending || stale || Boolean(count && !choice)} onClick={() => onConfirm(choice || 'copy')}>
           {pending ? 'Removing…' : action}
         </Button>
       </div>

@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SkillSources } from './SkillSources';
 import { skillSourcesApi } from '@/api/skillSources';
+import { ApiError } from '@/api/client';
 import { sourceFixture } from '../../storybook/fixtures/githubSkillSources';
 
 const context = vi.hoisted(() => ({ navigate: vi.fn(), breadcrumbs: vi.fn(), sourceId: 'new' }));
@@ -275,6 +276,26 @@ describe('GitHub skill source import', () => {
     expect(skillSourcesApi.disconnect).toHaveBeenCalledWith('company-1', source.id, { revision: source.revision, skills: 'delete' });
     expect(document.querySelector('[role="dialog"]')).toBeNull();
     expect(document.body.textContent).not.toContain('acme/team-skills');
+  });
+  it('reloads a stale confirmation and requires a new choice for the updated skill count', async () => {
+    const source = await openRemoval();
+    vi.mocked(skillSourcesApi.disconnect).mockRejectedValueOnce(new ApiError('Source changed. Reload before disconnecting.', 409, {}));
+    await act(async () => document.querySelector<HTMLButtonElement>('[role="radio"]')!.click());
+    await act(async () => button('Disconnect source').click()); await flush();
+    expect(button('Disconnect source').disabled).toBe(true);
+    vi.mocked(skillSourcesApi.list).mockResolvedValue([{ ...source, revision: source.revision + 1, entries: source.entries.slice(0, 1) }]);
+    await act(async () => button('Reload source').click()); await flush(); await flush();
+    expect(document.querySelector('[role="dialog"]')?.textContent).toContain('1 imported skill');
+    expect(document.querySelector('[role="dialog"] [role="alert"]')).toBeNull();
+    expect(button('Disconnect source').disabled).toBe(true);
+    await act(async () => document.querySelector<HTMLButtonElement>('[role="radio"]')!.click());
+    vi.mocked(skillSourcesApi.disconnect).mockImplementation(async () => {
+      vi.mocked(skillSourcesApi.list).mockResolvedValue([]);
+      return { id: source.id, copiedCount: 1, deletedCount: 0 };
+    });
+    await act(async () => button('Disconnect source').click()); await flush(); await flush();
+    expect(skillSourcesApi.disconnect).toHaveBeenLastCalledWith('company-1', source.id, { revision: source.revision + 1, skills: 'copy' });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
   it('sends the keep-copy choice and keeps failures in the confirmation for retry', async () => {
     const source = await openRemoval();

@@ -390,7 +390,10 @@ export function companySkillRoutes(db: Db) {
     const companyId = req.params.companyId as string;
     res.json(await sourceOperation(req, companyId, context => sourceSvc.refresh(companyId, req.params.sourceId as string, context)));
   });
-  router.delete("/companies/:companyId/skill-sources/:sourceId", validate(skillSourceDisconnectSchema), async (req, res) => {
+  router.delete("/companies/:companyId/skill-sources/:sourceId", (req, _res, next) => {
+    assertCompanyAccess(req, req.params.companyId as string);
+    next();
+  }, validate(skillSourceDisconnectSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     res.json(await sourceOperation(req, companyId, context => sourceSvc.disconnect(companyId, req.params.sourceId as string, context, req.body)));
   });
