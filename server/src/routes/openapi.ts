@@ -1330,6 +1330,8 @@ const RUNTIME_TOOLS_OPERATIONS = new Set([
 const PUBLIC_OPERATIONS = new Set([
   "GET /api/agent-avatars/{version}/{palette}/{file}",
   "GET /api/health",
+  "GET /api/liveness",
+  "HEAD /api/liveness",
   "GET /api/openapi.json",
   "GET /api/board-claim/{token}",
   "POST /api/cli-auth/challenges",
@@ -1869,6 +1871,28 @@ function applyDocumentFixups(document: any): any {
 }
 
 // ─── Health ──────────────────────────────────────────────────────────────────
+
+registry.registerPath({
+  method: "get",
+  path: "/api/liveness",
+  tags: ["health"],
+  summary: "Process startup status without database access",
+  description: "Runs before actor/session resolution. Reports only in-memory startup recovery and the public build commit. Use /api/health for explicit database readiness or signed bootstrap. No workspace identity or control authority is granted.",
+  responses: {
+    200: r.ok(z.object({ status: z.literal("ok"), commit: z.string().nullable() }).strict()),
+    503: { description: "Startup recovery is not complete", content: {
+      "application/json": { schema: z.object({ status: z.literal("starting"), commit: z.string().nullable() }).strict() },
+    } },
+  },
+});
+
+registry.registerPath({
+  method: "head",
+  path: "/api/liveness",
+  tags: ["health"],
+  summary: "Process startup status without a response body",
+  responses: { 200: { description: "Process startup recovery is complete" }, 503: { description: "Startup recovery is not complete" } },
+});
 
 // Shared by the healthy and database-unreachable responses: full details
 // (including serverInfo) ride only on board/agent-actor responses.

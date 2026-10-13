@@ -399,6 +399,13 @@ flowchart LR
   explicit deep readiness still tests DB health, and signed claim/bootstrap
   mutations retain their existing validation and tracking.
 
+  Implementation progress: `/api/liveness` reports startup state and the public
+  commit without auth/session resolution, SQL, or provider I/O. It is mounted
+  after hostname and signed-bootstrap validation, before standby/auth, and its
+  exact GET/HEAD route stays reachable without adding a sleep hold. `/api/health`
+  retains database readiness and signed bootstrap. Callers must opt into the
+  liveness endpoint; this does not claim all external probes are migrated.
+
 - [ ] **DB-05 — Audit external probes and configured endpoints.** Inspect the
   fleet gateway, uptime monitors, deployment checks, DB pool settings, and Neon
   suspend configuration. The [ECS example](../../docker/ecs-task-definition.json)
