@@ -79,7 +79,8 @@ existing clients. Board-only routes remain restricted for agent identity.
 Native `search_api` / `call_api` requires operator rollout admission, a running
 authorized native run, current task assignment and execution-run binding, company
 and budget authority, task privacy, and a permitted work mode. Ask and Plan retain
-mutation restrictions, and skill tests retain their admitted JWT scope. A waiting
+mutation restrictions, and runs retain their admitted JWT scope during restart
+recovery even when task mode changes. A waiting
 agent does not gain independent native control just because a REST route exists.
 
 Credential-bearing replies, including company exports and their legacy alias,

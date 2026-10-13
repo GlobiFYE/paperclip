@@ -14,6 +14,7 @@ import { registerRunnerPrpAuthority } from "../../realtime/runner-prp-ws.js";
 import { createLocalAgentJwt } from "../../agent-auth-jwt.js";
 import { RUNNER_API_RESPONSE_MAX_BYTES, RUNNER_API_RESPONSE_RUN_MAX_BYTES } from "./runner-api-response-limits.js";
 import { PaperclipRunnerToolAuthority } from "./paperclip-runner-tool-authority.js";
+import { prepareHeartbeatTaskContext } from "../heartbeat/task-context.js";
 
 describe("runner API against real HTTP routes", () => {
   let server: Awaited<ReturnType<typeof startRunnerApiTestServer>>;
@@ -338,13 +339,27 @@ else if(m.id!==undefined) send({id:m.id,result:{}});
     expect(Object.values((run.resultJson as any).apiToolReceipts)[0]).toHaveProperty("encryptedResult");
   });
 
-  it("preserves the REST skill-test credential scope after a task mode edit", async () => {
+  async function reprepareRun(fixture: { runId: string; issueId: string; agentId: string }) {
+    const [run] = await server.db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, fixture.runId));
+    const [issue] = await server.db.select().from(issues).where(eq(issues.id, fixture.issueId));
+    const [agent] = await server.db.select().from(agents).where(eq(agents.id, fixture.agentId));
+    const context = structuredClone(run.contextSnapshot ?? {});
+    await prepareHeartbeatTaskContext(server.db, { run, agent,
+      task: { issueRef: issue, issueContext: null, wakeCommentContext: null, context, taskSession: null },
+      policy: { recovering: true, trustPreset: { kind: "standard" }, experimentalInstanceSettings: {} },
+      services: { issuesSvc: { getAncestors: async () => [] }, getPinnedSkillTestContext: async () => null },
+    });
+    await server.db.update(heartbeatRuns).set({ contextSnapshot: context }).where(eq(heartbeatRuns.id, fixture.runId));
+  }
+
+  it("preserves the REST skill-test credential scope after a task mode edit and restart preparation", async () => {
     const fixture = await server.fixture();
     await server.db.update(heartbeatRuns).set({ contextSnapshot: { issueId: fixture.issueId,
       paperclipAgentJwtScope: { kind: "skill_test", issueId: fixture.issueId },
     } }).where(eq(heartbeatRuns.id, fixture.runId));
     await server.db.update(issues).set({ workMode: "skill_test" }).where(eq(issues.id, fixture.issueId));
     await server.db.update(issues).set({ workMode: "standard" }).where(eq(issues.id, fixture.issueId));
+    await reprepareRun(fixture);
     const body = { kind: "secret", name: "parity/skill-test", value: "disposable-skill-test-value", justification: "Must remain denied" };
     const token = createLocalAgentJwt(fixture.agentId, fixture.companyId, "paperclip_runner", fixture.runId,
       fixture.responsibleUserId, { kind: "skill_test", issueId: fixture.issueId });
@@ -358,12 +373,13 @@ else if(m.id!==undefined) send({id:m.id,result:{}});
     expect(result).toMatchObject({ ok: false, status: direct.status, data: await direct.json() });
   });
 
-  it("retains standard REST credential scope after a task becomes a skill test", async () => {
+  it("retains standard REST credential scope after a task becomes a skill test and restart preparation", async () => {
     const fixture = await server.fixture();
     await server.db.update(heartbeatRuns).set({ contextSnapshot: { issueId: fixture.issueId,
       paperclipAgentJwtScope: { kind: "standard" },
     } }).where(eq(heartbeatRuns.id, fixture.runId));
     await server.db.update(issues).set({ workMode: "skill_test" }).where(eq(issues.id, fixture.issueId));
+    await reprepareRun(fixture);
     const token = createLocalAgentJwt(fixture.agentId, fixture.companyId, "paperclip_runner", fixture.runId, null, { kind: "standard" });
     const direct = await fetch(`${fixture.apiUrl}/api/companies/${fixture.companyId}/projects`, { headers: { Authorization: `Bearer ${token}` } });
     expect(direct.status).toBe(200);

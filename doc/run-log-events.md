@@ -36,6 +36,12 @@ without restoring API bodies. Ports without a projection compare their original
 payloads. Repeated redaction preserves the original digest and detects changed
 private payloads.
 
+The native runtime passes this projection through backend recovery to the Codex
+driver. Recovery compares saved semantic results and turn fingerprints with
+provider history through the same representation. A private body change retains
+its distinct digest and fails recovery; an unchanged body does not require
+restoring its plaintext into the checkpoint.
+
 PostgreSQL JSONB cannot represent NUL (U+0000), which can occur in command
 output such as Vite virtual-module paths. The run-event payload column uses a
 lossless storage codec for these events: the JSONB projection renders NUL as

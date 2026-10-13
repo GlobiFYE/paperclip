@@ -2062,6 +2062,7 @@ export async function executeNativeSession(
             operation: (signal) =>
               options.backend.recoverSession!(providerRecoveryCheckpoint, {
                 signal,
+                normalizeReplayPayload: options.controlPlane.normalizeReplayPayload?.bind(options.controlPlane),
               }),
             onLateResolution: async (lateRecovery) => {
               if (lateRecovery.session) {
