@@ -94,6 +94,7 @@ export async function withNativeWorkspaceFinalizationOwnership<T>(
                 eq(issueRecoveryActions.fingerprint, fingerprint), eq(issueRecoveryActions.cause, NATIVE_WORKSPACE_OWNER_UNVERIFIED),
                 inArray(issueRecoveryActions.status, ["active", "escalated"]),
                 sql`${issueRecoveryActions.evidence}->'workspaceOwnerStop' is null`,
+                sql`(${issueRecoveryActions.nextAction} is distinct from ${nextAction} or ${issueRecoveryActions.evidence}#>>'{workspaceOwnerRecovery,state}' is distinct from 'operator_required')`,
               ));
             }
             return { acquired: false } as const;
