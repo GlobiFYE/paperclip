@@ -39,3 +39,57 @@ execution. Use the same managed checkout for dependency preflight and builds.
 Every PR uses the repository template and points to its preceding stack branch.
 Check current-head Greptile feedback and CI before completing each slice. Update
 this plan with evidence and a fresh map after the batch.
+
+## Implemented boundaries and evidence
+
+All ten local slices are committed. The service is now 19,153 lines and 762,442
+bytes: 2,307 lines and 99,842 bytes removed from the entry point. The service body
+is 17,787 lines, including 138 nested functions (17,270 lines) and 71 state/wiring
+statements (231 lines). Imports occupy 399 lines. The aggregate AST audit checks
+38 moved bodies/declarations and the syntax and order of 263 retained statements.
+
+The first baseline passed 96 selected assembled-service cases and 33 credential,
+inventory, and Photon cases. Additional command, setup, and publication baselines
+passed before their moves. Each slice passed server typecheck, module boundaries,
+and its public-path checks. Post-move integration case counts were 6, 8, 10, 50,
+7, 1, 21, 3, 34, and 12 respectively; these selections overlap and are not a count
+of unique tests. The first slice also reran all 33 credential/inventory/Photon
+cases. Repository-wide typecheck passes on the complete stack. Full tests and build
+are recorded below when complete.
+
+Review found that the inventory dispatcher needed `return await` to retain its
+existing catch boundary. Three new real-database HTTP tests passed against the
+pre-extraction service, failed with 500 instead of 422 after the initial move, and
+passed after the correction. They also check the public error code/message and
+unchanged credential refs. The repair is included in slice two and replayed through
+all subsequent local branches. Moved provider bodies remain unchanged.
+
+The Teams activity protocol callback is deferred until use because its new factory
+is initialized after file-authority construction. Shutdown is read through a live
+callback. GitHub lifecycle claims and credential leasing remain in the coordinator;
+the provider workflow returns runtime outcomes and notifies its cleanup owner
+immediately after persisting a failure, before throwing.
+
+## Remaining map
+
+The largest shared functions are `processMessage` (2,166 lines), `handleAction`
+(1,074), `configureWithCredentialLease` (868), `processSelectedPublication` (729),
+`handleModalSubmit` (708), `handleWebhook` (685), and `processLifecycleDelivery`
+(657). These include shared admission and transaction ownership; do not relocate
+them wholesale into a provider folder.
+
+The next provider candidates to inspect are:
+
+- Provider setup-state and runtime-config projections. Extend provider modules
+  while retaining live origin reads and the shared dispatcher.
+- Photon outbound publication (a 227-line provider branch), including interaction
+  prompts and exact retry evidence. Keep current-source checks and partial receipt
+  ownership explicit.
+- GitHub authenticated webhook handling (a 209-line provider branch). Preserve
+  durable ingress admission, signed ping verification, and receiver fencing.
+- Discord durable Markdown transport (96 lines) and its modal wire handling
+  (85-line branch plus smaller branches). Preserve shared question resolution and
+  publication ownership.
+
+This remains a candidate map, not authorization for another batch or merging this
+stack. All provider calls in local integration evidence use fixtures.
