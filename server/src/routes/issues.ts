@@ -14241,7 +14241,18 @@ export function issueRoutes(
           agentId: existing.assigneeAgentId,
         });
         const runToStopForReassignment = await resolveActiveIssueRun(existing);
-        if (runToStopForReassignment) {
+        const isHumanSelfHandoff =
+          req.actor.type === "agent" &&
+          req.actor.source === "agent_jwt" &&
+          nextAssigneeAgentId === null &&
+          typeof nextAssigneeUserId === "string" &&
+          req.actor.agentId === existing.assigneeAgentId &&
+          runToStopForReassignment?.runtimeMode === "legacy" &&
+          runToStopForReassignment.id === req.actor.runId &&
+          runToStopForReassignment.agentId === req.actor.agentId &&
+          runToStopForReassignment.companyId === existing.companyId &&
+          runToStopForReassignment.contextSnapshot?.issueId === existing.id;
+        if (runToStopForReassignment && !isHumanSelfHandoff) {
           const cancelled = await heartbeat.cancelRun(
             runToStopForReassignment.id,
             "Cancelled before issue reassignment",
