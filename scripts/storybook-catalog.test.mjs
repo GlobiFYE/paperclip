@@ -82,6 +82,31 @@ test("feature organization rejects wrong folders, sidebar homes and unstable met
   assert.match(validateCatalog(f.root, f.catalog, f.stories).join("\n"), /sidebar title/);
 });
 
+test("shared foundations cross-list capabilities without moving their canonical home or IDs", t => {
+  const f = fixture(t);
+  const entry = f.catalog.entries[0];
+  const file = "ui/storybook/stories/foundations/task.stories.tsx";
+  f.write(file, "// shared control example\n");
+  entry.file = file;
+  entry.home = "foundations";
+  entry.exception = "Shared control with related product examples.";
+  entry.sidebarTitle = "Foundations/Task";
+  entry.sources = [file, "ui/src/Task.tsx"];
+  entry.fingerprint = fingerprint(f.root, entry.sources);
+  f.stories[0] = { ...f.stories[0], file, title: entry.sidebarTitle };
+  assert.deepEqual(validateCatalog(f.root, f.catalog, f.stories), []);
+  const index = renderIndex(f.catalog, f.stories, featureIndex(f.root));
+  assert.match(index, /### Tasks[\s\S]*?No primary story suite/);
+  assert.match(index, /### Shared foundations and guides[\s\S]*?\[Foundations\/Task\]/);
+  assert.match(index, /`tasks\/create`: \[Foundations\/Task\]/);
+  assert.deepEqual(f.stories[0].ids, ["tasks-create--empty"]);
+  entry.home = "tasks";
+  assert.match(validateCatalog(f.root, f.catalog, f.stories).join("\n"), /only shared foundations/);
+  entry.home = "foundations";
+  delete entry.exception;
+  assert.match(validateCatalog(f.root, f.catalog, f.stories).join("\n"), /foundation home needs an explicit reason/);
+});
+
 test("production and shared fixture drift invalidate review fingerprints", t => {
   const f = fixture(t);
   f.write("ui/src/Task.tsx", "// changed contract\n");

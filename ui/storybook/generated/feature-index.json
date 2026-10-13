@@ -83,6 +83,16 @@
               "description": "update company identity and configured settings."
             },
             {
+              "id": "companies/decision-models",
+              "label": "Decision models",
+              "description": "configure and test the company's decision model, then inspect invocation history and recorded usage."
+            },
+            {
+              "id": "companies/fast-responses",
+              "label": "Fast responses",
+              "description": "configure and test the experimental fast-response service, then inspect acknowledgement history, failures, and recorded usage."
+            },
+            {
               "id": "companies/archive",
               "label": "Archive",
               "description": "archive and restore through the available controls without confusing archival with deletion."
@@ -357,6 +367,11 @@
               "id": "agents/organization",
               "label": "Organization",
               "description": "inspect and change reporting relationships through supported controls."
+            },
+            {
+              "id": "agents/primary-agent",
+              "label": "Primary agent",
+              "description": "choose a personal primary agent for the company, confirm replacement, and inspect its roster/sidebar and task/chat defaults."
             },
             {
               "id": "agents/lifecycle",

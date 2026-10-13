@@ -50,6 +50,13 @@ reasons rather than invented capabilities. Cross-cutting stories have one source
 and several references. Do not count historical/proposed stories as current
 feature coverage.
 
+For shared foundations that demonstrate a mapped capability, keep their existing
+folder/sidebar with `home: "foundations"` and an exception reason, then add related
+capability references. Inspect the named exports before linking them. Notes must
+name the demonstrated states and remaining limits; an association does not certify
+the whole capability. If a story reveals a shipped capability absent upstream,
+reconcile its feature recipe and access companion through map maintenance first.
+
 Preserve story exports and IDs. Before moves/title changes, capture the existing
 built `index.json`; use explicit meta IDs when needed and compare IDs afterward.
 Place stories under `ui/storybook/stories/<primary-feature-area>/`. Use the feature

@@ -22,6 +22,9 @@ maintainer; this catalog does not redefine product behavior or permissions.
 export filtering, story counts and IDs come from source, not filename guesses.
 All examples are retained, including historical suites. A file's first capability
 is its primary home; remaining capabilities are lookup references, not copies.
+Shared foundations may declare `home: "foundations"` to retain their folder and
+sidebar while linking related capabilities. This override requires an exception
+reason; it is not available for arbitrary feature homes.
 Foundations/guides and proposals without a mapped capability need an exception
 reason. An absent story is not automatically a feature gap.
 

@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import catalog from "../../../../maps/storybook-map/catalog.json";
 import featureIndex from "../../generated/feature-index.json";
 
-type Entry = Omit<(typeof catalog.entries)[number], "capabilities"> & { capabilities: string[] };
+type Entry = Omit<(typeof catalog.entries)[number], "capabilities" | "home"> & { capabilities: string[]; home?: string };
 const entries: Entry[] = catalog.entries;
 type IndexEntry = { id: string; type: string; importPath: string };
 const recipeRoot = "https://github.com/paperclipai/paperclip/blob/master/maps/feature-map/";
@@ -68,7 +68,7 @@ export function FeatureMapIndex() {
       ].join(" ").toLowerCase().includes(search);
     }),
   })).filter(section => section.features.length), [search]);
-  const foundations = examples.filter(entry => !entry.capabilities.length
+  const foundations = examples.filter(entry => (entry.home === "foundations" || !entry.capabilities.length)
     && ["Shared foundations", entry.file, entry.purpose, entry.status, entry.implementation, entry.boundary].join(" ").toLowerCase().includes(search));
   return (
     <main className="paperclip-story__inner space-y-6 p-6">

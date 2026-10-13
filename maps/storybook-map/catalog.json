@@ -10,7 +10,7 @@
       "ui/storybook/generated/feature-index.json",
       "ui/storybook/support/feature-map/FeatureOverview.tsx"
     ],
-    "fingerprint": "8454a7897e390c824f7bd2120009a8454ae60eeae5f4d562f556f8839b716daf"
+    "fingerprint": "451bee6238c89f00e77fa9fdc5f86c621afffdf9809c4a9ac9cbf1f3f4f60b78"
   },
   "entries": [
     {
@@ -37,14 +37,18 @@
       "file": "ui/storybook/stories/connection-setup/ArcadeConnection.stories.tsx",
       "capabilities": [
         "connection-setup/credentials",
-        "connection-setup/failure"
+        "connection-setup/failure",
+        "connection-setup/draft-recovery",
+        "connection-setup/identity-and-access",
+        "app-permissions/action-policy",
+        "app-permissions/test-action"
       ],
       "purpose": "Apps/Connections/Arcade",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. SavedDraftResume, Reconnect, SelectedAgents and ManageToolPermissions demonstrate production setup/permissions/test surfaces with an in-memory wrapper. Reload loses the draft; these examples do not verify persisted recovery. NewToolsAllowed does not demonstrate quarantined-action review.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/connection-setup.md",
         "ui/src/components/JsonSchemaForm.tsx",
@@ -53,9 +57,10 @@
         "ui/src/features/connections/remote-mcp/types.ts",
         "ui/storybook/fixtures/remoteMcpConnections.ts",
         "ui/storybook/prototypes/RemoteMcpConnectionReview.tsx",
-        "ui/storybook/stories/connection-setup/ArcadeConnection.stories.tsx"
+        "ui/storybook/stories/connection-setup/ArcadeConnection.stories.tsx",
+        "maps/feature-map/app-permissions.md"
       ],
-      "fingerprint": "cb8802f6362599a2aa164520a07a15ae3d41d4ff90173cfcbb9f8b3cefae0dc4",
+      "fingerprint": "e613c96bf5fdfca19508ffe5d74ed027d757a38110029a59ca66d471f4e829f9",
       "stableId": "apps-connections-arcade",
       "sidebarTitle": "Apps, channels, and extensions/Connection setup/Apps/Connections/Arcade"
     },
@@ -63,14 +68,18 @@
       "file": "ui/storybook/stories/connection-setup/ComposioConnection.stories.tsx",
       "capabilities": [
         "connection-setup/credentials",
-        "connection-setup/failure"
+        "connection-setup/failure",
+        "connection-setup/draft-recovery",
+        "connection-setup/identity-and-access",
+        "app-permissions/action-policy",
+        "app-permissions/test-action"
       ],
       "purpose": "Apps/Connections/Composio",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. SavedDraftResume, Reconnect, SelectedAgents and ManageToolPermissions demonstrate production setup/permissions/test surfaces with an in-memory wrapper. Reload loses the draft; these examples do not verify persisted recovery. NewToolsAllowed does not demonstrate quarantined-action review.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/connection-setup.md",
         "ui/src/components/JsonSchemaForm.tsx",
@@ -79,9 +88,10 @@
         "ui/src/features/connections/remote-mcp/types.ts",
         "ui/storybook/fixtures/remoteMcpConnections.ts",
         "ui/storybook/prototypes/RemoteMcpConnectionReview.tsx",
-        "ui/storybook/stories/connection-setup/ComposioConnection.stories.tsx"
+        "ui/storybook/stories/connection-setup/ComposioConnection.stories.tsx",
+        "maps/feature-map/app-permissions.md"
       ],
-      "fingerprint": "f7623b707dd4982dc583621f2b7b478544b2873653eff36cb7e62e2d2d1bbce3",
+      "fingerprint": "b5f0945453ee1e8b040bb77577723ea0a0caf13a91d2b367835d331c0d9af9cb",
       "stableId": "apps-connections-composio",
       "sidebarTitle": "Apps, channels, and extensions/Connection setup/Apps/Connections/Composio"
     },
@@ -116,14 +126,18 @@
       "file": "ui/storybook/stories/connection-setup/ExecutorConnection.stories.tsx",
       "capabilities": [
         "connection-setup/credentials",
-        "connection-setup/failure"
+        "connection-setup/failure",
+        "connection-setup/draft-recovery",
+        "connection-setup/identity-and-access",
+        "app-permissions/action-policy",
+        "app-permissions/test-action"
       ],
       "purpose": "Apps/Connections/Executor",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. SavedDraftResume, Reconnect, SelectedAgents and ManageToolPermissions demonstrate production setup/permissions/test surfaces with an in-memory wrapper. Reload loses the draft; these examples do not verify persisted recovery. NewToolsAllowed does not demonstrate quarantined-action review.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/connection-setup.md",
         "ui/src/components/JsonSchemaForm.tsx",
@@ -132,9 +146,10 @@
         "ui/src/features/connections/remote-mcp/types.ts",
         "ui/storybook/fixtures/remoteMcpConnections.ts",
         "ui/storybook/prototypes/RemoteMcpConnectionReview.tsx",
-        "ui/storybook/stories/connection-setup/ExecutorConnection.stories.tsx"
+        "ui/storybook/stories/connection-setup/ExecutorConnection.stories.tsx",
+        "maps/feature-map/app-permissions.md"
       ],
-      "fingerprint": "4617104a6f8867e3eaa996a643bcefa03b158fe9be0c43c0d77f578da42a0cf2",
+      "fingerprint": "402206b2ff037110ee05a2d00e80f7ee2f9346b211829030eddf4b95541a2e30",
       "stableId": "apps-connections-executor",
       "sidebarTitle": "Apps, channels, and extensions/Connection setup/Apps/Connections/Executor"
     },
@@ -142,14 +157,18 @@
       "file": "ui/storybook/stories/connection-setup/ZapierConnection.stories.tsx",
       "capabilities": [
         "connection-setup/credentials",
-        "connection-setup/failure"
+        "connection-setup/failure",
+        "connection-setup/draft-recovery",
+        "connection-setup/identity-and-access",
+        "app-permissions/action-policy",
+        "app-permissions/test-action"
       ],
       "purpose": "Apps/Connections/Zapier",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. SavedDraftResume, Reconnect, SelectedAgents and ManageToolPermissions demonstrate production setup/permissions/test surfaces with an in-memory wrapper. Reload loses the draft; these examples do not verify persisted recovery. NewToolsAllowed does not demonstrate quarantined-action review.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/connection-setup.md",
         "ui/src/components/JsonSchemaForm.tsx",
@@ -158,9 +177,10 @@
         "ui/src/features/connections/remote-mcp/types.ts",
         "ui/storybook/fixtures/remoteMcpConnections.ts",
         "ui/storybook/prototypes/RemoteMcpConnectionReview.tsx",
-        "ui/storybook/stories/connection-setup/ZapierConnection.stories.tsx"
+        "ui/storybook/stories/connection-setup/ZapierConnection.stories.tsx",
+        "maps/feature-map/app-permissions.md"
       ],
-      "fingerprint": "6ab45d2c88183f3f63efaa1a1a6ad9eb05436f94fc4e1ba67fcfb97345ee8ffb",
+      "fingerprint": "c0593ea1b08ecf7ac978943e1cba6b04289234676caf498aeccd5a45be7fda16",
       "stableId": "apps-connections-zapier",
       "sidebarTitle": "Apps, channels, and extensions/Connection setup/Apps/Connections/Zapier"
     },
@@ -316,13 +336,14 @@
       "file": "ui/storybook/stories/agent-chat/agent-chat.stories.tsx",
       "capabilities": [
         "agent-chat/discovery",
-        "agent-chat/history"
+        "agent-chat/history",
+        "agent-chat/handoff"
       ],
       "purpose": "Design explorations/Agent chat",
       "status": "mixed",
       "implementation": "mixed",
       "boundary": "fixtures",
-      "notes": "Production conversation/task routes with a local ChatEntryLanding. Default-agent behavior and fallback API responses remain outside current-product parity. Master reconciliation inspected assignment-history recipient suggestions and manual-selection retention; existing stories do not establish the new assignment-history behavior.",
+      "notes": "Production conversation/task routes with a local ChatEntryLanding. Default-agent behavior and fallback API responses remain outside current-product parity. Master reconciliation inspected assignment-history recipient suggestions and manual-selection retention; existing stories do not establish the new assignment-history behavior. ProjectCreated, ExistingProject, MultipleRepositories, ProjectWithoutRepository and ProjectCreationFailed show linked handoff results/navigation through shipped chat/task hosts. Tool execution and persistence are simulated.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/agent-chat.md",
@@ -366,7 +387,7 @@
         "ui/storybook/fixtures/onboardingEnvironment.ts",
         "ui/storybook/stories/runs-adapters/agent-connection-reuse.stories.tsx"
       ],
-      "fingerprint": "7b2571f03ffa3a559a9c228f78c87302d346183599b667c1102d131b4f33593a",
+      "fingerprint": "49e00454cf0fed46e03b30feafb73704723581718a58ec6a250a40dbc480261a",
       "stableId": "onboarding-saved-connections",
       "sidebarTitle": "Agents and reusable capabilities/Runs, harnesses, and model accounts/Onboarding/Saved connections"
     },
@@ -412,7 +433,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/agents/agent-detail.stories.tsx"
       ],
-      "fingerprint": "11057146b400c257fbdc3ec5c20da9b55eacc6735121632f2fa55e72af29e777",
+      "fingerprint": "b3f02fa740f2397d82ee459dd686ff8fb34ec383f3192ca07b895c9ce6d1508d",
       "stableId": "pages-agent-detail",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Pages/Agent Detail"
     },
@@ -433,7 +454,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/agents/agent-files.stories.tsx"
       ],
-      "fingerprint": "d7976922e4431b6432f966c2f120b9a57f66437bfe519694007d76a790318043",
+      "fingerprint": "6324b721acf10b3ce10aa174a789ed09a99f821d4ee651d770026a7e23712463",
       "stableId": "agents-persistent-files",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Agents/Persistent files"
     },
@@ -441,14 +462,15 @@
       "file": "ui/storybook/stories/agents/agent-management.stories.tsx",
       "capabilities": [
         "agents/lifecycle",
-        "agents/instructions"
+        "agents/instructions",
+        "execution-environments/assignment"
       ],
       "purpose": "Product/Agent Management",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. ForcedKubernetesExecution and ForcedKubernetesMissingEnvironment mount AgentConfigForm with a forced execution target or missing-target warning. Read-only assignment presentation; no saved target or remote execution proof.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/agents.md",
         "ui/src/components/ActiveAgentsPanel.tsx",
@@ -459,9 +481,10 @@
         "ui/src/components/agent-config-defaults.ts",
         "ui/src/components/agent-config-primitives.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
-        "ui/storybook/stories/agents/agent-management.stories.tsx"
+        "ui/storybook/stories/agents/agent-management.stories.tsx",
+        "maps/feature-map/execution-environments.md"
       ],
-      "fingerprint": "f6dbb548bf03324350a3658ce6e724d88d04535b1d7e4a647492f21ff64cc332",
+      "fingerprint": "825f3c53828c756a52b4d710ae84fc5bd9b36d00affd6f4c0ffaf8ae9562e4c1",
       "stableId": "product-agent-management",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Product/Agent Management"
     },
@@ -490,7 +513,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/agents/agent-persona-pages.stories.tsx"
       ],
-      "fingerprint": "885a9c5e6afc2f064ef699ec80153b62e4e4bdaa62da4c0724055e910ab3284d",
+      "fingerprint": "35454c02bbae403677d0d79644dc92da6c96172265d0f7581508e7d111463e0f",
       "stableId": "agents-personas-full-pages",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Agents/Personas/Full pages"
     },
@@ -515,7 +538,7 @@
         "ui/src/components/ui/button.tsx",
         "ui/storybook/stories/agents/agent-personas.stories.tsx"
       ],
-      "fingerprint": "0b6f1811a05f57c3f87f45072d762f5c7fb613d82ddf1967553f0f0f78e9a4fe",
+      "fingerprint": "43f4316011eeec7f2c1b1aa5e73f6194c49ba0fb1eb9484375a3929792f4cbf1",
       "stableId": "agents-personas",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Agents/Personas"
     },
@@ -551,7 +574,7 @@
         "ui/storybook/prototypes/new-agent-fixtures.ts",
         "ui/storybook/stories/agents/agent-settings-redesign.stories.tsx"
       ],
-      "fingerprint": "0d438c68efa2c8b29d359c95944bc7aa55bd90808ea4f6229f144ffb4a16ffe4",
+      "fingerprint": "f3f3f3b232dd5e600485e2701153e069aa545eba232264c69c6eb64e21fd0f24",
       "stableId": "agents-configuration-refresh",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Agents/Configuration refresh"
     },
@@ -1301,14 +1324,15 @@
       "file": "ui/storybook/stories/budgets-costs/budget-finance.stories.tsx",
       "capabilities": [
         "budgets-costs/cost-reporting",
-        "budgets-costs/budgets"
+        "budgets-costs/budgets",
+        "budgets-costs/incidents"
       ],
       "purpose": "Product/Budget & Finance",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. FullMatrix renders BudgetIncidentCard in warning, resolved, pending-approval and escalated hard-stop states. Resolution handlers are no-ops; budget relief and resumption remain unverified.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/budgets-costs.md",
         "ui/src/components/AccountingModelCard.tsx",
@@ -1349,7 +1373,7 @@
         "ui/src/components/StatusBadge.tsx",
         "ui/storybook/stories/agents/built-in-agents.stories.tsx"
       ],
-      "fingerprint": "10f7d4cc67fac768afe96fc635480cf9cb91cfe1f18f11ffdfd2273de8eac8a3",
+      "fingerprint": "33d0aceb2ce1d9841cb03ea0b3ca84e4daadd367a424ef57d104e40733d948eb",
       "stableId": "product-built-in-agents",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Product/Built-in Agents"
     },
@@ -1440,13 +1464,15 @@
     {
       "file": "ui/storybook/stories/chat-channels/chat-management/chat-management.stories.tsx",
       "capabilities": [
-        "chat-channels/lifecycle"
+        "chat-channels/lifecycle",
+        "chat-channels/identity",
+        "chat-channels/conversation"
       ],
       "purpose": "Connections/Chat management",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation: the mounted endpoint adds connection and destination editors. Local endpoint PATCH/resource PUT preserve defaults; workspace-choice requests now return only active/idle, unclosed fixture workspaces. Browser save/error/reload and new-conversation inheritance remain unverified. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Inspected channel task-default controls, optional API fields, avatar rendering and matching fixture updates; live defaults inheritance and permission checks remain outside these stories.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation: the mounted endpoint adds connection and destination editors. Local endpoint PATCH/resource PUT preserve defaults; workspace-choice requests now return only active/idle, unclosed fixture workspaces. Browser save/error/reload and new-conversation inheritance remain unverified. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Inspected channel task-default controls, optional API fields, avatar rendering and matching fixture updates; live defaults inheritance and permission checks remain outside these stories. Access, InvitePeople, ConnectAndTest and Conversations render the shipped endpoint detail with simulated identity linking and conversation data. External delivery and identity authorization are not live.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/chat-channels.md",
@@ -1655,7 +1681,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/connection-setup/connection-instructions.stories.tsx"
       ],
-      "fingerprint": "3efdccf3ef32cfd6593a9dd5490337f53be859f7b2f0ecc3d8e3e843be74c7f7",
+      "fingerprint": "8f34f47beca85eea7d4cd012422422a37cd2d47ce7068bce9103dfc9d934e9dd",
       "stableId": "design-explorations-connections-agent-instructions",
       "sidebarTitle": "Apps, channels, and extensions/Connection setup/Design explorations/Connections/Agent instructions"
     },
@@ -1917,14 +1943,15 @@
       "file": "ui/storybook/stories/companies/decision-models/01-settings.stories.tsx",
       "capabilities": [
         "companies/identity",
-        "budgets-costs/cost-reporting"
+        "budgets-costs/cost-reporting",
+        "companies/decision-models"
       ],
       "purpose": "Decision models/01 Settings",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Related decision-service examples show connection/model configuration, bounded test receipts or invocation history using shipped subjects and simulated data. No paid provider or authorization proof.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/budgets-costs.md",
         "maps/feature-map/companies.md",
@@ -1932,7 +1959,7 @@
         "ui/storybook/stories/companies/decision-models/01-settings.stories.tsx",
         "ui/storybook/support/decision-models/fixtures.ts"
       ],
-      "fingerprint": "26ac3209bb283a94e102e2328689aec2cd801680ede48cbfdf85f77ed3b2b647",
+      "fingerprint": "deb224b7109eeb7c2672ac22e63c5ea62053198eac5ba69d796c13b418bff263",
       "stableId": "decision-models-01-settings",
       "sidebarTitle": "Getting started and access/Companies and portability/Decision models/01 Settings"
     },
@@ -1940,14 +1967,15 @@
       "file": "ui/storybook/stories/companies/decision-models/02-history.stories.tsx",
       "capabilities": [
         "companies/identity",
-        "budgets-costs/cost-reporting"
+        "budgets-costs/cost-reporting",
+        "companies/decision-models"
       ],
       "purpose": "Decision models/02 History",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Related decision-service examples show connection/model configuration, bounded test receipts or invocation history using shipped subjects and simulated data. No paid provider or authorization proof.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/budgets-costs.md",
         "maps/feature-map/companies.md",
@@ -1955,7 +1983,7 @@
         "ui/storybook/stories/companies/decision-models/02-history.stories.tsx",
         "ui/storybook/support/decision-models/fixtures.ts"
       ],
-      "fingerprint": "bae133e089fe0a1f7a27436d63bcc6eb4e49612a6418bb0529d49dc3da54d79f",
+      "fingerprint": "a32eb6bdb93e8fd8ecb05ed6bc8a7483c6c39e77b862700ff1ae192293d139ee",
       "stableId": "decision-models-02-history",
       "sidebarTitle": "Getting started and access/Companies and portability/Decision models/02 History"
     },
@@ -1963,14 +1991,15 @@
       "file": "ui/storybook/stories/companies/decision-models/03-journey.stories.tsx",
       "capabilities": [
         "companies/identity",
-        "budgets-costs/cost-reporting"
+        "budgets-costs/cost-reporting",
+        "companies/decision-models"
       ],
       "purpose": "Decision models/03 Journey",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Related decision-service examples show connection/model configuration, bounded test receipts or invocation history using shipped subjects and simulated data. No paid provider or authorization proof.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/budgets-costs.md",
         "maps/feature-map/companies.md",
@@ -1980,7 +2009,7 @@
         "ui/storybook/stories/companies/decision-models/03-journey.stories.tsx",
         "ui/storybook/support/decision-models/fixtures.ts"
       ],
-      "fingerprint": "9d5c8aa2027e900b4b5b52b602065dfe7c779e235b42f46a99dddb8037e4006a",
+      "fingerprint": "fe773821e67983b5a6255d417fd9952e3bc227c4ccdb8410b06e1a9200c94d63",
       "stableId": "decision-models-03-journey",
       "sidebarTitle": "Getting started and access/Companies and portability/Decision models/03 Journey"
     },
@@ -2056,7 +2085,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/tasks/dialogs-modals.stories.tsx"
       ],
-      "fingerprint": "0f7eecae93e4360074aeb626deabe29add4a7b3cb96467830d62802094f144a2",
+      "fingerprint": "75e4b0effdb3cd0c426dce00f908ca4657a03e2ffc365558d074858020ac5f23",
       "stableId": "product-dialogs-modals",
       "sidebarTitle": "Tasks and conversations/Task creation and lifecycle/Product/Dialogs & Modals"
     },
@@ -2233,7 +2262,7 @@
         "ui/src/components/new-agent/ExternalAgentInviteContent.tsx",
         "ui/storybook/stories/agents/external-agent-invite/components.stories.tsx"
       ],
-      "fingerprint": "68569d7c53ea9f52a63965a6a7568bf7d34d7fc8b34f404bf2e45cccd5822c3b",
+      "fingerprint": "596b3f1c4e49684683cbf309dc516c5b2d14c1032f2f3c2dba44257bc25c13ef",
       "stableId": "onboarding-external-agent-invitation-components",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Onboarding/External agent invitation/Components"
     },
@@ -2261,7 +2290,7 @@
         "ui/storybook/support/external-agent-invite/fixtures.ts",
         "ui/storybook/stories/agents/external-agent-invite/journeys.stories.tsx"
       ],
-      "fingerprint": "1dcbec5f8100e600233a3d2a27124e946f24a3fdb9c6fd4dd2b91e42c7134363",
+      "fingerprint": "fcca4eb4429c48361c9f39c01fe0aa3dab983452fbe8b1cf6be0266a9ff391ad",
       "stableId": "onboarding-external-agent-invitation-journeys",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Onboarding/External agent invitation/Journeys"
     },
@@ -2297,14 +2326,15 @@
       "file": "ui/storybook/stories/companies/fast-responses/01-settings.stories.tsx",
       "capabilities": [
         "companies/identity",
-        "budgets-costs/cost-reporting"
+        "budgets-costs/cost-reporting",
+        "companies/fast-responses"
       ],
       "purpose": "Fast responses/01 Settings",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Production settings view with simulated callbacks. Excluded exported fixture helpers and added the onConnectionChange spy required during rendering; full save/API state parity remains unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Production settings view with simulated callbacks. Excluded exported fixture helpers and added the onConnectionChange spy required during rendering; full save/API state parity remains unreviewed. Related fast-response examples show configuration/test receipts or invocation history with shipped subjects and simulated data. A receipt is an acknowledgement, not task completion; no paid provider or authorization proof.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/budgets-costs.md",
         "maps/feature-map/companies.md",
@@ -2312,7 +2342,7 @@
         "ui/storybook/support/decision-models/fixtures.ts",
         "ui/storybook/stories/companies/fast-responses/01-settings.stories.tsx"
       ],
-      "fingerprint": "1610fca918abcbf89a5cf901ae36217df841169efcc21bd91db735bb0ea306bd",
+      "fingerprint": "569c9d9b91872d61d0b4fe44b114d7f9c81bb8c5a5ca5b3545235cd935d8129e",
       "stableId": "fast-responses-01-settings",
       "sidebarTitle": "Getting started and access/Companies and portability/Fast responses/01 Settings"
     },
@@ -2320,14 +2350,15 @@
       "file": "ui/storybook/stories/companies/fast-responses/02-history.stories.tsx",
       "capabilities": [
         "companies/identity",
-        "budgets-costs/cost-reporting"
+        "budgets-costs/cost-reporting",
+        "companies/fast-responses"
       ],
       "purpose": "Fast responses/02 History",
       "status": "current",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shared production DecisionHistoryTable receives fastResponse=true, matching FastResponseHistory presentation; API loading/error and feature-gate wrapper are outside this story.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shared production DecisionHistoryTable receives fastResponse=true, matching FastResponseHistory presentation; API loading/error and feature-gate wrapper are outside this story. Related fast-response examples show configuration/test receipts or invocation history with shipped subjects and simulated data. A receipt is an acknowledgement, not task completion; no paid provider or authorization proof.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/budgets-costs.md",
         "maps/feature-map/companies.md",
@@ -2335,7 +2366,7 @@
         "ui/storybook/support/decision-models/fixtures.ts",
         "ui/storybook/stories/companies/fast-responses/02-history.stories.tsx"
       ],
-      "fingerprint": "a2ed599851817c86c4b03be10c9083e365401be922f731260f1c718e0975c803",
+      "fingerprint": "0be6f0579e9daf13ba3bc6500c4a5980efc09407a408498385219391a5fdd3c1",
       "stableId": "fast-responses-02-history",
       "sidebarTitle": "Getting started and access/Companies and portability/Fast responses/02 History"
     },
@@ -2417,13 +2448,15 @@
     },
     {
       "file": "ui/storybook/stories/foundations/forms-editors.stories.tsx",
-      "capabilities": [],
+      "capabilities": [
+        "developer-labs/design"
+      ],
       "purpose": "Components/Forms & Editors",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Related design reference: demonstrates shared production controls and visual states in an isolated contributor fixture; retains its Foundations home. No product-journey or baseline comparison claim.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "ui/src/components/ExecutionParticipantPicker.tsx",
         "ui/src/components/FoldCurtain.tsx",
@@ -2440,22 +2473,26 @@
         "ui/src/components/ui/badge.tsx",
         "ui/src/components/ui/button.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
-        "ui/storybook/stories/foundations/forms-editors.stories.tsx"
+        "ui/storybook/stories/foundations/forms-editors.stories.tsx",
+        "maps/feature-map/developer-labs.md"
       ],
       "exception": "Shared foundations or contributor guide; no single business capability owns this suite.",
-      "fingerprint": "2ffc131b9725c748a223fe4ddc8f9d31242e6d96e0d2feb3ab91563a89dea120",
+      "fingerprint": "28920ad31b69171ba62c0fd1f5b7f1581d527ede597acd6b445c5f8e773c2f64",
       "stableId": "components-forms-editors",
-      "sidebarTitle": "Foundations/Components/Forms & Editors"
+      "sidebarTitle": "Foundations/Components/Forms & Editors",
+      "home": "foundations"
     },
     {
       "file": "ui/storybook/stories/foundations/foundations.stories.tsx",
-      "capabilities": [],
+      "capabilities": [
+        "developer-labs/design"
+      ],
       "purpose": "Foundations/Primitive Matrix",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Related design reference: demonstrates shared production controls and visual states in an isolated contributor fixture; retains its Foundations home. No product-journey or baseline comparison claim.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "ui/src/components/ui/badge.tsx",
         "ui/src/components/ui/button.tsx",
@@ -2471,12 +2508,14 @@
         "ui/src/components/ui/textarea.tsx",
         "ui/src/components/ui/toggle-switch.tsx",
         "ui/src/components/ui/tooltip.tsx",
-        "ui/storybook/stories/foundations/foundations.stories.tsx"
+        "ui/storybook/stories/foundations/foundations.stories.tsx",
+        "maps/feature-map/developer-labs.md"
       ],
       "exception": "Shared foundations or contributor guide; no single business capability owns this suite.",
-      "fingerprint": "ed53a4be78a572368f4c22577ccad159699f291eb1d01c242528df3b35cd63fe",
+      "fingerprint": "59d7a5410b79c4825e561dc3286e6138f97fe6fa89a30ccced2c980cf8fc4fe3",
       "stableId": "foundations-primitive-matrix",
-      "sidebarTitle": "Foundations/Primitive Matrix"
+      "sidebarTitle": "Foundations/Primitive Matrix",
+      "home": "foundations"
     },
     {
       "file": "ui/storybook/stories/skills/frontmatter-panel.stories.tsx",
@@ -2612,14 +2651,15 @@
       "file": "ui/storybook/stories/skills/github-skills-journey.stories.tsx",
       "capabilities": [
         "skills/versions",
-        "skills/discovery"
+        "skills/discovery",
+        "skills/policy"
       ],
       "purpose": "Skills/GitHub sync journey",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. AssignToAgent and AssignedSkill demonstrate library/detail assignment with local policy fixtures. No runtime enforcement or backend persistence proof.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/skills.md",
         "ui/src/components/Layout.tsx",
@@ -2734,13 +2774,18 @@
     {
       "file": "ui/storybook/stories/chat-channels/imessage-photon.stories.tsx",
       "capabilities": [
-        "chat-channels/conversation"
+        "chat-channels/conversation",
+        "chat-channels/providers",
+        "chat-channels/identity",
+        "chat-channels/lifecycle",
+        "connection-setup/channel-setup",
+        "connection-setup/failure"
       ],
       "purpose": "Connections/iMessage Photon",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the endpoint editor addition; this suite selects setup/access and locally simulated conversation states. Endpoint PATCH retains fields, but settings workspace-choice requests and default selection are not covered by these scenarios. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Inspected channel task-default controls, optional API fields, avatar rendering and matching fixture updates; live defaults inheritance and permission checks remain outside these stories.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the endpoint editor addition; this suite selects setup/access and locally simulated conversation states. Endpoint PATCH retains fields, but settings workspace-choice requests and default selection are not covered by these scenarios. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Inspected channel task-default controls, optional API fields, avatar rendering and matching fixture updates; live defaults inheritance and permission checks remain outside these stories. Catalog, ChooseAgent, Credentials, Access, Reconnect and ProviderOutageRecovery render shipped setup/detail states with simulated provider data. No live iMessage connection, delivery or recovery claim.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/chat-channels.md",
@@ -2754,9 +2799,10 @@
         "ui/src/pages/apps/chat/ChatEndpointSetup.tsx",
         "ui/src/pages/apps/chat/ChatExecutionDefaults.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
-        "ui/storybook/stories/chat-channels/imessage-photon.stories.tsx"
+        "ui/storybook/stories/chat-channels/imessage-photon.stories.tsx",
+        "maps/feature-map/connection-setup.md"
       ],
-      "fingerprint": "002c59e80ccd20170b8ed432e8343395414df94b724c858006447735b0afc680",
+      "fingerprint": "c94d86853171b760a7d54e20fb59e57944da289278f76c1c21ed42b3a5cb61af",
       "stableId": "connections-imessage-photon",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Connections/iMessage Photon"
     },
@@ -2910,13 +2956,15 @@
       "capabilities": [
         "questions-and-approvals/questions",
         "questions-and-approvals/confirmations",
-        "questions-and-approvals/audience"
+        "questions-and-approvals/audience",
+        "questions-and-approvals/plan-review",
+        "questions-and-approvals/continuation"
       ],
       "purpose": "Chat & Comments/Issue Thread Interactions",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Master reconciliation inspected assignment-history recipient suggestions and manual-selection retention; existing stories do not establish the new assignment-history behavior.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Master reconciliation inspected assignment-history recipient suggestions and manual-selection retention; existing stories do not establish the new assignment-history behavior. Plan approval Pending, Confirmed, ExpiredByTargetChange and ResumeFailed states use shipped interaction cards. The continuation association covers accepted-but-resume-failed presentation only; no successful resumption, retry or duplicate-suppression proof.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/questions-and-approvals.md",
@@ -2989,7 +3037,7 @@
         "ui/src/pages/apps/Browse.tsx",
         "ui/storybook/stories/connection-setup/memory-connectors.stories.tsx"
       ],
-      "fingerprint": "498446eef1e0bae94d8d740335989d615eeddb5961768d900bee994533ed9883",
+      "fingerprint": "f7e104c4e8b912b93fab037be9811583b3437e3c2d8a906eba343e70107dfc80",
       "stableId": "apps-connections-memory",
       "sidebarTitle": "Apps, channels, and extensions/Connection setup/Apps/Connections/Memory"
     },
@@ -3139,7 +3187,7 @@
         "ui/storybook/stories/agents/new-agent-onboarding.stories.tsx"
       ],
       "replacement": "ui/storybook/stories/agents/agent-persona-pages.stories.tsx",
-      "fingerprint": "4f8600fabe74a9c84e6fd6501f8f7cf9c1e1b5926bf2086d3bafaf2b2ed17a94",
+      "fingerprint": "b79b3193788385fef0e26daaf1cf30f48e77ca2f224a70141a64c0feced97aea",
       "stableId": "onboarding-new-agent",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Onboarding/New agent"
     },
@@ -3171,22 +3219,24 @@
     {
       "file": "ui/storybook/stories/tasks/new-task-composer.stories.tsx",
       "capabilities": [
-        "tasks/create"
+        "tasks/create",
+        "workspaces/binding"
       ],
       "purpose": "Composer/New task",
       "status": "current",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. WorktreePicker, ReuseWorktree, CreateWithReusedWorktree and NewWorktreeAfterReuse exercise workspace selection and submitted fixture request values. Actual admission/binding and execution remain outside this story.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/tasks.md",
         "ui/src/components/MarkdownBody.tsx",
         "ui/src/components/NewIssueDialog.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
-        "ui/storybook/stories/tasks/new-task-composer.stories.tsx"
+        "ui/storybook/stories/tasks/new-task-composer.stories.tsx",
+        "maps/feature-map/workspaces.md"
       ],
-      "fingerprint": "35fbacd5d5fc225d537fc537e34ad8601a75a7b3aa21b6016537096337b71261",
+      "fingerprint": "56ef4e67f8e6b51ab54a664336fae33a75aece2f56883861ce617d53145b5637",
       "stableId": "composer-new-task",
       "sidebarTitle": "Tasks and conversations/Task creation and lifecycle/Composer/New task"
     },
@@ -3328,7 +3378,7 @@
         "ui/storybook/generated/feature-index.json"
       ],
       "exception": "Shared foundations or contributor guide; no single business capability owns this suite.",
-      "fingerprint": "e8dad5fdfca60cad92af994a3d9defbe847894610c368a0edbd1900837c03743",
+      "fingerprint": "b4a1cb9cf763e78cfc632a5adf859c8827318de12eeb0cd359b4a5b8b838a730",
       "stableId": "overview-storybook-guide",
       "sidebarTitle": "Overview/Storybook Guide"
     },
@@ -3402,7 +3452,7 @@
     {
       "file": "ui/storybook/stories/agents/primary-agent/00-review-guide.stories.tsx",
       "capabilities": [
-        "agents/organization",
+        "agents/primary-agent",
         "tasks/create",
         "agent-chat/discovery"
       ],
@@ -3410,7 +3460,7 @@
       "status": "unreviewed",
       "implementation": "guide",
       "boundary": "static",
-      "notes": "Review guide retained; explanatory content does not establish runtime or production coverage. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts.",
+      "notes": "Review guide retained; explanatory content does not establish runtime or production coverage. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Primary choice, replacement confirmation, unavailable states and task/chat fallback presentation use local presentation-provider callbacks. Production preference persistence and default-resolution precedence remain unverified by this suite.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/agent-chat.md",
@@ -3418,14 +3468,14 @@
         "maps/feature-map/tasks.md",
         "ui/storybook/stories/agents/primary-agent/00-review-guide.stories.tsx"
       ],
-      "fingerprint": "277165110d00845305892000266531905d0a18f017c6c9bf2d8e2e2069af5cb2",
+      "fingerprint": "d54242a3d8d8096014dd54fe49ca0e86669894ff859d41ff0e50866315a412f4",
       "stableId": "primary-agent-00-review-guide",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Primary Agent/00 Review guide"
     },
     {
       "file": "ui/storybook/stories/agents/primary-agent/01-components.stories.tsx",
       "capabilities": [
-        "agents/organization",
+        "agents/primary-agent",
         "tasks/create",
         "agent-chat/discovery"
       ],
@@ -3433,7 +3483,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Primary choice, replacement confirmation, unavailable states and task/chat fallback presentation use local presentation-provider callbacks. Production preference persistence and default-resolution precedence remain unverified by this suite.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/agent-chat.md",
@@ -3453,14 +3503,14 @@
         "ui/storybook/stories/agents/primary-agent/01-components.stories.tsx",
         "ui/storybook/support/primary-agent/PrimaryAgentStory.tsx"
       ],
-      "fingerprint": "910d12dfac4a601dad1d80217dadf4db6855d8580157c8d9bb18db13b5bf7ddc",
+      "fingerprint": "b1ae1d45a7e4a89f94a4a10343ddabd085cc758f0ceb17df43806722df874019",
       "stableId": "primary-agent-01-components",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Primary Agent/01 Components"
     },
     {
       "file": "ui/storybook/stories/agents/primary-agent/02-sidebar.stories.tsx",
       "capabilities": [
-        "agents/organization",
+        "agents/primary-agent",
         "tasks/create",
         "agent-chat/discovery"
       ],
@@ -3468,7 +3518,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Primary choice, replacement confirmation, unavailable states and task/chat fallback presentation use local presentation-provider callbacks. Production preference persistence and default-resolution precedence remain unverified by this suite.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/agent-chat.md",
@@ -3487,14 +3537,14 @@
         "ui/storybook/stories/agents/primary-agent/02-sidebar.stories.tsx",
         "ui/storybook/support/primary-agent/PrimaryAgentStory.tsx"
       ],
-      "fingerprint": "05f87fcb1dc24bd7ca56ca885ef1c79343f0330f9e93fb0c017aa7cb21c3a104",
+      "fingerprint": "a98ea7e6c56135bd030b43385bfdb2a5e12f5e78d18ed301c88ff12da07481a3",
       "stableId": "primary-agent-02-sidebar",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Primary Agent/02 Sidebar"
     },
     {
       "file": "ui/storybook/stories/agents/primary-agent/03-agents.stories.tsx",
       "capabilities": [
-        "agents/organization",
+        "agents/primary-agent",
         "tasks/create",
         "agent-chat/discovery"
       ],
@@ -3502,7 +3552,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Primary choice, replacement confirmation, unavailable states and task/chat fallback presentation use local presentation-provider callbacks. Production preference persistence and default-resolution precedence remain unverified by this suite.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/agent-chat.md",
@@ -3521,14 +3571,14 @@
         "ui/storybook/stories/agents/primary-agent/03-agents.stories.tsx",
         "ui/storybook/support/primary-agent/PrimaryAgentStory.tsx"
       ],
-      "fingerprint": "d9878058d6c2d4d144bcb8aeb97e9e0cb8186407b1b3fefb07078af7f147d74f",
+      "fingerprint": "2096810ef9ccf52eaf2811175604550302b314fc2e3d6bb951413a5505c3214b",
       "stableId": "primary-agent-03-agents",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Primary Agent/03 Agents"
     },
     {
       "file": "ui/storybook/stories/agents/primary-agent/04-new-task.stories.tsx",
       "capabilities": [
-        "agents/organization",
+        "agents/primary-agent",
         "tasks/create",
         "agent-chat/discovery"
       ],
@@ -3536,7 +3586,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Primary choice, replacement confirmation, unavailable states and task/chat fallback presentation use local presentation-provider callbacks. Production preference persistence and default-resolution precedence remain unverified by this suite.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/agent-chat.md",
@@ -3555,14 +3605,14 @@
         "ui/storybook/stories/agents/primary-agent/04-new-task.stories.tsx",
         "ui/storybook/support/primary-agent/PrimaryAgentStory.tsx"
       ],
-      "fingerprint": "8ab5193560196f684c82e8d8fab6728a208395c3b8628f04dac0ac8c0185d4aa",
+      "fingerprint": "2ab88c703c7376edd519dc413a562ab802998ae25cafc44925fdd00f48ceb7cb",
       "stableId": "primary-agent-04-new-task",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Primary Agent/04 New task"
     },
     {
       "file": "ui/storybook/stories/agents/primary-agent/05-chat.stories.tsx",
       "capabilities": [
-        "agents/organization",
+        "agents/primary-agent",
         "tasks/create",
         "agent-chat/discovery"
       ],
@@ -3570,7 +3620,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Primary choice, replacement confirmation, unavailable states and task/chat fallback presentation use local presentation-provider callbacks. Production preference persistence and default-resolution precedence remain unverified by this suite.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/agent-chat.md",
@@ -3589,14 +3639,14 @@
         "ui/storybook/stories/agents/primary-agent/05-chat.stories.tsx",
         "ui/storybook/support/primary-agent/PrimaryAgentStory.tsx"
       ],
-      "fingerprint": "7defc95cd9c952f5f5f4ad1c7954478f5a33921fc6c6b1adf0a8fa3e16621dff",
+      "fingerprint": "2b22fe59288fb0d6597f7122ac195038f3ed8d748c2ed80fba7e795576501cd3",
       "stableId": "primary-agent-05-chat",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Primary Agent/05 Chat"
     },
     {
       "file": "ui/storybook/stories/agents/primary-agent/06-journeys.stories.tsx",
       "capabilities": [
-        "agents/organization",
+        "agents/primary-agent",
         "tasks/create",
         "agent-chat/discovery"
       ],
@@ -3604,7 +3654,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Primary choice, replacement confirmation, unavailable states and task/chat fallback presentation use local presentation-provider callbacks. Production preference persistence and default-resolution precedence remain unverified by this suite.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/agent-chat.md",
@@ -3623,14 +3673,14 @@
         "ui/storybook/stories/agents/primary-agent/06-journeys.stories.tsx",
         "ui/storybook/support/primary-agent/PrimaryAgentStory.tsx"
       ],
-      "fingerprint": "6c8a08ae15112a54e69fee220160a1550ab9098445486e316c4fb34e2d6e085f",
+      "fingerprint": "67c35f4ec63e84d1ccaa4362e2e2289857ecfa583d412c8582168d169ca38a54",
       "stableId": "primary-agent-06-journeys",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Primary Agent/06 Journeys"
     },
     {
       "file": "ui/storybook/stories/agents/primary-agent/07-confirmation.stories.tsx",
       "capabilities": [
-        "agents/organization",
+        "agents/primary-agent",
         "tasks/create",
         "agent-chat/discovery"
       ],
@@ -3638,7 +3688,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Primary choice, replacement confirmation, unavailable states and task/chat fallback presentation use local presentation-provider callbacks. Production preference persistence and default-resolution precedence remain unverified by this suite.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/agent-chat.md",
@@ -3657,19 +3707,21 @@
         "ui/storybook/stories/agents/primary-agent/07-confirmation.stories.tsx",
         "ui/storybook/support/primary-agent/PrimaryAgentStory.tsx"
       ],
-      "fingerprint": "a9ecc61cc3e70460b23e3fdd5ede33abd8e4e8e62d5dbce5fa5fcdbf0df2d234",
+      "fingerprint": "6be424a8d962be786c09ef1d2c3b505e407c7b645367adabfc2f737d73c692c6",
       "stableId": "primary-agent-07-confirmation",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Primary Agent/07 Confirmation"
     },
     {
       "file": "ui/storybook/stories/foundations/primitives-coverage.stories.tsx",
-      "capabilities": [],
+      "capabilities": [
+        "developer-labs/design"
+      ],
       "purpose": "Foundations/Primitive Coverage",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Related design reference: demonstrates shared production controls and visual states in an isolated contributor fixture; retains its Foundations home. No product-journey or baseline comparison claim.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "ui/src/components/ui/alert-dialog.tsx",
         "ui/src/components/ui/avatar.tsx",
@@ -3682,12 +3734,14 @@
         "ui/src/components/ui/scroll-area.tsx",
         "ui/src/components/ui/sheet.tsx",
         "ui/src/components/ui/skeleton.tsx",
-        "ui/storybook/stories/foundations/primitives-coverage.stories.tsx"
+        "ui/storybook/stories/foundations/primitives-coverage.stories.tsx",
+        "maps/feature-map/developer-labs.md"
       ],
       "exception": "Shared foundations or contributor guide; no single business capability owns this suite.",
-      "fingerprint": "b8a0afd9a2fefb2e89e3215ca86a7dea3673f254d361f7d821d43c13c2a795bc",
+      "fingerprint": "e976ac856930f41020485a292121b6a4879c9db1d7014e74d6a7add59acd53ce",
       "stableId": "foundations-primitive-coverage",
-      "sidebarTitle": "Foundations/Primitive Coverage"
+      "sidebarTitle": "Foundations/Primitive Coverage",
+      "home": "foundations"
     },
     {
       "file": "ui/storybook/stories/access/private-tasks/00-review-guide.stories.tsx",
@@ -4351,21 +4405,23 @@
     {
       "file": "ui/storybook/stories/gateways-profiles/public-mcp-setting.stories.tsx",
       "capabilities": [
-        "gateways-profiles/client-connect"
+        "gateways-profiles/client-connect",
+        "instance-operations/configuration"
       ],
       "purpose": "Assistant connections/Experimental setting",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. ToggleOnAndOff, ManagedByCloud and SaveFailedRollsBack mount production experimental settings with simulated saves. Only the assistant-connection flag is represented, not every instance setting.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/gateways-profiles.md",
         "ui/src/pages/InstanceExperimentalSettings.tsx",
         "ui/storybook/fixtures/publicMcp.ts",
-        "ui/storybook/stories/gateways-profiles/public-mcp-setting.stories.tsx"
+        "ui/storybook/stories/gateways-profiles/public-mcp-setting.stories.tsx",
+        "maps/feature-map/instance-operations.md"
       ],
-      "fingerprint": "15f99c5632c11f8e90dfaa340d192b90b07138176317e17e51a176952383adb7",
+      "fingerprint": "96735a71b1d81cbe604ed55594ee9a8a04de8f365665c33ca260fbfc84263d55",
       "stableId": "assistant-connections-experimental-setting",
       "sidebarTitle": "Apps, channels, and extensions/Tool gateways and access profiles/Assistant connections/Experimental setting"
     },
@@ -4474,14 +4530,15 @@
       "file": "ui/storybook/stories/routines/routine-detail-c.stories.tsx",
       "capabilities": [
         "routines/definition",
-        "routines/management"
+        "routines/management",
+        "activity/routine-audit"
       ],
       "purpose": "Product/Routines · Detail (variation C)",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Activity mounts the shipped ActivitySection with fixture trigger/run/configuration events. This does not establish live routine execution or audit persistence.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/routines.md",
         "ui/src/components/AgentActionButtons.tsx",
@@ -4491,9 +4548,10 @@
         "ui/src/components/routine-sections/editable-sections.tsx",
         "ui/src/components/routine-sections/operate-sections.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
-        "ui/storybook/stories/routines/routine-detail-c.stories.tsx"
+        "ui/storybook/stories/routines/routine-detail-c.stories.tsx",
+        "maps/feature-map/activity.md"
       ],
-      "fingerprint": "c07544c830cd35d90c553d9388e2a9479e42f69460a6c506e1c541cea78607d4",
+      "fingerprint": "853370d71e85c5e01b79d19831cba7f839f4b75af42fa51e7e94f84e31a6eb81",
       "stableId": "product-routines-·-detail-variation-c",
       "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines · Detail (variation C)"
     },
@@ -4554,14 +4612,16 @@
     {
       "file": "ui/storybook/stories/routines/routine-webhooks.stories.tsx",
       "capabilities": [
-        "routines/triggers"
+        "routines/triggers",
+        "routines/history",
+        "activity/routine-audit"
       ],
       "purpose": "Product/Routines/Webhooks",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Runs and Activity mount RoutineDetail with fixture execution tasks/events and play assertions. Scheduler execution, delivery and audit persistence are not live.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/routines.md",
         "ui/src/components/Layout.tsx",
@@ -4569,9 +4629,10 @@
         "ui/src/pages/Routines.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/fixtures/routineWebhooks.tsx",
-        "ui/storybook/stories/routines/routine-webhooks.stories.tsx"
+        "ui/storybook/stories/routines/routine-webhooks.stories.tsx",
+        "maps/feature-map/activity.md"
       ],
-      "fingerprint": "588536cb71d6c79eff20ea1dc14d60c96932631f267a45adc36e2078d816aa39",
+      "fingerprint": "93bdd95dd2c677ba7562f477b111486f93a081276a9e3c3a8af3c45874f20a5d",
       "stableId": "product-routines-webhooks",
       "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Product/Routines/Webhooks"
     },
@@ -4784,14 +4845,16 @@
     {
       "file": "ui/storybook/stories/skills/skills-store-detail.stories.tsx",
       "capabilities": [
-        "skills/discovery"
+        "skills/discovery",
+        "skills/versions",
+        "skills/policy"
       ],
       "purpose": "Skills Store/Skill detail",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Related examples cover fixture revisions and agent attachment selection. Save and attachment submission callbacks are no-ops; durable authoring, grants and enforcement are not established.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/skills.md",
         "ui/src/pages/CompanySkills.tsx",
@@ -4983,13 +5046,15 @@
     },
     {
       "file": "ui/storybook/stories/foundations/status-language.stories.tsx",
-      "capabilities": [],
+      "capabilities": [
+        "developer-labs/design"
+      ],
       "purpose": "Foundations/Status Language",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Related design reference: demonstrates shared production controls and visual states in an isolated contributor fixture; retains its Foundations home. No product-journey or baseline comparison claim.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "ui/src/components/CopyText.tsx",
         "ui/src/components/EmptyState.tsx",
@@ -5003,12 +5068,14 @@
         "ui/src/components/StatusIcon.tsx",
         "ui/src/components/ui/card.tsx",
         "ui/storybook/fixtures/paperclipData.ts",
-        "ui/storybook/stories/foundations/status-language.stories.tsx"
+        "ui/storybook/stories/foundations/status-language.stories.tsx",
+        "maps/feature-map/developer-labs.md"
       ],
       "exception": "Shared foundations or contributor guide; no single business capability owns this suite.",
-      "fingerprint": "1c7360f6c527b4377c85ee10b1eeb4d268b1af77b7a403ed321129b918409b76",
+      "fingerprint": "9cf8b929ba0d6ad4d8d2a6711aa7fb609ef57069d87a050f77dd389de608ee36",
       "stableId": "foundations-status-language",
-      "sidebarTitle": "Foundations/Status Language"
+      "sidebarTitle": "Foundations/Status Language",
+      "home": "foundations"
     },
     {
       "file": "ui/storybook/stories/task-coordination/sub-issues-workflow.stories.tsx",
@@ -5074,7 +5141,7 @@
         "ui/src/components/SummarySlotCard.tsx",
         "ui/storybook/stories/agents/summary-slot-card.stories.tsx"
       ],
-      "fingerprint": "810f833adef832e3eaf3a0e70da1b433d6c1bb59deb7928725e4de48753c0000",
+      "fingerprint": "88f4120cbc9da82fdcd44644259f8bacf39b482ef12950e0b26313b5c0a2c81d",
       "stableId": "summaries-summaryslotcard",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Summaries/SummarySlotCard"
     },
@@ -5318,14 +5385,16 @@
       "file": "ui/storybook/stories/teams/team-catalog.stories.tsx",
       "capabilities": [
         "teams/preview",
-        "teams/discovery"
+        "teams/discovery",
+        "teams/install",
+        "teams/configuration"
       ],
       "purpose": "Surfaces/Team Catalog",
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Renders shipped TeamCatalog source, but feature map documents current CLI/API access and no top-level catalog route.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Renders shipped TeamCatalog source, but feature map documents current CLI/API access and no top-level catalog route. InstallApplyProgress, InstallSuccess and InstalledStates show simulated installation results; InstallPreview edits adapter choices in local state. No routed catalog, real package installation, account setup or working-agent proof.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/teams.md",
         "ui/src/pages/TeamCatalog.fixtures.ts",

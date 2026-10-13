@@ -138,3 +138,36 @@ remaining operations before qualifying the whole capability.
 
 Gaps: Provisioning checks agents:create. Enabling/running its built-in routine is not
 the same permission path.
+
+## `primary-agent`
+
+Review: `baseline`.
+
+API: `present` — GET and PUT /api/companies/{companyId}/primary-agent/me.
+
+Agent access: `restricted` — this is the authenticated human's personal
+preference. Agent keys and native call_api use agent identity and are denied by
+the board gate; no dedicated agent selection tool is present.
+
+Policy: Requires board user identity, company access and active membership,
+except implicit-local board or instance administrator. Viewers may choose their
+own primary. Selection requires a same-company readable, available agent and
+is scoped to actor user ID; the request cannot select another user's preference.
+Explicit null selection is rejected; leave/termination can clear an unavailable
+choice. Initialization stays recorded so clearing does not silently replace it.
+
+Evidence: `source-only` — reviewed on 2026-10-13 at
+`60bc0d5fee9a6e48db08fc016521fee3d9f57d67`:
+[routes](../../server/src/routes/primary-agent.ts),
+[service](../../server/src/services/primary-agent.ts),
+[provider](../../ui/src/context/PrimaryAgentProvider.tsx), and
+[route tests](../../server/src/__tests__/primary-agent.test.ts).
+
+Verification: `not-run` — select and read the preference as two company users;
+assert isolation, wrong-company/unreadable targets, pending/terminated agent
+rejection and agent-key denial. Verify replacement confirmation and fallback
+precedence in the UI; inspect the cleared state after permitted leave/termination.
+
+Gaps: No agent mutation path for another person's preference. Live human/agent
+access is unverified; UI fixture callbacks do not establish persistence or task
+and Chat default resolution.

@@ -54,6 +54,10 @@ export function scanStories(root = defaultRoot) {
   });
 }
 
+function storyHome(entry) {
+  return entry.home ?? entry.capabilities[0]?.split("/")[0] ?? (entry.implementation === "guide" ? "overview" : "foundations");
+}
+
 export function validateCatalog(root, catalog, stories) {
   const errors = [];
   const refs = capabilities(root);
@@ -79,10 +83,12 @@ export function validateCatalog(root, catalog, stories) {
     if (!entry.purpose?.trim() || !entry.notes?.trim()) errors.push(`${label}: purpose and review notes are required`);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.reviewedAt ?? "")) errors.push(`${label}: missing review date`);
     if (!Array.isArray(entry.capabilities)) { errors.push(`${label}: missing capabilities`); continue; }
+    if (entry.home !== undefined && entry.home !== "foundations") errors.push(`${label}: only shared foundations may override the capability home`);
+    if (entry.home === "foundations" && !entry.exception?.trim()) errors.push(`${label}: foundation home needs an explicit reason`);
     for (const ref of entry.capabilities) if (!refs.has(ref)) errors.push(`${label}: unknown feature capability ${ref}`);
     if (!entry.capabilities.length && !entry.exception?.trim()) errors.push(`${label}: unmapped story needs an explicit reason`);
     if (entry.capabilities.length !== new Set(entry.capabilities).size) errors.push(`${label}: duplicate capability references`);
-    const area = entry.capabilities[0]?.split("/")[0] ?? (entry.implementation === "guide" ? "overview" : "foundations");
+    const area = storyHome(entry);
     const prefix = navigation.get(area) ?? ({ overview: "Overview", foundations: "Foundations" })[area];
     const story = byFile.get(label);
     if (!label.startsWith(`${storyRoot}/${area}/`)) errors.push(`${label}: story must live in its primary feature folder ${area}`);
@@ -104,7 +110,8 @@ export function renderIndex(catalog, stories, index) {
   const byFile = new Map(stories.map(story => [story.file, story]));
   const groups = new Map();
   for (const entry of catalog.entries) {
-    const area = entry.capabilities[0]?.split("/")[0] ?? "foundations-and-guides";
+    const home = storyHome(entry);
+    const area = ["foundations", "overview"].includes(home) ? "foundations-and-guides" : home;
     if (!groups.has(area)) groups.set(area, []);
     groups.get(area).push(entry);
   }
