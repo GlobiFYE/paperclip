@@ -40,18 +40,30 @@ export function capabilities(root) {
   return result;
 }
 
+export function featureNavigation(root) {
+  const navigation = new Map();
+  let section;
+  for (const line of readFileSync(path.join(root, "maps/feature-map/README.md"), "utf8").split("\n")) {
+    if (line.startsWith("### ")) section = line.slice(4);
+    const match = line.match(/^\| \[([^\]]+)\]\(\.\/([^.)]+)\.md\)/);
+    if (match && section) navigation.set(match[2], `${section}/${match[1]}`);
+  }
+  return navigation;
+}
+
 export function scanStories(root = defaultRoot) {
   const require = createRequire(path.join(root, "ui/package.json"));
   const { loadCsf } = require("storybook/internal/csf-tools");
   return files(root, storyRoot).filter(file => /\.stories\.(ts|tsx|mdx)$/.test(file)).map(file => {
     const csf = loadCsf(readFileSync(path.join(root, file), "utf8"), { fileName: file, makeTitle: title => title }).parse();
-    return { file, title: csf.meta.title, ids: csf.stories.map(story => story.id), plays: csf.stories.filter(story => story.__stats?.play).length };
+    return { file, title: csf.meta.title, metaId: csf.meta.id, ids: csf.stories.map(story => story.id), plays: csf.stories.filter(story => story.__stats?.play).length };
   });
 }
 
 export function validateCatalog(root, catalog, stories) {
   const errors = [];
   const refs = capabilities(root);
+  const navigation = featureNavigation(root);
   const byFile = new Map(stories.map(story => [story.file, story]));
   const seen = new Set();
   const local = file => typeof file === "string" && !path.isAbsolute(file) && !file.split("/").includes("..") && existsSync(path.join(root, file));
@@ -76,6 +88,12 @@ export function validateCatalog(root, catalog, stories) {
     for (const ref of entry.capabilities) if (!refs.has(ref)) errors.push(`${label}: unknown feature capability ${ref}`);
     if (!entry.capabilities.length && !entry.exception?.trim()) errors.push(`${label}: unmapped story needs an explicit reason`);
     if (entry.capabilities.length !== new Set(entry.capabilities).size) errors.push(`${label}: duplicate capability references`);
+    const area = entry.capabilities[0]?.split("/")[0] ?? (entry.implementation === "guide" ? "overview" : "foundations");
+    const prefix = navigation.get(area) ?? ({ overview: "Overview", foundations: "Foundations" })[area];
+    const story = byFile.get(label);
+    if (!label.startsWith(`${storyRoot}/${area}/`)) errors.push(`${label}: story must live in its primary feature folder ${area}`);
+    if (!prefix || !entry.sidebarTitle?.startsWith(`${prefix}/`) || story?.title !== entry.sidebarTitle) errors.push(`${label}: sidebar title must match its feature-map home`);
+    if (!entry.stableId || story?.metaId !== entry.stableId) errors.push(`${label}: explicit meta ID must preserve the catalog stableId`);
     if (entry.replacement && !byFile.has(entry.replacement)) errors.push(`${label}: replacement story is missing`);
     if (!entry.sources?.includes(label)) errors.push(`${label}: review must include its story source`);
     review(label, entry.sources, entry.fingerprint);

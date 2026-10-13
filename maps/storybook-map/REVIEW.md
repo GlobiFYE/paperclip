@@ -7,17 +7,17 @@ coverage, or production acceptance for all stories.
 
 ## Inventory and organization
 
-There is one Storybook, already centralized under `ui/storybook/`. Its 223 story
-files are split between 176 files at the stories root and 47 nested files. The
-existing sidebar has 51 top-level groups. A bulk file move would add churn without
-fixing the main problem: product meaning, provenance, and review status were not
-recorded consistently.
+There is one Storybook, already centralized under `ui/storybook/`. At the initial
+baseline, its 223 story files were split between 176 files at the stories root and
+47 nested files, with 51 top-level sidebar groups. The initial pass recorded
+product meaning, provenance, and review status before changing that organization.
+The follow-up organization pass below moves the files and sidebar together.
 
 The downstream catalog gives each file a primary feature home and related stable
 capability IDs. The generated index includes all 171 upstream capabilities across
 35 feature areas. The existing Overview story now provides searchable feature
-navigation into the actual built story index. Existing sidebar titles remain
-stable to preserve links and snapshot identity.
+navigation into the actual built story index. The initial pass kept sidebar titles
+stable; the follow-up uses explicit IDs to preserve links while changing titles.
 
 | Dimension | Initial classification |
 | --- | --- |
@@ -101,6 +101,41 @@ guide classification. This records change detection, not new parity
 acceptance. Added a real CSF parser regression for nested discovery, include/exclude
 rules, stable explicit IDs, and play counts.
 
+## Feature organization follow-up — 2026-10-12
+
+Source baseline: `75bd3c977cd828d5222823850339e8204f40eb47` (parent PR #16046).
+The 223 story files now live under their primary feature area in
+`ui/storybook/stories/`. The sidebar uses the feature map's section and feature
+labels in map order. Existing scenario groups remain below those labels.
+Overview and shared Foundations have dedicated homes. Areas without stories do
+not get empty sidebar groups; their gaps remain visible in the catalog.
+
+Nineteen supporting files moved to `ui/storybook/support/`, including fixtures,
+shared wrappers, guide READMEs, an HTML fixture, and a fixture test. Relative imports,
+active documentation, catalog sources, and replacement references follow the
+moves. Classification and review scope did not change. The upstream feature map
+and its skill are unchanged.
+
+Every suite now has an explicit meta ID, recorded as `stableId` in the catalog.
+The built index comparison preserved all 2,210 story IDs, the single docs ID, and
+all entry names. No story was removed or added. Catalog validation checks primary
+feature folders, sidebar prefixes, and stable meta IDs; its nine tests passed.
+
+The Storybook build, UI typecheck, all 8,176 UI tests in 728 files, token gates,
+map checks, and the maintenance-skill validator passed. A source comparison found
+only changed meta titles/IDs, rebased relative references, and updated fixture
+path text in story files. The full repository suite was not repeated for these
+file moves; the prior full-suite limitation above still applies.
+
+Local Chromium verified the sidebar's section/feature order, rendered the guide,
+searched `steering/queue`, and followed its link to the unchanged
+`composer-steering-and-queued-messages--queued-while-running` ID. The nine play
+cases listed above and `fast-responses-01-settings--empty` all reached
+`storyFinished: success` without page exceptions after relocation. This is a
+sample of interactions and rendering, not execution of all 2,210 stories.
+The fixture-server story and visual-baseline comparisons remain untested for the
+reasons below. The owned static preview was left running for the requested test-drive.
+
 ## Remaining review work
 
 1. Review the 188 unreviewed suites by capability and production subject. Compare
@@ -123,3 +158,58 @@ rules, stable explicit IDs, and play counts.
 Use `maintain-storybook` to correct drift and `review-storybook` to record separate
 source, render, interaction, visual-comparison, and production evidence. Both skills
 consume the feature map; neither changes its upstream contract.
+
+## Task workspace reconciliation — 2026-10-12
+
+Scope: the 26 declared-source entries affected by task-workspace work at
+`88b1d3a2`, compared with master `dabb8c5daf`, including subsequent comment-only
+cleanup and the fixture corrections below. This is a bounded source review,
+not a new review of all Storybook states. Reconciliation onto `b5046ec022`
+preserves its new feature folders, sidebar titles and explicit stable IDs, along
+with the existing exports, classification and simulation boundaries. Shared GitHub
+fixtures now live under `ui/storybook/support/github-bot-management/`.
+
+Twenty-one entries changed only through the expanded chat/workspace recipes.
+Their setup, identity, browser, artifact, picker and service examples are retained;
+the new recipe requirements do not become covered merely because they reference
+the same capability. Five entries also depend on changed production subjects:
+
+| Story file under `ui/storybook/stories/` | Source review and remaining scope |
+| --- | --- |
+| `chat-channels/chat-management/chat-management.stories.tsx` | Mounted endpoint includes connection/destination defaults. Added the missing selectable-workspace fixture response; existing endpoint PATCH and resource PUT retain defaults. No browser save, error, reload or inheritance proof in this pass. |
+| `chat-channels/github-bot-management/management.stories.tsx` | Mounted endpoint/repository editors include defaults. Fixed the endpoint mock to persist PATCH values instead of returning the original endpoint. Resource PUT already distinguishes omitted, null and concrete values. Project/workspace choices are intentionally empty fixtures. |
+| `chat-channels/imessage-photon.stories.tsx` | Existing scenarios mount setup/access and simulate task conversations. They do not exercise the newly added settings editor or its workspace-choice request. Kept unreviewed rather than claiming settings coverage. |
+| `projects/projects-goals-workspaces.stories.tsx` | Existing project-bound summaries still match the rendered components. New nullable project references and runtime invalidation branches have no projectless story scenario here. |
+| `workspaces/workspace-runtime-provisioning.stories.tsx` | The demonstrated status subcomponent is unchanged. Its local context row does not prove the full detail page's new projectless behavior. |
+
+The three endpoint-management entries now declare `ChatExecutionDefaults` and its
+API clients as review dependencies. AgentMail settings still demonstrates only
+the inbox subsection, not the surrounding endpoint defaults. Historical GitHub
+designs remain historical; existing unreviewed entries remain unreviewed. None of
+these fixture examples establishes source authorization, retained file privacy,
+pending workspace selection, sandbox admission or existing-conversation continuity.
+
+Executed: the GitHub fixture's two Vitest cases passed, including default save,
+subsequent GET, omitted-value preservation, explicit null clearing and fresh-mount
+reset. After the folder rebase, both fixture tests and all nine catalog checker
+tests passed again; token gates passed before the path-only reconciliation. After the final
+source freeze, only the 26 reviewed fingerprints were refreshed; catalog validation
+passed for all 223 files and all 2,210 source-parsed story IDs were unchanged.
+All 223 upstream file paths, explicit stable IDs and sidebar titles were preserved.
+Not run in this pass: Storybook build, browser rendering or `play`, screenshot
+comparisons, provider calls and live production acceptance. No new visual
+baselines were accepted. Fixture tests are boundary simulations, not server
+persistence or permission tests.
+
+## Workspace safety recipe follow-up — 2026-10-12
+
+Reviewed the twelve entries that depend on the workspace feature recipe: browser-use activity/footer/page, the three HTML-artifact suites, project execution strategy and project workspace summaries, searchable selection, workspace files, runtime provisioning and service controls. Their production subjects, fixtures, feature folders, sidebar titles and stable IDs are unchanged. The recipe now requires prospective child boundary checks, safe low-trust reopening, and coherent returned checkpoint ancestry. These backend safety contracts are not exercised by those fixtures. Each entry remains unreviewed for full production parity. Only the reviewed recipe fingerprints were refreshed; no browser render, play, screenshot baseline or production acceptance was run for this follow-up.
+
+
+## Remote provisioning recipe follow-up — 2026-10-13
+
+Reviewed the same twelve workspace-recipe-dependent entries after extending the controller-provisioning boundary to standard-trust sandbox and SSH selections. Their components, fixtures and stable IDs are unchanged. Project strategy stories demonstrate configuration fields with environment selection disabled; runtime provisioning stories demonstrate status values with a no-operation log handler. Browser, artifact, file and service-control fixtures do not execute source scripts or prove admission placement. The new recipe requires controller marker denial independent of source write grants while copying and dispatch remain available, including local copy-only selections, retained deny-only metadata and closed-worktree reopening. Implicit trusted local defaults remain separate positive controls. All twelve entries retain their unreviewed production classification. Refreshed only these recipe fingerprints after this source review; no browser render, play, screenshot, Storybook build or live runtime qualification is claimed.
+
+## Default-source recipe follow-up — 2026-10-13
+
+Reviewed the twelve unchanged workspace recipe subjects and fixtures after correcting implicit default selection. Task creation and controller classification now share configured-policy, primary, creation-time and ID precedence. Explicit choices and retained denial markers still suppress controller hooks. Project strategy fixtures show configuration, while runtime status and file/browser/artifact/service fixtures do not execute source scripts or prove this backend ordering. Refreshed only their reviewed recipe fingerprints and retained all classifications and stable IDs. No browser render, play, screenshot, Storybook build or live runtime acceptance was performed.

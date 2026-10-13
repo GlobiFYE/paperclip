@@ -124,6 +124,11 @@ API responses and MCP transports keep their existing compression behavior.
 
 The board UI Storybook keeps stories and Storybook config under `ui/storybook/` so component review files stay out of the app source routes.
 
+Stories are grouped in `ui/storybook/stories/<feature-area>/` and the sidebar follows
+the feature map's sections and feature names. Shared fixtures live in
+`ui/storybook/support/`. Keep each suite's explicit meta `id` and catalog `stableId`
+when changing titles or locations so existing review links remain valid.
+
 Start from the downstream [Storybook feature index](../maps/storybook-map/INDEX.md)
 to find existing stories by capability. Its [contract](../maps/storybook-map/README.md)
 separates production subjects, prototype implementations, simulated data, and
@@ -2270,6 +2275,14 @@ Chromium. The test starts its own loopback Vite server and mocks API responses;
 it needs no running Paperclip instance or provider credentials. The same spec lives
 in the default `test:e2e` discovery tree, so the existing Chrome CI shards run it
 on pull requests.
+
+### Workspace feature checks (2026-10-09)
+
+Task files, personal agent state (`AGENT_HOME`), and provider home are distinct. New filesystem tasks without an explicit source use a stable company/task directory. Debug workspace placement through the task workspace API rather than inferring it from organizational project or agent identity.
+
+Focused coverage lives in `task-workspace-binding.test.ts`, `task-workspace-repositories*.test.ts`, `task-workspace-tools.test.ts`, channel integration tests, and adapter-utils checkpoint/native persistence tests. Full handoff still requires the repository typecheck, test, and build commands. Remote transport fixtures establish protocol behavior; they do not qualify production provider throughput.
+
+Channel defaults can be configured in Apps connection settings and per destination. They affect new conversations only. A queued selection or repository request is applied on the next normal admission; configuration changes do not interrupt a live run. See [the architecture](plans/2026-10-09-task-workspaces.md).
 
 ### Slack provisioning paths
 
