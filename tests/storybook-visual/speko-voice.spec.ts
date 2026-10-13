@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 const require = createRequire(import.meta.url);
 const root = resolve(import.meta.dirname, "../..");
@@ -9,15 +9,44 @@ const addon = require.resolve("@storybook/addon-a11y/package.json", { paths: [re
 const axePath = require.resolve("axe-core/axe.min.js", { paths: [addon] });
 const index = JSON.parse(readFileSync(resolve(root, "ui/storybook-static/index.json"), "utf8"));
 const stories = (Object.values(index.entries) as { id: string; type: string }[]).filter((entry) => entry.type === "story" && entry.id.startsWith("connections-speko-"));
+async function protectStoryOrigin(page: Page, baseURL: string, external: string[]) {
+  const storyOrigin = new URL(baseURL).origin;
+  await page.route(/^https?:\/\//, (route) => {
+    const url = new URL(route.request().url());
+    if (url.origin !== storyOrigin) {
+      external.push(url.hostname);
+      return route.abort();
+    }
+    return route.fallback();
+  });
+}
+
+test("Speko network isolation permits hosted Storybook and blocks providers", async ({ page }) => {
+  const baseURL = "https://storybook.example.invalid";
+  const external: string[] = [];
+  const served: string[] = [];
+  await page.route(/^https?:\/\//, (route) => {
+    served.push(route.request().url());
+    return route.fulfill({ contentType: "text/html", body: "<!doctype html><title>Hosted fixture</title>" });
+  });
+  await protectStoryOrigin(page, baseURL, external);
+  await page.goto(`${baseURL}/iframe.html`);
+  await expect(page).toHaveTitle("Hosted fixture");
+  expect(external).toEqual([]);
+  expect(await page.evaluate(async (origin) => (await fetch(`${origin}/asset`)).ok, baseURL)).toBe(true);
+  expect(await page.evaluate(async () => {
+    try { await fetch("https://api.speko.dev/v1/calls"); return false; }
+    catch { return true; }
+  })).toBe(true);
+  expect(external).toEqual(["api.speko.dev"]);
+  expect(served).toEqual([`${baseURL}/iframe.html`, `${baseURL}/asset`]);
+});
+
 for (const story of stories) for (const theme of ["light", "dark"]) for (const width of [390, 1200]) {
   test(`Speko accessibility ${story.id} ${theme} ${width}`, async ({ page }, info) => {
     const errors: string[] = [], external: string[] = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    await page.route(/^https?:\/\//, (route) => {
-      const url = new URL(route.request().url());
-      if (!["localhost", "127.0.0.1"].includes(url.hostname)) { external.push(url.hostname); return route.abort(); }
-      return route.continue();
-    });
+    await protectStoryOrigin(page, info.project.use.baseURL!, external);
     await page.addInitScript(() => {
       Object.defineProperty(navigator.mediaDevices, "getUserMedia", { value: () => { throw new Error("Story attempted real microphone access"); } });
     });
