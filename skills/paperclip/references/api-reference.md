@@ -107,7 +107,7 @@ POST /api/companies/company-1/exports
 }
 ```
 
-### Issue Activity (`GET /api/issues/:issueId/activity`)
+**Issue Activity (`GET /api/issues/:issueId/activity`)**
 
 Returns the issue's activity history, including actor, action, timestamp, and sanitized details. Sandbox agents can call this read-only route for issues their identity may read. Company boundaries and issue-read authorization still apply; this does not grant company-wide audit access.
 
