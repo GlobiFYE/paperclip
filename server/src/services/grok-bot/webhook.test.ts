@@ -75,3 +75,9 @@ describe("Grok routine delivery", () => {
     expect(cancel).toHaveBeenCalledTimes(1);
   });
 });
+
+it.each([undefined, null, 12, {}, { webhookUrl: "not a URL", webhookKey: "key" }, { webhookUrl: secret.webhookUrl }])("rejects malformed persisted credential data without transmission", async malformed => {
+  const fetcher = vi.fn();
+  expect(await deliverGrokRoutineWake(malformed as typeof secret, wake, fetcher)).toEqual({ delivery: "rejected", httpStatus: null });
+  expect(fetcher).not.toHaveBeenCalled();
+});

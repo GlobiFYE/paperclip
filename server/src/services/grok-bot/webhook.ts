@@ -22,8 +22,10 @@ export interface GrokRoutineDelivery {
 type RoutineFetch = (url: string, init: RequestInit) => Promise<Response>;
 
 /** URL/key are one encrypted secret version. Neither belongs in the wake payload. */
-function credential(value: GrokRoutineCredential): GrokRoutineCredential {
-  const url = new URL(value.webhookUrl);
+export function validateGrokRoutineCredential(value: GrokRoutineCredential): GrokRoutineCredential {
+  if (!value || typeof value.webhookUrl !== "string" || typeof value.webhookKey !== "string") throw new Error("Invalid Grok routine credential");
+  let url: URL;
+  try { url = new URL(value.webhookUrl); } catch { throw new Error("Invalid Grok routine credential"); }
   if (value.webhookUrl.length > 2048 || url.protocol !== "https:" || url.username || url.password || url.hash || url.search
     || !/^[\x21-\x7e]{1,16384}$/.test(value.webhookKey)) {
     throw new Error("Invalid Grok routine credential");
@@ -50,7 +52,7 @@ export async function deliverGrokRoutineWake(
   let destination: GrokRoutineCredential;
   let body: string;
   try {
-    destination = credential(secret);
+    destination = validateGrokRoutineCredential(secret);
     body = JSON.stringify(wakeSchema.parse(wake));
     if (Buffer.byteLength(body) > 4096) throw new Error("Grok wake exceeds reference limit");
   } catch {

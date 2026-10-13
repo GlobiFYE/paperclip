@@ -1,6 +1,6 @@
 # Grok Bot production readiness
 
-Status: implementation and qualification in progress. Real Grok client authorization and authenticated reads are observed. Routine wake, durable challenge acknowledgement and deployed two-way work acceptance remain unverified.
+Status: implementation and qualification in progress. Actual client OAuth and a routine wake with an exact chat acknowledgement are observed. The candidate has local authenticated challenge receipts, real Rust assigned-work/file/finalization tests, and durable proactive-intake tests. Deployed two-way work acceptance remains a release gate.
 
 ## Candidate and release contract
 
@@ -10,10 +10,10 @@ Use `.agents/skills/create-external-bot-integration/SKILL.md` and its release, R
 
 | Area | Required release behavior | Evidence / current state |
 | --- | --- | --- |
-| Bot identity | New Paperclip Qualification Bot for acceptance; one Bot to one Paperclip agent; fixed company, agent, client, resource, authorizer, and binding generation | New Bot and temporary fixed agent grant observed; production provider binding unimplemented |
-| Entry point | Agents → Invite an external agent → Grok Bot; existing shared invitation, copy-prompt component, role/manager controls, Back and Save & exit | Current master has the shared Dot/Hermes/Other invitation foundation |
+| Bot identity | New Paperclip Qualification Bot for acceptance; one Bot to one Paperclip agent; fixed company, agent, client, resource, authorizer, and binding generation | New Bot and temporary fixed agent grant observed; production provider binding implemented and locally tested; not deployed |
+| Entry point | Agents → Invite an external agent → Grok Bot; existing shared invitation, copy-prompt component, role/manager controls, Back and Save & exit | Grok preset, persisted setup and secure credential fields implemented; rendered Storybook journey inspected |
 | Setup | Copy a complete prompt, approve scoped OAuth, create a webhook-only routine, copy its desktop URL/key into secure Paperclip fields, watch both checks, Done | No terminal or config edits; account-wide plugin access disclosed |
-| Outbound / inbound | Supported routine webhook / authenticated agent-purpose remote MCP | Historical outbound observed September 30; current desktop OAuth, authenticated reads, continued access, revocation and reconnect observed; routine round trip pending |
+| Outbound / inbound | Supported routine webhook / authenticated agent-purpose remote MCP | Historical outbound observed September 30; current desktop OAuth, authenticated reads, continued access, revocation and reconnect observed; one current routine wake and exact chat acknowledgement observed; candidate’s authenticated receipt pending in the real client |
 | Idle work | Bot starts governed work without a placeholder task or echo assignment; can create/assign an authorized task to its responsible human | First production milestone alongside assigned work |
 | Cloud placement | Ordinary managed Rust Runner per admitted assignment, reused across messages/tools; no compute for idle connection/readiness traffic | Must prove shipped Linux artifact, configured environment, lease and cleanup on the selected tenant |
 | Native capabilities | Bot retains its relevant native browser/apps/skills; Paperclip permissions govern Paperclip calls | Public-source native-tool case required; no new third-party grant solely for testing |
@@ -97,8 +97,8 @@ There is no verified production API in this record for resetting Night Shift's r
 - Night Shift’s original browser URL returned Page not found. At the user’s request, a new Paperclip Qualification Bot was created through the running Grok Bot desktop app. Existing Bots were preserved.
 - The actual Bot added a private remote MCP connection through chat and completed OAuth through the current Cursor client. A one-use operator invitation fixed the company and agent in the consent preview; no persistent credentials were copied into chat. Paperclip shows the temporary agent connection as established, and the Bot’s inbox read returned its binding generation and an empty inbox. This was assisted setup, not prompt-only onboarding.
 - The temporary protocol agent is labeled Grok Gateway Qualification / Temporary Grok client interoperability test, with the shared Dot provider. Attachment and workspace powers are off. Readiness still requires a verified wake and acknowledgement; no readiness flag or subscription was faked.
-- The Bot saved Paperclip MCP Qualification as a webhook-only routine. Its detail row and search result only focused the Routines section during computer use; URL/key acquisition is pending. No webhook test, work task, managed job or deployment has been initiated.
-- The new candidate’s narrow routine transport uses the existing DNS-pinned public-network guard, closed reference-only payloads, redacted outcomes and single-send behavior. Its transport and existing public-network guard/rebinding regressions pass: 77 tests across three files. Server typecheck also passes. It is not yet wired into admission, durable dispatch storage or the UI; repository-wide checks and production acceptance remain outstanding.
+- The Bot saved Paperclip MCP Qualification as a webhook-only routine. Its detail row and search result only focused the Routines section during computer use; the documented Bot-generated Webhook URL navigation link opened the fields. Credentials were saved privately, and one guarded routine test returned HTTP 200 and an exact nonce acknowledgement. No real work task, managed job or candidate deployment has been initiated.
+- The new candidate’s narrow routine transport uses the existing DNS-pinned public-network guard, closed reference-only payloads, redacted outcomes and single-send behavior. Its transport and existing public-network guard/rebinding regressions pass: 77 tests across three files. Server typecheck also passes. It is now wired into durable dispatch, the shared agent authority/Runner and setup UI. Full repository typecheck, production build, token gates and Storybook build passed before the latest baseline update; final checks and deployed acceptance remain outstanding.
 
 
 ## Updated provider access contract
@@ -119,7 +119,20 @@ The existing Dot readiness contract requires its authenticated MCP Events callba
 | Continued authorization | Capabilities call succeeded after the initial 15-minute token lifetime without a new consent step | Supports client renewal; token endpoint/rotation receipt not independently inspected |
 | Revocation | Paperclip revoked the temporary connection; real stale inbox attempt returned authentication-required and no data | Current connection boundary only; no task mutation/reassignment test yet |
 | Reconnect | Fresh one-use invitation and consent for the same agent; real read returned a replacement binding and empty inbox | Existing plugin reused; old binding revoked; operator-driven test |
-| Routine wake | Webhook-only routine saved; desktop details did not open from its row, created-routine link or search result | No URL/key acquired, no webhook sent, no authenticated challenge receipt; user is checking the physical UI with precise directions |
-| Current source checks | Three focused transport/egress test files: 77 passed; server typecheck passed | No app/Runner integration, repository-wide tests/build, token or Storybook acceptance claimed |
+| Routine wake | Vendor-confirmed desktop row-click regression; Bot-generated Webhook URL navigation link opened the panel. One guarded invocation returned HTTP 200 and the exact nonce reply | Operator workaround required; chat acknowledgement is not a persisted authenticated nonce receipt in Paperclip. One of twenty permitted webhook calls used |
+| Current source checks | Local authenticated MCP challenge, Rust task → document/file → finalization, proactive intake/deduplication, and renewed-session recovery tests pass. Repository typecheck, build, token gates, maps and Storybook build pass | Source candidate is not deployed; complete final suite and candidate-bound real managed acceptance remain required |
 
-Do not promote the temporary shared Dot connection to ready or substitute its event subscription with an unverified Grok webhook. The remaining P1 gate is a supported routine URL/key acquisition followed by real webhook wake and durable, authenticated challenge acknowledgement. Assigned work, idle intake, recovery and managed cleanup are still unverified.
+Do not promote the temporary shared Dot connection to ready or substitute its event subscription with an unverified Grok webhook. The remaining P1 gate is the candidate’s durable authenticated challenge acknowledgement through the actual Grok client. Assigned work, idle intake, restart and managed cleanup still require real deployed acceptance. Local tests use scripted clients and synthetic storage; they do not count as provider acceptance.
+
+## Current implementation evidence
+
+- Separate `enableGrokBot` gate defaults off. Existing Dot event readiness and person MCP behavior remain distinct.
+- Shared Rust external backend identifies `grok_bot_mcp`; session completion does not assert remote termination, transcript streaming or usage accounting. Existing native provider identity guarantees remain required.
+- Routine URL/key are one immutable encrypted secret version. Closed reference payloads, DNS-pinned public egress, no redirects, durable single-send intents and authenticated nonce receipts distinguish delivery from reply.
+- Recovery holds span old bindings. Inspection cancels uncertain intents and requires re-verification; stop fences session authority before cancellation, without a global Grok stop claim.
+- First-party native operations, deferred feedback and proactive admission reuse existing ownership, receipts and finalization. File grants bind current company/agent/assignment/grant and exact bytes; they use existing artifact storage.
+- Guided setup and management include resume, fixed consent identity/authorizer, account-wide plugin disclosure, both verification checks, observed contact, queued work and recovery. Pairing codes remain in browser authorization; routine credentials never enter chat instructions.
+- The latest upstream fetch advanced beyond the original baseline. Integrate it and regenerate the unshipped migrations before freezing a review candidate. The original baseline’s Storybook catalog has unrelated fingerprint drift; do not erase it by claiming new runtime proof.
+- Cloud’s current ingress allows the existing agent protocol but needs exact GET/PUT exceptions for bounded file tickets. Extend the current Cloud baseline in isolation and test header stripping and denied adjacent routes. No Cloud primary edits or fleet-default change are authorized or required.
+
+The Grok routine is still a **transport-only qualification** routine. Explicitly replace those test instructions before actual assigned/proactive work; retain Grok’s own authorized native tools. No real client work, Linux managed Runner artifact or deployed candidate has been qualified yet.

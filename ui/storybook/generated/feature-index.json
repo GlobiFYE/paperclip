@@ -364,6 +364,11 @@
               "description": "choose identity, adapter, model, and required account settings; edit reporting relationships through the agent configuration afterward."
             },
             {
+              "id": "agents/grok-bot",
+              "label": "Grok bot",
+              "description": "experimental existing-Bot agent setup through remote OAuth, routine credentials, and an authenticated two-way challenge; current contact, stop and explicit recovery."
+            },
+            {
               "id": "agents/instructions",
               "label": "Instructions",
               "description": "edit agent configuration and instruction files with durable revisions."
@@ -1090,7 +1095,7 @@
             {
               "id": "instance-operations/backup",
               "label": "Backup",
-              "description": "create and inspect backups and verify restore only into a separate disposable target."
+              "description": "create and inspect backups and verify restore only into a separate disposable target. Routine HTTP monitoring may use `GET /api/liveness` (or `HEAD`). It returns only process startup status and the public build commit without SQL or authentication. It remains reachable during an idle drain. Use `/api/health` for explicit database readiness, signed bootstrap, and authorized diagnostics; liveness does not establish database health or claim a workspace."
             }
           ]
         },
