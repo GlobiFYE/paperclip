@@ -9983,6 +9983,60 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     ]);
   });
 
+  it.each(["slack", "discord", "github"] as const)("preserves the public inventory error response for %s", async (provider) => {
+    const fixture = await seedCompany();
+    let failInventory = false;
+    let service: ChatChannelService;
+    let endpoint: Awaited<ReturnType<ChatChannelService["create"]>>;
+    if (provider === "slack") {
+      const successfulFetch = fakeSlackFetch();
+      const context = await configuredSlackEndpoint(fixture, {
+        fetch: (async (input, init) => {
+          if (failInventory && String(input).includes("/conversations.list"))
+            throw new Error("inventory fixture outage");
+          return successfulFetch(input, init);
+        }) as typeof fetch,
+      });
+      ({ service, endpoint } = context);
+    } else if (provider === "discord") {
+      const applicationId = uniqueDiscordApplicationId();
+      const successfulFetch = fakeDiscordFetch(applicationId);
+      const context = createService(new FakeChatSdkRuntime(), (async (input) => {
+        if (failInventory && new URL(String(input)).pathname.endsWith("/channels"))
+          throw new Error("inventory fixture outage");
+        return successfulFetch(input);
+      }) as typeof fetch);
+      service = context.service;
+      endpoint = await service.create(fixture.companyId, {
+        provider, assignedAgentId: fixture.assignedAgentId,
+      }, "owner-user");
+      await service.configure(endpoint.id, {
+        action: "configure",
+        credentials: { applicationId, botToken: "discord-secret", guildId: "1457808928258658549" },
+      }, "owner-user");
+    } else {
+      const context = await configuredGitHubEndpoint(fixture);
+      ({ service, endpoint } = context);
+      context.setSupplementalProviderFetch(async (input) => {
+        if (failInventory && String(input).includes("/app/installations?"))
+          throw new Error("inventory fixture outage");
+        return undefined;
+      });
+    }
+    const [before] = await readToolConnectionsById(endpoint.connectionId);
+    failInventory = true;
+    const response = await request(routesApp(db, fixture.companyId, service))
+      .post(`/api/chat-endpoints/${endpoint.id}/setup`)
+      .send({ action: "reconnect" });
+    expect(response.status).toBe(422);
+    expect(response.body).toMatchObject({
+      error: expect.stringContaining("inventory fixture outage"),
+      details: { code: "chat_provider_inventory_failed" },
+    });
+    const [after] = await readToolConnectionsById(endpoint.connectionId);
+    expect(after.credentialSecretRefs).toEqual(before.credentialSecretRefs);
+  });
+
   it("rejects under-scoped Slack and GitHub apps before saving provider credentials", async () => {
     const fixture = await seedCompany();
     const slack = createService(new FakeChatSdkRuntime(), (async (
