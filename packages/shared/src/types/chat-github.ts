@@ -24,8 +24,6 @@ export interface GitHubReviewPolicy {
   requiredLabels: string[];
   excludedLabels: string[];
   ignoredPaths: string[];
-  /** Unset policies retain the default review approach and rating rubric. */
-  baseReviewPrompt?: string;
   instructions: string;
   prompts: Record<GitHubReviewEvent, string>;
   findingCategories: string[];
@@ -161,11 +159,6 @@ export const GITHUB_REVIEW_RUBRIC = [
   "5: No actionable defects found within the stated coverage and limitations.",
 ] as const;
 
-export const DEFAULT_GITHUB_BASE_REVIEW_PROMPT = [
-  "Assessment rubric (0–5):",
-  ...GITHUB_REVIEW_RUBRIC,
-].join("\n\n");
-
 export const DEFAULT_GITHUB_REVIEW_PROMPTS: Record<GitHubReviewEvent, string> =
   {
     opened:
@@ -197,7 +190,6 @@ export function defaultGitHubReviewPolicy(): GitHubReviewPolicy {
     requiredLabels: [],
     excludedLabels: [],
     ignoredPaths: [],
-    baseReviewPrompt: DEFAULT_GITHUB_BASE_REVIEW_PROMPT,
     instructions: "",
     prompts: { ...DEFAULT_GITHUB_REVIEW_PROMPTS },
     findingCategories: [

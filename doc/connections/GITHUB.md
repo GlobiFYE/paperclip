@@ -31,14 +31,6 @@ isolation restrictions. The admitted configuration snapshot determines skill
 selection for each wake, including queued events. GitHub messages, repository
 content and other companies' skills cannot assign skills to the run.
 
-**Base review prompt** exposes the review approach and 0–5 assessment rubric in
-Settings. It is included before the common and event-specific instructions for
-PR events and bot mentions/replies; new-issue events keep their issue instructions.
-The editor supports skill links and **Reset to default**. Existing saved policies
-without this field retain the default rubric; an explicitly empty value omits it.
-Editing this prompt does not change repository access, the tool/publication
-protocol, score validation, or passing-score enforcement.
-
 Authorized @mentions remain available when **Run automatically** is on or off.
 The switch in Settings reveals the PR and issue event checkboxes. Access lists
 company members and external contributors separately. Author include/exclude filters
