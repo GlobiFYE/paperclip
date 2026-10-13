@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import fs, { existsSync, readFileSync, rmSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import path from "node:path";
 import { test } from "node:test";
 import { featureArtifacts, featureIndex, featureOrder, generateFeatureArtifacts } from "./storybook-feature-index.mjs";
@@ -58,6 +59,35 @@ test("missing metadata, duplicate capabilities and inconsistent group order fail
   assert.throws(() => featureIndex(f.root), /duplicate capability/);
   f.feature("new", "New", ["create"], { sectionOrder: 99 });
   assert.throws(() => featureIndex(f.root), /inconsistent section order/);
+});
+
+test("overlapping generators can both retire the same overview", t => {
+  const f = mapFixture(t);
+  const retired = "ui/storybook/generated/features/retired.stories.tsx";
+  f.write(retired, "export const Overview = {};\n");
+  const directory = path.join(f.root, "ui/storybook/generated/features");
+  const readDirectory = fs.readdirSync;
+  let competed = false;
+  // Reproduce the interleaving deterministically: the other generator removes
+  // the file after this generator lists it, before this generator removes it.
+  const mock = t.mock.method(fs, "readdirSync", (...args) => {
+    const listing = readDirectory(...args);
+    if (args[0] === directory && !competed) {
+      competed = true;
+      rmSync(path.join(f.root, retired));
+    }
+    return listing;
+  });
+  syncBuiltinESMExports();
+  try {
+    generateFeatureArtifacts(f.root);
+    assert.equal(competed, true);
+    assert.equal(existsSync(path.join(f.root, retired)), false);
+    assert.ok(existsSync(path.join(directory, "tasks.stories.tsx")));
+  } finally {
+    mock.mock.restore();
+    syncBuiltinESMExports();
+  }
 });
 
 test("verification guidance rejects orphan capability references", t => {

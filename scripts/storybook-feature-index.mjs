@@ -74,7 +74,7 @@ export function generateFeatureArtifacts(root, index = featureIndex(root)) {
   if (existsSync(path.join(root, directory))) {
     for (const name of readdirSync(path.join(root, directory))) {
       const file = `${directory}/${name}`;
-      if (name.endsWith(".stories.tsx") && !outputs.has(file)) rmSync(path.join(root, file));
+      if (name.endsWith(".stories.tsx") && !outputs.has(file)) rmSync(path.join(root, file), { force: true });
     }
   }
   writeArtifacts(root, outputs);
