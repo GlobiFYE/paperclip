@@ -1,3 +1,5 @@
+import type { Message, Thread } from "chat";
+import type { ChatSdkMessageCallbackEvent } from "../chat-sdk-runtime.js";
 import type { Db, chatEndpoints } from "@paperclipai/db";
 import type { ToolCredentialSecretRef, ChatEndpointSetupState, ChatEndpointCallbackSurfaces } from "@paperclipai/shared";
 import type { ChatEndpointRuntime } from "../voice/voice-runtime.js";
@@ -65,4 +67,14 @@ export type PreparedProviderInventory = {
   credentials: Record<string, string>;
   inventory: import("../chat-provider-inventory.js").ChatProviderInventoryResult | null;
   managementUrl?: string;
+};
+
+export type LiveInboundMessage = {
+  endpoint: EndpointRow;
+  message: Message;
+  receiptReactionSupported: boolean;
+  providerUrl: string | null;
+  runtimeContext?: InboundRuntimeContext;
+  thread: Thread;
+  trigger: ChatSdkMessageCallbackEvent["trigger"];
 };

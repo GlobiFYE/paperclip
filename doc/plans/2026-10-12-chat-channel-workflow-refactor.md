@@ -84,3 +84,18 @@ The AST audit covers 26 declarations, three provider bodies, and retained servic
 order. Shared endpoint lanes and Teams cooldowns retain their original maps;
 shutdown and publication wake listeners stay live. Early callback registration
 uses typed forwarding functions instead of reading factories before initialization.
+
+## Fourth extraction
+
+Ordered delivery and lifecycle reconciliation reduce the service to 9,287 lines
+and 388,734 bytes. The delivery ledger owns ordering and runtime-fence projections.
+The conversation queue owns exact leases, reconstruction and ordered replay.
+The lifecycle workflow owns edit/delete admission and reconciliation. Teams owns
+authenticated route recording. GitHub owns restoration of durable message policy
+into the same per-service provenance maps.
+
+The same 225 lifecycle, ordering, lease, replay and recovery cases pass before and
+after. Typecheck and module boundaries pass. AST checks cover 26 declarations, the
+GitHub restoration body, and retained service order. Live maps and lease hooks retain
+their original lifetime. The publication predecessor's packaging checks remain
+unverified after a timeout; this fourth slice remains unpublished until they pass.
