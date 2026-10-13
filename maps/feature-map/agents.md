@@ -1,4 +1,8 @@
-# Hiring, agent configuration, and organization
+---
+navigation: {"section":"Agents and reusable capabilities","sectionOrder":30,"order":10}
+---
+
+# Hiring, configuration, and organization
 
 Operators hire agents, configure their identity and instructions, assign reporting relationships, and manage their lifecycle. Built-in agents have their own setup and lifecycle constraints.
 
@@ -91,3 +95,6 @@ Choose **Invite an external agent → Grok Bot**, identify the Bot by its deskto
 Prerequisites: authenticated public HTTPS, Assistant connections (MCP), Paperclip Runner and Grok Bot experimental settings. Cloud uses its normal managed Runner environment. Provider usage is unknown. Routine uncertainty blocks new assignments until explicit inspection and recovery; stopping work revokes Paperclip authority without confirming remote termination.
 
 Evidence: source implementation and focused protocol tests; real provider assigned/proactive workflows and deployed managed acceptance remain release gates.
+### Documentation scope: Agents, organization, and runtime setup
+
+Per-harness/model/account capabilities, every instruction-file error, and complete built-in-agent lifecycle variants remain separate qualification matrices.

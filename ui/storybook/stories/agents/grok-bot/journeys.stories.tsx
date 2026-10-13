@@ -44,7 +44,7 @@ function SetupPreview({ initialStep = 0, outboundOnly = false, rejected = false,
 const meta = {
   id: "onboarding-grok-bot-journeys",
   title: "Agents and reusable capabilities/Hiring, configuration, and organization/Onboarding/Grok Bot/Journeys",
-  component: SetupPreview, parameters: { layout: "fullscreen", docs: { description: { component: "Production setup presentation with simulated server evidence. These stories create no OAuth connection, routine, task or managed job. A real authenticated challenge receipt is required in the app. The question fixture uses the existing task thread and durable input-card UI; its callbacks are simulated." } } },
+  component: SetupPreview, parameters: { layout: "fullscreen", paperclip: { capabilities: ["agents/connect-grok-bot"], status: "proposed", implementation: "mixed", boundary: "fixtures", notes: "Production setup presentation with simulated connection evidence; the work journey is a guide using an existing question fixture. No live authorization, provider task or managed Runner proof." }, docs: { description: { component: "Production setup presentation with simulated server evidence. These stories create no OAuth connection, routine, task or managed job. A real authenticated challenge receipt is required in the app. The question fixture uses the existing task thread and durable input-card UI; its callbacks are simulated." } } },
 } satisfies Meta<typeof SetupPreview>;
 export default meta;
 type Story = StoryObj<typeof meta>;
