@@ -39,5 +39,5 @@ export async function verifyTeamsCredentials(credentials: Record<string, string>
       providerAccountLabel: teamsCredentials.tenantId,
       botExternalId: teamsCredentials.clientId,
     };
-  
+
 }
