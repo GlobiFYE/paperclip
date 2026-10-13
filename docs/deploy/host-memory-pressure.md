@@ -103,6 +103,33 @@ that runs the check every 5 minutes and appends alerts to a log:
 
 `launchctl load ~/Library/LaunchAgents/com.paperclip.host-memory-watchdog.plist`
 
+**Pitfall — repo on an external volume.** If the checkout lives on an
+external volume (for example `/Volumes/AI-Models`), launchd-spawned shells may
+fail to read scripts from it (`bash: .../host-memory-watchdog.sh: Operation not
+permitted`, a TCC restriction — the volume is not mounted `noexec`, the read
+itself is denied). A direct terminal run works, which makes the failure look
+intermittent. Two workarounds, in order of preference:
+
+1. Keep the canonical script in the repo and feed it to bash through a reader
+   that already has volume access (on this host, the same Homebrew `python3`
+   that runs `launch.py`):
+
+   ```xml
+   <key>ProgramArguments</key>
+   <array>
+     <string>/opt/homebrew/bin/python3</string>
+     <string>-c</string>
+     <string>import subprocess,sys; sys.exit(subprocess.run(['/bin/bash'], input=open('/Volumes/AI-Models/pantheon-app/scripts/host-memory-watchdog.sh','rb').read()).returncode)</string>
+   </array>
+   ```
+
+2. Or install a copy of the script on the internal disk and point the plist at
+   the copy (simpler, but the copy must be re-installed when the script
+   changes).
+
+Verify with `launchctl kickstart gui/$(id -u)/com.paperclip.host-memory-watchdog`
+and check the log file for the expected alert line (or silence).
+
 ## Detecting a memory-pressure kill window
 
 Same-minute `process_lost` clusters are the signature (runs killed together are
