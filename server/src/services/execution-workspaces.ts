@@ -1,6 +1,7 @@
 import { assertTaskWorkspaceAccess, assertTaskWorkspaceSourceProjectAccess } from "./task-workspace-source-access.js";
 import { parseObject } from "../adapters/utils.js";
 import { resolveCoreTrustPreset } from "./trust-preset-resolver.js";
+import { CONTROLLER_PROVISION_COPY_ONLY, workspaceRequiresCopyOnlyProvisioning } from "./workspace-host-provision.js";
 import { instanceSettingsService } from "./instance-settings.js";
 import { taskWorkspaceSelectableCondition } from "./task-workspace-selection.js";
 import { executionWorkspaceRepositoryService, lockExecutionWorkspaceRootProvenance, preserveExecutionWorkspaceRootProvenance, assertExecutionWorkspaceRootWriteAccess, assertExecutionWorkspaceRootReadAccess, assertIsolatedWorkspaceSourceReadAccess, retainIsolatedWorkspaceSourceAccess, canonicalRepositoryRoot, type IsolatedWorkspaceSourceAccess, type TaskWorkspaceCreationTrustContext } from "./execution-workspace-repositories.js";
@@ -257,6 +258,9 @@ async function preserveWorkspaceOwnershipForPatch(
       ...(patch.metadata !== undefined ? patch.metadata ?? {} : current.metadata ?? {}),
       _issuePrivacySources: retainedSources,
     };
+  }
+  if (current.metadata?.[CONTROLLER_PROVISION_COPY_ONLY] === true) {
+    nextPatch.metadata = { ...(nextPatch.metadata ?? current.metadata), [CONTROLLER_PROVISION_COPY_ONLY]: true };
   }
   return nextPatch;
 }
@@ -3417,9 +3421,14 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           const trust = resolveCoreTrustPreset({ companyId: row.companyId, agent: assignee, issue: boundTask,
             project: organization, workspaceSourceProject: sourceProject });
           if (trust.kind === "denied") throw forbidden(trust.detail);
+          const copyOnlyProvisioning = await workspaceRequiresCopyOnlyProvisioning(tx, {
+            companyId: row.companyId, task: boundTask, sourceProjectId: row.projectId,
+            sourceWorkspaceId: row.projectWorkspaceId, boundWorkspace: row,
+          });
+          if (copyOnlyProvisioning) nextMetadata[CONTROLLER_PROVISION_COPY_ONLY] = true;
           const realized = await ensurePersistedExecutionWorkspaceAvailable({
             db: tx as unknown as Db,
-            skipHostProvision: trust.kind === "low_trust_review",
+            skipHostProvision: trust.kind === "low_trust_review" || copyOnlyProvisioning,
             beforeSourceCopy: verifyCopyIdentity,
             afterSourceCopy: verifyCopyIdentity,
             base: {

@@ -469,10 +469,11 @@ suite("task project repository provisioning", () => {
     expect(await readFile(path.join(cwd, "work.txt"), "utf8")).toBe("Protected source content");
   }, 30_000);
 
-  it.each(["success", "provision_failure", "occupied_target"] as const)("checks nested private source access before worktree copy and retains it after read-grant revocation (%s)", async (scenario) => {
+  it.each(["success", "provision_failure", "copy_only_provision", "occupied_target"] as const)("checks nested private source access before worktree copy and retains it after read-grant revocation (%s)", async (scenario) => {
     const previousPrivacyMode = process.env.PAPERCLIP_ISSUE_PRIVACY_MODE;
     vi.stubEnv("PAPERCLIP_ISSUE_PRIVACY_MODE", "enforce");
     try {
+      if (scenario === "provision_failure") await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: true });
       const companyId = randomUUID(), projectId = randomUUID(), privateProjectId = randomUUID();
       const sourceId = randomUUID(), agentId = randomUUID(), issueId = randomUUID();
       const cwd = path.join(root, companyId, "public-source");
@@ -504,9 +505,15 @@ suite("task project repository provisioning", () => {
         sourceType: "local_path", cwd: path.dirname(occupiedTarget), isPrimary: false,
       });
       await db.insert(agents).values({ id: agentId, companyId, name: "Isolated reader", status: "idle", adapterType: "codex_local", adapterConfig: {}, permissions: {} });
+      if (scenario === "provision_failure") await db.insert(companyMemberships).values({ companyId, principalType: "agent", principalId: agentId, status: "active", membershipRole: "member" });
       await db.insert(issues).values({ id: issueId, companyId, title: "Read isolated source", status: "todo", assigneeAgentId: agentId,
-        projectWorkspaceId: sourceId, executionWorkspaceSettings: { mode: "isolated_workspace", workspaceStrategy: { type: "git_worktree", ...(scenario === "provision_failure" ? { provisionCommand: "exit 42" } : {}), ...(scenario === "occupied_target" ? { branchTemplate: "occupied-private", provisionCommand: "touch provision-ran" } : {}) } },
-        workspaceSelection: { version: 1, source: "explicit", selection: { kind: "configured_source", projectWorkspaceId: sourceId, mode: "managed_isolated" } } });
+        projectId: scenario === "provision_failure" ? projectId : null,
+        projectWorkspaceId: sourceId, executionWorkspaceSettings: { mode: "isolated_workspace", workspaceStrategy: { type: "git_worktree", ...(scenario === "provision_failure" ? { provisionCommand: "exit 42" } : {}), ...(scenario === "copy_only_provision" ? { provisionCommand: "touch provision-ran; exit 42" } : {}), ...(scenario === "occupied_target" ? { branchTemplate: "occupied-private", provisionCommand: "touch provision-ran" } : {}) } },
+        workspaceSelection: scenario === "provision_failure" ? null : { version: 1, source: "explicit", selection: { kind: "configured_source", projectWorkspaceId: sourceId, mode: "managed_isolated" } } });
+      if (scenario === "provision_failure") await db.insert(principalPermissionGrants).values([
+        { companyId, principalType: "agent", principalId: agentId, permissionKey: "tasks:assign_scope", scope: { projectId, assigneeAgentId: agentId } },
+        { companyId, principalType: "user", principalId: "responsible-user", permissionKey: "tasks:assign_scope", scope: { projectId, assigneeAgentId: agentId } },
+      ]);
       const admit = async () => {
         const run = await heartbeat.wakeup(agentId, { source: "on_demand", triggerDetail: "manual", contextSnapshot: { issueId } });
         expect(run).not.toBeNull();
@@ -524,11 +531,11 @@ suite("task project repository provisioning", () => {
         { companyId, projectId: privateProjectId, subjectType: "user", subjectId: "responsible-user" },
       ]);
       expect(await accessService(db).decide({ actor: { type: "agent", agentId, companyId, source: "agent_jwt", onBehalfOfUserId: "responsible-user" },
-        action: "tasks:assign", resource: { type: "issue", companyId, projectId, assigneeAgentId: agentId }, scope: { projectId, assigneeAgentId: agentId } })).toMatchObject({ allowed: false });
+        action: "tasks:assign", resource: { type: "issue", companyId, projectId, assigneeAgentId: agentId }, scope: { projectId, assigneeAgentId: agentId } })).toMatchObject({ allowed: scenario === "provision_failure" });
       const allowed = await admit();
       const calls = execute.mock.calls.filter(([input]) => input.runId === allowed.id);
       let copiedCwd: string;
-      if (scenario !== "success") {
+      if (scenario === "provision_failure" || scenario === "occupied_target") {
         expect(allowed.status).toBe("failed");
         expect(calls).toHaveLength(0);
         if (scenario === "provision_failure") {
@@ -558,6 +565,12 @@ suite("task project repository provisioning", () => {
         expect(calls).toHaveLength(1);
         expect(calls[0]![0].context.paperclipWorkspace.strategy).toBe("git_worktree");
         copiedCwd = calls[0]![0].context.paperclipWorkspace.cwd;
+        if (scenario === "copy_only_provision") {
+          await expect(readFile(path.join(copiedCwd, "provision-ran"), "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+          const [bound] = await db.select().from(issues).where(eq(issues.id, issueId));
+          const [workspace] = await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, bound.executionWorkspaceId!));
+          expect(workspace.metadata?._controllerProvisionCopyOnly).toBe(true);
+        }
       }
       const workspace = { cwd: copiedCwd };
       expect(await realpath(workspace.cwd)).not.toBe(await realpath(cwd));

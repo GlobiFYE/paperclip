@@ -4314,6 +4314,34 @@ describe("ensureRuntimeServicesForRun", () => {
     };
   }
 
+  it.each(["configured", "builtin"] as const)("suppresses %s runtime provision scripts for remote runs without disabling local provisioning", async kind => {
+    const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-remote-runtime-provision-"));
+    const restorePaperclipEnv = configureRuntimeProvisionTestHome(workspaceRoot, "remote-runtime-provision");
+    const marker = path.join(workspaceRoot, "runtime-script-ran");
+    const command = `printf host-runtime > '${marker}'`;
+    await fs.mkdir(path.join(workspaceRoot, "scripts"));
+    await fs.writeFile(path.join(workspaceRoot, "scripts", "provision-worktree-runtime.sh"), `${command}\n`);
+    const workspace = { ...buildWorkspace(workspaceRoot), strategy: "git_worktree" as const, worktreePath: workspaceRoot };
+    const config = runtimeProvisionTestConfig({ provisionCommand: kind === "configured" ? command : undefined });
+    const { recorder, operations } = createWorkspaceOperationRecorderDouble();
+    const input = { runId: randomUUID(), agent: { id: "agent-1", name: "Remote worker", companyId: "company-1" },
+      issue: null, workspace, config, executionWorkspaceId: randomUUID(), adapterEnv: {}, recorder };
+    try {
+      expect(await ensureRuntimeServicesForRun({ ...input, skipHostProvision: true })).toHaveLength(1);
+      await expect(fs.readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+      expect(operations.filter(operation => ["workspace_seed", "workspace_runtime_provision"].includes(operation.phase))).toHaveLength(0);
+      await stopRuntimeServicesForExecutionWorkspace({ executionWorkspaceId: input.executionWorkspaceId, workspaceCwd: workspaceRoot });
+      const local = ensureRuntimeServicesForRun({ ...input, runId: randomUUID() });
+      if (kind === "builtin") await expect(local).rejects.toThrow(/without a readable seed manifest/);
+      else expect(await local).toHaveLength(1);
+      expect(await fs.readFile(marker, "utf8")).toBe("host-runtime");
+    } finally {
+      await stopRuntimeServicesForExecutionWorkspace({ executionWorkspaceId: input.executionWorkspaceId, workspaceCwd: workspaceRoot });
+      await fs.rm(workspaceRoot, { recursive: true, force: true });
+      restorePaperclipEnv();
+    }
+  });
+
   it("runs runtime provisioning once when service starts race for the same workspace", async () => {
     const workspaceRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-runtime-provision-race-"));
     const restorePaperclipEnv = configureRuntimeProvisionTestHome(workspaceRoot, "runtime-provision-race");

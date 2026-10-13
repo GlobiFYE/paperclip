@@ -148,7 +148,6 @@ export {
   mergeExecutionWorkspaceMetadataForPersistence,
   resolveExecutionWorkspaceBranchOwnership,
   stripWorkspaceRuntimeFromExecutionRunConfig,
-  stripHostWorkspaceProvisionForLowTrustSandbox,
   preflightLowTrustWorkspaceIsolation,
   resolveWorkspaceAfterLowTrustPreflight,
   ensureManagedProjectWorkspace,
@@ -2669,6 +2668,7 @@ export function heartbeatService(
       const {
         resolvedWorkspace,
         hostExecutionWorkspaceConfig,
+        skipHostProvision,
         latestWorkspaceConfigMetadata,
         workspaceConfigFreshness,
         workspaceOperationRecorder,
@@ -2693,6 +2693,7 @@ export function heartbeatService(
           context,
           responsibleUserId,
           previousSessionParams,
+          workspaceSelection: taskWorkspaceIntentRow?.intent ?? null,
         },
         policy: {
           trustPreset,
@@ -3203,7 +3204,7 @@ export function heartbeatService(
         );
         const runtimeServices = await startHeartbeatRuntimeServices(db, {
           run, agent, issueId, issueRef, executionWorkspace, context, issuesSvc, onLog,
-          persistedExecutionWorkspace, hostExecutionWorkspaceConfig, adapterEnv, workspaceOperationRecorder,
+          persistedExecutionWorkspace, hostExecutionWorkspaceConfig, skipHostProvision, adapterEnv, workspaceOperationRecorder,
         });
         const adapter = getServerAdapter(agent.adapterType);
         const durableGoalControlRun =

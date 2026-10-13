@@ -330,18 +330,17 @@ export function buildExecutionWorkspaceConfigSnapshot(
   return hasSnapshot ? snapshot : null;
 }
 
-export function stripHostWorkspaceProvisionForLowTrustSandbox(input: {
+export function stripHostWorkspaceProvision(input: {
   config: Record<string, unknown>;
-  trustPreset: TrustPresetResolution;
-  selectedEnvironmentDriver: string | null | undefined;
+  skipHostProvision: boolean;
 }): Record<string, unknown> {
-  if (input.trustPreset.kind !== "low_trust_review") return input.config;
-  if (input.selectedEnvironmentDriver !== "sandbox") return input.config;
+  if (!input.skipHostProvision) return input.config;
 
   const workspaceStrategy = parseObject(input.config.workspaceStrategy);
   if (
     typeof workspaceStrategy.provisionCommand !== "string" &&
-    typeof workspaceStrategy.runtimeProvisionCommand !== "string"
+    typeof workspaceStrategy.runtimeProvisionCommand !== "string" &&
+    typeof input.config.runtimeProvisionCommand !== "string"
   )
     return input.config;
 
@@ -349,10 +348,9 @@ export function stripHostWorkspaceProvisionForLowTrustSandbox(input: {
   delete nextWorkspaceStrategy.provisionCommand;
   delete nextWorkspaceStrategy.runtimeProvisionCommand;
 
-  return {
-    ...input.config,
-    workspaceStrategy: nextWorkspaceStrategy,
-  };
+  const nextConfig: Record<string, unknown> = { ...input.config, workspaceStrategy: nextWorkspaceStrategy };
+  delete nextConfig.runtimeProvisionCommand;
+  return nextConfig;
 }
 
 export async function preflightLowTrustWorkspaceIsolation(input: {

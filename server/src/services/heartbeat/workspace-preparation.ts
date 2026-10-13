@@ -1,7 +1,7 @@
 import {
   resolveWorkspaceAfterLowTrustPreflight,
   WorkspaceValidationFailure,
-  stripHostWorkspaceProvisionForLowTrustSandbox,
+  stripHostWorkspaceProvision,
   assertGitWorktreeBaseWorkspaceReady,
   buildEffectiveRunWorkspaceConfigMetadata,
   resolveExecutionWorkspaceConfigFreshness,
@@ -16,6 +16,7 @@ import {
 import { resolvePaperclipInstanceRoot } from "../../home-paths.js";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { CONTROLLER_PROVISION_COPY_ONLY, workspaceRequiresCopyOnlyProvisioning } from "../workspace-host-provision.js";
 import { and, asc, eq } from "drizzle-orm";
 import { type ExecutionWorkspace } from "@paperclipai/shared";
 import { heartbeatRuns, projectWorkspaces } from "@paperclipai/db";
@@ -93,6 +94,7 @@ export interface HeartbeatWorkspacePreparationInput {
     context: Record<string, unknown>;
     responsibleUserId: string | null;
     previousSessionParams: Record<string, unknown> | null;
+    workspaceSelection?: import("@paperclipai/shared").TaskWorkspaceIntent | null;
   };
   policy: {
     trustPreset: TrustPresetResolution;
@@ -326,13 +328,19 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
         : workspace;
     },
   });
-  const skipHostProvision = trustPreset.kind === "low_trust_review"
-    && lowTrustPreflightEnvironmentDriver === "sandbox";
+  const hostProvisionDriver = selectedEnvironmentForConfig?.driver ?? lowTrustPreflightEnvironmentDriver;
+  const copyOnlyProvisioning = await workspaceRequiresCopyOnlyProvisioning(db, {
+    companyId: agent.companyId,
+    task: issueRef ? { ...issueRef, workspaceSelection: input.task.workspaceSelection } : null,
+    sourceProjectId: resolvedWorkspace.projectId,
+    sourceWorkspaceId: resolvedWorkspace.workspaceId,
+    boundWorkspace: reusableExistingExecutionWorkspace ?? existingExecutionWorkspace,
+  });
+  const skipHostProvision = copyOnlyProvisioning || hostProvisionDriver === "sandbox" || hostProvisionDriver === "ssh";
   const hostExecutionWorkspaceConfig = isDotRun ? {} :
-    stripHostWorkspaceProvisionForLowTrustSandbox({
+    stripHostWorkspaceProvision({
       config: mergedConfig,
-      trustPreset,
-      selectedEnvironmentDriver: lowTrustPreflightEnvironmentDriver,
+      skipHostProvision,
     });
   const executionWorkspaceBase = {
     baseCwd: resolvedWorkspace.cwd,
@@ -743,6 +751,7 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
   }
   const nextExecutionWorkspaceMetadata = {
     ...baseExecutionWorkspaceMetadata,
+    ...(copyOnlyProvisioning ? { [CONTROLLER_PROVISION_COPY_ONLY]: true } : {}),
     ...(persistedWorktreeInstanceRoot
       ? {
           [WORKTREE_INSTANCE_ROOT_METADATA_KEY]:
@@ -1126,6 +1135,7 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
   return {
     resolvedWorkspace,
     hostExecutionWorkspaceConfig,
+    skipHostProvision,
     latestWorkspaceConfigMetadata,
     workspaceConfigFreshness,
     workspaceOperationRecorder,

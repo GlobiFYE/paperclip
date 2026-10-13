@@ -40,8 +40,17 @@ selection applies at the next normal admission without interrupting a live run.
 Writable aliases must also be compatible with current and retained physical
 source projects' trust boundaries. Incompatible choices are rejected before
 dispatch; a projectless alias cannot bypass required sandbox containment.
-Source-copy checks apply the same trust boundary before provisioning. Low-trust
-sandbox runs skip host worktree provisioning, including built-in scripts.
+Source-copy checks apply the same trust boundary before provisioning. The
+authoritative sandbox or SSH selection suppresses configured and built-in
+controller worktree and runtime provisioning regardless of task trust, source
+write grants or board sponsorship. Genuine isolated worktrees still permit
+authorized read-only source copying. Source write permission does not authorize
+controller execution. Explicit, channel, inherited, foreign or nondefault isolated
+source choices remain copy-only for controller provisioning even on local runs.
+Their deny-only workspace marker survives metadata and binding changes; a board
+reopen does not turn it into approval. Implicit trusted local defaults and explicit
+SSH remote provisioning retain their existing placement; no new sandbox provision transport
+is claimed.
 Closed-worktree reopening checks current task, agent, organizational and source policies without assuming a future driver. Effective low-trust reopens suppress configured and built-in host scripts. Returned checkpoints must have directory parents for every nested entry before merging, including unchanged entries; invalid output leaves retained host files intact and keeps recovery evidence.
 Child creation by an admitted agent checks an explicit prospective-task context before the child is saved. The creator run must have an authoritative saved policy and a verified company/agent/parent lineage. Current parent, prospective child and physical source policies must fit that boundary. This creation path does not relax exact task/run checks for existing-task writes. The [child trust regression](../../server/src/__tests__/task-workspace-child-trust.test.ts) is automated source-level evidence, not live agent qualification.
 Source review for these additions: PR #15749 and

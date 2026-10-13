@@ -7448,6 +7448,7 @@ type EnsureRuntimeServicesForRunInput = {
   workspace: RealizedExecutionWorkspace;
   executionWorkspaceId?: string | null;
   config: Record<string, unknown>;
+  skipHostProvision?: boolean;
   adapterEnv: Record<string, string>;
   onLog?: (stream: "stdout" | "stderr", chunk: string) => Promise<void>;
   recorder?: WorkspaceOperationRecorder | null;
@@ -7464,7 +7465,9 @@ async function ensureRuntimeServicesForRunInvocation(
   });
   const acquiredServiceIds: string[] = [];
   const refs: RuntimeServiceRef[] = [];
-  const runtimeProvision = resolveRuntimeProvision(input);
+  const runtimeProvision = input.skipHostProvision
+    ? { command: "", kind: null }
+    : resolveRuntimeProvision(input);
   const runtimeProvisionCommand = runtimeProvision.command;
   const provisionCoordinator = createRuntimeProvisionCoordinator();
   const allowFixedPortFallback = await isPersistedIsolatedExecutionWorkspace({

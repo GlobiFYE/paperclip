@@ -37,7 +37,6 @@ import {
   resolveWorkspaceAfterLowTrustPreflight,
   resolveRuntimeSessionParamsForWorkspace,
   shouldDeferFollowupWakeForSameIssue,
-  stripHostWorkspaceProvisionForLowTrustSandbox,
   stripWorkspaceRuntimeFromExecutionRunConfig,
   shouldResetTaskSessionForModelChange,
   stripConfiguredModelFromSessionParams,
@@ -49,6 +48,7 @@ import {
   buildAnchorFallbackWorkspaceNotes,
   type ResolvedWorkspaceForRun,
 } from "../services/heartbeat.ts";
+import { stripHostWorkspaceProvision } from "../services/heartbeat/workspaces.js";
 import type { TrustPresetResolution } from "../services/trust-preset-resolver.ts";
 
 const execFile = promisify(execFileCallback);
@@ -1125,8 +1125,15 @@ describe("requiresPushCapabilityPreflight", () => {
   });
 });
 
-describe("stripHostWorkspaceProvisionForLowTrustSandbox", () => {
-  it("removes only the host-side provision command for sandbox-backed low-trust runs", () => {
+describe("stripHostWorkspaceProvision", () => {
+  it.each(["sandbox", "ssh"])("removes nested and top-level runtime commands immutably for %s", selectedEnvironmentDriver => {
+    const config = { runtimeProvisionCommand: "top-level", workspaceStrategy: { type: "git_worktree", provisionCommand: "host", runtimeProvisionCommand: "nested" } };
+    const original = structuredClone(config);
+    expect(stripHostWorkspaceProvision({ config, skipHostProvision: true }))
+      .toEqual({ workspaceStrategy: { type: "git_worktree" } });
+    expect(config).toEqual(original);
+  });
+  it("removes controller provisioning while retaining unrelated settings", () => {
     const config = {
       workspaceStrategy: {
         type: "git_worktree",
@@ -1139,10 +1146,9 @@ describe("stripHostWorkspaceProvisionForLowTrustSandbox", () => {
       },
     };
 
-    const result = stripHostWorkspaceProvisionForLowTrustSandbox({
+    const result = stripHostWorkspaceProvision({
       config,
-      trustPreset: lowTrustResolution(),
-      selectedEnvironmentDriver: "sandbox",
+      skipHostProvision: true,
     });
 
     expect(result).not.toBe(config);
@@ -1155,7 +1161,7 @@ describe("stripHostWorkspaceProvisionForLowTrustSandbox", () => {
     expect(config.workspaceStrategy.provisionCommand).toBe("bash ./scripts/provision-worktree.sh");
   });
 
-  it("preserves provision commands for standard-trust runs", () => {
+  it("strips provision commands when the controller is not the execution target", () => {
     const config = {
       workspaceStrategy: {
         type: "git_worktree",
@@ -1163,14 +1169,13 @@ describe("stripHostWorkspaceProvisionForLowTrustSandbox", () => {
       },
     };
 
-    expect(stripHostWorkspaceProvisionForLowTrustSandbox({
+    expect(stripHostWorkspaceProvision({
       config,
-      trustPreset: standardTrustResolution(),
-      selectedEnvironmentDriver: "sandbox",
-    })).toBe(config);
+      skipHostProvision: true,
+    })).toEqual({ workspaceStrategy: { type: "git_worktree" } });
   });
 
-  it("preserves provision commands when a low-trust run is not sandbox-backed", () => {
+  it("preserves provision commands when the server permits controller provisioning", () => {
     const config = {
       workspaceStrategy: {
         type: "git_worktree",
@@ -1178,10 +1183,9 @@ describe("stripHostWorkspaceProvisionForLowTrustSandbox", () => {
       },
     };
 
-    expect(stripHostWorkspaceProvisionForLowTrustSandbox({
+    expect(stripHostWorkspaceProvision({
       config,
-      trustPreset: lowTrustResolution(),
-      selectedEnvironmentDriver: "local",
+      skipHostProvision: false,
     })).toBe(config);
   });
 });

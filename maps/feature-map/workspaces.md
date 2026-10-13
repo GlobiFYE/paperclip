@@ -48,10 +48,17 @@ An existing projectless folder alias of a sandbox-restricted project must be
 rejected for a standard local task before its adapter executes. Repeat after
 relocating the configured source; retained ownership must still enforce the
 boundary. This is separate from ordinary authorized file preview/download.
-For a registered low-trust worktree running in a sandbox, a configured or built-in
-provision script must not run on the host during fresh creation, reuse, or rebuild.
-Verify the adapter still selects the sandbox and ordinary trusted provisioning
-continues to work.
+For a registered worktree selected for a sandbox or SSH environment, configured
+and built-in provision scripts must not run on the controller during fresh
+creation, reuse, or rebuild, including host runtime provisioning. Repeat with
+standard trust and a protected read-only source, then with source write grants;
+permissions must not change execution placement. Verify isolated source copying
+and selected-environment dispatch still work. Repeat an explicit local isolated
+source choice: copying remains available but controller scripts must stay absent,
+including after binding or metadata changes and closed-worktree reopening. An
+implicit trusted local project default remains a positive provisioning control.
+SSH keeps its explicit remote provision-command path; these checks
+do not claim a new sandbox provision transport.
 Low-trust closed-worktree reopening, including a board-comment reopen of a projectless task, must also suppress both kinds of host provision script. Returned checkpoints must reject file, symlink or missing parents before host writes, even if a nested file is marked unchanged. The retained host file and recovery evidence must survive rejection. These are automated safety contracts, not new live runtime acceptance.
 
 For a child created by an admitted agent with an explicit existing workspace, verify that a matching sandbox boundary permits creation before the child has an ID. A changed child policy, unrelated parent, or forged creator run must fail. See the [child workspace trust regression](../../server/src/__tests__/task-workspace-child-trust.test.ts). This automated contract does not add live acceptance evidence.

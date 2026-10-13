@@ -116,6 +116,24 @@ describe.skipIf(!support.supported)("heartbeat workspace preparation boundary", 
     expect(input.controllerLease.assertOwned).toHaveBeenCalledTimes(2);
   });
 
+  it.each(["sandbox", "ssh", "local", null] as const)("uses the selected %s placement for controller provisioning", async driver => {
+    const { input, source, issue, envOrchestrator } = await fixture(true);
+    const marker = join(source, "host-provision-ran");
+    const provisionCommand = `printf host > '${marker}'`;
+    input.config.mergedConfig = { workspaceStrategy: { type: "git_worktree", provisionCommand, runtimeProvisionCommand: "printf runtime" } };
+    const originalConfig = structuredClone(input.config.mergedConfig);
+    input.environment.selectedEnvironmentForConfig = driver === null ? null : { ...input.environment.localEnvironment, driver };
+    const stopped = new Error("Fixture stops before transport acquisition");
+    vi.spyOn(envOrchestrator, "acquireForRun").mockRejectedValue(stopped);
+    await expect(prepareHeartbeatWorkspace(db, input)).rejects.toBe(stopped);
+    const bound = await readIssue(issue.id);
+    const [workspace] = await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, bound.executionWorkspaceId!));
+    expect(await readFile(join(workspace.cwd!, "README.md"), "utf8")).toBe("source content\n");
+    if (driver === "sandbox" || driver === "ssh") await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    else expect(await readFile(marker, "utf8")).toBe("host");
+    expect(input.config.mergedConfig).toEqual(originalConfig);
+  });
+
   it("checks physical root admission before publishing configured sibling repositories", async () => {
     const { input, source, issue } = await fixture();
     await db.insert(projectWorkspaces).values({ companyId: issue.companyId, projectId: issue.projectId!,

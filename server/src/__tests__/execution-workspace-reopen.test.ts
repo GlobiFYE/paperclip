@@ -261,7 +261,7 @@ describeEmbeddedPostgres("reopen archived isolated execution workspace", () => {
   }
 
   describe.each(["configured", "builtin"] as const)("reopen %s host provision containment", kind => {
-    it.each(["task", "agent", "organization", "source", "same-source", "trusted"] as const)("honors persisted %s policy before running repository scripts", async restriction => {
+    it.each(["task", "agent", "organization", "source", "same-source", "trusted", "explicit", "projectless", "nondefault", "foreign-source-task", "retained-missing", "retained-false", "retained-null"] as const)("honors persisted %s policy before running repository scripts", async restriction => {
       const { companyId, projectId, projectWorkspaceId } = await seedCompanyProject();
       const directory = await makeExistingDir();
       const base = join(directory, "source"), target = join(directory, "target"), marker = join(directory, "host-provision-ran");
@@ -279,7 +279,7 @@ describeEmbeddedPostgres("reopen archived isolated execution workspace", () => {
         [EXECUTION_WORKSPACE_LIFECYCLE_GENERATION_METADATA_KEY]: 1, config: { provisionCommand: command },
       } }).where(eq(executionWorkspaces.id, workspaceId));
       const issueId = await seedIssue({ companyId, projectId, workspaceId, issueNumber: 4199 });
-      let organizationId: string | null = restriction === "same-source" ? projectId : null;
+      let organizationId: string | null = restriction === "projectless" ? null : projectId;
       if (restriction === "organization") {
         organizationId = randomUUID();
         await db.insert(projects).values({ id: organizationId, companyId, name: "Organizational policy" });
@@ -296,6 +296,30 @@ describeEmbeddedPostgres("reopen archived isolated execution workspace", () => {
         await db.update(projects).set({ executionWorkspacePolicy: policy })
           .where(eq(projects.id, restriction === "organization" ? organizationId! : projectId));
       }
+      if (restriction === "explicit" || restriction.startsWith("retained-")) {
+        await db.update(issues).set({ workspaceSelection: { version: 1, source: "explicit",
+          selection: { kind: "configured_source", projectWorkspaceId, mode: "managed_isolated" } } })
+          .where(eq(issues.id, issueId));
+      }
+      if (restriction === "nondefault") {
+        await db.insert(projectWorkspaces).values({ companyId, projectId, name: "Earlier default",
+          sourceType: "local_path", cwd: base, createdAt: new Date(0) });
+      }
+      if (restriction === "foreign-source-task") {
+        const sourceIssueId = await seedIssue({ companyId, projectId, workspaceId, issueNumber: 4198 });
+        await db.update(executionWorkspaces).set({ sourceIssueId }).where(eq(executionWorkspaces.id, workspaceId));
+      }
+      if (restriction.startsWith("retained-")) {
+        const workspace = await readWorkspace(workspaceId);
+        await db.update(executionWorkspaces).set({ metadata: { ...workspace?.metadata,
+          _controllerProvisionCopyOnly: true } }).where(eq(executionWorkspaces.id, workspaceId));
+        await db.update(issues).set({ workspaceSelection: null }).where(eq(issues.id, issueId));
+        const service = executionWorkspaceService(db);
+        await service.update(workspaceId, { metadata: restriction === "retained-null" ? null
+          : restriction === "retained-false" ? { _controllerProvisionCopyOnly: false } : {} });
+        if (kind === "configured") await service.update(workspaceId, { metadata: { config: { provisionCommand: command } } });
+        expect((await readWorkspace(workspaceId))?.metadata).toMatchObject({ _controllerProvisionCopyOnly: true });
+      }
       const result = await executionWorkspaceService(db).reopenClosedIsolatedExecutionWorkspaceForIssue({
         workspaceId, issue: { id: issueId, companyId, projectId: organizationId },
         actor: { agentId: null, actorType: "user" },
@@ -306,6 +330,8 @@ describeEmbeddedPostgres("reopen archived isolated execution workspace", () => {
       if (restriction === "trusted") await expect(readFile(marker, "utf8")).resolves.toBe("host execution\n");
       else await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
       expect(await readWorkspace(workspaceId)).toMatchObject({ status: "active", projectId, projectWorkspaceId });
+      if (["explicit", "projectless", "nondefault", "foreign-source-task"].includes(restriction) || restriction.startsWith("retained-")) expect((await readWorkspace(workspaceId))?.metadata)
+        .toMatchObject({ _controllerProvisionCopyOnly: true });
       expect((await db.select().from(issues).where(eq(issues.id, issueId)))[0])
         .toMatchObject({ projectId: organizationId, executionWorkspaceId: workspaceId, assigneeAgentId: agentId });
     });

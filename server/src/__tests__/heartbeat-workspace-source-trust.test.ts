@@ -139,4 +139,81 @@ suite("heartbeat physical workspace source trust", () => {
     }
   });
 
+  it.each([
+    ["configured", "none", "sandbox"], ["builtin", "none", "sandbox"],
+    ["configured", "agent", "sandbox"], ["builtin", "agent", "sandbox"],
+    ["configured", "both", "sandbox"], ["builtin", "both", "sandbox"],
+    ["configured", "both", "local"], ["builtin", "both", "local"],
+    ["configured", "none", "local"], ["builtin", "none", "local"],
+    ["configured", "both", "local_default"], ["builtin", "both", "local_default"],
+  ] as const)("places standard source %s provisioning with %s grants on %s", async (provisionKind, grants, placement) => {
+    const implicitDefault = placement === "local_default";
+    const companyId = randomUUID(), projectId = randomUUID(), sourceId = randomUUID(), agentId = randomUUID(), issueId = randomUUID();
+    await instanceSettingsService(db).updateExperimental({ enableIsolatedWorkspaces: true });
+    const cwd = path.join(root, companyId, "read-only-source");
+    const marker = path.join(root, companyId, "host-script-ran");
+    await mkdir(path.join(cwd, "scripts"), { recursive: true });
+    await writeFile(path.join(cwd, "source.txt"), "read-only source bytes");
+    await writeFile(path.join(cwd, "scripts", "provision-worktree.sh"), `printf host-script-ran > '${marker}'\n`);
+    const git = (...args: string[]) => execFileSync("git", args, { cwd, stdio: "ignore" });
+    git("init", "-b", "main"); git("add", ".");
+    git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-m", "source");
+    git("remote", "add", "origin", pathToFileURL(cwd).href);
+    await db.insert(companies).values({ id: companyId, name: "Read-only source", issuePrefix: `R${companyId.slice(0, 6)}`, defaultResponsibleUserId: "responsible-user" });
+    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "owner" });
+    await db.insert(projects).values({ id: projectId, companyId, name: "Protected source", executionWorkspacePolicy: {
+      authorizationPolicy: { assignmentPolicy: { mode: "protected" } },
+    } });
+    await db.insert(projectWorkspaces).values({ id: sourceId, companyId, projectId, name: "Source", sourceType: "local_path", cwd, repoUrl: pathToFileURL(cwd).href, isPrimary: true });
+    await db.insert(agents).values({ id: agentId, companyId, name: "Reader", status: "idle", adapterType: "codex_local", adapterConfig: { fullAuto: grants === "both" }, permissions: {} });
+    await db.insert(companyMemberships).values({ companyId, principalType: "agent", principalId: agentId, status: "active", membershipRole: "member" });
+    await db.insert(issues).values({ id: issueId, companyId, projectId: implicitDefault ? projectId : null, title: "Read-only isolated source", status: "todo", assigneeAgentId: agentId,
+      projectWorkspaceId: sourceId, executionWorkspaceSettings: { mode: "isolated_workspace", workspaceStrategy: { type: "git_worktree",
+        worktreeParentDir: path.join(root, companyId, "worktrees"), ...(provisionKind === "configured" ? { provisionCommand: `printf host-script-ran > '${marker}'` } : {}) } },
+      workspaceSelection: implicitDefault ? null : { version: 1, source: "explicit", selection: { kind: "configured_source", projectWorkspaceId: sourceId, mode: "managed_isolated" } } });
+    if (grants !== "none") await db.insert(principalPermissionGrants).values({ companyId, principalType: "agent", principalId: agentId,
+      permissionKey: "tasks:assign_scope", scope: { projectId, assigneeAgentId: agentId } });
+    if (grants === "both") await db.insert(principalPermissionGrants).values({ companyId, principalType: "user", principalId: "responsible-user",
+      permissionKey: "tasks:assign_scope", scope: { projectId, assigneeAgentId: agentId } });
+    const actor = { type: "agent" as const, agentId, companyId, source: "agent_jwt" as const, onBehalfOfUserId: "responsible-user" };
+    expect(await accessService(db).decide({ actor, action: "project:read", resource: { type: "project", companyId, projectId } })).toMatchObject({ allowed: true });
+    expect(await accessService(db).decide({ actor, action: "project:write_workspace", resource: { type: "issue", companyId, projectId, issueId, assigneeAgentId: agentId }, scope: { projectId, assigneeAgentId: agentId } })).toMatchObject({ allowed: grants === "both" });
+    const environmentId = randomUUID();
+    await db.insert(environments).values({ id: environmentId, name: `Standard sandbox ${companyId}`, driver: "sandbox", status: "active", config: { provider: "fake", image: "fake:test" } });
+    await db.update(agents).set({ defaultEnvironmentId: placement === "sandbox" ? environmentId : null }).where(eq(agents.id, agentId));
+    const driver = heartbeatService(db, { environmentRuntime: { ...environmentRuntimeService(db), execute: async input => ({
+      exitCode: 0, stdout: execFileSync(input.command, input.args ?? [], { cwd: root, input: input.stdin, encoding: "utf8", env: { ...process.env, ...input.env } }),
+      stderr: "", signal: null, timedOut: false,
+    }) } });
+    const run = await driver.wakeup(agentId, { source: "on_demand", triggerDetail: "manual", contextSnapshot: { issueId } });
+    expect(run).not.toBeNull();
+    await vi.waitFor(async () => expect((await driver.getRun(run!.id))?.status).toMatch(/^(succeeded|failed)$/), { timeout: 15_000 });
+    await drainHeartbeatRunsToQuiescence(db, driver);
+    expect(await driver.getRun(run!.id)).toMatchObject({ status: "succeeded", error: null });
+    const [bound] = await db.select().from(issues).where(eq(issues.id, issueId));
+    const [workspace] = await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, bound.executionWorkspaceId!));
+    expect(workspace.cwd).not.toBe(cwd);
+    expect(await readFile(path.join(workspace.cwd!, "source.txt"), "utf8")).toBe("read-only source bytes");
+    const calls = execute.mock.calls.filter(([input]) => input.runId === run!.id);
+    expect(calls).toHaveLength(1);
+    expect(calls[0][0].context.paperclipEnvironment.driver).toBe(placement === "sandbox" ? "sandbox" : "local");
+    if (!implicitDefault) await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    else expect(await readFile(marker, "utf8")).toBe("host-script-ran");
+    await rm(marker, { force: true });
+    if (grants === "none") await rm(workspace.cwd!, { recursive: true, force: true });
+    await db.update(issues).set({ status: "todo" }).where(eq(issues.id, issueId));
+    const { executionWorkspaceService } = await import("../services/execution-workspaces.js");
+    if (placement === "local" && grants === "both") await db.update(issues).set({ projectId, workspaceSelection: null }).where(eq(issues.id, issueId));
+    await executionWorkspaceService(db).update(workspace.id, { metadata: { ...workspace.metadata,
+      _controllerProvisionCopyOnly: false, config: { provisionCommand: `printf host-script-ran > '${marker}'` } } });
+    const resumed = await driver.wakeup(agentId, { source: "on_demand", triggerDetail: "manual", contextSnapshot: { issueId } });
+    await vi.waitFor(async () => expect((await driver.getRun(resumed!.id))?.status).toMatch(/^(succeeded|failed)$/), { timeout: 15_000 });
+    await drainHeartbeatRunsToQuiescence(db, driver);
+    expect(await driver.getRun(resumed!.id)).toMatchObject({ status: "succeeded", error: null });
+    expect((await db.select().from(issues).where(eq(issues.id, issueId)))[0].executionWorkspaceId).toBe(workspace.id);
+    expect(await readFile(path.join(workspace.cwd!, "source.txt"), "utf8")).toBe("read-only source bytes");
+    if (!implicitDefault) await expect(readFile(marker, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
+    else expect(await readFile(marker, "utf8")).toBe("host-script-ran");
+  }, 30_000);
+
 });
