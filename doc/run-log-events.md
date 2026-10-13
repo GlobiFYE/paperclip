@@ -7,6 +7,12 @@ event needs no operator endpoint.
 
 ## Native PRP Run-Log Events
 
+Fresh remote Codex model substitution emits `runner.model_fallback` on the
+system stream with `warn` severity. Its payload contains `requestedModel`,
+`effectiveModel`, and `codexCliVersion`. It records a preparation choice before
+provider launch, not a failed turn or a retry. The same substitution appears as
+a system warning in the task conversation. It remains local run-log data.
+
 The hidden native coordinator writes each validated PRP event to the bound
 run's existing event stream before it acknowledges the runner. The row keeps
 the PRP `eventType`, source instance, source event ID, source sequence, protocol
@@ -211,6 +217,41 @@ The payload never carries a command, an argument, a path, an environment value,
 or a raw identifier. The event rides the `ctx.onEvent` run-event bridge and is
 run-log-only. It needs no OTLP endpoint.
 
+## Workspace Restore and Settled Run Measurements
+
+The heartbeat controller writes these records with `eventType: "lifecycle"`,
+`stream: "system"`, and `level: "info"`. The event name below is its `message`
+and its payload's `phase`. They remain in the instance run log and add no
+Paperclip Telemetry or OpenTelemetry export.
+
+| Event | Payload fields besides `phase` | Meaning |
+| --- | --- | --- |
+| `workspace_checkpoint` | `mode`, `scannedEntries`, `changedFiles`, `payloadBytes` | Metrics for a validated sparse checkpoint, or a full restore fallback. |
+| `workspace.restore` | `durationMs` | Wall time around native workspace restoration. |
+| `task.run.measured` | `durationMs`, `outcome`, `durableSettlement` | Wall time through terminal owner cleanup, with the persisted terminal run status and `durableSettlement: true`. |
+
+For `workspace_checkpoint`, `mode` is `"sparse"` or `"full"`. Sparse metrics
+count snapshot entries in `scannedEntries`, regular files in the validated
+downloaded payload in `changedFiles`, and their total bytes in `payloadBytes`.
+Deleted entries and symlinks do not add to the regular-file count or byte total.
+Full fallback reports all three counts as `null`: unavailable, not zero. A run
+can emit multiple checkpoint records while restoring its repositories. These
+payloads contain no paths, filenames, file contents, or credentials.
+
+`workspace.restore` is emitted when the timed restoration exits, including an
+exception. It has no outcome field and does not by itself prove restore success.
+Its producer is the native workspace sync `onPhase` callback.
+
+`task.run.measured` is emitted only after the controller observes a terminal run
+with no remaining native runner ownership. Its duration starts at `startedAt`,
+or `createdAt` if the run never started, and includes preparation, execution,
+finalization, and cleanup. It is not model-only time; the creation-time fallback
+also includes time spent queued. `outcome` is the actual terminal status, such as
+`succeeded`, `failed`, or `cancelled`. Provider turn completion can precede this
+settlement record. The record does not imply exactly-once emission across
+controller recovery, and failure to write it is logged without changing the
+already-settled outcome.
+
 ## ACP terminal failure diagnostics
 
 The shared ACP adapter engine preserves typed terminal session failures in the
@@ -280,6 +321,14 @@ warnings and errors remain visible.
 
 Recovery lifecycle events retain the original structured failure code, retry attempt, next retry time, and predecessor/successor identifiers. Durable status delivery uses an idempotency marker; delivery grants no provider authority. Failed publication is retried without repeating provider work. These records are not first-party Telemetry.
 
+An unstarted legacy conversation retry waiting for execution cleanup retains
+`resultJson.executionWait` with the issue, blocking run, and
+`execution_owner_active` cause. A local lifecycle event records the wait and the
+unchanged scheduled retry attempt once per blocking run. Repeated scheduler
+checks update the same retry row without repeating that event. Promotion removes
+this ownership-wait marker after cleanup; other execution holds retain their
+existing dispatch gates.
+
 If execution-continuation setup finds that a task no longer exists, is closed,
 or its owner changed, the existing cancellation settlement records
 `continuation_task_ownership_changed`. The run and wake request become cancelled
@@ -334,6 +383,12 @@ task emits its own diagnostic; nested repository failures are logged once by
 the enclosing workspace task. The original error and restore safety policy are
 unchanged. These lines stay in the instance run log and its configured durable
 storage, and are not new first-party telemetry events.
+
+Native sandbox `environmentSyncOut` errors preserve allowlisted error codes and
+bounded HTTP/exit statuses across worker RPC for this diagnostic line. The host
+revalidates the envelope and keeps the original failure and recovery policy.
+Provider messages, paths, response bodies, credentials, and arbitrary error data
+are not copied into the new envelope. Older workers can still report `unknown`.
 
 The optional `step` identifies the failed restore operation. For
 `phase=workspace` and `step=git_integration`, `gitCommand` identifies one fixed

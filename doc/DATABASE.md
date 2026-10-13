@@ -19,6 +19,17 @@ That's it. On first start the server:
 
 Data persists across restarts in `~/.paperclip/instances/default/db/`. To reset local dev data, delete that directory.
 
+Subscription reporting adds `ai_subscriptions` (company-scoped account identity),
+`ai_subscription_prices` (immutable price revisions), and
+`ai_subscription_connections` (selected grant-to-account bindings). New managed
+subscription receipts also have a nullable `cost_events.subscription_id`.
+Migration `0322_reflective_kree.sql` is replay-safe and leaves existing cost
+amounts and receipts untouched. No historical account attribution is inferred.
+Deleting a connection removes its binding but retains subscription price history;
+disconnecting is not proof that provider billing ended. See
+[subscription cost reporting](connections/AI-CONNECTIONS.md#subscription-cost-reporting)
+for the reporting and ownership rules.
+
 If you need to apply pending migrations manually, run:
 
 ```sh
@@ -226,6 +237,17 @@ When authoring migrations or one-time backfills:
 - Split schema changes, index creation, and data backfill into separate phases so each step has clear locking and rollback behavior.
 - Treat the `check:migrations` CI gate as the enforcement backstop for these rules. If it flags a migration, rewrite the migration or add a suppression comment with the indexed predicate, batch bound, and reason the remaining scan is safe.
 
+Private-task migrations `0313` and `0314` are explicitly allowlisted in the
+Paperclip executor to run outside a file-wide transaction. Their idempotent
+keyset batches commit every 1,000 rows, and migration history is recorded only
+when all batches finish. The executor repairs invalid concurrent indexes on
+retry. A reserved connection holds a session advisory lock across all batch
+commits, so concurrent migrators recheck history only after the preceding runner
+finishes. Privacy triggers are replaced atomically. Bootstrap uses the same
+executor; other migrations remain transactional
+per file. Apply these migrations through `pnpm db:migrate` using a direct
+connection, before enabling the new server and UI.
+
 ## Migration snapshots
 
 `drizzle-kit generate` diffs `packages/db/src/schema/` against the newest snapshot in `packages/db/src/migrations/meta/`. That snapshot must describe the schema that every migration produces when they run in order. A snapshot that drifts from the schema makes the *next* migration wrong, because `generate` folds the drift into it. The drift can add a column that an earlier migration already created, which makes that migration fail on a fresh database. It can also drop a column that the schema still uses.
@@ -289,6 +311,8 @@ Paperclip stores current-user sidebar membership state in:
 These rows are company-scoped and user-scoped. A missing row means the user is joined, so existing users keep seeing projects and agents in the sidebar until they explicitly leave them. Rows only control sidebar visibility; they do not affect project/agent detail access, all-pages, selectors, assignment flows, or existing company permissions.
 
 Both tables use a unique key on `(company_id, user_id, resource_id)` and keep `state` as `joined` or `left`. Join/leave mutations are idempotent board-user `/me` operations and write activity entries when the effective state changes.
+
+Private-project authorization uses the separate `project_access_members` table. Its user/agent rows are security grants, not sidebar preferences, and are evaluated by the same issue-read predicate as issue-level grants. Do not merge or overload these two concepts.
 
 ## Decision training snapshot retention
 
@@ -408,6 +432,14 @@ run/turn ids, payload digest, attempt/acknowledgement state, and one of `steered
 `coalesced`, or `wake_fallback`; answer content remains only in
 `issue_thread_interactions.result`. Deleting the interaction cascades its receipt,
 while deleting a referenced run clears that run pointer without deleting history.
+
+The question-history index covers `(company_id, idempotency_key)` for every
+`question-response:` wake state, including failed, cancelled, and skipped
+receipts excluded from the delivery-idempotency fence. Migration `0332` creates
+this nonunique index concurrently through the standard migration executor.
+Apply it with `pnpm db:migrate` on a direct connection before enabling the new
+sleep guard. The executor retries interrupted invalid builds and records history
+only after the index is valid. It does not delete delivery or wake records.
 
 ## Plugin database namespaces
 
@@ -600,6 +632,7 @@ write requires operator reconciliation before an unattached reservation is
 removed. The table stores no response bodies. See `doc/runner-api-tools.md` for
 limits and the operator override.
 
+Project `privacy_owner_user_id` records who may manage its audience independently of project read membership. Creation assigns the authenticated user or run responsible user; migration recovers legacy ownership from creation audit evidence. Missing evidence leaves management with administrators.
 ## Internal agent commentary
 
 `agent_commentary` stores company-scoped, attributed complaints and suggestions
@@ -617,3 +650,153 @@ reads and server startup do not provision them. Normal backups preserve identity
 rows and need the matching secrets master key for recovery. Both development seed
 modes omit identity rows, including with live-work preservation, so copied agents
 get fresh identities. See [Agent cryptographic identity](AGENT-IDENTITY.md).
+
+### Slack app registration
+
+`chat_slack_registrations` stores one company-scoped app registration per chat
+endpoint. A composite foreign key binds `(company_id, endpoint_id)` to the
+endpoint's company. It contains the creation request ID, immutable manifest
+snapshot/hash, OAuth callback URI, app/client IDs, vault references, installation
+identity, status, safe failure code, creator, and timestamps. It contains no
+plaintext configuration token, OAuth code, signing/client secret, or bot token.
+
+Creation records `creating` before dispatch. An interrupted attempt becomes
+`uncertain`; a new request needs explicit confirmation that no app exists.
+`install` means the app exists. `credentials_saved` means the OAuth bot token is
+vaulted and connection checks can resume. `configured` means runtime credentials
+are durably bound; staged duplicates are cleaned and the client secret remains
+available for reauthorization. `removed` invalidates registration and keeps the
+safe app management link for provider-side cleanup.
+
+`chat_endpoints.setup.slackAvatar` records optional avatar provisioning as
+`pending`, `uploaded` with its confirmation timestamp, or `failed` with a fixed
+safe error code. It survives reloads and restarts. App credentials are durably
+bound before icon upload; an interrupted upload never triggers another app
+creation. This JSON state stores no token, image URL, or provider error payload.
+
+`chat_endpoints.setup.slackAccount` stores the OAuth installer’s Slack ID, the
+initiating Paperclip user ID, pending/linked status, durable welcome-DM and
+optional verification-DM status, and the returned DM channel ID. It stores no
+user OAuth token or provider payload.
+The account uses the existing company-scoped `chat_identity_links` table; it
+preserves conflicting/revoked links and does not change on reauthorization.
+Both message dispatches move pending → sending before network I/O, then sent/failed;
+a restart or ambiguous response moves sending → uncertain without replay.
+Signed Request URL verification can precede installation. Internal setup state
+retains a signing-secret fingerprint and observed URL so configuration preserves
+that evidence only for the same secret and callback. No plaintext secret is stored
+in setup state, and the fingerprint is excluded from endpoint responses.
+For automatically registered apps, `webhookVerifiedAt` also records successful
+delivery of an authenticated message/app-mention event to the current callback
+URL. The current signing secret, saved app/workspace/bot binding, active connection,
+and runtime generation are checked before recording it. This is Paperclip's
+connection evidence, not Slack's settings-page URL-verification flag. Activity
+identifies this evidence as `authenticated_event`; no message body is recorded.
+
+Slack install attempts use `tool_oauth_states` with the `slack-install.` namespace.
+They expire after ten minutes, bind the company/connection/endpoint, registration
+request ID, app ID, initiating actor/session, callback URI, and requested scopes,
+and are atomically deleted before code exchange. The `code_verifier` column holds
+this non-secret binding for this namespace; Slack bot installation does not use
+PKCE. Removal and manual recovery invalidate outstanding attempts under the same
+credential-mutation lease used by configuration.
+
+### Slack manager workspace grants
+
+`chat_slack_manager_grants` stores a personal workspace authorization, scoped by
+company, Paperclip user, Slack user, workspace and manager app. Access/refresh
+credentials are references to user-scoped vault entries, never plaintext columns.
+Revision fencing protects reauthorization from concurrent revocation. Per-method
+rate-limit deadlines retain Slack's Retry-After across setup retries.
+
+`chat_slack_registrations.manager_grant_id` is optional, with a composite company
+foreign key. Existing registrations remain customer owned with a null reference.
+Deleting one endpoint removes its registration credentials and attempts, but does
+not revoke grants used by other bots. See [Slack setup](connections/slack-setup.md).
+
+## Transaction-aware delivery work signals
+
+Five existing delivery queues use process-local work signals to avoid empty
+polling. Register work **before** writing a queue row, on that row's transaction:
+
+```ts
+await db.transaction(async tx => {
+  await signalDatabaseWork(tx, "queue-topic");
+  await tx.insert(existingQueueTable).values(row);
+});
+```
+
+`createDb` instruments transaction callbacks and nested savepoints. Subscribers
+receive intent immediately and settlement only after the outer transaction
+finishes. Caller-owned transactions therefore need no extra post-commit wrapper.
+Dedicated clients from `withDedicatedDbConnection` share the owner's signal
+scope. No schema changes, triggers, dedicated listener connection, or periodic
+queries are installed by this API.
+
+The first registered write in a transaction fetches `pg_current_xact_id()`.
+Awaiting registration is required: a failure at that point must prevent the
+queue write. Unrelated transactions add no queries. If the transaction rejects,
+the coordinator probes `pg_xact_status(xid)` through the root pool before scanning
+the queue. An in-progress transaction remains unresolved even when the queue
+currently looks empty. Committed/aborted results permit reconciliation; NULL
+means PostgreSQL has discarded an old, no-longer-active transaction's outcome.
+The existing durable queue supplies the work in either case. Probe failures
+retain the idle hold and schedule another attempt. Work signals never replay
+queries or convert a failed database operation into success.
+
+This uses PostgreSQL's transaction-information functions (this path requires
+PostgreSQL 14+; embedded PostgreSQL uses 18). See the
+[PostgreSQL transaction information documentation](https://www.postgresql.org/docs/18/functions-info.html#FUNCTIONS-PG-SNAPSHOT).
+The process-local intent survives coordinator replacement, but not process exit.
+Startup scans recover committed queue rows. Independent DB clients, other
+processes, late transactions from an old process, and database failover need an
+explicit ownership/wake protocol; these signals are not cross-process messaging.
+Use the same root client for in-process writers. New queue insertion paths must
+register before writing, or they can remain unseen until the next startup or
+another notification. Tests should verify both the producer and its outer
+transaction boundary.
+
+
+### Task workspace records (2026-10-09)
+
+Migration [0336_big_crystal.sql](../packages/db/src/migrations/0336_big_crystal.sql) makes `execution_workspaces.project_id` nullable and changes its project reference to `ON DELETE RESTRICT`: source-project policy cannot disappear while a workspace still depends on it. `issues.execution_workspace_id` remains the sole active task binding. Versioned selection/pending-selection JSON and a binding revision record intent and protect transitions; they are not additional active bindings. Accepting a new pending choice advances the revision without changing the active folder. Its receipt retains the original request revision, so current-choice retries are idempotent and superseded retries fail the revision check.
+
+`execution_workspace_repositories` is company-scoped inventory beneath an execution workspace. It records repository identity, contained relative path, requested ref, pinned commit, preparation state and idempotency receipts. Credentials are resolved at use and are never stored in this inventory. Connection/destination `execution_defaults` JSON contains optional typed project/workspace choices, never arbitrary host paths or commands.
+
+Migration [0337_exotic_proemial_gods.sql](../packages/db/src/migrations/0337_exotic_proemial_gods.sql) adds internal `execution_workspace_repository_roots` records. A company and hash of its canonical physical path uniquely identify a sticky `anonymous_only` or `managed` acquisition reservation. Short transactions serialize reservations with repository requests and credential promotion, preventing private publication after low-trust admission checks. Records have no workspace foreign key: mutable workspace metadata, relocation, archival or deletion cannot release a physical folder still accessible to an admitted run. There is no automatic mode change or reservation deletion.
+
+Migration [0338_absurd_vengeance.sql](../packages/db/src/migrations/0338_absurd_vengeance.sql) adds internal `execution_workspace_repository_access` provenance. Company/canonical-root source entries retain execution-workspace and source-project identities; reader entries retain the exact admitted run, task, agent and responsible user. New repository receipts also record their root at creation; legacy receipts receive no inferred origin. Shared project-source entries retain which physical owners require workspace write authority. Current admission, selection, requests and publication check the current task’s writer against those owners; retained past readers and file APIs still require only read authority. Genuine isolated copies retain source read access without requiring shared-folder write access. An existing linked worktree can recover a missing isolated-copy proof only after Git registration and its captured source owner are verified. Configured local sibling copies retain deny-only task/project source ownership on the bound task root before materialization; ordinary repository clones create no isolation proof. The shared root fence checks every reader against every source before admission and future publication, including tasks without repository requests. File APIs apply the same source privacy without writing provenance. These entries grant no authority and have no workspace or run deletion cascade; unavailable retained identity fails closed. Automatic provenance release is deferred, so a newly incompatible permission scope requires a separate physical root.
+
+Git-source capture checks the actual common Git storage directory and verified
+checkout owners. Separately stored metadata does not make its parent a checkout.
+When a linked worktree cannot identify its primary checkout, the service verifies
+company-known configured, execution, and retained roots against that metadata
+identity. A primary checkout identifies itself when its Git directory equals its
+common directory, including separate metadata layouts. Verified primary sources
+and linked worktrees with a verified registered primary avoid the fallback scan.
+
+Writable selection, source-copy preparation, admission, and publication check the trust policy of
+current and retained physical source projects. A projectless alias cannot bypass
+a source's sandbox requirement. An incompatible preset or boundary is rejected;
+the check never silently changes the selected execution environment. Admitted
+and retained readers use their persisted effective run policy; absence of a
+retained low-trust policy counts as standard. Live policy edits cannot relabel
+a standard local run as sandboxed. Read-only file access
+keeps its existing authorization rules.
+
+Source-copy checks retain deny-only ownership on failure but create a new
+isolated-copy proof only after physical identity, access, and trust checks pass.
+For low-trust sandbox runs, the harness also disables host worktree provisioning
+on fresh realization, reuse, and rebuild. This covers configured commands and
+the repository's built-in provision script; an empty configured command alone
+would still allow that fallback. The capability comes from the server's selected
+trust policy and environment, never repository configuration.
+
+After source authorization and retained-reader checks pass, the existing
+`source` and `project_source` kinds retain ownership on shared Git storage.
+Removing the original checkout cannot release private committed files in surviving
+worktrees. These records grant no authority and create no isolation proof. Denied
+source captures leave no new records. Worktree realization uses a verified checkout
+as its Git command directory, including when metadata sits inside another repository.
+
+No migration scans or copies existing agent home directories. Keep admitted native descriptors and recovery references until compatible controllers finish their persistence obligations. See [the architecture rollout contract](plans/2026-10-09-task-workspaces.md).

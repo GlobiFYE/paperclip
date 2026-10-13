@@ -1,3 +1,4 @@
+import { verifyInstalledDaytonaPlugin } from "./installed-daytona-plugin.js";
 import { NATIVE_COMPLETION_BUDGET_CENTS } from "./native-completion-defaults.js";
 import path from "node:path";
 import { installedReleaseDaytonaPlugin } from "./installed-release.js";
@@ -115,15 +116,14 @@ export async function setupLiveFixtures(input: {
     registry.register<PluginRecord>({
       id: "sandbox-provider",
       async setup() {
+        const installed = await verifyInstalledDaytonaPlugin(process.env, [execution]);
         return api.post<PluginRecord>("/api/plugins/install", {
-          packageName: process.env.PAPERCLIP_RUNNER_E2E_INSTALLED_CLI
-            ? installedReleaseDaytonaPlugin(process.env.PAPERCLIP_RUNNER_E2E_INSTALLED_CLI, process.env.PAPERCLIP_RUNNER_E2E_INSTALLED_DAYTONA_PLUGIN, process.env.PAPERCLIP_RUNNER_E2E_INSTALLED_DAYTONA_PLUGIN_VERSION)
-            : path.resolve(
+          packageName: installed?.packageRoot ?? path.resolve(
             import.meta.dirname,
             "../../packages/plugins/sandbox-providers/daytona",
           ),
           isLocalPath: true,
-        });
+        }, { timeout: 120_000 });
       },
       async teardown() {
         // The plugin is installed only in the isolated instance/database. The
@@ -142,7 +142,7 @@ export async function setupLiveFixtures(input: {
         budgetMonthlyCents: ["native-completion", "native-instruction-consolidation", "native-connection-guidance"].includes(execution.suite.id)
           || (execution.suite.id === "everyday-workflows" && ["hire-reuse", "delegate-feedback"].includes(execution.task.id)) ? NATIVE_COMPLETION_BUDGET_CENTS
           : execution.suite.id === "task-titles" ? TASK_TITLE_BUDGET_CENTS
-          : execution.suite.id === "stock-harness" ? 1_000 : 0,
+          : ["stock-harness", "task-workspaces"].includes(execution.suite.id) ? 1_000 : 0,
       });
     },
     async teardown() {

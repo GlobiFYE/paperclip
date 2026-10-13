@@ -91,6 +91,13 @@ The Board sets Company-level budgets. The CEO can set budgets for Agents below t
 
 ## 2. Agent Model [DRAFT]
 
+A human's personal primary agent is a company-scoped navigation and assignment
+preference, independent of the org chart, roles, stars, and authority. First human
+creation initializes it automatically. Later explicit choices persist across
+devices; recent task/chat choices take precedence. The profile owns the setting
+and replacement confirmation. See the personal-primary addendum in
+`SPEC-implementation.md` for persistence and lifecycle rules.
+
 Every employee is an agent. Agents are the workforce.
 
 ### Cryptographic identity
@@ -178,7 +185,7 @@ Hierarchical reporting structure. CEO at top, reports cascade down.
 
 **Full visibility across the org.** Every agent can see the entire org chart, all tasks, all agents. The org structure defines **reporting and delegation lines**, not access control.
 
-Visibility settings on an agent profile (where supported) do not alter company-level visibility for tasks, projects, issues, comments, costs, or activity. Those work-object privacy controls are not a V1 feature until centralized scoped authorization is in place.
+Visibility settings on an agent profile do not control task privacy. Work is company-open by default; opt-in private tasks and projects use centralized authorization as specified in `SPEC-implementation.md` and `ISSUE-PRIVACY.md`. Sharing a child grants access to it and its descendants. Ancestors and siblings require separate access.
 
 Each agent publishes a short description of their responsibilities and capabilities — almost like skills ("when I'm relevant"). This lets other agents discover who can help with what.
 
@@ -316,6 +323,9 @@ should name the rejected action and the specific restriction.
 
 There is no separate messaging or chat system. Tasks are the communication channel. This keeps all context attached to the work it relates to and creates a natural audit trail.
 
+Experimental external chat and voice connections are transports into this task
+system. They preserve the selected agent, task context, current caller authority,
+and governed-action checks; a voice session is not a separate authority or inbox.
 Experimental Agent Chat presents one persistent task per person and agent as a simplified conversation. Chat has a searchable secondary sidebar with agent avatars that lists every eligible agent, conversations first; adding an agent starts or reopens their single conversation. It retains the task composer, transcript, tools, attachments, documents, and existing Subtasks panel, with ordinary company visibility. New execution tasks are ordinary project tasks, not children of the conversation. Idle conversations wait for a message without entering execution-task work queues. Agents clarify goals here and create assigned tasks for substantial execution. `/new` resets provider context at an ordered session boundary within the same task while preserving visible history. `enableAgentChat` is disabled by default; the V1 lifecycle and rollout contract is specified in `SPEC-implementation.md`.
 
 ### Question recipients
@@ -325,6 +335,8 @@ Task questions may optionally name a particular user or agent. Explicit user
 recipients must be valid and authorized in the company before a question is
 saved. See `SPEC-implementation.md` §9.8.1 for the resolver contract.
 
+
+Experimental Agent Chat presents one persistent task per person and agent as a simplified conversation. Chat has a searchable secondary sidebar with agent avatars; adding an agent starts or reopens their single conversation. It retains the task composer, transcript, tools, attachments, documents, and existing Subtasks panel, with the task's selected visibility. New execution tasks are ordinary project tasks, not structural children of the conversation; private-source restrictions still flow through their run provenance. Idle conversations wait for a message without entering execution-task work queues. Agents clarify goals here and create assigned tasks for substantial execution. `/new` resets provider context at an ordered session boundary within the same task while preserving visible history. `enableAgentChat` is disabled by default; the V1 lifecycle and rollout contract is specified in `SPEC-implementation.md`.
 
 ### Implications
 
@@ -486,6 +498,10 @@ No separate "agent API" vs. "board API." Same endpoints, different authorization
 ### Work Artifacts
 
 Paperclip manages task-linked work artifacts: issue documents (rich-text plans, specs, notes attached to issues) and file attachments. Agents read and write these through the API as part of normal task execution. Full delivery infrastructure (code repos, deployments, production runtime) remains the agent's domain — Paperclip orchestrates the work, not the build pipeline.
+
+Self-contained HTML reports can render in an opaque-origin sandbox. The report
+cannot access the board's cookies, storage, or DOM. Users can switch to the raw
+source beside Download, which returns the original file.
 
 Users may start a task with only a prompt. Paperclip uses a short prompt slice as
 its initial title and asks the assigned agent to name the task early. Explicit
@@ -699,7 +715,15 @@ A source tracks repository identity, branch, selected paths, and installed commi
 an existing GitHub connection supplies caller-authorized reads. Manual refresh publishes
 complete local immutable versions, preserving skill identity and assignments. Selection
 operates on whole skill packages, with inspectable included files, declared runtime
-requirements, and advisory warnings for missing or external references. New
+requirements, and advisory warnings for missing or external references. A repository
+package retains supported source files while the user selects which skill entrypoints
+appear in the library. Authored content remains unchanged and shared files travel to
+the runtime. A declarative manifest can suggest public entrypoints and setup requirements;
+new imports keep repository files together and select all discovered skills. Missing
+references, setup problems and omitted files produce persistent warnings. Files rejected
+for unsafe execution or secret disclosure are excluded without blocking other files.
+The installed file viewer exposes saved repository dependencies. Importing never runs
+setup or configures host tools. New
 upstream skills require reviewed selection; removed or deselected skills remain
 installed. Editing starts with an independent copy. Write-back and PR publication
 are a later milestone; exact path and commit provenance provide their base.
@@ -716,6 +740,12 @@ configuration, plugin packages and outstanding hosted release gates. The
 [delivery plan](plans/2026-09-30-paperclip-public-mcp-and-plugins.md) separates
 external agent participation and granted third-party tools into later releases.
 
+The experimental OpenAI Dot Runner provider uses a separate `/mcp/runner`
+agent OAuth resource. It reuses browser/device consent and signed event delivery
+while preserving agent pairing, normal run admission and task authority.
+Personal grants cannot authorize Runner operations. See
+[OpenAI Dot Runner](openai-dot-runner.md) for its supported release boundary.
+
 ### Experimental connection routing
 
 A virtual AI connection can rotate new task/agent allocations through an
@@ -731,3 +761,18 @@ as free-form text in the instance database. Legacy agents use the default
 in standard, ask, and planning modes. Submission never changes task disposition
 or routes feedback externally. See [Agent commentary](agent-commentary.md) for
 authentication, replay, document-sized limits, inspection, and deletion semantics.
+
+### Managed decision models
+
+A company may configure a shared decision model for optional Paperclip features. The instance owns credential resolution, authorization, budget admission, and attributable service charges. Company-sponsored background use is enabled by default during configuration; explicit opt-out persists. User and agent requests keep their own access boundaries and cannot become sponsored background requests after denial. Availability is a cheap local capability check, and metadata-only request history makes service usage inspectable. The implemented V1 contract is in [decision-models.md](decision-models.md).
+
+
+### Task workspace ownership (2026-10-09)
+
+Organizational projects, task files, personal agent home, and provider home are separate concepts. App and chat tasks share one workspace policy: preserve a binding or explicit configured folder, otherwise allocate a stable task directory. A repository is optional and can be prepared without creating a project. Optional connection and destination defaults feed the same task policy; they do not grant permissions or relocate existing conversations.
+
+Agents select authorized workspace/repository intent while the harness owns paths, preparation, persistence and safe transitions. Intentional simultaneous sharing of one physical local/SSH folder remains supported. Provider sessions keep their admitted root through completion and recovery. See [SPEC-implementation.md](SPEC-implementation.md) and [the layer architecture](plans/2026-10-09-task-workspaces.md) for the versioned contracts and rollout constraints.
+
+### Fast responses
+
+A company may use a shared API model to acknowledge accepted human messages across tasks, agent chat and external channels while normal work starts. Acknowledgements retain their platform provenance and cannot satisfy execution or completion requirements. The bounded inference, authorization, sponsorship and independent accounting contract is defined in [fast-responses.md](fast-responses.md).
