@@ -17,7 +17,11 @@ Retire only `packages/shared/src/telemetry/client-contract.test.ts` after moving
 | `derives a different batchId for the same events under a different installId` | The same-named owner case remains unchanged with the clock frozen across clients, isolating install identity from timestamp differences. |
 | `emits a batchId of at least 32 hex chars — 128-bit collision floor` | `emits a batchId of at least 32 hex chars (128-bit collision floor)` retains both the minimum length and lowercase hexadecimal format checks. |
 
-The remaining owner controls for event registration, dynamic events, configuration, oversized/circular events, backoff, endpoint fallback and retry-store bounds are unchanged. No production code, generated telemetry contract or telemetry README changed; no runtime behavior changed.
+The remaining owner controls for event registration, dynamic events, configuration, oversized/circular events, backoff, endpoint fallback and retry-store bounds are unchanged. No production code or generated telemetry contract changed; no runtime behavior changed. The generated contract was checked first and remains byte-identical because no event names, dimensions, or schema version changed. The telemetry README now records `client.test.ts` as the durable owner for transport contract assertions.
+
+## Privacy review
+
+Independent review of this change found no production telemetry client, event, config, type, generated-contract, retention, or payload construction changes. Event names, dimensions, schema version, identity and privacy transforms, destination, opt-out behavior, and retention remain unchanged. The tests use the existing localhost endpoint and stubbed fetch; the assertions preserve the wire allow-set, schema version, count/byte limits, and retry payload boundaries. Privacy impact: none in emitted behavior.
 
 ## Exact reduction
 
