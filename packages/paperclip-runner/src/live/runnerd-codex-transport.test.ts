@@ -1762,6 +1762,9 @@ it("preserves OpenCode runtime bindings when a durable runner is respawned", () 
       environment: {
         PATH: "/bin",
         OPENROUTER_API_KEY: "test-provider-key",
+        PAPERCLIP_OPENCODE_SERVER_URL: "https://opencode.example",
+        PAPERCLIP_OPENCODE_SERVER_AUTH: "Bearer fixture-token",
+        PAPERCLIP_OPENCODE_SERVER_VERSION: "2.0.27",
         HOME: "/host/home",
         CODEX_HOME: "/host/codex-home",
         DATABASE_URL: "must-not-reach-runnerd",
@@ -1786,6 +1789,9 @@ it("preserves OpenCode runtime bindings when a durable runner is respawned", () 
   expect(environment).toMatchObject({
     PAPERCLIP_OPENCODE_PERMISSION_MODE: "deny",
     PAPERCLIP_OPENCODE_RUNTIME_DIR: "/isolated/session/opencode",
+    PAPERCLIP_OPENCODE_SERVER_URL: "https://opencode.example",
+    PAPERCLIP_OPENCODE_SERVER_AUTH: "Bearer fixture-token",
+    PAPERCLIP_OPENCODE_SERVER_VERSION: "2.0.27",
     PAPERCLIP_RUNNER_INSTANCE_ID: "runner-1",
     PAPERCLIP_RUN_ID: "run-1",
     PAPERCLIP_NORMALIZED_SESSION_ID: "session-1",
