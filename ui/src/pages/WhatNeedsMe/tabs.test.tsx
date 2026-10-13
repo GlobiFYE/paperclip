@@ -12,6 +12,7 @@ import { attentionApi } from "../../api/attention";
 import { approvalsApi } from "../../api/approvals";
 import { decisionsApi } from "../../api/decisions";
 import { plainDecision } from "./testFixtures";
+import { queryKeys } from "../../lib/queryKeys";
 import { issuesApi } from "../../api/issues";
 import { agentsApi } from "../../api/agents";
 import { authApi } from "../../api/auth";
@@ -127,4 +128,16 @@ it("keeps a deep-linked full card expanded when hydration finishes after the fee
   expect(ui().getByRole("tab", { name: "All 5" }).getAttribute("aria-selected")).toBe("true");
   expect(ui().getByTestId(target.id)).toBe(fullCard);
   expect(fullCard.getAttribute("data-expanded")).toBe("true");
+});
+
+it("does not pin a default from a stale cached feed while it refreshes", async () => {
+  const empty = { companyId: "company-1", generatedAt: "2026-10-12T11:00:00Z", items: [], totalCount: 0, deskBadgeCount: 0, nextCursor: null,
+    countsBySourceKind: Object.fromEntries(ATTENTION_SOURCE_KINDS.map((kind) => [kind, 0])) as never };
+  client.setQueryData([...queryKeys.attention("company-1"), "with-dismissed", null, null], empty);
+  const fresh = await attentionApi.list("company-1");
+  vi.mocked(attentionApi.list).mockImplementation(() => new Promise((resolve) => setTimeout(() => resolve(fresh), 120)));
+  await mount();
+  await settle(); await settle(); await settle(); await settle();
+  expect(ui().getByRole("tab", { name: "Hiring 1" }).getAttribute("aria-selected")).toBe("true");
+  expect(ui().getByTestId("location").textContent).toBe("?tab=hiring");
 });

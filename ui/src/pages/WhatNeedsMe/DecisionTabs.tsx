@@ -63,9 +63,10 @@ function CompanyDecisionTabs({ companyId }: { companyId: string | null }) {
   });
   const loading = feed.isLoading || hydrated.isFetching || session.isLoading;
   useEffect(() => {
-    if (loading || feed.error || requested === tab) return;
+    // Wait for any background refresh: a cached (possibly stale) feed must not pin an automatic default.
+    if (loading || feed.isFetching || feed.error || requested === tab) return;
     setParams((previous) => { const next = new URLSearchParams(previous); next.set("tab", tab); return next; }, { replace: true });
-  }, [loading, feed.error, requested, tab, setParams]);
+  }, [loading, feed.isFetching, feed.error, requested, tab, setParams]);
   if (!companyId) return <p>Select an organization first.</p>;
   if (loading && !requested && tab !== "all") return <PageSkeleton variant="approvals" />;
   const hires = categorized.flatMap(({ item, record, category }) => category === "hiring" && record?.kind === "approval" ? [{ item, record: record.record }] : []);
