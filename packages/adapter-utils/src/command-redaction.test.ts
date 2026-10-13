@@ -24,7 +24,7 @@ describe("looksLikeCredentialJwt", () => {
 
   it.each([
     "api.openai.com",
-    "bottybois.staging.paperclip.app",
+    "agents.staging.example.com",
     "deployment.credentials.example.md",
     "paperclip.native-model-envelope.v3",
   ])("rejects public dotted identifiers: %s", (input) => {
