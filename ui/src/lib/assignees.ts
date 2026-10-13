@@ -41,7 +41,7 @@ export function suggestedCommentAssigneeValue(
         if (event.actorType !== "agent" || !event.actorId || event.actorId === currentAgentId) return false;
         const details = event.details;
         if (!details || details.assigneeUserId !== currentUserId) return false;
-        if (event.action === "issue.created") return true;
+        if (event.action === "issue.created" || event.action === "issue.child_created") return true;
         if (event.action === "issue.reassigned") {
           return details.changed === true
             && Object.hasOwn(details, "previousAssigneeUserId")

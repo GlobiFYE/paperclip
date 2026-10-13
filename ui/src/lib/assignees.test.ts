@@ -154,3 +154,15 @@ it("prefers a newer native reassignment over a REST assignment and ignores nativ
   ];
   expect(suggestedCommentAssigneeValue({ assigneeUserId: "me" }, [], "me", undefined, history)).toBe("agent:beta");
 });
+
+
+it.each(["issue.created", "issue.child_created"])("uses a REST %s receipt assigned to the current human", (action) => {
+  const event: ActivityEvent = {
+    id: "creation", companyId: "company", entityType: "issue", entityId: "task",
+    agentId: "creator", runId: null, actorType: "agent", actorId: "creator", action,
+    createdAt: new Date("2026-02-01"),
+    details: { title: "Task", identifier: "PAP-1", status: "todo", assigneeAgentId: null, assigneeUserId: "me" },
+  };
+  expect(suggestedCommentAssigneeValue({ assigneeUserId: "me" }, [{ authorAgentId: "commenter" }], "me", undefined, [event])).toBe("agent:creator");
+  expect(suggestedCommentAssigneeValue({ assigneeUserId: "other" }, [], "other", undefined, [event])).toBe("");
+});

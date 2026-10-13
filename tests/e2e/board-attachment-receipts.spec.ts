@@ -9,7 +9,7 @@ import {
 
 // Real local Board UI, upload storage, comment HTTP routes, and disposable DB.
 // Only the interface flag and explicit transport/upload rejection faults are mocked.
-// Tasks belong to the Board user: no agent, runner, or provider is contacted.
+// Tasks have no recipient: no agent, runner, or provider is contacted.
 type Attachment = {
   id: string;
   issueCommentId: string | null;
@@ -44,7 +44,9 @@ async function setup(page: Page, request: APIRequestContext, classic: boolean) {
       data: {
         title: "Inspect the newly uploaded Board files",
         status: "todo",
-        assigneeUserId: "local-board",
+        // Keep attachment sends on the comment route. A task assigned to the
+        // current human now suggests an empty recipient and sends a reassignment.
+        assigneeUserId: null,
       },
     }),
   );
