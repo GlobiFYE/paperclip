@@ -88,6 +88,10 @@ vi.mock("@/lib/router", () => ({
 
 vi.mock("@/api/connection-intents", () => ({ connectionIntentsApi: connectionIntentsApiMocks }));
 
+vi.mock("@/features/connections/ConnectionSetupFlow", () => ({
+  ConnectionSetupFlow: () => <div data-testid="shared-connection-setup" />,
+}));
+
 function renderCard(
   props: Partial<ComponentProps<typeof IssueThreadInteractionCard>> = {},
 ) {
@@ -126,6 +130,24 @@ afterEach(() => {
 });
 
 describe("IssueThreadInteractionCard", () => {
+  it("arrows past a free-text radio without the textarea stealing focus", async () => {
+    const interaction = structuredClone(pendingAskUserQuestionsWithFreeTextOption);
+    const question = interaction.payload.questions[0];
+    const freeText = question.options.find((option) => option.freeText)!;
+    question.options = [question.options.find((option) => !option.freeText)!, freeText, { id: "last", label: "Last choice" }];
+    const host = renderCard({ interaction, onSubmitInteractionAnswers: vi.fn() });
+    const radios = within(host).getAllByRole("radio") as HTMLInputElement[];
+    await act(async () => { await userEvent.click(radios[0]); });
+    await act(async () => { await userEvent.keyboard("{ArrowRight}"); });
+    expect(radios[1].checked).toBe(true);
+    expect(host.querySelector("textarea")).toBeTruthy();
+    expect(document.activeElement).toBe(radios[1]);
+    await act(async () => { await userEvent.keyboard("{ArrowRight}"); });
+    expect(radios[2].checked).toBe(true);
+    expect(document.activeElement).toBe(radios[2]);
+    await act(async () => { await userEvent.keyboard("{ArrowLeft}{Tab}"); });
+    expect(document.activeElement).toBe(host.querySelector("textarea"));
+  });
   it("marks explicit recommendations and supports keyboard radio selection without submitting", async () => {
     const submit = vi.fn();
     const host = renderCard({ interaction: bulkQuestions(), onSubmitInteractionAnswers: submit });
@@ -164,6 +186,9 @@ describe("IssueThreadInteractionCard", () => {
     expect(dialog).toBeTruthy();
     expect(dialog?.textContent).toContain("Connect Notion");
     expect(dialog?.textContent).toContain("Complete connection setup without leaving this task.");
+    await act(async () => {
+      await vi.waitFor(() => expect(dialog?.querySelector('[data-testid="shared-connection-setup"]')).toBeTruthy());
+    });
   });
 
   it("keeps connection resolution controls exclusive to the addressed user", () => {

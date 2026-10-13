@@ -1276,7 +1276,6 @@ function AskUserQuestionsCard({
                               }))}
                             placeholder="Type your answer"
                             className="min-h-24 bg-background text-sm"
-                            autoFocus
                           />
                         ) : null}
                       </div>

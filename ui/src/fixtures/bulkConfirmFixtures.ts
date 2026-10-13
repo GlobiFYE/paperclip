@@ -1,5 +1,13 @@
 import type { Approval, AskUserQuestionsInteraction, AttentionItem, AttentionSourceKind, IssueThreadInteraction } from "@paperclipai/shared";
-import { pendingAskUserQuestionsInteraction } from "./issueThreadInteractionFixtures";
+import { pendingAskUserQuestionsInteraction, pendingRequestConfirmationInteraction } from "./issueThreadInteractionFixtures";
+
+export function bulkOwnerConfirmation(id = "owner-confirmation-1"): typeof pendingRequestConfirmationInteraction {
+  return { ...pendingRequestConfirmationInteraction, id, companyId: "company-1", issueId: "issue-1", status: "pending",
+    title: "Choose the report format", result: null,
+    bulkEligibility: { ownerDecision: true, governed: false, unknownKeys: false },
+    payload: { version: 1, prompt: "Use a short weekly report?", acceptLabel: "Yes, use a short report",
+      target: { type: "custom", key: "owner_decision" } } };
+}
 
 export function bulkApproval(id = "hire-1"): Approval {
   return { id, companyId: "company-1", type: "hire_agent", status: "pending", payload: { name: `Specialist ${id}` },
@@ -9,6 +17,7 @@ export function bulkApproval(id = "hire-1"): Approval {
 
 export function bulkQuestions(id = "questions-1"): AskUserQuestionsInteraction {
   return { ...pendingAskUserQuestionsInteraction, id, companyId: "company-1", issueId: "issue-1", status: "pending",
+    bulkEligibility: { ownerDecision: false, governed: false, unknownKeys: false },
     payload: { version: 1, questions: [{ id: "model", prompt: "Which model should I use?", selectionMode: "single", required: true,
       options: [{ id: "a", label: "Gemini Flash-Lite" }, { id: "b", label: "Another model" }] }],
       questionSet: { schema: "paperclip.question_set.v1", questions: [{ id: "model", prompt: "Which model should I use?", required: true,

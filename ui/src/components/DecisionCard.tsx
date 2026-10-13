@@ -463,7 +463,6 @@ export function DecisionCard({
                     <input
                       type="radio"
                       name={`decision-${decision.id}`}
-                      aria-label={option.label}
                       checked={selectedOptionId === option.id}
                       disabled={disabled}
                       onChange={() => { setSelectedOptionId(option.id); setConfirmOptionId(null); setConfirmText(""); }}

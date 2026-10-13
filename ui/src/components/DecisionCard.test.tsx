@@ -5,6 +5,7 @@ import { flushSync } from "react-dom";
 import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { within } from "storybook/test";
 import { DecisionCard, type DecisionIssueRef } from "./DecisionCard";
 import type { Decision, DecisionEffectExecution } from "../api/decisions";
 import { ThemeProvider } from "../context/ThemeContext";
@@ -138,6 +139,15 @@ afterEach(() => {
 });
 
 describe("DecisionCard", () => {
+  it("includes descriptions, effects and stale status in radio accessible names", () => {
+    const el = render({
+      decision: mkDecision({ options: [{ id: "cancel", label: "Cancel it", description: "Stops the remaining work.",
+        style: "destructive", effects: [{ type: "update_issue_status", targetIssueId: "issue-target", staleness: "strict", status: "cancelled" }] }] }),
+      targetChanged: { "issue-target": true },
+    });
+    const radio = within(el).getByRole("radio", { name: /Cancel it.*Blocked · stale.*Stops the remaining work\..*PAP-456/ });
+    expect((radio as HTMLInputElement).disabled).toBe(true);
+  });
   it("renders a pending decision with provenance, effect summary and dismiss", () => {
     const el = render({});
     expect(el.textContent).toContain("Pending");

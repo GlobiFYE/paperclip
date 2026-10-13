@@ -1501,6 +1501,11 @@ export interface RequestItemVerdictsResult {
 }
 
 export interface IssueThreadInteractionBase extends IssueThreadInteractionActorFields {
+  /** Server-computed from the raw stored payload before read-schema stripping.
+   * Missing on older servers; clients must fail closed for bulk owner confirmations.
+   * This is read metadata, never accepted as creation input.
+   */
+  bulkEligibility?: { ownerDecision: boolean; governed: boolean; unknownKeys: boolean };
   id: string;
   companyId: string;
   issueId: string;

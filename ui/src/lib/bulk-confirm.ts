@@ -1,6 +1,6 @@
 import {
   askUserQuestionsPayloadSchema,
-  requestCheckboxConfirmationPayloadSchema,
+  requestConfirmationCustomTargetSchema,
   requestConfirmationPayloadSchema,
   respondIssueThreadInteractionSchema,
   type Approval,
@@ -20,17 +20,23 @@ export interface BulkConfirmEntry {
   askedByAgentId: string | null;
   askedByUserId: string | null;
   answers: string[];
+  details: { label: string; markdown: string }[];
   fingerprint: string;
   action:
     | { kind: "approve_hire"; approvalId: string }
+    | { kind: "accept_confirmation"; issueId: string; interactionId: string }
     | { kind: "answer_questions"; issueId: string; interactionId: string; answers: AskUserQuestionsAnswer[] };
 }
 
-// G-04: no audited creator supplies a target/subtype guaranteed to be a simple
-// owner yes/no confirmation. Even untargeted cards can authorize PR merges.
-// Keep this allowlist empty until the server exposes such a discriminant.
+// G-04 + host follow-up: agents explicitly identify simple owner yes/no input.
+// Untargeted cards can authorize PR merges and must remain individual.
 // See doc/design/CONFIRM-ALL.md for the creator audit and excluded target keys.
-export const BULK_CONFIRM_TARGET_ALLOWLIST: readonly string[] = [];
+export const BULK_CONFIRM_TARGET_ALLOWLIST: readonly string[] = ["owner_decision"];
+
+// Defense in depth for metadata that survives API hydration. Raw stored keys
+// are checked by the server; the client must also require its classification.
+const bulkOwnerConfirmationPayloadSchema = requestConfirmationPayloadSchema.strict();
+const bulkOwnerConfirmationTargetSchema = requestConfirmationCustomTargetSchema.strict();
 
 /** Stable across object-key order and Date/JSON representations; any data drift skips. */
 export function bulkRecordFingerprint(value: unknown): string {
@@ -47,7 +53,7 @@ function object(value: unknown): value is Record<string, unknown> {
 }
 
 /** Validate full API records before they enter the planner. Never trust feed metadata. */
-export function validateBulkRecord(item: AttentionItem, value: unknown): HydratedBulkRecord | null {
+export function validateBulkRecord(item: AttentionItem, value: unknown, currentUserId?: string | null): HydratedBulkRecord | null {
   if (!object(value) || value.id !== item.subject.id || value.companyId !== item.companyId
     || item.subject.companyId !== item.companyId || typeof value.status !== "string"
     || !value.updatedAt || !object(value.payload)) return null;
@@ -58,16 +64,31 @@ export function validateBulkRecord(item: AttentionItem, value: unknown): Hydrate
   if (item.sourceKind !== "issue_thread_interaction" || item.subject.kind !== "interaction"
     || !item.relatedIssue || value.issueId !== item.relatedIssue.id
     || item.relatedIssue.companyId !== item.companyId) return null;
+  // Match the server's human audience rules, including its human override of
+  // agent-addressed cards. Identity-dependent restrictions fail closed.
+  if (!["anyone", "human_only", "not_creator"].includes(String(value.effectiveResolverPolicy))
+    || (value.addresseeUserId && value.addresseeUserId !== currentUserId)
+    || (value.effectiveResolverPolicy === "not_creator"
+      && (!currentUserId || value.createdByUserId === currentUserId))) return null;
   // Reject governed metadata before parsing: Zod can otherwise strip it.
   const payload = value.payload;
   if (["toolAction", "secretProposal", "connectionAuthorization"].some((key) => key in payload)
     || value.effectiveResolverPolicySource === "governed_action") return null;
   const schema = value.kind === "ask_user_questions" ? askUserQuestionsPayloadSchema
-    : value.kind === "request_confirmation" ? requestConfirmationPayloadSchema
-      : value.kind === "request_checkbox_confirmation" ? requestCheckboxConfirmationPayloadSchema : null;
+    : value.kind === "request_confirmation" ? bulkOwnerConfirmationPayloadSchema : null;
   if (!schema?.safeParse(value.payload).success) return null;
+  // Question read schemas also strip governed metadata. Require the server's
+  // raw-row classification instead of relying on surviving payload keys.
+  if (!object(value.bulkEligibility) || value.bulkEligibility.governed !== false) return null;
+  if (value.kind === "request_confirmation") {
+    const eligibility = value.bulkEligibility;
+    if (!object(eligibility) || eligibility.ownerDecision !== true
+      || eligibility.governed !== false || eligibility.unknownKeys !== false) return null;
+  }
   if (value.kind !== "ask_user_questions"
-    && (!object(payload.target) || typeof payload.target.key !== "string"
+    && (!object(payload.target) || payload.target.type !== "custom"
+      || !bulkOwnerConfirmationTargetSchema.safeParse(payload.target).success
+      || typeof payload.target.key !== "string"
       || !BULK_CONFIRM_TARGET_ALLOWLIST.includes(payload.target.key))) return null;
   return { item, kind: "interaction", record: value as unknown as IssueThreadInteraction };
 }
@@ -79,6 +100,8 @@ export function recommendedQuestionAnswers(payload: AskUserQuestionsPayload): {
 } | null {
   const canonical = payload.questionSet?.questions;
   if (!canonical?.length || canonical.length !== payload.questions.length) return null;
+  // These answers authorize external connection routing, even if recommended.
+  if ([...payload.questions, ...canonical].some((question) => question.id.startsWith("connection-provider:"))) return null;
   const answers: AskUserQuestionsAnswer[] = [];
   const labels: string[] = [];
   for (const question of payload.questions) {
@@ -109,7 +132,7 @@ export function bulkConfirmPlan(items: readonly HydratedBulkRecord[]): BulkConfi
     const identity = `${item.sourceKind}:${record.id}`;
     if (seen.has(identity) || record.status !== "pending") continue;
     seen.add(identity);
-    const common = { item, fingerprint: bulkRecordFingerprint(record) };
+    const common = { item, fingerprint: bulkRecordFingerprint(record), details: [] };
     if (hydrated.kind === "approval") {
       const approval = hydrated.record;
       if (approval.type !== "hire_agent") continue;
@@ -122,13 +145,36 @@ export function bulkConfirmPlan(items: readonly HydratedBulkRecord[]): BulkConfi
       const interaction = hydrated.record;
       const recommended = recommendedQuestionAnswers(interaction.payload);
       if (!recommended) continue;
+      const details: BulkConfirmEntry["details"] = [];
+      if (interaction.payload.questionSet?.description?.trim()) {
+        details.push({ label: "Question context", markdown: interaction.payload.questionSet.description });
+      }
+      for (const question of interaction.payload.questions) {
+        const canonical = interaction.payload.questionSet?.questions.find((entry) => entry.id === question.id);
+        for (const help of new Set([question.helpText, canonical?.helpText])) {
+          if (help?.trim()) details.push({ label: question.prompt, markdown: help });
+        }
+        for (const option of question.options) {
+          const canonicalOption = canonical?.options?.find((entry) => entry.id === option.id);
+          for (const description of new Set([option.description, canonicalOption?.description])) {
+            if (description?.trim()) details.push({ label: `${question.prompt} — ${option.label}`, markdown: description });
+          }
+        }
+      }
       plan.push({ ...common, title: interaction.title ?? interaction.payload.title ?? item.subject.title ?? "Answer questions",
         askedByAgentId: interaction.createdByAgentId ?? null, askedByUserId: interaction.createdByUserId ?? null,
-        answers: recommended.labels, action: { kind: "answer_questions", issueId: interaction.issueId,
+        answers: recommended.labels, details, action: { kind: "answer_questions", issueId: interaction.issueId,
           interactionId: interaction.id, answers: recommended.answers } });
+    } else if (hydrated.record.kind === "request_confirmation") {
+      const interaction = hydrated.record;
+      plan.push({ ...common, title: interaction.title ?? interaction.payload.prompt,
+        askedByAgentId: interaction.createdByAgentId ?? null, askedByUserId: interaction.createdByUserId ?? null,
+        answers: [`${interaction.payload.prompt} — Answer: ${interaction.payload.acceptLabel ?? "Confirm"}`],
+        details: interaction.payload.detailsMarkdown?.trim()
+          ? [{ label: "Confirmation details", markdown: interaction.payload.detailsMarkdown }] : [],
+        action: { kind: "accept_confirmation", issueId: interaction.issueId, interactionId: interaction.id } });
     }
-    // Decisions lack a recommendation flag. All confirmations fail the empty
-    // target/subtype allowlist; reviews and every other source remain individual.
+    // Decisions lack a recommendation flag; reviews and other sources remain individual.
   }
   return plan;
 }
