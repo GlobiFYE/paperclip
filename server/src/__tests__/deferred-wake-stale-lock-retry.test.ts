@@ -298,4 +298,110 @@ describeEmbeddedPostgres("heartbeat retryDeferredIssueExecutionWakes", () => {
     expect(second.staleLocksReleased).toBe(0);
     expect((await readWake(parkedWakeId))?.status).toBe("queued");
   });
+
+  it("claims the wake in the full recovery sequence: retry pass runs before the stale-lock sweep", async () => {
+    // The production startup/periodic recovery sequence runs
+    // retryDeferredIssueExecutionWakes() BEFORE sweepStaleIssueLocks() (the
+    // ordering is pinned in server-startup-feedback-export.test.ts). The
+    // sweep clears a terminal holder's lock columns without draining parked
+    // wakes; run first, the retry releases the failed holder through the
+    // standard drain and the wake claims before the sweep can clear the
+    // evidence — in the sweep-first order the retry would find no holder and
+    // the wake would strand.
+    const { assigneeAgentId, issueId, holderRunId, parkedWakeId } = await seed("failed");
+    const svc = service();
+
+    const retried = await svc.retryDeferredIssueExecutionWakes();
+    expect(retried.examined).toBe(1);
+    expect(retried.staleLocksReleased).toBe(1);
+
+    const swept = await svc.sweepStaleIssueLocks();
+    expect(swept.cleared).toBe(0);
+
+    const wake = await readWake(parkedWakeId);
+    expect(wake?.status).toBe("queued");
+    expect(wake?.reason).toBe("issue_execution_promoted");
+    expect(wake?.runId).toBeTruthy();
+
+    const promotedRun = await readRun(wake!.runId!);
+    expect(promotedRun?.agentId).toBe(assigneeAgentId);
+    expect((await readIssue(issueId))?.executionRunId).toBe(promotedRun?.id);
+    expect((await readRun(holderRunId))?.status).toBe("failed");
+  });
+
+  it("does not cancel the holder when the issue is reassigned back mid-pass (guarded cancel re-checks the issue row)", async () => {
+    const { formerAgentId, issueId, holderRunId, parkedWakeId } = await seed("queued");
+
+    // Race simulation: after the pass reads the reassignment shape but
+    // before its guarded cancel UPDATE executes, an operator assigns the
+    // issue back to the holder's agent. The service receives a wrapped db
+    // whose first heartbeat_runs UPDATE performs the flip at exactly that
+    // point, before letting the cancel UPDATE reach the database.
+    let flipped = false;
+    const rawUpdate = db.update.bind(db);
+    const racingDb = new Proxy(db, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver) as unknown;
+        if (prop !== "update" || typeof value !== "function") {
+          return typeof value === "function"
+            ? (value as (...args: unknown[]) => unknown).bind(target)
+            : value;
+        }
+        return (table: unknown) => {
+          if (table !== heartbeatRuns || flipped) return rawUpdate(table as never);
+          flipped = true;
+          // Drizzle's builder methods return new stage objects; track the
+          // current stage through the chain and execute that on await.
+          let current: unknown = rawUpdate(table as never);
+          const chain: Record<string, (...args: unknown[]) => unknown> = {};
+          for (const method of ["set", "where", "returning"] as const) {
+            chain[method] = (...args: unknown[]) => {
+              current = (current as Record<string, (...inner: unknown[]) => unknown>)[
+                method
+              ](...args);
+              return chain;
+            };
+          }
+          chain.then = ((
+            onFulfilled?: (value: unknown) => unknown,
+            onRejected?: (reason: unknown) => unknown,
+          ) =>
+            db
+              .update(issues)
+              .set({ assigneeAgentId: formerAgentId })
+              .where(eq(issues.id, issueId))
+              .then(() => current as never)
+              .then(onFulfilled, onRejected)) as (...args: unknown[]) => unknown;
+          return chain;
+        };
+      },
+    }) as unknown as typeof db;
+
+    const result = await heartbeatService(racingDb, {
+      runtimeEnv: { PAPERCLIP_IN_WORKTREE: "true" },
+    }).retryDeferredIssueExecutionWakes();
+
+    expect(flipped).toBe(true);
+    // The guarded cancel matched zero rows: the reassignment shape no longer
+    // holds at write time, so nothing is cancelled or released this pass.
+    expect(result.examined).toBe(1);
+    expect(result.liveHoldersSkipped).toBe(1);
+    expect(result.staleHoldersCancelled).toBe(0);
+    expect(result.staleLocksReleased).toBe(0);
+
+    const holder = await readRun(holderRunId);
+    expect(holder?.status).toBe("queued");
+    expect(holder?.errorCode).toBeNull();
+
+    // The parked wake stays parked; the holder is the re-current assignee's
+    // own queued run, whose release path owns the wake.
+    expect((await readWake(parkedWakeId))?.status).toBe("deferred_issue_execution");
+    expect((await readIssue(issueId))?.executionRunId).toBe(holderRunId);
+    const assignee = await db
+      .select({ assigneeAgentId: issues.assigneeAgentId })
+      .from(issues)
+      .where(eq(issues.id, issueId))
+      .then((rows) => rows[0] ?? null);
+    expect(assignee?.assigneeAgentId).toBe(formerAgentId);
+  });
 });

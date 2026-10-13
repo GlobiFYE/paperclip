@@ -99,6 +99,12 @@ const {
     reconcileTaskWatchdogs: vi.fn(async () => ({ triggered: 0 })),
     scanSilentActiveRuns: vi.fn(async () => ({ created: 0, escalated: 0 })),
     sweepStaleIssueLocks: vi.fn(async () => ({ cleared: 0 })),
+    retryDeferredIssueExecutionWakes: vi.fn(async () => ({
+      examined: 0,
+      staleHoldersCancelled: 0,
+      staleLocksReleased: 0,
+      liveHoldersSkipped: 0,
+    })),
     sweepPendingCleanupLeases: vi.fn(async () => ({ swept: 0, destroyed: 0, capped: 0 })),
     sweepExpiredRuntimeStatuses: vi.fn(() => 0),
     tickTimers: vi.fn(async () => ({ checked: 0, enqueued: 0, skipped: 0 })),
@@ -717,11 +723,26 @@ describe("startServer feedback export wiring", () => {
       await startServer();
       expect(heartbeatServiceMock.reconcileCostAccounting).toHaveBeenCalledTimes(1);
       expect(heartbeatServiceMock.sweepStaleIssueLocks).toHaveBeenCalledTimes(1);
+      // Production ordering invariant: the deferred-wake retry pass runs
+      // BEFORE the stale-lock sweep in the startup recovery sequence (and,
+      // asserted below, on the periodic one). The sweep clears terminal
+      // holders' lock columns without draining parked wakes, so a sweep-first
+      // order strands every wake the retry has not yet promoted.
+      expect(
+        heartbeatServiceMock.retryDeferredIssueExecutionWakes.mock.invocationCallOrder[0],
+      ).toBeLessThan(
+        heartbeatServiceMock.sweepStaleIssueLocks.mock.invocationCallOrder[0],
+      );
       expect(intervalCallback).not.toBeNull();
       intervalCallback?.();
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(heartbeatServiceMock.sweepStaleIssueLocks).toHaveBeenCalledTimes(2);
       expect(heartbeatServiceMock.reconcileCostAccounting).toHaveBeenCalledTimes(2);
+      expect(
+        heartbeatServiceMock.retryDeferredIssueExecutionWakes.mock.invocationCallOrder[1],
+      ).toBeLessThan(
+        heartbeatServiceMock.sweepStaleIssueLocks.mock.invocationCallOrder[1],
+      );
       expect(retiredDetector).not.toHaveBeenCalled();
     } finally {
       delete (runtime as Partial<typeof runtime>).reconcileProductivityReviews;

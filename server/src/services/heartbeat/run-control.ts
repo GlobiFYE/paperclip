@@ -824,7 +824,12 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
       if (!isHeartbeatRunTerminalStatus(holder.status)) {
         // Race-guarded compare-and-set on the exact non-running status read
         // above: a worker can claim the holder between the read and this
-        // write, and a freshly running run must never be clobbered.
+        // write, and a freshly running run must never be clobbered. The
+        // guarded write also re-verifies the reassignment shape against the
+        // issue row itself: an operator can assign the issue back to the
+        // holder's agent (or move the execution lock) after the shape read
+        // above, and a holder that is current again must never be cancelled
+        // by this pass.
         const cancelledAt = new Date();
         const cancelled = await db
           .update(heartbeatRuns)
@@ -841,6 +846,13 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
               eq(heartbeatRuns.id, holder.id),
               eq(heartbeatRuns.companyId, holder.companyId),
               eq(heartbeatRuns.status, holder.status),
+              sql`exists (
+                select 1 from issues
+                where issues.id = ${issueId}
+                  and issues.company_id = ${holder.companyId}
+                  and issues.assignee_agent_id = ${issue.assigneeAgentId}
+                  and issues.execution_run_id = ${holder.id}
+              )`,
             ),
           )
           .returning();
