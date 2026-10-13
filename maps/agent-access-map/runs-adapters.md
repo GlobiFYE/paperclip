@@ -91,6 +91,16 @@ or Legacy CLI check cannot replace that runtime evidence. Missing dependencies,
 credentials, invalid models and incompatible settings fail without silently
 changing runners. Account login remains board/owner-bound.
 
+For a linked Codex subscription, setup checks the resolved credential owner and
+stages a private probe copy before local or remote isolation. The general native
+home materializer retains its no-follow symlink guard. Refresh still targets the
+checked account source, and confirmed bounded retirement removes its private
+copy. Unconfirmed retirement retains the existing cleanup block and owned state.
+[Existing fake-credential setup controls](../../server/src/services/native-runtime/setup-readiness.test.ts)
+exercise linked/regular sources and failure cleanup. This adds no credential-read
+API, agent login authority or cross-company account access. Its source-only
+evidence does not qualify a live permitted/denied agent operation.
+
 Verification for this scope remains `not-run`: use an admitted agent REST/CLI
 validation path, assert missing grants and cross-company targets/accounts are
 denied, then prove the useful task/follow-up separately. `hire_agent` inherits its

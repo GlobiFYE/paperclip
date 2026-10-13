@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { ADAPTER_AUTH_MISSING_CHECK_CODE } from "@paperclipai/shared";
+const { prepareIsolatedCodexHome } = await import(new URL("../../../../packages/paperclip-runner/src/drivers/runtime-context-materializer.ts", import.meta.url).href);
 const { execute, nativeProbe, selectedRunner, selectedRemoteRunner, sshExecute, sshRunner, nativeArtifacts, remoteLauncher, registerPrp, ingressConnect } = vi.hoisted(() => ({ execute: vi.fn(), nativeProbe: vi.fn(), selectedRunner: vi.fn(), selectedRemoteRunner: vi.fn(), sshExecute: vi.fn(), sshRunner: vi.fn(), nativeArtifacts: vi.fn(), remoteLauncher: vi.fn(), registerPrp: vi.fn(), ingressConnect: vi.fn() }));
 vi.mock("@paperclipai/adapter-utils/execution-target", () => ({ runAdapterExecutionTargetShellCommand: execute }));
 vi.mock("./native-ssh-command-runner.js", () => ({ createNativeSshCommandRunner: sshRunner }));
@@ -99,6 +100,109 @@ describe("Codex selected native account verification", () => {
   const sshContext = { companyId: "company", adapterType: "paperclip_runner", config: {}, executionTarget: {
     kind: "remote" as const, transport: "ssh" as const, remoteCwd: "/qa-workspace", spec: { host: "qa-host", username: "qa-user", port: 22, remoteCwd: "/qa-workspace", remoteWorkspacePath: "/qa-workspace", privateKey: null, knownHosts: null, strictHostKeyChecking: true },
   } };
+  it.each(["local", "remote"].flatMap(transport => [false, true].map(linked => ({ transport, linked }))))
+  ("seeds the selected subscription before isolated $transport setup (linked=$linked)", async ({ transport, linked }) => {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "native-selected-auth-")));
+    const auth = JSON.stringify({ tokens: { account_id: "fixture-account", id_token: "fixture-id", access_token: "fixture-access", refresh_token: "fixture-refresh" }, last_refresh: "2026-01-01T00:00:00.000Z" });
+    const stored = join(home, linked ? "account-store.json" : "auth.json");
+    let seeded = false;
+    try {
+      await writeFile(stored, auth, { mode: 0o600 });
+      if (linked) await symlink(stored, join(home, "auth.json"));
+      await writeFile(join(home, "config.toml"), 'cli_auth_credentials_store = "file"\n[mcp_servers.host_only]\ncommand = "untrusted-host-tool"\n', { mode: 0o600 });
+      await writeFile(join(home, "unassigned-private-file"), "must-not-copy");
+      nativeProbe.mockImplementation(async input => {
+        expect(input.environment._PAPERCLIP_NATIVE_SETUP_CODEX_AUTH_JSON_SECRET).toBeUndefined();
+        const codexHome = join(input.runtimeDirectory, "codex-home");
+        await prepareIsolatedCodexHome({ context: null, codexHome, sourceCodexHome: input.transportOptions.sourceCodexHome,
+          apiKey: input.environment.CODEX_API_KEY ?? input.environment.OPENAI_API_KEY });
+        const privateAuth = await readFile(join(codexHome, "auth.json"), "utf8").catch(() => null);
+        seeded = privateAuth === auth;
+        expect((await readFile(join(codexHome, "config.toml"), "utf8"))).not.toContain("untrusted-host-tool");
+        if (!seeded) throw new Error("authentication required");
+        if (linked) {
+          const source = join(input.runtimeDirectory, "codex-credential-source");
+          expect(input.transportOptions.sourceCodexHome).toBe(source);
+          expect((await stat(source)).mode & 0o777).toBe(0o700);
+          expect((await stat(join(source, "auth.json"))).mode & 0o777).toBe(0o600);
+          expect((await readdir(source)).sort()).toEqual(["auth.json", "config.toml"]);
+        }
+        if (transport === "remote") {
+          await remoteLauncher.mock.calls[0][0].ensureArtifact();
+          const upload = sshExecute.mock.calls.find(([value]) => value.args?.[1]?.includes("/codex-home/auth.json"))?.[0];
+          expect(upload).toBeDefined();
+          expect(Buffer.from(upload!.stdin, "base64").toString("utf8")).toBe(auth);
+          expect(upload!.args[1]).toContain("chmod 600");
+        }
+        await input.onCleanupConfirmed();
+        return receipt("codex", "gpt-6.1-sol");
+      });
+      const testContext = transport === "remote" ? sshContext : { companyId: "company", adapterType: "paperclip_runner", config: {} };
+      const result = await testNativeRunnerAuthentication({ ...testContext, config: { env: { CODEX_HOME: "/untrusted-configured-home", _PAPERCLIP_NATIVE_SETUP_CODEX_AUTH_JSON_SECRET: "spoofed-auth" } }, managedAiCredentialHome: home }, "codex", "gpt-6.1-sol");
+      expect(result.status).toBe("pass");
+      expect(seeded).toBe(true);
+      expect(await readFile(stored, "utf8")).toBe(auth);
+      expect(JSON.stringify(result)).not.toContain("fixture-access");
+      await expect(stat(nativeProbe.mock.calls[0][0].runtimeDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(execute).not.toHaveBeenCalled();
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+  it.each(["local", "remote"].flatMap(transport => ["dangling", "foreign-owner", "unsafe-mode", "oversize"].map(mode => ({ transport, mode }))))
+  ("rejects $mode linked subscription before $transport provider admission", async ({ transport, mode }) => {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "native-invalid-link-")));
+    const stored = join(home, "account-store.json");
+    let owner: ReturnType<typeof vi.spyOn> | undefined;
+    try {
+      if (mode !== "dangling") await writeFile(stored, mode === "oversize" ? "x".repeat(65_537) : '{"tokens":{"account_id":"fixture-account"}}', { mode: 0o600 });
+      await symlink(stored, join(home, "auth.json"));
+      if (mode === "unsafe-mode") await chmod(stored, 0o644);
+      if (mode === "foreign-owner") owner = vi.spyOn(process, "getuid").mockReturnValue(process.getuid!() + 1);
+      nativeProbe.mockResolvedValue(receipt("codex", "gpt-6.1-sol"));
+      const testContext = transport === "remote" ? sshContext : { companyId: "company", adapterType: "paperclip_runner", config: {} };
+      const result = await testNativeRunnerAuthentication({ ...testContext, managedAiCredentialHome: home }, "codex", "gpt-6.1-sol");
+      expect(result.status).toBe("fail");
+      expect(nativeProbe).not.toHaveBeenCalled();
+      expect(sshExecute).not.toHaveBeenCalled();
+      if (mode === "dangling") expect(result.checks.some(check => check.code === ADAPTER_AUTH_MISSING_CHECK_CODE)).toBe(true);
+    } finally { owner?.mockRestore(); await rm(home, { recursive: true, force: true }); }
+  });
+  it.each(["local", "remote"])("redacts checked file credentials from %s native probe errors without exporting them to env", async transport => {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "native-file-redaction-")));
+    const auth = JSON.stringify({ tokens: { account_id: "fixture-account", id_token: "fixture-id", access_token: "fixture-access", refresh_token: "fixture-refresh" } });
+    try {
+      await writeFile(join(home, "account-store.json"), auth, { mode: 0o600 });
+      await symlink(join(home, "account-store.json"), join(home, "auth.json"));
+      nativeProbe.mockImplementation(async input => {
+        expect(input.environment._PAPERCLIP_NATIVE_SETUP_CODEX_AUTH_JSON_SECRET).toBeUndefined();
+        throw new Error("authentication failed: " + auth + " fixture-access fixture-refresh");
+      });
+      const testContext = transport === "remote" ? sshContext : { companyId: "company", adapterType: "paperclip_runner", config: {} };
+      const result = await testNativeRunnerAuthentication({ ...testContext, managedAiCredentialHome: home }, "codex", "gpt-6.1-sol");
+      expect(result.status).toBe("fail");
+      expect(JSON.stringify(result)).not.toMatch(/fixture-account|fixture-access|fixture-refresh|fixture-id/);
+      expect(result.checks[0].message).toContain("[REDACTED]");
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+  it.each(["local", "remote"].flatMap(transport => [false, true].map(confirmed => ({ transport, confirmed }))))
+  ("settles private linked credentials only after confirmed canceled $transport setup (confirmed=$confirmed)", async ({ transport, confirmed }) => {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "native-linked-cancel-")));
+    const auth = '{"tokens":{"account_id":"fixture-account","access_token":"fixture-access"}}';
+    try {
+      await writeFile(join(home, "account-store.json"), auth, { mode: 0o600 });
+      await symlink(join(home, "account-store.json"), join(home, "auth.json"));
+      nativeProbe.mockImplementation(async input => {
+        expect(await readFile(join(input.transportOptions.sourceCodexHome, "auth.json"), "utf8")).toBe(auth);
+        if (confirmed) await input.onCleanupConfirmed();
+        throw new Error("Native provider setup canceled");
+      });
+      const testContext = transport === "remote" ? sshContext : { companyId: "company", adapterType: "paperclip_runner", config: {} };
+      expect((await testNativeRunnerAuthentication({ ...testContext, managedAiCredentialHome: home }, "codex", "gpt-6.1-sol")).status).toBe("fail");
+      const root = nativeProbe.mock.calls[0][0].runtimeDirectory;
+      if (confirmed) await expect(stat(root)).rejects.toMatchObject({ code: "ENOENT" });
+      else expect(await readFile(join(root, "codex-credential-source", "auth.json"), "utf8")).toBe(auth);
+      expect(await readFile(join(home, "account-store.json"), "utf8")).toBe(auth);
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
   it.each(["linux-arm64", "linux-x64"])("uses task staging and the selected %s SSH daemon without a provider pack", async target => {
     const selectedBinary = `/fixture/bin/${target}/paperclip-runnerd`;
     selectedRemoteRunner.mockResolvedValue(selectedBinary);
@@ -162,7 +266,8 @@ describe("Codex selected native account verification", () => {
     const home = await mkdtemp(join(tmpdir(), "native-ssh-managed-account-"));
     const auth = (account: string, marker: string, age: number) => JSON.stringify({ tokens: { account_id: account, id_token: `id-${marker}`, access_token: `access-${marker}`, refresh_token: `refresh-${marker}` }, last_refresh: new Date(Date.now() - age).toISOString() });
     try {
-      await writeFile(join(home, "auth.json"), auth("qa-account", "old", 120_000), { mode: 0o600 });
+      await writeFile(join(home, "account-store.json"), auth("qa-account", "old", 120_000), { mode: 0o600 });
+      await symlink(join(home, "account-store.json"), join(home, "auth.json"));
       const refreshed = auth(mode === "another-account" ? "different-account" : "qa-account", "new", 60_000);
       sshExecute.mockImplementation(async input => ({ exitCode: input.args?.[2] === "paperclip-native-refresh" && mode === "read-failure" ? 1 : 0, timedOut: false,
         stdout: input.args?.[2] === "paperclip-native-refresh" ? Buffer.from(refreshed).toString("base64") : "", stderr: "" }));
@@ -182,7 +287,7 @@ describe("Codex selected native account verification", () => {
       expect(JSON.stringify(result)).not.toContain("access-new");
       const read = sshExecute.mock.calls.find(([input]) => input.args?.[2] === "paperclip-native-refresh")![0];
       expect(read.command).toBe("sh"); expect(read.args[1]).toContain("head -c 65537"); expect(read.args[1]).toContain("test ! -L");
-      expect(nativeProbe.mock.calls[0][0].transportOptions.sourceCodexHome).toBe(home);
+      expect(nativeProbe.mock.calls[0][0].transportOptions.sourceCodexHome).toBe(join(nativeProbe.mock.calls[0][0].runtimeDirectory, "codex-credential-source"));
       if (mode === "read-failure") expect(result.checks[0].message).toContain("refresh handoff unavailable");
       if (mode === "uncertain-close") expect(result.checks[0].message).toContain("teardown was not confirmed");
     } finally { await rm(home, { recursive: true, force: true }); }

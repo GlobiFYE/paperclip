@@ -100,6 +100,13 @@ recover the harness and runner, and a changed harness or runner invalidates stal
 test results. Existing Legacy agents remain Legacy when their onboarding/setup
 configuration is reopened; this journey does not migrate them.
 
+Reload both `/onboarding` and the company-prefixed route after the first agent is
+saved but before Get started. The authorized draft must retain its current step
+and that agent's execution choice. An explicit new-company opening still starts
+fresh. Opening another company must clear the previous company's resource IDs;
+an unauthorized account must not restore its draft. Existing component controls
+cover these boundaries; they do not substitute for the managed first-task eval.
+
 ### `cli-setup`
 
 Automated: [CLI onboarding](../../cli/src/__tests__/onboard.test.ts) and [isolated test drive](../../cli/src/__tests__/test-drive.test.ts) cover their setup contracts; they do not establish that every model account is usable.

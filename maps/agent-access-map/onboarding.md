@@ -200,3 +200,12 @@ Scoped source review of [draft restoration](../../ui/src/components/OnboardingWi
 preserves harness/runner intent and invalidates obsolete setup-test results after
 a selection change. Browser draft continuity is not API or live-agent evidence,
 and opening a saved Legacy agent does not apply new-agent defaults.
+
+The initial matching route opening preserves the authorized saved wizard step
+on bare and company-prefixed reloads. Explicit new-company or changed-company
+openings retain their navigation override and clear foreign company resource
+IDs. [Existing component controls](../../ui/src/components/OnboardingWizard.test.tsx)
+exercise these presentation and account boundaries. This scoped correction adds
+no server draft API, agent grant or proof of live actor authorization. The
+managed first-task eval still reloads before Get started and remains a separate
+live acceptance gate.

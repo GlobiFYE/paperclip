@@ -59,6 +59,15 @@ existing agent, make an unrelated edit, and confirm both its persisted runner an
 next run stay unchanged. Use [hiring/import preservation](./agents.md#hire-agent)
 for approval and portability controls.
 
+Test native Codex with a saved subscription whose auth file is a managed link,
+as well as a regular file and an API-key account. Setup must seed the isolated
+probe from the checked account without exposing credentials or changing its
+saved runner. Dangling or incorrectly owned credentials must fail clearly. The
+private probe copy must be removed after confirmed retirement following success,
+failure or cancellation. Unconfirmed shutdown remains a cleanup failure.
+Existing setup controls use fake credentials; real account execution remains
+a separate acceptance requirement.
+
 ### `run-history`
 
 Automated: [live run routes](../../server/src/__tests__/agent-live-run-routes.test.ts) and [run event sequencing](../../server/src/__tests__/heartbeat-run-event-sequencing.test.ts) cover run data contracts.

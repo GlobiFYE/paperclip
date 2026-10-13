@@ -781,6 +781,7 @@ function OnboardingWizardInner({
   // changes, and takes whatever the step is at that moment.
   const initialStepRef = useRef<Step | undefined>(undefined);
   initialStepRef.current = effectiveOnboardingOptions.initialStep;
+  const openingRequestRef = useRef<{ open: boolean; companyId: string | null; hasOpened: boolean } | null>(null);
 
   // Reset the route-dismissed flag when navigating to a different path.
   useEffect(() => {
@@ -820,20 +821,29 @@ function OnboardingWizardInner({
   // Navigating from one company's onboarding path to another re-decides the
   // step; the same request re-deriving a fresher value does not.
   useEffect(() => {
+    const routeCompanyId = effectiveOnboardingOptions.companyId ?? null;
+    const previousRequest = openingRequestRef.current;
+    openingRequestRef.current = { open: effectiveOnboardingOpen, companyId: routeCompanyId,
+      hasOpened: previousRequest?.hasOpened === true || effectiveOnboardingOpen };
     if (!effectiveOnboardingOpen) return;
-    // If explicit options are provided, they take precedence over saved state
-    if (initialStepRef.current) {
+    if (previousRequest?.open && previousRequest.companyId === routeCompanyId) return;
+    const initialRequest = previousRequest?.hasOpened !== true;
+    const resumesRouteDraft = initialRequest && !onboardingOpen && saved !== null
+      && typeof saved.step === "number" && saved.step >= 1 && saved.step <= 5
+      && (routeCompanyId ? routeCompanyId === saved.createdCompanyId : !companyPrefix);
+    if (initialStepRef.current && !resumesRouteDraft) {
       setStep(initialStepRef.current);
       setEntryStep(initialStepRef.current);
     }
-    const routeCompanyId = effectiveOnboardingOptions.companyId ?? null;
     if (routeCompanyId) {
       // Claim ownership only when the route *introduces* a company. A route
       // that merely names the one already in hand - the wizard created it,
       // then the user navigated to that company's onboarding path - has not
       // supplied anything, so it must not take ownership of it. Otherwise
       // navigating on to `/onboarding` would clear work the wizard did.
-      if (routeCompanyId !== createdCompanyIdRef.current) {
+      if (routeCompanyId !== createdCompanyIdRef.current
+        || (initialRequest && typeof saved?.createdCompanyId === "string"
+          && routeCompanyId !== saved.createdCompanyId)) {
         setCreatedCompanyId(routeCompanyId);
         clearCompanyScopedState();
       }
@@ -857,7 +867,7 @@ function OnboardingWizardInner({
       routeCompanyIdRef.current = routeCompanyId;
       return;
     }
-    if (routeCompanyIdRef.current) {
+    if (routeCompanyIdRef.current || (initialRequest && companyPrefix && saved?.createdCompanyId)) {
       // The route named a company and now does not - the user navigated from
       // an existing company's onboarding to `/onboarding`, or to a prefix that
       // matches nothing. Drop it. Keeping it leaves the wizard showing step 1,

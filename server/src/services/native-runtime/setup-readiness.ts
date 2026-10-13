@@ -1,4 +1,5 @@
-import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
+import { constants } from "node:fs";
+import { lstat, mkdir, mkdtemp, open, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { copyBackCodexAuth } from "@paperclipai/adapter-codex-local/server";
@@ -28,6 +29,41 @@ function redactNativeProbeMessage(message: string, environment: Record<string, s
   return message.slice(0, 2000);
 }
 
+async function prepareProbeCodexSource(runtimeDirectory: string, sourceCodexHome: string, authJson?: string): Promise<string> {
+  if (authJson === undefined) return sourceCodexHome;
+  let config: Buffer | undefined;
+  const source = await open(join(sourceCodexHome, "config.toml"), constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK)
+    .catch((error: NodeJS.ErrnoException) => { if (error.code === "ENOENT" || error.code === "ELOOP") return null; throw error; });
+  if (source) {
+    try {
+      const metadata = await source.stat();
+      if (metadata.isFile()) {
+        const bytes = Buffer.alloc(1024 * 1024 + 1);
+        let size = 0;
+        while (size < bytes.length) {
+          const result = await source.read(bytes, size, bytes.length - size, size);
+          if (!result.bytesRead) break;
+          size += result.bytesRead;
+        }
+        if (size > 1024 * 1024) throw new Error("The selected Codex configuration exceeds its size limit.");
+        config = bytes.subarray(0, size);
+      }
+    } finally { await source.close(); }
+  }
+  const credentialSource = join(runtimeDirectory, "codex-credential-source");
+  let created = false;
+  try {
+    await mkdir(credentialSource, { mode: 0o700 });
+    created = true;
+    await writeFile(join(credentialSource, "auth.json"), authJson, { mode: 0o600, flag: "wx" });
+    if (config) await writeFile(join(credentialSource, "config.toml"), config, { mode: 0o600, flag: "wx" });
+    return credentialSource;
+  } catch (error) {
+    if (created) await rm(credentialSource, { recursive: true, force: true });
+    throw error;
+  }
+}
+
 async function probeRemoteNativeCodex(options: {
   context: AdapterEnvironmentTestContext;
   model: string | null;
@@ -35,6 +71,7 @@ async function probeRemoteNativeCodex(options: {
   environment: Record<string, string>;
   sourceCodexHome: string;
   credentialRefreshAuthPath?: string;
+  sourceAuthJson?: string;
   timeoutMs: number;
 }) {
   const target = options.context.executionTarget;
@@ -66,6 +103,7 @@ async function probeRemoteNativeCodex(options: {
     if (result.timedOut || result.exitCode !== 0) throw new Error(message);
   };
   const runtimeDirectory = await realpath(await mkdtemp(join(tmpdir(), "paperclip-native-setup-")));
+  const sourceCodexHome = await prepareProbeCodexSource(runtimeDirectory, options.sourceCodexHome, options.sourceAuthJson);
   let remoteDirectoryCreated = false;
   let remoteCaBundlePath: string | undefined;
   let signalSpawned!: () => void;
@@ -74,7 +112,7 @@ async function probeRemoteNativeCodex(options: {
     workingDirectory: remoteWorkspace, environment: options.environment, timeoutMs: options.timeoutMs,
     transportOptions: {
       externallySandboxed: target.transport === "sandbox",
-      runnerBinary: controllerRunnerBinary, codexCommand: remoteCodexBinary, sourceCodexHome: options.sourceCodexHome,
+      runnerBinary: controllerRunnerBinary, codexCommand: remoteCodexBinary, sourceCodexHome,
       runnerFilesystemRoot: remoteFilesystemRoot, runnerStateDirectory: remoteStateDirectory,
       prpIdentity: { runnerInstanceId, runId: id, environmentLeaseId: `setup-${id}`, normalizedSessionId: `setup-${id}`, turnId: `turn-${id}`, itemId: `item-${id}` },
       readRunnerState: () => readRemoteRunnerState({ runner, stateDirectory: remoteStateDirectory }),
@@ -155,6 +193,7 @@ export async function testNativeRunnerAuthentication(context: AdapterEnvironment
   const effort = context.config.modelReasoningEffort ?? context.config.reasoningEffort ?? context.config.effort;
   const timeoutMs = remote ? 90_000 : 45_000;
   let runtimeDirectory: string | undefined;
+  let sourceAuthJson: string | undefined;
   try {
     if (provider === "codex") {
       const { buildNativeProviderEnvironment } = await import("./native-session-executor.js");
@@ -162,24 +201,31 @@ export async function testNativeRunnerAuthentication(context: AdapterEnvironment
     }
     let credentialRefreshAuthPath: string | undefined;
     if (sourceCodexHome && !environment.OPENAI_API_KEY?.trim() && !environment.PAPERCLIP_AI_PROVIDER_KEY?.trim()) {
+      let linked = false;
       try {
-        credentialRefreshAuthPath = await realpath(join(sourceCodexHome, "auth.json"));
-        const source = await stat(credentialRefreshAuthPath);
+        const authPath = join(sourceCodexHome, "auth.json");
+        linked = (await lstat(authPath)).isSymbolicLink();
+        const resolvedAuthPath = await realpath(authPath);
+        const source = await stat(resolvedAuthPath);
         if (!source.isFile() || source.uid !== process.getuid?.()) throw new Error("Invalid Codex source credential owner.");
+        if (linked) sourceAuthJson = await readLocalAiCredentialFile(resolvedAuthPath);
+        credentialRefreshAuthPath = resolvedAuthPath;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        if (linked) throw new Error("Codex authentication required: the selected credential link is unavailable.");
       }
     }
     let receipt: Awaited<ReturnType<typeof probeNativeRunnerEnvironment>>;
     if (context.executionTarget?.kind === "remote") {
-      receipt = await probeRemoteNativeCodex({ context, model, environment, sourceCodexHome: sourceCodexHome ?? "", credentialRefreshAuthPath, timeoutMs,
+      receipt = await probeRemoteNativeCodex({ context, model, environment, sourceCodexHome: sourceCodexHome ?? "", credentialRefreshAuthPath, sourceAuthJson, timeoutMs,
         ...(typeof effort === "string" && effort ? { reasoningEffort: effort } : {}) });
     } else {
       runtimeDirectory = await realpath(await mkdtemp(join(tmpdir(), "paperclip-native-setup-")));
+      const probeSourceCodexHome = await prepareProbeCodexSource(runtimeDirectory, sourceCodexHome ?? "", sourceAuthJson);
       receipt = await probeNativeRunnerEnvironment({ runtimeDirectory, provider, model, environment, timeoutMs,
         ...(provider === "codex" && typeof effort === "string" && effort ? { reasoningEffort: effort } : {}),
         onCleanupConfirmed: async () => { await rm(runtimeDirectory!, { recursive: true, force: true }); },
-        transportOptions: { runnerBinary: resolvePaperclipRunnerBinary(), sourceCodexHome: sourceCodexHome ?? "", externallySandboxed: false },
+        transportOptions: { runnerBinary: resolvePaperclipRunnerBinary(), sourceCodexHome: probeSourceCodexHome, externallySandboxed: false },
         ...(credentialRefreshAuthPath ? { onCodexCredentialRefresh: async (filename: string) => {
           if (filename !== join(runtimeDirectory!, "codex-home", "auth.json")) throw new Error("The native Codex credential refresh handoff is invalid.");
           await copyBackCodexAuth({ hostAuthPath: credentialRefreshAuthPath!, log: () => {}, readSandboxAuth: async () => Buffer.from(await readLocalAiCredentialFile(filename)) });
@@ -191,7 +237,7 @@ export async function testNativeRunnerAuthentication(context: AdapterEnvironment
     return { adapterType: "paperclip_runner", status: "pass", testedAt: new Date().toISOString(), checks: [{ code: `${provider}_hello_probe_passed`, level: "info",
       message: `The native ${provider} runtime verified the selected account and model in ${remote ? "the selected environment" : "the Paperclip host"}.` }] };
   } catch (error) {
-    const message = redactNativeProbeMessage(error instanceof Error ? error.message : "The selected native runtime could not verify this account.", environment);
+    const message = redactNativeProbeMessage(error instanceof Error ? error.message : "The selected native runtime could not verify this account.", { ...environment, ...(sourceAuthJson ? { [authKey]: sourceAuthJson } : {}) });
     const authentication = /(?:invalid (?:api[- ]?key|auth(?:entication)? token)|authentication (?:failed|required)|unauthenticated|unauthorized|not authenticated|please (?:log|sign) in|not logged in|\b(?:401|403)\b)/i.test(message);
     return { adapterType: "paperclip_runner", status: "fail", testedAt: new Date().toISOString(), checks: [{ code: `${provider}_hello_probe_${authentication ? "auth_required" : /timed out/i.test(message) ? "timeout" : "failed"}`, level: "error", message,
       hint: "Check the selected account, model access, and native runtime prerequisites, then retry. Legacy runner is available explicitly in Advanced." },

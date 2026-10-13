@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act } from "react";
+import { act, StrictMode } from "react";
 import type { LocalAiLoginStatus } from "@paperclipai/shared";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -171,8 +171,10 @@ const mockAdapterRegistry = vi.hoisted(() => ({
   disabled: new Set<string>(),
 }));
 
+const mockRouterState = vi.hoisted(() => ({ pathname: "/" }));
+
 vi.mock("@/lib/router", () => ({
-  useLocation: () => ({ pathname: "/", search: "", hash: "", state: null }),
+  useLocation: () => ({ pathname: mockRouterState.pathname, search: "", hash: "", state: null }),
   useNavigate: () => vi.fn(),
   useParams: () => ({}),
 }));
@@ -356,6 +358,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
     mockSecretsApi.listMyUserSecrets.mockResolvedValue([]);
     mockSecretsApi.removeUserSecretDefinition.mockResolvedValue({ ok: true });
     window.localStorage.clear();
+    mockRouterState.pathname = "/";
     mockDialog.onboardingOpen = true;
     mockDialog.onboardingOptions = {};
     mockDialog.onboardingRouteDismissed = false;
@@ -1255,6 +1258,116 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       expect(mockAgentsApi.getClaudeOAuthTokenStatus).toHaveBeenCalledTimes(discoveryReads + 2);
 
       await act(async () => root.unmount());
+    });
+  });
+
+  describe("restored route progress", () => {
+    function savedReview(runner = "auto") {
+      return { step: 5, companyName: "Saved Co", createdCompanyId: "c1", createdCompanyPrefix: "SC",
+        createdAgentId: "saved-agent", agentName: "Saved lead", adapterType: "codex_local", runner,
+        model: "gpt-5.6-sol", credentialMode: "api" };
+    }
+
+    async function openSavedReview(pathname: string, runner = "auto", options: { strict?: boolean; companiesLoading?: boolean; dialogStep?: number } = {}) {
+      const draft = savedReview(runner);
+      window.localStorage.setItem(ONBOARDING_STORAGE_KEY, JSON.stringify(draft));
+      mockRouterState.pathname = pathname;
+      mockDialog.onboardingOpen = options.dialogStep !== undefined;
+      mockDialog.onboardingOptions = options.dialogStep === undefined ? {} : { initialStep: options.dialogStep, companyId: "c1" };
+      const companies = [{ id: "c1", name: "Saved Co", issuePrefix: "SC" },
+        { id: "c2", name: "Other Co", issuePrefix: "OTHER" }];
+      mockCompany.companies = companies;
+      mockCompany.loading = options.companiesLoading ?? false;
+      mockCompaniesApi.list.mockResolvedValue(companies);
+      const handles = render();
+      if (options.strict) {
+        await act(async () => handles.root.render(
+          <QueryClientProvider client={handles.queryClient}><StrictMode><OnboardingWizard /></StrictMode></QueryClientProvider>,
+        ));
+      } else await renderWizardView(handles.root, handles.queryClient);
+      for (let tick = 0; tick < 8; tick++) await flushReact();
+      return { ...handles, draft };
+    }
+
+    it.each([
+      ["/onboarding", "auto"], ["/SC/onboarding", "auto"],
+      ["/onboarding", "legacy"], ["/SC/onboarding", "legacy"],
+    ])("restores the authorized review draft after route reload %s with %s runner", async (pathname, runner) => {
+      const { root, draft } = await openSavedReview(pathname, runner);
+      try {
+        expect([...document.querySelectorAll("button")].some(button => button.textContent?.trim() === "Get started")).toBe(true);
+        expect(document.body.textContent).not.toContain("What is the name of your organization?");
+        const persisted = JSON.parse(window.localStorage.getItem(ONBOARDING_STORAGE_KEY)!);
+        expect(persisted).toMatchObject(draft);
+        expect(mockAgentsApi.hire).not.toHaveBeenCalled();
+        expect(mockAgentsApi.testEnvironment).not.toHaveBeenCalled();
+      } finally { await act(async () => root.unmount()); }
+    });
+
+    it("keeps restored review progress when initial effects replay in StrictMode", async () => {
+      const { root, draft } = await openSavedReview("/SC/onboarding", "auto", { strict: true });
+      try {
+        expect([...document.querySelectorAll("button")].some(button => button.textContent?.trim() === "Get started")).toBe(true);
+        expect(JSON.parse(window.localStorage.getItem(ONBOARDING_STORAGE_KEY)!)).toMatchObject(draft);
+      } finally { await act(async () => root.unmount()); }
+    });
+
+    it("waits for route company loading before deciding the initial restored step", async () => {
+      const { root, queryClient, draft } = await openSavedReview("/SC/onboarding", "auto", { companiesLoading: true });
+      try {
+        mockCompany.loading = false;
+        await renderWizardView(root, queryClient);
+        for (let tick = 0; tick < 8; tick++) await flushReact();
+        expect([...document.querySelectorAll("button")].some(button => button.textContent?.trim() === "Get started")).toBe(true);
+        expect(JSON.parse(window.localStorage.getItem(ONBOARDING_STORAGE_KEY)!)).toMatchObject(draft);
+      } finally { await act(async () => root.unmount()); }
+    });
+
+    it("does not restore another company's review into a different route", async () => {
+      const { root } = await openSavedReview("/OTHER/onboarding");
+      try {
+        expect(document.querySelector("#onboarding-agent-name")).not.toBeNull();
+        const persisted = JSON.parse(window.localStorage.getItem(ONBOARDING_STORAGE_KEY)!);
+        expect(persisted.createdCompanyId).toBe("c2");
+        expect(persisted.createdAgentId).toBeNull();
+        expect(persisted.step).toBe(3);
+      } finally { await act(async () => root.unmount()); }
+    });
+
+    it("does not bind an unmatched company prefix to the restored company", async () => {
+      const { root } = await openSavedReview("/MISSING/onboarding");
+      try {
+        const persisted = JSON.parse(window.localStorage.getItem(ONBOARDING_STORAGE_KEY)!);
+        expect(persisted.step).toBe(1);
+        expect(persisted.createdCompanyId).toBeNull();
+        expect(persisted.createdAgentId).toBeNull();
+        expect(persisted.companyName).toBe("");
+      } finally { await act(async () => root.unmount()); }
+    });
+
+    it.each([2, 3])("honors explicit prefilled-company dialog step %s on initial mount", async initialStep => {
+      const { root } = await openSavedReview("/SC/onboarding", "auto", { dialogStep: initialStep });
+      try {
+        const persisted = JSON.parse(window.localStorage.getItem(ONBOARDING_STORAGE_KEY)!);
+        expect(persisted.step).toBe(initialStep);
+        expect(persisted.createdCompanyId).toBe("c1");
+        expect([...document.querySelectorAll("button")].some(button => button.textContent?.trim() === "Get started")).toBe(false);
+      } finally { await act(async () => root.unmount()); }
+    });
+
+    it("honors an explicit dialog step instead of resuming the route draft", async () => {
+      const { root, queryClient } = await openSavedReview("/SC/onboarding");
+      try {
+        mockDialog.onboardingOpen = true;
+        mockDialog.onboardingOptions = { companyId: "c2", initialStep: 3 };
+        await renderWizardView(root, queryClient);
+        await flushReact();
+        expect(document.querySelector("#onboarding-agent-name")).not.toBeNull();
+        const persisted = JSON.parse(window.localStorage.getItem(ONBOARDING_STORAGE_KEY)!);
+        expect(persisted.createdCompanyId).toBe("c2");
+        expect(persisted.createdAgentId).toBeNull();
+        expect(persisted.step).toBe(3);
+      } finally { await act(async () => root.unmount()); }
     });
   });
 

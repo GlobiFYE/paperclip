@@ -1,5 +1,47 @@
 # Runner defaults: staged delivery
 
+## Current Codex merge checkpoint — 2026-10-13
+
+Canonical branch: `codex/codex-runner-default`. Delivery PR:
+[#15683](https://github.com/paperclipai/paperclip/pull/15683).
+The runtime/install prerequisite #16028 and release repair #16149 are merged.
+The finish line remains ordinary native Codex onboarding, checked task/follow-up,
+saved-agent preservation, exact-candidate installation and required checks, then
+a normal protected merge. Production deployment and default promotion remain
+outside this merge campaign.
+
+Published `e301c68d645eabd9fa7ae3a9450a460f6d2d0439` passes required CI with
+52 successes and two conditional skips. Its fresh review finds one linked-login
+setup defect. Literal executable source `6c0eca871616a110954553d6ff971e7655c85f93`
+passes [remote package qualification](https://github.com/paperclipai/paperclip/actions/runs/38445419339),
+including all four producers and clean Apple Silicon, Intel Mac and Linux ARM64
+consumers. Fresh installed JavaScript initializes migration0339. The existing
+Mac app upgrades while preserving three full agent configurations, eight
+historical runs and saved account summaries, with no provider work during upgrade.
+
+The [managed6c attempt](https://github.com/paperclipai/paperclip/actions/runs/38448001365)
+passes the saved environment probe, native account/model hello, native hire and
+campaign bounds. A legitimate reload then returns onboarding to step one before
+Get started. Both setup leases and fixture cleanup pass; no task/artifact/follow-up
+is reached. Preserve this failed attempt. The production draft-restoration fix
+passes192 existing/new controls and independent source review, including delayed
+loading, explicit fresh starts, old runner choices and company/account boundaries.
+The managed fixture keeps its reload assertion. The separately scoped linked-login
+fix stages checked credentials only for isolated setup and keeps the general
+no-follow guard, refresh target and bounded retirement contract. Its original
+source passes both regular-file controls and fails both linked-file controls
+after the real lower materializer omits authentication. The matching treatment
+passes69 setup controls and12 unchanged lower controls, server no-emit and
+independent source review. Private copies retire only after confirmed cleanup;
+an uncertain close retains owned state and remains a failure.
+
+Next action: integrate exact master
+`393d1c410862aa93561548e0a39feec3b89df6ff` with its migration0340 and plugin lifecycle
+changes, preserve the Storybook catalog, and freeze one candidate. Require fresh
+CI/review, affected installed-package and managed first-task proof before ready
+or merge. Historical receipts keep their literal sources. The following
+checkpoints are retained history, not the current merge state.
+
 ## Production preparation checkpoint — 2026-10-13
 
 The runtime prerequisite [#16028](https://github.com/paperclipai/paperclip/pull/16028)
