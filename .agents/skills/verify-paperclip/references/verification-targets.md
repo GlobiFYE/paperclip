@@ -27,9 +27,13 @@ Read [DEVELOPING.md](../../../../doc/DEVELOPING.md) and
 
 `--data-dir` alone is not proof of a fresh database: check effective config and
 whether `DATABASE_URL` routes to an external database. Do not print its value.
-For ordinary dev, unset `DATABASE_URL` selects embedded PostgreSQL in the active
-instance, which may already hold data. Do not reset shared data to make a test
-pass. Choose separate disposable data for first-run checks.
+For ordinary dev, inspect both environment overrides and the active database
+config: with `DATABASE_URL` unset, `database.mode: postgres` and a saved
+`connectionString` still select external PostgreSQL. Embedded PostgreSQL is the
+default only when neither an environment override nor the active config selects
+an external database; its instance directory may already hold data. Do not reset
+shared data to make a test pass. Choose separate disposable data for first-run
+checks and verify the effective backend before calling it isolated.
 
 Record runtime PID, URL, port owner, checkout, and data location for a process you
 start. Check `/api/health`, expected served revision, bootstrap/auth readiness,
