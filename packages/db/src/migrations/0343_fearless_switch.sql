@@ -34,6 +34,7 @@ CREATE TABLE "grok_bot_routines" (
 	"verified_at" timestamp with time zone,
 	"last_contact_at" timestamp with time zone,
 	"recovery_required_at" timestamp with time zone,
+	"recovery_reason" text,
 	"created_at" timestamp with time zone DEFAULT now() NOT NULL,
 	"updated_at" timestamp with time zone DEFAULT now() NOT NULL
 );

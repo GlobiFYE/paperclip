@@ -108,6 +108,8 @@ Test no-auth and authenticated endpoints separately; never infer one from the ot
 Automated: [interaction card](../../ui/src/components/IssueThreadInteractionCard.test.tsx)
 checks addressed-user controls. AppsConnect tests cover page/dialog parity,
 task-bound OAuth, popup handoff, and verifying a saved connection before closing.
+Withdrawn requests render a terminal acknowledgement with no setup action; the
+interaction-body test and narrow Storybook journey cover this recovery state.
 The connection-intents browser suite above exercises fixture-backed continuation.
 
 Manual: ask an agent to use an unavailable app, open its request as the named

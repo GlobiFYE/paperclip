@@ -331,6 +331,14 @@ const aiRepair: Story = {
     await expect(within(document.body).queryByRole("dialog")).not.toBeInTheDocument();
   },
 };
+export const AiWithdrawn: Story = {
+  ...card({ ...aiPending, status: "cancelled", resolvedAt: new Date("2026-10-13T14:09:07Z") }, { ai: true }),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(await canvas.findByText("Connection request withdrawn")).toBeVisible();
+    await expect(canvas.queryByRole("button", { name: "Fix connection" })).not.toBeInTheDocument();
+  },
+};
 export const AiInlineRepair = aiRepair;
 export const AiInlineRepairNarrow: Story = { ...aiRepair, globals: { viewport: { value: "mobile1", isRotated: false } } };
 export const AiRepairCancel: Story = { ...aiRepair, play: async context => {

@@ -66,6 +66,21 @@ Manual: Enable the skill for one test agent and leave another without access. Ru
 - Read-only GitHub/bundled skills may require a writable copy rather than an in-place edit.
 - Studio interaction coverage is in [questions and approvals](./questions-and-approvals.md); a passing mock is not a live harness test.
 
+### Project repository source behavior
+
+New GitHub project repositories import skills automatically. Skills → Sources lists
+accessible legacy repositories with Import skills, shows source/project provenance,
+and provides Refresh and Automatic updates in its source menu. Verify future additions,
+retained exclusions, error recovery and reload persistence. Private-only sources must
+be absent for unrelated people/agents; access through either originating project is sufficient.
+
+Storybook/browser coverage uses scoped fixtures. Live GitHub-to-routine execution
+must be verified separately; inspect resolved version IDs across an upstream update.
+
+### Connection repair during an update
+
+Open Choose connection while a source is being refreshed. Select an authorized account and save. If the source changes, the dialog must retain that selection, load the current revision, and allow a second save without reopening. The [project repository browser suite](../../tests/storybook-visual/project-repository-skills.spec.ts) covers this recovery with simulated upstream data.
+
 ### Storybook verification
 
 #### `testing`
