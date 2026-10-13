@@ -132,7 +132,10 @@ Core delivers events to ready plugins with a configuration row for that company,
 unless the plugin is disabled there. Each invocation has the event's company
 scope. The dispatcher wakes after the mutation's outer transaction settles,
 on host startup, plugin activation/worker start, and company configuration or
-enablement changes. Empty and deferred queues have no periodic scans. `retry`,
+enablement changes. Successful worker `onConfigChanged` completion wakes delivery
+again, so a callback that deferred while configuration was still applying is
+revisited. Failed scans retain pending work through idle drain. Empty and deferred
+queues have no periodic scans. `retry`,
 exceptions, invalid results, and unavailable workers leave the event pending and
 schedule another attempt after 30 seconds. Other acknowledgments or mutations
 do not bypass that event's delay; a host restart may replay it immediately.

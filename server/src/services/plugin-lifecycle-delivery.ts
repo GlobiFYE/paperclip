@@ -13,7 +13,7 @@ type Coordinator = ReturnType<typeof createDeliveryWorkCoordinator>;
 export function registerPluginLifecycleDelivery(
   coordinator: Coordinator,
   db: Db,
-  manager: Pick<PluginWorkerManager, "call" | "isRunning">,
+  manager: Pick<PluginWorkerManager, "call" | "isRunning" | "onConfigApplied">,
   lifecycle: Pick<PluginLifecycleManager, "on" | "off">,
 ) {
   // Startup and every wake remain pending until an admitted run inspects the inbox.
@@ -36,70 +36,76 @@ export function registerPluginLifecycleDelivery(
     },
     async run(signal) {
       pending = false;
-      for (const [key, at] of retryAt) if (at <= Date.now()) retryAt.delete(key);
-      const configured = await db.select({ plugin: plugins, companyId: pluginConfig.companyId })
-        .from(plugins).innerJoin(pluginConfig, eq(pluginConfig.pluginId, plugins.id))
-        .where(eq(plugins.status, "ready"))
-        .orderBy(asc(plugins.installOrder), asc(pluginConfig.companyId));
-      for (const { plugin, companyId } of configured) {
-        const types = plugin.manifestJson.resourceLifecycle;
-        if (!types?.length || !plugin.manifestJson.capabilities.includes("events.subscribe")) continue;
-        const [disabled] = await db.select({ id: pluginCompanySettings.id }).from(pluginCompanySettings)
-          .where(and(eq(pluginCompanySettings.pluginId, plugin.id), eq(pluginCompanySettings.companyId, companyId), eq(pluginCompanySettings.enabled, false)));
-        if (disabled) continue;
-        const inbox = pluginLifecycleInbox(db, plugin.id);
-        let afterId: string | undefined;
-        // Visit independent resources past a failed or deferred head.
-        for (;;) {
-          if (signal.aborted) return;
-          const events = await inbox.list(companyId, 100, afterId, types);
-          for (const event of events) {
+      try {
+        for (const [key, at] of retryAt) if (at <= Date.now()) retryAt.delete(key);
+        const configured = await db.select({ plugin: plugins, companyId: pluginConfig.companyId })
+          .from(plugins).innerJoin(pluginConfig, eq(pluginConfig.pluginId, plugins.id))
+          .where(eq(plugins.status, "ready"))
+          .orderBy(asc(plugins.installOrder), asc(pluginConfig.companyId));
+        for (const { plugin, companyId } of configured) {
+          const types = plugin.manifestJson.resourceLifecycle;
+          if (!types?.length || !plugin.manifestJson.capabilities.includes("events.subscribe")) continue;
+          const [disabled] = await db.select({ id: pluginCompanySettings.id }).from(pluginCompanySettings)
+            .where(and(eq(pluginCompanySettings.pluginId, plugin.id), eq(pluginCompanySettings.companyId, companyId), eq(pluginCompanySettings.enabled, false)));
+          if (disabled) continue;
+          const inbox = pluginLifecycleInbox(db, plugin.id);
+          let afterId: string | undefined;
+          // Visit independent resources past a failed or deferred head.
+          for (;;) {
             if (signal.aborted) return;
-            const retryKey = `${plugin.id}:${event.id}`;
-            if (retryAt.has(retryKey)) { pending = true; continue; }
-            if (!manager.isRunning(plugin.id)) { pending = true; break; }
-            let stage = "eligibility";
-            try {
-              // Recheck enablement for each invocation; a disable during a batch must stop delivery.
-              const [enabled] = await db.select({ manifest: plugins.manifestJson }).from(plugins)
-                .leftJoin(pluginCompanySettings, and(eq(pluginCompanySettings.pluginId, plugins.id), eq(pluginCompanySettings.companyId, companyId)))
-                .where(and(eq(plugins.id, plugin.id), eq(plugins.status, "ready"),
-                  or(isNull(pluginCompanySettings.enabled), eq(pluginCompanySettings.enabled, true))));
-              if (!enabled?.manifest.resourceLifecycle?.includes(event.resourceType) || !enabled.manifest.capabilities.includes("events.subscribe")) break;
-              stage = "callback";
-              const result = await manager.call(plugin.id, "resourceLifecycle", event, 30_000);
-              stage = "result";
-              if (result?.eventId !== event.id || !["acknowledged", "retry", "deferred"].includes(result.status)) {
-                throw new Error("Invalid resource lifecycle result");
-              }
+            const events = await inbox.list(companyId, 100, afterId, types);
+            for (const event of events) {
               if (signal.aborted) return;
-              if (result.status === "acknowledged") {
-                stage = "acknowledgment";
-                await inbox.acknowledge(companyId, event.id);
-                // An acknowledgment exposes the next event for this resource. Drain immediately.
-                wake();
-              } else if (result.status === "retry") {
+              const retryKey = `${plugin.id}:${event.id}`;
+              if (retryAt.has(retryKey)) { pending = true; continue; }
+              if (!manager.isRunning(plugin.id)) { pending = true; break; }
+              let stage = "eligibility";
+              try {
+                // Recheck enablement for each invocation; a disable during a batch must stop delivery.
+                const [enabled] = await db.select({ manifest: plugins.manifestJson }).from(plugins)
+                  .leftJoin(pluginCompanySettings, and(eq(pluginCompanySettings.pluginId, plugins.id), eq(pluginCompanySettings.companyId, companyId)))
+                  .where(and(eq(plugins.id, plugin.id), eq(plugins.status, "ready"),
+                    or(isNull(pluginCompanySettings.enabled), eq(pluginCompanySettings.enabled, true))));
+                if (!enabled?.manifest.resourceLifecycle?.includes(event.resourceType) || !enabled.manifest.capabilities.includes("events.subscribe")) break;
+                stage = "callback";
+                const result = await manager.call(plugin.id, "resourceLifecycle", event, 30_000);
+                stage = "result";
+                if (result?.eventId !== event.id || !["acknowledged", "retry", "deferred"].includes(result.status)) {
+                  throw new Error("Invalid resource lifecycle result");
+                }
+                if (signal.aborted) return;
+                if (result.status === "acknowledged") {
+                  stage = "acknowledgment";
+                  await inbox.acknowledge(companyId, event.id);
+                  // An acknowledgment exposes the next event for this resource. Drain immediately.
+                  wake();
+                } else if (result.status === "retry") {
+                  retryAt.set(retryKey, Date.now() + retryMs);
+                  pending = true;
+                }
+              } catch (error) {
                 retryAt.set(retryKey, Date.now() + retryMs);
+                // Provider error messages/data may contain secrets; retain only routing
+                // identifiers, the failed stage, and the protocol's numeric error code.
+                const code = (error as { code?: unknown } | null)?.code;
+                logger.warn({ pluginId: plugin.id, companyId, eventId: event.id, stage,
+                  ...(typeof code === "number" ? { rpcCode: code } : {}) }, "Resource lifecycle delivery failed; retry scheduled");
+                // Failed RPCs and uncertain acknowledgments leave durable work for replay.
                 pending = true;
               }
-            } catch (error) {
-              retryAt.set(retryKey, Date.now() + retryMs);
-              // Provider error messages/data may contain secrets; retain only routing
-              // identifiers, the failed stage, and the protocol's numeric error code.
-              const code = (error as { code?: unknown } | null)?.code;
-              logger.warn({ pluginId: plugin.id, companyId, eventId: event.id, stage,
-                ...(typeof code === "number" ? { rpcCode: code } : {}) }, "Resource lifecycle delivery failed; retry scheduled");
-              // Failed RPCs and uncertain acknowledgments leave durable work for replay.
-              pending = true;
             }
+            if (events.length < 100) break;
+            afterId = events.at(-1)!.id;
           }
-          if (events.length < 100) break;
-          afterId = events.at(-1)!.id;
         }
+      } catch (error) {
+        pending = true; // A failed scan must survive a retry skipped during idle drain.
+        throw error;
       }
     },
   });
   function wake() { pending = true; delivery.wake(); }
+  const unsubscribeConfig = manager.onConfigApplied(wake);
   lifecycle.on("plugin.loaded", wake);
   lifecycle.on("plugin.enabled", wake);
   lifecycle.on("plugin.worker_started", wake);
@@ -107,6 +113,7 @@ export function registerPluginLifecycleDelivery(
     ...delivery,
     wake,
     dispose() {
+      unsubscribeConfig();
       lifecycle.off("plugin.loaded", wake);
       lifecycle.off("plugin.enabled", wake);
       lifecycle.off("plugin.worker_started", wake);

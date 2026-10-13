@@ -48,8 +48,10 @@ describePostgres("durable plugin lifecycle delivery", () => {
     const call = vi.fn(async (_pluginId, _method, input) => ({ eventId: input.id, status: "acknowledged" }));
     const running = vi.fn(() => true);
     const lifecycle = new EventEmitter();
-    const worker = registerPluginLifecycleDelivery(coordinator as never, db, { call, isRunning: running } as unknown as PluginWorkerManager, lifecycle as unknown as PluginLifecycleManager);
-    return { call, running, wake, lifecycle, worker, run: () => task.run(new AbortController().signal), pending: () => task.hasPending(), nextRunAt: () => task.nextRunAt?.(), settled: () => task.onSettled?.() };
+    const configApplied = new Set<() => void>();
+    const onConfigApplied = (listener: () => void) => { configApplied.add(listener); return () => { configApplied.delete(listener); }; };
+    const worker = registerPluginLifecycleDelivery(coordinator as never, db, { call, isRunning: running, onConfigApplied } as unknown as PluginWorkerManager, lifecycle as unknown as PluginLifecycleManager);
+    return { call, running, wake, lifecycle, worker, applied: () => { for (const listener of configApplied) listener(); }, run: () => task.run(new AbortController().signal), pending: () => task.hasPending(), nextRunAt: () => task.nextRunAt?.(), settled: () => task.onSettled?.() };
   }
   it("drains creation before transitions, recovers acknowledgments across dispatcher replacement, and ignores agent events", async () => {
     const id = await event(); await event(id, "update"); await event(id, "delete");
@@ -158,6 +160,29 @@ describePostgres("durable plugin lifecycle delivery", () => {
     d.lifecycle.emit("plugin.enabled"); expect(await d.pending()).toBe(true);
     await d.run(); expect(await d.pending()).toBe(false);
     d.worker.wake(); expect(await d.pending()).toBe(true);
+    d.worker.dispose();
+  });
+  it("wakes deferred events after live configuration finishes applying", async () => {
+    await event(); const d = delivery();
+    let configured = false;
+    d.call.mockImplementation(async (_p, _m, e) => ({ eventId: e.id, status: configured ? "acknowledged" : "deferred" }));
+    await d.run(); expect(await d.pending()).toBe(false);
+    // Commit notification races ahead of the asynchronous worker callback.
+    d.settled(); await d.run(); expect(await d.pending()).toBe(false);
+    configured = true; d.applied();
+    expect(await d.pending()).toBe(true); expect(d.wake).toHaveBeenCalledTimes(1);
+    await d.run(); expect(await pluginLifecycleInbox(db, pluginId).list(companyId)).toEqual([]);
+    d.worker.dispose(); d.wake.mockClear(); d.applied(); expect(d.wake).not.toHaveBeenCalled();
+  });
+  it("retains a failed scan across a retry skipped during idle drain", async () => {
+    await event(); const d = delivery();
+    const select = vi.spyOn(db, "select").mockImplementationOnce(() => { throw new Error("database unavailable"); });
+    await expect(d.run()).rejects.toThrow("database unavailable");
+    // The coordinator's drain path checks hasPending without calling run.
+    expect(await d.pending()).toBe(true); expect(d.call).not.toHaveBeenCalled();
+    select.mockRestore(); await d.run(); await d.run();
+    expect(await d.pending()).toBe(false);
+    expect(await pluginLifecycleInbox(db, pluginId).list(companyId)).toEqual([]);
     d.worker.dispose();
   });
   it("saves config and settings without borrowing another pool connection", async () => {
