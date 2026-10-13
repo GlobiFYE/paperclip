@@ -78,3 +78,16 @@ export type LiveInboundMessage = {
   thread: Thread;
   trigger: ChatSdkMessageCallbackEvent["trigger"];
 };
+
+export type DiscordGatewayOwnership = {
+  companyId: string;
+  context: RuntimeContext;
+  endpointId: string;
+  expiresAt: Date;
+  leaseKey: "discord_gateway_runtime" | "photon_receiver_runtime";
+  renewTimer: ReturnType<typeof setInterval> | null;
+  renewal: Promise<void> | null;
+  stopPromise: Promise<void> | null;
+  stopping: boolean;
+  token: string;
+};
