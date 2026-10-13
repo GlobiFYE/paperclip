@@ -2272,3 +2272,10 @@ already authorized in the persisted active run identity. The responsible person
 is recorded for attribution; that identity alone does not permit searching other
 personal connections. Without a selected run grant, Sources requires an explicit
 human connection repair before background import or update.
+
+Automatic initial repository imports reserve durable company work credits before
+provider reads: 512 MiB capacity, refilling 512 MiB per hour, with a 128 MiB
+reservation per attempt. Failed downloads and package fallback keep the full
+reservation. Successfully linked small imports refund unused measured work.
+Completed bindings do not reset company credits; waiting jobs retry on refill.
+The company_skill_import_budgets table stores no credentials or source contents.

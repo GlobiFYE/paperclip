@@ -89,3 +89,10 @@ export const companySkillSourceEntries = pgTable('company_skill_source_entries',
   sourcePath: uniqueIndex('company_skill_source_entries_source_path_idx').on(table.sourceId, table.path),
   companySkill: index('company_skill_source_entries_company_skill_idx').on(table.companyId, table.skillId),
 }));
+
+/** Sustained company credits for automatic initial imports, including failures. */
+export const companySkillImportBudgets = pgTable('company_skill_import_budgets', {
+  companyId: uuid('company_id').primaryKey().references(() => companies.id, { onDelete: 'cascade' }),
+  availableBytes: integer('available_bytes').notNull().default(512 * 1024 * 1024),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+});

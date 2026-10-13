@@ -172,3 +172,7 @@ policy/access checks. These limits grant no content or execution access.
 Agent repository setup preserves the active run's selected GitHub connection/grant
 IDs. Missing selections require human repair; the worker never searches the
 responsible person's other grants for an agent-created source.
+
+Initial automatic imports reserve company work credits before provider reads.
+Failures retain the reservation; completed jobs cannot replenish the queue's
+work allowance. Jobs remain durable and resume as company credits refill.

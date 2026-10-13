@@ -1,3 +1,4 @@
+import { reserveInitialSkillWork, settleInitialSkillWork } from './skill-source-import-budget.js';
 import { admitDeferredSkillImports, lockSkillImportQueue, SKILL_IMPORT_CAPACITY_WAIT } from './skill-source-import-queue.js';
 import { randomUUID } from 'node:crypto';
 import { skillSourceRetryAt } from './skill-source-retry.js';
@@ -182,6 +183,7 @@ export function skillSourceSyncService(db: Db, options: { context?: (setup: Setu
       }
       const context = await contextFor(binding);
       await context.authorize('skills.import', { sourceType: 'git', sourceLocator: binding.repositoryUrl });
+      await reserveInitialSkillWork(db, binding, token, now);
       const reader = context.read(binding.connectionId);
       const scan = await scanGitHubSkillsWithPackageFallback({ repositoryUrl: binding.repositoryUrl, trackingRef: binding.trackingRef, packageMode: 'repository' }, reader, { signal: shutdown.signal });
       const [existing] = await db.select().from(companySkillSources).where(and(eq(companySkillSources.companyId, binding.companyId),
@@ -212,6 +214,7 @@ export function skillSourceSyncService(db: Db, options: { context?: (setup: Setu
         const linked = await tx.update(projectSkillSources).set({ sourceId, status: 'ready', lastError: null, failureCount: 0, leaseToken: null, leaseExpiresAt: null })
           .where(and(eq(projectSkillSources.id, binding.id), eq(projectSkillSources.companyId, binding.companyId),
             eq(projectSkillSources.active, true), eq(projectSkillSources.leaseToken, token))).returning({ id: projectSkillSources.id });
+        if (linked.length) await settleInitialSkillWork(tx as unknown as Db, binding.companyId, scan.packageMode === 'skills' ? {} : scan);
         return linked.length > 0;
       });
     } catch (error) {

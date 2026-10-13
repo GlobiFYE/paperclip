@@ -469,3 +469,11 @@ Adoption now captures run identity and takes the company queue lock before
 source/binding locks, reusing that validated setup while enqueueing. Admission
 excludes full projects before its bounded waiting-row selection. Verification
 and current-head gates are recorded on the PR.
+
+The final initial-import resource finding is corrected with durable company
+credits, reserved before provider work. The failing-download regression observed
+five reads before correction instead of the allowed four. New cases cover
+worker recreation/refill, small-import refunds and completed large measured
+jobs retaining their charge. These are simulated download sizes with real DB
+transactions, not new oversized live downloads. Generated migration and final
+qualification results are recorded on the PR.

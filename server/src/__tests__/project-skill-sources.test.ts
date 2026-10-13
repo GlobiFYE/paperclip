@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { and, eq, sql } from 'drizzle-orm';
-import { activityLog, agents, authUsers, companies, companyMemberships, companySkillSources, companySkills, createDb, projects,
+import { activityLog, agents, authUsers, companies, companyMemberships, companySkillSources, companySkillImportBudgets, companySkills, createDb, projects,
   projectWorkspaces, projectSkillSources, projectAccessMembers } from '@paperclipai/db';
 import { startEmbeddedPostgresTestDatabase, getEmbeddedPostgresTestSupport } from './helpers/embedded-postgres.js';
 import { githubFixture } from './helpers/github-skills.js';
@@ -176,6 +176,82 @@ describe.skipIf(!support.supported)('automatic project skill sources', () => {
       // this binding. The old inverse adoption order fails with lock_not_available.
       await editTx.execute(sql`select id from project_skill_sources where id = ${binding!.id} for update nowait`);
     } finally { unlock(); await edit; await adoption; }
+  });
+
+  it('meters failed initial downloads across workers and retries before provider reads', async () => {
+    const budgetCompany = randomUUID();
+    await db.insert(companies).values({ id: budgetCompany, name: 'Initial work credits', issuePrefix: 'IWC' });
+    const [project] = await db.insert(projects).values({ companyId: budgetCompany, name: 'Repeated failed downloads' }).returning();
+    const rows = await db.insert(projectWorkspaces).values(Array.from({ length: 5 }, (_, index) => ({ companyId: budgetCompany,
+      projectId: project!.id, name: `Failed ${index}`, repoUrl: 'https://github.com/acme/skills', defaultRef: `failed-${index}` }))).returning();
+    for (const row of rows) await enqueueProjectSkillSource(db, row);
+    const reads = vi.fn(() => {
+      const reader = githubFixture({});
+      reader.openSnapshot = async () => { throw unprocessable('Git download exceeds 128 MiB.'); };
+      return reader;
+    });
+    const factory = async (setup: { companyId: string }) => setup.companyId === budgetCompany ? { ...context, read: reads } : context;
+    const now = new Date();
+    try {
+      await skillSourceSyncService(db, { context: factory }).tick(now);
+      expect(reads).toHaveBeenCalledTimes(4);
+      const [budget] = await db.select().from(companySkillImportBudgets).where(eq(companySkillImportBudgets.companyId, budgetCompany));
+      expect(budget!.availableBytes).toBe(0);
+      const worker = skillSourceSyncService(db, { context: factory });
+      await worker.tick(new Date(now.getTime() + 5 * 60_000));
+      expect(reads).toHaveBeenCalledTimes(4);
+      const waiting = await db.select().from(projectSkillSources).where(eq(projectSkillSources.companyId, budgetCompany));
+      expect(waiting.every(row => row.active && row.status === 'error' && row.lastError?.includes('limited'))).toBe(true);
+      await worker.tick(new Date(now.getTime() + 15 * 60_000));
+      expect(reads).toHaveBeenCalledTimes(5);
+    } finally { await db.update(companies).set({ status: 'archived' }).where(eq(companies.id, budgetCompany)); }
+  });
+
+  it('refunds measured small initial imports while completed jobs keep a company budget', async () => {
+    const budgetCompany = randomUUID();
+    await db.insert(companies).values({ id: budgetCompany, name: 'Small initial imports', issuePrefix: 'SII' });
+    const [project] = await db.insert(projects).values({ companyId: budgetCompany, name: 'Small repositories' }).returning();
+    const rows = await db.insert(projectWorkspaces).values(Array.from({ length: 6 }, (_, index) => ({ companyId: budgetCompany,
+      projectId: project!.id, name: `Small ${index}`, repoUrl: 'https://github.com/acme/skills', defaultRef: `small-${index}` }))).returning();
+    for (const row of rows) await enqueueProjectSkillSource(db, row);
+    const opened = vi.fn();
+    const reads = vi.fn(() => {
+      const reader = githubFixture({}), open = reader.openSnapshot!;
+      reader.openSnapshot = async (...args) => { opened(); return open(...args); };
+      return reader;
+    });
+    try {
+      await skillSourceSyncService(db, { context: async setup => setup.companyId === budgetCompany ? { ...context, read: reads } : context }).tick();
+      const bindings = await db.select().from(projectSkillSources).where(eq(projectSkillSources.companyId, budgetCompany));
+      expect(bindings.every(row => row.status === 'ready' && row.sourceId)).toBe(true);
+      expect(opened).toHaveBeenCalledTimes(6);
+      const [budget] = await db.select().from(companySkillImportBudgets).where(eq(companySkillImportBudgets.companyId, budgetCompany));
+      expect(budget!.availableBytes).toBeGreaterThan(500 * 1024 * 1024);
+    } finally { await db.update(companies).set({ status: 'archived' }).where(eq(companies.id, budgetCompany)); }
+  });
+
+  it('does not replenish initial work credits when large measured jobs complete', async () => {
+    const budgetCompany = randomUUID();
+    await db.insert(companies).values({ id: budgetCompany, name: 'Completed work credits', issuePrefix: 'CWC' });
+    const [project] = await db.insert(projects).values({ companyId: budgetCompany, name: 'Large measured imports' }).returning();
+    const rows = await db.insert(projectWorkspaces).values(Array.from({ length: 5 }, (_, index) => ({ companyId: budgetCompany,
+      projectId: project!.id, name: `Measured ${index}`, repoUrl: 'https://github.com/acme/skills', defaultRef: `measured-${index}` }))).returning();
+    for (const row of rows) await enqueueProjectSkillSource(db, row);
+    const opened = vi.fn();
+    const reads = vi.fn(() => {
+      const reader = githubFixture({}), open = reader.openSnapshot!;
+      reader.openSnapshot = async (...args) => { opened(); return { ...await open(...args), downloadBytes: 128 * 1024 * 1024 }; };
+      return reader;
+    });
+    try {
+      await skillSourceSyncService(db, { context: async setup => setup.companyId === budgetCompany ? { ...context, read: reads } : context }).tick();
+      const bindings = await db.select().from(projectSkillSources).where(eq(projectSkillSources.companyId, budgetCompany));
+      expect(bindings.filter(row => row.status === 'ready' && row.sourceId)).toHaveLength(4);
+      expect(bindings.filter(row => row.status === 'error' && row.lastError?.includes('limited'))).toHaveLength(1);
+      expect(opened).toHaveBeenCalledTimes(4);
+      const [budget] = await db.select().from(companySkillImportBudgets).where(eq(companySkillImportBudgets.companyId, budgetCompany));
+      expect(budget!.availableBytes).toBe(0);
+    } finally { await db.update(companies).set({ status: 'archived' }).where(eq(companies.id, budgetCompany)); }
   });
 
   it('does not read GitHub or retry an initial job denied by import policy', async () => {

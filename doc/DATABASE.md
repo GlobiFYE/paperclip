@@ -837,3 +837,10 @@ work allowance. The allowance starts at 512 MiB, refills at 512 MiB/hour, and
 reserves the existing 128 MiB upper bound before automatic downloads. Completed
 small scans refund unused capacity; interrupted/failed work keeps its bounded
 reservation. These internal fields do not appear in source responses.
+
+Automatic initial repository imports reserve durable company work credits before
+provider reads: 512 MiB capacity, refilling 512 MiB per hour, with a 128 MiB
+reservation per attempt. Failed downloads and package fallback keep the full
+reservation. Successfully linked small imports refund unused measured work.
+Completed bindings do not reset company credits; waiting jobs retry on refill.
+The company_skill_import_budgets table stores no credentials or source contents.
