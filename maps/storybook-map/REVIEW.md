@@ -435,3 +435,25 @@ and three also reference the Slack-only settings copy. Other source bytes and
 all classifications, fixture boundaries, story IDs and sidebar titles remain
 unchanged from that baseline. Catalog checks validate these references and
 fingerprints, not live Slack behavior.
+
+## Verification routes for unassociated capabilities — 2026-10-13
+
+Source classification against merged master `5e8e992df2`: [VERIFICATION.md](VERIFICATION.md)
+accounts for all 60 capabilities without non-guide example associations. It
+records 48 UI example gaps with separate production contracts, nine CLI/operator
+operations and three browser verification boundaries. Existing tests are starting
+points; no new live journey, rendering, interaction or visual evidence is claimed.
+The targeted association revisit found no further justified links. This does not
+complete parity review of the 184 suites still classified `unreviewed`.
+
+Master includes #16153's personal task-toast capability. Its upstream README and
+recipe were inspected; reconstructing the five inbox-suite and shared fingerprints
+with the pre-toast recipe bytes matches the stored baseline. No other declared
+source changed for those suites. Regeneration adds the capability/description to
+the feature index, which also changes the guide fingerprint. Refreshing those
+review fingerprints preserves statuses, associations and all 2,212 authored IDs.
+
+Catalog/map checks, 27 catalog/generator/map tests and maintenance-skill validation
+passed. The 60-row inventory and all local links were checked against current
+source. Repository-wide typecheck/tests/build and Storybook build are not run for
+this documentation and generated-data pass; runtime behavior is unchanged.

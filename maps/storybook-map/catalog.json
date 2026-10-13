@@ -10,7 +10,7 @@
       "ui/storybook/generated/feature-index.json",
       "ui/storybook/support/feature-map/FeatureOverview.tsx"
     ],
-    "fingerprint": "451bee6238c89f00e77fa9fdc5f86c621afffdf9809c4a9ac9cbf1f3f4f60b78"
+    "fingerprint": "6bdb0d9cc1f9abb1d9b1c1d7b4652ee4f4cf5c9c5d939069dfabef70ed731df3"
   },
   "entries": [
     {
@@ -1211,7 +1211,7 @@
       "implementation": "production",
       "boundary": "fixtures",
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/inbox-search.md",
         "maps/feature-map/recovery.md",
@@ -1220,7 +1220,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/inbox-search/blocked-inbox.stories.tsx"
       ],
-      "fingerprint": "b6f5f4b7c00e48da7320bef20e5904527f83665e5fdac4fbb44c866e15547502",
+      "fingerprint": "08d54faa78c4e343896132b3d1503b47e89f7250f789d5dd36a31a68fb4b7962",
       "stableId": "product-inbox-blocked-tab",
       "sidebarTitle": "Tasks and conversations/Inbox, decisions, and search/Product/Inbox/Blocked tab"
     },
@@ -1929,13 +1929,13 @@
       "implementation": "production",
       "boundary": "fixtures",
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/inbox-search.md",
         "ui/src/components/DecisionCard.tsx",
         "ui/storybook/stories/inbox-search/decision-card.stories.tsx"
       ],
-      "fingerprint": "220a4f037c1dd4a456ac7df75d6ee7fd0d844ff7db3fd30ca1da2fff9477cbc8",
+      "fingerprint": "ce752a57c95655f6a4ff7839caa3df2d162fe37318fd08d7152816551b861e69",
       "stableId": "decisions-decisioncard",
       "sidebarTitle": "Tasks and conversations/Inbox, decisions, and search/Decisions/DecisionCard"
     },
@@ -2023,7 +2023,7 @@
       "implementation": "production",
       "boundary": "fixtures",
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/inbox-search.md",
         "ui/src/components/AttentionQueueRow.tsx",
@@ -2031,7 +2031,7 @@
         "ui/src/pages/WhatNeedsMe.tsx",
         "ui/storybook/stories/inbox-search/decisions-desk.stories.tsx"
       ],
-      "fingerprint": "1e49e931cddd7ef77de70f25fc4ee991d3de9d933670ae4412c5d17fad6db0aa",
+      "fingerprint": "0692f9582ba2eb28ba13d5fc9d16c1d5b0c309f6f968f90738d9f7bfc4a105a7",
       "stableId": "pages-decisions-desk",
       "sidebarTitle": "Tasks and conversations/Inbox, decisions, and search/Pages/Decisions Desk"
     },
@@ -3369,7 +3369,7 @@
       "implementation": "guide",
       "boundary": "static",
       "notes": "Matches the upstream feature index and order, including features with no cataloged examples. Related suite links and classifications do not imply execution coverage.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "ui/src/components/ui/badge.tsx",
         "ui/src/components/ui/input.tsx",
@@ -3378,7 +3378,7 @@
         "ui/storybook/generated/feature-index.json"
       ],
       "exception": "Shared foundations or contributor guide; no single business capability owns this suite.",
-      "fingerprint": "b4a1cb9cf763e78cfc632a5adf859c8827318de12eeb0cd359b4a5b8b838a730",
+      "fingerprint": "408bb736ebe6591fb5a397db6d8b3d3d0b37741a66ed2a7edc84781c67d5c6c7",
       "stableId": "overview-storybook-guide",
       "sidebarTitle": "Overview/Storybook Guide"
     },
@@ -4718,7 +4718,7 @@
       "implementation": "prototype",
       "boundary": "fixtures",
       "notes": "Local search-page composition mounts production result components; does not establish parity with the production Search route.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/inbox-search.md",
         "ui/src/components/PageTabBar.tsx",
@@ -4731,7 +4731,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/inbox-search/search.stories.tsx"
       ],
-      "fingerprint": "4ebfe41c086ce2e0ae674263dfa50239a0770e5e6f98c3c24f54955f6cbdd3d2",
+      "fingerprint": "1e3913c43f5dc8652640bf9eaf53e76db2948deeacc9f4b9a3309a9771d41d97",
       "stableId": "product-search-command-k",
       "sidebarTitle": "Tasks and conversations/Inbox, decisions, and search/Product/Search & Command K"
     },
@@ -5529,7 +5529,7 @@
       "implementation": "production",
       "boundary": "fixtures",
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/inbox-search.md",
         "ui/src/components/AttentionQueueRow.tsx",
@@ -5537,7 +5537,7 @@
         "ui/src/components/ToastViewport.tsx",
         "ui/storybook/stories/inbox-search/what-needs-me.stories.tsx"
       ],
-      "fingerprint": "d8b838185489f6b5009e52d9c2ac3a1fea3b2718211a1ddc393c404a0335a466",
+      "fingerprint": "a5126b8041661708fc03f913478a51d606048319d11b6dd23b2ad5e836a0ad6d",
       "stableId": "pages-decisions",
       "sidebarTitle": "Tasks and conversations/Inbox, decisions, and search/Pages/Decisions"
     },
