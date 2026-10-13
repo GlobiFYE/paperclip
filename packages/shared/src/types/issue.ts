@@ -796,7 +796,39 @@ export interface Issue {
   ancestors?: IssueAncestor[];
   title: string;
   description: string | null;
+  /**
+   * `true` when {@link description} is a **preview** clipped at this surface's cap and
+   * the stored text continues past it. This is the only authoritative truncation signal:
+   * never infer it from a length threshold, because the threshold differs per surface.
+   *
+   * - issue-list projections (`view=full` and `view=compact` alike): clipped at
+   *   {@link descriptionMaxChars}, currently 1200 characters.
+   * - heartbeat wake payloads: clipped at 12000 characters.
+   *
+   * Absent means "not a projection" (single-item reads), not "not truncated".
+   */
   descriptionTruncated?: boolean;
+  /**
+   * Full stored {@link description} length in Unicode code points, measured before this
+   * surface clipped it. `null` when the stored description is `null`.
+   *
+   * Present on projections so a consumer can size the gap it is not reading instead of
+   * comparing `description.length` against a guessed constant. Compare against
+   * {@link descriptionMaxChars}, not against the returned `description.length`: astral
+   * characters (emoji) are one code point but two UTF-16 units, so the two lengths
+   * legitimately differ for text that was *not* truncated.
+   */
+  descriptionLength?: number | null;
+  /**
+   * The cap, in Unicode code points, that this surface applied to {@link description}.
+   *
+   * Surfacing the cap is what makes the preview self-describing: the consumer is told
+   * the threshold instead of having to know it out of band. Invariant for every row that
+   * carries it: `descriptionTruncated === (descriptionLength > descriptionMaxChars)`.
+   * Absent on non-projecting surfaces such as single-item reads, where the cap is the
+   * stored length itself.
+   */
+  descriptionMaxChars?: number | null;
   status: IssueStatus;
   workMode: IssueWorkMode;
   priority: IssuePriority;
@@ -884,6 +916,9 @@ export type CompactIssue = Pick<
   | "parentId"
   | "title"
   | "description"
+  | "descriptionTruncated"
+  | "descriptionLength"
+  | "descriptionMaxChars"
   | "status"
   | "workMode"
   | "priority"

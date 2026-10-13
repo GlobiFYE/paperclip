@@ -245,6 +245,83 @@ describeEmbeddedPostgres("issue list routes assigneeAgentId filter", () => {
     expect(res.body[0]).not.toHaveProperty("goal");
   });
 
+  it("carries the description preview signal through the compact list projection", async () => {
+    const companyId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: uniqueIssuePrefix(),
+      requireBoardApprovalForNewAgents: false,
+    });
+    await seedCloudTenantMember(companyId);
+
+    const shortDescription = "A brief that fits inside the preview cap.";
+    const longDescription = `${"evidence ".repeat(200)}repro steps`;
+    await db.insert(issues).values([
+      { id: randomUUID(), companyId, title: "Short brief", description: shortDescription, status: "todo", priority: "medium" },
+      { id: randomUUID(), companyId, title: "Clipped brief", description: longDescription, status: "todo", priority: "medium" },
+    ]);
+
+    const app = createApp(companyId);
+    const res = await request(app)
+      .get(`/api/companies/${companyId}/issues`)
+      .query({ view: "compact", limit: "20" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const byTitle = new Map<string, any>(res.body.map((row: any) => [row.title, row]));
+
+    // view=compact is the projection agents triage from. Before this contract it dropped
+    // the truncation flag entirely, so a clipped description and a complete one were
+    // indistinguishable from the row alone (ONE-354).
+    expect(byTitle.get("Short brief")).toMatchObject({
+      description: shortDescription,
+      descriptionTruncated: false,
+      descriptionLength: shortDescription.length,
+      descriptionMaxChars: 1200,
+    });
+
+    const clipped = byTitle.get("Clipped brief");
+    expect(clipped.description).toHaveLength(1200);
+    expect(clipped.description).not.toBe(longDescription);
+    expect(clipped.descriptionTruncated).toBe(true);
+    expect(clipped.descriptionLength).toBe(longDescription.length);
+    expect(clipped.descriptionMaxChars).toBe(1200);
+    expect(clipped.descriptionTruncated).toBe(clipped.descriptionLength > clipped.descriptionMaxChars);
+  });
+
+  it("leaves single-item reads unclipped and without preview metadata", async () => {
+    const companyId = randomUUID();
+    const issueId = randomUUID();
+    const longDescription = "evidence ".repeat(500);
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: uniqueIssuePrefix(),
+      requireBoardApprovalForNewAgents: false,
+    });
+    await seedCloudTenantMember(companyId);
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Detail read issue",
+      description: longDescription,
+      status: "todo",
+      priority: "medium",
+    });
+
+    const app = createApp(companyId);
+    const res = await request(app).get(`/api/issues/${issueId}`);
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body.description).toBe(longDescription);
+    // Absent means "not a projection", not "not truncated" - documented on the type.
+    expect(res.body).not.toHaveProperty("descriptionTruncated");
+    expect(res.body).not.toHaveProperty("descriptionLength");
+    expect(res.body).not.toHaveProperty("descriptionMaxChars");
+  });
+
   it("marks a required successful-run handoff live while a run targets the issue", async () => {
     const companyId = randomUUID();
     const agentId = randomUUID();

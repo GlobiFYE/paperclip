@@ -2766,6 +2766,151 @@ describeEmbeddedPostgres("issueService.list participantAgentId", () => {
     expect(result?.executionWorkspaceSettings).toBeNull();
   });
 
+  it("sizes the clipped description instead of leaving the consumer to guess the cap", async () => {
+    const companyId = randomUUID();
+    const issueId = randomUUID();
+    const longDescription = "x".repeat(5_000);
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Sized issue",
+      description: longDescription,
+      status: "todo",
+      priority: "medium",
+    });
+
+    const [result] = await svc.list(companyId);
+
+    // The cap travels with the row, so triage never needs an out-of-band constant.
+    expect(result?.descriptionMaxChars).toBe(1200);
+    expect(result?.descriptionLength).toBe(5_000);
+    // Invariant a consumer can verify from the row alone.
+    expect(result?.descriptionTruncated).toBe(result!.descriptionLength! > result!.descriptionMaxChars!);
+    // And the gap is quantified: 3800 characters of stored text are not in this payload.
+    expect(result!.descriptionLength! - result!.description!.length).toBe(3_800);
+  });
+
+  it("discriminates short from clipped descriptions within one list page", async () => {
+    const companyId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    // One row on each side of the cap. A uniformly-true flag, or a flag missing from
+    // the projection, collapses this set and is exactly the reported failure.
+    const descriptions = [
+      "short brief",
+      "x".repeat(1_200),
+      "x".repeat(1_201),
+      "y".repeat(6_251),
+      null,
+    ];
+    await db.insert(issues).values(
+      descriptions.map((description, index) => ({
+        id: randomUUID(),
+        companyId,
+        title: `Issue ${index}`,
+        description,
+        status: "todo" as const,
+        priority: "medium" as const,
+      })),
+    );
+
+    const rows = await svc.list(companyId);
+    const byTitle = new Map(rows.map((row) => [row.title, row]));
+
+    expect(byTitle.get("Issue 0")?.descriptionTruncated).toBe(false);
+    expect(byTitle.get("Issue 1")?.descriptionTruncated).toBe(false);
+    expect(byTitle.get("Issue 2")?.descriptionTruncated).toBe(true);
+    expect(byTitle.get("Issue 3")?.descriptionTruncated).toBe(true);
+    expect(byTitle.get("Issue 4")?.descriptionTruncated).toBe(false);
+
+    // Every row carries the cap and its own full length, and the invariant holds for all.
+    for (const row of rows) {
+      expect(row.descriptionMaxChars).toBe(1200);
+      expect(row.descriptionTruncated).toBe(row.descriptionLength! > row.descriptionMaxChars!);
+    }
+    expect(byTitle.get("Issue 4")?.descriptionLength).toBeNull();
+    expect(byTitle.get("Issue 3")?.descriptionLength).toBe(6_251);
+  });
+
+  it("measures descriptionLength in code points so astral characters do not fake a clip", async () => {
+    const companyId = randomUUID();
+    const issueId = randomUUID();
+    // 1199 astral code points: 1199 in Postgres, 2398 UTF-16 units in JS.
+    const description = "\u{1F600}".repeat(1_199);
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Astral description issue",
+      description,
+      status: "todo",
+      priority: "medium",
+    });
+
+    const [result] = await svc.list(companyId);
+
+    expect(result?.descriptionLength).toBe(1_199);
+    expect(result?.descriptionTruncated).toBe(false);
+    // Full text, byte-for-byte: nothing was clipped even though the JS string is long.
+    expect(result?.description).toBe(description);
+    // This is exactly why the contract compares against descriptionMaxChars and not
+    // against description.length.
+    expect(result!.description!.length).toBeGreaterThan(result!.descriptionLength!);
+  });
+
+  it("clips astral descriptions at the code-point cap without splitting a character", async () => {
+    const companyId = randomUUID();
+    const issueId = randomUUID();
+    // 1201 astral code points: one past the cap, so the clip has to land somewhere.
+    const description = "\u{1F600}".repeat(1_201);
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      title: "Clipped astral description issue",
+      description,
+      status: "todo",
+      priority: "medium",
+    });
+
+    const [result] = await svc.list(companyId);
+
+    expect(result?.descriptionLength).toBe(1_201);
+    expect(result?.descriptionTruncated).toBe(true);
+    expect(Array.from(result!.description!).length).toBe(1_200);
+    // A whole code point survived at the cut, so no replacement character was spliced in.
+    expect(result!.description!.endsWith("\u{1F600}")).toBe(true);
+    expect(result?.description).not.toContain("\uFFFD");
+  });
+
   it("marks list descriptions as not truncated when they fit the preview limit", async () => {
     const companyId = randomUUID();
     const issueId = randomUUID();

@@ -411,6 +411,11 @@ export function asBoolean(value: unknown, fallback: boolean): boolean {
   return typeof value === "boolean" ? value : fallback;
 }
 
+/** Accept a finite number from a wire payload, or null when it is absent/not a number. */
+export function asNumberOrNull(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 export function asStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
@@ -486,6 +491,10 @@ type PaperclipWakeIssue = {
   title: string | null;
   description: string | null;
   descriptionTruncated: boolean;
+  /** Full stored description length, when the surface reported it. */
+  descriptionLength: number | null;
+  /** Cap this surface applied to the description, when it reported one. */
+  descriptionMaxChars: number | null;
   status: string | null;
   workMode: string | null;
   priority: string | null;
@@ -828,6 +837,8 @@ function normalizePaperclipWakeIssue(value: unknown): PaperclipWakeIssue | null 
     title,
     description,
     descriptionTruncated: asBoolean(issue.descriptionTruncated, false),
+    descriptionLength: asNumberOrNull(issue.descriptionLength),
+    descriptionMaxChars: asNumberOrNull(issue.descriptionMaxChars),
     status,
     workMode,
     priority,
@@ -1493,7 +1504,15 @@ export function stringifyPaperclipWakePayload(
   if (options.omitIssueDescription === true && normalized.issue) {
     return JSON.stringify({
       ...normalized,
-      issue: { ...normalized.issue, description: null, descriptionTruncated: false },
+      issue: {
+        ...normalized.issue,
+        description: null,
+        // Drop the preview metadata with the text it described, so the surviving
+        // fields never imply a cap that is no longer being applied.
+        descriptionTruncated: false,
+        descriptionLength: null,
+        descriptionMaxChars: null,
+      },
     });
   }
   return JSON.stringify(normalized);
@@ -1729,7 +1748,14 @@ export function renderPaperclipWakePrompt(
       markdownFencedText(issueDescription),
     );
     if (normalized.issue?.descriptionTruncated) {
-      lines.push("[issue description truncated; fetch the issue for the full brief]");
+      // Quantify the gap. "truncated" alone reads as a formatting footnote; telling the
+      // agent it is holding a fifth of the brief makes the fetch a decision, not a detail.
+      const storedLength = normalized.issue.descriptionLength;
+      lines.push(
+        storedLength && storedLength > 0
+          ? `[issue description truncated: showing ${issueDescription.length} of ${storedLength} characters; fetch the issue for the full brief before acting]`
+          : "[issue description truncated; fetch the issue for the full brief]",
+      );
     }
   } else if (issueDescription !== null && resumeOmitsIssueDescription) {
     lines.push("- issue description: omitted from this resume delta; fetch the issue if you need the latest brief");

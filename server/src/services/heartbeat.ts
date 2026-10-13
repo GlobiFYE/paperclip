@@ -7256,6 +7256,8 @@ export async function buildPaperclipWakePayload(input: {
           title: issueSummary.title,
           description: inlineIssueDescription,
           descriptionTruncated: issueDescriptionTruncated,
+          descriptionLength: issueDescription?.length ?? null,
+          descriptionMaxChars: MAX_INLINE_WAKE_ISSUE_DESCRIPTION_CHARS,
           status: issueSummary.status,
           priority: issueSummary.priority,
           workMode: issueSummary.workMode,

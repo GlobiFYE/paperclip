@@ -930,6 +930,89 @@ describe("renderPaperclipWakePrompt", () => {
     );
   });
 
+  it("quantifies a truncated description instead of leaving it as a bare footnote", () => {
+    const preview = "head of the report".repeat(60);
+    const payload = {
+      reason: "issue_assigned",
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-154",
+        title: "Long incident writeup",
+        description: preview,
+        descriptionTruncated: true,
+        descriptionLength: 4_456,
+        descriptionMaxChars: 1_200,
+        status: "todo",
+      },
+      commentWindow: { requestedCount: 0, includedCount: 0, missingCount: 0 },
+      comments: [],
+      fallbackFetchNeeded: false,
+    };
+
+    const prompt = renderPaperclipWakePrompt(payload);
+    expect(prompt).toContain(
+      `[issue description truncated: showing ${preview.length} of 4456 characters; fetch the issue for the full brief before acting]`,
+    );
+
+    // The metadata survives the wake envelope so a consumer can size the gap.
+    expect(JSON.parse(stringifyPaperclipWakePayload(payload) ?? "{}")).toMatchObject({
+      issue: {
+        descriptionTruncated: true,
+        descriptionLength: 4_456,
+        descriptionMaxChars: 1_200,
+      },
+    });
+  });
+
+  it("keeps the truncation notice when the surface reports no length", () => {
+    const payload = {
+      reason: "issue_assigned",
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-155",
+        title: "Truncated without a size",
+        description: "head of the report",
+        descriptionTruncated: true,
+        status: "todo",
+      },
+      commentWindow: { requestedCount: 0, includedCount: 0, missingCount: 0 },
+      comments: [],
+      fallbackFetchNeeded: false,
+    };
+
+    expect(renderPaperclipWakePrompt(payload)).toContain(
+      "[issue description truncated; fetch the issue for the full brief]",
+    );
+  });
+
+  it("drops the preview metadata with the description it described", () => {
+    const payload = {
+      reason: "issue_assigned",
+      issue: {
+        id: "issue-1",
+        identifier: "PAP-156",
+        title: "Omitted description",
+        description: "head of the report",
+        descriptionTruncated: true,
+        descriptionLength: 4_456,
+        descriptionMaxChars: 1_200,
+        status: "todo",
+      },
+      commentWindow: { requestedCount: 0, includedCount: 0, missingCount: 0 },
+      comments: [],
+      fallbackFetchNeeded: false,
+    };
+
+    expect(JSON.parse(stringifyPaperclipWakePayload(payload, { omitIssueDescription: true }) ?? "{}")).toMatchObject({
+      issue: {
+        description: null,
+        descriptionTruncated: false,
+        descriptionLength: null,
+        descriptionMaxChars: null,
+      },
+    });
+  });
+
   it("renders the simplified-english interaction directive only when the payload enables it", () => {
     const payload = {
       reason: "issue_commented",

@@ -271,6 +271,14 @@ Invariants:
 - the transition into `in_review` and its requester activity record commit atomically, including transitions without an explicit review-interaction binding
 - terminal states: `done | cancelled`
 
+Description projection contract:
+
+- issue-list endpoints (`GET /api/companies/{id}/issues`, `view=full` and `view=compact` alike) return `description` as a **preview** clipped at `ISSUE_LIST_DESCRIPTION_MAX_CHARS` (1200 Unicode code points). No stored text is lost; `GET /api/issues/{id}` returns the full description.
+- every list row carries the preview signal: `descriptionTruncated` (authoritative), `descriptionLength` (full stored length in code points, `null` when the description is `null`), and `descriptionMaxChars` (the cap that surface applied). Invariant: `descriptionTruncated === (descriptionLength > descriptionMaxChars)`.
+- consumers must branch on `descriptionTruncated` and must not infer the clip from `description.length`; astral characters are one code point but two UTF-16 units, so those lengths legitimately differ for text that was not clipped.
+- heartbeat wake payloads use the same three fields with `descriptionMaxChars = MAX_INLINE_WAKE_ISSUE_DESCRIPTION_CHARS` (12000).
+- single-item reads omit all three fields: absent means "not a projection", not "not truncated".
+
 ## 7.7 `issue_comments`
 
 - `id` uuid pk

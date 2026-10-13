@@ -824,7 +824,10 @@ function sameRunLock(checkoutRunId: string | null, actorRunId: string | null) {
 }
 
 export const TERMINAL_HEARTBEAT_RUN_STATUSES = new Set(["succeeded", "interrupted", "failed", "cancelled", "timed_out"]);
-const ISSUE_LIST_DESCRIPTION_MAX_CHARS = 1200;
+export const ISSUE_LIST_DESCRIPTION_MAX_CHARS = 1200;
+// Byte window guarding the base64 round-trip below. A code point is at most 4 UTF-8
+// bytes, so a window of 4x the code-point cap can never itself clip; it exists to bound
+// what Postgres ships over the wire, not to bound the preview.
 const ISSUE_LIST_DESCRIPTION_MAX_BYTES = ISSUE_LIST_DESCRIPTION_MAX_CHARS * 4;
 
 function escapeLikePattern(value: string): string {
@@ -3257,6 +3260,14 @@ const issueListSelect = {
       ELSE length(${issues.description}) > ${ISSUE_LIST_DESCRIPTION_MAX_CHARS}
     END
   `,
+  // Full stored length, measured before the preview clip. Without it a consumer can only
+  // see that the preview is clipped, never how much text it is not reading, and has to
+  // guess the threshold from an out-of-band constant to judge severity.
+  descriptionLength: sql<number | null>`char_length(${issues.description})`,
+  // Advertise the cap this surface applied so the preview is self-describing. Together
+  // with descriptionLength this gives a verifiable per-row invariant:
+  //   descriptionTruncated === (descriptionLength > descriptionMaxChars)
+  descriptionMaxChars: sql<number>`${ISSUE_LIST_DESCRIPTION_MAX_CHARS}::int`,
   status: issues.status,
   statusVersion: issues.statusVersion,
   lastStatusDecisionId: issues.lastStatusDecisionId,

@@ -2500,6 +2500,12 @@ function toCompactIssue(issue: any): CompactIssue {
     parentId: issue.parentId,
     title: issue.title,
     description: issue.description,
+    // Carry the whole preview signal through the compact projection. Dropping the
+    // truncation flag here is what made it look uniformly absent to an agent triaging
+    // via view=compact, and it is the projection agents use most.
+    descriptionTruncated: issue.descriptionTruncated ?? false,
+    descriptionLength: issue.descriptionLength ?? null,
+    descriptionMaxChars: issue.descriptionMaxChars ?? null,
     status: issue.status,
     workMode: issue.workMode,
     priority: issue.priority,
