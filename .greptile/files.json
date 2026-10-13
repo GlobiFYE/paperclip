@@ -13,6 +13,10 @@
       "description": "Existing Paperclip review guidance for PR descriptions, UI evidence, and growth of large source files."
     },
     {
+      "path": "rules/product-harness-responsibility.mdc",
+      "description": "Product requirements and review criteria for harness responsibility, minimal user-facing internals, truthful progress, and human decisions."
+    },
+    {
       "path": "rules/chat-channel-platform-boundaries.mdc",
       "description": "Architecture requirements and review criteria for separating chat channel platform implementations from shared orchestration.",
       "scope": [
