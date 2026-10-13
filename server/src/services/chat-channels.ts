@@ -1726,11 +1726,11 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       }
       // The task transaction re-runs automatic admission before any task changes.
       const principalAllowed =
-        !principalResolution.linkedDenied &&
-        (principalResolution.userId !== null ||
-          guestSponsorAllowed ||
-          publicVoiceTaskAllowed ||
-          githubAutomatic?.reviewedAuthor === true);
+        githubAutomatic?.reviewedAuthor === true ||
+        (!principalResolution.linkedDenied &&
+          (principalResolution.userId !== null ||
+            guestSponsorAllowed ||
+            publicVoiceTaskAllowed));
       const activationAllowed = addressed || existingConversation !== null;
       const allowed =
         endpointAllowed &&
@@ -2311,7 +2311,8 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           })
           .where(eq(toolConnections.id, taskEndpoint.connectionId));
         if (endpoint.provider === "github") {
-          await retainGitHubDeliveryAuthority(taskTx, taskEndpoint, activeDelivery.id, principalResolution.userId, taskUserId);
+          // A reviewed author's task keeps bot-only GitHub access even when the author is a linked member.
+          await retainGitHubDeliveryAuthority(taskTx, taskEndpoint, activeDelivery.id, reviewedAuthorReview ? null : principalResolution.userId, taskUserId);
         }
         if (githubAutomatic) {
           await retainGitHubReviewReceipt(taskTx, endpoint, issue.id, activeDelivery.id, githubAutomatic);
