@@ -7,7 +7,7 @@ type DestinationAdmissionInput = {
   endpoint: EndpointRow;
   currentEndpoint: Pick<EndpointRow, "status" | "allowGroupChats">;
   thread: Thread;
-  
+
 };
 type DestinationAdmissionOptions = {
   ensureResource: (endpoint: EndpointRow, thread: Thread, enableForSetup: boolean, database?: DbOrTransaction) => Promise<typeof chatEndpointResources.$inferSelect>;
