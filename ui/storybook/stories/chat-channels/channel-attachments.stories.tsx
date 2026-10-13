@@ -61,6 +61,7 @@ export const MultipleFiles: Story = {
         ...attachment,
         id: "attachment-two",
         assetId: "asset-two",
+        contentPath: "/api/assets/asset-two/content",
         originalFilename: "checks.json",
         contentType: "application/json",
       },

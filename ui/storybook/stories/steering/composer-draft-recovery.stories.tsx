@@ -42,7 +42,7 @@ const meta = {
     saveDraft(second, "Check provider qualification.");
     if (parameters.uncertain)
       saveDraftSubmission(first, {
-        attemptId: "submission-gap",
+        attemptId: "00000000-0000-4000-8000-000000000001",
         reviewed: false,
       });
     return () => {

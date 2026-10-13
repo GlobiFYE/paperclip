@@ -30,7 +30,9 @@ const meta = {
     },
   },
   beforeEach: ({ parameters }) =>
-    installPipelineFixture(parameters.fixtureState as FixtureState).cleanup,
+    installPipelineFixture(parameters.fixtureState as FixtureState, {
+      emptyStages: parameters.fixtureState === "empty",
+    }).cleanup,
 } satisfies Meta<typeof Host>;
 export default meta;
 type Story = StoryObj<typeof meta>;
@@ -40,7 +42,12 @@ export const Ready: Story = {
   },
 };
 export const Loading: Story = { parameters: { fixtureState: "loading" } };
-export const Empty: Story = { parameters: { fixtureState: "empty" } };
+export const Empty: Story = {
+  parameters: { fixtureState: "empty" },
+  play: async ({ canvasElement }) => {
+    await within(canvasElement).findByText("No stages configured.");
+  },
+};
 export const Failed: Story = { parameters: { fixtureState: "failure" } };
 export const PermissionDenied: Story = {
   parameters: { fixtureState: "permission" },

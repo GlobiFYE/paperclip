@@ -1,3 +1,4 @@
+import { assertRenderState } from "./feature-gap-render-states";
 import { readFileSync, writeFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import { scanStories } from "../../scripts/storybook-catalog.mjs";
@@ -49,12 +50,16 @@ for (const suite of suites) {
       ).toBeDefined();
       const errors: string[] = [];
       page.on("pageerror", (error) => errors.push(error.message));
-      await page.goto(`/?path=/story/${id}`);
+      // Opening an addon during play steals focus from inputs and dismisses menus.
+      await page.goto(
+        `/?path=/story/${id}&addonPanel=storybook/interactions/panel`,
+      );
       const frame = page.frameLocator("#storybook-preview-iframe");
       await expect(frame.locator("body")).toHaveClass(/sb-show-main/);
       await expect(frame.locator(".sb-show-errordisplay")).toHaveCount(0);
-      const interactions = page.getByRole("tab", { name: /^Interactions/ });
-      await interactions.click();
+      await expect(
+        page.getByRole("tab", { name: /^Interactions/ }),
+      ).toHaveAttribute("aria-selected", "true");
       const status = page.locator('[aria-label^="Story status:"]');
       if (index.entries[id]?.tags.includes("play-fn")) {
         await expect(status).toHaveAttribute(
@@ -62,6 +67,8 @@ for (const suite of suites) {
           "Story status: Pass",
         );
       }
+      if (!index.entries[id].tags.includes("play-fn"))
+        await assertRenderState(frame, id);
       await expect(frame.locator("#storybook-root")).toBeAttached();
       expect(errors).toEqual([]);
       if (
@@ -77,8 +84,12 @@ for (const suite of suites) {
 test("token fixtures reset when switching stories in one browser", async ({
   page,
 }) => {
-  await page.goto("/?path=/story/feature-gateway-tokens--issued-token");
-  await page.getByRole("tab", { name: /^Interactions/ }).click();
+  await page.goto(
+    "/?path=/story/feature-gateway-tokens--issued-token&addonPanel=storybook/interactions/panel",
+  );
+  await expect(
+    page.getByRole("tab", { name: /^Interactions/ }),
+  ).toHaveAttribute("aria-selected", "true");
   await expect(page.locator('[aria-label^="Story status:"]')).toHaveAttribute(
     "aria-label",
     "Story status: Pass",

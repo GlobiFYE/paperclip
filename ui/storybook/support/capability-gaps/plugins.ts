@@ -2,9 +2,10 @@ import { prepareFixtureApi, type FixtureState } from "./api";
 export function installPluginFixtures(
   state: FixtureState = "ready",
   empty = false,
+  pluginId = "plugin-gap",
 ) {
   let plugin = {
-    id: "plugin-gap",
+    id: pluginId,
     pluginKey: "storybook.fixture",
     packageName: "@paperclipai/storybook-fixture",
     version: "1.0.0",
@@ -48,7 +49,7 @@ export function installPluginFixtures(
         },
       },
       {
-        path: "/api/plugins/plugin-gap",
+        path: `/api/plugins/${pluginId}`,
         read: ({ method }) => {
           if (method === "DELETE") {
             rows = [];
@@ -58,7 +59,7 @@ export function installPluginFixtures(
         },
       },
       {
-        path: /^\/api\/plugins\/plugin-gap\/(enable|disable)$/,
+        path: new RegExp(`^/api/plugins/${pluginId}/(enable|disable)$`),
         method: "POST",
         read: ({ url }) => {
           plugin = {
@@ -72,10 +73,10 @@ export function installPluginFixtures(
           return { ok: true };
         },
       },
-      { path: "/api/plugins/plugin-gap/health", read: () => health },
-      { path: "/api/plugins/plugin-gap/logs", read: () => [] },
+      { path: `/api/plugins/${pluginId}/health`, read: () => health },
+      { path: `/api/plugins/${pluginId}/logs`, read: () => [] },
       {
-        path: "/api/plugins/plugin-gap/dashboard",
+        path: `/api/plugins/${pluginId}/dashboard`,
         read: () => ({
           pluginId: plugin.id,
           worker: null,
@@ -86,7 +87,7 @@ export function installPluginFixtures(
         }),
       },
       {
-        path: "/api/plugins/plugin-gap/config",
+        path: `/api/plugins/${pluginId}/config`,
         read: ({ method, body }) => {
           if (method === "POST")
             configJson = body.configJson as Record<string, unknown>;
@@ -99,7 +100,7 @@ export function installPluginFixtures(
         },
       },
       {
-        path: "/api/plugins/plugin-gap/config/test",
+        path: `/api/plugins/${pluginId}/config/test`,
         method: "POST",
         read: () => ({ valid: true }),
       },

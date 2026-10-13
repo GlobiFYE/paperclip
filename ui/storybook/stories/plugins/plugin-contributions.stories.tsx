@@ -1,3 +1,6 @@
+import { PluginSettings } from "@/pages/PluginSettings";
+import { PluginManager } from "@/pages/PluginManager";
+import { installPluginFixtures } from "../../support/capability-gaps/plugins";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Routes, Route } from "@/lib/router";
 import { PluginPage } from "@/pages/PluginPage";
@@ -10,6 +13,14 @@ import {
 function Contribution() {
   return (
     <Routes>
+      <Route
+        path="/PAP/company/settings/instance/plugins/:pluginId"
+        element={<PluginSettings />}
+      />
+      <Route
+        path="/PAP/company/settings/instance/plugins"
+        element={<PluginManager />}
+      />
       <Route path="/PAP/plugins/:pluginId" element={<PluginPage />} />
     </Routes>
   );
@@ -31,7 +42,12 @@ const meta = {
       "FixturePluginContent",
       FixturePluginContent,
     );
-    return prepareFixtureApi(
+    const baseCleanup = installPluginFixtures(
+      "ready",
+      false,
+      "contribution-gap",
+    );
+    const fixture = prepareFixtureApi(
       [
         {
           path: "/api/plugins/ui-contributions",
@@ -60,7 +76,11 @@ const meta = {
         },
       ],
       parameters.fixtureState as FixtureState,
-    ).cleanup;
+    );
+    return () => {
+      fixture.cleanup();
+      baseCleanup();
+    };
   },
 } satisfies Meta<typeof Contribution>;
 export default meta;

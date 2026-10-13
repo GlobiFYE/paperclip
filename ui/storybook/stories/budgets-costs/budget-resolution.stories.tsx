@@ -53,7 +53,7 @@ const meta = {
               currentIncident.status !== "open"
                 ? []
                 : [currentIncident],
-            pausedAgentCount: currentIncident.status === "open" ? 1 : 0,
+            pausedAgentCount: parameters.fixtureState==="empty"?0:currentIncident.status === "open" ? 1 : 0,
             pausedProjectCount: 0,
             pendingApprovalCount: 0,
           }),

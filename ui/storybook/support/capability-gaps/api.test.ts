@@ -75,7 +75,7 @@ describe("capability story API boundary", () => {
     expect(await (await window.fetch("/api/flags")).json()).toEqual({
       enabled: true,
     });
-    expect((await window.fetch("/api/subject")).status).toBe(503);
+    expect((await window.fetch("/api/subject")).status).toBe(500);
     fixture.cleanup();
     cleanup = undefined;
     expect(window.fetch).toBe(previous);

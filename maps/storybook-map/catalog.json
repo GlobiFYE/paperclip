@@ -11,7 +11,7 @@
       "ui/storybook/support/feature-map/FeatureOverview.tsx",
       "ui/storybook/support/capability-gaps/api.ts"
     ],
-    "fingerprint": "66a01f89e70452fbd5484f7c50110db4984ff3cfa3257380f0d04e454269bf47"
+    "fingerprint": "263c1ee4432893b22ad7e545de5a43685d6e38778aed6b4d061138707c589ae9"
   },
   "entries": [
     {
@@ -5693,7 +5693,7 @@
       ],
       "stableId": "feature-backup-retention",
       "sidebarTitle": "Oversight and operation/Instance operations/Backup retention",
-      "fingerprint": "5b3250ec38b7dd0355ef6868fceebedb488e260503ec436ca95060881b5311ee"
+      "fingerprint": "c7e9504ae74714e4b1c316e10673fef8e80ebab18b478d6dc447fa243b66ddfb"
     },
     {
       "file": "ui/storybook/stories/recovery/recovery-gap-states.stories.tsx",
@@ -5718,7 +5718,7 @@
       ],
       "stableId": "feature-recovery-gap-states",
       "sidebarTitle": "Projects and execution/Recovery/Exhaustion and user decisions",
-      "fingerprint": "eee2827553995a3b4e52c224dda338efce3d993cd9e96fa74a70b37f58f5e6df"
+      "fingerprint": "b40c48d0ee8916ce0538b78d91265bc365a1e3a0ca0a41a3626b521a48f4ccf5"
     },
     {
       "file": "ui/storybook/stories/steering/durable-response-queue.stories.tsx",
@@ -5742,7 +5742,7 @@
       ],
       "stableId": "feature-durable-response-queue",
       "sidebarTitle": "Tasks and conversations/Steering and queued messages/Accepted response delivery",
-      "fingerprint": "dcd207be5f35e16bd73dec09fcc69fb172e90331c78f0301c050afc1e16defbb"
+      "fingerprint": "d98801700657f1fffd08c23541f4ddefc8c1262f48144cb30c488aa2aba55793"
     },
     {
       "file": "ui/storybook/stories/workspaces/workspace-close.stories.tsx",
@@ -5765,7 +5765,7 @@
       ],
       "stableId": "feature-workspace-close",
       "sidebarTitle": "Projects and execution/Workspaces, services, and files/Close readiness",
-      "fingerprint": "4cf9c525b6d34f40c118a435cdf1496c113a5b84f1b4724b5a10884143f85547"
+      "fingerprint": "b3d1d32d7f1f51f837ecd04f64ca1b6b7e8b36c921d54b638898ef06512617cc"
     },
     {
       "file": "ui/storybook/stories/budgets-costs/budget-resolution.stories.tsx",
@@ -5787,7 +5787,7 @@
       ],
       "stableId": "feature-budget-resolution",
       "sidebarTitle": "Oversight and operation/Costs and budgets/Resolve a budget incident",
-      "fingerprint": "b856d28d726457113b0f605dc5b369b7c5c3c82756c486b95dce06ff8237d6ed"
+      "fingerprint": "93892dd8b0902a6b0a2374abaa94a01af39ba9dc39fdcaee0148f8043561eebb"
     },
     {
       "file": "ui/storybook/stories/activity/run-audit.stories.tsx",
@@ -5810,7 +5810,7 @@
       ],
       "stableId": "feature-run-audit",
       "sidebarTitle": "Oversight and operation/Dashboards and audit trails/Execution history",
-      "fingerprint": "a89d2ac1d212667b7a0da9180591c8879be5a7b6f25c966a27e53c734443d67f"
+      "fingerprint": "7c1490d03123079826016f5423d2770271db3b68606dd680c03e367645673c4d"
     },
     {
       "file": "ui/storybook/stories/secrets/proposal-review.stories.tsx",
@@ -5833,7 +5833,7 @@
       ],
       "stableId": "feature-secret-proposal-review",
       "sidebarTitle": "Apps, channels, and extensions/Secrets and proposals/Proposal review",
-      "fingerprint": "7b8c3dcf148a483e3bea2d66192ac36bf3055d1c318ac61ff2d2d11bc59d78f3"
+      "fingerprint": "008f1fc5b9e5ee44203ef1f711d367b62a85c880e96b87a86c32b7c82a7eb316"
     },
     {
       "file": "ui/storybook/stories/gateways-profiles/gateway-tokens.stories.tsx",
@@ -5858,7 +5858,7 @@
       ],
       "stableId": "feature-gateway-tokens",
       "sidebarTitle": "Apps, channels, and extensions/Tool gateways and access profiles/Named gateway tokens",
-      "fingerprint": "f18d701dd451bbf58f8d128ea2af569f29afc219b90bcc623582ba8264207424"
+      "fingerprint": "0c565737015544b791cf7b4fda2f80fd9456368aeb8f0df0f9a4f60ad221b028"
     },
     {
       "file": "ui/storybook/stories/access/cli-authorization.stories.tsx",
@@ -5881,7 +5881,7 @@
       ],
       "stableId": "feature-cli-authorization",
       "sidebarTitle": "Getting started and access/Login, invitations, and access/CLI authorization",
-      "fingerprint": "c1545735e504cfce5a86811b3bf37881a5105e340c82ef9ed51490dfafcb4eb8"
+      "fingerprint": "c87b678d05b7818fd201f97c7e41cd92ce25520123ef4d20b56dd0c9785455ee"
     },
     {
       "file": "ui/storybook/stories/access/sign-in.stories.tsx",
@@ -5906,7 +5906,7 @@
       ],
       "stableId": "feature-sign-in",
       "sidebarTitle": "Getting started and access/Login, invitations, and access/Sign in",
-      "fingerprint": "17585dfd130ed1ae38a62780fc1118f1778ca08a2c0fa8950e05e1e0fbfd8960"
+      "fingerprint": "b9524d5f5a97e14c7e3bc5989b94ebe0fea56ab8767df5c5efb24430b003d491"
     },
     {
       "file": "ui/storybook/stories/access/membership.stories.tsx",
@@ -5929,7 +5929,7 @@
       ],
       "stableId": "feature-membership",
       "sidebarTitle": "Getting started and access/Login, invitations, and access/Organization membership",
-      "fingerprint": "1b3d166bb5d69965eba0661e3902df8adafef4717af2fa2971a5c9f10bf9c207"
+      "fingerprint": "8bd65a1aa65dc4e4767390eefb1b731a410ff852ac6eced05f5e3e5249d1a356"
     },
     {
       "file": "ui/storybook/stories/companies/company-selection.stories.tsx",
@@ -5953,7 +5953,7 @@
       ],
       "stableId": "feature-company-selection",
       "sidebarTitle": "Getting started and access/Companies and portability/Selection and archived organizations",
-      "fingerprint": "be5263ea0071636f58254610563fd5ccf5696349813db7424a84cebf625dc769"
+      "fingerprint": "0275b0bd6538672ef381ffb6fbdf68b7611e93df97334246cb4b3b1c6856bc17"
     },
     {
       "file": "ui/storybook/stories/plugins/plugin-management.stories.tsx",
@@ -5971,6 +5971,7 @@
         "maps/feature-map/plugins.md",
         "ui/src/components/ToastViewport.tsx",
         "ui/src/pages/PluginManager.tsx",
+        "ui/src/pages/PluginSettings.tsx",
         "ui/storybook/.storybook/preview.tsx",
         "ui/storybook/stories/plugins/plugin-management.stories.tsx",
         "ui/storybook/support/capability-gaps/api.ts",
@@ -5978,7 +5979,7 @@
       ],
       "stableId": "feature-plugin-management",
       "sidebarTitle": "Apps, channels, and extensions/Plugins/Installation and lifecycle",
-      "fingerprint": "f6f32d5870da3d29c95caeba1cfad2b429a4704db55308bfc20582b5e6769afc"
+      "fingerprint": "fd52b6f6966ae05ad7ffb755eebcfa0aeb6d9cb7c246a9def116de663eb5feeb"
     },
     {
       "file": "ui/storybook/stories/plugins/plugin-configuration.stories.tsx",
@@ -5994,6 +5995,7 @@
       "sources": [
         "maps/feature-map/plugins.md",
         "ui/src/lib/router.tsx",
+        "ui/src/pages/PluginManager.tsx",
         "ui/src/pages/PluginSettings.tsx",
         "ui/storybook/.storybook/preview.tsx",
         "ui/storybook/stories/plugins/plugin-configuration.stories.tsx",
@@ -6002,7 +6004,7 @@
       ],
       "stableId": "feature-plugin-configuration",
       "sidebarTitle": "Apps, channels, and extensions/Plugins/Configuration",
-      "fingerprint": "197042ea6b2699b2f8cee1139b25094a20666afefcf95a30edb77e95efb0a18b"
+      "fingerprint": "b80dc4cfa9311c9df6fb795a4b481405144342a9003062b2e0d8397d6f8b68e1"
     },
     {
       "file": "ui/storybook/stories/plugins/plugin-contributions.stories.tsx",
@@ -6018,15 +6020,18 @@
       "sources": [
         "maps/feature-map/plugins.md",
         "ui/src/lib/router.tsx",
+        "ui/src/pages/PluginManager.tsx",
         "ui/src/pages/PluginPage.tsx",
+        "ui/src/pages/PluginSettings.tsx",
         "ui/src/plugins/slots.tsx",
         "ui/storybook/.storybook/preview.tsx",
         "ui/storybook/stories/plugins/plugin-contributions.stories.tsx",
-        "ui/storybook/support/capability-gaps/api.ts"
+        "ui/storybook/support/capability-gaps/api.ts",
+        "ui/storybook/support/capability-gaps/plugins.ts"
       ],
       "stableId": "feature-plugin-contributions",
       "sidebarTitle": "Apps, channels, and extensions/Plugins/Contributed routes",
-      "fingerprint": "c08cd7ab01a3c2a3db519469de003b0a1c11f0a120bcb5ec9a4c8a56ecfb7fcb"
+      "fingerprint": "09b20d50e157c332613c3c03ccded5ae21804011005891cacd4342ce653b8d67"
     },
     {
       "file": "ui/storybook/stories/cases/case-browse.stories.tsx",
@@ -6037,7 +6042,7 @@
       "status": "current",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Cases page with fixture parent/child records and loading/empty/error/403. Responsive duplicate labels are accounted for; server filters and case mutations remain separate.",
+      "notes": "Cases page with fixture parent/child records and loading/empty/error/403. Failed list queries currently use the shipped empty-case presentation. Responsive duplicate labels are accounted for; server filters and case mutations remain separate.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/cases.md",
@@ -6049,7 +6054,7 @@
       ],
       "stableId": "feature-case-browse",
       "sidebarTitle": "Automation and structured work/Cases/Browse and hierarchy",
-      "fingerprint": "615b9529c2f98aa5d51dfcbb28a09cfae736b9676e58436da7d66c4b8adbc5f8"
+      "fingerprint": "41f3255e05cc2ca30fc22ff25748cff9b7017189f6ebb71d6f42827602237691"
     },
     {
       "file": "ui/storybook/stories/cases/case-detail.stories.tsx",
@@ -6077,7 +6082,7 @@
       ],
       "stableId": "feature-case-detail",
       "sidebarTitle": "Automation and structured work/Cases/Structure, history and task links",
-      "fingerprint": "860bac763b2007d1317c0299f067b4ec716794c9e21af48a96a118636796a27c"
+      "fingerprint": "13a24fcf6de97812864194104d14343ec50130ba6aa5405078a1b127778ab0cf"
     },
     {
       "file": "ui/storybook/stories/status-cards/status-card-states.stories.tsx",
@@ -6108,7 +6113,7 @@
       ],
       "stableId": "feature-status-card-states",
       "sidebarTitle": "Automation and structured work/Status cards/Authoring, updates and archive",
-      "fingerprint": "bd28d4c2236ce840420180dca0a0380a29d188eeed410ceacdb1098b6ec5a119"
+      "fingerprint": "c6f52ca5e82fa4a14bc10b30177a0a9e689cd37d83fc5afbee77370f707bb13f"
     },
     {
       "file": "ui/storybook/stories/goals/goal-alignment.stories.tsx",
@@ -6133,7 +6138,7 @@
       ],
       "stableId": "feature-goal-alignment",
       "sidebarTitle": "Projects and execution/Goals and work alignment/Aligned work and navigation",
-      "fingerprint": "8323e78c37affb4048964a14a1868011e0dca356fbc3096f68bcc55277963ebe"
+      "fingerprint": "a9a4bc0845dbed28f5cc458713f4ceecb3641a9ba1b60fe1867f3b573a471622"
     },
     {
       "file": "ui/storybook/stories/companies/company-import.stories.tsx",
@@ -6155,7 +6160,7 @@
       ],
       "stableId": "feature-company-import",
       "sidebarTitle": "Getting started and access/Companies and portability/Import preview",
-      "fingerprint": "6e9b98bd9d05bd072c7c805607af9fb0e62d440d4f45be272bb3193f170cb292"
+      "fingerprint": "578c7550b2a601c0c71aa7a847f9c9505a642629a92da73af0ef7e750fb3f370"
     },
     {
       "file": "ui/storybook/stories/inbox-search/inbox-views.stories.tsx",
@@ -6166,7 +6171,7 @@
       "status": "current",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped Inbox host with Mine/Recent/Unread/Blocked under combined-inbox flags and list states. Personal participation/read metadata and server counts remain production verification.",
+      "notes": "Shipped Inbox host with Mine/Recent/Unread/Blocked under combined-inbox flags and list states. Approvals/join requests/run lists are isolated alongside tasks. Failed/denied list queries currently fall back to Inbox zero; personal participation/read metadata and server counts remain production verification.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/inbox-search.md",
@@ -6178,7 +6183,7 @@
       ],
       "stableId": "feature-inbox-views",
       "sidebarTitle": "Tasks and conversations/Inbox, decisions, and search/Personal task views",
-      "fingerprint": "2df4b2468be83856a389cf42e1e9e2c41e4e7c313f2978d85abcafb694c8efc8"
+      "fingerprint": "ab88abe5bfaba8abdbb55f1cb849e48fc649eeacfd6d464742d1218b375fd349"
     },
     {
       "file": "ui/storybook/stories/skills/skill-test-runs.stories.tsx",
@@ -6202,7 +6207,7 @@
       ],
       "stableId": "feature-skill-test-runs",
       "sidebarTitle": "Agents and reusable capabilities/Skills and Skill Studio/Test runs",
-      "fingerprint": "85eeafb76bc8fff70ba9be81ce90824b62d1673d7ddedfc525b306dd00b3b48f"
+      "fingerprint": "4685add5676a5e6dd96885d326be891b8b48520787177d8540d5f3e2758cb8c5"
     },
     {
       "file": "ui/storybook/stories/onboarding/resume-draft.stories.tsx",
@@ -6228,7 +6233,7 @@
       ],
       "stableId": "feature-onboarding-resume",
       "sidebarTitle": "Getting started and access/Onboarding and first work/Resume a saved draft",
-      "fingerprint": "293be094bb9cd13041b93e9f53fa0a6d277ec701ed8d6a5478336c00ec7f89db"
+      "fingerprint": "d49d11af5c551771afff5cc961eb726bc6dbc8d24606360fdaa930ae3f7807e5"
     },
     {
       "file": "ui/storybook/stories/routines/run-now.stories.tsx",
@@ -6254,7 +6259,7 @@
       ],
       "stableId": "feature-routine-run-now",
       "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Run now",
-      "fingerprint": "5ee5ef6e955c4f6f0eb01962629c21e883f26eb92e1c0de65785ae738b4d2508"
+      "fingerprint": "6d6f650f4990ad61045c6e3c47ae446cf5ac7a5240ca123a91c2c3216bf0d3c9"
     },
     {
       "file": "ui/storybook/stories/app-permissions/catalog-review.stories.tsx",
@@ -6276,7 +6281,7 @@
       ],
       "stableId": "feature-catalog-review",
       "sidebarTitle": "Apps, channels, and extensions/App access and action permissions/Review newly discovered actions",
-      "fingerprint": "29c0f0dd155123ccd4afc8a8c93b695d507101bea5a4859177660b92fff73060"
+      "fingerprint": "0b4c214f3c5e138fa57da3ed59a64c368d8ac7615476164743b810c117e7cab6"
     },
     {
       "file": "ui/storybook/stories/chat-channels/channel-attachments.stories.tsx",
@@ -6298,7 +6303,7 @@
       ],
       "stableId": "feature-channel-attachments",
       "sidebarTitle": "Apps, channels, and extensions/External chat and email/Task-linked files",
-      "fingerprint": "692a66f31fbec180b0d400b6bb2734c565d2496bd8c37c9e332a2b4a00ebb667"
+      "fingerprint": "aa6718bf5754d2f5603682ed76d5075e277ce19f35b38356f92f8e3f14bc4f43"
     },
     {
       "file": "ui/storybook/stories/steering/composer-draft-recovery.stories.tsx",
@@ -6322,7 +6327,7 @@
       ],
       "stableId": "feature-composer-draft-recovery",
       "sidebarTitle": "Tasks and conversations/Steering and queued messages/Draft recovery",
-      "fingerprint": "dca1f8c7eb9dd726aa230edc23835d63a386a9a148dd392d33a67d44286b72b8"
+      "fingerprint": "3cc7aa7f7ca1d3248cf92173cc8c0f1f80d1da2d086053e0e92a1aafe00a2a91"
     },
     {
       "file": "ui/storybook/stories/inbox-search/personal-task-toasts.stories.tsx",
@@ -6347,7 +6352,7 @@
       ],
       "stableId": "feature-personal-task-toasts",
       "sidebarTitle": "Tasks and conversations/Inbox, decisions, and search/Personal task notifications",
-      "fingerprint": "22c7f91b8b36e344e4830b01df407ce963621586a8f40c9b7d48403e4b571793"
+      "fingerprint": "d47baf5e96f99f1af392cd1138d71c04d09fd446e5974e168291fd1404120109"
     },
     {
       "file": "ui/storybook/stories/agent-chat/conference-room.stories.tsx",
@@ -6370,7 +6375,7 @@
       ],
       "stableId": "feature-conference-room",
       "sidebarTitle": "Tasks and conversations/Agent conversations and project handoff/Conference Room",
-      "fingerprint": "291eaaea61c854fb2f62596c04059936674210bfc73dcb6651ebd1e2e9913ac4"
+      "fingerprint": "2c2431d14a8e6106a6ede10021ea387b7b5e8a9770710f423cbe95ba316dc4da"
     },
     {
       "file": "ui/storybook/stories/documents-artifacts/document-revisions.stories.tsx",
@@ -6394,7 +6399,7 @@
       ],
       "stableId": "feature-document-revisions",
       "sidebarTitle": "Tasks and conversations/Documents, attachments, and work products/Document revisions",
-      "fingerprint": "71d8826968fcb176c9fb5ccc5d094a863adf51a7c29893c508d452f43d10877e"
+      "fingerprint": "a1d9e6b7f17a5d75ac2ff91a0ad96b9de9dadab4b2e0340ac7ae94d32809409b"
     },
     {
       "file": "ui/storybook/stories/navigation-preferences/sidebar-preferences.stories.tsx",
@@ -6418,7 +6423,7 @@
       ],
       "stableId": "feature-sidebar-preferences",
       "sidebarTitle": "Oversight and operation/Navigation, profile, and announcements/Sidebar preferences",
-      "fingerprint": "d8adadd7b09283dd66bea9cb4874eea8b5c5452c0ac441c57244560627934506"
+      "fingerprint": "5426596737a1f27105954d0e7fde6729f0b3a2e83ba7dec9e288286a359ab216"
     },
     {
       "file": "ui/storybook/stories/pipelines/pipeline-board.stories.tsx",
@@ -6442,7 +6447,7 @@
       ],
       "stableId": "feature-pipeline-board",
       "sidebarTitle": "Automation and structured work/Pipelines, review queues, and learnings/Items",
-      "fingerprint": "ccb8fc9ec8d7debb2a7b4a13a40062f4d355a31ce049d0498b95eebf3cc19738"
+      "fingerprint": "6259bfc636e56d936fa77164bd5acbc5967066721a37f75bc803f5a4db6b3be3"
     },
     {
       "file": "ui/storybook/stories/pipelines/stage-settings.stories.tsx",
@@ -6466,7 +6471,7 @@
       ],
       "stableId": "feature-pipeline-stages",
       "sidebarTitle": "Automation and structured work/Pipelines, review queues, and learnings/Stage settings",
-      "fingerprint": "b102bbcf370154e535e4e83ed85071183235f5f248acb234cfab31cf4ea79dee"
+      "fingerprint": "747e8cf58dd88118466de6b4ba8967f2f76ed31f7a8ee300f05265630367f0aa"
     },
     {
       "file": "ui/storybook/stories/pipelines/review-queue.stories.tsx",
@@ -6490,7 +6495,7 @@
       ],
       "stableId": "feature-pipeline-review",
       "sidebarTitle": "Automation and structured work/Pipelines, review queues, and learnings/Review queue",
-      "fingerprint": "09854f9ad5dd37c3f81b43bec6ad6c544fb279eadd5641144ddac725f810d428"
+      "fingerprint": "360dedf71d3540f1b67880ba49687a3b6a8962a11fdc8c3a2acd375c695a883c"
     },
     {
       "file": "ui/storybook/stories/pipelines/learnings.stories.tsx",
@@ -6514,7 +6519,7 @@
       ],
       "stableId": "feature-pipeline-learnings",
       "sidebarTitle": "Automation and structured work/Pipelines, review queues, and learnings/Learnings",
-      "fingerprint": "5674a2d77567afe96b62cac93c488b698a73bded4df526635e81a13de266d3a0"
+      "fingerprint": "acc796cc3ca32601e40809ffb0b5e1406c1360785c988d74baca3172cad71b49"
     },
     {
       "file": "ui/storybook/stories/execution-environments/environment-states.stories.tsx",
@@ -6541,7 +6546,7 @@
       ],
       "stableId": "feature-execution-environments",
       "sidebarTitle": "Projects and execution/Execution environments/Configuration, capabilities, and probes",
-      "fingerprint": "1bca1436cfe4088e9fe45407ac188cc8d1b96e0f00993671119939818592d321"
+      "fingerprint": "779b0bdfd61826a31e88725c7d95a7f2c1d556352c3927ecaf32cf557be2adf7"
     },
     {
       "file": "ui/storybook/stories/execution-environments/custom-images.stories.tsx",
@@ -6566,7 +6571,7 @@
       ],
       "stableId": "feature-environment-images",
       "sidebarTitle": "Projects and execution/Execution environments/Custom images",
-      "fingerprint": "8f8eca26ad84d5f1f100d01cdace2f5b406248b0623d0457f14c165654358076"
+      "fingerprint": "0877c994c37d7272b9a1330897cf56d366162dc17e7503c753415dd1077c9446"
     }
   ]
 }

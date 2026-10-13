@@ -15,6 +15,7 @@ const meta = {
   title:
     "Tasks and conversations/Inbox, decisions, and search/Personal task views",
   component: InboxHost,
+  args: { tab: "mine" },
   parameters: { layout: "padded" },
   beforeEach: ({ parameters }) => {
     const api = prepareFixtureApi(
@@ -23,6 +24,10 @@ const meta = {
           path: "/api/companies/company-storybook/issues",
           read: () =>
             parameters.fixtureState === "empty" ? [] : storybookIssues,
+        },
+        {
+          path: /^\/api\/companies\/company-storybook\/(approvals|join-requests|heartbeat-runs)$/,
+          read: () => [],
         },
       ],
       parameters.fixtureState as FixtureState,

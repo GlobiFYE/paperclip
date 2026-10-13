@@ -5,8 +5,8 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 15_000 },
   retries: 0,
-  fullyParallel: false,
-  workers: 1,
+  fullyParallel: true,
+  workers: 4,
   reporter: "list",
   outputDir: "./test-results/feature-gaps",
   use: {

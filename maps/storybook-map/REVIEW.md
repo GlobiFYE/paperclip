@@ -462,3 +462,42 @@ Review correction: backup retention already has shipped controls in
 `InstanceGeneralSettings`, embedded in `CompanySettings`. The backup row therefore
 keeps missing retention UI examples alongside separate CLI backup/restore proof;
 it is not a wholesale Storybook exemption. No existing story mounts those controls.
+
+## Production-subject UI gap examples — 2026-10-13
+
+Step 3 adds 37 suites and 257 scenarios associated with the 49 UI capabilities
+from [VERIFICATION.md](VERIFICATION.md). Subjects are shipped pages/components;
+API replies, sockets, callbacks and storage seeds remain simulated. Source
+review uses production snapshot `a9ef9e8ebc1f41bb7047142704655d08b3e47be7`;
+the story revision is `36689fc8149c31858d0b4c6f7839ecc663404073` plus the review
+corrections in this commit. Catalog fingerprints identify the tested source bytes.
+Existing suite classifications and all 2,248 prior built entry IDs are preserved;
+the new built index has 2,505 entries. Existing unreviewed suites remain unreviewed.
+
+Executed the focused browser suite against this checkout's static build on macOS
+Chromium at 1280 × 900 with reduced motion: **260 checks passed**. Every new story
+was exercised: 129 declared play functions passed; the remaining 128 scenarios
+have explicit subject-content, skeleton, editable-control or documented fallback
+assertions. The only intentionally empty root is the zero-entry durable-response
+queue, whose shipped component returns null. Additional checks verified token
+fixture reset through sidebar navigation and backup retention at 390 × 844 in
+light and dark themes. No browser page errors were observed. The test names
+identify each story ID; rerun with the command in VERIFICATION.md. Selected
+screenshots are inspection captures, not pinned Linux visual-baseline comparisons.
+
+Review corrections give empty stage settings zero stages and assert its message,
+make failed reads return HTTP 500 rather than the service-warmup HTTP 503,
+provide Inbox dependencies and actual plugin redirect destinations, use distinct
+attachment paths and a valid uncertain-submission UUID, and select Interactions
+before play starts so the browser harness does not steal input/menu focus.
+
+Repository typecheck/build, the UI Vitest suite (730 files, 8,208 tests),
+four fixture-boundary tests, 27 catalog/generator/map tests, token gates and
+Storybook build passed. The full local repository test command could not complete:
+embedded PostgreSQL exhausted host shared-memory allocation, and native-runner
+tests reported timeouts. No host settings or other jobs were changed.
+
+Production acceptance and pinned Linux visual comparisons were not run. The
+scenario inventory retains outstanding recipe variants and real authorization,
+persistence and provider contracts. Examples expose existing read-error/loading
+fallbacks rather than inventing feedback; those limits are named in VERIFICATION.md.

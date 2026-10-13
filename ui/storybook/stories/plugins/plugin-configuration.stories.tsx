@@ -1,3 +1,4 @@
+import { PluginManager } from "@/pages/PluginManager";
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { Routes, Route } from "@/lib/router";
 import { PluginSettings } from "@/pages/PluginSettings";
@@ -7,6 +8,10 @@ import type { FixtureState } from "../../support/capability-gaps/api";
 function Settings() {
   return (
     <Routes>
+      <Route
+        path="/PAP/company/settings/instance/plugins"
+        element={<PluginManager />}
+      />
       <Route
         path="/PAP/plugins/:pluginId/settings"
         element={<PluginSettings />}

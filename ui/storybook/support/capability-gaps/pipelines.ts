@@ -54,7 +54,10 @@ export const pipeline: PipelineDetail = {
     { fromStageId: "stage-review", toStageId: "stage-done" },
   ],
 };
-export function installPipelineFixture(state: FixtureState = "ready") {
+export function installPipelineFixture(
+  state: FixtureState = "ready",
+  options: { emptyStages?: boolean } = {},
+) {
   let item: PipelineCase = {
     id: "case-pipeline-gap",
     companyId: "company-storybook",
@@ -124,7 +127,13 @@ export function installPipelineFixture(state: FixtureState = "ready") {
         path: "/api/companies/company-storybook/pipelines",
         read: () => (state === "empty" ? [] : [pipeline]),
       },
-      { path: "/api/pipelines/pipeline-gap", read: () => pipeline },
+      {
+        path: "/api/pipelines/pipeline-gap",
+        read: () =>
+          options.emptyStages
+            ? { ...pipeline, stages: [], stageCount: 0, transitions: [] }
+            : pipeline,
+      },
       {
         path: "/api/pipelines/pipeline-gap/cases",
         read: () =>

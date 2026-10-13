@@ -19,7 +19,7 @@ node scripts/serve-storybook-static.mjs --port 6136
 pnpm exec playwright test --config tests/storybook-visual/feature-gap-stories.config.ts
 ```
 
-The static server must be an owned process serving this checkout. Override the browser target with `PAPERCLIP_GAP_STORYBOOK_URL` when using another owned port. The browser suite checks rendered stories and waits for declared play assertions; it also checks reset when switching token stories in one browser. This is not the pinned Linux visual-baseline comparison.
+The static server must be an owned process serving this checkout. Override the browser target with `PAPERCLIP_GAP_STORYBOOK_URL` when using another owned port. The browser suite asserts each non-interactive story's expected content, skeleton or documented fallback and waits for declared play assertions; it also checks reset when switching token stories in one browser. This is not the pinned Linux visual-baseline comparison.
 
 | Suite | Capability associations | Scenarios / play functions |
 | --- | --- | --- |
@@ -48,7 +48,7 @@ The static server must be an owned process serving this checkout. Override the b
 | [Automation and structured work/Pipelines, review queues, and learnings/Learnings](../../ui/storybook/stories/pipelines/learnings.stories.tsx) | `pipelines/learnings` | 5 / 1 |
 | [Automation and structured work/Pipelines, review queues, and learnings/Items](../../ui/storybook/stories/pipelines/pipeline-board.stories.tsx) | `pipelines/items` | 5 / 1 |
 | [Automation and structured work/Pipelines, review queues, and learnings/Review queue](../../ui/storybook/stories/pipelines/review-queue.stories.tsx) | `pipelines/review` | 7 / 3 |
-| [Automation and structured work/Pipelines, review queues, and learnings/Stage settings](../../ui/storybook/stories/pipelines/stage-settings.stories.tsx) | `pipelines/stages` | 5 / 1 |
+| [Automation and structured work/Pipelines, review queues, and learnings/Stage settings](../../ui/storybook/stories/pipelines/stage-settings.stories.tsx) | `pipelines/stages` | 5 / 2 |
 | [Apps, channels, and extensions/Plugins/Configuration](../../ui/storybook/stories/plugins/plugin-configuration.stories.tsx) | `plugins/configuration` | 6 / 3 |
 | [Apps, channels, and extensions/Plugins/Contributed routes](../../ui/storybook/stories/plugins/plugin-contributions.stories.tsx) | `plugins/contributions` | 4 / 1 |
 | [Apps, channels, and extensions/Plugins/Installation and lifecycle](../../ui/storybook/stories/plugins/plugin-management.stories.tsx) | `plugins/installation`, `plugins/lifecycle` | 10 / 5 |
@@ -64,7 +64,7 @@ The static server must be an owned process serving this checkout. Override the b
 ## Production UI limitations exposed
 
 - Plugin contribution discovery errors remain on “Loading…”. The named DiscoveryFailure story exposes this shipped behavior; it does not claim a useful failure state.
-- The document section and execution-environment list lack dedicated read-error/loading presentation. Their stories retain the real fallback behavior. Custom-image metadata has its own loading and error states.
+- The document section and execution-environment list lack dedicated read-error/loading presentation. Cases and Inbox also fall back to empty views after list errors. Their stories retain the real fallback behavior. Custom-image metadata has its own loading and error states.
 - GoalDetail displays aligned projects and children. The current UI has no project goal-assignment control. The stories do not invent one.
 - Conference Room maps a denied stream to its generic assistant-unavailable message. Real permission enforcement belongs to the separate route verification.
 

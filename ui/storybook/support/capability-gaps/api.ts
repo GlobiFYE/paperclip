@@ -89,7 +89,7 @@ export function installFixtureApi(
             ? "You do not have permission to perform this action."
             : "The request failed. Please try again.",
         },
-        { status: denied ? 403 : 503 },
+        { status: denied ? 403 : 500 },
       );
     }
     const result = await route.read(fixtureRequest);
