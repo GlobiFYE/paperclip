@@ -26,7 +26,7 @@ test("capability order and related foundations links survive generation", async 
   page.on("pageerror", error => errors.push(error.message));
   await page.goto("/?path=/story/feature-map-developer-labs--overview");
   const frame = page.frameLocator("#storybook-preview-iframe");
-  await expect(frame.getByRole("navigation", { name: "Capabilities" }).getByRole("link")).toHaveText(["Design", "Performance", "Route gates"]);
+  await expect(frame.getByRole("navigation", { name: "Capabilities" }).getByRole("link")).toHaveText(["Design", "Interaction labs", "Performance", "Route gates"]);
   const design = frame.locator("section#design");
   const related = design.getByRole("link", { name: "Primitive Matrix", exact: true });
   await expect(related).toHaveAttribute("href", /foundations-primitive-matrix--/);
