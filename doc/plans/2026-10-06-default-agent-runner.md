@@ -10,6 +10,41 @@ saved-agent preservation, exact-candidate installation and required checks, then
 a normal protected merge. Production deployment and default promotion remain
 outside this merge campaign.
 
+Current published candidate `57881c607fcea782ac30f601b768b2142fc2184b`
+passes all required checks: 53 successful checks, two conditional Storybook skips,
+fresh 5/5 automated review and 28 resolved review threads. The existing hosted Linux
+login/reload case passes against its recorded CI merge. The previous failed
+attempts below remain historical evidence.
+
+Normal reconciliation with master `7eea9d8214fec00dfde32bda7fcf9b20a428e330`
+accepts its source-annotation Storybook/map migration. All 263 authored suites and
+2503 story identities, exports and play counts remain intact. Retired aggregate
+files and their review history remain in Git; current indexes regenerate as
+ignored outputs. Durable creation/onboarding annotations describe fixture limits. The 28
+existing tooling controls, UI typecheck, token gates and 35-area/175-ID map check
+pass. Independent inspection finds no change to native execution, defaults,
+onboarding, credentials, workspace, DB, CLI or packaging source relative to 578.
+The isolated GitHub review-heading change and Storybook build preparation retain
+their incoming master source. Fresh published-head CI/review is still required.
+
+Literal 578 [remote package qualification](https://github.com/paperclipai/paperclip/actions/runs/38464237723)
+is in progress. The [single managed onboarding attempt](https://github.com/paperclipai/paperclip/actions/runs/38464212481)
+passes automatic selection, saved environment qualification, native authentication,
+hire and reload, then completes two successful native runs with session continuity.
+It fails the accepted-child assertion: the model puts its document/file on the
+onboarding parent and finishes that parent despite the delivered first-task skill
+requiring a child. Preserve this candidate failure; it is not a passing E2E cell
+or complete task/follow-up proof. The owning verifier records six terminal lease
+rows with successful cleanup, of which four appear in the selected report;
+physical deletion and unpriced usage remain unsettled.
+
+The former staging QA stack is archived with a decommissioned database. Its
+normal preview preparation rejects the lifecycle before deployment. A new owned
+QA workspace has been provisioned through the ordinary signup path; it still
+needs candidate deployment and live verification. Previous preview/runtime proof
+is historical. Heavy builds remain remote, existing-agent data stays preserved,
+and no production deployment, default promotion or timer is authorized here.
+
 Published `e301c68d645eabd9fa7ae3a9450a460f6d2d0439` passes required CI with
 52 successes and two conditional skips. Its fresh review finds one linked-login
 setup defect. Literal executable source `6c0eca871616a110954553d6ff971e7655c85f93`

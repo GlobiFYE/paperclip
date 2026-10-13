@@ -1,4 +1,8 @@
-# External chat and email conversations
+---
+navigation: {"section":"Apps, channels, and extensions","sectionOrder":50,"order":30}
+---
+
+# External chat and email
 
 People can talk to an assigned agent through configured external channels, bind their identity, exchange files, and inspect delivery state. Each provider has a different identity, threading, and attachment contract.
 
@@ -50,6 +54,10 @@ Automated: [channel integration](../../server/src/__tests__/chat-channels.integr
 
 Manual: Inspect the bound agent and identity, recent activity, and delivery failure details. Repair a disposable credential, retry a safe message when offered, and verify exactly one external reply. Disable the endpoint and confirm new traffic is not silently processed.
 
+For GitHub, submit a disposable PR and verify the summary heading uses the bot's
+display name and the check remains **Paperclip Review**. For two separate bots on one PR, verify
+their App-scoped checks and comments remain independent.
+
 Configure optional project and workspace defaults at the connection and destination
 levels. Start a new conversation and inspect its task workspace. Verify that
 inheritance, an explicit selection, and clearing a default remain distinct.
@@ -63,3 +71,16 @@ Changing defaults must not move an existing conversation or interrupt its run.
 - One provider’s passing fixture does not qualify another provider or live delivery.
 - An accepted send request does not prove the recipient received the message or file.
 - Use [steering](./steering.md) and [questions](./questions-and-approvals.md) for their channel-specific interaction checks.
+
+### Storybook verification
+
+#### `attachments`
+
+Scope: ui
+Storybook: Mount TaskChatBubble attachments and ChatEndpointDetail provider-specific consent/upload/delivery failure and unknown-outcome states. Local email attachment dialog remains a prototype.
+Production: Transfer a disposable supported file through each affected provider; verify recipient delivery, read scope, duplicate/replay handling and failure/unknown state without treating notification as file-upload proof.
+Sources: Source: [TaskChatBubble.tsx](../../ui/src/components/task-chat/TaskChatBubble.tsx), [ChatEndpointDetail.tsx](../../ui/src/pages/apps/chat/ChatEndpointDetail.tsx), [chatEndpoints.ts](../../ui/src/api/chatEndpoints.ts), [chat-channels.ts](../../server/src/routes/chat-channels.ts). Tests: [TaskChatBubble.test.tsx](../../ui/src/components/task-chat/TaskChatBubble.test.tsx), [task-chat-attachments.test.ts](../../ui/src/components/task-chat/task-chat-attachments.test.ts), [chat-channels.integration.test.ts](../../server/src/__tests__/chat-channels.integration.test.ts), [issue-attachment-routes.test.ts](../../server/src/__tests__/issue-attachment-routes.test.ts)
+
+### Documentation scope: Chat and email channel setup
+
+Shared recipes name provider checks; each provider transport/thread/identity/file-size/type combination needs separate live evidence and deeper instructions.

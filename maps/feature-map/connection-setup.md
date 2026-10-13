@@ -1,3 +1,7 @@
+---
+navigation: {"section":"Apps, channels, and extensions","sectionOrder":50,"order":10}
+---
+
 # Connection setup
 
 People connect an app or account, choose who may use it, and recover incomplete
@@ -160,3 +164,7 @@ Slack setup does not qualify Discord, Telegram, GitHub, email, or iMessage.
 - Full provider matrix, AI-account selection, gateway/profile administration,
   and account revocation lifecycles remain outside this seed recipe.
 - For governed actions after setup, use [questions and approvals](./questions-and-approvals.md).
+
+### Documentation scope: App catalog and connection setup
+
+Provider-specific authentication/revocation, credential-only accounts, and aggregator administrative variants still need their own detailed matrices.

@@ -35,7 +35,17 @@ import {
 const meta = {
   id: "onboarding-agent-arc",
   title: "Getting started and access/Onboarding and first work/Onboarding/Agent arc",
-  parameters: { layout: "centered" },
+  parameters: { layout: "centered",
+    paperclip: {
+      "capabilities": [
+        "onboarding/adapter",
+        "onboarding/first-task"
+      ],
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Production wizard with simulated accounts, immutable-target discovery, native/Legacy setup and refused/unconfirmed cleanup. Fixtures do not prove isolation, lease cleanup, runtime limits, draft reload persistence or model execution."
+    },
+  },
 } satisfies Meta;
 
 export default meta;
