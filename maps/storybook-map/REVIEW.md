@@ -311,3 +311,23 @@ Source inspection only: no browser rendering, play, visual baseline, provider
 run or live production acceptance was performed for this reconciliation. The
 existing catalog checker must run on the actual merged tree after synchronization;
 its result verifies structure and declared hashes, not these live journeys.
+
+## 2026-10-13 master merge reconciliation
+
+Reviewed the source delta from `4808adc34e` to merge `63b2e7b8ad`
+(master parent `d67e3507b2`). The text conflict in INDEX retained the feature-map
+ordering and upstream workspace review notes. Regenerated INDEX after reviewing
+61 stale catalog entries against the changed declared sources.
+
+The inspected changes add assignment-history recipient suggestions and preserve
+manual selections, expand backend verification recipes, and add channel task
+defaults and access avatars with matching fixture changes. Entries record those
+limits. The sidebar suite that also mounts IssueDetail is now unreviewed because
+its route fixture has not been exercised against the new activity query. Existing
+composer examples omit the new optional suggested-assignee prop and retain their
+previous scenarios; their classifications do not certify the new behavior.
+
+All 223 authored suites and 2,210 authored story IDs remain. Generated feature
+pages still cover 35 areas and 171 capabilities. Catalog/generator tests (16),
+catalog validation, map checks and token gates pass. This is source reconciliation,
+not a new visual or live production acceptance claim.
