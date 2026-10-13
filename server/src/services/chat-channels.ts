@@ -1,3 +1,5 @@
+import { githubInboundTaskTitle, githubInboundCommentText, githubAssignedAgentRequiresLowTrust, retainGitHubDeliveryAuthority, retainGitHubReviewReceipt } from "./chat-channels/github/task-preparation.js";
+import { applyChatTaskReviewContainment } from "./chat-channels/inbound/task-trust.js";
 import { photonControlTargetsConversation, photonReplyMetadata, recordPhotonInboundActivity } from "./chat-channels/imessage-photon/messages.js";
 import { deferTeamsSetupReply } from "./chat-channels/microsoft-teams/setup-replies.js";
 import { slackOrphanFollowUp, stripSlackTitleMentions } from "./chat-channels/slack/messages.js";
@@ -129,12 +131,9 @@ import { canPublishIssueToChatAudience } from "./authorization.js";
 
 import { buildChatCommunicationGuidance } from "./chat-communication-guidance.js";
 import { assertChatTaskCreationAccess, resolveChatExecutionDefaults } from "./chat-execution-defaults.js";
-function githubPolicyRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 
 import { githubReviewCheckService } from "./chat-github-checks.js";
 import { githubAutomaticAdmission } from "./chat-github-events.js";
-import { githubManualMessagePrompt } from "./chat-github-review-policy.js";
-import { chatGitHubReviews } from "@paperclipai/db";
 import type { GitHubReviewEventContext, GitHubIssueEventContext, GitHubReviewPolicy } from "@paperclipai/shared";
 import { githubChatReviewService } from "./chat-github-reviews.js";
 import { githubResponseCommentService } from "./chat-github-response-comments.js";
@@ -176,8 +175,6 @@ import type { ChatEventKind, ChatEndpointSetupState, ChatProvider, ExternalChann
 import {
   isUuidLike,
   LOW_TRUST_REVIEW_PRESET,
-  LOW_TRUST_REVIEW_PRESET_VERSION,
-  LOW_TRUST_REVIEW_RAW_OUTPUT_DISPOSITION,
 } from "@paperclipai/shared";
 
 import {
@@ -2220,9 +2217,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
             taskEndpoint.companyId,
             {
               title: safeTitle(
-                githubAutomatic
-                  ? `PR #${githubAutomatic.context.pullNumber}: ${githubAutomatic.context.title}`
-                  : githubIssue ? `GitHub issue #${githubIssue.context.issueNumber}: ${githubIssue.context.title}` : message.text,
+                githubInboundTaskTitle(message.text, githubAutomatic, githubIssue),
                 `${PROVIDER_LABELS[taskEndpoint.provider]} conversation`,
               ),
               description: `Started from ${PROVIDER_LABELS[taskEndpoint.provider]}: ${resource.label}`,
@@ -2288,54 +2283,9 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
                 .where(eq(issues.id, conversation.issueId))
                 .then((rows) => rows[0] ?? null);
         if (!issue) throw notFound("Bound task not found");
-          const [assignedAgentTrust] = taskEndpoint.provider === "github" ? await taskTx.select({ permissions: agents.permissions }).from(agents).where(and(eq(agents.companyId, taskEndpoint.companyId), eq(agents.id, taskEndpoint.assignedAgentId))) : [];
-        if (!taskUserId || ((githubAutomatic || githubIssue) && !principalResolution.userId) || assignedAgentTrust?.permissions?.trustPreset === LOW_TRUST_REVIEW_PRESET) {
-            const reviewPreset = {
-              id: LOW_TRUST_REVIEW_PRESET,
-              version: LOW_TRUST_REVIEW_PRESET_VERSION,
-              rawOutputDisposition: LOW_TRUST_REVIEW_RAW_OUTPUT_DISPOSITION,
-            } as const;
-            await taskTx
-              .update(issues)
-              .set({
-                sourceTrust: {
-                  preset: LOW_TRUST_REVIEW_PRESET,
-                  disposition: "quarantined",
-                  sourceIssueId: issue.id,
-                },
-                executionPolicy: {
-                  mode: "normal",
-                  commentRequired: true,
-                  stages: [],
-                  ...issue.executionPolicy,
-                  reviewPreset,
-                  authorizationPolicy: {
-                    ...githubPolicyRecord(issue.executionPolicy?.authorizationPolicy),
-                    trustPreset: LOW_TRUST_REVIEW_PRESET,
-                    reviewPreset,
-                    trustBoundary: {
-                      mode: LOW_TRUST_REVIEW_PRESET,
-                      companyId: endpoint.companyId,
-                      rootIssueId: issue.id,
-                      issueIds: [issue.id],
-                      allowedAgentIds: [endpoint.assignedAgentId],
-                      allowedToolClasses: [
-                        "git.read",
-                        "github.pr.read",
-                        "tests.local",
-                      ],
-                      ...githubPolicyRecord(githubPolicyRecord(issue.executionPolicy?.authorizationPolicy)?.trustBoundary),
-                    },
-                  },
-                },
-                updatedAt: new Date(),
-              })
-              .where(
-                and(
-                  eq(issues.id, issue.id),
-                  eq(issues.companyId, endpoint.companyId),
-                ),
-              );
+        const githubAgentRequiresLowTrust = taskEndpoint.provider === "github" && await githubAssignedAgentRequiresLowTrust(taskTx, taskEndpoint);
+        if (!taskUserId || ((githubAutomatic || githubIssue) && !principalResolution.userId) || githubAgentRequiresLowTrust) {
+          await applyChatTaskReviewContainment(taskTx, endpoint, issue);
           }
 
         if (issue.status === "done" || issue.status === "cancelled") {
@@ -2349,14 +2299,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           );
         }
         const body =
-          (githubManual ? githubManualMessagePrompt({
-            event: githubManual.event,
-            policy: githubManual.policy,
-            repository: resource.providerResourceId,
-            thread: thread.id,
-            sender: { id: principalResolution.principal.externalId, login: principalResolution.principal.handle },
-            message: message.text,
-          }) : message.text.trim()) ||
+          githubInboundCommentText({ manual: githubManual, repository: resource.providerResourceId, thread: thread.id, sender: { id: principalResolution.principal.externalId, login: principalResolution.principal.handle }, message: message.text }) ||
           (message.attachments.length > 0
             ? taskEndpoint.provider === "microsoft-teams" &&
               !thread.isDM &&
@@ -2478,17 +2421,10 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           })
           .where(eq(toolConnections.id, taskEndpoint.connectionId));
         if (endpoint.provider === "github") {
-          const guest = !principalResolution.userId;
-          await taskTx.update(chatDeliveries).set({ normalizedEvent: sql`${chatDeliveries.normalizedEvent} || ${JSON.stringify({ githubAuthority: { guest, responsibleUserId: taskUserId, sponsorUserId: guest ? taskEndpoint.sponsorUserId : null } })}::jsonb` }).where(eq(chatDeliveries.id, activeDelivery.id));
+          await retainGitHubDeliveryAuthority(taskTx, taskEndpoint, activeDelivery.id, principalResolution.userId, taskUserId);
         }
         if (githubAutomatic) {
-          await taskTx.insert(chatGitHubReviews).values({
-            companyId: endpoint.companyId, endpointId: endpoint.id, issueId: issue.id,
-            repositoryId: githubAutomatic.context.repositoryId, repository: githubAutomatic.context.repository,
-            pullNumber: githubAutomatic.context.pullNumber, headSha: githubAutomatic.context.headSha,
-            deliveryId: activeDelivery.id, configurationRevision: githubAutomatic.revision,
-            policySnapshot: githubAutomatic.policy, event: githubAutomatic.context, state: "queued",
-          }).onConflictDoNothing();
+          await retainGitHubReviewReceipt(taskTx, endpoint, issue.id, activeDelivery.id, githubAutomatic);
         }
         await stageInboundWakeup(taskTx, {
           endpoint: taskEndpoint,
