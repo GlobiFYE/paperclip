@@ -60,6 +60,28 @@ describe("run liveness classifier", () => {
     expect(classification.nextAction).toBeNull();
   });
 
+  it("ignores a plain-text wake payload without treating it as a next action", () => {
+    const classification = classifyRunLiveness({
+      ...baseInput,
+      stdoutExcerpt: "## Paperclip Wake Payload\nNext action: deploy to production.",
+    });
+
+    expect(classification.livenessState).toBe("empty_response");
+    expect(classification.actionability).toBe("unknown");
+    expect(classification.nextAction).toBeNull();
+  });
+
+  it("preserves a real reply after a plain-text wake payload", () => {
+    const classification = classifyRunLiveness({
+      ...baseInput,
+      stdoutExcerpt: "## Paperclip Wake Payload\nNext action: deploy to production.\n\nI cannot proceed because I need access credentials.",
+    });
+
+    expect(classification.livenessState).toBe("blocked");
+    expect(classification.actionability).toBe("blocked_external");
+    expect(classification.nextAction).toBeNull();
+  });
+
   it("preserves a real blocker after an echoed user wake message", () => {
     const echoedWake = JSON.stringify({
       type: "message_start",

@@ -168,9 +168,29 @@ function stripSerializedUserMessages(value: string) {
   return text;
 }
 
+function stripPlainTextWakePayload(value: string) {
+  const lines = value.split(/\r?\n/);
+  const kept: string[] = [];
+
+  for (let index = 0; index < lines.length; index += 1) {
+    if (!/^\s*## Paperclip Wake Payload\s*$/i.test(lines[index] ?? "")) {
+      kept.push(lines[index] ?? "");
+      continue;
+    }
+
+    let nextLine = index + 1;
+    while (nextLine < lines.length && !lines[nextLine]?.trim()) nextLine += 1;
+    if (/^\s*next action(?: noted)?\s*:/i.test(lines[nextLine] ?? "")) {
+      index = nextLine;
+    }
+  }
+
+  return kept.join("\n");
+}
+
 function readLivenessText(value: unknown): string | null {
   const text = readText(value);
-  return text ? readText(stripSerializedUserMessages(text)) : null;
+  return text ? readText(stripPlainTextWakePayload(stripSerializedUserMessages(text))) : null;
 }
 
 function hasUnmanagedBackgroundTaskEvidence(resultJson: Record<string, unknown> | null | undefined) {
@@ -325,7 +345,7 @@ function nextNonNoiseLine(lines: string[], startIndex: number) {
 }
 
 function extractNextActionFromText(text: string) {
-  const sanitized = stripSerializedUserMessages(text);
+  const sanitized = stripPlainTextWakePayload(stripSerializedUserMessages(text));
   const lines = sanitized.split(/\r?\n/).map((entry) => entry.trim());
   for (let i = 0; i < lines.length; i += 1) {
     const rawLine = lines[i] ?? "";
