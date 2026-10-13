@@ -69,3 +69,18 @@ passes 268 selected integration cases, server typecheck, and module boundaries.
 AST checks cover 25 declarations and nine provider bodies. One final test attempt
 could not start PostgreSQL because this Mac exhausted IPC slots; after reclaiming
 one unused zero-attachment segment with a dead creator, the same suite passed.
+
+## Third extraction
+
+The publication workflow reduces the service to 11,198 lines and 462,108 bytes.
+Authorization, durable preparation, transport, failures, attempt ownership, task
+control completion, and bounded endpoint scheduling now have named modules.
+Photon owns prompt and reply delivery. Discord and Telegram own durable Markdown
+attachment preparation. Shared native splitting remains shared across providers.
+
+The same 301 public-path publication cases pass before and after. Eight supporting
+suites pass all 185 cases. Server typecheck, module boundaries, and AST checks pass.
+The AST audit covers 26 declarations, three provider bodies, and retained service
+order. Shared endpoint lanes and Teams cooldowns retain their original maps;
+shutdown and publication wake listeners stay live. Early callback registration
+uses typed forwarding functions instead of reading factories before initialization.
