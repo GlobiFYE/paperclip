@@ -454,3 +454,10 @@ only still-pending, capacity-waiting bindings with a workspace. Generated homes
 include selected config.toml content in their identity, so edits and removals
 reach the launched process without carrying old private inventory. Focused
 verification and fresh final-head review are recorded on the PR.
+
+Both final review fixes pass all 54 affected worker/Codex cases, recursive
+typecheck and production build. Master c7f4b74111 changed workspace preparation
+and its catalog notes; the catalog conflict preserves both sets of stable IDs
+and classifications. Its affected workspace tests and final CI/review are
+recorded on the PR. No new feature canvas or provider run is inferred from
+this source reconciliation.
