@@ -33,15 +33,22 @@ export function Hiring() {
   const [message, setMessage] = useState<string | null>(null);
   const [days, setDays] = useState(30);
   const running = useRef(false);
+  const cancelled = useRef(false);
+  useEffect(() => {
+    cancelled.current = false;
+    return () => {
+      cancelled.current = true;
+    };
+  }, [selectedCompanyId]);
 
   useEffect(() => setBreadcrumbs([{ label: "Hiring" }]), [setBreadcrumbs]);
 
-  const { data: approvals, isLoading } = useQuery({
+  const { data: approvals, isLoading, error: approvalsError } = useQuery({
     queryKey: queryKeys.approvals.list(selectedCompanyId!),
     queryFn: () => approvalsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
-  const { data: agents } = useQuery({
+  const { data: agents, error: agentsError } = useQuery({
     queryKey: queryKeys.agents.list(selectedCompanyId!),
     queryFn: () => agentsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
@@ -57,7 +64,8 @@ export function Hiring() {
   }, [agents, days]);
 
   const refresh = () => {
-    queryClient.invalidateQueries({ queryKey: ["approvals", selectedCompanyId] });
+    queryClient.invalidateQueries({ queryKey: ["approvals"] });
+    queryClient.invalidateQueries({ queryKey: ["issues", "approvals"] });
     queryClient.invalidateQueries({ queryKey: queryKeys.agents.list(selectedCompanyId!) });
     queryClient.invalidateQueries({ queryKey: queryKeys.attention(selectedCompanyId!) });
   };
@@ -81,10 +89,19 @@ export function Hiring() {
     running.current = true;
     const ids = pending.map((a) => a.id); // snapshot: later arrivals are never included
     let ok = 0;
+    let skipped = 0;
     const failed: string[] = [];
     for (let i = 0; i < ids.length; i++) {
       setBusy(`all:${i + 1}/${ids.length}`);
+      if (cancelled.current) break;
       try {
+        // Re-read right before deciding: skip anything no longer a pending hire.
+        const current = await approvalsApi.get(ids[i]);
+        if (current.type !== "hire_agent" || current.status !== "pending") {
+          skipped++;
+          continue;
+        }
+        if (cancelled.current) break;
         const res = await approvalsApi.approve(ids[i], "Confirmed by the owner with Confirm all on the Hiring page.");
         if (res.status === "approved") ok++;
         else failed.push(ids[i]);
@@ -94,7 +111,11 @@ export function Hiring() {
     }
     setBusy(null);
     running.current = false;
-    setMessage(failed.length ? `${ok} hired, ${failed.length} could not be confirmed. They are still listed below.` : `${ok} hired.`);
+    if (cancelled.current) return;
+    const parts = [`${ok} hired`];
+    if (skipped) parts.push(`${skipped} skipped because they changed`);
+    if (failed.length) parts.push(`${failed.length} could not be confirmed and are still listed below`);
+    setMessage(`${parts.join(", ")}.`);
     refresh();
   }
 
@@ -114,6 +135,11 @@ export function Hiring() {
         ) : null}
       </header>
 
+      {approvalsError || agentsError ? (
+        <p role="alert" className="rounded-md border border-destructive px-3 py-2 text-sm text-destructive">
+          Couldn't load hiring data. Refresh the page to try again.
+        </p>
+      ) : null}
       {message ? (
         <p role="status" className="rounded-md border px-3 py-2 text-sm">
           {message}
@@ -125,7 +151,7 @@ export function Hiring() {
           Waiting for you {pending.length ? <Badge variant="secondary">{pending.length}</Badge> : null}
         </h2>
         {isLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : null}
-        {!isLoading && pending.length === 0 ? (
+        {!isLoading && !approvalsError && pending.length === 0 ? (
           <p className="rounded-md border px-3 py-4 text-sm text-muted-foreground">No hires waiting. You're all caught up.</p>
         ) : null}
         <ul className="flex flex-col divide-y rounded-md border">
@@ -134,11 +160,12 @@ export function Hiring() {
             const meta = obj(p.metadata);
             const model = str(obj(p.adapterConfig).model) || (str(p.adapterType) === "process" ? "Local AI / Jev" : "");
             const manager = nameOf.get(str(p.reportsTo)) ?? "";
-            const reason = firstSentence(str(p.capabilities) || str(p.title));
+            const reason = str(p.capabilities) ? firstSentence(str(p.capabilities)) : "";
             return (
               <li key={a.id} className="flex flex-wrap items-center gap-3 px-3 py-3">
                 <div className="min-w-0 flex-1">
                   <div className="font-medium">{str(p.name) || "New agent"}</div>
+                  {str(p.title) ? <div className="text-sm">{str(p.title)}</div> : null}
                   <div className="text-sm text-muted-foreground">
                     {[str(meta.division), model, manager ? `reports to ${manager}` : ""].filter(Boolean).join(" · ")}
                   </div>
