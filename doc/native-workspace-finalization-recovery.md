@@ -96,7 +96,10 @@ with releasing the receipt. The accepted result, workspace descriptor, source
 lease, task status, monitors, and approval waits are unchanged. The ordinary
 reconciler performs copyback and applies the saved result through the status
 arbiter. No provider wake is enqueued. The recovery action remains visible until
-finalization commits. Repeating the same confirmation before reconciliation is
+finalization commits. Admission supports saved-result copyback from `result_accepted`,
+`workspace_finalizing`, and `retryable_failure`; an abandoned retry does not need
+a replacement run. The existing retry schedule remains unchanged.
+Repeating the same confirmation before reconciliation is
 idempotent; it cannot release a newer owner. Generic recovery resolution, including
 false-positive dispositions, cannot dismiss this hold or bypass saved-result
 finalization.

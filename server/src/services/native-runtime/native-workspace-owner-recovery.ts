@@ -34,7 +34,7 @@ export async function resumeNativeWorkspaceAfterOwnerStop(input: {
     if (!issue || !run || !coordinator || !action || action.evidence?.runId !== run.id
       || action.cause !== "native_workspace_finalization_owner_unverified" || action.ownerType !== "board"
       || action.kind !== "active_run_watchdog" || !["active", "escalated"].includes(action.status)
-      || run.runtimeMode !== "native" || run.status !== "running" || coordinator.phase !== "workspace_finalizing"
+      || run.runtimeMode !== "native" || run.status !== "running" || !["result_accepted", "workspace_finalizing", "retryable_failure"].includes(coordinator.phase)
       || (coordinator.leaseOwner && (!coordinator.leaseExpiresAt || coordinator.leaseExpiresAt.getTime() > Date.now())) || !coordinator.resultId || ["done", "cancelled"].includes(issue.status)
       || issue.executionRunId !== run.id
       || (issue.checkoutRunId && issue.checkoutRunId !== run.id)) throw changed();

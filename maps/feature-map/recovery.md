@@ -121,12 +121,35 @@ The recovery-card suite covers workspace divergence, reissue, reconcile, and
 confirmation. [Workspace export](../../ui/src/components/WorkspaceExportRecovery.test.tsx)
 covers its separate repair surface.
 
+For an abandoned native copyback owner, the task notice requires deployment stop
+evidence and an explicit confirmation. Only a company owner, company administrator,
+trusted local board, or instance administrator can submit it. Ordinary runtime
+managers see a read-only notice. The [authorization regressions](../../server/src/__tests__/authorization-service.test.ts),
+[route regressions](../../server/src/__tests__/issue-agent-mutation-ownership-routes.test.ts),
+and [client permission regressions](../../ui/src/lib/recovery-reconcile.test.ts)
+cover administrator admission, ordinary-member and agent denial, suspended and
+foreign membership, missing role data, and stale cloud admin rows.
+The [native workspace finalizer suite](../../server/src/services/native-runtime/native-workspace-finalizer.test.ts)
+runs the real reconciler with a valid saved yield from `result_accepted`,
+`workspace_finalizing`, and `retryable_failure`. It verifies physical fencing
+before confirmation, successful export and commitment afterward, hold resolution,
+unchanged saved results, retained approval/monitor waits, and no new provider wake.
+These local regressions do not prove a deployment platform stopped a foreign writer.
+
 Manual: reproduce an exhausted disposable action. Click once, verify pending
 state prevents repeated clicks, and inspect a successful continuation or an
 explicit rejection. Reload to confirm the durable outcome. For a workspace
 repair, record the compared branches/revisions and preserve uncommitted work;
 confirm the repair's actual result before resuming. Check the denied and stale
 action paths. A changed card label is insufficient proof of workspace integrity.
+
+For an abandoned native controller, follow the [stop-verification procedure](../../doc/native-workspace-finalization-recovery.md)
+with a disposable deployment. Verify the exact controller and all copyback children
+stopped before recording evidence and selecting **Resume saved result**. Confirm
+the original accepted result commits, the recovery hold resolves, saved files
+remain intact, and existing approval waits or monitor checks remain. No new agent
+turn should start. Repeat with a retry-phase owner and an ordinary runtime manager;
+the first can resume after authorized confirmation, while the second cannot submit.
 
 ### `post-stop-message`
 

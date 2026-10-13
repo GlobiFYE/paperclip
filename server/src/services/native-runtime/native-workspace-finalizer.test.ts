@@ -266,8 +266,17 @@ describe("native workspace finalization recovery", () => {
     }
   });
 
-  it.each(["monitor", "approval"] as const)("commits the saved yield through reconciliation while preserving its %s wait", async wait => {
+  it.each([
+    ["workspace_finalizing", "monitor"], ["workspace_finalizing", "approval"],
+    ["retryable_failure", "monitor"], ["retryable_failure", "approval"],
+    ["result_accepted", "monitor"], ["result_accepted", "approval"],
+  ] as const)("commits the saved yield from %s through reconciliation while preserving its %s wait", async (phase, wait) => {
     const seed = await seedAbandonedCopyback();
+    await db.update(nativeRunFinalizations).set({ phase,
+      ...(phase === "retryable_failure" ? { attempt: 1, nextAttemptAt: new Date(Date.now() - 60_000),
+        failureCode: "native_workspace_sync_out_failed" } : {}),
+    }).where(eq(nativeRunFinalizations.runId, seed.runId));
+    await db.update(heartbeatRuns).set({ nativePhase: phase }).where(eq(heartbeatRuns.id, seed.runId));
     const workspaceId = randomUUID();
     const cwd = path.join(workspaceRoot, seed.runId);
     await fs.mkdir(cwd);
@@ -302,8 +311,10 @@ describe("native workspace finalization recovery", () => {
 
     // The real reconciler must remain fenced before operator confirmation.
     await reconcileNativeFinalizations(db, [seed.runId]);
-    expect((await db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, seed.runId)))[0].phase).toBe("workspace_finalizing");
+    expect((await db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, seed.runId)))[0].phase).toBe(phase);
+    const [beforeConfirmation] = await db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, seed.runId));
     await resumeNativeWorkspaceAfterOwnerStop(seed);
+    expect((await db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, seed.runId)))[0]).toEqual(beforeConfirmation);
     await reconcileNativeFinalizations(db, [seed.runId]);
 
     expect((await db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, seed.runId)))[0]).toMatchObject({ phase: "committed", resultId: accepted.id });
