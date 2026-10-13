@@ -10,7 +10,7 @@ The route's `resolveWorkProductCreatedByRunId` helper takes no work-product type
 
 ## Audit scope and evidence
 
-Read all 90 declarations, including parameter rows and the human self-handoff cases added in #16082. Retain all other declarations: their route registrations, actor classes, recovery authority, admission, workspace defaults, or observable ordering differ. In particular, independently registered write routes must each preserve their authorization gate, even when they share a helper.
+Read all 83 declarations: 63 plain `it` declarations and 19 `it.each` declarations, including parameter rows and the human self-handoff cases added in #16082. The parameter rows expand to 142 runtime cases. Retain all other declarations: their route registrations, actor classes, recovery authority, admission, workspace defaults, or observable ordering differ. In particular, independently registered write routes must each preserve their authorization gate, even when they share a helper.
 
 Reviewed the owning route attribution helper and POST handler, work-product service persistence and metadata helper, sibling `work-products.test.ts`, production route mounting, CLI work-product create/update commands, board API calls, test helper and Vitest configuration, CI selection, and relevant history. The removed case originated in `86b0fe7d01` on June 5; the stronger keeper arrived in `87d05e194b` (#12717) on September 2.
 
@@ -19,14 +19,14 @@ The suite already hoists its module graph (#13524). Its historical 50,945ms shar
 ## Savings
 
 - Test code: 16 lines removed, including its separator.
-- Declarations: 90 → 89; expanded cases: 160 → 159.
+- Declarations: 83 → 82; expanded cases: 143 → 142.
 - Requests: one fewer HTTP request per owner-suite run.
 - Production and shared support: zero lines changed.
 - Runtime savings: not measured.
 
 ## Validation
 
-Focused exact-head validation passed with local bind access: `pnpm exec vitest run --project @paperclipai/server server/src/__tests__/issue-agent-mutation-ownership-routes.test.ts` reported **159/159 passing** in 10.71 seconds. Expected warning logs are produced by cases that inject revalidation failures. Another campaign owner run briefly overlapped the earlier sandbox-blocked attempt; no timing claim is made from either run.
+Focused exact-head validation passed with local bind access: `pnpm exec vitest run --project @paperclipai/server server/src/__tests__/issue-agent-mutation-ownership-routes.test.ts` reported **142/142 passing** in 10.59 seconds (start 08:18:35; finish 08:18:45). Expected warning logs are produced by cases that inject revalidation failures. The corrected run was serialized and completed successfully. No timing savings are inferred from this test duration.
 
 `git diff --check` passed for the changed test file; its exact source diff is zero added lines and 16 removed lines. No production mutation was performed in this change. A recommended preservation mutation is to temporarily remove the POST route's `createInput.createdByRunId = createdByRunId` assignment, require the retained PR case to fail its attribution assertion, then restore production byte-for-byte.
 
