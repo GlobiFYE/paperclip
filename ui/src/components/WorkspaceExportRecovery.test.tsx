@@ -13,7 +13,7 @@ describe("WorkspaceExportRecovery", () => {
   let root: Root, container: HTMLDivElement, client: QueryClient;
   const onQueued = vi.fn();
   beforeEach(() => {
-    retry.mockReset().mockResolvedValue({ status: "queued" }); onQueued.mockReset();
+    retry.mockReset().mockResolvedValue({ status: "queued" }); resume.mockReset(); onQueued.mockReset();
     container = document.createElement("div"); document.body.append(container); root = createRoot(container);
     client = new QueryClient({ defaultOptions: { mutations: { retry: false } } });
   });
@@ -34,7 +34,7 @@ describe("WorkspaceExportRecovery", () => {
   }
   it("requires explicit process-stop confirmation before resuming the exact saved result", async () => {
     resume.mockResolvedValue({ status: "queued" });
-    await mount({ action: { ...action, cause: "native_workspace_finalization_owner_unverified",
+    await mount({ canConfirmOwnerStop: true, action: { ...action, cause: "native_workspace_finalization_owner_unverified",
       evidence: { runId: "run", owner: { token: "owner-token", hostname: "old-container", pid: 2, processStartedAt: "2026-10-10T00:02:55Z" } } } });
     expect(container.textContent).toContain("Workspace finalization needs recovery");
     await enterNote();
@@ -71,6 +71,14 @@ describe("WorkspaceExportRecovery", () => {
   });
   it("does not offer the action without runtime access", async () => {
     await mount({ canManage: false }); expect(container.querySelector("button")).toBeNull();
+  });
+  it("keeps owner-stop confirmation read-only for ordinary runtime managers", async () => {
+    await mount({ action: { ...action, cause: "native_workspace_finalization_owner_unverified",
+      evidence: { runId: "run", owner: { token: "owner-token", hostname: "foreign-container", pid: 2 } } } });
+    expect(container.textContent).toContain("company administrator");
+    expect(container.querySelector("textarea")).toBeNull();
+    expect(container.querySelector("button")).toBeNull();
+    expect(resume).not.toHaveBeenCalled();
   });
   it("offers saved-result export after transient retries are exhausted without claiming an unsafe link", async () => {
     await mount({ action: { ...action, cause: "native_workspace_sync_out_retry_exhausted" } });

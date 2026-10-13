@@ -10,9 +10,10 @@ import { Checkbox } from "./ui/checkbox";
 import { Textarea } from "./ui/textarea";
 
 /** Copyback repair preserves the accepted result and never wakes the provider. */
-export function WorkspaceExportRecovery({ issueId, action, canManage, onQueued, className }: {
+export function WorkspaceExportRecovery({ issueId, action, canManage, canConfirmOwnerStop = false, onQueued, className }: {
   className?: string;
   issueId: string; action: IssueRecoveryAction | null; canManage: boolean; onQueued: () => void;
+  canConfirmOwnerStop?: boolean;
 }) {
   const noteId = useId();
   const confirmationId = useId();
@@ -39,7 +40,7 @@ export function WorkspaceExportRecovery({ issueId, action, canManage, onQueued, 
     {queued ? <p role="status">{ownerRecovery ? "Workspace finalization is queued for the saved result." : "Export is queued for the saved result."} The agent will not repeat its work.</p> : <>
       <p className="text-muted-foreground">{ownerRecovery ? "The agent’s result is saved. Before resuming, verify through the deployment platform that the previous controller and all its workspace-copyback processes have stopped. Keep the saved workspace intact." : "Automatic workspace export retries stopped. Inspect the export failure, restore provider or destination availability, and preserve the saved files in the retained sandbox. Retry export here when the cause is resolved."}</p>
       {ownerRecovery && <p className="font-mono text-muted-foreground">{owner?.hostname} · PID {owner?.pid} · started {owner?.processStartedAt}</p>}
-      {canManage ? <>
+      {canManage && (!ownerRecovery || canConfirmOwnerStop) ? <>
         <Label htmlFor={noteId}>{ownerRecovery ? "Deployment stop evidence" : "Repair performed"}</Label>
         <Textarea id={noteId} value={repairNote} onChange={event => setRepairNote(event.target.value)} maxLength={12_000}
           placeholder={ownerRecovery ? "Record how the deployment platform confirmed this controller and all copyback processes stopped." : "Describe the repair and how the saved workspace files were preserved."} disabled={retry.isPending} />
@@ -52,7 +53,7 @@ export function WorkspaceExportRecovery({ issueId, action, canManage, onQueued, 
             {retry.isPending ? "Queueing…" : ownerRecovery ? "Resume saved result" : "Retry workspace export"}
           </Button>
         </div>
-      </> : <p className="text-muted-foreground">A board member with runtime access can recover this workspace.</p>}
+      </> : <p className="text-muted-foreground">{ownerRecovery ? "A company owner, company administrator, or instance administrator must verify the deployment stopped before resuming this workspace." : "A board member with runtime access can recover this workspace."}</p>}
       {retry.isError && <p role="alert" className="text-destructive">{retry.error instanceof Error ? retry.error.message : "Could not queue export. Refresh the task and inspect its run."}</p>}
     </>}
   </section>;

@@ -67,7 +67,8 @@ sandbox, accepted native result, and workspace descriptor. Do not run a new
 provider turn, delete workspace contents, or relax archive confinement.
 
 After that platform verification, open the task's **Workspace finalization needs
-recovery** notice. A board member with runtime-management access records the
+recovery** notice. A company owner, company administrator, or instance
+administrator records the
 platform stop evidence, confirms that the exact controller and all its copyback
 processes have stopped, and selects **Resume saved result**. The equivalent API is
 `POST /api/issues/:id/recovery-actions/resume-workspace-finalization` with:
@@ -82,7 +83,12 @@ processes have stopped, and selects **Resume saved result**. The equivalent API 
 }
 ```
 
-This is an operator attestation, not an automatic deployment-platform probe. A
+This is an operator attestation, not an automatic deployment-platform probe.
+The separate `runtime:confirm_owner_stop` authorization action limits this
+attestation to active company owners or administrators, the trusted local board,
+or an instance administrator. Ordinary runtime managers and agents cannot release
+the physical owner receipt. Missing role data keeps the client notice read-only.
+A
 missing advisory connection alone is insufficient. Admission rejects an active
 copyback lock, an observably live local controller, a changed owner, a newer run,
 or an unbound result. It records the exact owner and operator evidence atomically

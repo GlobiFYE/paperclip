@@ -281,7 +281,7 @@
         "ui/storybook/prototypes/chat-entry/ChatEntryReview.tsx",
         "ui/storybook/stories/agent-chat/agent-chat-sidebar.stories.tsx"
       ],
-      "fingerprint": "aeea37e51418ab1d78eca93cfd4b51636941ac22c8dbadf7fe1a70de74b7ae8b",
+      "fingerprint": "1bc14c5f1259d371dbd2f4b0e0c94764dfeb6cd16f9c94db24f3ba8600fd5621",
       "stableId": "design-explorations-agent-chat-sidebar-pages",
       "sidebarTitle": "Tasks and conversations/Agent conversations and project handoff/Design explorations/Agent chat sidebar/Pages"
     },
@@ -340,7 +340,7 @@
         "ui/storybook/prototypes/chat-entry/ChatEntryReview.tsx",
         "ui/storybook/stories/agent-chat/agent-chat.stories.tsx"
       ],
-      "fingerprint": "b04974700adf2b2fc95565066e4385c68979e509da1f97443ae31a653947255e",
+      "fingerprint": "1aac136a30132a51ad78f22016a016097514f541b70a5f8f253818914ddb60f5",
       "stableId": "design-explorations-agent-chat",
       "sidebarTitle": "Tasks and conversations/Agent conversations and project handoff/Design explorations/Agent chat"
     },
@@ -487,7 +487,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/agents/agent-persona-pages.stories.tsx"
       ],
-      "fingerprint": "4c76c6a1c6f5ac036140b649bcf8a0a02978273550a8f784d772a8756358b34a",
+      "fingerprint": "0b5035ff3587a06102e492c74d38a19d2791dc54af8c63d8b4e2f223a63b5c96",
       "stableId": "agents-personas-full-pages",
       "sidebarTitle": "Agents and reusable capabilities/Hiring, configuration, and organization/Agents/Personas/Full pages"
     },
@@ -1429,7 +1429,7 @@
         "ui/storybook/prototypes/chat-entry/ChatEntryReview.tsx",
         "ui/storybook/stories/agent-chat/chat-entry.stories.tsx"
       ],
-      "fingerprint": "8e43da9f1bb33d31007ceb6adb20ed6ece6a0cbc99f87ab0cea2172d11d4d2e4",
+      "fingerprint": "a4c30644555c5ab8cc6ae586bd9581b1f84268085a67c6c7a924666afea76d6c",
       "replacement": "ui/storybook/stories/agents/primary-agent/05-chat.stories.tsx",
       "stableId": "design-explorations-chat-entry",
       "sidebarTitle": "Tasks and conversations/Agent conversations and project handoff/Design explorations/Chat entry"
@@ -3304,7 +3304,7 @@
         "ui/storybook/prototypes/originating-tasks/OriginatingTasks.tsx",
         "ui/storybook/stories/task-coordination/originating-tasks.stories.tsx"
       ],
-      "fingerprint": "e16a7c6351086b45005478d57101377fe51d5c2e8f8ae59ee0f3a32b1811d09d",
+      "fingerprint": "805813003533db72f1d2f22335ad2854f6bc18a0789e34545e287cd29041c47e",
       "stableId": "ux-labs-tasks-created-from-a-task",
       "sidebarTitle": "Tasks and conversations/Delegation, dependencies, and signoff/UX Labs/Tasks Created From a Task"
     },
@@ -5613,10 +5613,11 @@
         "maps/feature-map/recovery.md",
         "ui/src/components/IssueRecoveryActionCard.tsx",
         "ui/src/components/WorkspaceExportRecovery.tsx",
+        "ui/src/lib/recovery-reconcile.ts",
         "ui/storybook/stories/recovery/workspace-finalization-recovery/01-notice.stories.tsx",
         "ui/storybook/support/workspace-finalization-recovery/fixtures.tsx"
       ],
-      "fingerprint": "09ab0280b6ed9ae6e5cbef1c67c672dcb8a7acd7a7d1a0138615dd17794e4234",
+      "fingerprint": "bc9412c600781485d13aa8b3059aeb3859d637fff84f4a61d7e3e567b25b851b",
       "stableId": "workspace-finalization-recovery-01-notice",
       "sidebarTitle": "Projects and execution/Recovery/Workspace finalization recovery/01 Notice"
     },
@@ -5639,10 +5640,11 @@
         "ui/src/components/WorkspaceExportRecovery.tsx",
         "ui/src/components/task-chat/TaskChatBubble.tsx",
         "ui/src/components/task-chat/TaskChatComposer.tsx",
+        "ui/src/lib/recovery-reconcile.ts",
         "ui/storybook/stories/recovery/workspace-finalization-recovery/02-task-journey.stories.tsx",
         "ui/storybook/support/workspace-finalization-recovery/fixtures.tsx"
       ],
-      "fingerprint": "ee6b90ed352645491e8a0bf3c39ecb09cc4eb7719f234acb5d52e5a85316c653",
+      "fingerprint": "0486a1db2dcc3b13b2421b8b70505e8431a9ad9436869465bd6bcab0954c8d75",
       "stableId": "workspace-finalization-recovery-02-task-journey",
       "sidebarTitle": "Projects and execution/Recovery/Workspace finalization recovery/02 Task journey"
     }

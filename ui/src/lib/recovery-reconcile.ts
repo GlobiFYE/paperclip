@@ -1,6 +1,18 @@
 import type { IssueRecoveryAction } from "@paperclipai/shared";
 import type { CurrentBoardAccess } from "../api/access";
 
+export function canBoardConfirmWorkspaceOwnerStop(
+  companyId: string | null | undefined,
+  boardAccess: CurrentBoardAccess | undefined,
+) {
+  if (!companyId || !boardAccess) return false;
+  if (boardAccess.source === "local_implicit" || boardAccess.isInstanceAdmin) return true;
+  const membership = boardAccess.memberships?.find(
+    item => item.companyId === companyId && item.status === "active",
+  );
+  return membership?.membershipRole === "owner" || membership?.membershipRole === "admin";
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)

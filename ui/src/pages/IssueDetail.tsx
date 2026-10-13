@@ -66,6 +66,7 @@ import {
 import { instanceSettingsApi } from "../api/instanceSettings";
 import { accessApi, type CurrentBoardAccess } from "../api/access";
 import {
+  canBoardConfirmWorkspaceOwnerStop,
   canBoardManageRuntime,
   readRecoveryReconcileWorkspaceId,
 } from "../lib/recovery-reconcile";
@@ -7653,7 +7654,8 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
           {resolvedDetailTab === "chat" && (
             <WorkspaceExportRecovery key={`workspace-export:${issue.activeRecoveryAction?.id ?? issue.id}`} issueId={issue.id}
               className={shellSectionClass}
-              action={issue.activeRecoveryAction ?? null} canManage={canManageBoardRuntime} onQueued={invalidateIssueDetail} />
+              action={issue.activeRecoveryAction ?? null} canManage={canManageBoardRuntime}
+              canConfirmOwnerStop={canBoardConfirmWorkspaceOwnerStop(issue.companyId, boardAccess)} onQueued={invalidateIssueDetail} />
           )}
           {resolvedDetailTab === "chat" && issue.executionBlocker && (
             <ExecutionBlockerNotice className={shellSectionClass} companyId={issue.companyId} issueId={issue.id} blocker={issue.executionBlocker} onRetried={invalidateIssueDetail} />

@@ -22,7 +22,7 @@ function TaskConversation() {
     </header>
     <TaskChatBubble item={{ id: "request", kind: "message", author: "human", text: "Prepare the rollout plan and wait for my confirmation before starting implementation." }} />
     <TaskChatBubble item={{ id: "saved-result", kind: "message", author: "agent", authorName: "Jordan Lee", text: "The plan is ready. I’m waiting for your confirmation before continuing." }} />
-    <WorkspaceExportRecovery issueId={issueId} action={recoveryAction} canManage onQueued={() => {}} />
+    <WorkspaceExportRecovery issueId={issueId} action={recoveryAction} canManage canConfirmOwnerStop onQueued={() => {}} />
     {messages.map((text, index) => <TaskChatBubble key={index} item={{ id: `followup-${index}`, kind: "message", author: "human", text }} />)}
     <div className="flex-1" />
     <TaskChatComposer workMode="standard" onAdd={async body => setMessages(current => [...current, body])} placeholder="Message Jordan Lee…" />

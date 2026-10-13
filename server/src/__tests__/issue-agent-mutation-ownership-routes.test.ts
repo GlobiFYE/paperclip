@@ -2019,6 +2019,7 @@ describe("agent issue mutation checkout ownership", () => {
       .send({ actionId: recoveryActionId, runId: ownerRunId, ownerToken: ownerRunId,
         controllerAndCopybackStopped: true, stopEvidence: "Deployment platform confirms the exact old container and all its processes exited." });
     expect(res.status).toBe(202);
+    expect(mockAccessService.decide).toHaveBeenCalledWith(expect.objectContaining({ action: "runtime:confirm_owner_stop" }));
     expect(mockResumeWorkspaceFinalization).toHaveBeenCalledWith(expect.objectContaining({ companyId, issueId, runId: ownerRunId, ownerToken: ownerRunId, actorId: "board-user" }));
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
@@ -2040,6 +2041,20 @@ describe("agent issue mutation checkout ownership", () => {
         controllerAndCopybackStopped: true, stopEvidence: "Deployment platform confirms the exact old container and all its processes exited." });
     expect(res.status).toBe(403);
     expect(mockResumeWorkspaceFinalization).not.toHaveBeenCalled();
+  });
+
+  it("rejects an ordinary runtime manager's claimed foreign-owner stop", async () => {
+    mockAccessService.decide.mockImplementation(async ({ action }: { action: string }) => ({
+      allowed: action === "issue:read" || action === "runtime:manage",
+      explanation: "A deployment administrator must verify the controller stopped",
+    }));
+    const res = await request(await createApp(boardActor()))
+      .post(`/api/issues/${issueId}/recovery-actions/resume-workspace-finalization`)
+      .send({ actionId: recoveryActionId, runId: ownerRunId, ownerToken: ownerRunId,
+        controllerAndCopybackStopped: true, stopEvidence: "I claim that the foreign controller and all its processes have stopped." });
+    expect(res.status).toBe(403);
+    expect(mockResumeWorkspaceFinalization).not.toHaveBeenCalled();
+    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
   it("queues board export-only recovery without calling provider wake", async () => {
