@@ -140,10 +140,24 @@ export const DeliveryFailed: Story = {
 };
 export const Delivering: Story = {
   args: { state: "saving" },
+  parameters: {
+    docs: {
+      description: {
+        story:
+          "The shipped queue removes accepted responses optimistically while delivery remains pending; it has no separate visible progress indicator.",
+      },
+    },
+  },
   play: async ({ canvasElement }) => {
     await userEvent.click(
       await within(canvasElement).findByRole("button", { name: "Interrupt" }),
     );
+    await waitFor(() =>
+      expect(
+        within(canvasElement).queryByTestId("task-chat-queued-messages"),
+      ).not.toBeInTheDocument(),
+    );
+    await expect(canvasElement).toBeEmptyDOMElement();
   },
 };
 export const Delivered: Story = {

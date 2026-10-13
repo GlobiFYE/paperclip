@@ -74,5 +74,12 @@ export const FilterNoMatches: Story = {
         name: /Clear filters/,
       }),
     ).toBeEnabled();
+    const c = within(canvasElement);
+    await expect(
+      await c.findByText("No runs match these filters."),
+    ).toBeVisible();
+    await expect(
+      c.queryByText("Reviewed the release checklist"),
+    ).not.toBeInTheDocument();
   },
 };

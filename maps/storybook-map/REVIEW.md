@@ -635,3 +635,14 @@ completed play status while the new play starts. No isolated-context substitute
 is used for the retained-submission regression. The unchanged GitHub bot-management
 suite also passed locally (34 tests) after its CI assertion failed; a separate
 server job reported cancellation. Those CI jobs require a fresh passing run.
+
+## Named play-result assertions — 2026-10-13
+
+Strengthened four review cases: UnavailableCompanyDraft waits for the visible
+wizard and an empty agent-name input before rejecting the foreign draft; Probing
+asserts a disabled Testing button; FilterNoMatches asserts the filtered empty
+message and absence of the seeded run; Delivering asserts the queue's optimistic
+removal after clicking a loaded row. The shipped queue returns null while that
+delivery remains pending, so this story records the missing visible progress
+presentation rather than inventing it. All four browser cases passed on the
+owned preview, as did UI typecheck and 27 catalog/generator/map tests.

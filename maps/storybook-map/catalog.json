@@ -5778,7 +5778,7 @@
       "status": "current",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Accepted immutable response, cleanup wait, unavailable admission, empty queue and interrupt delivery states. Local callbacks remove delivered entries; durable queue/coalescing and fresh-session authority need production tests. The expanded native copyback recovery recipe requires harness stop proof; these generic exhaustion/queued-response fixtures do not establish that path.",
+      "notes": "Accepted immutable response, cleanup wait, unavailable admission, empty queue and interrupt delivery states. Local callbacks remove delivered entries; durable queue/coalescing and fresh-session authority need production tests. The expanded native copyback recovery recipe requires harness stop proof; these generic exhaustion/queued-response fixtures do not establish that path. The shipped pending-delivery path removes rows optimistically and shows no separate progress indicator; the Delivering story asserts that actual presentation.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/recovery.md",
@@ -5790,7 +5790,7 @@
       ],
       "stableId": "feature-durable-response-queue",
       "sidebarTitle": "Tasks and conversations/Steering and queued messages/Accepted response delivery",
-      "fingerprint": "8ffc1f75f0cfa1bd192491e527f46cffc0784d2e60d2137e65bdb63860a04ade"
+      "fingerprint": "0071986d1378afd66fcb683d479d9569b05af97a4f98b2bc7ced1f67e8aaf61b"
     },
     {
       "file": "ui/storybook/stories/workspaces/workspace-close.stories.tsx",
@@ -5858,7 +5858,7 @@
       ],
       "stableId": "feature-run-audit",
       "sidebarTitle": "Oversight and operation/Dashboards and audit trails/Execution history",
-      "fingerprint": "7c1490d03123079826016f5423d2770271db3b68606dd680c03e367645673c4d"
+      "fingerprint": "0a43211053a4c36b6ae4061a624b7e223660931b565a234a829b38d53eab4861"
     },
     {
       "file": "ui/storybook/stories/secrets/proposal-review.stories.tsx",
@@ -6281,7 +6281,7 @@
       ],
       "stableId": "feature-onboarding-resume",
       "sidebarTitle": "Getting started and access/Onboarding and first work/Resume a saved draft",
-      "fingerprint": "d49d11af5c551771afff5cc961eb726bc6dbc8d24606360fdaa930ae3f7807e5"
+      "fingerprint": "90abcea935be1524a081ff34041f608fa2c0dd354dbc3bacbf16679cf580957f"
     },
     {
       "file": "ui/storybook/stories/routines/run-now.stories.tsx",
@@ -6594,7 +6594,7 @@
       ],
       "stableId": "feature-execution-environments",
       "sidebarTitle": "Projects and execution/Execution environments/Configuration, capabilities, and probes",
-      "fingerprint": "779b0bdfd61826a31e88725c7d95a7f2c1d556352c3927ecaf32cf557be2adf7"
+      "fingerprint": "9a14e48be15b72210745d53541505a92e331437b67369d42d6364e78938b5120"
     },
     {
       "file": "ui/storybook/stories/execution-environments/custom-images.stories.tsx",

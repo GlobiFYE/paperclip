@@ -76,6 +76,9 @@ export const Probing: Story = {
         name: "Test provider",
       }),
     );
+    await expect(
+      await within(canvasElement).findByRole("button", { name: "Testing..." }),
+    ).toBeDisabled();
   },
 };
 export const ProbeFailed: Story = {

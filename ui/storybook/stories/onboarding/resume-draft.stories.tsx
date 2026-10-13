@@ -97,9 +97,14 @@ export const MalformedDraft: Story = { parameters: { invalid: true } };
 export const UnavailableCompanyDraft: Story = {
   parameters: { otherCompany: true },
   play: async () => {
+    const body = within(document.body);
+    await expect(await body.findByTestId("onboarding-wizard")).toBeVisible();
+    const name = await body.findByLabelText("Agent name");
+    await waitFor(() => expect(name).toBeVisible(), { timeout: 10000 });
+    await expect(name).toHaveValue("");
     await waitFor(() =>
       expect(
-        within(document.body).queryByDisplayValue("Another account's draft"),
+        body.queryByDisplayValue("Another account's draft"),
       ).not.toBeInTheDocument(),
     );
   },

@@ -66,6 +66,7 @@ The static server must be an owned process serving this checkout. Override the b
 - Plugin contribution discovery errors remain on “Loading…”. The named DiscoveryFailure story exposes this shipped behavior; it does not claim a useful failure state.
 - The document section and execution-environment list lack dedicated read-error/loading presentation. Cases and Inbox also fall back to empty views after list errors. Their stories retain the real fallback behavior. Custom-image metadata has its own loading and error states.
 - GoalDetail displays aligned projects and children. The current UI has no project goal-assignment control. The stories do not invent one.
+- Accepted queued responses disappear optimistically while delivery is pending; the shipped component has no separate visible progress indicator. The Delivering story asserts this presentation.
 - Conference Room maps a denied stream to its generic assistant-unavailable message. Real permission enforcement belongs to the separate route verification.
 
 ## UI scenarios and separate production contracts
