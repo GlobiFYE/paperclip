@@ -206,6 +206,95 @@ describeEmbeddedPostgres("heartbeat runtime MCP servers", () => {
     ).resolves.toBeNull();
   });
 
+  it("delivers a connection-less plugin tool to an agent granted only that tool", async () => {
+    process.env.PAPERCLIP_API_URL = "https://paperclip.example.test";
+    const [company] = await db.insert(companies).values({
+      name: `Plugin-only assignment ${randomUUID()}`,
+      issuePrefix: `PO${randomUUID().slice(0, 5).toUpperCase()}`,
+    }).returning();
+    const [agent] = await db.insert(agents).values({
+      companyId: company!.id,
+      name: "Plugin Only Agent",
+      role: "engineer",
+      adapterType: "opencode_local",
+      adapterConfig: {},
+    }).returning();
+    const [run] = await db.insert(heartbeatRuns).values({
+      companyId: company!.id,
+      agentId: agent!.id,
+      status: "running",
+      responsibleUserId: "responsible-user",
+      contextSnapshot: {},
+    }).returning();
+    const grantedToolName = "paperclipai.plugin-llm-wiki:wiki_search";
+    // No toolConnections row and no toolCatalogEntries row exists for this
+    // tool: plugin tools are served by allTools() and authorized by exact name.
+    const [profile] = await db.insert(toolProfiles).values({
+      companyId: company!.id,
+      profileKey: `plugin-only:${agent!.id}`,
+      name: "Plugin only",
+      defaultAction: "deny",
+    }).returning();
+    await db.insert(toolProfileEntries).values({
+      companyId: company!.id,
+      profileId: profile!.id,
+      selectorType: "tool_name",
+      effect: "include",
+      toolName: grantedToolName,
+    });
+    await db.insert(toolProfileBindings).values({
+      companyId: company!.id,
+      profileId: profile!.id,
+      targetType: "agent",
+      targetId: agent!.id,
+    });
+
+    // Regression: with no assigned connections this used to return [] early, so
+    // the agent received no runtime MCP server and saw zero plugin tools even
+    // though policy had approved one.
+    const servers = await buildPaperclipRuntimeMcpServers({
+      db,
+      agent: agent!,
+      runId: run!.id,
+    });
+    expect(servers).toHaveLength(1);
+    expect(servers[0]).toMatchObject({
+      name: "paperclip-assigned",
+      token: expect.stringMatching(/^pcgw_/),
+    });
+
+    const [gateway] = await db.select().from(toolMcpGateways);
+    const generatedEntries = await db.select().from(toolProfileEntries)
+      .where(eq(toolProfileEntries.profileId, gateway!.profileId!));
+    // The native profile defaults to deny, so the approval must be re-stated
+    // there or the gateway hides the tool from tools/list.
+    expect(generatedEntries).toEqual([
+      expect.objectContaining({
+        selectorType: "tool_name",
+        effect: "include",
+        toolName: grantedToolName,
+      }),
+    ]);
+
+    // The approved tool must survive into the immutable assignment digest, so a
+    // dispatch-time change to plugin access invalidates rather than slips past.
+    const effective = await toolAccessService(db).getEffectiveProfilesForAgent(company!.id, agent!.id);
+    expect(effective.allowedToolNames).toContain(grantedToolName);
+    expect(effective.allowedTools).toHaveLength(0);
+    const digest = servers[0]!.connectionId.slice("assignment:".length);
+    await expect(
+      buildPaperclipRuntimeMcpServers({ db, agent: agent!, runId: run!.id, expectedAssignmentDigest: digest }),
+    ).resolves.toHaveLength(1);
+    await expect(
+      buildPaperclipRuntimeMcpServers({
+        db,
+        agent: agent!,
+        runId: run!.id,
+        expectedAssignmentDigest: "0".repeat(64),
+      }),
+    ).resolves.toEqual([]);
+  });
+
   it("preserves exact permissions when an aggregate assignment exceeds the public 250-entry edit limit", async () => {
     process.env.PAPERCLIP_API_URL = "https://paperclip.example.test";
     const [company] = await db.insert(companies).values({

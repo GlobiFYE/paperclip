@@ -4277,8 +4277,17 @@ export async function buildPaperclipRuntimeMcpServers(input: {
   const assignedTools = effective.allowedTools.filter((tool) =>
     assignedConnectionIds.has(tool.connectionId),
   );
+  // Plugin-contributed and built-in gateway tools are served by
+  // `allTools()` and are authorized by exact tool_name, so they never appear in
+  // `allowedTools` (which is derived from the connection-scoped catalog). They
+  // must be carried into the assignment separately, or an agent granted only
+  // such tools would receive no runtime server at all and would silently see
+  // zero tools even though policy approved them.
+  const assignedToolNames = effective.allowedToolNames.filter(
+    (toolName) => !effective.allowedTools.some((tool) => tool.toolName === toolName),
+  );
   const service = createToolGatewayService(input.db);
-  if (assignedConnections.length === 0) {
+  if (assignedConnections.length === 0 && assignedToolNames.length === 0) {
     await service.recordRuntimeMcpDeliveryDiagnostic({
       companyId: input.agent.companyId,
       agentId: input.agent.id,
@@ -4292,6 +4301,10 @@ export async function buildPaperclipRuntimeMcpServers(input: {
     agentId: input.agent.id,
     connections: assignedConnections.map((connection) => connection.id).sort(),
     tools: assignedTools.map((tool) => tool.id).sort(),
+    // Part of the digest: changing which non-catalog tools an agent may call
+    // changes its effective assignment, and a native run must not gain or lose
+    // one after its immutable context was captured.
+    toolNames: assignedToolNames,
   };
   const assignmentDigest = createHash("sha256")
     .update(JSON.stringify(assignment))
@@ -4340,6 +4353,14 @@ export async function buildPaperclipRuntimeMcpServers(input: {
           connectionId: tool.connectionId,
           catalogEntryId: tool.id,
         })),
+      // The native profile defaults to deny, so a plugin or built-in tool that
+      // policy approved must be re-stated here by exact name; otherwise the
+      // gateway hides it from tools/list despite the approval.
+      ...assignedToolNames.map((toolName) => ({
+        selectorType: "tool_name" as const,
+        effect: "include" as const,
+        toolName,
+      })),
     ];
     // The 250-entry limit bounds a public profile-edit request, not the
     // effective assignment assembled from existing profiles. Keep every exact
