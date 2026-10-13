@@ -222,6 +222,8 @@ interface OpenCodeRuntime {
   close(input?: {
     finalizeTrace?: boolean;
     reason?: string | null;
+    interrupt?: boolean;
+    providerSessionId?: string;
   }): Promise<void>;
 }
 
@@ -435,8 +437,10 @@ export class OpenCodeServerDriver implements HarnessDriver {
                 ? {
                     location: { directory: cwd },
                     model: openCodeModelRef(this.#options.model),
-                    permissions: openCodePermissionRules(
+                    permissions: await openCodePermissionRules(
                       this.#options.permissionMode ?? "allow",
+                      cwd,
+                      this.#options.runtimeContext?.instructions.bundle.rootPath,
                     ),
                   }
                 : {}),
@@ -1108,7 +1112,10 @@ class OpenCodeHarnessSession implements HarnessSession {
     for (const requestId of [...this.#pendingRuntimeRequests.keys()])
       this.#settlePendingRuntimeRequest(requestId);
     this.#events.close();
-    await this.#runtime.close();
+    await this.#runtime.close({
+      providerSessionId: this.#providerSessionId,
+      interrupt: this.#activeTurnId !== null,
+    });
   }
 
   // A request can outlive its own turn: the turn can fail or get cancelled
@@ -2347,17 +2354,17 @@ class OpenCodeHarnessSession implements HarnessSession {
         },
         { turnId, itemId: `${turnId}:session-error` },
       );
+      this.#settlePendingRuntimeRequestsForTurn(turnId);
       this.#emit("turn.failed", { status: "failed", error: bounded(data) }, { turnId });
       this.#activeTurnId = null;
       this.#terminalTurns.set(turnId, canonicalJson({ status: "failed" }));
-      this.#events.close();
       return;
     }
     if (type === "session.execution.interrupted") {
+      this.#settlePendingRuntimeRequestsForTurn(turnId);
       this.#emit("turn.cancelled", { status: "cancelled", error: bounded(data) }, { turnId });
       this.#activeTurnId = null;
       this.#terminalTurns.set(turnId, canonicalJson({ status: "cancelled" }));
-      this.#events.close();
       return;
     }
     if (type === "session.execution.succeeded") {
@@ -2374,9 +2381,9 @@ class OpenCodeHarnessSession implements HarnessSession {
           { ...workspace, complete: true },
           { turnId, itemId: `${turnId}:workspace` },
         );
+      this.#settlePendingRuntimeRequestsForTurn(turnId);
       this.#emit("turn.completed", { status: "completed" }, { turnId });
       this.#activeTurnId = null;
-      this.#events.close();
     }
   }
 
@@ -3200,6 +3207,14 @@ async function startPersistentRuntime(input: {
     trace: input.trace,
     sensitiveValues,
     close: async (closeInput = {}) => {
+      if (closeInput.interrupt && closeInput.providerSessionId) {
+        await api(
+          fetcher,
+          runtime,
+          `/session/${encodeURIComponent(closeInput.providerSessionId)}/interrupt`,
+          { method: "POST" },
+        ).catch(() => {});
+      }
       await Promise.allSettled([
         persistentMcpRequest(
           fetcher,
@@ -3466,10 +3481,31 @@ function openCodeModelRef(model: string): Record<string, string> {
   };
 }
 
-function openCodePermissionRules(
+async function openCodePermissionRules(
   permissionMode: "allow" | "ask" | "deny",
-): Array<Record<string, string>> {
-  return [{ action: "*", resource: "*", effect: permissionMode }];
+  cwd: string,
+  instructionRoot?: string,
+): Promise<Array<Record<string, string>>> {
+  const roots = new Set([cwd, await realpath(cwd).catch(() => cwd)]);
+  const externalRules = [...roots].flatMap((root) => [
+    { action: "external_directory", resource: root, effect: "allow" },
+    { action: "external_directory", resource: `${root}/**`, effect: "allow" },
+  ]);
+  if (instructionRoot) {
+    externalRules.push({
+      action: "external_directory",
+      resource: `${instructionRoot}/**`,
+      effect: "allow",
+    });
+  }
+  return [
+    { action: "*", resource: "*", effect: permissionMode },
+    { action: "question", resource: "*", effect: "allow" },
+    { action: "paperclip_*", resource: "*", effect: "allow" },
+    { action: "mcp__paperclip__*", resource: "*", effect: "allow" },
+    { action: "external_directory", resource: "*", effect: "deny" },
+    ...externalRules,
+  ];
 }
 
 function persistentMcpName(name: string, scope: string): string {

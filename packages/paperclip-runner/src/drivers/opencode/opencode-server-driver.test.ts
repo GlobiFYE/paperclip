@@ -189,6 +189,7 @@ async function startFakeV2Server(options: {
   let pendingPermission = false;
   let formReply: Record<string, unknown> | null = null;
   let permissionReply: Record<string, unknown> | null = null;
+  let interruptCalls = 0;
 
   const json = (
     response: ServerResponse,
@@ -342,8 +343,10 @@ async function startFakeV2Server(options: {
     if (
       request.method === "POST" &&
       path === `/api/session/${session.id}/interrupt`
-    )
+    ) {
+      interruptCalls += 1;
       return json(response, 200, true);
+    }
     if (
       request.method === "POST" &&
       path === `/api/session/${session.id}/prompt`
@@ -375,6 +378,16 @@ async function startFakeV2Server(options: {
           type: "form.created",
           data: { form },
         });
+        if (text.includes("v2-form-fail")) {
+          emit({
+            id: "v2-form-terminal",
+            type: "session.execution.failed",
+            data: {
+              sessionID: session.id,
+              error: { message: "Fixture failure after form" },
+            },
+          });
+        }
         return;
       }
       if (text.includes("v2-permission")) {
@@ -473,6 +486,9 @@ async function startFakeV2Server(options: {
     get permissionReply() {
       return permissionReply;
     },
+    get interruptCalls() {
+      return interruptCalls;
+    },
     mcpNames,
     instructionValues,
     sessionCreates,
@@ -537,12 +553,19 @@ describe("OpenCodeServerDriver", () => {
       title: "Paperclip run-v2-text",
       location: { directory: workspace },
       model: { providerID: "openrouter", id: "deepseek/deepseek-v4-flash-0731" },
-      permissions: [{ action: "*", resource: "*", effect: "allow" }],
+      permissions: [
+        { action: "*", resource: "*", effect: "allow" },
+        { action: "question", resource: "*", effect: "allow" },
+        { action: "paperclip_*", resource: "*", effect: "allow" },
+        { action: "mcp__paperclip__*", resource: "*", effect: "allow" },
+        { action: "external_directory", resource: "*", effect: "deny" },
+        { action: "external_directory", resource: workspace, effect: "allow" },
+        { action: "external_directory", resource: `${workspace}/**`, effect: "allow" },
+      ],
     }]);
     expect(server.instructionValues).toEqual(["Follow the supplied Paperclip instructions."]);
     await session.startTurn({ message: { role: "user", text: "v2-text" } });
-    const events = [];
-    for await (const event of session.events()) events.push(event);
+    const events = await collectTurnEvents(session.events());
     expect(events).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -597,8 +620,7 @@ describe("OpenCodeServerDriver", () => {
       expect(server.promptCalls).toBe(0);
       gate.resolve();
       await turn;
-      const events = [];
-      for await (const event of session.events()) events.push(event);
+      const events = await collectTurnEvents(session.events());
       expect(events.filter((event) => event.eventType === "turn.completed")).toHaveLength(1);
       expect(server.promptCalls).toBe(1);
     } finally {
@@ -643,8 +665,7 @@ describe("OpenCodeServerDriver", () => {
     });
     try {
       await session.startTurn({ message: { role: "user", text } });
-      const events = [];
-      for await (const event of session.events()) events.push(event);
+      const events = await collectTurnEvents(session.events());
       expect(events.filter((event) => event.eventType === terminal)).toHaveLength(1);
       expect(events.some((event) => event.eventType === "turn.completed")).toBe(false);
     } finally {
@@ -764,6 +785,7 @@ describe("OpenCodeServerDriver", () => {
       const next = await iterator.next();
       if (next.done) break;
       remaining.push(next.value);
+      if (TURN_TERMINAL_EVENT_TYPES.has(next.value.eventType)) break;
     }
     expect(server.formReply).toEqual({
       answer: { environment: "staging", regions: ["us", "eu"], approved: false, replicas: 3 },
@@ -828,9 +850,122 @@ describe("OpenCodeServerDriver", () => {
     for (;;) {
       const next = await iterator.next();
       if (next.done) break;
+      if (TURN_TERMINAL_EVENT_TYPES.has(next.value.eventType)) break;
     }
     expect(server.permissionReply).toEqual({ decision: "always" });
     await session.close({ reason: "v2 permission test complete" });
+  });
+
+  it("keeps a persistent V2 session usable for follow-up turns", async () => {
+    const root = await mkdtemp(join(tmpdir(), "paperclip-opencode-v2-follow-up-"));
+    const workspace = await mkdtemp(
+      join(tmpdir(), "paperclip-opencode-v2-follow-up-workspace-"),
+    );
+    roots.push(root, workspace);
+    const server = await startFakeV2Server();
+    fakeV2Servers.push(server);
+    const driver = new OpenCodeServerDriver({
+      model: "fixture/model",
+      runtimeDirectory: root,
+      persistentServer: server,
+    });
+    const session = await driver.openSession({
+      runId: "v2-follow-up",
+      normalizedSessionId: "v2-follow-up",
+      workingDirectory: workspace,
+    });
+    try {
+      const first = await session.startTurn({
+        message: { role: "user", text: "first" },
+      });
+      expect(await collectTurnEvents(session.events())).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ eventType: "turn.completed", turnId: first.turnId }),
+        ]),
+      );
+      const second = await session.startTurn({
+        message: { role: "user", text: "second" },
+      });
+      expect(await collectTurnEvents(session.events())).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ eventType: "turn.completed", turnId: second.turnId }),
+          expect.objectContaining({
+            eventType: "item.completed",
+            payload: expect.objectContaining({ kind: "agentMessage", text: "V2 fixture answer" }),
+          }),
+        ]),
+      );
+      expect(server.promptCalls).toBe(2);
+    } finally {
+      await session.close({ reason: "v2 follow-up test complete" });
+    }
+  });
+
+  it("settles a pending V2 request before a failed turn terminal event", async () => {
+    const root = await mkdtemp(join(tmpdir(), "paperclip-opencode-v2-pending-fail-"));
+    const workspace = await mkdtemp(
+      join(tmpdir(), "paperclip-opencode-v2-pending-fail-workspace-"),
+    );
+    roots.push(root, workspace);
+    const server = await startFakeV2Server();
+    fakeV2Servers.push(server);
+    const driver = new OpenCodeServerDriver({
+      model: "fixture/model",
+      runtimeDirectory: root,
+      persistentServer: server,
+    });
+    const session = await driver.openSession({
+      runId: "v2-pending-fail",
+      normalizedSessionId: "v2-pending-fail",
+      workingDirectory: workspace,
+    });
+    try {
+      await session.startTurn({
+        message: { role: "user", text: "v2-form-fail" },
+      });
+      const events = await collectTurnEvents(session.events());
+      const settlement = events.findIndex(
+        (event) => event.eventType === "runtime_request.expired",
+      );
+      const terminal = events.findIndex(
+        (event) => event.eventType === "turn.failed",
+      );
+      expect(settlement).toBeGreaterThanOrEqual(0);
+      expect(terminal).toBeGreaterThan(settlement);
+      expect(session.pendingRuntimeRequests?.()).toHaveLength(0);
+    } finally {
+      await session.close({ reason: "v2 pending failure test complete" });
+    }
+  });
+
+  it("interrupts an active persistent V2 execution before cleanup", async () => {
+    const root = await mkdtemp(join(tmpdir(), "paperclip-opencode-v2-close-active-"));
+    const workspace = await mkdtemp(
+      join(tmpdir(), "paperclip-opencode-v2-close-active-workspace-"),
+    );
+    roots.push(root, workspace);
+    const server = await startFakeV2Server();
+    fakeV2Servers.push(server);
+    const driver = new OpenCodeServerDriver({
+      model: "fixture/model",
+      runtimeDirectory: root,
+      persistentServer: server,
+    });
+    const session = await driver.openSession({
+      runId: "v2-close-active",
+      normalizedSessionId: "v2-close-active",
+      workingDirectory: workspace,
+    });
+    await session.startTurn({
+      message: { role: "user", text: "v2-form" },
+    });
+    const iterator = session.events()[Symbol.asyncIterator]();
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done || next.value.eventType === "runtime_request.created") break;
+    }
+    await session.close({ reason: "v2 active close test complete" });
+    expect(server.interruptCalls).toBe(1);
   });
 
   it("normalizes raw OpenCode boundary events into the local-integrity golden identities", async () => {
