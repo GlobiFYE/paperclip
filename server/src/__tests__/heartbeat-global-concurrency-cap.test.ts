@@ -98,7 +98,7 @@ describeEmbeddedPostgres("heartbeat global concurrency cap", () => {
     await tempDb?.cleanup();
   });
 
-  async function insertAgent(companyId: string, name: string) {
+  async function insertAgent(companyId: string, name: string, adapterType = "codex_local") {
     const agentId = randomUUID();
     await db.insert(agents).values({
       id: agentId,
@@ -106,7 +106,7 @@ describeEmbeddedPostgres("heartbeat global concurrency cap", () => {
       name,
       role: "engineer",
       status: "idle",
-      adapterType: "codex_local",
+      adapterType,
       adapterConfig: {},
       runtimeConfig: {
         heartbeat: {
@@ -240,6 +240,23 @@ describeEmbeddedPostgres("heartbeat global concurrency cap", () => {
     expect(await runStatus(queuedA)).toMatchObject({ status: "succeeded" });
     expect(await runStatus(queuedB)).toMatchObject({ status: "succeeded" });
     expect(mockAdapterExecute).toHaveBeenCalledTimes(2);
+  });
+
+  it("never defers a process agent (job router) behind the fleet-wide cap", async () => {
+    const companyId = await insertCompany();
+    const modelAgent = await insertAgent(companyId, "Model Agent");
+    const router = await insertAgent(companyId, "Router", "process");
+    const otherModelAgent = await insertAgent(companyId, "Other Model Agent");
+    await insertRun(companyId, modelAgent, "running");
+    const queuedRouter = await insertRun(companyId, router, "queued");
+    const queuedModel = await insertRun(companyId, otherModelAgent, "queued");
+
+    await heartbeat.resumeQueuedRuns();
+    await heartbeat.drainActiveRunExecutions();
+
+    // The single fleet-wide slot is full, yet the process agent runs; the model agent still waits.
+    expect(await runStatus(queuedRouter)).toMatchObject({ status: "succeeded" });
+    expect(await runStatus(queuedModel)).toMatchObject({ status: "queued" });
   });
 
   it("does not defer queued runs when the fleet-wide cap is disabled", async () => {

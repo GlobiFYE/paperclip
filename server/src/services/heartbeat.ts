@@ -20056,7 +20056,9 @@ export function heartbeatService(
       const globalMaxConcurrentRuns = parseGlobalMaxConcurrentRuns(
         runtimeEnv[HEARTBEAT_GLOBAL_MAX_CONCURRENT_RUNS_ENV],
       );
-      if (globalMaxConcurrentRuns !== null && availableSlots > 0) {
+      // `process` agents (e.g. the job router) run a short local script, not a model session, so they never
+      // wait behind the fleet-wide model-run ceiling; their per-agent limit still applies.
+      if (globalMaxConcurrentRuns !== null && availableSlots > 0 && agent.adapterType !== "process") {
         const globalRunningCount = await countRunningRuns();
         availableSlots = Math.min(
           availableSlots,
