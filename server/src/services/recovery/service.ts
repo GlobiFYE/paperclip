@@ -4447,6 +4447,7 @@ export function recoveryService(
       recentProgressExempted: 0,
       operatorCancelExempted: 0,
       onboardingFirstTaskExempted: 0,
+      failed: 0,
       skipped: 0,
       issueIds: [] as string[],
     };
@@ -5629,6 +5630,7 @@ export function recoveryService(
     result.continuationRequeued += activeRecovery.requeued;
     result.escalated += activeRecovery.escalated;
     result.skipped += activeRecovery.skipped;
+    result.failed += activeRecovery.failed;
     result.issueIds.push(...activeRecovery.issueIds);
     result.issueIds = [...new Set(result.issueIds)];
 
