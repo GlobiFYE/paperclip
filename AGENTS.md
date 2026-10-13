@@ -26,6 +26,20 @@ authoring runbook for provider research, supported transport/auth patterns,
 credential handling, branding, implementation, testing, live proof, and PR
 submission.
 
+### Scoped repository rules
+
+Before editing or reviewing files, read the matching rules in `rules/*.mdc`.
+Each rule has Markdown content and YAML frontmatter: `globs` contains
+comma-separated, repository-relative file patterns, and `alwaysApply: true`
+means the rule applies throughout the repository. Read all rules whose scope
+matches the affected files. These rules supplement this file and any applicable
+nested `AGENTS.md` instructions.
+
+For `server/src/services/chat-channels.ts` and everything under
+`server/src/services/chat-channels/`, read
+[`rules/chat-channel-platform-boundaries.mdc`](rules/chat-channel-platform-boundaries.mdc).
+See [`rules/README.md`](rules/README.md) for rule authoring and Greptile setup.
+
 ## 3. Repo Map
 
 - `server/`: Express REST API and orchestration services
