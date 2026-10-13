@@ -8,9 +8,10 @@
       "maps/feature-map/README.md",
       "scripts/storybook-feature-index.mjs",
       "ui/storybook/generated/feature-index.json",
-      "ui/storybook/support/feature-map/FeatureOverview.tsx"
+      "ui/storybook/support/feature-map/FeatureOverview.tsx",
+      "ui/storybook/support/capability-gaps/api.ts"
     ],
-    "fingerprint": "6bdb0d9cc1f9abb1d9b1c1d7b4652ee4f4cf5c9c5d939069dfabef70ed731df3"
+    "fingerprint": "66a01f89e70452fbd5484f7c50110db4984ff3cfa3257380f0d04e454269bf47"
   },
   "entries": [
     {
@@ -5670,6 +5671,902 @@
       "fingerprint": "b9cd51c58b31ab445e2997b9f2a23c7a7b3f4ecd7b6dd39fc0f35ae0779311df",
       "stableId": "workspaces-service-control-bar",
       "sidebarTitle": "Projects and execution/Workspaces, services, and files/Workspaces/Service control bar"
+    },
+    {
+      "file": "ui/storybook/stories/instance-operations/backup-retention.stories.tsx",
+      "capabilities": [
+        "instance-operations/backup",
+        "instance-operations/configuration"
+      ],
+      "purpose": "Oversight and operation/Instance operations/Backup retention",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Retention presets, initial read, loading, error, denial and pending/saved selection in InstanceGeneralSettings. Backup creation/restore and real settings authority remain production obligations.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/instance-operations.md",
+        "ui/src/pages/InstanceGeneralSettings.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/instance-operations/backup-retention.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-backup-retention",
+      "sidebarTitle": "Oversight and operation/Instance operations/Backup retention",
+      "fingerprint": "5b3250ec38b7dd0355ef6868fceebedb488e260503ec436ca95060881b5311ee"
+    },
+    {
+      "file": "ui/storybook/stories/recovery/recovery-gap-states.stories.tsx",
+      "capabilities": [
+        "recovery/exhaustion",
+        "recovery/unknown-outcome"
+      ],
+      "purpose": "Projects and execution/Recovery/Exhaustion and user decisions",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Exhaustion notice, blocked authority, retry pending/failure/accepted and inactive notice; unknown-outcome action card is rendered separately. Retry callbacks and disposition context are simulated; no real continuation proof.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/recovery.md",
+        "ui/src/components/DispositionRecoveryNotice.tsx",
+        "ui/src/components/IssueRecoveryActionCard.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/fixtures/paperclipData.ts",
+        "ui/storybook/stories/recovery/recovery-gap-states.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-recovery-gap-states",
+      "sidebarTitle": "Projects and execution/Recovery/Exhaustion and user decisions",
+      "fingerprint": "eee2827553995a3b4e52c224dda338efce3d993cd9e96fa74a70b37f58f5e6df"
+    },
+    {
+      "file": "ui/storybook/stories/steering/durable-response-queue.stories.tsx",
+      "capabilities": [
+        "steering/approval-queue",
+        "recovery/user-continuation"
+      ],
+      "purpose": "Tasks and conversations/Steering and queued messages/Accepted response delivery",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Accepted immutable response, cleanup wait, unavailable admission, empty queue and interrupt delivery states. Local callbacks remove delivered entries; durable queue/coalescing and fresh-session authority need production tests.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/recovery.md",
+        "maps/feature-map/steering.md",
+        "ui/src/components/task-chat/TaskChatQueuedMessages.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/steering/durable-response-queue.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-durable-response-queue",
+      "sidebarTitle": "Tasks and conversations/Steering and queued messages/Accepted response delivery",
+      "fingerprint": "dcd207be5f35e16bd73dec09fcc69fb172e90331c78f0301c050afc1e16defbb"
+    },
+    {
+      "file": "ui/storybook/stories/workspaces/workspace-close.stories.tsx",
+      "capabilities": [
+        "workspaces/closure"
+      ],
+      "purpose": "Projects and execution/Workspaces, services, and files/Close readiness",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Readiness dialog with loading, inspection failure/403, running-task block and pending/accepted archive response. No real workspace cleanup, Git removal or service shutdown is performed.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/workspaces.md",
+        "ui/src/components/ExecutionWorkspaceCloseDialog.tsx",
+        "ui/src/components/ToastViewport.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/workspaces/workspace-close.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-workspace-close",
+      "sidebarTitle": "Projects and execution/Workspaces, services, and files/Close readiness",
+      "fingerprint": "4cf9c525b6d34f40c118a435cdf1496c113a5b84f1b4724b5a10884143f85547"
+    },
+    {
+      "file": "ui/storybook/stories/budgets-costs/budget-resolution.stories.tsx",
+      "capabilities": [
+        "budgets-costs/resolution"
+      ],
+      "purpose": "Oversight and operation/Costs and budgets/Resolve a budget incident",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Shipped Costs budget tab with empty/read failures, invalid amount, raise-and-resume, keep-paused and write failure/pending. Fixture incident transitions only; real overlapping holds and hard stops remain separate.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/budgets-costs.md",
+        "ui/src/pages/Costs.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/budgets-costs/budget-resolution.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-budget-resolution",
+      "sidebarTitle": "Oversight and operation/Costs and budgets/Resolve a budget incident",
+      "fingerprint": "b856d28d726457113b0f605dc5b369b7c5c3c82756c486b95dce06ff8237d6ed"
+    },
+    {
+      "file": "ui/storybook/stories/activity/run-audit.stories.tsx",
+      "capabilities": [
+        "activity/runs"
+      ],
+      "purpose": "Oversight and operation/Dashboards and audit trails/Execution history",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "AuditRuns list, completed receipt, empty/loading/failed/denied and no-match filter. Run records are fixture snapshots; no real execution or scoped audit proof.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/activity.md",
+        "ui/src/pages/audit/AuditRuns.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/fixtures/paperclipData.ts",
+        "ui/storybook/stories/activity/run-audit.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-run-audit",
+      "sidebarTitle": "Oversight and operation/Dashboards and audit trails/Execution history",
+      "fingerprint": "a89d2ac1d212667b7a0da9180591c8879be5a7b6f25c966a27e53c734443d67f"
+    },
+    {
+      "file": "ui/storybook/stories/secrets/proposal-review.stories.tsx",
+      "capabilities": [
+        "secrets/proposals"
+      ],
+      "purpose": "Apps, channels, and extensions/Secrets and proposals/Proposal review",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Pending proposal, authority preflight block, list states and rejected proposal/rejection error. ProposalsTab and its dialogs are shipped; secret creation, values and grant authority are not exercised.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/secrets.md",
+        "ui/src/components/ToastViewport.tsx",
+        "ui/src/pages/secrets/ProposalsTab.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/secrets/proposal-review.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-secret-proposal-review",
+      "sidebarTitle": "Apps, channels, and extensions/Secrets and proposals/Proposal review",
+      "fingerprint": "7b8c3dcf148a483e3bea2d66192ac36bf3055d1c318ac61ff2d2d11bc59d78f3"
+    },
+    {
+      "file": "ui/storybook/stories/gateways-profiles/gateway-tokens.stories.tsx",
+      "capabilities": [
+        "gateways-profiles/tokens"
+      ],
+      "purpose": "Apps, channels, and extensions/Tool gateways and access profiles/Named gateway tokens",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Named, empty and expired token history; issuance pending/error/403/success and name-confirmed revocation. Tokens are fictional; real bearer expiry, scope and revocation need API verification.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/gateways-profiles.md",
+        "ui/src/api/tools.ts",
+        "ui/src/components/ToastViewport.tsx",
+        "ui/src/pages/apps/gateways/NewGatewayDialog.tsx",
+        "ui/src/pages/apps/gateways/panels/TokensPanel.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/gateways-profiles/gateway-tokens.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-gateway-tokens",
+      "sidebarTitle": "Apps, channels, and extensions/Tool gateways and access profiles/Named gateway tokens",
+      "fingerprint": "f18d701dd451bbf58f8d128ea2af569f29afc219b90bcc623582ba8264207424"
+    },
+    {
+      "file": "ui/storybook/stories/access/cli-authorization.stories.tsx",
+      "capabilities": [
+        "access/cli-auth"
+      ],
+      "purpose": "Getting started and access/Login, invitations, and access/CLI authorization",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Real CliAuth route with pending/expired/unavailable/preflight denial, approval/cancel and write pending/error. Fictional challenge; no CLI identity or real token is authorized.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/access.md",
+        "ui/src/lib/router.tsx",
+        "ui/src/pages/CliAuth.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/access/cli-authorization.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-cli-authorization",
+      "sidebarTitle": "Getting started and access/Login, invitations, and access/CLI authorization",
+      "fingerprint": "c1545735e504cfce5a86811b3bf37881a5105e340c82ef9ed51490dfafcb4eb8"
+    },
+    {
+      "file": "ui/storybook/stories/access/sign-in.stories.tsx",
+      "capabilities": [
+        "access/login"
+      ],
+      "purpose": "Getting started and access/Login, invitations, and access/Sign in",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "AuthPage email form, session read loading/error, submission pending/failure and navigation to Companies after a fixture session. Real authentication, bootstrap claim and sign-out remain separate.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/access.md",
+        "ui/src/lib/router.tsx",
+        "ui/src/pages/Auth.tsx",
+        "ui/src/pages/Companies.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/fixtures/paperclipData.ts",
+        "ui/storybook/stories/access/sign-in.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-sign-in",
+      "sidebarTitle": "Getting started and access/Login, invitations, and access/Sign in",
+      "fingerprint": "17585dfd130ed1ae38a62780fc1118f1778ca08a2c0fa8950e05e1e0fbfd8960"
+    },
+    {
+      "file": "ui/storybook/stories/access/membership.stories.tsx",
+      "capabilities": [
+        "access/membership"
+      ],
+      "purpose": "Getting started and access/Login, invitations, and access/Organization membership",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "CompanyAccess member list and role change with loading/empty/failure/403 and failed mutation toast. Backend actor authority, invite lifecycle and durable membership are not verified.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/access.md",
+        "ui/src/components/ToastViewport.tsx",
+        "ui/src/pages/CompanyAccess.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/access/membership.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-membership",
+      "sidebarTitle": "Getting started and access/Login, invitations, and access/Organization membership",
+      "fingerprint": "1b3d166bb5d69965eba0661e3902df8adafef4717af2fa2971a5c9f10bf9c207"
+    },
+    {
+      "file": "ui/storybook/stories/companies/company-selection.stories.tsx",
+      "capabilities": [
+        "companies/selection",
+        "companies/archive"
+      ],
+      "purpose": "Getting started and access/Companies and portability/Selection and archived organizations",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Companies list, selection storage and archived-company restoration with loading/empty/error/403. This covers the archive list/restoration side; CompanySettings archive confirmation remains an additional UI scenario.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/companies.md",
+        "ui/src/pages/Companies.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/fixtures/paperclipData.ts",
+        "ui/storybook/stories/companies/company-selection.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-company-selection",
+      "sidebarTitle": "Getting started and access/Companies and portability/Selection and archived organizations",
+      "fingerprint": "be5263ea0071636f58254610563fd5ccf5696349813db7424a84cebf625dc769"
+    },
+    {
+      "file": "ui/storybook/stories/plugins/plugin-management.stories.tsx",
+      "capabilities": [
+        "plugins/installation",
+        "plugins/lifecycle"
+      ],
+      "purpose": "Apps, channels, and extensions/Plugins/Installation and lifecycle",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "PluginManager list states, install pending/error/success, disable and uninstall receipts. Local record transitions only; package loading and worker lifecycle require production verification.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/plugins.md",
+        "ui/src/components/ToastViewport.tsx",
+        "ui/src/pages/PluginManager.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/plugins/plugin-management.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts",
+        "ui/storybook/support/capability-gaps/plugins.ts"
+      ],
+      "stableId": "feature-plugin-management",
+      "sidebarTitle": "Apps, channels, and extensions/Plugins/Installation and lifecycle",
+      "fingerprint": "f6f32d5870da3d29c95caeba1cfad2b429a4704db55308bfc20582b5e6769afc"
+    },
+    {
+      "file": "ui/storybook/stories/plugins/plugin-configuration.stories.tsx",
+      "capabilities": [
+        "plugins/configuration"
+      ],
+      "purpose": "Apps, channels, and extensions/Plugins/Configuration",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "PluginSettings configuration route with hydrated values, read pending/unavailable and saved/error/403 responses. Real config storage and plugin worker validation are not proved.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/plugins.md",
+        "ui/src/lib/router.tsx",
+        "ui/src/pages/PluginSettings.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/plugins/plugin-configuration.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts",
+        "ui/storybook/support/capability-gaps/plugins.ts"
+      ],
+      "stableId": "feature-plugin-configuration",
+      "sidebarTitle": "Apps, channels, and extensions/Plugins/Configuration",
+      "fingerprint": "197042ea6b2699b2f8cee1139b25094a20666afefcf95a30edb77e95efb0a18b"
+    },
+    {
+      "file": "ui/storybook/stories/plugins/plugin-contributions.stories.tsx",
+      "capabilities": [
+        "plugins/contributions"
+      ],
+      "purpose": "Apps, channels, and extensions/Plugins/Contributed routes",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Production PluginPage host with a registered fixture plugin component; pending/missing contribution and discovery failure. Discovery failure currently remains Loading; contribution contents are a fixture, not shipped plugin code.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/plugins.md",
+        "ui/src/lib/router.tsx",
+        "ui/src/pages/PluginPage.tsx",
+        "ui/src/plugins/slots.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/plugins/plugin-contributions.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-plugin-contributions",
+      "sidebarTitle": "Apps, channels, and extensions/Plugins/Contributed routes",
+      "fingerprint": "c08cd7ab01a3c2a3db519469de003b0a1c11f0a120bcb5ec9a4c8a56ecfb7fcb"
+    },
+    {
+      "file": "ui/storybook/stories/cases/case-browse.stories.tsx",
+      "capabilities": [
+        "cases/browse"
+      ],
+      "purpose": "Automation and structured work/Cases/Browse and hierarchy",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Cases page with fixture parent/child records and loading/empty/error/403. Responsive duplicate labels are accounted for; server filters and case mutations remain separate.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/cases.md",
+        "ui/src/pages/Cases.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/cases/case-browse.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts",
+        "ui/storybook/support/capability-gaps/cases.ts"
+      ],
+      "stableId": "feature-case-browse",
+      "sidebarTitle": "Automation and structured work/Cases/Browse and hierarchy",
+      "fingerprint": "615b9529c2f98aa5d51dfcbb28a09cfae736b9676e58436da7d66c4b8adbc5f8"
+    },
+    {
+      "file": "ui/storybook/stories/cases/case-detail.stories.tsx",
+      "capabilities": [
+        "cases/structure",
+        "cases/history",
+        "cases/task-links"
+      ],
+      "purpose": "Automation and structured work/Cases/Structure, history and task links",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "CaseDetail hierarchy and activity, CaseFieldsPanel arbitrary/empty data and IssueCasesPanel reverse links. Fixture relations/events; document revision history and persisted links remain production obligations.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/cases.md",
+        "ui/src/components/CaseFieldsPanel.tsx",
+        "ui/src/components/IssueCasesPanel.tsx",
+        "ui/src/lib/router.tsx",
+        "ui/src/pages/CaseDetail.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/cases/case-detail.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts",
+        "ui/storybook/support/capability-gaps/cases.ts"
+      ],
+      "stableId": "feature-case-detail",
+      "sidebarTitle": "Automation and structured work/Cases/Structure, history and task links",
+      "fingerprint": "860bac763b2007d1317c0299f067b4ec716794c9e21af48a96a118636796a27c"
+    },
+    {
+      "file": "ui/storybook/stories/status-cards/status-card-states.stories.tsx",
+      "capabilities": [
+        "status-cards/authoring",
+        "status-cards/generation",
+        "status-cards/inspection",
+        "status-cards/archive"
+      ],
+      "purpose": "Automation and structured work/Status cards/Authoring, updates and archive",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "StatusCards board/drawer with current/stale/error/live setup, list states, create, refresh, inspection and archive/restoration. Mutable receipts and setup task ID are fixtures; no summarizer execution or revision-history parity is claimed.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/status-cards.md",
+        "ui/src/lib/router.tsx",
+        "ui/src/pages/StatusCards/ArchivedStatusCardRow.tsx",
+        "ui/src/pages/StatusCards/CreateStatusCardDialog.tsx",
+        "ui/src/pages/StatusCards/StatusCardDetailDrawer.tsx",
+        "ui/src/pages/StatusCards/StatusCardTile.tsx",
+        "ui/src/pages/StatusCards/index.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/status-cards/status-card-states.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts",
+        "ui/storybook/support/capability-gaps/status-cards.ts"
+      ],
+      "stableId": "feature-status-card-states",
+      "sidebarTitle": "Automation and structured work/Status cards/Authoring, updates and archive",
+      "fingerprint": "bd28d4c2236ce840420180dca0a0380a29d188eeed410ceacdb1098b6ec5a119"
+    },
+    {
+      "file": "ui/storybook/stories/goals/goal-alignment.stories.tsx",
+      "capabilities": [
+        "goals/alignment",
+        "goals/navigation"
+      ],
+      "purpose": "Projects and execution/Goals and work alignment/Aligned work and navigation",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "GoalDetail child navigation and aligned-project tab with empty/loading/failure/403. Current UI displays relationships but has no project goal-assignment control; no invented assignment UI.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/goals.md",
+        "ui/src/lib/router.tsx",
+        "ui/src/pages/GoalDetail.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/fixtures/paperclipData.ts",
+        "ui/storybook/stories/goals/goal-alignment.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-goal-alignment",
+      "sidebarTitle": "Projects and execution/Goals and work alignment/Aligned work and navigation",
+      "fingerprint": "8323e78c37affb4048964a14a1868011e0dca356fbc3096f68bcc55277963ebe"
+    },
+    {
+      "file": "ui/storybook/stories/companies/company-import.stories.tsx",
+      "capabilities": [
+        "companies/portability"
+      ],
+      "purpose": "Getting started and access/Companies and portability/Import preview",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Shipped CompanyImport GitHub-source preview, warnings, pending, error and 403. Plan/package replies are fictional; export, final import and real package fidelity remain separate scenarios/contracts.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/companies.md",
+        "ui/src/pages/CompanyImport.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/companies/company-import.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-company-import",
+      "sidebarTitle": "Getting started and access/Companies and portability/Import preview",
+      "fingerprint": "6e9b98bd9d05bd072c7c805607af9fb0e62d440d4f45be272bb3193f170cb292"
+    },
+    {
+      "file": "ui/storybook/stories/inbox-search/inbox-views.stories.tsx",
+      "capabilities": [
+        "inbox-search/views"
+      ],
+      "purpose": "Tasks and conversations/Inbox, decisions, and search/Personal task views",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Shipped Inbox host with Mine/Recent/Unread/Blocked under combined-inbox flags and list states. Personal participation/read metadata and server counts remain production verification.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/inbox-search.md",
+        "ui/src/pages/Inbox.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/fixtures/paperclipData.ts",
+        "ui/storybook/stories/inbox-search/inbox-views.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-inbox-views",
+      "sidebarTitle": "Tasks and conversations/Inbox, decisions, and search/Personal task views",
+      "fingerprint": "2df4b2468be83856a389cf42e1e9e2c41e4e7c313f2978d85abcafb694c8efc8"
+    },
+    {
+      "file": "ui/storybook/stories/skills/skill-test-runs.stories.tsx",
+      "capabilities": [
+        "skills/testing"
+      ],
+      "purpose": "Agents and reusable capabilities/Skills and Skill Studio/Test runs",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "SkillStudio test history statuses and result detail with immutable fixture output/version. No agent/provider runs; authoring, harness execution, persisted costs and snapshots require production tests.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/skills.md",
+        "ui/src/lib/router.tsx",
+        "ui/src/pages/SkillStudio.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/skills/skill-test-runs.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts",
+        "ui/storybook/support/capability-gaps/skills.ts"
+      ],
+      "stableId": "feature-skill-test-runs",
+      "sidebarTitle": "Agents and reusable capabilities/Skills and Skill Studio/Test runs",
+      "fingerprint": "85eeafb76bc8fff70ba9be81ce90824b62d1673d7ddedfc525b306dd00b3b48f"
+    },
+    {
+      "file": "ui/storybook/stories/onboarding/resume-draft.stories.tsx",
+      "capabilities": [
+        "onboarding/resume"
+      ],
+      "purpose": "Getting started and access/Onboarding and first work/Resume a saved draft",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "OnboardingWizard restores a seeded draft, malformed/unavailable-company handling and draft retention across a fixture remount. The reopen button belongs to the fixture host; real reload, account switch and storage failure remain separate checks.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/onboarding.md",
+        "ui/src/api/companies-query.ts",
+        "ui/src/components/OnboardingWizard.tsx",
+        "ui/src/components/ui/button.tsx",
+        "ui/src/context/DialogContext.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/fixtures/onboardingDraft.ts",
+        "ui/storybook/stories/onboarding/resume-draft.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-onboarding-resume",
+      "sidebarTitle": "Getting started and access/Onboarding and first work/Resume a saved draft",
+      "fingerprint": "293be094bb9cd13041b93e9f53fa0a6d277ec701ed8d6a5478336c00ec7f89db"
+    },
+    {
+      "file": "ui/storybook/stories/routines/run-now.stories.tsx",
+      "capabilities": [
+        "routines/run-now"
+      ],
+      "purpose": "Automation and structured work/Routines, schedules, and triggers/Run now",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "RoutineDetail manual-run dialog with required input, captured variables, pending/error/success and read states. Fictional dispatch receipt; real scheduling, coalescing, workspace authority and execution remain separate.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/routines.md",
+        "ui/src/components/ToastViewport.tsx",
+        "ui/src/lib/router.tsx",
+        "ui/src/pages/RoutineDetail.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/fixtures/paperclipData.ts",
+        "ui/storybook/fixtures/routineWebhooks.tsx",
+        "ui/storybook/stories/routines/run-now.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-routine-run-now",
+      "sidebarTitle": "Automation and structured work/Routines, schedules, and triggers/Run now",
+      "fingerprint": "5ee5ef6e955c4f6f0eb01962629c21e883f26eb92e1c0de65785ae738b4d2508"
+    },
+    {
+      "file": "ui/storybook/stories/app-permissions/catalog-review.stories.tsx",
+      "capabilities": [
+        "app-permissions/catalog-change"
+      ],
+      "purpose": "Apps, channels, and extensions/App access and action permissions/Review newly discovered actions",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Shipped ActionsSection quarantine reviewer with allowed/blocked decisions, empty/refreshing/saving/read-only props. Callbacks simulate catalog persistence; discovery failures belong to AppDetail and backend authority remains separate.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/app-permissions.md",
+        "ui/src/pages/apps/app-detail/PermissionsPanel.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/app-permissions/catalog-review.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-catalog-review",
+      "sidebarTitle": "Apps, channels, and extensions/App access and action permissions/Review newly discovered actions",
+      "fingerprint": "29c0f0dd155123ccd4afc8a8c93b695d507101bea5a4859177660b92fff73060"
+    },
+    {
+      "file": "ui/storybook/stories/chat-channels/channel-attachments.stories.tsx",
+      "capabilities": [
+        "chat-channels/attachments"
+      ],
+      "purpose": "Apps, channels, and extensions/External chat and email/Task-linked files",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "TaskChatBubble with received/outbound saved attachment receipts, no/multiple files and missing filename. File links are fictional; no download, provider transfer or authorization is proved.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/chat-channels.md",
+        "ui/src/components/task-chat/TaskChatBubble.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/chat-channels/channel-attachments.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-channel-attachments",
+      "sidebarTitle": "Apps, channels, and extensions/External chat and email/Task-linked files",
+      "fingerprint": "692a66f31fbec180b0d400b6bb2734c565d2496bd8c37c9e332a2b4a00ebb667"
+    },
+    {
+      "file": "ui/storybook/stories/steering/composer-draft-recovery.stories.tsx",
+      "capabilities": [
+        "steering/drafts"
+      ],
+      "purpose": "Tasks and conversations/Steering and queued messages/Draft recovery",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "TaskChatComposer uses owned task-keyed browser drafts, uncertain submission fence, switch/restore and failed/accepted send callbacks. API receipt authority and real submission durability remain separate.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/steering.md",
+        "ui/src/components/task-chat/TaskChatComposer.tsx",
+        "ui/src/components/ui/button.tsx",
+        "ui/src/lib/composer-draft.ts",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/steering/composer-draft-recovery.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-composer-draft-recovery",
+      "sidebarTitle": "Tasks and conversations/Steering and queued messages/Draft recovery",
+      "fingerprint": "dca1f8c7eb9dd726aa230edc23835d63a386a9a148dd392d33a67d44286b72b8"
+    },
+    {
+      "file": "ui/storybook/stories/inbox-search/personal-task-toasts.stories.tsx",
+      "capabilities": [
+        "inbox-search/toasts"
+      ],
+      "purpose": "Tasks and conversations/Inbox, decisions, and search/Personal task notifications",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "LiveUpdatesProvider and ToastViewport consume fixture socket eligibility, suppress unrelated/visible-task events and deduplicate replay. Server eligibility metadata is simulated; no persisted multiplayer participation proof.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/inbox-search.md",
+        "ui/src/components/ToastViewport.tsx",
+        "ui/src/components/ui/button.tsx",
+        "ui/src/context/LiveUpdatesProvider.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/inbox-search/personal-task-toasts.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts",
+        "ui/storybook/support/capability-gaps/live-events.ts"
+      ],
+      "stableId": "feature-personal-task-toasts",
+      "sidebarTitle": "Tasks and conversations/Inbox, decisions, and search/Personal task notifications",
+      "fingerprint": "22c7f91b8b36e344e4830b01df407ce963621586a8f40c9b7d48403e4b571793"
+    },
+    {
+      "file": "ui/storybook/stories/agent-chat/conference-room.stories.tsx",
+      "capabilities": [
+        "agent-chat/conference-room"
+      ],
+      "purpose": "Tasks and conversations/Agent conversations and project handoff/Conference Room",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "BoardChat empty, reply, send pending/error/403 through fixture SSE and persisted comment reads. 403 uses the shipped generic unavailable message; route gates and real Claude execution remain separate.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/agent-chat.md",
+        "ui/src/pages/BoardChat.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/fixtures/paperclipData.ts",
+        "ui/storybook/stories/agent-chat/conference-room.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-conference-room",
+      "sidebarTitle": "Tasks and conversations/Agent conversations and project handoff/Conference Room",
+      "fingerprint": "291eaaea61c854fb2f62596c04059936674210bfc73dcb6651ebd1e2e9913ac4"
+    },
+    {
+      "file": "ui/storybook/stories/documents-artifacts/document-revisions.stories.tsx",
+      "capabilities": [
+        "documents-artifacts/documents"
+      ],
+      "purpose": "Tasks and conversations/Documents, attachments, and work products/Document revisions",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "IssueDocumentsSection renders current/edit/historical preview and append-only restore with mutation error. Read/loading failures retain shipped fallback rendering; no persisted concurrency or authorization proof.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/documents-artifacts.md",
+        "ui/src/components/DocumentFrameHeader.tsx",
+        "ui/src/components/IssueDocumentsSection.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/fixtures/paperclipData.ts",
+        "ui/storybook/stories/documents-artifacts/document-revisions.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-document-revisions",
+      "sidebarTitle": "Tasks and conversations/Documents, attachments, and work products/Document revisions",
+      "fingerprint": "71d8826968fcb176c9fb5ccc5d094a863adf51a7c29893c508d452f43d10877e"
+    },
+    {
+      "file": "ui/storybook/stories/navigation-preferences/sidebar-preferences.stories.tsx",
+      "capabilities": [
+        "navigation-preferences/preferences"
+      ],
+      "purpose": "Oversight and operation/Navigation, profile, and announcements/Sidebar preferences",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Production Sidebar inside PluginLauncherProvider with saved-order reads, pending/error/403 fallback and session-only section collapse. Favorites, recents and actual order persistence still need the recipe checks.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/navigation-preferences.md",
+        "ui/src/components/Sidebar.tsx",
+        "ui/src/components/SidebarSection.tsx",
+        "ui/src/plugins/launchers.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/navigation-preferences/sidebar-preferences.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts"
+      ],
+      "stableId": "feature-sidebar-preferences",
+      "sidebarTitle": "Oversight and operation/Navigation, profile, and announcements/Sidebar preferences",
+      "fingerprint": "d8adadd7b09283dd66bea9cb4874eea8b5c5452c0ac441c57244560627934506"
+    },
+    {
+      "file": "ui/storybook/stories/pipelines/pipeline-board.stories.tsx",
+      "capabilities": [
+        "pipelines/items"
+      ],
+      "purpose": "Automation and structured work/Pipelines, review queues, and learnings/Items",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Production Pipelines board with stages/items and loading/empty/error/403. Snapshot rows only; transitions, liveness, guards and automation execution remain separate.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/pipelines.md",
+        "ui/src/lib/router.tsx",
+        "ui/src/pages/Pipelines.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/pipelines/pipeline-board.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts",
+        "ui/storybook/support/capability-gaps/pipelines.ts"
+      ],
+      "stableId": "feature-pipeline-board",
+      "sidebarTitle": "Automation and structured work/Pipelines, review queues, and learnings/Items",
+      "fingerprint": "ccb8fc9ec8d7debb2a7b4a13a40062f4d355a31ce049d0498b95eebf3cc19738"
+    },
+    {
+      "file": "ui/storybook/stories/pipelines/stage-settings.stories.tsx",
+      "capabilities": [
+        "pipelines/stages"
+      ],
+      "purpose": "Automation and structured work/Pipelines, review queues, and learnings/Stage settings",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Production PipelineSettings stage editor with filled configuration, no stages, pending/error/403. This pass renders the shipped controls; saved stage/automation changes remain production obligations.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/pipelines.md",
+        "ui/src/lib/router.tsx",
+        "ui/src/pages/PipelineSettings.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/pipelines/stage-settings.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts",
+        "ui/storybook/support/capability-gaps/pipelines.ts"
+      ],
+      "stableId": "feature-pipeline-stages",
+      "sidebarTitle": "Automation and structured work/Pipelines, review queues, and learnings/Stage settings",
+      "fingerprint": "b102bbcf370154e535e4e83ed85071183235f5f248acb234cfab31cf4ea79dee"
+    },
+    {
+      "file": "ui/storybook/stories/pipelines/review-queue.stories.tsx",
+      "capabilities": [
+        "pipelines/review"
+      ],
+      "purpose": "Automation and structured work/Pipelines, review queues, and learnings/Review queue",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Production ReviewQueue with empty/loading/error/403, approval removal and failure recovery marked Needs attention. Fixture decisions do not prove real review leases, version checks or transitions.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/pipelines.md",
+        "ui/src/lib/router.tsx",
+        "ui/src/pages/Pipelines.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/pipelines/review-queue.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts",
+        "ui/storybook/support/capability-gaps/pipelines.ts"
+      ],
+      "stableId": "feature-pipeline-review",
+      "sidebarTitle": "Automation and structured work/Pipelines, review queues, and learnings/Review queue",
+      "fingerprint": "09854f9ad5dd37c3f81b43bec6ad6c544fb279eadd5641144ddac725f810d428"
+    },
+    {
+      "file": "ui/storybook/stories/pipelines/learnings.stories.tsx",
+      "capabilities": [
+        "pipelines/learnings"
+      ],
+      "purpose": "Automation and structured work/Pipelines, review queues, and learnings/Learnings",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "Production Learnings feed renders a review_decided event plus loading/empty/error/403. Event provenance and durable audit records remain separate; this is not a new learning-record subsystem.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/pipelines.md",
+        "ui/src/lib/router.tsx",
+        "ui/src/pages/Pipelines.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/pipelines/learnings.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts",
+        "ui/storybook/support/capability-gaps/pipelines.ts"
+      ],
+      "stableId": "feature-pipeline-learnings",
+      "sidebarTitle": "Automation and structured work/Pipelines, review queues, and learnings/Learnings",
+      "fingerprint": "5674a2d77567afe96b62cac93c488b698a73bded4df526635e81a13de266d3a0"
+    },
+    {
+      "file": "ui/storybook/stories/execution-environments/environment-states.stories.tsx",
+      "capabilities": [
+        "execution-environments/configuration",
+        "execution-environments/capabilities",
+        "execution-environments/probe"
+      ],
+      "purpose": "Projects and execution/Execution environments/Configuration, capabilities, and probes",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "CompanyEnvironments configuration/edit, unsupported capabilities and probe pending/failure/success. No provider contacted. List read/loading failures expose shipped fallback behavior, not dedicated error UI.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/execution-environments.md",
+        "ui/src/components/ToastViewport.tsx",
+        "ui/src/lib/router.tsx",
+        "ui/src/pages/CompanyEnvironments.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/execution-environments/environment-states.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts",
+        "ui/storybook/support/capability-gaps/environments.ts"
+      ],
+      "stableId": "feature-execution-environments",
+      "sidebarTitle": "Projects and execution/Execution environments/Configuration, capabilities, and probes",
+      "fingerprint": "1bca1436cfe4088e9fe45407ac188cc8d1b96e0f00993671119939818592d321"
+    },
+    {
+      "file": "ui/storybook/stories/execution-environments/custom-images.stories.tsx",
+      "capabilities": [
+        "execution-environments/images"
+      ],
+      "purpose": "Projects and execution/Execution environments/Custom images",
+      "status": "current",
+      "implementation": "production",
+      "boundary": "fixtures",
+      "notes": "CompanyEnvironments image metadata: unconfigured, captured, unsupported, failed, loading and 403. No live setup terminal, provider capture, rollback or relink is executed.",
+      "reviewedAt": "2026-10-13",
+      "sources": [
+        "maps/feature-map/execution-environments.md",
+        "ui/src/components/ToastViewport.tsx",
+        "ui/src/lib/router.tsx",
+        "ui/src/pages/CompanyEnvironments.tsx",
+        "ui/storybook/.storybook/preview.tsx",
+        "ui/storybook/stories/execution-environments/custom-images.stories.tsx",
+        "ui/storybook/support/capability-gaps/api.ts",
+        "ui/storybook/support/capability-gaps/environments.ts"
+      ],
+      "stableId": "feature-environment-images",
+      "sidebarTitle": "Projects and execution/Execution environments/Custom images",
+      "fingerprint": "8f8eca26ad84d5f1f100d01cdace2f5b406248b0623d0457f14c165654358076"
     }
   ]
 }
