@@ -994,6 +994,19 @@ describe("New agent setup", () => {
     expect(secrets.create).not.toHaveBeenCalled();
     expect(api.hire.mock.calls[0][1].adapterConfig).not.toHaveProperty("env");
   });
+  it("keeps OpenRouter when its model is chosen before the declared Pi models load", async () => {
+    state.adapters = [{ type: "pi_local", loaded: true, disabled: false, declaredModels: true }];
+    let resolveModels!: (value: object[]) => void;
+    api.adapterModels.mockImplementationOnce(() => new Promise<object[]>(resolve => { resolveModels = resolve; }));
+    await render();
+    await fill("Model", "openrouter/anthropic/claude-sonnet-4.6");
+    await fill("OPENROUTER_API_KEY", "example-test-secret");
+    await act(async () => resolveModels([{ id: "gateway/llama-3.3-70b", label: "Llama 3.3 70B" }]));
+    await settle();
+    expect((container.querySelector('[aria-label="API key provider"]') as HTMLSelectElement).value).toBe("openrouter");
+    await click("Finish setup");
+    expect(api.hire.mock.calls[0][1].adapterConfig.env.OPENROUTER_API_KEY).toMatchObject({ type: "secret_ref", secretId: "org-secret-1" });
+  });
   it("requires an explicit provider/model for Pi", async () => {
     await render();
     await click("Run test");

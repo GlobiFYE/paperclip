@@ -943,14 +943,12 @@ function Setup({
                                       : PROVIDER_ENV_KEYS[prefix]
                                         ? prefix
                                         : null;
-                                  if (
-                                    multiProvider &&
-                                    nextProvider &&
-                                    nextProvider !== provider
-                                  ) {
+                                  if (multiProvider && nextProvider) {
                                     setProvider(nextProvider);
-                                    setApiKey("");
-                                    setProviderBinding(null);
+                                    if (nextProvider !== provider) {
+                                      setApiKey("");
+                                      setProviderBinding(null);
+                                    }
                                   }
                                   resetTest();
                                 }}
