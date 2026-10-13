@@ -1,0 +1,388 @@
+{
+  "generated_at": "2026-10-12T12:00:00",
+  "collection": {
+    "hermes_state_db": "ok",
+    "hermes_logs": "ok",
+    "paperclip_runs": "ok"
+  },
+  "sources": {
+    "secret": "/private/path"
+  },
+  "windows": {
+    "today": {
+      "providers": {
+        "mimo": {
+          "display": "MiMo",
+          "total": {"requests": 1414, "tokens_in": 40000000, "tokens_out": 9700000, "cache_read_tokens": 698000000, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 1414, "tokens_in": 40000000, "tokens_out": 9700000, "cache_read_tokens": 698000000, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "claude": {
+          "display": "Claude",
+          "total": {"requests": 47, "tokens_in": 1000, "tokens_out": 200, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 47, "tokens_in": 1000, "tokens_out": 200, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "openai": {
+          "display": "OpenAI",
+          "total": {"requests": 2, "tokens_in": 500, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 2, "tokens_in": 500, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "local": {
+          "display": "Local model",
+          "total": {"requests": 1, "tokens_in": 10, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 1, "tokens_in": 10, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "local_ollama": {
+          "display": "Ollama",
+          "total": {"requests": 1, "tokens_in": 0, "tokens_out": 20, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 1, "tokens_in": 0, "tokens_out": 20, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "unknown": {
+          "display": "Empty",
+          "total": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "nvidia": {
+          "display": "NVIDIA",
+          "total": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 3},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 3}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "cached": {
+          "display": "Cached only",
+          "total": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 100, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 100, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "errors": {
+          "display": "Errors only",
+          "total": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 1, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 1, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "warning": {
+          "display": "Warning only",
+          "total": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": true,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "calls": {
+          "display": "Calls only",
+          "total": {"requests": 1, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 1, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        }
+      }
+    },
+    "d7": {
+      "providers": {
+        "mimo": {
+          "display": "MiMo",
+          "total": {"requests": 1414, "tokens_in": 40000000, "tokens_out": 9700000, "cache_read_tokens": 698000000, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 1414, "tokens_in": 40000000, "tokens_out": 9700000, "cache_read_tokens": 698000000, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "claude": {
+          "display": "Claude",
+          "total": {"requests": 47, "tokens_in": 1000, "tokens_out": 200, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 47, "tokens_in": 1000, "tokens_out": 200, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "openai": {
+          "display": "OpenAI",
+          "total": {"requests": 2, "tokens_in": 500, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 2, "tokens_in": 500, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "local": {
+          "display": "Local model",
+          "total": {"requests": 1, "tokens_in": 10, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 1, "tokens_in": 10, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "local_ollama": {
+          "display": "Ollama",
+          "total": {"requests": 1, "tokens_in": 0, "tokens_out": 20, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 1, "tokens_in": 0, "tokens_out": 20, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "unknown": {
+          "display": "Empty",
+          "total": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "nvidia": {
+          "display": "NVIDIA",
+          "total": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 3},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 3}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "cached": {
+          "display": "Cached only",
+          "total": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 100, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 100, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "errors": {
+          "display": "Errors only",
+          "total": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 1, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 1, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "warning": {
+          "display": "Warning only",
+          "total": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": true,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "calls": {
+          "display": "Calls only",
+          "total": {"requests": 1, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 1, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        }
+      }
+    },
+    "d30": {
+      "providers": {
+        "mimo": {
+          "display": "MiMo",
+          "total": {"requests": 1414, "tokens_in": 40000000, "tokens_out": 9700000, "cache_read_tokens": 698000000, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 1414, "tokens_in": 40000000, "tokens_out": 9700000, "cache_read_tokens": 698000000, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "claude": {
+          "display": "Claude",
+          "total": {"requests": 47, "tokens_in": 1000, "tokens_out": 200, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 47, "tokens_in": 1000, "tokens_out": 200, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "openai": {
+          "display": "OpenAI",
+          "total": {"requests": 2, "tokens_in": 500, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 2, "tokens_in": 500, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "local": {
+          "display": "Local model",
+          "total": {"requests": 1, "tokens_in": 10, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 1, "tokens_in": 10, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "local_ollama": {
+          "display": "Ollama",
+          "total": {"requests": 1, "tokens_in": 0, "tokens_out": 20, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 1, "tokens_in": 0, "tokens_out": 20, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "unknown": {
+          "display": "Empty",
+          "total": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "nvidia": {
+          "display": "NVIDIA",
+          "total": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 3},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 3}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "cached": {
+          "display": "Cached only",
+          "total": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 100, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 100, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "errors": {
+          "display": "Errors only",
+          "total": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 1, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 1, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "warning": {
+          "display": "Warning only",
+          "total": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": true,
+          "pct_used": null,
+          "remaining_display": null
+        },
+        "calls": {
+          "display": "Calls only",
+          "total": {"requests": 1, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+          "models": {
+            "empty": {"requests": 0, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0},
+            "model-a": {"requests": 1, "tokens_in": 0, "tokens_out": 0, "cache_read_tokens": 0, "errors": 0, "rate_429": 0}
+          },
+          "warning": false,
+          "pct_used": null,
+          "remaining_display": null
+        }
+      }
+    }
+  }
+}

@@ -2012,6 +2012,24 @@ registry.registerPath({
 
 registry.registerPath({
   method: "get",
+  path: "/api/companies/{companyId}/token-usage",
+  tags: ["companies"],
+  summary: "Get machine AI token usage",
+  description: "Board instance admins with company access only. Reads the collector summary for the configured company; other companies return available: false. Counts are per provider (calls or runs), never summed. Missing or malformed data returns available: false.",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    query: z.object({ window: z.enum(["today", "d7", "d30"]).default("d7") }),
+  },
+  responses: {
+    200: r.ok(),
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
+  },
+});
+
+registry.registerPath({
+  method: "get",
   path: "/api/companies/{companyId}/deliverables",
   tags: ["companies"],
   summary: "List company deliverables",

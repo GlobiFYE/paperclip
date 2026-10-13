@@ -37,6 +37,7 @@ import { Button } from "@/components/ui/button";
 import { InlineBanner } from "../components/InlineBanner";
 import type { Agent, Issue } from "@paperclipai/shared";
 import { PluginSlotOutlet } from "@/plugins/slots";
+import { TokenUsage } from "../components/TokenUsage";
 import { SmokeLabDashboardCard } from "../components/SmokeLabDashboardCard";
 
 const DASHBOARD_ACTIVITY_LIMIT = 10;
@@ -450,6 +451,8 @@ export function Dashboard() {
               }
             />
           </div>
+
+          <TokenUsage companyId={selectedCompanyId} />
 
           <SmokeLabDashboardCard companyId={selectedCompanyId!} />
 
