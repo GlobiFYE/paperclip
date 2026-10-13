@@ -39,6 +39,11 @@ CREATE TABLE "grok_bot_routines" (
 );
 --> statement-breakpoint
 ALTER TABLE "dot_agent_bindings" ADD COLUMN "provider_kind" text DEFAULT 'openai_dot' NOT NULL;--> statement-breakpoint
+ALTER TABLE "dot_runner_operations" ADD COLUMN "pending_returned_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "dot_runner_operations" ADD COLUMN "observed_at" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "mcp_attachment_uploads" ADD COLUMN "grant_id" uuid;--> statement-breakpoint
+ALTER TABLE "mcp_attachment_uploads" ADD COLUMN "work_session_id" uuid;--> statement-breakpoint
+ALTER TABLE "mcp_file_tickets" ADD COLUMN "work_session_id" uuid;--> statement-breakpoint
 ALTER TABLE "grok_bot_dispatches" ADD CONSTRAINT "grok_bot_dispatches_company_id_companies_id_fk" FOREIGN KEY ("company_id") REFERENCES "public"."companies"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "grok_bot_dispatches" ADD CONSTRAINT "grok_bot_dispatches_routine_id_grok_bot_routines_id_fk" FOREIGN KEY ("routine_id") REFERENCES "public"."grok_bot_routines"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "grok_bot_dispatches" ADD CONSTRAINT "grok_bot_dispatches_binding_id_dot_agent_bindings_id_fk" FOREIGN KEY ("binding_id") REFERENCES "public"."dot_agent_bindings"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
@@ -52,4 +57,5 @@ ALTER TABLE "grok_bot_routines" ADD CONSTRAINT "grok_bot_routines_verified_grant
 CREATE UNIQUE INDEX "grok_dispatch_event_uq" ON "grok_bot_dispatches" USING btree ("binding_id","binding_generation","routine_revision","source_event_id");--> statement-breakpoint
 CREATE INDEX "grok_dispatch_company_status_idx" ON "grok_bot_dispatches" USING btree ("company_id","status");--> statement-breakpoint
 CREATE UNIQUE INDEX "grok_routines_binding_uq" ON "grok_bot_routines" USING btree ("binding_id");--> statement-breakpoint
-CREATE INDEX "grok_routines_company_agent_idx" ON "grok_bot_routines" USING btree ("company_id","agent_id");
+CREATE INDEX "grok_routines_company_agent_idx" ON "grok_bot_routines" USING btree ("company_id","agent_id");--> statement-breakpoint
+ALTER TABLE "mcp_attachment_uploads" ADD CONSTRAINT "mcp_attachment_uploads_grant_id_mcp_oauth_grants_id_fk" FOREIGN KEY ("grant_id") REFERENCES "public"."mcp_oauth_grants"("id") ON DELETE cascade ON UPDATE no action;

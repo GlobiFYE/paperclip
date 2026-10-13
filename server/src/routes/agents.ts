@@ -421,6 +421,7 @@ const ACCOUNT_HOME_CLAIM_SCAN_MAX_PASSES = 5;
 
 async function anySecretNamesAccountHome(
   secretsSvc: {
+    hasInstanceAccountHomeClaim: (companyId: string, accountHomeDir: string) => Promise<boolean>;
     list: (companyId: string) => Promise<Array<{ id: string; name: string; provider: string }>>;
     resolveSecretValueForDeviceLoginCheck: (
       companyId: string,
@@ -431,6 +432,7 @@ async function anySecretNamesAccountHome(
   companyId: string,
   accountHomeDir: string,
 ): Promise<boolean> {
+  if (await secretsSvc.hasInstanceAccountHomeClaim(companyId, accountHomeDir)) return true;
   const checkedSecretIds = new Set<string>();
   for (let pass = 0; pass < ACCOUNT_HOME_CLAIM_SCAN_MAX_PASSES; pass += 1) {
     const secrets = await secretsSvc.list(companyId);

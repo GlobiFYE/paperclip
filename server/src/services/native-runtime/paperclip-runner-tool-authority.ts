@@ -923,6 +923,9 @@ export class PaperclipRunnerToolAuthority {
   }
 
   async #assertDotApiFileAccess(path: string, input: { pathParams?: Record<string, string>; files?: RunnerApiFile[] }) {
+    if (this.binding.firstPartyOnly && (input.files?.length || /\/(?:attachments|assets)\/[^/]+\/content$/.test(path) || /\/file-resources\/content$/.test(path))) {
+      throw forbidden("Use this Grok work session's bounded upload or download grant; direct file API access is unavailable.");
+    }
     if (!this.binding.dotRuntime) return;
     const current = await this.#boundContext();
     await this.binding.assertBridgeAuthority?.();

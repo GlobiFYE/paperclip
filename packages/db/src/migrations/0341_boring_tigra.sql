@@ -1,2 +1,0 @@
-ALTER TABLE "dot_runner_operations" ADD COLUMN "pending_returned_at" timestamp with time zone;--> statement-breakpoint
-ALTER TABLE "dot_runner_operations" ADD COLUMN "observed_at" timestamp with time zone;

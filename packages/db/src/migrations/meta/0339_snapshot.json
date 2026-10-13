@@ -1,5 +1,5 @@
 {
-  "id": "df43451a-6e51-4064-9f77-23014a8f8e06",
+  "id": "045fe4f7-1636-4e1b-b304-11b6128fefcf",
   "prevId": "108e07e7-19ab-4f16-8400-fd733f77afdc",
   "version": "7",
   "dialect": "postgresql",
@@ -16324,6 +16324,18 @@
           "primaryKey": false,
           "notNull": false
         },
+        "owner_agent_id": {
+          "name": "owner_agent_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "owner_plugin_id": {
+          "name": "owner_plugin_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
         "user_secret_definition_id": {
           "name": "user_secret_definition_id",
           "type": "uuid",
@@ -16552,6 +16564,40 @@
           "method": "btree",
           "with": {}
         },
+        "company_secrets_instance_owner_key_uq": {
+          "name": "company_secrets_instance_owner_key_uq",
+          "columns": [
+            {
+              "expression": "company_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "owner_agent_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "owner_plugin_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"company_secrets\".\"scope\" = 'instance' and \"company_secrets\".\"deleted_at\" is null",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "company_secrets_provider_config_idx": {
           "name": "company_secrets_provider_config_idx",
           "columns": [
@@ -16654,6 +16700,19 @@
           "onDelete": "no action",
           "onUpdate": "no action"
         },
+        "company_secrets_owner_plugin_id_plugins_id_fk": {
+          "name": "company_secrets_owner_plugin_id_plugins_id_fk",
+          "tableFrom": "company_secrets",
+          "tableTo": "plugins",
+          "columnsFrom": [
+            "owner_plugin_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
         "company_secrets_user_secret_definition_id_user_secret_definitions_id_fk": {
           "name": "company_secrets_user_secret_definition_id_user_secret_definitions_id_fk",
           "tableFrom": "company_secrets",
@@ -16692,6 +16751,21 @@
           ],
           "onDelete": "set null",
           "onUpdate": "no action"
+        },
+        "company_secrets_company_id_owner_agent_id_agents_company_id_id_fk": {
+          "name": "company_secrets_company_id_owner_agent_id_agents_company_id_id_fk",
+          "tableFrom": "company_secrets",
+          "tableTo": "agents",
+          "columnsFrom": [
+            "company_id",
+            "owner_agent_id"
+          ],
+          "columnsTo": [
+            "company_id",
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
         }
       },
       "compositePrimaryKeys": {},
@@ -16700,7 +16774,7 @@
       "checkConstraints": {
         "company_secrets_scope_shape_check": {
           "name": "company_secrets_scope_shape_check",
-          "value": "(\n        \"company_secrets\".\"scope\" = 'company'\n        and \"company_secrets\".\"owner_user_id\" is null\n        and \"company_secrets\".\"user_secret_definition_id\" is null\n      ) or (\n        \"company_secrets\".\"scope\" = 'user'\n        and \"company_secrets\".\"owner_user_id\" is not null\n        and \"company_secrets\".\"user_secret_definition_id\" is not null\n      )"
+          "value": "(\n        \"company_secrets\".\"scope\" = 'company'\n        and \"company_secrets\".\"owner_user_id\" is null\n        and \"company_secrets\".\"user_secret_definition_id\" is null\n        and \"company_secrets\".\"owner_agent_id\" is null and \"company_secrets\".\"owner_plugin_id\" is null\n      ) or (\n        \"company_secrets\".\"scope\" = 'user'\n        and \"company_secrets\".\"owner_user_id\" is not null\n        and \"company_secrets\".\"user_secret_definition_id\" is not null\n        and \"company_secrets\".\"owner_agent_id\" is null and \"company_secrets\".\"owner_plugin_id\" is null\n      ) or (\n        \"company_secrets\".\"scope\" = 'instance'\n        and \"company_secrets\".\"owner_user_id\" is null and \"company_secrets\".\"user_secret_definition_id\" is null\n        and \"company_secrets\".\"owner_agent_id\" is not null and \"company_secrets\".\"owner_plugin_id\" is not null\n      )"
         }
       },
       "isRLSEnabled": false
@@ -24497,13 +24571,6 @@
           "primaryKey": false,
           "notNull": false
         },
-        "provider_kind": {
-          "name": "provider_kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'openai_dot'"
-        },
         "generation": {
           "name": "generation",
           "type": "integer",
@@ -30206,468 +30273,6 @@
             "id"
           ],
           "onDelete": "no action",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.grok_bot_dispatches": {
-      "name": "grok_bot_dispatches",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "company_id": {
-          "name": "company_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "routine_id": {
-          "name": "routine_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "binding_id": {
-          "name": "binding_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "binding_generation": {
-          "name": "binding_generation",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "grant_id": {
-          "name": "grant_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "routine_revision": {
-          "name": "routine_revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "assignment_id": {
-          "name": "assignment_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "source_event_id": {
-          "name": "source_event_id",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "kind": {
-          "name": "kind",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "payload": {
-          "name": "payload",
-          "type": "jsonb",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "challenge_hash": {
-          "name": "challenge_hash",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "status": {
-          "name": "status",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "'prepared'"
-        },
-        "http_status": {
-          "name": "http_status",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "expires_at": {
-          "name": "expires_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "sent_at": {
-          "name": "sent_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "acknowledged_at": {
-          "name": "acknowledged_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "grok_dispatch_event_uq": {
-          "name": "grok_dispatch_event_uq",
-          "columns": [
-            {
-              "expression": "binding_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "binding_generation",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "routine_revision",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "source_event_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "grok_dispatch_company_status_idx": {
-          "name": "grok_dispatch_company_status_idx",
-          "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "status",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "grok_bot_dispatches_company_id_companies_id_fk": {
-          "name": "grok_bot_dispatches_company_id_companies_id_fk",
-          "tableFrom": "grok_bot_dispatches",
-          "tableTo": "companies",
-          "columnsFrom": [
-            "company_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "grok_bot_dispatches_routine_id_grok_bot_routines_id_fk": {
-          "name": "grok_bot_dispatches_routine_id_grok_bot_routines_id_fk",
-          "tableFrom": "grok_bot_dispatches",
-          "tableTo": "grok_bot_routines",
-          "columnsFrom": [
-            "routine_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "grok_bot_dispatches_binding_id_dot_agent_bindings_id_fk": {
-          "name": "grok_bot_dispatches_binding_id_dot_agent_bindings_id_fk",
-          "tableFrom": "grok_bot_dispatches",
-          "tableTo": "dot_agent_bindings",
-          "columnsFrom": [
-            "binding_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "grok_bot_dispatches_grant_id_mcp_oauth_grants_id_fk": {
-          "name": "grok_bot_dispatches_grant_id_mcp_oauth_grants_id_fk",
-          "tableFrom": "grok_bot_dispatches",
-          "tableTo": "mcp_oauth_grants",
-          "columnsFrom": [
-            "grant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "grok_bot_dispatches_assignment_id_dot_runner_assignments_id_fk": {
-          "name": "grok_bot_dispatches_assignment_id_dot_runner_assignments_id_fk",
-          "tableFrom": "grok_bot_dispatches",
-          "tableTo": "dot_runner_assignments",
-          "columnsFrom": [
-            "assignment_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        }
-      },
-      "compositePrimaryKeys": {},
-      "uniqueConstraints": {},
-      "policies": {},
-      "checkConstraints": {},
-      "isRLSEnabled": false
-    },
-    "public.grok_bot_routines": {
-      "name": "grok_bot_routines",
-      "schema": "",
-      "columns": {
-        "id": {
-          "name": "id",
-          "type": "uuid",
-          "primaryKey": true,
-          "notNull": true,
-          "default": "gen_random_uuid()"
-        },
-        "company_id": {
-          "name": "company_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "agent_id": {
-          "name": "agent_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "binding_id": {
-          "name": "binding_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "binding_generation": {
-          "name": "binding_generation",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "bot_name": {
-          "name": "bot_name",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "secret_id": {
-          "name": "secret_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "secret_version": {
-          "name": "secret_version",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true
-        },
-        "revision": {
-          "name": "revision",
-          "type": "integer",
-          "primaryKey": false,
-          "notNull": true,
-          "default": 1
-        },
-        "verified_grant_id": {
-          "name": "verified_grant_id",
-          "type": "uuid",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "verified_at": {
-          "name": "verified_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "last_contact_at": {
-          "name": "last_contact_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "recovery_required_at": {
-          "name": "recovery_required_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": false
-        },
-        "created_at": {
-          "name": "created_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp with time zone",
-          "primaryKey": false,
-          "notNull": true,
-          "default": "now()"
-        }
-      },
-      "indexes": {
-        "grok_routines_binding_uq": {
-          "name": "grok_routines_binding_uq",
-          "columns": [
-            {
-              "expression": "binding_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": true,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        },
-        "grok_routines_company_agent_idx": {
-          "name": "grok_routines_company_agent_idx",
-          "columns": [
-            {
-              "expression": "company_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            },
-            {
-              "expression": "agent_id",
-              "isExpression": false,
-              "asc": true,
-              "nulls": "last"
-            }
-          ],
-          "isUnique": false,
-          "concurrently": false,
-          "method": "btree",
-          "with": {}
-        }
-      },
-      "foreignKeys": {
-        "grok_bot_routines_company_id_companies_id_fk": {
-          "name": "grok_bot_routines_company_id_companies_id_fk",
-          "tableFrom": "grok_bot_routines",
-          "tableTo": "companies",
-          "columnsFrom": [
-            "company_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "grok_bot_routines_agent_id_agents_id_fk": {
-          "name": "grok_bot_routines_agent_id_agents_id_fk",
-          "tableFrom": "grok_bot_routines",
-          "tableTo": "agents",
-          "columnsFrom": [
-            "agent_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "grok_bot_routines_binding_id_dot_agent_bindings_id_fk": {
-          "name": "grok_bot_routines_binding_id_dot_agent_bindings_id_fk",
-          "tableFrom": "grok_bot_routines",
-          "tableTo": "dot_agent_bindings",
-          "columnsFrom": [
-            "binding_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "cascade",
-          "onUpdate": "no action"
-        },
-        "grok_bot_routines_secret_id_company_secrets_id_fk": {
-          "name": "grok_bot_routines_secret_id_company_secrets_id_fk",
-          "tableFrom": "grok_bot_routines",
-          "tableTo": "company_secrets",
-          "columnsFrom": [
-            "secret_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "no action",
-          "onUpdate": "no action"
-        },
-        "grok_bot_routines_verified_grant_id_mcp_oauth_grants_id_fk": {
-          "name": "grok_bot_routines_verified_grant_id_mcp_oauth_grants_id_fk",
-          "tableFrom": "grok_bot_routines",
-          "tableTo": "mcp_oauth_grants",
-          "columnsFrom": [
-            "verified_grant_id"
-          ],
-          "columnsTo": [
-            "id"
-          ],
-          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },
