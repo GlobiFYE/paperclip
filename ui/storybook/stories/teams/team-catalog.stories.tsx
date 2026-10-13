@@ -139,6 +139,7 @@ function Frame({ children, width = "max-w-3xl" }: { children: React.ReactNode; w
 }
 
 const meta: Meta = {
+  excludeStories: ["makePreview"],
   id: "surfaces-team-catalog",
   title: "Agents and reusable capabilities/Team packages and installation/Surfaces/Team Catalog",
 };
