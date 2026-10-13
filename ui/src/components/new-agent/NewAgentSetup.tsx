@@ -72,6 +72,7 @@ import {
 import { adapterCuratesModelOrder } from "../../lib/model-utils";
 
 const controlClass = nativeSelectClassName;
+const SERVER_PROVIDER = "server";
 const blocking = (result: AdapterEnvironmentTestResult) =>
   result.status === "fail" ||
   result.checks.some((check) => check.code === ADAPTER_AUTH_MISSING_CHECK_CODE);
@@ -157,7 +158,7 @@ function Setup({
   const [effort, setEffort] = useState("");
   const [modelOpen, setModelOpen] = useState(false);
   const [environmentOverride, setEnvironmentOverride] = useState("");
-  const [provider, setProvider] = useState("openrouter");
+  const [providerChoice, setProvider] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [providerBinding, setProviderBinding] = useState<EnvBinding | null>(
     null,
@@ -212,6 +213,12 @@ function Setup({
     queryKey: queryKeys.adapters.all,
     queryFn: () => adaptersApi.list(),
   });
+  // PAPERCLIP_PI_PROVIDERS routes the declared models server-side, so Pi needs no per-agent key for them.
+  const serverModels =
+    brandType === "pi_local" &&
+    Boolean(adapterInventory.data?.some((adapter) => adapter.type === adapterType && adapter.declaredModels));
+  const provider = providerChoice ?? (serverModels ? SERVER_PROVIDER : "openrouter");
+  const serverProvider = provider === SERVER_PROVIDER;
   const agents = useQuery({
     queryKey: queryKeys.agents.list(companyId),
     queryFn: () => agentsApi.list(companyId),
@@ -307,7 +314,7 @@ function Setup({
     (entry) => entry.key === envKey && entry.status === "active",
   );
   const selectedBinding =
-    adapterType === "cursor_cloud"
+    adapterType === "cursor_cloud" || serverProvider
       ? null
       : (providerBinding ??
         (savedOrganizationKey
@@ -916,10 +923,16 @@ function Setup({
                                     )
                                   )
                                     setEffort("");
-                                  const nextProvider = value.split("/")[0];
+                                  const prefix = value.split("/")[0];
+                                  const nextProvider =
+                                    serverModels && models.data?.some((option) => option.id === value)
+                                      ? SERVER_PROVIDER
+                                      : PROVIDER_ENV_KEYS[prefix]
+                                        ? prefix
+                                        : null;
                                   if (
                                     multiProvider &&
-                                    PROVIDER_ENV_KEYS[nextProvider] &&
+                                    nextProvider &&
                                     nextProvider !== provider
                                   ) {
                                     setProvider(nextProvider);
@@ -981,6 +994,11 @@ function Setup({
                                     resetTest();
                                   }}
                                 >
+                                  {serverModels && (
+                                    <option value={SERVER_PROVIDER}>
+                                      Configured by server
+                                    </option>
+                                  )}
                                   {Object.keys(providerKeys).map((key) => (
                                     <option key={key} value={key}>
                                       {key === "openrouter"
@@ -1000,50 +1018,52 @@ function Setup({
                                 </select>
                               </Field>
                             )}
-                            <div
-                              className={
-                                adapterType === "cursor_cloud"
-                                  ? "sm:col-span-2"
-                                  : undefined
-                              }
-                            >
-                              <Field label={envKey}>
-                                <div className="flex items-center gap-3">
-                                  <Input
-                                    aria-label={envKey}
-                                    type="password"
-                                    autoComplete="off"
-                                    value={apiKey}
-                                    onChange={(event) => {
-                                      setApiKey(event.target.value);
-                                      setProviderBinding(null);
-                                      resetTest();
-                                    }}
-                                    placeholder={
-                                      selectedBinding
-                                        ? "Using saved key"
-                                        : [
-                                              "cursor_cloud",
-                                              "hermes_gateway",
-                                            ].includes(adapterType)
-                                          ? "Required"
-                                          : "Optional if already configured"
-                                    }
-                                  />
-                                  {adapterType === "cursor_cloud" && (
-                                    <a
-                                      href="https://cursor.com/dashboard/api?section=user-keys#user-api-keys"
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="shrink-0 text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
-                                    >
-                                      get api key
-                                    </a>
-                                  )}
-                                </div>
-                              </Field>
-                            </div>
-                            {adapterType !== "cursor_cloud" && (
+                            {!serverProvider && (
+                              <div
+                                className={
+                                  adapterType === "cursor_cloud"
+                                    ? "sm:col-span-2"
+                                    : undefined
+                                }
+                              >
+                                <Field label={envKey}>
+                                  <div className="flex items-center gap-3">
+                                    <Input
+                                      aria-label={envKey}
+                                      type="password"
+                                      autoComplete="off"
+                                      value={apiKey}
+                                      onChange={(event) => {
+                                        setApiKey(event.target.value);
+                                        setProviderBinding(null);
+                                        resetTest();
+                                      }}
+                                      placeholder={
+                                        selectedBinding
+                                          ? "Using saved key"
+                                          : [
+                                                "cursor_cloud",
+                                                "hermes_gateway",
+                                              ].includes(adapterType)
+                                            ? "Required"
+                                            : "Optional if already configured"
+                                      }
+                                    />
+                                    {adapterType === "cursor_cloud" && (
+                                      <a
+                                        href="https://cursor.com/dashboard/api?section=user-keys#user-api-keys"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="shrink-0 text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                                      >
+                                        get api key
+                                      </a>
+                                    )}
+                                  </div>
+                                </Field>
+                              </div>
+                            )}
+                            {adapterType !== "cursor_cloud" && !serverProvider && (
                               <div
                                 className={
                                   chooseProvider ? "sm:col-span-2" : undefined
@@ -1073,11 +1093,13 @@ function Setup({
                                 </Field>
                               </div>
                             )}
-                            <p className="text-xs text-muted-foreground sm:col-span-2">
-                              New keys are saved as organization secrets when
-                              you finish setup.
-                              {multiProvider && ` Use a ${provider}/model ID.`}
-                            </p>
+                            {!serverProvider && (
+                              <p className="text-xs text-muted-foreground sm:col-span-2">
+                                New keys are saved as organization secrets when
+                                you finish setup.
+                                {multiProvider && ` Use a ${provider}/model ID.`}
+                              </p>
+                            )}
                           </div>
                         )}
                         {adapterType === "hermes_gateway" && (

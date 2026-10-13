@@ -906,6 +906,62 @@ describe("New agent setup", () => {
     expect(container.textContent).toContain("Agent quota exceeded");
     expect(container.textContent).toContain("Could not remove an unused setup credential");
   });
+  it("defaults Pi to the server-configured provider when the server declares Pi models", async () => {
+    state.adapters = [{ type: "pi_local", loaded: true, disabled: false, declaredModels: true }];
+    await render();
+    const provider = container.querySelector('[aria-label="API key provider"]') as HTMLSelectElement;
+    expect(provider.value).toBe("server");
+    expect(provider.selectedOptions[0]?.textContent).toBe("Configured by server");
+    expect(container.querySelector('[aria-label="OPENROUTER_API_KEY"]')).toBeNull();
+    expect(container.textContent).not.toContain("Or use an organization secret");
+    expect(container.textContent).not.toContain("Use a openrouter/model ID");
+  });
+  it("hires a server-configured Pi agent with the declared model and no credential env", async () => {
+    state.adapters = [{ type: "pi_local", loaded: true, disabled: false, declaredModels: true }];
+    secrets.list.mockResolvedValue([
+      { id: "org-openrouter", key: "OPENROUTER_API_KEY", name: "OpenRouter", status: "active" },
+      { id: "org-generic", key: "API_KEY", name: "Generic", status: "active" },
+    ]);
+    await render();
+    await fill("Model", "gateway/llama-3.3-70b");
+    await click("Run test");
+    expect(api.testEnvironment.mock.calls[0][2].testCredentials).toEqual({});
+    expect(api.testEnvironment.mock.calls[0][2].adapterConfig).not.toHaveProperty("env");
+    await click("Finish setup");
+    const config = api.hire.mock.calls[0][1].adapterConfig;
+    expect(config.model).toBe("gateway/llama-3.3-70b");
+    expect(config).not.toHaveProperty("env");
+    expect(secrets.create).not.toHaveBeenCalled();
+  });
+  it("restores the API key field when switching Pi from the server provider to OpenRouter", async () => {
+    state.adapters = [{ type: "pi_local", loaded: true, disabled: false, declaredModels: true }];
+    await render();
+    const provider = container.querySelector('[aria-label="API key provider"]') as HTMLSelectElement;
+    await act(async () => {
+      provider.value = "openrouter";
+      provider.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await settle();
+    expect(container.querySelector('[aria-label="OPENROUTER_API_KEY"]')).toBeTruthy();
+    await fill("Model", "openrouter/anthropic/claude-sonnet-4.6");
+    await fill("OPENROUTER_API_KEY", "example-test-secret");
+    await click("Finish setup");
+    expect(api.hire.mock.calls[0][1].adapterConfig.env.OPENROUTER_API_KEY).toMatchObject({ type: "secret_ref", secretId: "org-secret-1" });
+  });
+  it("selects the server-configured provider again when a declared Pi model is chosen", async () => {
+    state.adapters = [{ type: "pi_local", loaded: true, disabled: false, declaredModels: true }];
+    api.adapterModels.mockResolvedValue([{ id: "gateway/llama-3.3-70b", label: "Llama 3.3 70B" }]);
+    await render();
+    const provider = container.querySelector('[aria-label="API key provider"]') as HTMLSelectElement;
+    await act(async () => {
+      provider.value = "openrouter";
+      provider.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await settle();
+    await fill("Model", "gateway/llama-3.3-70b");
+    expect((container.querySelector('[aria-label="API key provider"]') as HTMLSelectElement).value).toBe("server");
+    expect(container.querySelector('[aria-label="OPENROUTER_API_KEY"]')).toBeNull();
+  });
   it("requires an explicit provider/model for Pi", async () => {
     await render();
     await click("Run test");
