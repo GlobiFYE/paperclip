@@ -1,3 +1,6 @@
+import { createDiscordRuntimeReconciliation } from "./chat-channels/discord/runtime-reconciliation.js";
+import { createPhotonRuntimeCallbacks } from "./chat-channels/imessage-photon/runtime-callbacks.js";
+import { createChatReceiverOwnership } from "./chat-channels/runtime/ownership.js";
 import { createGitHubWebhookScope } from "./chat-channels/github/webhook-scope.js";
 import { createGitHubWebhookAuthentication, retryableGitHubWebhookResponse } from "./chat-channels/github/webhook-authentication.js";
 import { createSlackWebhookCallbacks } from "./chat-channels/slack/webhook-callbacks.js";
@@ -44,11 +47,6 @@ import { createTelegramCommands, telegramGuidanceCommand } from "./chat-channels
 import { createTeamsFileDelivery } from "./chat-channels/microsoft-teams/file-delivery.js";
 import { createGitHubSetupSecret } from "./chat-channels/github/setup-secret.js";
 import { createSlackInventory } from "./chat-channels/slack/inventory.js";
-
-
-
-
-
 
 import { REQUIRED_GITHUB_EVENTS, UNAVOIDABLE_GITHUB_EVENTS } from "./chat-channels/github/credentials.js";
 
@@ -114,7 +112,7 @@ import {
 } from "./chat-channels/github/messages.js";
 import { nextChatActionAt } from "./chat-action-work.js";
 import type { ScheduledChatAction } from "./chat-work-notifications.js";
-import { notifyChatDeliveryWork, notifyChatPublicationWork, notifyChatEndpointWork, notifyChatActionWork } from "./chat-work-notifications.js";
+import { notifyChatDeliveryWork, notifyChatPublicationWork, notifyChatActionWork } from "./chat-work-notifications.js";
 
 
 import { voiceSessionService } from "./voice/voice-session-service.js";
@@ -122,8 +120,6 @@ import { createSpekoProvider } from "./voice/speko-provider.js";
 import { currentVoiceCredentialFingerprint, voiceSessionStore } from "./voice/voice-session-store.js";
 import { createChatRuntime, type ChatRuntime } from "./chat-runtime.js";
 import type { ChatEndpointRuntime } from "./voice/voice-runtime.js";
-
-
 
 import { fastResponseService, enqueueFastResponse, fastResponseSourceCurrent, fastResponseTurnQueued } from "./fast-responses.js";
 import { fastResponseRequests } from "@paperclipai/db";
@@ -138,12 +134,6 @@ import { mirrorSlackBoardComment } from "./slack-board-messages.js";
 
 import { assertSlackBoardWorkAllowed } from "./slack-board-resume.js";
 
-
-
-
-
-
-
 import { buildChatCommunicationGuidance } from "./chat-communication-guidance.js";
 import { assertChatTaskCreationAccess, resolveChatExecutionDefaults } from "./chat-execution-defaults.js";
 function githubPolicyRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
@@ -156,28 +146,13 @@ import type { GitHubReviewEventContext, GitHubIssueEventContext, GitHubAutomatic
 import { githubChatReviewService } from "./chat-github-reviews.js";
 import { githubResponseCommentService } from "./chat-github-response-comments.js";
 
-
-
-
-
 import { resumeExternalConversation } from "./slack-conversation-state.js";
 
 import { runtimeCanonicalOrigin } from "./cloud-runtime-identity.js";
 
-import { writePhotonCheckpoint } from "./photon/receiver.js";
-import { PhotonState } from "./photon/state.js";
-
-
-
-
-
-
-
 import { photonReplyReference } from "./photon/adapter.js";
 
-
-
-import { createHash, randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import {
   and,
   asc,
@@ -206,29 +181,7 @@ import {
   createDurableChatWakeupRequest,
   assertDurableChatWakeupReceipt,
 } from "./durable-chat-wakeup.js";
-import {
-  agentWakeupRequests,
-  agents,
-  assets,
-  chatActions,
-  chatConversations,
-  chatDeliveries,
-  chatEndpointLeases,
-  chatEndpointResources,
-  chatEndpoints,
-  chatExternalPrincipals,
-  chatIdentityLinks,
-  chatMessageLinks,
-  chatPublications,
-  chatTeamsFileTransfers,
-  companyMemberships,
-  heartbeatRuns,
-  issueComments,
-  issueAttachments,
-  issueThreadInteractions,
-  issues,
-  toolConnections,
-} from "@paperclipai/db";
+import { agentWakeupRequests, agents, assets, chatActions, chatConversations, chatDeliveries, chatEndpointResources, chatEndpoints, chatExternalPrincipals, chatIdentityLinks, chatMessageLinks, chatPublications, chatTeamsFileTransfers, companyMemberships, heartbeatRuns, issueComments, issueAttachments, issueThreadInteractions, issues, toolConnections } from "@paperclipai/db";
 import type {
   ChatEventKind,
   ChatEndpointSetupState,
@@ -245,8 +198,6 @@ import {
   LOW_TRUST_REVIEW_RAW_OUTPUT_DISPOSITION,
 } from "@paperclipai/shared";
 
-
-
 import {
   type TeamsFileTransferOptions,
 } from "./chat-teams-file-transfers.js";
@@ -256,13 +207,6 @@ import {
   projectChatFileTransfer,
   projectChatPublicationBatch,
 } from "./chat-publication-batches.js";
-
-
-
-
-
-
-
 
 import { parseChatWebhookPublicBaseUrl } from "../chat-webhook-public-url.js";
 
@@ -308,8 +252,6 @@ import {
 } from "./chat-github-attachments.js";
 import { getExternalChannelBindingSummary } from "./chat-channel-binding.js";
 
-
-
 import {
   readRegisteredDiscordCommandRegistration,
 } from "./chat-discord-command-registration-store.js";
@@ -323,18 +265,12 @@ import {
   type ChatProviderLifecycleEffect,
 } from "./chat-provider-lifecycle.js";
 
-
-
-
 import {
   inboundWakePublicationKey,
   inboundWakePublicationText,
   parseInboundWakePublicationKey,
   resolveInboundWakeReceipt,
 } from "./chat-inbound-wakeup-publications.js";
-
-
-
 
 import {
   questionResponseDeliveryService,
@@ -392,10 +328,10 @@ const DELIVERY_DRAIN_LIMIT = 100;
 const ORPHAN_FOLLOW_UP_GRACE_MS = 5_000;
 const ORPHAN_FOLLOW_UP_MAX_ATTEMPTS = 12;
 const PUBLICATION_ENDPOINT_CONCURRENCY = 4;
-const DISCORD_GATEWAY_LEASE_KEY = "discord_gateway_runtime";
+
 function leasedChatProvider(provider: string): boolean { return provider === "discord" || provider === "imessage-photon"; }
-const DISCORD_GATEWAY_LEASE_TTL_MS = 15_000;
-const DISCORD_GATEWAY_LEASE_WAIT_MS = 20_000;
+
+
 const DISCORD_GATEWAY_LEASE_POLL_MS = 100;
 const PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS = 25_000;
 const GITHUB_WEBHOOK_RESPONSE_BUDGET_MS = 8_000;
@@ -699,356 +635,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   const discordGatewayOwnerships = new Map<string, DiscordGatewayOwnership>();
   const discordGatewayStopTasks = new Set<Promise<void>>();
   let shuttingDown = false;
-
-  function discordGatewayNotOwnedError() {
-    return conflict(
-      "Another Paperclip server owns this Discord Gateway connection; retry shortly",
-      { code: "chat_discord_gateway_not_owned" },
-    );
-  }
-
-  function isDiscordGatewayNotOwnedError(error: unknown): boolean {
-    return Boolean(
-      error &&
-      typeof error === "object" &&
-      "details" in error &&
-      error.details &&
-      typeof error.details === "object" &&
-      "code" in error.details &&
-      error.details.code === "chat_discord_gateway_not_owned",
-    );
-  }
-
-  async function releaseDiscordGatewayLeaseRow(
-    ownership: DiscordGatewayOwnership,
-  ): Promise<void> {
-    await db
-      .delete(chatEndpointLeases)
-      .where(
-        and(
-          eq(chatEndpointLeases.companyId, ownership.companyId),
-          eq(chatEndpointLeases.endpointId, ownership.endpointId),
-          eq(chatEndpointLeases.leaseKey, ownership.leaseKey),
-          eq(chatEndpointLeases.token, ownership.token),
-        ),
-      )
-      .catch((error) => {
-        logger.warn(
-          {
-            endpointId: ownership.endpointId,
-            error: redactError(error),
-          },
-          "could not release Discord Gateway ownership lease",
-        );
-      });
-  }
-
-  async function stopDiscordGatewayOwnership(
-    ownership: DiscordGatewayOwnership,
-    removeRuntime = true,
-  ): Promise<void> {
-    if (ownership.stopPromise) return ownership.stopPromise;
-    ownership.stopping = true;
-    if (ownership.renewTimer) {
-      clearInterval(ownership.renewTimer);
-      ownership.renewTimer = null;
-    }
-    if (discordGatewayOwnerships.get(ownership.endpointId) === ownership) {
-      discordGatewayOwnerships.delete(ownership.endpointId);
-    }
-    ownership.stopPromise = (async () => {
-      if (
-        removeRuntime &&
-        ownership.context.endpointRuntime &&
-        runtime.get(ownership.endpointId) === ownership.context.endpointRuntime
-      ) {
-        runtimeVersions.delete(ownership.endpointId);
-        await runtime.removeEndpoint(ownership.endpointId).catch((error) => {
-          logger.warn(
-            {
-              endpointId: ownership.endpointId,
-              error: redactError(error),
-            },
-            "could not stop Discord Gateway after ownership loss",
-          );
-        });
-      }
-      // The listener is stopped before the lease is released. A standby can
-      // therefore acquire immediately without overlapping Gateway sessions.
-      await releaseDiscordGatewayLeaseRow(ownership);
-    })();
-    discordGatewayStopTasks.add(ownership.stopPromise);
-    void ownership.stopPromise.finally(() => {
-      if (ownership.stopPromise) {
-        discordGatewayStopTasks.delete(ownership.stopPromise);
-      }
-    });
-    return ownership.stopPromise;
-  }
-
-  async function renewDiscordGatewayOwnership(
-    ownership: DiscordGatewayOwnership,
-  ): Promise<boolean> {
-    if (
-      shuttingDown ||
-      ownership.stopping ||
-      discordGatewayOwnerships.get(ownership.endpointId) !== ownership ||
-      ownership.context.discordGatewayOwned !== true ||
-      ownership.context.endpointRuntime === undefined ||
-      runtime.get(ownership.endpointId) !== ownership.context.endpointRuntime
-    ) {
-      return false;
-    }
-    const proposedExpiresAt = new Date(
-      Date.now() +
-        (options.discordGatewayLeaseTtlMs ?? DISCORD_GATEWAY_LEASE_TTL_MS),
-    );
-    if (
-      options.renewDiscordGatewayLease &&
-      !(await options.renewDiscordGatewayLease({
-        companyId: ownership.companyId,
-        credentialFingerprint: ownership.context.credentialFingerprint,
-        endpointId: ownership.endpointId,
-        expiresAt: proposedExpiresAt,
-        generation: ownership.context.generation,
-        leaseKey: ownership.leaseKey,
-        token: ownership.token,
-      }))
-    ) {
-      return false;
-    }
-    return db.transaction(async (tx) => {
-      const now = new Date();
-      const current = await runtimeCallbackEndpoint(
-        tx,
-        ownership.endpointId,
-        {
-          credentialFingerprint: ownership.context.credentialFingerprint,
-          generation: ownership.context.generation,
-        },
-        ["verifying", "active", "attention"],
-      );
-      if (!current || !leasedChatProvider(current.provider)) return false;
-      const expiresAt = new Date(
-        now.getTime() +
-          (options.discordGatewayLeaseTtlMs ?? DISCORD_GATEWAY_LEASE_TTL_MS),
-      );
-      const renewed = await tx
-        .update(chatEndpointLeases)
-        .set({ expiresAt, updatedAt: now })
-        .where(
-          and(
-            eq(chatEndpointLeases.companyId, ownership.companyId),
-            eq(chatEndpointLeases.endpointId, ownership.endpointId),
-            eq(chatEndpointLeases.leaseKey, ownership.leaseKey),
-            eq(chatEndpointLeases.token, ownership.token),
-          ),
-        )
-        .returning({ id: chatEndpointLeases.id });
-      if (!renewed.length) return false;
-      ownership.expiresAt = expiresAt;
-      return true;
-    });
-  }
-
-  async function renewDiscordGatewayOwnershipForMessageAdmission(
-    tx: DbTransaction,
-    endpointId: string,
-    context: InboundRuntimeContext,
-  ): Promise<
-    | {
-        kind: "owned";
-        expiresAt: Date;
-        ownership: DiscordGatewayOwnership;
-      }
-    | { kind: "lost"; ownership: DiscordGatewayOwnership | null }
-  > {
-    const ownership = discordGatewayOwnerships.get(endpointId);
-    if (
-      !ownership ||
-      ownership.stopping ||
-      ownership.context !== context ||
-      context.discordGatewayOwned !== true ||
-      context.endpointRuntime === undefined ||
-      runtime.get(endpointId) !== context.endpointRuntime
-    ) {
-      return {
-        kind: "lost",
-        ownership: ownership?.context === context ? ownership : null,
-      };
-    }
-    const now = new Date();
-    const expiresAt = new Date(
-      now.getTime() +
-        (options.discordGatewayLeaseTtlMs ?? DISCORD_GATEWAY_LEASE_TTL_MS),
-    );
-    const renewed = await tx
-      .update(chatEndpointLeases)
-      .set({ expiresAt, updatedAt: now })
-      .where(
-        and(
-          eq(chatEndpointLeases.companyId, ownership.companyId),
-          eq(chatEndpointLeases.endpointId, ownership.endpointId),
-          eq(chatEndpointLeases.leaseKey, ownership.leaseKey),
-          eq(chatEndpointLeases.token, ownership.token),
-        ),
-      )
-      .returning({ id: chatEndpointLeases.id });
-    return renewed.length
-      ? { kind: "owned", expiresAt, ownership }
-      : { kind: "lost", ownership };
-  }
-
-  function refreshDiscordGatewayOwnership(
-    ownership: DiscordGatewayOwnership,
-  ): Promise<void> {
-    if (ownership.renewal) return ownership.renewal;
-    ownership.renewal = renewDiscordGatewayOwnership(ownership)
-      .then((owned) => {
-        if (owned) return;
-        logger.warn(
-          { endpointId: ownership.endpointId },
-          "lost Discord Gateway ownership; stopping the local listener",
-        );
-        // A Gateway lifecycle callback can be the caller that discovers the
-        // lost token. Fence it synchronously, but do not make that callback
-        // await the Gateway task whose adapter notification may be waiting on
-        // the callback itself. The tracked stop task is joined at shutdown.
-        void stopDiscordGatewayOwnership(ownership);
-      })
-      .catch((error) => {
-        logger.warn(
-          {
-            endpointId: ownership.endpointId,
-            error: redactError(error),
-          },
-          "Discord Gateway ownership renewal failed; stopping the local listener",
-        );
-        void stopDiscordGatewayOwnership(ownership);
-      })
-      .finally(() => {
-        ownership.renewal = null;
-      });
-    return ownership.renewal;
-  }
-
-  async function ensureDiscordGatewayRuntimeIsCurrent(
-    endpointId: string,
-    context: RuntimeContext,
-  ): Promise<boolean> {
-    const ownership = discordGatewayOwnerships.get(endpointId);
-    if (
-      !ownership ||
-      ownership.stopping ||
-      ownership.context !== context ||
-      context.discordGatewayOwned !== true ||
-      context.endpointRuntime === undefined ||
-      runtime.get(endpointId) !== context.endpointRuntime
-    ) {
-      return false;
-    }
-    if (ownership.expiresAt.getTime() <= Date.now()) {
-      // A host can resume after the local TTL while its durable token is still
-      // authoritative. Reclaim that exact token before accepting buffered
-      // callbacks. A standby takeover changes the token, so the CAS fails and
-      // the old listener remains fenced.
-      await refreshDiscordGatewayOwnership(ownership);
-    }
-    return discordGatewayRuntimeIsCurrent(endpointId, context);
-  }
-
-  function startDiscordGatewayLeaseRenewal(
-    ownership: DiscordGatewayOwnership,
-  ): void {
-    ownership.renewTimer = setInterval(
-      () => {
-        if (ownership.renewal || ownership.stopping) return;
-        void refreshDiscordGatewayOwnership(ownership);
-      },
-      options.discordGatewayLeaseRenewalIntervalMs ??
-        (options.discordGatewayLeaseTtlMs ?? DISCORD_GATEWAY_LEASE_TTL_MS) / 3,
-    );
-    ownership.renewTimer.unref?.();
-  }
-
-  async function acquireDiscordGatewayOwnership(
-    endpoint: EndpointRow,
-    context: RuntimeContext,
-    waitForOwnership: boolean,
-  ): Promise<DiscordGatewayOwnership | null> {
-    const receiverLeaseKey = endpoint.provider === "imessage-photon" ? "photon_receiver_runtime" : DISCORD_GATEWAY_LEASE_KEY;
-    const local = discordGatewayOwnerships.get(endpoint.id);
-    if (
-      local &&
-      !local.stopping &&
-      local.context.version === context.version &&
-      local.expiresAt.getTime() > Date.now()
-    ) {
-      return local;
-    }
-    if (local) await stopDiscordGatewayOwnership(local);
-
-    const token = randomUUID();
-    const deadline =
-      Date.now() +
-      (waitForOwnership
-        ? (options.discordGatewayLeaseWaitMs ?? DISCORD_GATEWAY_LEASE_WAIT_MS)
-        : 0);
-    for (;;) {
-      if (shuttingDown) return null;
-      const now = new Date();
-      const expiresAt = new Date(
-        now.getTime() +
-          (options.discordGatewayLeaseTtlMs ?? DISCORD_GATEWAY_LEASE_TTL_MS),
-      );
-      const inserted = await db
-        .insert(chatEndpointLeases)
-        .values({
-          companyId: endpoint.companyId,
-          endpointId: endpoint.id,
-          leaseKey: receiverLeaseKey,
-          token,
-          expiresAt,
-        })
-        .onConflictDoNothing()
-        .returning({ id: chatEndpointLeases.id });
-      const reclaimed = inserted.length
-        ? inserted
-        : await db
-            .update(chatEndpointLeases)
-            .set({ token, expiresAt, updatedAt: now })
-            .where(
-              and(
-                eq(chatEndpointLeases.companyId, endpoint.companyId),
-                eq(chatEndpointLeases.endpointId, endpoint.id),
-                eq(chatEndpointLeases.leaseKey, receiverLeaseKey),
-                lte(chatEndpointLeases.expiresAt, now),
-              ),
-            )
-            .returning({ id: chatEndpointLeases.id });
-      if (reclaimed.length) {
-        const ownership: DiscordGatewayOwnership = {
-          companyId: endpoint.companyId,
-          context,
-          endpointId: endpoint.id,
-          expiresAt,
-          leaseKey: receiverLeaseKey,
-          renewal: null,
-          renewTimer: null,
-          stopPromise: null,
-          stopping: false,
-          token,
-        };
-        discordGatewayOwnerships.set(endpoint.id, ownership);
-        startDiscordGatewayLeaseRenewal(ownership);
-        return ownership;
-      }
-      if (Date.now() >= deadline) return null;
-      await new Promise((resolve) =>
-        setTimeout(resolve, DISCORD_GATEWAY_LEASE_POLL_MS),
-      );
-    }
-  }
+  const { discordGatewayNotOwnedError, isDiscordGatewayNotOwnedError, releaseDiscordGatewayLeaseRow, stopDiscordGatewayOwnership, renewDiscordGatewayOwnershipForMessageAdmission, ensureDiscordGatewayRuntimeIsCurrent, acquireDiscordGatewayOwnership, discordGatewayRuntimeIsCurrent } = createChatReceiverOwnership(db, { runtime, runtimeVersions, runtimeCallbackEndpoint, redactError, leasedChatProvider, discordGatewayOwnerships, discordGatewayStopTasks, isShuttingDown: () => shuttingDown, get discordGatewayLeaseTtlMs() { return options.discordGatewayLeaseTtlMs; }, get discordGatewayLeaseRenewalIntervalMs() { return options.discordGatewayLeaseRenewalIntervalMs; }, get discordGatewayLeaseWaitMs() { return options.discordGatewayLeaseWaitMs; }, get renewDiscordGatewayLease() { return options.renewDiscordGatewayLease; } });
 
   function localRuntimeEpoch(endpointId: string): number {
     return runtimeLocalEpochs.get(endpointId) ?? 0;
@@ -1099,8 +686,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       return pending;
     });
   }
-
-
 
   function conversationDrainKey(endpointId: string, threadId: string) {
     return `${endpointId}:${createHash("sha256").update(durableExternalThreadIdentity(threadId)).digest("hex")}`;
@@ -1307,22 +892,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       : null;
   }
 
-  function discordGatewayRuntimeIsCurrent(
-    endpointId: string,
-    context: RuntimeContext,
-  ): boolean {
-    const ownership = discordGatewayOwnerships.get(endpointId);
-    return (
-      ownership !== undefined &&
-      !ownership.stopping &&
-      ownership.context === context &&
-      ownership.expiresAt.getTime() > Date.now() &&
-      context.discordGatewayOwned === true &&
-      context.endpointRuntime !== undefined &&
-      runtime.get(endpointId) === context.endpointRuntime
-    );
-  }
-
   const withCredentialMutationLease = chatCredentialMutationLease(db, options);
   const { list, get, create, update } = createChatEndpoints(db, {
     endpointRecord, CAPABILITIES, PROVIDER_LABELS, withCredentialMutationLease,
@@ -1380,6 +949,8 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
 
   const { authenticateGitHubWebhook } = createGitHubWebhookAuthentication(db, { endpointRecord, runtimeContextForRecord, withCredentialMutationLease, resolveCredentials, reconcileGitHubWebhookRepository, stageGitHubWebhookIngress, processGitHubWebhookIngress, githubIngressAcceptedResponse, scheduleMessageProcessing, backgroundMessageTasks, redactError, get githubWebhookAuthenticationBarrier() { return options.githubWebhookAuthenticationBarrier; }, get deferWebhookProcessing() { return options.deferWebhookProcessing; } });
   const { inspectSlackWebhookScope, recordSlackWebhookCallback } = createSlackWebhookCallbacks(db, { resolveCredentials, runtimeCallbackEndpoint, getWebhookPublicBaseUrl, scheduleMessageProcessing, slackRegistration: { notifyVerified: (endpointId) => slackRegistration.notifyVerified(endpointId) } });
+
+  const { reconcileDiscordRuntime } = createDiscordRuntimeReconciliation(db, { reconcileDiscordCommands, endpointRecord, runtimeContexts, invalidateRuntime, runtimeFor, runtime, runtimeCallbackEndpoint, credentialFingerprint, discordGatewayRuntimeIsCurrent });
 
   async function runtimeFor(
     endpoint: EndpointRow,
@@ -1524,29 +1095,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
             enableDiscordGateway: discordOwnership !== null,
             callbacks: {
               onMessage: (event) => handleSdkMessage(event, context),
-              onPhotonAssertOwned: async (activeThreadId) => {
-                if (!(await runtimeCallbackRecord(endpoint.id, context, ["verifying", "active", "attention"]))) throw new Error("Photon receiver ownership changed");
-                if (activeThreadId) {
-                  const working = await db.select({ id: heartbeatRuns.id }).from(chatConversations).innerJoin(heartbeatRuns, and(
-                    eq(heartbeatRuns.companyId, chatConversations.companyId), eq(heartbeatRuns.agentId, record.endpoint.assignedAgentId),
-                    eq(sql<string>`${heartbeatRuns.contextSnapshot}->>'issueId'`, sql<string>`${chatConversations.issueId}::text`), inArray(heartbeatRuns.status, ["queued", "running"]),
-                  )).where(and(eq(chatConversations.companyId, record.endpoint.companyId), eq(chatConversations.endpointId, endpoint.id), eq(chatConversations.externalThreadId, activeThreadId), inArray(chatConversations.state, ["active", "waiting"]))).limit(1);
-                  if (!working.length) throw new Error("Photon conversation has no active agent work");
-                }
-                await db.transaction(async (tx) => {
-                  const current = await runtimeCallbackEndpoint(tx, endpoint.id, context, ["attention"]);
-                  if (!current) return;
-                  const connection = await tx.select().from(toolConnections).where(eq(toolConnections.id, current.connectionId)).then((rows) => rows[0]);
-                  if (!connection?.enabled) throw new Error("Photon endpoint requires operator recovery");
-                  await notifyChatEndpointWork(tx, endpoint.connectionId);
-                  await tx.update(chatEndpoints).set({ status: current.setup.step === "complete" ? "active" : "verifying", healthMessage: "Photon receiver connected", lastError: null, updatedAt: new Date() }).where(eq(chatEndpoints.id, endpoint.id));
-                });
-              },
-              onPhotonCheckpoint: (sequence) => db.transaction(async (tx) => {
-                if (!(await runtimeCallbackEndpoint(tx, endpoint.id, context, ["verifying", "active"]))) throw new Error("Photon receiver is no longer current");
-                if ((await renewDiscordGatewayOwnershipForMessageAdmission(tx, endpoint.id, context)).kind !== "owned") throw new Error("Photon receiver lease was replaced");
-                await writePhotonCheckpoint(new PhotonState({ companyId: record.endpoint.companyId, endpointId: endpoint.id }, createChatSdkStatePersistence(tx as unknown as Db)), credentials.lineId, sequence);
-              }),
+              ...createPhotonRuntimeCallbacks(db, { endpointId: endpoint.id, connectionId: endpoint.connectionId, companyId: record.endpoint.companyId, assignedAgentId: record.endpoint.assignedAgentId, context, lineId: credentials.lineId, runtimeCallbackRecord, runtimeCallbackEndpoint, renewDiscordGatewayOwnershipForMessageAdmission }),
               onPhotonEvent: (event) => handlePhotonEvent(endpoint.id, event, context),
               onPhotonFailure: (error) => handlePhotonFailure(endpoint.id, error, context),
               onDiscordRootMentionAdmission:
@@ -1694,94 +1243,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         let instance = await runtimeFor(record.endpoint, {
           requireDiscordOwnership: true,
         });
-        await reconcileDiscordCommands(row.endpointId);
-        const afterCommands = await endpointRecord(row.endpointId);
-        const desiredCommands =
-          afterCommands?.endpoint.capabilities.slashCommands &&
-          afterCommands.endpoint.botExternalId &&
-          afterCommands.endpoint.providerAccountId
-            ? await readRegisteredDiscordCommandRegistration(db, {
-                companyId: afterCommands.endpoint.companyId,
-                endpointId: row.endpointId,
-                applicationId: afterCommands.endpoint.botExternalId,
-                guildId: afterCommands.endpoint.providerAccountId,
-              })
-            : null;
-        // A missing command handler needs a new runtime only on upgrade.
-        // Loss of registration is denied by the existing callback's current
-        // durable checks; optional REST maintenance must not tear down a
-        // healthy Gateway used for ordinary mentions and thread messages.
-        if (
-          afterCommands &&
-          desiredCommands &&
-          runtimeContexts.get(instance as object)?.discordCommandId !==
-            desiredCommands.receipt.commandId
-        ) {
-          await invalidateRuntime(row.endpointId);
-          instance = await runtimeFor(afterCommands.endpoint, {
-            requireDiscordOwnership: true,
-          });
-        }
-        const context = runtimeContexts.get(instance as object);
-        if (
-          CAPABILITIES.discord.modals &&
-          context &&
-          runtime.get(row.endpointId) === instance
-        ) {
-          // Existing connected endpoints acquire the new implementation
-          // capability only after the pinned runtime initialized successfully.
-          // No reconnect, policy/reach change, credential rotation, or runtime
-          // generation change is needed: its Discord handler is registered
-          // even while the persisted capability remains disabled.
-          await db.transaction(async (tx) => {
-            const current = await runtimeCallbackEndpoint(
-              tx,
-              row.endpointId,
-              context,
-              ["verifying", "active", "attention"],
-            );
-            if (
-              !current ||
-              current.provider !== "discord" ||
-              current.capabilities.modals === true ||
-              runtime.get(row.endpointId) !== instance
-            )
-              return;
-            const connection = await tx
-              .select({
-                enabled: toolConnections.enabled,
-                status: toolConnections.status,
-                refs: toolConnections.credentialSecretRefs,
-              })
-              .from(toolConnections)
-              .where(
-                and(
-                  eq(toolConnections.companyId, current.companyId),
-                  eq(toolConnections.id, current.connectionId),
-                ),
-              )
-              .for("no key update")
-              .then((rows) => rows[0]);
-            if (
-              !connection?.enabled ||
-              connection.status !== "active" ||
-              credentialFingerprint(connection.refs) !==
-                context.credentialFingerprint ||
-              runtime.get(row.endpointId) !== instance ||
-              !discordGatewayRuntimeIsCurrent(row.endpointId, context)
-            )
-              return;
-            await tx
-              .update(chatEndpoints)
-              .set({ capabilities: { ...current.capabilities, modals: true } })
-              .where(
-                and(
-                  eq(chatEndpoints.companyId, current.companyId),
-                  eq(chatEndpoints.id, current.id),
-                ),
-              );
-          });
-        }
+        await reconcileDiscordRuntime(row.endpointId, instance);
         local += 1;
       } catch (error) {
         if (isDiscordGatewayNotOwnedError(error)) {
@@ -5134,8 +4596,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     if (ordinaryFailed) throw ordinaryError;
     return reactionCount + rows.length;
   }
-
-
 
   async function replayDelivery(endpointId: string, deliveryId: string) {
     const delivery = await db
