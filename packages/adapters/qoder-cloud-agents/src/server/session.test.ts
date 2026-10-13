@@ -14,6 +14,7 @@ describe("qoderCloudAgents sessionCodec", () => {
       repoRef: "main",
       repoMountPath: "/data/workspace/paperclip",
       envFingerprint: "abc",
+      repoTokenFingerprint: "def",
       authorization_token: "must-not-persist",
     };
     const normalized = sessionCodec.deserialize(params);
@@ -28,6 +29,7 @@ describe("qoderCloudAgents sessionCodec", () => {
       repoRef: "main",
       repoMountPath: "/data/workspace/paperclip",
       envFingerprint: "abc",
+      repoTokenFingerprint: "def",
     });
     expect(sessionCodec.serialize(normalized)).toEqual(normalized);
     expect(sessionCodec.getDisplayId?.(normalized)).toBe("sess_1");

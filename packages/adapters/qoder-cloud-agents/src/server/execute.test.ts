@@ -298,6 +298,7 @@ describe("qoder_cloud_agents execute", () => {
       repoMountPath: "/data/workspace/paperclip",
     });
     expect(JSON.stringify(result.sessionParams)).not.toContain("secret");
+    expect((result.sessionParams as Record<string, unknown>).repoTokenFingerprint).toMatch(/^[0-9a-f]{32}$/);
     expect(result.resultJson).toMatchObject({
       status: "finished",
       stopReason: "end_turn",
@@ -442,6 +443,7 @@ describe("qoder_cloud_agents execute", () => {
     ["model", (config: Record<string, any>) => { config.model = "performance"; }],
     ["configured agent", (config: Record<string, any>) => { config.qoderAgentId = "agent_other"; }],
     ["configured environment", (config: Record<string, any>) => { config.environmentId = "env_other"; }],
+    ["repository token", (config: Record<string, any>) => { config.env = { ...config.env, QODER_REPO_TOKEN: "ghp_rotated_secret" }; }],
   ])("does not reuse a stored session after the %s changed", async (_label, mutate) => {
     const sessionParams = await storedSessionParams(createContext());
     const qoder = createFakeQoder();
@@ -582,6 +584,48 @@ describe("qoder_cloud_agents execute", () => {
     expect(sleep).toHaveBeenCalledTimes(5);
   });
 
+  it("recovers this turn's final answer from event history, not an earlier turn's", async () => {
+    const qoder = createFakeQoder({
+      "GET /sessions/:id/events/stream": [
+        () => sse([{ id: "evt_partial", type: "agent.message", content: [{ type: "text", text: "Partial progress" }] }]),
+        () => { throw new Error("socket hang up"); },
+      ],
+      // Newest first, as Qoder returns with order=desc.
+      "GET /sessions/:id/events": () => json({
+        data: [
+          END_TURN,
+          { id: "evt_final", type: "agent.message", content: [{ type: "text", text: "Final answer\nwith detail" }] },
+          { id: "evt_partial", type: "agent.message", content: [{ type: "text", text: "Partial progress" }] },
+          { id: "evt_user", type: "user.message" },
+          { id: "evt_old_idle", type: "session.status_idle", stop_reason: { type: "end_turn" } },
+          { id: "evt_old", type: "agent.message", content: [{ type: "text", text: "Answer from an older turn" }] },
+        ],
+      }),
+    });
+    const ctx = createContext();
+    const result = await execute(ctx, { fetchImpl: qoder.fetchImpl, sleep: noSleep });
+    expect(result.exitCode).toBe(0);
+    expect(result.summary).toBe("Final answer");
+    expect(result.resultJson).toMatchObject({ result: "Final answer\nwith detail" });
+    expect(stdoutEvents(ctx).at(-1)).toMatchObject({ status: "finished", result: "Final answer\nwith detail" });
+  });
+
+  it("recovers the session error from event history when the turn failed after the stream was lost", async () => {
+    const qoder = createFakeQoder({
+      "GET /sessions/:id/events/stream": () => { throw new Error("socket hang up"); },
+      "GET /sessions/:id/events": () => json({
+        data: [
+          { id: "evt_idle", type: "session.status_idle", stop_reason: { type: "retries_exhausted" } },
+          { id: "evt_err", type: "session.error", error: { message: "Model overloaded", retry_status: { type: "exhausted" } } },
+          { id: "evt_user", type: "user.message" },
+        ],
+      }),
+    });
+    const result = await execute(createContext(), { fetchImpl: qoder.fetchImpl, sleep: noSleep });
+    expect(result.exitCode).toBe(1);
+    expect(result.errorMessage).toBe("Model overloaded");
+  });
+
   it("fails the run when the stream is lost while the turn is still running", async () => {
     const qoder = createFakeQoder({
       "GET /sessions/:id/events/stream": () => { throw new Error("socket hang up"); },
@@ -627,6 +671,60 @@ describe("qoder_cloud_agents execute", () => {
     const cancel = qoder.find("POST", `/sessions/${SESSION_ID}/cancel`);
     expect(cancel).toHaveLength(1);
     expect(cancel[0].signal?.aborted).toBe(false);
+  });
+
+  it("does not acknowledge cancellation when Qoder rejects the cancel request", async () => {
+    const controller = new AbortController();
+    const qoder = createFakeQoder({
+      "GET /sessions/:id/events/stream": (call) => {
+        queueMicrotask(() => controller.abort());
+        return hangingSse(call.signal);
+      },
+      "POST /sessions/:id/cancel": () => apiError(500, "api_error", "cancel failed"),
+    });
+    const ctx = createContext({ signal: controller.signal });
+    const result = await execute(ctx, { fetchImpl: qoder.fetchImpl });
+    expect(result.errorCode).toBe("cancelled");
+    expect(result.errorMessage).toContain("could not confirm");
+    expect(result.resultJson).toMatchObject({ qoderTurnStopped: false });
+    expect(result.resultJson).not.toHaveProperty("executionCancellation");
+    expect(ctx.logs.some((entry) => entry.stream === "stderr" && entry.chunk.includes("cancel failed"))).toBe(true);
+  });
+
+  it("waits for Qoder to report the turn stopped before acknowledging cancellation", async () => {
+    const controller = new AbortController();
+    const running = () => json({ id: SESSION_ID, status: "running", archived_at: null });
+    const idle = () => json({ id: SESSION_ID, status: "idle", archived_at: null });
+    const qoder = createFakeQoder({
+      "GET /sessions/:id/events/stream": (call) => {
+        queueMicrotask(() => controller.abort());
+        return hangingSse(call.signal);
+      },
+      "GET /sessions/:id": [running, running, idle],
+    });
+    const sleep = vi.fn(async (_ms: number, _signal: AbortSignal) => {});
+    const result = await execute(createContext({ signal: controller.signal }), { fetchImpl: qoder.fetchImpl, sleep });
+    expect(sleep).toHaveBeenCalledTimes(2);
+    expect(sleep.mock.calls[0]?.[1].aborted).toBe(false);
+    expect(result.resultJson).toMatchObject({ qoderTurnStopped: true, executionCancellation: { state: "acknowledged" } });
+  });
+
+  it("cancels a turn Qoder may have accepted when the run stops before the send response arrives", async () => {
+    const controller = new AbortController();
+    const qoder = createFakeQoder({
+      "POST /sessions/:id/events": (call) => {
+        // Qoder has the message; the caller aborts before reading the response.
+        controller.abort();
+        call.signal?.throwIfAborted();
+        return json({ data: [] });
+      },
+    });
+    const ctx = createContext({ signal: controller.signal });
+    const result = await execute(ctx, { fetchImpl: qoder.fetchImpl });
+    expect(result.errorCode).toBe("cancelled");
+    expect(qoder.find("POST", `/sessions/${SESSION_ID}/cancel`)).toHaveLength(1);
+    expect(result.resultJson).toMatchObject({ qoderTurnStopped: true, executionCancellation: { state: "acknowledged" } });
+    expect(result.sessionId).toBe(SESSION_ID);
   });
 
   it("does no remote work when the run was cancelled before dispatch", async () => {

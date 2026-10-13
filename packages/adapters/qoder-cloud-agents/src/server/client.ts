@@ -87,7 +87,7 @@ export function createQoderClient(input: {
   async function json(
     method: "GET" | "POST",
     path: string,
-    options: { body?: unknown; headers?: Record<string, string> } = {},
+    options: { body?: unknown; headers?: Record<string, string>; signal?: AbortSignal } = {},
   ): Promise<QoderRecord> {
     const response = await send(method, path, options);
     return asRecord(await response.json()) ?? {};
@@ -121,13 +121,14 @@ export function createQoderClient(input: {
     createSession(body: QoderRecord): Promise<QoderRecord> {
       return json("POST", "/sessions", { body });
     },
-    getSession(sessionId: string): Promise<QoderRecord> {
-      return json("GET", `/sessions/${encodeURIComponent(sessionId)}`);
+    /** Pass a signal to read the session after the run signal has aborted. */
+    getSession(sessionId: string, signal?: AbortSignal): Promise<QoderRecord> {
+      return json("GET", `/sessions/${encodeURIComponent(sessionId)}`, { signal });
     },
     async sendEvents(sessionId: string, events: QoderRecord[]): Promise<QoderRecord[]> {
       return readList(await json("POST", `/sessions/${encodeURIComponent(sessionId)}/events`, { body: { events } }));
     },
-    async listRecentEvents(sessionId: string, limit = 50): Promise<QoderRecord[]> {
+    async listRecentEvents(sessionId: string, limit = 100): Promise<QoderRecord[]> {
       return readList(await json("GET", `/sessions/${encodeURIComponent(sessionId)}/events?order=desc&limit=${limit}`));
     },
     /** Deliberately ignores the run signal so a cancelled run can still stop its remote turn. */

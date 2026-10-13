@@ -27,6 +27,7 @@ import {
   type QoderFetch,
   type QoderRecord,
 } from "./client.js";
+import { parseHttpRepoUrl } from "./repo-url.js";
 
 export type QoderCloudAgentsExecuteDeps = {
   fetchImpl?: QoderFetch;
@@ -44,6 +45,8 @@ type QoderCloudAgentsSession = {
   repoRef?: string;
   repoMountPath?: string;
   envFingerprint: string;
+  /** Digest only. Qoder takes the repository token at session creation, so a new token needs a new session. */
+  repoTokenFingerprint?: string;
 };
 
 type QoderRepo = { url: string; ref: string | null; mountPath: string };
@@ -69,6 +72,8 @@ const BUSY_SESSION_STATUSES = new Set(["running", "rescheduling"]);
 const IDLE_POLL_INTERVAL_MS = 3_000;
 const MAX_STREAM_RECONNECTS = 5;
 const STREAM_RECONNECT_BASE_DELAY_MS = 1_000;
+const CANCEL_CONFIRM_TIMEOUT_MS = 30_000;
+const CANCEL_CONFIRM_POLL_INTERVAL_MS = 1_000;
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
@@ -188,6 +193,10 @@ export function buildSessionEnv(
   return { env, dropped };
 }
 
+function fingerprintSecret(value: string | null): string | null {
+  return value ? createHash("sha256").update(value).digest("hex").slice(0, 32) : null;
+}
+
 function fingerprintEnv(env: Record<string, string>): string {
   const entries = Object.keys(env).sort().map((key) => [key, env[key]]);
   return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
@@ -276,6 +285,7 @@ function readSession(params: Record<string, unknown> | null): QoderCloudAgentsSe
   const repoUrl = trimNullable(record.repoUrl);
   const repoRef = trimNullable(record.repoRef);
   const repoMountPath = trimNullable(record.repoMountPath);
+  const repoTokenFingerprint = trimNullable(record.repoTokenFingerprint);
   return {
     qoderSessionId,
     qoderAgentId,
@@ -287,6 +297,7 @@ function readSession(params: Record<string, unknown> | null): QoderCloudAgentsSe
     ...(repoRef ? { repoRef } : {}),
     ...(repoMountPath ? { repoMountPath } : {}),
     envFingerprint,
+    ...(repoTokenFingerprint ? { repoTokenFingerprint } : {}),
   };
 }
 
@@ -299,11 +310,13 @@ function sessionMatches(
     model: string;
     repo: QoderRepo | null;
     envFingerprint: string;
+    repoTokenFingerprint: string | null;
   },
 ): boolean {
   if (!session) return false;
   if (session.apiBaseUrl !== expected.apiBaseUrl) return false;
   if (session.envFingerprint !== expected.envFingerprint) return false;
+  if ((session.repoTokenFingerprint ?? null) !== (expected.repo ? expected.repoTokenFingerprint : null)) return false;
   if (expected.configuredAgentId) {
     if (session.qoderAgentId !== expected.configuredAgentId) return false;
   } else {
@@ -314,15 +327,6 @@ function sessionMatches(
   return (session.repoUrl ?? null) === (expected.repo?.url ?? null)
     && (session.repoRef ?? null) === (expected.repo?.ref ?? null)
     && (session.repoMountPath ?? null) === (expected.repo?.mountPath ?? null);
-}
-
-function parseRepoUrl(raw: string): URL | null {
-  try {
-    const url = new URL(raw);
-    return url.protocol === "https:" || url.protocol === "http:" ? url : null;
-  } catch {
-    return null;
-  }
 }
 
 function defaultMountPath(url: URL): string {
@@ -452,13 +456,14 @@ function readTerminalEvent(event: QoderRecord): Pick<TurnOutcome, "kind" | "stop
 async function streamTurn(input: {
   client: QoderClient;
   sessionId: string;
-  cursor: string | null;
+  /** The user.message event that started this turn; also the first stream cursor. */
+  turnEventId: string | null;
   onLog: AdapterExecutionContext["onLog"];
   sleep: NonNullable<QoderCloudAgentsExecuteDeps["sleep"]>;
   signal: AbortSignal;
 }): Promise<TurnOutcome> {
   const { client, sessionId, onLog, sleep, signal } = input;
-  let cursor = input.cursor;
+  let cursor = input.turnEventId;
   let lastMessage: string | null = null;
   let lastError: string | null = null;
   let reconnects = 0;
@@ -519,9 +524,33 @@ async function streamTurn(input: {
       // The stream is gone; recover the turn's outcome from event history when it already ended.
       const session = await client.getSession(sessionId);
       if (!BUSY_SESSION_STATUSES.has(asString(session.status, ""))) {
-        for (const event of await client.listRecentEvents(sessionId)) {
-          const terminal = readTerminalEvent(event);
-          if (terminal) return outcome(terminal, event);
+        const history = await client.listRecentEvents(sessionId);
+        const terminalIndex = history.findIndex((event) => readTerminalEvent(event));
+        if (terminalIndex !== -1) {
+          // History is newest first: walk back from the terminal event to this
+          // turn's user.message so the answer and errors the stream never
+          // delivered are not lost, and an older turn's reply is not reused.
+          let recoveredMessage: string | null = null;
+          let recoveredError: string | null = null;
+          for (const event of history.slice(terminalIndex + 1)) {
+            const type = asString(event.type, "");
+            if (type === "user.message" || (input.turnEventId && event.id === input.turnEventId)) break;
+            if (type === "agent.message") {
+              recoveredMessage ??= contentText(event.content) || null;
+            } else if (type === "session.error") {
+              const error = asRecord(event.error);
+              if (asRecord(error?.retry_status)?.type !== "retrying") {
+                recoveredError ??= trimNullable(error?.message) ?? trimNullable(error?.type) ?? "Qoder session error";
+              }
+            } else if ((type === "agent.tool_use" || type === "agent.mcp_tool_use") && event.evaluated_permission === "allow") {
+              const id = trimNullable(event.id);
+              if (id) allowedToolUseIds.add(id);
+            }
+          }
+          lastMessage = recoveredMessage ?? lastMessage;
+          lastError = recoveredError ?? lastError;
+          const terminalEvent = history[terminalIndex];
+          return outcome(readTerminalEvent(terminalEvent)!, terminalEvent);
         }
       }
       throw new Error(
@@ -568,7 +597,7 @@ export async function execute(
   const repoUrlRaw = asString(config.repoUrl, "").trim() || asString(workspace.repoUrl, "").trim();
   let repo: QoderRepo | null = null;
   if (repoUrlRaw) {
-    const parsed = parseRepoUrl(repoUrlRaw);
+    const parsed = parseHttpRepoUrl(repoUrlRaw);
     if (!parsed) {
       return configError(`qoder_cloud_agents requires an http(s) repoUrl; Qoder cannot clone "${repoUrlRaw}".`);
     }
@@ -586,6 +615,7 @@ export async function execute(
   const timeoutSec = Math.max(0, asNumber(config.timeoutSec, 0));
   const { env: sessionEnv, dropped: droppedEnvKeys } = buildSessionEnv(ctx, rawEnv);
   const envFingerprint = fingerprintEnv(sessionEnv);
+  const repoTokenFingerprint = fingerprintSecret(repoToken);
 
   const storedSession = readSession(runtime.sessionParams);
   const candidateSession = sessionMatches(storedSession, {
@@ -595,6 +625,7 @@ export async function execute(
     model,
     repo,
     envFingerprint,
+    repoTokenFingerprint,
   }) ? storedSession : null;
 
   const abort = new AbortController();
@@ -613,6 +644,9 @@ export async function execute(
 
   let session: QoderCloudAgentsSession | null = candidateSession;
   let turnStarted = false;
+  // Set before the send: Qoder can accept the message even when the request is
+  // aborted before its response arrives.
+  let turnPossiblyAccepted = false;
   const failure = (errorMessage: string, extra: Partial<AdapterExecutionResult> = {}): AdapterExecutionResult => ({
     exitCode: 1,
     signal: null,
@@ -632,12 +666,25 @@ export async function execute(
       ...extra.resultJson,
     },
   });
-  const cancelRemoteTurn = async () => {
-    if (!session || !turnStarted) return;
+  /** Resolves true only once Qoder reports that no turn is running on the session. */
+  const cancelRemoteTurn = async (): Promise<boolean> => {
+    if (!session || !turnPossiblyAccepted) return true;
+    const sessionId = session.qoderSessionId;
+    // The run signal is already aborted here, so confirmation needs its own deadline.
+    const confirmSignal = AbortSignal.timeout(CANCEL_CONFIRM_TIMEOUT_MS);
     try {
-      await client.cancelSession(session.qoderSessionId);
+      await client.cancelSession(sessionId);
+      for (;;) {
+        const status = trimNullable((await client.getSession(sessionId, confirmSignal)).status);
+        if (!status || !BUSY_SESSION_STATUSES.has(status)) return true;
+        await sleep(CANCEL_CONFIRM_POLL_INTERVAL_MS, confirmSignal);
+      }
     } catch (err) {
-      await onLog("stderr", `[paperclip] Warning: could not cancel Qoder session ${session.qoderSessionId}: ${formatRunError(err)}\n`);
+      await onLog(
+        "stderr",
+        `[paperclip] Warning: could not confirm that the turn on Qoder session ${sessionId} stopped: ${formatRunError(err)}\n`,
+      );
+      return false;
     }
   };
 
@@ -767,6 +814,7 @@ export async function execute(
         ...(configuredAgentId ? {} : { model }),
         ...(repo ? { repoUrl: repo.url, repoMountPath: repo.mountPath, ...(repo.ref ? { repoRef: repo.ref } : {}) } : {}),
         envFingerprint,
+        ...(repo && repoTokenFingerprint ? { repoTokenFingerprint } : {}),
       };
     }
     const activeSession = session;
@@ -774,6 +822,7 @@ export async function execute(
 
     const userMessage = { type: "user.message", content: [{ type: "text", text: finalPrompt }] };
     let sent: QoderRecord[];
+    turnPossiblyAccepted = true;
     try {
       sent = await client.sendEvents(activeSession.qoderSessionId, [userMessage]);
     } catch (err) {
@@ -794,7 +843,7 @@ export async function execute(
     const outcome = await streamTurn({
       client,
       sessionId: activeSession.qoderSessionId,
-      cursor: sent.map((event) => trimNullable(event.id)).filter(Boolean).pop() ?? null,
+      turnEventId: sent.map((event) => trimNullable(event.id)).filter(Boolean).pop() ?? null,
       onLog,
       sleep,
       signal: abort.signal,
@@ -858,20 +907,26 @@ export async function execute(
     };
   } catch (err) {
     if (stopKind) {
-      await cancelRemoteTurn();
+      const remoteStopped = await cancelRemoteTurn();
       const timedOut = stopKind === "timeout";
-      const message = timedOut
+      const message = `${timedOut
         ? `Qoder Cloud Agents run timed out after ${timeoutSec}s`
-        : "Qoder Cloud Agents run was cancelled";
+        : "Qoder Cloud Agents run was cancelled"}${remoteStopped
+        ? ""
+        : `, but Paperclip could not confirm that the turn on Qoder session ${session?.qoderSessionId ?? "unknown"} stopped`}`;
       if (turnStarted) {
         await onLog("stdout", eventLine({ type: "qoder_cloud_agents.result", status: "error", error: message }));
       }
       return failure(message, {
         timedOut,
         ...(timedOut ? {} : { exitCode: null, errorCode: "cancelled" }),
-        resultJson: timedOut
-          ? {}
-          : { executionCancellation: { state: "acknowledged", acknowledgedAt: new Date().toISOString() } },
+        resultJson: {
+          qoderTurnStopped: remoteStopped,
+          // Only a confirmed stop may release the run for continuation.
+          ...(!timedOut && remoteStopped
+            ? { executionCancellation: { state: "acknowledged", acknowledgedAt: new Date().toISOString() } }
+            : {}),
+        },
       });
     }
     const error = formatRunError(err);

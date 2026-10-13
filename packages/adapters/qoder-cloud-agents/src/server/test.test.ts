@@ -71,6 +71,19 @@ describe("qoder_cloud_agents testEnvironment", () => {
     expect(fake.urls).toHaveLength(1);
   });
 
+  it.each(["https://", "https://github.com", "not a url", "ftp://host/org/repo"])(
+    "rejects the repository URL %j that execute would also reject",
+    async (repoUrl) => {
+      const fake = fakeFetch({ "/agents": () => json({ data: [] }) });
+      const result = await testEnvironment({
+        ...baseCtx,
+        config: { env: { QODER_ACCESS_TOKEN: "pt-secret" }, repoUrl },
+      }, { fetchImpl: fake.fetchImpl });
+      expect(result.status).toBe("fail");
+      expect(result.checks.map((check) => check.code)).toContain("qoder_cloud_agents_repo_invalid");
+    },
+  );
+
   it("warns when the configured environment is self-hosted", async () => {
     const fake = fakeFetch({
       "/agents": () => json({ data: [] }),

@@ -22,6 +22,7 @@ function normalize(raw: unknown): Record<string, unknown> | null {
   const repoRef = readString(record.repoRef);
   const repoMountPath = readString(record.repoMountPath);
   const envFingerprint = readString(record.envFingerprint);
+  const repoTokenFingerprint = readString(record.repoTokenFingerprint);
   return {
     qoderSessionId,
     ...(qoderAgentId ? { qoderAgentId } : {}),
@@ -33,6 +34,7 @@ function normalize(raw: unknown): Record<string, unknown> | null {
     ...(repoRef ? { repoRef } : {}),
     ...(repoMountPath ? { repoMountPath } : {}),
     ...(envFingerprint ? { envFingerprint } : {}),
+    ...(repoTokenFingerprint ? { repoTokenFingerprint } : {}),
   };
 }
 

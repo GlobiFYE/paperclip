@@ -6,6 +6,7 @@ import type {
 import { asString, parseObject } from "@paperclipai/adapter-utils/server-utils";
 import { DEFAULT_QODER_API_BASE_URL } from "../index.js";
 import { createQoderClient, normalizeQoderApiBaseUrl, type QoderFetch } from "./client.js";
+import { parseHttpRepoUrl } from "./repo-url.js";
 
 function summarizeStatus(checks: AdapterEnvironmentCheck[]): AdapterEnvironmentTestResult["status"] {
   if (checks.some((check) => check.level === "error")) return "fail";
@@ -25,10 +26,6 @@ function asStringEnvMap(value: unknown): Record<string, string> {
     }
   }
   return env;
-}
-
-function looksLikeHttpRepoUrl(value: string): boolean {
-  return /^https?:\/\//i.test(value.trim());
 }
 
 export async function testEnvironment(
@@ -54,7 +51,7 @@ export async function testEnvironment(
   }
 
   if (repoUrl) {
-    checks.push(looksLikeHttpRepoUrl(repoUrl)
+    checks.push(parseHttpRepoUrl(repoUrl)
       ? {
           code: "qoder_cloud_agents_repo_present",
           level: "info",
