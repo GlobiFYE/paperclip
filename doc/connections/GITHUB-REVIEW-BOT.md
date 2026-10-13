@@ -127,6 +127,14 @@ choose an active sponsor, and use the restricted guest profile. Guests receive n
 sponsor credentials. Authority is checked again before tool calls and
 publication, so revocation also affects queued or ongoing work.
 
+To review the pull requests of a GitHub person without admitting them, add
+their verified account under **Reviewed authors**. Their pull request events
+start automatic reviews under the responsible member, with the same events and
+filters. A reviewed author gets no company membership and cannot mention or
+control the bot. Issues that they open do not start tasks. Their reviews are not
+quarantined as low-trust work, and gateway tools stay limited to the bot
+connection. When you remove the author, new admissions and tool calls stop.
+
 Choose automatic events and author filters in **Settings** to control which
 authored PRs and issues start work. Authorized mentions remain available with
 automatic events off and bypass automatic author filters. The shared external-
