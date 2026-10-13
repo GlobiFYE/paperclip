@@ -1392,6 +1392,10 @@ export function heartbeatService(
     return runControl.releaseIssueExecutionAndPromote(...args);
   }
 
+  function retryDeferredIssueExecutionWakes(...args: Parameters<typeof runControl.retryDeferredIssueExecutionWakes>) {
+    return runControl.retryDeferredIssueExecutionWakes(...args);
+  }
+
   function releaseEnvironmentLeasesForRun(...args: Parameters<typeof runControl.releaseEnvironmentLeasesForRun>) {
     return runControl.releaseEnvironmentLeasesForRun(...args);
   }
@@ -4064,6 +4068,7 @@ export function heartbeatService(
     resumeExecutionWaitComments,
 
     sweepStaleIssueLocks,
+    retryDeferredIssueExecutionWakes,
 
     reconcileResolvedDependencyWakes,
 

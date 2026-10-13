@@ -1611,6 +1611,17 @@ async function startServerWithDatabaseTeardown(
         if (swept.cleared > 0) {
           logger.warn({ ...swept }, "startup stale-lock sweeper cleared issue locks");
         }
+
+        const retriedWakes = await heartbeat.retryDeferredIssueExecutionWakes();
+        if (
+          retriedWakes.staleLocksReleased > 0 ||
+          retriedWakes.staleHoldersCancelled > 0
+        ) {
+          logger.warn(
+            { ...retriedWakes },
+            "startup deferred-wake retry released stale issue execution locks",
+          );
+        }
       })().catch((err) => {
         logger.error({ err }, "startup heartbeat recovery failed");
         throw err;
@@ -1841,6 +1852,18 @@ async function startServerWithDatabaseTeardown(
               const swept = await heartbeat.sweepStaleIssueLocks();
               if (swept.cleared > 0) {
                 logger.warn({ ...swept }, "periodic stale-lock sweeper cleared issue locks");
+              }
+            })
+            .then(async () => {
+              const retriedWakes = await heartbeat.retryDeferredIssueExecutionWakes();
+              if (
+                retriedWakes.staleLocksReleased > 0 ||
+                retriedWakes.staleHoldersCancelled > 0
+              ) {
+                logger.warn(
+                  { ...retriedWakes },
+                  "periodic deferred-wake retry released stale issue execution locks",
+                );
               }
             })
             .catch((err) => {

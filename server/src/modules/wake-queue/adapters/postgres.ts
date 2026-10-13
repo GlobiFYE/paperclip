@@ -1104,7 +1104,9 @@ export function createPostgresWakeQueueAdapter(db: Db, deps: WakeQueuePostgresAd
           issueStatus: issueRow?.status ?? "",
           hasAssigneeUser: Boolean(issueRow?.assigneeUserId),
           assigneeAgentMatchesRunAgent: issueRow?.assigneeAgentId === run.agentId,
-          legacyExecutionNeedsReconciliation: await legacyExecutionNeedsReconciliationWithEvidence(tx as unknown as Db, run),
+          legacyExecutionNeedsReconciliation:
+            !input.forceDrainDeferredWakes &&
+            (await legacyExecutionNeedsReconciliationWithEvidence(tx as unknown as Db, run)),
           // An operator stop never promotes old queued work by itself. The
           // next explicit wake adopts those messages atomically when it
           // queues a run.
@@ -1137,7 +1139,11 @@ export function createPostgresWakeQueueAdapter(db: Db, deps: WakeQueuePostgresAd
             sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${issueRow.id}`),
           inArray(heartbeatRuns.status, ["queued", "running", "scheduled_retry"]),
         )).limit(1);
-        if (successor) return { outcome: { kind: "released" }, postCommitEffects: [], run: runSnapshot };
+        // A forced drain (bounded deferred-wake retry pass) has already proven
+        // the parked wake belongs to the current assignee while this finishing
+        // run belongs to a former one; a queued successor of the former agent
+        // cannot own that next turn, so it must not skip the drain here.
+        if (successor && !input.forceDrainDeferredWakes) return { outcome: { kind: "released" }, postCommitEffects: [], run: runSnapshot };
 
         if (preDrain.kind === "blocked") {
           return {

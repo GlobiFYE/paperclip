@@ -687,7 +687,17 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
 
   async function releaseIssueExecutionAndPromote(
     run: Pick<typeof heartbeatRuns.$inferSelect, "id" | "companyId">,
-    options: { suppressImmediateRecovery?: boolean; deferredPostCommitEffects?: WakeQueuePostCommitEffect[] } = {},
+    options: {
+      suppressImmediateRecovery?: boolean;
+      deferredPostCommitEffects?: WakeQueuePostCommitEffect[];
+      /**
+       * Sweep-context bypass for the release early exits that skip the
+       * deferred-wake drain. Only `retryDeferredIssueExecutionWakes` sets
+       * this; see `IssueLockWriter.withIssueExecutionLock` for the safety
+       * argument.
+       */
+      forceDrainDeferredWakes?: boolean;
+    } = {},
   ) {
     try {
       const source = await getRun(run.id);
@@ -698,6 +708,7 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
         // A durable authentication card owns recovery. This covers the review path,
         // while continuation classification blocks periodic generic retries.
         suppressImmediateRecovery: options.suppressImmediateRecovery || isAiAuthenticationBlocked(source),
+        ...(options.forceDrainDeferredWakes ? { forceDrainDeferredWakes: true } : {}),
       });
       if (options.deferredPostCommitEffects) {
         options.deferredPostCommitEffects.push(...postCommitEffects);
@@ -723,6 +734,162 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
       }
       throw error;
     }
+  }
+
+  /**
+   * Bounded-cadence retry for wakes parked as `deferred_issue_execution`
+   * behind an issue execution lock.
+   *
+   * A parked wake's only promotion path is the release drain of the run that
+   * holds the issue execution lock. When that holder errors out, is
+   * terminalized without running its release, or is a non-running run left
+   * over from a reassignment, the parked wake never claims: an incident task
+   * can park a named assignee's assignment wake for hours behind an error'd
+   * lock holder. This pass re-examines parked wakes on the periodic
+   * heartbeat-recovery cadence and acts on the reassignment shape only: the
+   * current assignee has a parked wake while the issue's execution lock is
+   * held by a non-running run of a FORMER assignee (queued, scheduled, or
+   * already terminal after an error). In that case the stale holder is
+   * cancelled (same compare-and-set guard and error contract as the
+   * wake-admission reassignment force-release) and its lock is released
+   * through the standard `releaseIssueExecutionAndPromote` drain with
+   * `forceDrainDeferredWakes`, which promotes the parked wake under the
+   * normal wake policies.
+   *
+   * Everything else is left alone: a running holder keeps its lock (live
+   * work, single-execution semantics unchanged), and so does a non-running
+   * holder that still belongs to the current assignee — its own release (or
+   * the existing recovery paths) owns its queue. At most one wake promotes
+   * per issue per pass (the drain's own invariant).
+   */
+  async function retryDeferredIssueExecutionWakes() {
+    const result = {
+      examined: 0,
+      staleHoldersCancelled: 0,
+      staleLocksReleased: 0,
+      liveHoldersSkipped: 0,
+    };
+    const parked = await db
+      .select({
+        wakeId: agentWakeupRequests.id,
+        companyId: agentWakeupRequests.companyId,
+        agentId: agentWakeupRequests.agentId,
+        issueId: sql<string | null>`${agentWakeupRequests.payload} ->> 'issueId'`,
+      })
+      .from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.status, "deferred_issue_execution"))
+      .orderBy(asc(agentWakeupRequests.requestedAt));
+    if (parked.length === 0) return result;
+
+    const parkedByIssue = new Map<string, typeof parked>();
+    for (const wake of parked) {
+      if (!wake.issueId) continue;
+      const list = parkedByIssue.get(wake.issueId) ?? [];
+      list.push(wake);
+      parkedByIssue.set(wake.issueId, list);
+    }
+
+    for (const [issueId, wakes] of parkedByIssue) {
+      result.examined += 1;
+      const companyId = wakes[0].companyId;
+      const issue = await db
+        .select({
+          status: issues.status,
+          assigneeAgentId: issues.assigneeAgentId,
+          executionRunId: issues.executionRunId,
+        })
+        .from(issues)
+        .where(and(eq(issues.id, issueId), eq(issues.companyId, companyId)))
+        .then((rows) => rows[0] ?? null);
+      // No execution lock, or a holder run row that no longer exists: the
+      // stale-lock sweeper and the adoption paths already own those cases.
+      if (!issue?.executionRunId) continue;
+      const holder = await getRun(issue.executionRunId);
+      if (!holder) continue;
+
+      // Strict reassignment shape: the current assignee is parked behind a
+      // non-running holder that belongs to a former assignee. A running
+      // holder is live work; a holder for the current assignee still owns its
+      // own release path. Neither is touched here.
+      const reassignedStaleHolder =
+        Boolean(issue.assigneeAgentId) &&
+        holder.agentId !== issue.assigneeAgentId &&
+        holder.status !== "running" &&
+        wakes.some((wake) => wake.agentId === issue.assigneeAgentId);
+      if (!reassignedStaleHolder) {
+        result.liveHoldersSkipped += 1;
+        continue;
+      }
+
+      if (!isHeartbeatRunTerminalStatus(holder.status)) {
+        // Race-guarded compare-and-set on the exact non-running status read
+        // above: a worker can claim the holder between the read and this
+        // write, and a freshly running run must never be clobbered.
+        const cancelledAt = new Date();
+        const cancelled = await db
+          .update(heartbeatRuns)
+          .set({
+            status: "cancelled",
+            finishedAt: cancelledAt,
+            error:
+              "Execution lock released after issue reassigned to a different agent",
+            errorCode: "lock_released_on_reassignment",
+            updatedAt: cancelledAt,
+          })
+          .where(
+            and(
+              eq(heartbeatRuns.id, holder.id),
+              eq(heartbeatRuns.companyId, holder.companyId),
+              eq(heartbeatRuns.status, holder.status),
+            ),
+          )
+          .returning();
+        if (cancelled.length === 0) {
+          result.liveHoldersSkipped += 1;
+          continue;
+        }
+        result.staleHoldersCancelled += 1;
+        if (holder.wakeupRequestId) {
+          await setWakeupStatus(holder.wakeupRequestId, "cancelled", {
+            finishedAt: cancelledAt,
+            error:
+              "Execution lock released after issue reassigned to a different agent",
+          });
+        }
+        await appendRunEvent(cancelled[0], {
+          eventType: "lifecycle",
+          stream: "system",
+          level: "warn",
+          message:
+            "Execution lock released after issue reassigned to a different agent",
+          payload: {
+            source: "heartbeat.retry_deferred_issue_execution_wakes",
+            issueId,
+            previousStatus: holder.status,
+            currentAssigneeAgentId: issue.assigneeAgentId,
+          },
+        }).catch((err: unknown) => {
+          logger.warn(
+            { err, runId: holder.id },
+            "deferred-wake retry could not append a run event for the cancelled stale holder",
+          );
+        });
+      }
+
+      try {
+        await releaseIssueExecutionAndPromote(holder, {
+          suppressImmediateRecovery: true,
+          forceDrainDeferredWakes: true,
+        });
+        result.staleLocksReleased += 1;
+      } catch (error) {
+        logger.error(
+          { err: error, runId: holder.id, issueId },
+          "deferred-wake retry release failed; parked wakes stay parked for the next pass",
+        );
+      }
+    }
+    return result;
   }
 
   async function listProjectScopedRunIds(companyId: string, projectId: string, createdBefore?: Date) {
@@ -1308,6 +1475,7 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
   return {
     cancelBudgetScopeWork,
     releaseIssueExecutionAndPromote,
+    retryDeferredIssueExecutionWakes,
     releaseEnvironmentLeasesForRun,
     acknowledgeRemoteStop,
     resumeRemoteStopComments,

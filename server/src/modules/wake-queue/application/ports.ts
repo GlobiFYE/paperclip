@@ -235,7 +235,20 @@ export interface WakeQueueTransaction {
  */
 export interface IssueLockWriter {
   withIssueExecutionLock(
-    input: { companyId: string; runId: string; now: Date },
+    input: {
+      companyId: string;
+      runId: string;
+      now: Date;
+      /**
+       * Sweep-context bypass for the early exits that release without draining
+       * the deferred-wake queue (legacy reconciliation, queued successor).
+       * Set only by the bounded deferred-wake retry pass, which has already
+       * proven the parked wake belongs to the current assignee while the lock
+       * holder belongs to a former one; the drained queue's own policies still
+       * govern every wake. Ordinary releases never set this.
+       */
+      forceDrainDeferredWakes?: boolean;
+    },
     fn: (
       locked: LockedIssueExecution,
       ports: { host: WakeQueueHost; transaction: WakeQueueTransaction },
