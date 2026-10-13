@@ -97,6 +97,16 @@ function readText(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function isWakePayloadEcho(value: string) {
+  return /##\s*Paperclip Wake Payload/i.test(value) ||
+    /"type"\s*:\s*"message_start"[\s\S]{0,500}"role"\s*:\s*"user"/i.test(value);
+}
+
+function readLivenessText(value: unknown): string | null {
+  const text = readText(value);
+  return text && !isWakePayloadEcho(text) ? text : null;
+}
+
 function hasUnmanagedBackgroundTaskEvidence(resultJson: Record<string, unknown> | null | undefined) {
   if (!resultJson) return false;
   if (resultJson.stopReason === UNMANAGED_BACKGROUND_TASK_STOP_REASON) return true;
@@ -111,11 +121,11 @@ function hasUnmanagedBackgroundTaskEvidence(resultJson: Record<string, unknown> 
 function resultFinalText(resultJson: Record<string, unknown> | null | undefined) {
   if (!resultJson) return "";
   return [
-    readText(resultJson.nextAction),
-    readText(resultJson.summary),
-    readText(resultJson.result),
-    readText(resultJson.message),
-    readText(resultJson.error),
+    readLivenessText(resultJson.nextAction),
+    readLivenessText(resultJson.summary),
+    readLivenessText(resultJson.result),
+    readLivenessText(resultJson.message),
+    readLivenessText(resultJson.error),
   ]
     .filter((value): value is string => Boolean(value))
     .join("\n");
@@ -124,8 +134,8 @@ function resultFinalText(resultJson: Record<string, unknown> | null | undefined)
 function resultRawText(resultJson: Record<string, unknown> | null | undefined) {
   if (!resultJson) return "";
   return [
-    readText(resultJson.stdout),
-    readText(resultJson.stderr),
+    readLivenessText(resultJson.stdout),
+    readLivenessText(resultJson.stderr),
   ]
     .filter((value): value is string => Boolean(value))
     .join("\n");
@@ -133,18 +143,18 @@ function resultRawText(resultJson: Record<string, unknown> | null | undefined) {
 
 function highSignalSources(input: RunLivenessClassificationInput) {
   return [
-    ...(input.issueCommentBodies ?? []).map(readText),
+    ...(input.issueCommentBodies ?? []).map(readLivenessText),
     readText(resultFinalText(input.resultJson)),
-    readText(input.continuationSummaryBody),
+    readLivenessText(input.continuationSummaryBody),
   ].filter((value): value is string => Boolean(value));
 }
 
 function rawSources(input: RunLivenessClassificationInput) {
   return [
     readText(resultRawText(input.resultJson)),
-    readText(input.stdoutExcerpt),
-    readText(input.stderrExcerpt),
-    readText(input.error),
+    readLivenessText(input.stdoutExcerpt),
+    readLivenessText(input.stderrExcerpt),
+    readLivenessText(input.error),
   ]
     .filter((value): value is string => Boolean(value))
     .map(stripNoisyTranscriptLines)
@@ -249,6 +259,7 @@ function nextNonNoiseLine(lines: string[], startIndex: number) {
 }
 
 function extractNextActionFromText(text: string) {
+  if (isWakePayloadEcho(text)) return null;
   const lines = text.split(/\r?\n/).map((entry) => entry.trim());
   for (let i = 0; i < lines.length; i += 1) {
     const rawLine = lines[i] ?? "";

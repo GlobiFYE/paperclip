@@ -38,6 +38,28 @@ describe("run liveness classifier", () => {
     expect(classification.actionability).toBe("unknown");
   });
 
+  it("does not treat an echoed Paperclip wake payload as progress or a next action", () => {
+    const classification = classifyRunLiveness({
+      ...baseInput,
+      resultJson: {
+        stdout: JSON.stringify({
+          type: "message_start",
+          message: {
+            role: "user",
+            content: [{
+              type: "text",
+              text: "## Paperclip Wake Payload\nRecord the issue disposition.\nNext action: deploy to production.",
+            }],
+          },
+        }),
+      },
+    });
+
+    expect(classification.livenessState).toBe("empty_response");
+    expect(classification.actionability).toBe("unknown");
+    expect(classification.nextAction).toBeNull();
+  });
+
   it("treats issue comments, documents, products, and actions as progress", () => {
     const latestEvidenceAt = new Date("2026-04-18T12:00:00Z");
     const classification = classifyRunLiveness({
