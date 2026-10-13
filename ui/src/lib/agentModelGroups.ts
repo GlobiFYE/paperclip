@@ -70,7 +70,11 @@ function clientName(adapterType: string): string {
 }
 
 function providerId(agent: AgentModelGroupInput): string | null {
-  return text(agent.adapterConfig?.provider)?.toLowerCase() ?? null;
+  const id = text(agent.adapterConfig?.provider)?.toLowerCase() ?? null;
+  // The native runner's ACPX backend is a bridge, not an AI provider: the real
+  // one is the non-secret `acpxAgent` field (the runtime's default is claude).
+  if (id === "acpx") return text(agent.adapterConfig?.acpxAgent)?.toLowerCase() ?? "claude";
+  return id;
 }
 
 function usesPrefixedModel(agent: AgentModelGroupInput): boolean {

@@ -17,6 +17,10 @@ describe("agentModelGroups", () => {
     expect(agentModel({ id: "12", adapterType: "paperclip_runner", adapterConfig: { provider: "opencode", model: "openai/gpt-5" } })).toBe("gpt-5");
     expect(agentProvider({ id: "13", adapterType: "paperclip_runner", adapterConfig: { provider: "opencode" } })).toBe("Paperclip runner (default provider)");
     expect(agentProvider({ id: "14", adapterType: "opencode_local", adapterConfig: { model: "openai/gpt-5" } })).toBe("OpenAI");
+    // ACPX is the runner's bridge; the AI provider is acpxAgent (default claude).
+    expect(agentProvider({ id: "15", adapterType: "paperclip_runner", adapterConfig: { provider: "acpx", acpxAgent: "claude", model: "claude-opus-5-5" } })).toBe("Claude");
+    expect(agentProvider({ id: "16", adapterType: "paperclip_runner", adapterConfig: { provider: "acpx" } })).toBe("Claude");
+    expect(agentProvider({ id: "17", adapterType: "paperclip_runner", adapterConfig: { provider: "acpx", acpxAgent: "codex" } })).toBe("Codex");
     expect(agentModel({ id: "3", adapterType: "process" })).toBe("—");
     expect(agentModel({ id: "5", adapterType: "claude_local", adapterConfig: {} })).toBe("default model");
     // Pi and OpenCode write provider/model: group by the AI provider, not the client.
