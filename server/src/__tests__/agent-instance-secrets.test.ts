@@ -10,6 +10,8 @@ import { localEncryptedProvider } from "../secrets/local-encrypted-provider.js";
 import { createLifecycleDriver } from "../services/agent-lifecycle-driver.js";
 import { createLifecycleStore } from "../modules/agent-lifecycle/adapters/postgres.js";
 import { logger } from "../middleware/logger.js";
+import { resolveCodexAuthCacheDir } from "@paperclipai/adapter-codex-local/server";
+import path from "node:path";
 
 const support = await getEmbeddedPostgresTestSupport();
 (support.supported ? describe : describe.skip)("agent instance secrets use the tenant secret system", () => {
@@ -115,6 +117,13 @@ const support = await getEmbeddedPostgresTestSupport();
     });
     await expect(driver.runPlugin(snapshot, pluginId)).rejects.toThrow("stale or outside scope");
     expect(await f.service.read(f.scope)).toEqual({ runtime });
+  });
+
+  it("preserves the native guard against missing account-home directories", async () => {
+    const f = await fixture();
+    const missing = path.join(resolveCodexAuthCacheDir(undefined, companyId), "missing-instance-secret-fixture");
+    await expect(f.service.apply(f.request, pluginId, { runtime: missing })).rejects.toThrow("storage unavailable");
+    expect(await f.service.read(f.scope)).toEqual({});
   });
 
   it("can clean up after a lost master key without decrypting credentials", async () => {

@@ -2194,7 +2194,7 @@ export function secretService(db: Db | DbTransaction) {
     if (existing) throw conflict(`Secret already exists: ${input.name}`);
     const key = normalizeSecretKey(input.key ?? input.name);
     if (!key) throw unprocessable("Secret key is required");
-    const duplicateKey = await db
+    const duplicateKey = instanceOwner ? null : await db
       .select()
       .from(companySecrets)
       .where(and(
@@ -2204,7 +2204,7 @@ export function secretService(db: Db | DbTransaction) {
         ne(companySecrets.status, "deleted"),
       ))
       .then((rows) => rows[0] ?? null);
-    if (!instanceOwner && duplicateKey) throw conflict(`Secret key already exists: ${key}`);
+    if (duplicateKey) throw conflict(`Secret key already exists: ${key}`);
 
     const managedMode = input.managedMode ?? "paperclip_managed";
     const provider = getSecretProvider(input.provider);
@@ -3492,17 +3492,20 @@ export function secretService(db: Db | DbTransaction) {
       },
       // The lifecycle coordinator holds the owning agent's row lock across these writes.
       async set(scope: { companyId: string; agentId: string; pluginId: string }, key: string, value: string | null) {
-        const normalizedKey = normalizeSecretKey(key);
-        const [existing] = await db.select().from(companySecrets).where(and(eq(companySecrets.companyId, scope.companyId),
-          eq(companySecrets.scope, "instance"), eq(companySecrets.ownerAgentId, scope.agentId),
-          eq(companySecrets.ownerPluginId, scope.pluginId), eq(companySecrets.key, normalizedKey), ne(companySecrets.status, "deleted")));
-        if (value === null) {
-          if (existing) await removeSecretUnlocked(existing.id);
-        } else if (existing) {
-          await rotateUnlocked(existing.id, { value, expectedLatestVersion: existing.latestVersion });
-        } else {
-          await createSecretUnlocked(scope.companyId, { name: key, key, provider: "local_encrypted", value }, undefined, scope);
-        }
+        return withAccountHomeSecretMutationLock(undefined, scope.companyId, async () => {
+          if (value) await assertAccountHomeCacheDirStillValid(undefined, scope.companyId, value);
+          const normalizedKey = normalizeSecretKey(key);
+          const [existing] = await db.select().from(companySecrets).where(and(eq(companySecrets.companyId, scope.companyId),
+            eq(companySecrets.scope, "instance"), eq(companySecrets.ownerAgentId, scope.agentId),
+            eq(companySecrets.ownerPluginId, scope.pluginId), eq(companySecrets.key, normalizedKey), ne(companySecrets.status, "deleted")));
+          if (value === null) {
+            if (existing) await removeSecretUnlocked(existing.id);
+          } else if (existing) {
+            await rotateUnlocked(existing.id, { value, expectedLatestVersion: existing.latestVersion });
+          } else {
+            await createSecretUnlocked(scope.companyId, { name: key, key, provider: "local_encrypted", value }, undefined, scope);
+          }
+        });
       },
     },
 

@@ -3,6 +3,7 @@ import { agents, type Db } from "@paperclipai/db";
 import type { AgentLifecycleRequest } from "@paperclipai/shared";
 import { secretService } from "./secrets.js";
 import { persistActivity } from "./activity-log.js";
+import { withAccountHomeSecretMutationLock } from "@paperclipai/adapter-codex-local/server";
 
 type Scope = { companyId: string; agentId: string; pluginId: string };
 
@@ -19,7 +20,7 @@ export function agentInstanceSecretService(db: Db) {
       if (entries.length > 16 || entries.some(([key, value]) => !/^[a-z][a-z0-9_]{0,63}$/.test(key) ||
         (value !== null && (typeof value !== "string" || !value.trim() || Buffer.byteLength(value) > 65_536)))) throw new Error("Invalid agent instance secret changes");
       const scope = { companyId: request.companyId, agentId: request.agentId, pluginId };
-      await db.transaction(async tx => {
+      await withAccountHomeSecretMutationLock(undefined, request.companyId, () => db.transaction(async tx => {
         const [agent] = await tx.select().from(agents).where(and(eq(agents.companyId, request.companyId), eq(agents.id, request.agentId))).for("update");
         if (!agent || agent.lifecycleVersion !== request.version || agent.lifecycleState !== request.phase ||
           agent.lifecycleOperation?.id !== request.operationId || !agent.lifecycleRequiredPluginIds?.includes(pluginId)) {
@@ -33,7 +34,7 @@ export function agentInstanceSecretService(db: Db) {
             action: value === null ? "agent.instance_secret.removed" : "agent.instance_secret.saved", entityType: "agent", entityId: request.agentId,
             details: { key } });
         }
-      });
+      }));
     },
   };
 }
