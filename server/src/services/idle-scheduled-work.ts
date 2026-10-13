@@ -35,12 +35,21 @@ export async function readIdleRoutineSchedule(tx: Pick<Db, "execute">, ownerId: 
     ORDER BY t.id LIMIT ${limit + 1}`);
   if (rows.length > limit) return { blocked: true };
   let earliest = Infinity;
+  const validTimezones = new Set<string>();
+  const validCrons = new Set<string>();
   for (const row of rows) {
     if (row.scoped !== true || row.kind !== "schedule" || row.setup_pending !== false
-      || !row.cron_expression || validateCron(row.cron_expression) || !row.timezone
+      || !row.cron_expression || !row.timezone
       || row.next_run_at === null) return { blocked: true };
-    try { new Intl.DateTimeFormat("en", { timeZone: row.timezone }); }
-    catch { return { blocked: true }; }
+    if (!validCrons.has(row.cron_expression)) {
+      if (validateCron(row.cron_expression)) return { blocked: true };
+      validCrons.add(row.cron_expression);
+    }
+    if (!validTimezones.has(row.timezone)) {
+      try { new Intl.DateTimeFormat("en", { timeZone: row.timezone }); }
+      catch { return { blocked: true }; }
+      validTimezones.add(row.timezone);
+    }
     const at = new Date(row.next_run_at).getTime();
     if (!Number.isFinite(at) || at <= now) return { blocked: true };
     earliest = Math.min(earliest, at);

@@ -246,6 +246,23 @@ if (!support.supported) console.warn(`Skipping idle sleep Postgres tests: ${supp
     await db.update(routineTriggers).set({ companyId: other.companyId }).where(eq(routineTriggers.id, f.trigger.id));
     expect(await readScheduled()).toEqual(present);
   });
+  it.each(["checkpoint", "local inspection"])("keeps a routine awake when it becomes due during %s", async stage => {
+    await scheduledRoutine(now + 1000);
+    let clock = now;
+    let inspections = 0;
+    const inspect = async () => {
+      if (++inspections === 2 && stage === "local inspection") clock += 1000;
+      return "none" as const;
+    };
+    const checkpoint = stage === "checkpoint" ? async () => {
+      const done = beginIdleTrackedWork();
+      clock += 1000;
+      done();
+      return true;
+    } : undefined;
+    expect(await readIdleSleepSafety(db, owned, () => clock, ownerId, inspect, undefined, checkpoint, true)).toEqual(present);
+    expect(idleWorkSnapshot().active).toBe(0);
+  });
 
   it.each(["succeeded", "failed", "cancelled", "timed_out", "interrupted"])(
     "permits a finished %s run with a consumed retry date without changing history", async status => {

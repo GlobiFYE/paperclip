@@ -279,9 +279,11 @@ export async function readIdleSleepSafety(
     const localAfter = idleWorkSnapshot();
     if (!sameQuietHold(before, after, now()) || localAfter.active !== 0 ||
         expectedGeneration !== localAfter.generation) return unknown;
-    return local === "none" && scheduledWake
-      ? { version: 2, backgroundWork: "none", scheduledWake }
-      : { version: 1, backgroundWork: local };
+    if (local === "none" && scheduledWake) {
+      if (Date.parse(scheduledWake.nextWakeAt) <= now()) return { version: 1, backgroundWork: "present" };
+      return { version: 2, backgroundWork: "none", scheduledWake };
+    }
+    return { version: 1, backgroundWork: local };
 
   } catch {
     // Missing migrations, unknown state, malformed configuration, timeouts and
