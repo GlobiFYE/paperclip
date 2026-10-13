@@ -161,9 +161,10 @@ guessing resource URLs. The unprefixed `/onboarding` route starts naming; use th
 company-prefixed onboarding route to resume its agent setup. Check relevant
 experimental gates and actor permissions.
 
-For CLI checks, discover exact flags with
+For source-checkout CLI checks, discover exact flags with
 `node cli/node_modules/tsx/dist/cli.mjs cli/src/index.ts <command> --help`, then
-select the disposable data directory/API/company explicitly. API reads can
+select the disposable data directory/API/company explicitly. For published npm
+checks, use the installed version’s CLI and help instead. API reads can
 corroborate UI writes; API-created state does not prove a creation UI.
 
 ## Evidence
@@ -191,8 +192,9 @@ documentation coverage rather than live test health.
 ## Cleanup
 
 Close the browser context you created (the smoke does this in `finally`). Leave
-shared dev, staging, and production services running. For a runtime created by
-`launch.py`, stop it with:
+shared dev, staging, and production services running. The remaining cleanup steps
+in this section apply only to `launch.py` instances; use the selected target’s
+procedure for other launchers. Stop the helper-owned runtime with:
 
 ```sh
 python3 .agents/skills/verify-paperclip/scripts/stop.py \
