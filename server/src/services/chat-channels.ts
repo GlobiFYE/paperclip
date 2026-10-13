@@ -139,6 +139,7 @@ import { rememberVerifiedSlackSearchEvent } from "./connectors/slack-search-cont
 
 
 import { buildChatCommunicationGuidance } from "./chat-communication-guidance.js";
+import { assertChatTaskCreationAccess, resolveChatExecutionDefaults } from "./chat-execution-defaults.js";
 function githubPolicyRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 
 import { githubReviewCheckService } from "./chat-github-checks.js";
@@ -2065,7 +2066,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     lifecycleRuntimeFence,
     isShuttingDown: () => shuttingDown,
     wakeup: (...args) => options.heartbeat.wakeup(...args),
-    staleProcessingMs: DELIVERY_PROCESSING_STALE_MS,
   });
   const { githubCurrentOmissionPreparedText, settleGitHubAutomaticPublication } = createGitHubPublicationPolicy(db, {
     isExplicitOperatorPublication, getTaskBaseUrl, failedChatRetrySource, isExternalActionAuthorizationChange,
@@ -3838,27 +3838,45 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       ) => {
         let conversation = existingConversation;
         if (!conversation) {
+          const [taskResource] = await taskTx.select({ executionDefaults: chatEndpointResources.executionDefaults })
+            .from(chatEndpointResources).where(and(eq(chatEndpointResources.id, resource.id), eq(chatEndpointResources.endpointId, taskEndpoint.id)));
+          const executionDefaults = resolveChatExecutionDefaults(taskEndpoint.executionDefaults, taskResource?.executionDefaults);
+          const responsibleUserId = taskUserId ?? taskEndpoint.sponsorUserId;
+          await assertChatTaskCreationAccess(db, {
+            companyId: taskEndpoint.companyId,
+            assigneeAgentId: taskEndpoint.assignedAgentId,
+            actor: responsibleUserId ? { type: "board", userId: responsibleUserId, source: "session", ignoreInstanceAdmin: true } : { type: "none" },
+            defaults: executionDefaults,
+          }, taskTx);
+          await assertChatTaskCreationAccess(db, {
+            companyId: taskEndpoint.companyId,
+            assigneeAgentId: taskEndpoint.assignedAgentId,
+            actor: { type: "agent", agentId: taskEndpoint.assignedAgentId, companyId: taskEndpoint.companyId, onBehalfOfUserId: responsibleUserId, source: "agent_key" },
+            defaults: executionDefaults,
+          }, taskTx);
           const sessionGeneration = isLinear
             ? (latestConversation?.sessionGeneration ?? 0) + 1
             : 1;
           const issue = await issuesSvc.create(
-            endpoint.companyId,
+            taskEndpoint.companyId,
             {
               title: safeTitle(
                 githubAutomatic
                   ? `PR #${githubAutomatic.context.pullNumber}: ${githubAutomatic.context.title}`
                   : githubIssue ? `GitHub issue #${githubIssue.context.issueNumber}: ${githubIssue.context.title}` : message.text,
-                `${PROVIDER_LABELS[endpoint.provider]} conversation`,
+                `${PROVIDER_LABELS[taskEndpoint.provider]} conversation`,
               ),
-              description: `Started from ${PROVIDER_LABELS[endpoint.provider]}: ${resource.label}`,
+              description: `Started from ${PROVIDER_LABELS[taskEndpoint.provider]}: ${resource.label}`,
               status: "todo",
               priority: "medium",
-              assigneeAgentId: endpoint.assignedAgentId,
-              createdByUserId: taskUserId ?? endpoint.sponsorUserId,
-              responsibleUserId: taskUserId ?? endpoint.sponsorUserId,
+              assigneeAgentId: taskEndpoint.assignedAgentId,
+              createdByUserId: taskUserId ?? taskEndpoint.sponsorUserId,
+              responsibleUserId: taskUserId ?? taskEndpoint.sponsorUserId,
               originKind: "chat_channel",
-              originId: `${endpoint.id}:${thread.id}:${sessionGeneration}`,
-              idempotencyKey: `chat:${endpoint.id}:${thread.id}:${sessionGeneration}`,
+              originId: `${taskEndpoint.id}:${thread.id}:${sessionGeneration}`,
+              idempotencyKey: `chat:${taskEndpoint.id}:${thread.id}:${sessionGeneration}`,
+              ...(executionDefaults.projectId !== undefined ? { projectId: executionDefaults.projectId } : {}),
+              ...(executionDefaults.workspace ? { workspaceSelection: executionDefaults.workspace, workspaceSelectionSource: "channel" as const } : {}),
             },
             taskTx,
           );
@@ -5521,7 +5539,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   async function processPendingChatMaintenance(limit = 25) {
     return Promise.allSettled([
       processPendingTelegramMaintenance(limit),
-      processFailedChatRunRetries(limit),
     ]);
   }
 
@@ -5532,7 +5549,8 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     // so a crashed processing claim is quarantined before the delivery worker
     // could otherwise replay it.
     const actionRecovery = onlyDeliveryId || !maintenance ? null : Promise.allSettled([
-      processPendingChatMaintenance(limit), processPendingGitHubWebhookIngress(limit),
+      processPendingChatMaintenance(limit), processFailedChatRunRetries(limit),
+      processPendingGitHubWebhookIngress(limit),
       processPendingProviderEffects(limit), processPendingSlackBoardMessages(limit),
       processPendingSlackTaskStarts(limit), processPendingReceiptReactions(limit),
       processPendingSlackSessionStops(limit), slackRegistration.processPendingVerificationMessages(limit),

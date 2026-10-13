@@ -1,4 +1,5 @@
 import { slackSetupState } from "./slack/setup.js";
+import { assertChatExecutionDefaultsAccess } from "../chat-execution-defaults.js";
 
 import type { EndpointRow } from "./runtime-types.js";
 
@@ -154,6 +155,7 @@ function providerSetupState(
       botLabel: endpoint.botDisplayName ?? row.assignedAgentName,
       botAvatarUrl: endpoint.botAvatarUrl,
       communicationInstructions: endpoint.communicationInstructions,
+      executionDefaults: endpoint.executionDefaults,
       ...(endpoint.provider === "imessage-photon" && endpoint.botExternalId ? { photonAllocation: endpoint.botExternalId.startsWith("photon-project:") ? "shared" as const : "dedicated" as const } : {}),
       allowDirectMessages: endpoint.allowDirectMessages,
       requireAtMention: endpoint.requireAtMention,
@@ -381,7 +383,7 @@ function providerSetupState(
   ) {
     const initial = await endpointRecord(endpointId);
     if (!initial) throw notFound("Chat endpoint not found");
-    if (initial.endpoint.provider === "agentmail") throw badRequest("Use the email inbox API for AgentMail");
+    if (initial.endpoint.provider === "agentmail" && Object.keys(input).some((key) => key !== "executionDefaults")) throw badRequest("Use the email inbox API for AgentMail");
     await withCredentialMutationLease(
       initial.endpoint,
       async (credentialLease) => {
@@ -442,6 +444,15 @@ function providerSetupState(
           values.allowUnlinkedPeople = input.allowUnlinkedPeople;
         await db.transaction(async (tx) => {
           await credentialLease.assertOwned(tx);
+          if (input.executionDefaults !== undefined) {
+            await assertChatExecutionDefaultsAccess(db, {
+              companyId: existing.endpoint.companyId,
+              assigneeAgentId: values.assignedAgentId ?? existing.endpoint.assignedAgentId,
+              actor: { type: "board", userId: actorUserId, source: actorUserId ? "session" : "local_implicit" },
+              defaults: input.executionDefaults,
+            }, tx);
+            values.executionDefaults = input.executionDefaults;
+          }
           await tx
             .update(chatEndpoints)
             .set(values)
