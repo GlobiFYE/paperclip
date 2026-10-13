@@ -22,6 +22,20 @@ describe("looksLikeCredentialJwt", () => {
     expect(looksLikeCredentialJwt(`${header}.e30.c2ln`)).toBe(true);
   });
 
+  it("recognizes direct-encryption JWTs with an empty encrypted-key segment", () => {
+    const header = Buffer.from('{"alg":"dir","enc":"A256GCM"}').toString("base64url");
+    expect(looksLikeCredentialJwt(`${header}..abcdefghijk.abcdefghijkl.abcdefghijk`)).toBe(true);
+  });
+
+  it.each([
+    "eyJ..signature",
+    "eyJ.key..ciphertext.tag",
+    "eyJ.key.iv..tag",
+    "eyJ.key.iv.ciphertext.",
+  ])("rejects empty segments outside the JWE encrypted key: %s", (input) => {
+    expect(looksLikeCredentialJwt(input)).toBe(false);
+  });
+
   it.each([
     "api.openai.com",
     "agents.staging.example.com",

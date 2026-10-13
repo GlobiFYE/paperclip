@@ -13,6 +13,7 @@ describe("feedback redaction", () => {
     "paperclip.native-model-envelope.v3 and executor.coreTools.integrations.list",
     "Use bearer tokens for authentication and bearer authentication for requests.",
     "Document bearer authorization, bearer credentials, bearer schemes, and bearer flows.",
+    "Use (bearer tokens). Preserve [bearer authentication] and {bearer credentials}.",
   ])("preserves non-secret chat context: %s", (input) => {
     const state = createFeedbackRedactionState();
 
@@ -48,6 +49,17 @@ describe("feedback redaction", () => {
 
     expect(sanitizeFeedbackText(jwt, state, "body", 10_000)).toBe("[REDACTED_JWT]");
     expect(finalizeFeedbackRedactionSummary(state).counts).toEqual({ jwt: 1 });
+  });
+
+  it("redacts direct-encryption JWTs with an empty encrypted-key segment", () => {
+    const header = Buffer.from('{"alg":"dir","enc":"A256GCM"}').toString("base64url");
+    const jwt = `${header}..abcdefghijk.abcdefghijkl.abcdefghijk`;
+    const state = createFeedbackRedactionState();
+
+    expect(sanitizeFeedbackText(`Token ${jwt}; visit api.openai.com.`, state, "body", 10_000))
+      .toBe("Token [REDACTED_JWT]; visit api.openai.com.");
+    expect(finalizeFeedbackRedactionSummary(state).counts).toEqual({ jwt: 1 });
+    expect(finalizeFeedbackRedactionSummary(state).redactedFields).toEqual(["body"]);
   });
 
   it("still redacts explicit credentials and personal information", () => {

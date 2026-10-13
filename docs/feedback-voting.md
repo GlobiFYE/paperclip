@@ -113,7 +113,8 @@ Exports are full by default. `traces/` keeps the Paperclip envelope, while `full
 Feedback text redaction preserves hostnames, dotted filenames, public schema IDs,
 and authentication terms such as “bearer tokens.” Dotted text must have an encoded
 JWT header to be masked as a token. Complete three-part signed tokens and
-five-part encrypted tokens are masked, including tokens with short segments.
+five-part encrypted tokens are masked, including tokens with short segments
+and direct-encryption tokens with an empty encrypted-key segment.
 Explicit credentials, secret fields, email addresses, and phone numbers remain
 masked. The redaction summary counts text that was actually replaced.
 

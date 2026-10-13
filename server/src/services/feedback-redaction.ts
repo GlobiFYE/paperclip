@@ -35,7 +35,7 @@ const FREE_TEXT_PATTERNS: RedactionPattern[] = [
   },
   {
     kind: "bearer_token",
-    regex: /\bBearer\s+(?!(?:tokens?|authentication|authorization|credentials?|schemes?|flows?)[.,;:!?]?(?:\s|$))[A-Za-z0-9._~+/-]+=*/gi,
+    regex: /\bBearer\s+(?!(?:tokens?|authentication|authorization|credentials?|schemes?|flows?)[.,;:!?]?(?:\s|[)\]}]|$))[A-Za-z0-9._~+/-]+=*/gi,
     replacement: "Bearer [REDACTED_TOKEN]",
   },
   {
@@ -50,7 +50,7 @@ const FREE_TEXT_PATTERNS: RedactionPattern[] = [
   },
   {
     kind: "jwt",
-    regex: /\b[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+){2}(?:\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)?\b/g,
+    regex: /\b[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g,
     replacement: (match) => looksLikeCredentialJwt(match) ? "[REDACTED_JWT]" : match,
   },
   {
