@@ -1,7 +1,7 @@
 import { and, eq, inArray } from "drizzle-orm";
 import { createHash } from "node:crypto";
 import type { Db } from "@paperclipai/db";
-import { agentWakeupRequests } from "@paperclipai/db";
+import { agentWakeupRequests, heartbeatRuns } from "@paperclipai/db";
 
 export const ISSUE_BLOCKERS_RESOLVED_WAKE_REASON = "issue_blockers_resolved";
 
@@ -236,4 +236,59 @@ export async function findExistingIssueBlockersResolvedWakeForReadyState(
     }),
   );
   return covering ?? null;
+}
+
+export type IssueEchoWakeInput = {
+  actorType: string;
+  actorAgentId: string | null | undefined;
+  actorRunIssueId: string | null | undefined;
+  recipientAgentId: string;
+  targetIssueId: string;
+};
+
+export function isIssueEchoWake(input: IssueEchoWakeInput): boolean {
+  return (
+    input.actorType === "agent" &&
+    Boolean(input.actorAgentId) &&
+    input.actorAgentId === input.recipientAgentId &&
+    Boolean(input.actorRunIssueId) &&
+    input.actorRunIssueId === input.targetIssueId
+  );
+}
+
+export async function findHeartbeatRunIssueId(
+  db: Db,
+  runId: string | null | undefined,
+): Promise<string | null> {
+  if (!runId) return null;
+  const row = await db
+    .select({ contextSnapshot: heartbeatRuns.contextSnapshot })
+    .from(heartbeatRuns)
+    .where(eq(heartbeatRuns.id, runId))
+    .limit(1)
+    .then((rows) => rows[0] ?? null);
+  const issueId = row?.contextSnapshot?.issueId;
+  return typeof issueId === "string" && issueId.length > 0 ? issueId : null;
+}
+
+export function createIssueEchoWakeGuard(
+  db: Db,
+  actor: { actorType: string; agentId: string | null; runId: string | null },
+  onLookupError: (err: unknown) => void,
+) {
+  let actorRunIssueIdPromise: Promise<string | null> | null = null;
+  return async (recipientAgentId: string | null | undefined, targetIssueId: string): Promise<boolean> => {
+    if (!recipientAgentId || actor.actorType !== "agent" || actor.agentId !== recipientAgentId) return false;
+    actorRunIssueIdPromise ??= findHeartbeatRunIssueId(db, actor.runId).catch((err) => {
+      onLookupError(err);
+      return null;
+    });
+    return isIssueEchoWake({
+      actorType: actor.actorType,
+      actorAgentId: actor.agentId,
+      actorRunIssueId: await actorRunIssueIdPromise,
+      recipientAgentId,
+      targetIssueId,
+    });
+  };
 }
