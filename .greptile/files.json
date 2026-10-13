@@ -19,6 +19,16 @@
         "server/src/services/chat-channels/**",
         "server/src/services/chat-channels.ts"
       ]
+    },
+    {
+      "path": "rules/database-migration-snapshots.mdc",
+      "description": "Snapshot retention requirements for migration generation, rebases, and review; preserve SQL migrations and journal history.",
+      "scope": [
+        "packages/db/src/schema/**",
+        "packages/db/src/migrations/**",
+        "packages/db/package.json",
+        "packages/db/drizzle.config.ts"
+      ]
     }
   ]
 }
