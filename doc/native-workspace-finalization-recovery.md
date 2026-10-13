@@ -66,9 +66,8 @@ exact prior controller **and its copyback subprocesses** have stopped. Retain th
 sandbox, accepted native result, and workspace descriptor. Do not run a new
 provider turn, delete workspace contents, or relax archive confinement.
 
-After that platform verification, open the task's **Workspace finalization needs
-recovery** notice. A company owner, company administrator, or instance
-administrator records the
+After that platform verification, open the task's **Finish saving the agent’s work**
+notice. A company owner, company administrator, or instance administrator records
 platform stop evidence, confirms that the exact controller and all its copyback
 processes have stopped, and selects **Resume saved result**. The equivalent API is
 `POST /api/issues/:id/recovery-actions/resume-workspace-finalization` with:
@@ -182,7 +181,7 @@ A board member with runtime management access can complete the saved result:
    the export failure while preserving all user files. Restore transport access
    or other provider prerequisites before retrying. Extending the sandbox
    retention window can be necessary during this repair.
-3. In the task's **Workspace export needs repair** notice, describe the repair and
+3. In the task's **Finish saving the agent’s work** notice, describe the repair and
    choose **Retry workspace export**. The equivalent board API is
    `POST /api/issues/:id/recovery-actions/retry-workspace-export` with
    `{ "actionId": "<recovery-action-id>", "runId": "<run-id>", "repairNote": "<repair and preservation evidence>" }`.

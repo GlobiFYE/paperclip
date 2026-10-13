@@ -5607,8 +5607,8 @@
       "status": "current",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Source review covers the shipped notice, stop confirmation, stale-owner rejection and hidden generic resolution control. API queue responses are fixtures; no live provider stop or file export is asserted.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Production notice with concise saved-work copy, controller disclosure, administrator gating, evidence/confirmation guidance, queue acknowledgement, stale-owner error and mobile long-name coverage. API responses are simulated; no live provider stop or file export is asserted.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/recovery.md",
         "ui/src/components/IssueRecoveryActionCard.tsx",
@@ -5617,7 +5617,7 @@
         "ui/storybook/stories/recovery/workspace-finalization-recovery/01-notice.stories.tsx",
         "ui/storybook/support/workspace-finalization-recovery/fixtures.tsx"
       ],
-      "fingerprint": "5feb7a9ee282e823c79051525d9fe1232b2fba42c7e57345e4320d45c85f7915",
+      "fingerprint": "667bcec55cd1b602c30909c90f9142317fe99db382c773d2e483a54ed7beb959",
       "stableId": "workspace-finalization-recovery-01-notice",
       "sidebarTitle": "Projects and execution/Recovery/Workspace finalization recovery/01 Notice"
     },
@@ -5631,12 +5631,11 @@
       "status": "unreviewed",
       "implementation": "mixed",
       "boundary": "fixtures",
-      "notes": "The app shell and recovery notice are production components. The task conversation is a local composition, not the shipped task page. API queue responses and messages are fixtures; server finalization and approval behavior need separate verification.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Production shell, recovery notice, bubbles and composer in a local task composition. Viewer messages use stored fixture identity and the own-message style. Queue responses and messages are fixtures; this is not the shipped task page or production finalization acceptance.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/recovery.md",
         "ui/src/components/Layout.tsx",
-        "ui/src/components/StatusBadge.tsx",
         "ui/src/components/WorkspaceExportRecovery.tsx",
         "ui/src/components/task-chat/TaskChatBubble.tsx",
         "ui/src/components/task-chat/TaskChatComposer.tsx",
@@ -5644,7 +5643,7 @@
         "ui/storybook/stories/recovery/workspace-finalization-recovery/02-task-journey.stories.tsx",
         "ui/storybook/support/workspace-finalization-recovery/fixtures.tsx"
       ],
-      "fingerprint": "a1bd115d2082e0a800b6b5e13175f6494ce3751bff27a945d9c936543fda5c23",
+      "fingerprint": "cbb5a001e025722b8fd7d61128d067a8489684831ab17991d89606cc4a46f4ac",
       "stableId": "workspace-finalization-recovery-02-task-journey",
       "sidebarTitle": "Projects and execution/Recovery/Workspace finalization recovery/02 Task journey"
     }

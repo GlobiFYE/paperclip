@@ -5,7 +5,6 @@ import { Layout } from "@/components/Layout";
 import { TaskChatBubble } from "@/components/task-chat/TaskChatBubble";
 import { TaskChatComposer } from "@/components/task-chat/TaskChatComposer";
 import { WorkspaceExportRecovery } from "@/components/WorkspaceExportRecovery";
-import { StatusBadge } from "@/components/StatusBadge";
 import { PluginLauncherProvider } from "@/plugins/launchers";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
 import { RecoveryApiFixture, issueId, recoveryAction } from "../../../support/workspace-finalization-recovery/fixtures";
@@ -16,14 +15,14 @@ function TaskConversation() {
   useEffect(() => { setBreadcrumbs([{ label: "Tasks", href: "/PAP/issues" }, { label: "Prepare the rollout plan", identifier: "PAP-24" }]); }, [setBreadcrumbs]);
   return <main className="mx-auto flex min-h-full w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:px-8">
     <header className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-center gap-2"><StatusBadge status="in_progress" /><span className="font-mono text-xs text-muted-foreground">PAP-24</span></div>
+      <span className="font-mono text-xs text-muted-foreground">PAP-24</span>
       <h1 className="text-xl font-semibold">Prepare the rollout plan</h1>
       <p className="text-sm text-muted-foreground">Assigned to Jordan Lee</p>
     </header>
-    <TaskChatBubble item={{ id: "request", kind: "message", author: "human", text: "Prepare the rollout plan and wait for my confirmation before starting implementation." }} />
+    <TaskChatBubble item={{ id: "request", kind: "message", author: "human", authorName: "Riley Board", authorUserId: "user-board", isCurrentUser: true, text: "Prepare the rollout plan and wait for my confirmation before starting implementation." }} />
     <TaskChatBubble item={{ id: "saved-result", kind: "message", author: "agent", authorName: "Jordan Lee", text: "The plan is ready. I’m waiting for your confirmation before continuing." }} />
     <WorkspaceExportRecovery issueId={issueId} action={recoveryAction} canManage canConfirmOwnerStop onQueued={() => {}} />
-    {messages.map((text, index) => <TaskChatBubble key={index} item={{ id: `followup-${index}`, kind: "message", author: "human", text }} />)}
+    {messages.map((text, index) => <TaskChatBubble key={index} item={{ id: `followup-${index}`, kind: "message", author: "human", authorName: "Riley Board", authorUserId: "user-board", isCurrentUser: true, text }} />)}
     <div className="flex-1" />
     <TaskChatComposer workMode="standard" onAdd={async body => setMessages(current => [...current, body])} placeholder="Message Jordan Lee…" />
   </main>;

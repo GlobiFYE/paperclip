@@ -45,7 +45,7 @@ export function RecoveryApiFixture({ response = "success", children }: { respons
       }
       if (response === "pending") return new Promise<Response>(() => {});
       await new Promise(resolve => window.setTimeout(resolve, 600));
-      if (response === "conflict") return Response.json({ error: "The recorded workspace owner is no longer current. Refresh the task and inspect its run." }, { status: 409 });
+      if (response === "conflict") return Response.json({ error: "The recorded workspace owner is no longer current. Refresh the task and inspect its run.", details: { code: "workspace_owner_recovery_stale" } }, { status: 409 });
       return Response.json({ runId: recoveryAction.evidence.runId, resultId: "00000000-0000-4000-8000-000000000829", status: "queued" }, { status: 202 });
     };
     window.fetch = fixtureFetch;
@@ -58,7 +58,7 @@ export async function confirmStopped(canvasElement: HTMLElement) {
   const canvas = within(canvasElement);
   const button = canvas.getByRole("button", { name: "Resume saved result" });
   await expect(button).toBeDisabled();
-  await userEvent.type(canvas.getByRole("textbox", { name: "Deployment stop evidence" }), stopEvidence);
+  await userEvent.type(canvas.getByRole("textbox", { name: "Shutdown evidence" }), stopEvidence);
   await expect(button).toBeDisabled();
   await userEvent.click(canvas.getByRole("checkbox"));
   await expect(button).toBeEnabled();

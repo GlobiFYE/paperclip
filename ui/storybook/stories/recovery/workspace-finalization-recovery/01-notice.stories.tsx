@@ -22,7 +22,7 @@ export const Queueing: Story = {
   play: async ({ canvasElement }) => {
     const { canvas, button } = await confirmStopped(canvasElement);
     await userEvent.click(button);
-    await expect(await canvas.findByRole("button", { name: "Queueing…" })).toBeDisabled();
+    await expect(await canvas.findByRole("button", { name: "Requesting…" })).toBeDisabled();
   },
 };
 export const ResumeSavedResult: Story = {
@@ -32,14 +32,28 @@ export const ResumeSavedResult: Story = {
     await expect(await canvas.findByRole("status")).toHaveTextContent("The agent will not repeat its work.");
   },
 };
+export const ControllerDetails: Story = {
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByText("Controller details"));
+    await expect(canvas.getByText("Process ID")).toBeVisible();
+  },
+};
+export const LongControllerName: Story = {
+  args: { action: { ...recoveryAction, evidence: { ...recoveryAction.evidence,
+    owner: { ...(recoveryAction.evidence.owner as object), hostname: "workspace-controller-qualification-previous-deployment-7d4f69f78d-very-long-container-name" } } } },
+  globals: { viewport: { value: "mobile", isRotated: false } },
+};
 export const AlreadyQueued: Story = { args: { action: queuedAction } };
 export const OwnerChanged: Story = {
   parameters: { recoveryResponse: "conflict" },
   play: async ({ canvasElement }) => {
     const { canvas, button } = await confirmStopped(canvasElement);
     await userEvent.click(button);
-    await expect(await canvas.findByRole("alert")).toHaveTextContent("Refresh the task and inspect its run.");
+    await expect(await canvas.findByRole("alert")).toHaveTextContent("Refresh the task and verify its current controller");
     await expect(canvas.getByRole("textbox")).toHaveValue(stopEvidence);
+    await expect(canvas.getByRole("checkbox")).not.toBeChecked();
+    await expect(canvas.getByRole("button", { name: "Resume saved result" })).toBeDisabled();
   },
 };
 export const ReadOnly: Story = { args: { canConfirmOwnerStop: false } };
