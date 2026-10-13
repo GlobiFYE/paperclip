@@ -846,6 +846,15 @@ function readAutomationExecutionContext(
   };
 }
 
+function hasOwnKey(value: unknown, key: string) {
+  return !!value && typeof value === "object" && !Array.isArray(value) && Object.prototype.hasOwnProperty.call(value, key);
+}
+
+function storedExecutionWorkspaceScope(config: PipelineStageConfig) {
+  return readExecutionWorkspaceScope(config.onEnter?.executionWorkspaceScope)
+    ?? readExecutionWorkspaceScope(config.automation?.executionWorkspaceScope);
+}
+
 function readStageAutomationRequest(config?: PipelineStageConfig | null) {
   const automation = config?.automation;
   if (!automation || typeof automation !== "object" || Array.isArray(automation)) return null;
@@ -3699,6 +3708,17 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
       const automationRequest = input.patch.config !== undefined
         ? readStageAutomationRequest(input.patch.config)
         : null;
+      if (automationRequest && !hasOwnKey(input.patch.config?.automation, "executionWorkspaceScope")) {
+        // A client that does not send the key (an older settings form) keeps the stage's
+        // scope; only an explicit null clears it.
+        const existingScope = storedExecutionWorkspaceScope(stageConfig(existing));
+        if (existingScope) {
+          automationRequest.executionContext = {
+            ...automationRequest.executionContext,
+            executionWorkspaceScope: existingScope,
+          };
+        }
+      }
       const stageName = input.patch.name ?? existing.name;
       let config = normalizeStageConfig(kind, input.patch.config !== undefined ? input.patch.config : stageConfig(existing));
       if (automationRequest) {

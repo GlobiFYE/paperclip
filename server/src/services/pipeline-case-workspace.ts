@@ -52,8 +52,9 @@ export type PipelineCaseWorkspaceResolution =
  *
  * - A live workspace in `workspace_ref.executionWorkspaceId`, or the workspace of
  *   `workspace_ref.sourceIssueId`, is reused.
- * - A workspace from another project than the stage task's project is not reused, and the
- *   case keeps its ref (`record: false`).
+ * - A workspace from another project than the stage task's project (including a project
+ *   workspace for a project-free stage task) is not reused, and the case keeps its ref
+ *   (`record: false`).
  * - A missing, archived or closed workspace, or a source issue that never ran, means a
  *   fresh workspace; the caller records the new stage task as the case's source issue.
  *
@@ -90,7 +91,9 @@ export async function resolvePipelineCaseWorkspace(
   if (!workspace || workspace.closedAt || CLOSED_WORKSPACE_STATUSES.has(workspace.status)) {
     return { kind: "fresh", record: true };
   }
-  if (input.projectId && workspace.projectId !== input.projectId) {
+  // A project-free stage task must not land in a project workspace (and the reverse):
+  // core rejects that run with source_scope_mismatch.
+  if ((input.projectId ?? null) !== (workspace.projectId ?? null)) {
     return { kind: "fresh", record: false };
   }
   return {
@@ -142,6 +145,9 @@ export async function writePipelineCaseWorkspaceRef(
  * True while a pipeline case holds this workspace: a case references it in workspace_ref
  * (by id, or by its source issue before the id is recorded) and the case is still open,
  * or the case is terminal but an issue bound to the workspace is still open.
+ * The source issue match covers both directions: the workspace was realised for that
+ * issue (`source_issue_id`), or that issue was bound to an existing workspace
+ * (`execution_workspace_id`), in which case the workspace's own source issue differs.
  * Workspaces no case references are unaffected.
  */
 export function pipelineCaseHoldsExecutionWorkspaceSql(workspace: {
@@ -160,6 +166,13 @@ export function pipelineCaseHoldsExecutionWorkspaceSql(workspace: {
       AND (
         held_case.workspace_ref ->> 'executionWorkspaceId' = ${workspace.id}
         ${sourceIssueMatch}
+        OR EXISTS (
+          SELECT 1
+          FROM ${issues} ref_issue
+          WHERE ref_issue.company_id = ${workspace.companyId}
+            AND ref_issue.id::text = held_case.workspace_ref ->> 'sourceIssueId'
+            AND ref_issue.execution_workspace_id = ${workspace.id}
+        )
       )
       AND (
         (held_case.terminal_kind IS NULL AND held_case.retired_at IS NULL)

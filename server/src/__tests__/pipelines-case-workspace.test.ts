@@ -308,9 +308,74 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
     expect((await caseRow(child.case.id)).workspaceRef).toEqual({ sourceIssueId: childIssue.id });
   });
 
+  it("a stage settings save without the scope key keeps the scope; an explicit null clears it", async () => {
+    const { companyId, pipeline, byKey } = await seed({ scope: "case" });
+    const stageId = byKey.get("intake")!.id;
+    const onEnterOf = async () => {
+      const [row] = await db.select().from(pipelineStages).where(eq(pipelineStages.id, stageId));
+      return (row!.config as { onEnter?: Record<string, unknown> }).onEnter;
+    };
+    const [agent] = await db.select().from(agents).where(eq(agents.companyId, companyId));
+
+    // What the settings form sends: automation rebuilt without executionWorkspaceScope.
+    await svc.updateStage({
+      companyId,
+      pipelineId: pipeline.id,
+      stageId,
+      patch: { config: { automation: { assigneeAgentId: agent!.id, instructionsBody: "Edited instructions." } } },
+      actor: userActor,
+    });
+    expect(await onEnterOf()).toMatchObject({ type: "run_routine", executionWorkspaceScope: "case" });
+
+    await svc.updateStage({
+      companyId,
+      pipelineId: pipeline.id,
+      stageId,
+      patch: {
+        config: {
+          automation: { assigneeAgentId: agent!.id, instructionsBody: "Edited instructions.", executionWorkspaceScope: null },
+        },
+      },
+      actor: userActor,
+    });
+    expect(await onEnterOf()).not.toHaveProperty("executionWorkspaceScope");
+  });
+
+  it("a project-free scoped stage does not reuse the case's project workspace", async () => {
+    const { companyId, projectId, pipeline, byKey } = await seed({ scope: "case" });
+    const [agent] = await db.select().from(agents).where(eq(agents.companyId, companyId));
+    await svc.updateStage({
+      companyId,
+      pipelineId: pipeline.id,
+      stageId: byKey.get("in_progress")!.id,
+      patch: {
+        config: {
+          automation: { assigneeAgentId: agent!.id, instructionsBody: "No repo here.", executionWorkspaceScope: "case" },
+        },
+      },
+      actor: userActor,
+    });
+
+    const created = await svc.ingestCase({ companyId, pipelineId: pipeline.id, caseKey: "T-5", title: "Ticket", actor: userActor });
+    const first = await latestStageIssue(created.case.id);
+    await realiseWorkspace({ companyId, projectId, issueId: first.id });
+
+    const second = await move(companyId, created.case.id, "in_progress");
+    expect(second.projectId).toBeNull();
+    expect(second.executionWorkspaceId).toBeNull();
+    expect(second.executionWorkspacePreference).toBeNull();
+    expect((await caseRow(created.case.id)).workspaceRef).toEqual({ sourceIssueId: first.id });
+  });
+
   describe("terminal-workspace reaper", () => {
     // A worktree whose HEAD is the base: delivered by ancestry, so only the guards decide.
-    async function seedDeliveredCaseWorkspace(input: { caseTerminal: boolean; recordWorkspaceId: boolean; openBoundIssue?: boolean }) {
+    async function seedDeliveredCaseWorkspace(input: {
+      caseTerminal: boolean;
+      recordWorkspaceId: boolean;
+      openBoundIssue?: boolean;
+      /** The case's first task was bound to this already existing workspace. */
+      refIssueReusedWorkspace?: boolean;
+    }) {
       const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-case-workspace-"));
       tempDirs.add(repoRoot);
       await runGit(repoRoot, ["init"]);
@@ -361,6 +426,17 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
           executionWorkspacePreference: "reuse_existing",
         });
       }
+      const refIssueId = input.refIssueReusedWorkspace
+        ? await db.insert(issues).values({
+          companyId,
+          projectId,
+          title: "Case task on an existing workspace",
+          status: "done",
+          priority: "medium",
+          executionWorkspaceId: workspace!.id,
+          executionWorkspacePreference: "reuse_existing",
+        }).returning().then((rows) => rows[0]!.id)
+        : sourceIssue!.id;
       const created = await svc.ingestCase({
         companyId,
         pipelineId: pipeline.id,
@@ -368,8 +444,8 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
         caseKey: `R-${randomUUID().slice(0, 6)}`,
         title: "Ticket",
         workspaceRef: input.recordWorkspaceId
-          ? { sourceIssueId: sourceIssue!.id, executionWorkspaceId: workspace!.id }
-          : { sourceIssueId: sourceIssue!.id },
+          ? { sourceIssueId: refIssueId, executionWorkspaceId: workspace!.id }
+          : { sourceIssueId: refIssueId },
         actor: userActor,
       });
       if (input.caseTerminal) {
@@ -392,6 +468,19 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
       expect(sweep).toMatchObject({ archived: 0, skippedNonTerminalTree: 2 });
       expect(await statusOf(byId)).toBe("active");
       expect(await statusOf(bySourceIssue)).toBe("active");
+    }, 30_000);
+
+    it("keeps a workspace an open case's source issue was bound to, before the id is recorded", async () => {
+      const workspaceId = await seedDeliveredCaseWorkspace({
+        caseTerminal: false,
+        recordWorkspaceId: false,
+        refIssueReusedWorkspace: true,
+      });
+
+      const sweep = await workspaces.sweepTerminalWorkspaces();
+
+      expect(sweep).toMatchObject({ archived: 0, skippedNonTerminalTree: 1 });
+      expect(await statusOf(workspaceId)).toBe("active");
     }, 30_000);
 
     it("keeps it while a terminal case still has an open task bound to it", async () => {
