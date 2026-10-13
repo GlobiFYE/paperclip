@@ -624,3 +624,14 @@ checks) on the owned macOS Chromium development preview after cold dependency
 optimization. UI typecheck, 16 existing draft-persistence tests and the 27
 catalog/generator/map tests passed. No whole-suite browser rerun, production
 submission journey or visual-baseline comparison is claimed for this narrow fix.
+
+Static merge verification: Storybook build passed after restoring the checkout's
+renderer dependencies. All 2,248 original built IDs remain in the 2,517-entry
+index. The 25 budget/inbox/recovery examples affected by upstream source changes,
+six draft examples and same-browser reset check passed on the static preview
+(32 checks). The reset check uses the sidebar for Empty and reloads send stories
+within the same browser/storage context, so it cannot read the prior story's
+completed play status while the new play starts. No isolated-context substitute
+is used for the retained-submission regression. The unchanged GitHub bot-management
+suite also passed locally (34 tests) after its CI assertion failed; a separate
+server job reported cancellation. Those CI jobs require a fresh passing run.

@@ -129,7 +129,17 @@ test("draft fixtures reset when switching away from uncertain submission", async
     await expect(warning).toContainText(
       "We couldn’t confirm whether this comment was saved.",
     );
-    await page.getByRole("link", { name: story, exact: true }).click();
+    // Keep the browser/storage context, but reload for play stories so the
+    // manager cannot report the previous no-play story's Pass during navigation.
+    const id =
+      story === "Sent Clears Draft"
+        ? "sent-clears-draft"
+        : "send-failed-keeps-draft";
+    await page.goto(
+      `/?path=/story/feature-composer-draft-recovery--${id}&addonPanel=storybook/interactions/panel`,
+    );
+    await expect(frame.locator("body")).toHaveClass(/sb-show-main/);
+    await expect(editor).toBeVisible();
     await expect(warning).toHaveCount(0);
     await expect(page.locator('[aria-label^="Story status:"]')).toHaveAttribute(
       "aria-label",
