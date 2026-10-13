@@ -91,6 +91,19 @@ apply. Top-level DM replies retain their linear conversation destination. Source
 [queued run policy](../../server/src/services/durable-chat-wakeup.ts). Live Slack
 verification of this exemption remains separate from provider-fixture coverage.
 
+GitHub reviewed authors (`reviewedAuthors` in the bot configuration) admit only
+automatic pull request events from listed GitHub user IDs. Mentions, comments and
+issues from them stay denied. Their tasks run under the responsible member
+without low-trust quarantine. A run that their request started, and a later run
+on the task without its own GitHub request, uses only the bot's gateway
+connection and never a person's or the host's GitHub credentials; only the
+agent's own GitHub account can be exported. Task admission, wakeups, bot tools
+and response comments each re-run automatic admission, so removal applies to
+queued and ongoing work. Sources: [review policy](../../server/src/services/chat-github-review-policy.ts),
+[bot scoping](../../server/src/services/chat-github-tools.ts) and
+[credential export](../../server/src/services/github-operation-credentials.ts).
+Live GitHub verification remains separate from provider-fixture coverage.
+
 New conversations resolve typed project/workspace defaults from their endpoint
 and destination under the task-creation transaction. Defaults do not authorize
 private sources: admission checks the linked user's authority and assigned agent.
