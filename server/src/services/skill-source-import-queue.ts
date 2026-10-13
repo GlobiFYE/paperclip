@@ -1,4 +1,4 @@
-import { and, asc, eq, isNull } from 'drizzle-orm';
+import { and, asc, eq, isNull, isNotNull } from 'drizzle-orm';
 import { companies, projectSkillSources, projectWorkspaces, type Db } from '@paperclipai/db';
 
 export const MAX_COMPANY_PENDING_SKILL_IMPORTS = 100;
@@ -31,7 +31,10 @@ export async function admitDeferredSkillImports(db: Db, companyId: string, now: 
       if (count >= MAX_COMPANY_PENDING_SKILL_IMPORTS) break;
       if ((perProject.get(row.projectId) ?? 0) >= MAX_PROJECT_PENDING_SKILL_IMPORTS) continue;
       await tx.update(projectSkillSources).set({ active: true, lastError: null, nextSyncAt: now })
-        .where(eq(projectSkillSources.id, row.id));
+        .where(and(eq(projectSkillSources.companyId, companyId), eq(projectSkillSources.id, row.id),
+          isNotNull(projectSkillSources.workspaceId), eq(projectSkillSources.active, false),
+          isNull(projectSkillSources.sourceId), eq(projectSkillSources.status, 'pending'),
+          eq(projectSkillSources.lastError, SKILL_IMPORT_CAPACITY_WAIT)));
       count++;
       perProject.set(row.projectId, (perProject.get(row.projectId) ?? 0) + 1);
     }

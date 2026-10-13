@@ -445,3 +445,12 @@ now pins only a GitHub connection/grant already authorized in the persisted acti
 run identity. Responsibility remains attributable but does not authorize searching
 the person's other connections. Missing run selection and legacy agent sources
 require an explicit human connection repair before unattended reads.
+
+Final-head 684105f683 passed all 402 qualified Node 24 cases across 62 files
+and all 14 rebuilt browser journeys; CI and security also passed. Greptile then
+reported a deferred-admission/detach race and stale generated Codex settings.
+Both regressions failed before correction. Admission now conditionally updates
+only still-pending, capacity-waiting bindings with a workspace. Generated homes
+include selected config.toml content in their identity, so edits and removals
+reach the launched process without carrying old private inventory. Focused
+verification and fresh final-head review are recorded on the PR.

@@ -95,6 +95,35 @@ describe.skipIf(!support.supported)('automatic project skill sources', () => {
     await db.update(projectSkillSources).set({ active: false, lastError: null });
   });
 
+  it('does not reactivate a deferred import detached after admission selection', async () => {
+    const row = await workspace('deferred-removal-race');
+    const binding = await enqueueProjectSkillSource(db, row);
+    await db.update(projectSkillSources).set({ active: false, lastError: SKILL_IMPORT_CAPACITY_WAIT }).where(eq(projectSkillSources.id, binding!.id));
+    let detached = false;
+    const database = new Proxy(db, { get(target, key) {
+      if (key !== 'transaction') return Reflect.get(target, key);
+      return (callback: (tx: unknown) => Promise<unknown>) => target.transaction(async tx => callback(new Proxy(tx, { get(target, key) {
+        if (key !== 'update') return Reflect.get(target, key);
+        return (table: unknown) => {
+          const update = target.update(table as typeof projectSkillSources);
+          if (table !== projectSkillSources) return update;
+          return { set: (values: Parameters<typeof update.set>[0]) => {
+            const set = update.set(values);
+            return { where: async (condition: Parameters<typeof set.where>[0]) => {
+              if (!detached) { detached = true; await detachProjectSkillSource(db, companyId, row.id); }
+              return set.where(condition);
+            } };
+          } };
+        };
+      } })));
+    } });
+    await admitDeferredSkillImports(database, companyId, new Date());
+    const [saved] = await db.select().from(projectSkillSources).where(eq(projectSkillSources.id, binding!.id));
+    expect(detached).toBe(true);
+    expect(saved!.active).toBe(false);
+    expect(saved!.lastError).toBeNull();
+  });
+
   it('bounds the company pending queue across projects without losing deferred provenance', async () => {
     const projectsToInsert = Array.from({ length: MAX_COMPANY_PENDING_SKILL_IMPORTS + 1 }, (_, index) => ({ id: randomUUID(), companyId, name: `Quota project ${index}` }));
     await db.insert(projects).values(projectsToInsert);

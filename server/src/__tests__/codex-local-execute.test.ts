@@ -1745,6 +1745,15 @@ process.exit(1);
         expect(companyNext.codexHome).not.toBe(companyRun.codexHome);
         expect(JSON.parse(await fs.readFile(path.join(companyNext.codexHome!, "auth.json"), "utf8")).tokens.account_id).toBe("company-account-two");
         expect(await fs.readFile(path.join(sourceHome, "auth.json"), "utf8")).toBe(fakeCodexAuthJson);
+      } else {
+        await fs.writeFile(path.join(sourceHome, "config.toml"), '[mcp_servers.changed]\ncommand = "new-selected-server"\n');
+        const settingsChanged = await invoke("agent-1", "a".repeat(64));
+        expect(settingsChanged.codexHome).not.toBe(first.codexHome);
+        expect(settingsChanged.codexConfigContents).toContain('command = "new-selected-server"');
+        expect(settingsChanged.codexConfigContents).toContain('model_provider = "test_gateway"');
+        await fs.unlink(path.join(sourceHome, "config.toml"));
+        const settingsRemoved = await invoke("agent-1", "a".repeat(64));
+        expect(settingsRemoved.codexConfigContents).not.toContain('new-selected-server');
       }
 
     } finally {

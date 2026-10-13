@@ -669,13 +669,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (runtimeSkillDigest) {
     const credentialHome = runtimeCredentialHome!;
     const credentialBytes = await fs.readFile(path.join(credentialHome, "auth.json")).catch(() => null);
+    const selectedConfig = await fs.readFile(path.join(credentialHome, "config.toml")).catch(() => null);
+    // Keep selected-home provider/MCP edits (and removals) in the launched home.
+    const selectedConfigDigest = selectedConfig ? createHash("sha256").update(selectedConfig).digest("hex") : null;
     // Copy-back may retain a refreshed regular credential in a generated home.
     // Account switches must select a different home, while token refreshes for
     // the same subscription identity preserve its cache and session state.
     const credentialIdentity = credentialBytes
       ? readSubscriptionAccountId(credentialBytes) ?? createHash("sha256").update(credentialBytes).digest("hex") : null;
     runtimeSkillDigest = createHash("sha256").update(JSON.stringify({
-      runtimeSkillDigest, credentialHome, credentialIdentity, apiKey: envConfig.OPENAI_API_KEY ?? null,
+      runtimeSkillDigest, credentialHome, credentialIdentity, selectedConfigDigest, apiKey: envConfig.OPENAI_API_KEY ?? null,
     })).digest("hex");
     // Different authorized versions/assignments get separate homes, including
     // session state. Previously permitted private links cannot survive revocation.
