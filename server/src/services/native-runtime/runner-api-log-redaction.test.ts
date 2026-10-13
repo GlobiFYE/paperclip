@@ -10,6 +10,7 @@ describe("API payload persistence redaction", () => {
     expect(JSON.stringify(saved)).not.toContain("private-fixture-value");
     expect(event.item.result.data.value).toBe("private-fixture-value");
     expect(redactRunnerApiPayloads(event)).toEqual(saved);
+    expect(redactRunnerApiPayloads(saved)).toEqual(saved);
     expect((redactRunnerApiPayloads({ ...result, data: { value: "another-fixture-value" } }) as any).apiPayloadSha256)
       .not.toBe((saved.item.result as any).apiPayloadSha256);
   });
@@ -29,5 +30,6 @@ describe("API payload persistence redaction", () => {
     const value = { item: { type: "tool_use", name: "call_api", input: { operationId: "invalid", body: { value: "private-fixture-value" } } },
       result: { operationId: "call_api", result: { data: "private-fixture-value" } } };
     expect(JSON.stringify(redactRunnerApiPayloads(value))).not.toContain("private-fixture-value");
+    expect(redactRunnerApiPayloads(redactRunnerApiPayloads(value))).toEqual(redactRunnerApiPayloads(value));
   });
 });

@@ -389,6 +389,8 @@ describe("PaperclipControlPlanePort conformance", () => {
     };
     await port.appendEvent(event);
     expect((await port.appendEvent(event)).disposition).toBe("duplicate");
+    expect(port.normalizeReplayPayload(event.payload)).toEqual(observed[0]?.payload);
+    expect(port.normalizeReplayPayload(observed[0]!.payload)).toEqual(observed[0]?.payload);
     await expect(port.appendEvent({ ...event, payload: { ...event.payload, item: {
       ...(event.payload.item as object), result: { success: true, contentItems: [{ type: "inputText",
         text: JSON.stringify({ ...result, data: { credentials: "different-history-fixture-value" } }),

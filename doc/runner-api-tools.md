@@ -214,6 +214,9 @@ API request and response bodies are omitted from persisted native tool events,
 checkpoints and completion results. Saved events retain operation identity, HTTP
 status and a payload digest for replay conflict detection. The model still receives
 the original authorized HTTP response; this redaction affects durable history.
+Completion retries compare expected and persisted events through the same
+idempotent redaction projection. Repeated projection preserves the original
+payload digest. See [the run-log guide](run-log-events.md) for stored fields.
 
 The server-issued REST credential for the bound run is never returned to the model.
 Streaming, WebSocket, MCP and authentication

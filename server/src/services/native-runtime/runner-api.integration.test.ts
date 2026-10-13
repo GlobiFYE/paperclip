@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { agents, assets, documents, heartbeatRuns, issues, projects, routineDocuments, routines, runnerApiResponseReservations, companySkills, companyMemberships, principalPermissionGrants } from "@paperclipai/db";
 import { beforeAll, afterAll, beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { secretService } from "../secrets.js";
+import { authorizationService } from "../authorization.js";
 import { startRunnerApiTestServer } from "../../__tests__/helpers/runner-api-server.js";
 import { createRunnerdCodexTransport, defaultCapabilityRunnerdBinary } from "../../vendor/paperclip-runner/index.js";
 import { runnerApiCatalog } from "./runner-api-catalog.js";
@@ -218,6 +219,42 @@ else if(m.id!==undefined) send({id:m.id,result:{}});
     expect(ownUpload).toMatchObject({ ok: true, status: 201 });
   });
 
+  it.each(["skill_test", "low_trust_review"])("allows task image reads without company browsing (%s)", async scope => {
+    const fixture = await server.fixture();
+    if (scope === "skill_test") {
+      await server.db.update(heartbeatRuns).set({ contextSnapshot: { issueId: fixture.issueId,
+        paperclipAgentJwtScope: { kind: "skill_test", issueId: fixture.issueId },
+      } }).where(eq(heartbeatRuns.id, fixture.runId));
+    } else {
+      await server.db.update(agents).set({ permissions: { trustPreset: "low_trust_review", authorizationPolicy: {
+        trustBoundary: { mode: "low_trust_review", companyId: fixture.companyId, issueIds: [fixture.issueId], allowedAgentIds: [fixture.agentId] },
+      } } }).where(eq(agents.id, fixture.agentId));
+    }
+    const keyScope = scope === "skill_test" ? { kind: "skill_test" as const, issueId: fixture.issueId } : { kind: "standard" as const };
+    const actor = { type: "agent" as const, agentId: fixture.agentId, companyId: fixture.companyId, runId: fixture.runId, keyScope };
+    expect((await authorizationService(server.db).decide({ actor, action: "company_scope:read",
+      resource: { type: "company", companyId: fixture.companyId },
+    })).allowed).toBe(false);
+    const imageIds: string[] = [];
+    for (const issueId of [fixture.issueId, fixture.blockerId]) {
+      const stored = await server.storage.putFile({ companyId: fixture.companyId, namespace: `issues/${issueId}`,
+        originalFilename: "image.png", contentType: "image/png", body: Buffer.from("task-image-fixture"),
+      });
+      const [image] = await server.db.insert(assets).values({ companyId: fixture.companyId, ...stored, createdByAgentId: fixture.agentId }).returning();
+      imageIds.push(image.id);
+    }
+    const token = createLocalAgentJwt(fixture.agentId, fixture.companyId, "paperclip_runner", fixture.runId, null, keyScope);
+    expect((await fetch(`${fixture.apiUrl}/api/assets/${imageIds[0]}/content`, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(200);
+    expect((await fetch(`${fixture.apiUrl}/api/assets/${imageIds[1]}/content`, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(404);
+    expect(await fixture.authority.execute({ tool: "call_api", callId: "scoped-image", arguments: {
+      operationId: "GET /api/assets/{assetId}/content", pathParams: { assetId: imageIds[0] },
+    } })).toMatchObject({ ok: true, status: 206 });
+    await expect(fixture.authority.execute({ tool: "call_api", callId: "scoped-image-upload", arguments: {
+      operationId: "POST /api/companies/{companyId}/issues/{issueId}/attachments", pathParams: { issueId: fixture.issueId },
+      files: [{ artifactId: imageIds[1] }],
+    } })).rejects.toThrow("Artifact is not available to this actor");
+  });
+
   it("keeps restored webhook secrets inline and encrypts their replay receipts", async () => {
     const fixture = await server.fixture({ disableWakeOnDemand: true, conversation: true });
     vi.stubEnv("PAPERCLIP_API_URL", fixture.apiUrl);
@@ -319,6 +356,20 @@ else if(m.id!==undefined) send({id:m.id,result:{}});
       operationId: "POST /api/agents/me/secret-proposals", body,
     } });
     expect(result).toMatchObject({ ok: false, status: direct.status, data: await direct.json() });
+  });
+
+  it("retains standard REST credential scope after a task becomes a skill test", async () => {
+    const fixture = await server.fixture();
+    await server.db.update(heartbeatRuns).set({ contextSnapshot: { issueId: fixture.issueId,
+      paperclipAgentJwtScope: { kind: "standard" },
+    } }).where(eq(heartbeatRuns.id, fixture.runId));
+    await server.db.update(issues).set({ workMode: "skill_test" }).where(eq(issues.id, fixture.issueId));
+    const token = createLocalAgentJwt(fixture.agentId, fixture.companyId, "paperclip_runner", fixture.runId, null, { kind: "standard" });
+    const direct = await fetch(`${fixture.apiUrl}/api/companies/${fixture.companyId}/projects`, { headers: { Authorization: `Bearer ${token}` } });
+    expect(direct.status).toBe(200);
+    expect(await fixture.authority.execute({ tool: "call_api", callId: "standard-scope", arguments: {
+      operationId: "GET /api/companies/{companyId}/projects",
+    } })).toMatchObject({ ok: true, status: 200, data: await direct.json() });
   });
 
   it("creates and reads secret proposals while preserving redaction and board review", async () => {

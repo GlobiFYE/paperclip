@@ -706,17 +706,24 @@ export class PaperclipRunnerToolAuthority {
     return result;
   }
 
+  #apiScope(context: {
+    issue: { workMode: string };
+    run: { contextSnapshot: unknown };
+  }) {
+    const snapshot = record(context.run.contextSnapshot);
+    const admittedKind = record(snapshot.paperclipAgentJwtScope).kind;
+    const skillTest = admittedKind === "skill_test" || (admittedKind !== "standard"
+      && (Boolean(snapshot.paperclipSkillTest) || context.issue.workMode === "skill_test"));
+    return skillTest ? { kind: "skill_test" as const, issueId: this.binding.issueId } : { kind: "standard" as const };
+  }
+
   #apiToken(context: {
     actor: { adapterType: string };
     issue: { workMode: string };
     run: { responsibleUserId: string | null; contextSnapshot: unknown };
   }) {
-    const snapshot = record(context.run.contextSnapshot);
-    const skillTest = record(snapshot.paperclipAgentJwtScope).kind === "skill_test" || Boolean(snapshot.paperclipSkillTest)
-      || context.issue.workMode === "skill_test";
     return createLocalAgentJwt(this.binding.agentId, this.binding.companyId, context.actor.adapterType,
-      this.binding.runId, context.run.responsibleUserId,
-      skillTest ? { kind: "skill_test", issueId: this.binding.issueId } : { kind: "standard" });
+      this.binding.runId, context.run.responsibleUserId, this.#apiScope(context));
   }
 
   async #callApi(callId: string, value: unknown): Promise<unknown> {
@@ -942,7 +949,7 @@ export class PaperclipRunnerToolAuthority {
       if (!asset || asset.companyId !== this.binding.companyId) throw forbidden("Artifact is not available in this company");
       const assertArtifactAccess = async () => {
         const current = await this.#boundContext();
-        if (!(await canActorReadAssetContent(this.db, this.#privacyActor(current.run), asset)))
+        if (!(await canActorReadAssetContent(this.db, { ...this.#privacyActor(current.run), keyScope: this.#apiScope(current) }, asset)))
           throw forbidden("Artifact is not available to this actor");
       };
       await assertArtifactAccess();

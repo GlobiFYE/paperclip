@@ -19,7 +19,9 @@ export async function isRunnerApiResponseAsset(db: Pick<Db, "select">, asset: As
 
 export async function canActorReadAssetContent(db: Db, actor: AuthorizationActor, asset: Asset): Promise<boolean> {
   const access = authorizationService(db);
-  if (!(await access.decide({ actor, action: "company_scope:read", resource: { type: "company", companyId: asset.companyId } })).allowed) return false;
+  if (actor.type === "agent") {
+    if (actor.companyId !== asset.companyId) return false;
+  } else if (actor.type !== "board" || !(await access.decide({ actor, action: "company_scope:read", resource: { type: "company", companyId: asset.companyId } })).allowed) return false;
   const parts = asset.objectKey.split("/");
   const isDraft = parts[1] === "assets" && parts[2] === "issues" && parts[3] === "drafts";
   const sourceIssueId = parts[1] === "assets" ? parts[3] : parts[2];

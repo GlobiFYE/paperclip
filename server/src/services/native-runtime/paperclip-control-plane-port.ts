@@ -173,6 +173,10 @@ export class PaperclipControlPlanePort implements ControlPlanePort {
     return structuredClone(snapshot as PersistedNativeSession);
   }
 
+  normalizeReplayPayload(payload: PrpEvent["payload"]): PrpEvent["payload"] {
+    return redactRunnerApiPayloads(this.#identityRedactor.redact(payload));
+  }
+
   async checkpointSession(snapshot: PersistedNativeSession, options?: { signal: AbortSignal }): Promise<void> {
     this.#assertActive(options);
     snapshot = redactRunnerApiPayloads(this.#identityRedactor.redact(snapshot));

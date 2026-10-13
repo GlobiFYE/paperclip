@@ -91,6 +91,10 @@ Explicit deliverables use the existing sharing path. Native event history,
 checkpoints and completion records omit API bodies while preserving receipt
 metadata and replay digests. Restored webhook secrets use the same encrypted
 receipt and inline response policy as newly created webhook secrets.
+Task image access requires the company boundary and the task permission;
+skill-test and low-trust agents do not need company-wide browsing authority.
+Completion replay applies the same idempotent projection to stored and expected
+payloads; [the run-log guide](../../doc/run-log-events.md) describes its fields.
 
 Sources: [API client](../../server/src/services/native-runtime/runner-api-client.ts),
 [catalog](../../server/src/services/native-runtime/runner-api-catalog.ts),
