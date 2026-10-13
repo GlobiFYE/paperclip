@@ -7,6 +7,7 @@ import {
   companies,
   createDb,
   heartbeatRuns,
+  issues,
 } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -31,6 +32,7 @@ describeEmbeddedPostgres("cross-issue influence limit PostgreSQL serialization",
 
   afterEach(async () => {
     await db.delete(activityLog);
+    await db.delete(issues);
     await db.delete(heartbeatRuns);
     await db.delete(agents);
     await db.delete(companies);
@@ -112,5 +114,76 @@ describeEmbeddedPostgres("cross-issue influence limit PostgreSQL serialization",
       .where(and(eq(activityLog.companyId, companyId), eq(activityLog.runId, runId)));
     expect(recorded.filter((row) => row.action === "issue.cross_issue_influence_observed")).toHaveLength(20);
     expect(recorded.filter((row) => row.action === "issue.cross_issue_influence_cap_rejected")).toHaveLength(1);
+  });
+
+  // An interval wake persists a run whose contextSnapshot names no issue,
+  // because only a wake on an issue carries one. That run used to be refused on
+  // every comment and every status PATCH, including on the issue it had just
+  // checked out. That left an agent woken on a timer unable to write to the
+  // board at all. The cap must contain such a run instead of denying it.
+  it("lets a run with no source issue write, and exempts the issue it checked out", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `C${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      defaultResponsibleUserId: "board-user",
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "Interval Sweeper",
+      role: "engineer",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      status: "running",
+      responsibleUserId: "board-user",
+      // Exactly what the scheduler persists for an interval wake: no issueId.
+      contextSnapshot: { reason: "interval_elapsed", source: "scheduler", wakeReason: "heartbeat_timer" },
+    });
+    const [checkedOut] = await db.insert(issues).values({
+      companyId,
+      title: "Claimed by this run",
+      checkoutRunId: runId,
+    }).returning({ id: issues.id });
+    const [untouched] = await db.insert(issues).values({
+      companyId,
+      title: "Someone else's issue",
+    }).returning({ id: issues.id });
+
+    const base = {
+      companyId,
+      runId,
+      agentId,
+      kind: "comment" as const,
+      now: CROSS_ISSUE_INFLUENCE_ENFORCE_AT,
+    };
+
+    // Writing to the issue this run holds the checkout on is a same-issue write:
+    // exempt, and it must not spend the cross-issue budget.
+    await expect(observeCrossIssueInfluence(db, { ...base, targetIssueId: checkedOut!.id }))
+      .resolves.toBeNull();
+
+    // Reaching a different issue from the same run is still contained and audited.
+    await expect(observeCrossIssueInfluence(db, { ...base, targetIssueId: untouched!.id, kind: "update" }))
+      .resolves.toMatchObject({ allowed: true, mode: "enforce", count: 1 });
+
+    const recorded = await db
+      .select({ action: activityLog.action, details: activityLog.details })
+      .from(activityLog)
+      .where(and(eq(activityLog.companyId, companyId), eq(activityLog.runId, runId)));
+    expect(recorded).toHaveLength(1);
+    expect(recorded[0]!.action).toBe("issue.cross_issue_influence_observed");
+    expect((recorded[0]!.details as { sourceIssueId: unknown }).sourceIssueId).toBeNull();
   });
 });

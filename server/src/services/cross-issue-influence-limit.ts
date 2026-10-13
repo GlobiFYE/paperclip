@@ -1,6 +1,6 @@
 import { and, count, eq } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { activityLog, heartbeatRuns } from "@paperclipai/db";
+import { activityLog, heartbeatRuns, issues } from "@paperclipai/db";
 import { isUuidLike, issueWriteDenialResponse } from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 import { logger } from "../middleware/logger.js";
@@ -109,13 +109,40 @@ export async function observeCrossIssueInfluence(
       throw crossIssueInfluenceRunContextError();
     }
 
+    // A run with no source issue is not refused here. Only a wake on an issue
+    // puts one in the snapshot, so an interval wake has none. Refusing those
+    // runs removed the whole write surface instead of containing cross-issue
+    // reach: the agent could not comment and could not transition status. Such
+    // a run falls through to cap accounting below. It is bounded to
+    // CROSS_ISSUE_INFLUENCE_LIMIT per run and audited, which is the same
+    // containment a snapshot-sourced run gets for its cross-issue writes. The
+    // fail-closed throws above still cover the cases that really are "no valid
+    // run": a malformed run id, or a run row that is missing or that belongs to
+    // another company or agent.
     const sourceIssueId = readRunSourceIssueId(run.contextSnapshot);
-    if (!sourceIssueId) throw crossIssueInfluenceRunContextError();
     if (
-      sourceIssueId === input.targetIssueId ||
-      (input.targetIssueIdentifier && sourceIssueId.toUpperCase() === input.targetIssueIdentifier.toUpperCase())
+      sourceIssueId &&
+      (sourceIssueId === input.targetIssueId ||
+        (input.targetIssueIdentifier && sourceIssueId.toUpperCase() === input.targetIssueIdentifier.toUpperCase()))
     ) {
       return null;
+    }
+
+    if (!sourceIssueId) {
+      // Holding the target's checkout is the same statement of intent as a
+      // snapshot source: the run woke unassigned, claimed this issue, and is
+      // writing to the issue it claimed. Treat it as the same-issue write it is
+      // so routine work on an agent's own task never spends the cross-issue cap.
+      const holdsTargetCheckout = await tx
+        .select({ id: issues.id })
+        .from(issues)
+        .where(and(
+          eq(issues.id, input.targetIssueId),
+          eq(issues.companyId, input.companyId),
+          eq(issues.checkoutRunId, input.runId),
+        ))
+        .then((rows) => rows.length > 0);
+      if (holdsTargetCheckout) return null;
     }
 
     const priorCount = await tx

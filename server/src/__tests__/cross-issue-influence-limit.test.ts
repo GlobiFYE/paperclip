@@ -10,6 +10,7 @@ import {
 function counterDb(
   initialCount = 0,
   runOverrides: Record<string, unknown> | null = {},
+  options: { targetCheckedOutByRun?: boolean } = {},
 ) {
   let observedCount = initialCount;
   const inserted: Array<Record<string, unknown>> = [];
@@ -20,6 +21,15 @@ function counterDb(
           if (Object.keys(selection).includes("count")) {
             return {
               then: (resolve: (rows: unknown[]) => unknown) => resolve([{ count: observedCount }]),
+            };
+          }
+          // The checkout probe selects the issue id alone; the run lookup
+          // selects the whole run row and locks it with `.for("update")`.
+          if (Object.keys(selection).join() === "id") {
+            return {
+              then: (resolve: (rows: unknown[]) => unknown) => resolve(
+                options.targetCheckedOutByRun ? [{ id: "55555555-5555-4555-8555-555555555555" }] : [],
+              ),
             };
           }
           return {
@@ -198,7 +208,11 @@ describe("cross-issue influence limit rollout", () => {
     expect(fake.inserted).toEqual([]);
   });
 
-  it("fails closed when the persisted run has no source issue", async () => {
+  // A timer wake carries no issue in its snapshot. Refusing those runs disabled
+  // the whole write surface for every agent woken on an interval: no comments
+  // and no status transitions, including on the issue the run had just checked
+  // out. They are bounded by the cap now, never refused outright.
+  it("bounds rather than refuses a persisted run with no source issue", async () => {
     const fake = counterDb(0, { contextSnapshot: {} });
 
     await expect(observeCrossIssueInfluence(fake.db as never, {
@@ -207,10 +221,64 @@ describe("cross-issue influence limit rollout", () => {
       agentId: "33333333-3333-4333-8333-333333333333",
       targetIssueId: "55555555-5555-4555-8555-555555555555",
       kind: "update",
-    })).rejects.toMatchObject({
-      status: 403,
-      details: { code: "cross_issue_influence_run_context_required" },
+      now: CROSS_ISSUE_INFLUENCE_ENFORCE_AT,
+    })).resolves.toMatchObject({ allowed: true, mode: "enforce", count: 1 });
+    expect(fake.inserted).toEqual([
+      expect.objectContaining({ action: "issue.cross_issue_influence_observed" }),
+    ]);
+    // The audit row still renders, with the absent source recorded as such.
+    expect((fake.inserted[0]?.details as { sourceIssueId: unknown }).sourceIssueId).toBeNull();
+  });
+
+  it("still fails an issueless run closed once it has spent the cap", async () => {
+    const fake = counterDb(CROSS_ISSUE_INFLUENCE_LIMIT, { contextSnapshot: {} });
+
+    await expect(observeCrossIssueInfluence(fake.db as never, {
+      companyId: "22222222-2222-4222-8222-222222222222",
+      runId: "11111111-1111-4111-8111-111111111111",
+      agentId: "33333333-3333-4333-8333-333333333333",
+      targetIssueId: "55555555-5555-4555-8555-555555555555",
+      kind: "comment",
+      now: CROSS_ISSUE_INFLUENCE_ENFORCE_AT,
+    })).resolves.toMatchObject({
+      allowed: false,
+      mode: "enforce",
+      count: CROSS_ISSUE_INFLUENCE_LIMIT + 1,
     });
+    expect(fake.inserted).toEqual([
+      expect.objectContaining({ action: "issue.cross_issue_influence_cap_rejected" }),
+    ]);
+  });
+
+  it("exempts an issueless run writing to the issue it holds the checkout on", async () => {
+    const fake = counterDb(0, { contextSnapshot: {} }, { targetCheckedOutByRun: true });
+
+    await expect(observeCrossIssueInfluence(fake.db as never, {
+      companyId: "22222222-2222-4222-8222-222222222222",
+      runId: "11111111-1111-4111-8111-111111111111",
+      agentId: "33333333-3333-4333-8333-333333333333",
+      targetIssueId: "55555555-5555-4555-8555-555555555555",
+      kind: "comment",
+      now: CROSS_ISSUE_INFLUENCE_ENFORCE_AT,
+    })).resolves.toBeNull();
+    // Work on the run's own task must not spend the cross-issue budget.
     expect(fake.inserted).toEqual([]);
+  });
+
+  it("does not consult the checkout when the snapshot already names a source", async () => {
+    const fake = counterDb(0, {
+      contextSnapshot: { issueId: "44444444-4444-4444-8444-444444444444" },
+    }, { targetCheckedOutByRun: true });
+
+    await expect(observeCrossIssueInfluence(fake.db as never, {
+      companyId: "22222222-2222-4222-8222-222222222222",
+      runId: "11111111-1111-4111-8111-111111111111",
+      agentId: "33333333-3333-4333-8333-333333333333",
+      targetIssueId: "55555555-5555-4555-8555-555555555555",
+      kind: "comment",
+      now: CROSS_ISSUE_INFLUENCE_ENFORCE_AT,
+    })).resolves.toMatchObject({ allowed: true, count: 1 });
+    expect((fake.inserted[0]?.details as { sourceIssueId: unknown }).sourceIssueId)
+      .toBe("44444444-4444-4444-8444-444444444444");
   });
 });
