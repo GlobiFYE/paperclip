@@ -69,6 +69,7 @@ import {
 } from "./services/company-import-transfers.js";
 import { companyTransferRunService } from "./services/company-transfer-runs.js";
 import { healthRoutes } from "./routes/health.js";
+import { livenessRoutes } from "./routes/liveness.js";
 import { cloudRuntimeIdentityMiddleware } from "./middleware/cloud-runtime-identity.js";
 import { cloudControlMiddleware } from "./middleware/cloud-control.js";
 import { cloudRoutes } from "./routes/cloud.js";
@@ -190,6 +191,7 @@ import {
 import { subscribeAllCompanyLiveEvents } from "./services/live-events.js";
 import { heartbeatService } from "./services/heartbeat.js";
 import { pluginLifecycleManager } from "./services/plugin-lifecycle.js";
+import { registerPluginLifecycleDelivery } from "./services/plugin-lifecycle-delivery.js";
 import { createPluginJobCoordinator } from "./services/plugin-job-coordinator.js";
 import {
   buildHostServices,
@@ -606,6 +608,9 @@ export async function createApp(
   const publicMcpIngress = Router();
 
   app.use(cloudRuntimeIdentityMiddleware(db));
+  // Routine probes stop before session/actor resolution, even after claim.
+  // Keep hostname validation and the signed-bootstrap endpoint guard above.
+  app.use("/api/liveness", livenessRoutes());
   // A signed claim above commits identity before any normal request can seed
   // company data. Unclaimed probes bypass session resolution as well as SQL.
   app.use(cloudWarmStandbyMiddleware(isWarmStandby, health, staticUi));
@@ -1247,6 +1252,7 @@ export async function createApp(
     onError: (err, queue) => logger.error({ err, queue }, "Delivery reconciliation failed"),
   });
   app.locals.deliveryWork = deliveryWork;
+  const resourceLifecycleDelivery = registerPluginLifecycleDelivery(deliveryWork, db, workerManager, lifecycle);
   if (opts.feedbackExportService) {
     deliveryWork.register(DELIVERY_QUEUES.feedback, {
       retryMs: FEEDBACK_EXPORT_FLUSH_INTERVAL_MS,
@@ -1265,7 +1271,9 @@ export async function createApp(
       await chatChannels.reconcileProviderRuntimes();
       await chatChannels.voice.reconcile();
     },
-    processPendingDeliveries: () => chatChannels.processPendingChatMaintenance(),
+    // Chat delivery, action, and Telegram discovery workers now own these
+    // duties. Keep the coordinator's other maintenance lanes independent.
+    processPendingDeliveries: async () => undefined,
     processFailedGitHubWebhookDeliveries: () =>
       chatChannels.processFailedGitHubWebhookDeliveries(),
     projectRunMilestones: () =>
@@ -1403,7 +1411,7 @@ export async function createApp(
       logger.error({ err }, "Failed to load ready plugins on startup");
     });
   app.locals.bundledPluginsStartup = trackIdleWork(bundledPluginsStartup);
-  void bundledPluginsStartup.then(() => { lifecyclePluginsReady = true; return agentLifecycle.sweep(); }).catch(() => logger.warn("Agent lifecycle recovery failed; retrying."));
+  void bundledPluginsStartup.then(() => { lifecyclePluginsReady = true; resourceLifecycleDelivery.wake(); return agentLifecycle.sweep(); }).catch(() => logger.warn("Agent lifecycle recovery failed; retrying."));
   // The shutdown hook runs at most once. It caches the in-flight promise, so a
   // second caller (for example the `exit` handler) awaits the same completion
   // instead of starting a second teardown.
@@ -1418,6 +1426,7 @@ export async function createApp(
       await publicMcpEvents?.stop();
       await dotMcpEvents?.stop();
       jobCoordinator.stop();
+      resourceLifecycleDelivery.dispose();
       await deliveryWork.stop();
       unsubscribeChatPublicationSignals();
       chatReconciliation.stop();
