@@ -975,6 +975,7 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
               onConfigureArcade={connection => setArcadeToConfigure(connection)}
               onConfigureExecutor={connection => setExecutorToConfigure(connection)}
               defaultExpanded={Boolean(trimmed)}
+              searchQuery={trimmed}
             />
           ))}
           {showCustomConnector ? (
@@ -1076,6 +1077,7 @@ export function ConnectorCard({
   onConfigureArcade,
   onConfigureExecutor,
   defaultExpanded = false,
+  searchQuery = "",
 }: {
   renderAccountDetails?: (connection: ToolConnection) => ReactNode;
   row: ConnectorRowModel;
@@ -1098,9 +1100,13 @@ export function ConnectorCard({
   onConfigureExecutor?: (connection: ToolConnection) => void;
   /** Start with the connection list open, e.g. while a search is narrowing the catalog. */
   defaultExpanded?: boolean;
+  searchQuery?: string;
 }) {
   // The user's toggle only applies while the default it overrode still holds, so a new search reopens the list.
   const [expandedOverride, setExpandedOverride] = useState<{ open: boolean; defaultExpanded: boolean } | null>(null);
+  useEffect(() => {
+    setExpandedOverride(null);
+  }, [defaultExpanded, searchQuery]);
   const action = connectorAction(
     row,
     chatProviderVisible(row.slug, chatConnectorsEnabled, githubReviewBotsEnabled),

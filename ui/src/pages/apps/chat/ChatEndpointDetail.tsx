@@ -1,8 +1,9 @@
+import { deriveInitials } from "@/components/Identity";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { agentAvatarUrl } from "@/lib/agent-avatar-url";
 import { resolveAgentAppearance } from "@paperclipai/shared";
 import { SlackTestMessageButton } from "./SlackTestMessageButton";
 import { AgentAvatar } from "@/components/AgentAvatar";
-import { Identity } from "@/components/Identity";
 import { SlackSetupAdvanced } from "./SlackAppDetails";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { SlackToolsSettings, SlackSearchAccess } from "./SlackToolSettings";
@@ -589,7 +590,7 @@ function Settings({
           {endpoint.provider === "slack" && (
             <SettingToggle
               label="Require at-mention"
-              detail="Only respond to messages that @mention this bot, including thread replies and direct messages. Direct messages must also be allowed above."
+              detail="In channels, only respond to messages that @mention this bot, including thread replies. Direct messages never require an @mention and must be allowed above."
               checked={endpoint.requireAtMention ?? false}
               pending={updateEndpoint.isPending}
               onChange={(requireAtMention) =>
@@ -782,13 +783,19 @@ function Access({
                 role="listitem"
                 className="flex flex-wrap items-center gap-3 py-3"
               >
-                <div className="min-w-0 flex-1">
-                  <Identity name={link.paperclipUserLabel ?? link.externalLabel} size="default" className="gap-2" />
-                  {(link.status !== "linked" || link.externalLabel !== link.paperclipUserLabel) && <p className="pl-10 text-xs text-muted-foreground">
-                    {link.status === "revoked" ? "Disconnected" : link.status === "linked"
-                      ? link.externalLabel
-                      : "Waiting for account confirmation"}
-                  </p>}
+                <div className="flex min-w-0 flex-1 items-center gap-2">
+                  <Avatar aria-hidden="true">
+                    {link.paperclipUserImage && <AvatarImage src={link.paperclipUserImage} alt="" />}
+                    <AvatarFallback>{deriveInitials(link.paperclipUserLabel ?? link.externalLabel)}</AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0">
+                    <p className="truncate text-sm" title={link.paperclipUserLabel ?? link.externalLabel}>{link.paperclipUserLabel ?? link.externalLabel}</p>
+                    {(link.status !== "linked" || link.externalLabel !== link.paperclipUserLabel) && <p className="text-xs text-muted-foreground">
+                      {link.status === "revoked" ? "Disconnected" : link.status === "linked"
+                        ? link.externalLabel
+                        : "Waiting for account confirmation"}
+                    </p>}
+                  </div>
                 </div>
                 {link.status === "linked" ? (
                   <Button

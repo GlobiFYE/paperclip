@@ -1149,6 +1149,26 @@ describe("Connectors landing page", () => {
     expect(container.querySelector('[data-app-slug="notion"]')?.textContent).toContain("ops@example.com");
   });
 
+  it("reopens connection lists whenever the search query changes", async () => {
+    listApplicationsMock.mockResolvedValue({ applications: [application()] });
+    listConnectionsMock.mockResolvedValue({
+      connections: [connection(), connection({ id: "conn-ops", name: "ops@example.com" }),
+        connection({ id: "conn-eng", name: "eng@example.com" })],
+    });
+    await renderBrowse();
+    await search("ops@example");
+    let notion = container.querySelector<HTMLElement>('[data-app-slug="notion"]')!;
+    expect(notion.textContent).toContain("ops@example.com");
+    await clickButton("3 connections", notion);
+    expect(notion.textContent).not.toContain("ops@example.com");
+
+    await search("eng@example");
+    notion = container.querySelector<HTMLElement>('[data-app-slug="notion"]')!;
+    expect(notion.textContent).toContain("eng@example.com");
+    await search("ops@example");
+    expect(container.querySelector('[data-app-slug="notion"]')?.textContent).toContain("ops@example.com");
+  });
+
   it("keeps a single account inline and opens lists that need attention", async () => {
     listApplicationsMock.mockResolvedValue({ applications: [application()] });
     listConnectionsMock.mockResolvedValue({ connections: [connection()] });
