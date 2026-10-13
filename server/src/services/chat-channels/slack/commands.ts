@@ -374,7 +374,7 @@ export function createSlackCommands(db: Db, options: SlackCommandsOptions) {
         options.deferWebhookProcessing === true,
       );
     });
-  
+
   }
   return { handleSlackSlashCommand };
 }
