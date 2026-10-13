@@ -29,6 +29,7 @@ import { publicMcpIngressRoutes, publicMcpManagementRoutes } from "./routes/publ
 import { agentAvatarRoutes } from "./routes/agent-avatars.js";
 import { decisionModelRoutes } from "./routes/decision-models.js";
 import { aiConnectionRoutes } from "./routes/ai-connections.js";
+import { taskWorkspaceRoutes } from "./routes/task-workspaces.js";
 import { projectToolRoutes } from "./routes/project-tools.js";
 import { emailChannelService } from "./services/email-channels.js";
 import { emailRoutes, emailWebhookRoutes } from "./routes/email.js";
@@ -326,7 +327,7 @@ export function createChatReconciliationCoordinator(input: {
   projectRunMilestones: () => Promise<number>;
   flushPublications: () => Promise<unknown>;
   processPendingSlackFileUploadReceipts?: () => Promise<unknown>;
-  processPendingSlackSessionSyncs: () => Promise<unknown>;
+  processPendingSlackSessionSyncs?: () => Promise<unknown>;
   onError: (lane: ChatReconciliationLane, error: unknown) => void;
 }) {
   let stopped = false;
@@ -373,7 +374,7 @@ export function createChatReconciliationCoordinator(input: {
       milestoneReconciliation.poll();
       publicationReconciliation.poll();
       if (input.processPendingSlackFileUploadReceipts) start("Slack file receipts", input.processPendingSlackFileUploadReceipts);
-      start("Slack session status", input.processPendingSlackSessionSyncs);
+      if (input.processPendingSlackSessionSyncs) start("Slack session status", input.processPendingSlackSessionSyncs);
     },
     notifyPublications() {
       milestoneReconciliation.notify();
@@ -832,6 +833,7 @@ export async function createApp(
   api.use(assetRoutes(db, opts.storageService));
   api.use(agentProfileAvatarRoutes(db, opts.storageService));
   api.use(projectToolRoutes(db));
+  api.use(taskWorkspaceRoutes(db));
   api.use(projectRoutes(db));
   api.use(caseRoutes(db, opts.storageService));
   api.use(issueTreeControlRoutes(db, { pluginWorkerManager: workerManager }));
@@ -1271,8 +1273,6 @@ export async function createApp(
         publicBaseUrl: opts.authPublicBaseUrl,
       }),
     flushPublications: () => reconcileChatPublicationMaintenance(),
-    processPendingSlackSessionSyncs: () =>
-      chatChannels.processPendingSlackSessionSyncs(),
     onError: (lane, err) => {
       logger.error({ err, lane }, `Failed to reconcile chat ${lane}`);
     },
