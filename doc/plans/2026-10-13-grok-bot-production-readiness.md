@@ -4,7 +4,7 @@ Status: implementation and qualification in progress. Actual client OAuth and a 
 
 ## Candidate and release contract
 
-The production candidate started at `origin/master` commit `833769ab557255b11dd8f650f43ed7333653f5e4` and is being updated to `c7f4b74111d16f0b57112fa6d0b6a59c2d63bfe8` in the managed `codex/grokbot-production` worktree. The complete earlier prototype is preserved in snapshot `e0a8150ca248c1b80c58a7e26c10ccda9951907b`; its October 2 test results are historical, not evidence for this candidate. Reuse its provider-specific work where appropriate. Do not import its old gateway baseline, migration numbers, independent session coordinator, or retired UI entry point wholesale.
+The production candidate started at `origin/master` commit `833769ab557255b11dd8f650f43ed7333653f5e4` and incorporates master through `e0f30a4c71` in the managed `codex/grokbot-production` worktree. The complete earlier prototype is preserved in snapshot `e0a8150ca248c1b80c58a7e26c10ccda9951907b`; its October 2 test results are historical, not evidence for this candidate. Reuse its provider-specific work where appropriate. Do not import its old gateway baseline, migration numbers, independent session coordinator, or retired UI entry point wholesale.
 
 Use `.agents/skills/create-external-bot-integration/SKILL.md` and its release, Runner, onboarding, conformance, and deployment references. The user selected an existing staging tenant for acceptance; its hostname and verified stack identity are recorded in the private qualification environment manifest. Cloud permits one company per workspace. The user chose a dedicated synthetic qualification project in the selected existing staging company, and authorized a new Bot because Night Shift’s old web link is unavailable. Use the new Paperclip Qualification Bot and one identifiable app/ingress/Runner candidate. Preserve existing tasks, agents and connections.
 
@@ -144,3 +144,10 @@ The app and supporting Cloud ingress candidates are open as draft PRs. The first
 The guided story now uses Night Shift's production task thread, question form and document card with synthetic local callbacks. Incorrect credentials can be replaced from saved setup. This proves UI behavior only.
 
 Cloud master has introduced a separate Test environment for branch experiments. Staging now admits only master-derived app and schema revisions; the previous pre-merge staging harness override is retired. The selected staging tenant remains the authorized destination, but a pre-merge candidate cannot be forced onto it. Candidate testing must either use an explicitly authorized Test workspace/harness or wait for reviewed master changes. Do not change the staging guard or fleet default to bypass this constraint.
+
+
+## Candidate checks and review corrections
+
+The candidate passes repository typecheck, production build, token gates and the Storybook build. The saved-setup retry and pre-assignment Stop regressions pass. The shared provider descriptor schema accepts Grok and rejects invented native process identity. Copilot's versioned source declaration advances to v18 because that shared schema changes; v17 remains immutable, all pinned source hashes are checked, and Copilot qualification remains pending. Current-head full CI and review remain release gates.
+
+The supporting Cloud ingress candidate passes typecheck, routing smoke and its full suite (3,339 passing, 93 optional skips). Current-head review is 5/5 with no open findings. Neither candidate has been deployed. The actual-client evidence remains one routine HTTP acceptance and matching chat acknowledgement; candidate-side authenticated acknowledgement and the six bounded principal journeys are outstanding.
