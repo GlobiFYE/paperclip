@@ -42,6 +42,14 @@ Automated: [channel integration](../../server/src/__tests__/chat-channels.integr
 
 Manual: For each supported provider being changed, send a unique message, verify the intended agent/company receives it, and inspect the actual external reply in the original thread. Repeat with an unlinked/unauthorized sender, duplicate inbound delivery, and one supported attachment. Record provider-specific results separately.
 
+For GitHub reviewed authors, add a disposable account in **Access → Reviewed
+authors** and open a pull request from it. Expect one review task under the
+responsible member, without low-trust quarantine. A mention or comment from that
+account must be refused. A later run on the task, such as a timer wake, must get
+no personal or host GitHub credentials and only the bot's tools. Remove the
+account and confirm that new pull request events, wakeups, and bot tool calls are
+refused. The channel integration suite covers these paths with provider fixtures.
+
 For Slack, enable **Require at-mention** and **Allow direct messages**. Send a
 plain DM and follow up without a mention: both should reach the agent, with
 top-level replies to top-level DMs. Channel messages and thread replies still
