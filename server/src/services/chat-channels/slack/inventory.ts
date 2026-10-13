@@ -1,4 +1,4 @@
-import type { EndpointRow } from "../runtime-types.js";
+import type { EndpointRow, EndpointRecord } from "../runtime-types.js";
 
 import { slackResourceLabelIsFallback } from "./resources.js";
 
@@ -27,7 +27,6 @@ export async function prepareSlackInventory(credentials: Record<string,string>, 
   };
 }
 
-import type { EndpointRecord } from "../runtime-types.js";
 
 type SlackInventoryOptions = {
   endpointRecord: (endpointId: string) => Promise<EndpointRecord | null>;

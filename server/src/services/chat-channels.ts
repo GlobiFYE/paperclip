@@ -3179,9 +3179,9 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     managementUrl?: string;
   }> {
     try {
-      if (endpoint.provider === "slack") return prepareSlackInventory(credentials, fetchImpl);
-      if (endpoint.provider === "github") return prepareGitHubInventory(credentials, fetchImpl);
-      if (endpoint.provider === "discord") return prepareDiscordInventory(credentials, fetchImpl);
+      if (endpoint.provider === "slack") return await prepareSlackInventory(credentials, fetchImpl);
+      if (endpoint.provider === "github") return await prepareGitHubInventory(credentials, fetchImpl);
+      if (endpoint.provider === "discord") return await prepareDiscordInventory(credentials, fetchImpl);
       return { credentials, inventory: null };
     } catch (error) {
       throw unprocessable(redactError(error), {
