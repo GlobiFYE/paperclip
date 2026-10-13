@@ -73,7 +73,12 @@ Agent access: `available` — Native set_task_title/reassign_task/set_dependenci
 `call_api` for REST-authorized fields; agent REST.
 
 Policy: Company/task visibility, assignment/change policy, active-run checkout ownership
-and lifecycle rules.
+and lifecycle rules. A legacy run can assign its own task to a human without
+cancelling itself only with its signed run token and matching active run, agent,
+company and task. The outgoing run cannot mutate its human-owned task afterward,
+including through a late update already admitted before the handoff. Agent keys,
+native runs, board reassignment and transfers to
+another agent retain verified-stop requirements.
 
 Evidence: `source-only` — [implementation](../../server/src/routes/issues.ts) at the
 reviewed commit above.
@@ -81,7 +86,10 @@ reviewed commit above.
 Verification: `not-run` — exercise a listed permitted operation with actual agent
 credentials/run context; inspect its result and applicable persistence/attribution.
 Assert the relevant denied actor, owner, company or mode from Policy. Review the
-remaining operations before qualifying the whole capability.
+remaining operations before qualifying the whole capability. Focused route
+regressions in [ownership tests](../../server/src/__tests__/issue-agent-mutation-ownership-routes.test.ts)
+cover a human handoff and stop enforcement for other actors, runtimes and targets;
+they use mocked services and do not claim live execution proof.
 
 Gaps: Dedicated tools differ in scope and fields. Generic `call_api` forwards
 status, assignment and dependency fields to existing route authorization.

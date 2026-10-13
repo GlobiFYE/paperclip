@@ -1,3 +1,4 @@
+import { idleWorkSnapshot } from "../services/task-admission.js";
 import * as activityLogModule from "../services/activity-log.js";
 import { chatSlackManagerGrants, chatSlackRegistrations, toolOauthStates } from "@paperclipai/db";
 import type { PaperclipCloudConnector, SealedConnectorCredentials } from "../services/paperclip-cloud-connector.js";
@@ -6929,7 +6930,10 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       expect(saved.setup.webhookVerifiedAt).toBeNull();
       expect(saved.providerAccountId).toBe("TAUTO");
       expect(saved.setup.slackAccount).toEqual({ externalUserId: f.installerId, paperclipUserId: actor.userId, status: "linked", welcomeStatus: "sent", dmChannelId: "DWELCOME" });
-      expect(await f.service.listPrincipals(f.endpoint.id)).toEqual([expect.objectContaining({ status: "linked", paperclipUserId: actor.userId })]);
+      expect(await f.service.listPrincipals(f.endpoint.id)).toEqual([expect.objectContaining({ status: "linked", paperclipUserId: actor.userId, paperclipUserImage: null })]);
+      await db.update(authUsers).set({ image: "https://example.test/installer.png" }).where(eq(authUsers.id, actor.userId));
+      expect(await f.service.listPrincipals(f.endpoint.id)).toEqual([expect.objectContaining({ paperclipUserImage: "https://example.test/installer.png" })]);
+      await db.update(authUsers).set({ image: null }).where(eq(authUsers.id, actor.userId));
       const [, welcome] = f.provider.mock.calls.find(([url]) => String(url).endsWith("chat.postMessage"))!;
       expect(new URLSearchParams(String(welcome!.body)).get("channel")).toBe(f.installerId);
       expect(new URLSearchParams(String(welcome!.body)).get("text")).toMatch(/^Hi, I’m .+\. Your Slack account is connected to Paperclip\.$/);
@@ -10114,6 +10118,60 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     expect(connection!.refs).toEqual([
       expect.objectContaining({ configPath: "credentials.webhookSecret" }),
     ]);
+  });
+
+  it.each(["slack", "discord", "github"] as const)("preserves the public inventory error response for %s", async (provider) => {
+    const fixture = await seedCompany();
+    let failInventory = false;
+    let service: ChatChannelService;
+    let endpoint: Awaited<ReturnType<ChatChannelService["create"]>>;
+    if (provider === "slack") {
+      const successfulFetch = fakeSlackFetch();
+      const context = await configuredSlackEndpoint(fixture, {
+        fetch: (async (input, init) => {
+          if (failInventory && String(input).includes("/conversations.list"))
+            throw new Error("inventory fixture outage");
+          return successfulFetch(input, init);
+        }) as typeof fetch,
+      });
+      ({ service, endpoint } = context);
+    } else if (provider === "discord") {
+      const applicationId = uniqueDiscordApplicationId();
+      const successfulFetch = fakeDiscordFetch(applicationId);
+      const context = createService(new FakeChatSdkRuntime(), (async (input) => {
+        if (failInventory && new URL(String(input)).pathname.endsWith("/channels"))
+          throw new Error("inventory fixture outage");
+        return successfulFetch(input);
+      }) as typeof fetch);
+      service = context.service;
+      endpoint = await service.create(fixture.companyId, {
+        provider, assignedAgentId: fixture.assignedAgentId,
+      }, "owner-user");
+      await service.configure(endpoint.id, {
+        action: "configure",
+        credentials: { applicationId, botToken: "discord-secret", guildId: "1457808928258658549" },
+      }, "owner-user");
+    } else {
+      const context = await configuredGitHubEndpoint(fixture);
+      ({ service, endpoint } = context);
+      context.setSupplementalProviderFetch(async (input) => {
+        if (failInventory && String(input).includes("/app/installations?"))
+          throw new Error("inventory fixture outage");
+        return undefined;
+      });
+    }
+    const [before] = await readToolConnectionsById(endpoint.connectionId);
+    failInventory = true;
+    const response = await request(routesApp(db, fixture.companyId, service))
+      .post(`/api/chat-endpoints/${endpoint.id}/setup`)
+      .send({ action: "reconnect" });
+    expect(response.status).toBe(422);
+    expect(response.body).toMatchObject({
+      error: expect.stringContaining("inventory fixture outage"),
+      details: { code: "chat_provider_inventory_failed" },
+    });
+    const [after] = await readToolConnectionsById(endpoint.connectionId);
+    expect(after.credentialSecretRefs).toEqual(before.credentialSecretRefs);
   });
 
   it("rejects under-scoped Slack and GitHub apps before saving provider credentials", async () => {
@@ -33026,6 +33084,26 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
           await set("delivery_unknown");
           expect(await f.service.nextChatActionAt(kind)).toBeNull();
           expect(await due()).toBe(false);
+        } else if (kind === "failed_run_retry") {
+          expect(await due()).toBe(false);
+          await set("issued");
+          expect(await due()).toBe(true);
+          await set("issued", { retryAt: later.toISOString() });
+          expect(await f.service.nextChatActionAt(kind)).toBe(later.getTime());
+          expect(await due()).toBe(false);
+          await set("processing");
+          expect(await f.service.nextChatActionAt(kind)).toBe(at.getTime() + 60_000);
+          expect(await due()).toBe(false);
+          // Both the claim lease and retry time must expire before replay.
+          await set("processing", { retryAt: later.toISOString() });
+          expect(await f.service.nextChatActionAt(kind)).toBe(later.getTime());
+          await set("processing", { retryAt: at.toISOString() });
+          expect(await f.service.nextChatActionAt(kind)).toBe(at.getTime() + 60_000);
+          for (const status of ["failed", "cancelled", "processed"]) {
+            await set(status, { retryable: true, retryAt: at.toISOString() });
+            expect(await f.service.nextChatActionAt(kind)).toBeNull();
+            expect(await due()).toBe(false);
+          }
         } else if (kind === "slack_session_sync") {
           expect(await due()).toBe(true);
           await set("received", { retryAt: later.toISOString() });
@@ -59776,6 +59854,81 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
           rmSync(stateDirectory, { recursive: true, force: true });
         }
       }
+    },
+  );
+
+  it.each(["commit", "retry", "startup", "stale_claim", "rollback"] as const)(
+    "drains failed chat retries from durable work and becomes idle: %s",
+    async (mode) => {
+      const context = await failedChatRetryFixture("telegram");
+      const onError = vi.fn();
+      const coordinator = createDeliveryWorkCoordinator({ owner: db, canRun: () => true, onError });
+      const input = { companyId: context.fixture.companyId, issueId: context.issue.id,
+        agentId: context.fixture.assignedAgentId, failedRunId: context.runId, initiatedByUserId: "owner-user" };
+      const stage = () => db.transaction(tx => context.service.prepareFailedChatRunRetry(tx, input));
+      context.wakeup.mockClear();
+      try {
+        let actionId: string;
+        if (mode === "startup" || mode === "stale_claim") {
+          ({ actionId } = await stage());
+          if (mode === "stale_claim") await db.update(chatActions).set({ status: "processing",
+            updatedAt: new Date(Date.now() - 120_000) }).where(eq(chatActions.id, actionId));
+          await registerChatActionWork(coordinator, context.service, () => true).ready;
+        } else {
+          await registerChatActionWork(coordinator, context.service, () => true).ready;
+          if (mode === "rollback") {
+            await expect(db.transaction(async tx => {
+              await context.service.prepareFailedChatRunRetry(tx, input);
+              throw new Error("rollback retry intent");
+            })).rejects.toThrow("rollback retry intent");
+            await vi.waitFor(() => {
+              expect(coordinator.nextWakeAt()).toBeNull();
+              expect(idleWorkSnapshot().active).toBe(0);
+            }, { timeout: 10_000 });
+            expect(context.wakeup).not.toHaveBeenCalled();
+          }
+          if (mode === "retry") {
+            let failedAt = 0;
+            context.wakeup.mockImplementationOnce(async () => {
+              failedAt = Date.now();
+              throw new Error("temporary admission outage");
+            }).mockImplementationOnce(async () => {
+              expect(Date.now() - failedAt).toBeGreaterThanOrEqual(250);
+              return { accepted: true };
+            });
+          }
+          ({ actionId } = await db.transaction(async tx => {
+            const staged = await tx.transaction(nested => context.service.prepareFailedChatRunRetry(nested, input));
+            // A nested savepoint must not wake the worker before the outer commit.
+            await new Promise(resolve => setTimeout(resolve, 25));
+            expect(context.wakeup).not.toHaveBeenCalled();
+            return staged;
+          }));
+        }
+        await vi.waitFor(async () => {
+          const [action] = await db.select().from(chatActions).where(eq(chatActions.id, actionId));
+          expect(action?.status).toBe("processed");
+          expect(action?.result.attemptCount).toBe(mode === "retry" ? 2 : 1);
+          expect(coordinator.nextWakeAt()).toBeNull();
+        }, { timeout: 10_000 });
+        expect(context.wakeup).toHaveBeenCalledTimes(mode === "retry" ? 2 : 1);
+        const receipts = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, actionId));
+        expect(receipts).toHaveLength(1);
+        expect(receipts[0]?.payload).toMatchObject({ retryOfRunId: context.runId,
+          wakeCommentIds: [context.action.payload.commentId] });
+        // A running worker has no scheduled deadline. Wait for its final scan
+        // and any commit-driven follow-up before measuring the quiet period.
+        await vi.waitFor(() => {
+          expect(coordinator.nextWakeAt()).toBeNull();
+          expect(idleWorkSnapshot().active).toBe(0);
+        }, { timeout: 10_000 });
+        const scans = vi.spyOn(db, "select");
+        try {
+          await new Promise(resolve => setTimeout(resolve, 1200));
+          expect(scans).not.toHaveBeenCalled();
+        } finally { scans.mockRestore(); }
+        expect(onError).not.toHaveBeenCalled();
+      } finally { await coordinator.stop(); await context.service.shutdown(); }
     },
   );
 

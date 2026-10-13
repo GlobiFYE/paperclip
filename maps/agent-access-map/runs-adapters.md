@@ -11,6 +11,11 @@ Each capability needs operation-level review before its entire scope can be
 qualified. No live agent execution is claimed. Follow the [map contract](../README.md)
 for format, permission checks, evidence and maintenance.
 
+Scoped native cancellation source review: 2026-10-12 at
+`ce23716503a2c9158b5a7ab74ab61571ff4ee7a3`, limited to owned startup and
+shutdown/readiness ordering. The original baseline and review depth remain for
+unrelated operations; no live provider or agent authorization is claimed.
+
 ## `availability`
 
 Review: `baseline`.
@@ -112,3 +117,16 @@ own policy and access review.
 Gaps: Task-session listing and execution-context reset require board agent
 management at their HTTP routes. Native `call_api` preserves these denials; native
 continuation remains server-owned.
+
+Scoped Evidence: `source-only` — the
+[native transport](../../packages/paperclip-runner/src/live/runnerd-codex-transport.ts)
+joins owned startup before certifying cleanup. Rejected duplicates cannot replace
+that owner or mutate recovery state. Unconfirmed preparation or registration
+retains recovery state; late registration may release only its own route and
+cannot launch after close. Shutdown interrupts readiness without granting
+authority over an unauthenticated adopted process.
+
+Scoped Verification: `not-run` — verify allowed/denied access using the actual
+actor independently from the credential-free ownership controls. This correction
+adds no account-setup, cleanup-override or session-reset authority. The real native
+readiness/recovery fixtures and installed provider acceptance remain separate gates.
