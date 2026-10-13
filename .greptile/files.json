@@ -19,6 +19,16 @@
         "server/src/services/chat-channels/**",
         "server/src/services/chat-channels.ts"
       ]
+    },
+    {
+      "path": "rules/heartbeat-execution-boundaries.mdc",
+      "description": "Heartbeat module ownership and review criteria for admission, cancellation, recovery, cleanup, and durable execution evidence.",
+      "scope": [
+        "server/src/services/heartbeat.ts",
+        "server/src/services/heartbeat/**",
+        "server/src/services/heartbeat-*.ts",
+        "server/src/__tests__/heartbeat-*.test.ts"
+      ]
     }
   ]
 }

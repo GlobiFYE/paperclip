@@ -1,0 +1,87 @@
+---
+description: Keep heartbeat a clear lifecycle coordinator with cohesive modules, explicit execution authority, and safe resource ownership.
+globs: "server/src/services/heartbeat.ts,server/src/services/heartbeat/**,server/src/services/heartbeat-*.ts,server/src/__tests__/heartbeat-*.test.ts"
+alwaysApply: false
+---
+
+# Heartbeat execution boundaries
+
+## Scope and purpose
+
+This rule covers the heartbeat entry point, its extracted modules,
+heartbeat-prefixed sibling services, and heartbeat regression tests. Keep the
+code organized so a reader can follow whether work may start, who owns the
+execution, and how its outcome and resources settle.
+
+## Structure
+
+- Keep `heartbeat.ts` focused on composing services and coordinating the run
+  lifecycle. Put substantial domain behavior in a cohesive module under
+  `heartbeat/`; keep lifecycle ordering visible in the coordinator.
+- Maintain clear boundaries between admission/scheduling, preparation, provider
+  execution, completion, and recovery. Prefer an existing owner over a second
+  implementation of the same policy. The
+  [module map](../doc/DEVELOPING.md#heartbeat-service-extractions) describes the
+  current organization.
+- Keep provider protocols and environment mechanics in their adapter/runtime
+  services. Heartbeat should coordinate through their contracts. Small dispatch
+  branches are appropriate; backend details should not spread into shared policy.
+- Use narrow, typed contracts that make inputs, outcomes, and resource ownership
+  clear. Avoid passing the whole service closure or a generic mutable context.
+  Production dependencies should flow from the facade into its modules, without
+  modules importing the facade back.
+
+## Design principles
+
+- **Execution requires current authority.** Queue acceptance is not permission
+  to execute indefinitely. Admission and dispatch must respect company scope,
+  responsible-user authority, budgets, pause/Stop, and task eligibility, including
+  when these change during preparation. Retries and recovery must not become
+  alternate paths around those controls.
+- **Ownership must be explicit.** Every execution and resource needs an owner,
+  a lifetime, and a defined handoff or release condition. These contracts must
+  hold across service instances, cancellation, partial startup, and restart.
+  Process-local coordination cannot establish authority over another process.
+- **Completion has several independent obligations.** A result being accepted,
+  a provider stopping, a workspace being saved, and cleanup finishing are distinct
+  facts. Keep enough state to represent them honestly. Do not infer that resources
+  are safe to destroy or that successor work may start from a terminal status alone.
+- **Recovery preserves intent and completed work.** Resume the admitted work
+  under its recorded execution contract. New configuration belongs to a new
+  admission decision, not a silent reinterpretation of an existing run. Repair
+  incomplete persistence or cleanup without repeating already completed provider
+  work. Automatic recovery should be bounded and safe to retry.
+- **Durable state governs competing effects.** Claims and transitions must remain
+  correct when Stop, completion, and recovery race. A losing operation must respect
+  the winning outcome. Persist authoritative state before publishing notifications;
+  notification failures must not change the execution result or duplicate effects.
+- **Uncertainty stays visible.** Missing ownership or termination evidence must
+  remain pending, held, or explicitly failed until reconciled. Preserve recoverable
+  work through failures. Keep security and sandbox requirements intact rather than
+  silently choosing a weaker execution path. Optional diagnostics must not prevent
+  essential settlement.
+
+## Examples and allowed exceptions
+
+- Retrying workspace copy-back after an accepted result is recovery work; it
+  should not start another provider turn merely to repeat the completed task.
+- A shared checkout cache and per-run preparation state have different lifetimes.
+  Organize them by the ownership they need, rather than making all state local to
+  whichever factory happens to use it.
+- Keep coupled admission or cleanup decisions together when splitting them would
+  hide their ordering. A large cohesive module can be appropriate. Apply these
+  principles to new or materially changed behavior without requiring unrelated
+  restructuring or a generic orchestration framework.
+
+## Verification and review
+
+Test the affected contract through observable behavior, including relevant
+cancellation, concurrency, partial-failure, and restart cases. Exercise the public
+heartbeat path when a module change could alter lifecycle coordination; use an
+assembled-app journey for changes to dispatch, Stop, workspace recovery, or saved
+agent files. Assert execution and persisted outcomes, not only helper calls.
+
+Flag changes that give one policy competing owners, hide lifecycle ordering,
+weaken execution authority, lose recoverable work, or confuse completion with
+resource settlement. Explain the violated principle and the responsible boundary.
+Do not enforce the current variable names, helper layout, or file sizes as policy.
