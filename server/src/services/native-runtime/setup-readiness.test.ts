@@ -71,7 +71,7 @@ describe("Codex selected native account verification", () => {
     expect(input.environment.HOME).toBeUndefined();
     expect(input.runtimeDirectory).not.toContain("host-home");
   });
-  it.each(["same-account", "another-account", "bound-key", "invalid-handoff"] as const)("preserves the authorized unmanaged login refresh before local cleanup (%s)", async mode => {
+  it.each(["same-account", "another-account", "bound-key", "invalid-handoff"] as const)("preserves the server-selected login refresh before local cleanup (%s)", async mode => {
     const home = await realpath(await mkdtemp(join(tmpdir(), "native-local-login-")));
     const auth = (account: string, marker: string, age: number) => JSON.stringify({ tokens: { account_id: account, id_token: `id-${marker}`, access_token: `access-${marker}`, refresh_token: `refresh-${marker}` }, last_refresh: new Date(Date.now() - age).toISOString() });
     const store = join(home, "account.json");
@@ -88,7 +88,7 @@ describe("Codex selected native account verification", () => {
         await input.onCleanupConfirmed();
         return receipt("codex", "gpt-6.1-sol");
       });
-      const result = await testNativeRunnerAuthentication({ companyId: "company", adapterType: "paperclip_runner", config: { env: { CODEX_HOME: home, ...(mode === "bound-key" ? { OPENAI_API_KEY: "selected-key" } : {}) } } }, "codex", "gpt-6.1-sol");
+      const result = await testNativeRunnerAuthentication({ companyId: "company", adapterType: "paperclip_runner", managedAiCredentialHome: home, config: { env: { CODEX_HOME: home, ...(mode === "bound-key" ? { OPENAI_API_KEY: "selected-key" } : {}) } } }, "codex", "gpt-6.1-sol");
       expect(result.status).toBe(mode === "invalid-handoff" ? "fail" : "pass");
       expect(JSON.parse(await readFile(store, "utf8")).tokens.access_token).toBe(mode === "same-account" ? "access-new" : "access-old");
       expect((await stat(store)).mode & 0o777).toBe(0o600);
@@ -100,6 +100,66 @@ describe("Codex selected native account verification", () => {
   const sshContext = { companyId: "company", adapterType: "paperclip_runner", config: {}, executionTarget: {
     kind: "remote" as const, transport: "ssh" as const, remoteCwd: "/qa-workspace", spec: { host: "qa-host", username: "qa-user", port: 22, remoteCwd: "/qa-workspace", remoteWorkspacePath: "/qa-workspace", privateKey: null, knownHosts: null, strictHostKeyChecking: true },
   } };
+  it.each(["local", "remote"].flatMap(transport => ["configured", "operator"].flatMap(source => [false, true].map(linked => ({ transport, source, linked })))))
+  ("matches actual task auth seeding before $transport setup (source=$source, linked=$linked)", async ({ transport, source, linked }) => {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "native-unbound-auth-")));
+    const auth = '{"tokens":{"account_id":"fixture-unbound-account","access_token":"fixture-unbound-access","refresh_token":"fixture-unbound-refresh","id_token":"fixture-unbound-id"}}';
+    try {
+      const stored = join(home, linked ? "account-store.json" : "auth.json");
+      await writeFile(stored, auth, { mode: 0o600 });
+      if (linked) await symlink(stored, join(home, "auth.json"));
+      const taskHome = join(home, "actual-task-home");
+      await prepareIsolatedCodexHome({ context: null, codexHome: taskHome, sourceCodexHome: home });
+      const taskAuth = await readFile(join(taskHome, "auth.json"), "utf8").catch(() => null);
+      expect(taskAuth).toBe(linked ? null : auth);
+      vi.stubEnv("CODEX_HOME", source === "operator" ? home : "");
+      nativeProbe.mockImplementation(async input => {
+        const probeHome = join(input.runtimeDirectory, "codex-home");
+        await prepareIsolatedCodexHome({ context: null, codexHome: probeHome, sourceCodexHome: input.transportOptions.sourceCodexHome });
+        expect(await readFile(join(probeHome, "auth.json"), "utf8")).toBe(auth);
+        await input.onCleanupConfirmed();
+        return receipt("codex", "gpt-6.1-sol");
+      });
+      const testContext = transport === "remote" ? sshContext : { companyId: "company", adapterType: "paperclip_runner", config: {} };
+      const result = await testNativeRunnerAuthentication({ ...testContext, config: {
+        managedAiCredentialHome: home,
+        env: source === "configured" ? { CODEX_HOME: home } : {},
+      } }, "codex", "gpt-6.1-sol");
+      expect(result.status).toBe(linked ? "fail" : "pass");
+      if (linked) {
+        expect(nativeProbe).not.toHaveBeenCalled();
+        expect(sshExecute).not.toHaveBeenCalled();
+        expect(result.checks[0].message).toContain(source === "configured" ? "env.CODEX_HOME" : "operator CODEX_HOME");
+        expect(result.checks[0].message).toContain("Legacy runner");
+        expect(result.checks[0].message).toContain("managed Codex Connection");
+      } else expect(nativeProbe).toHaveBeenCalledOnce();
+      expect(await readFile(stored, "utf8")).toBe(auth);
+      expect(JSON.stringify(result)).not.toContain("fixture-unbound-access");
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+  it.each(["local", "remote"].flatMap(transport => ["OPENAI_API_KEY", "CODEX_API_KEY"].map(key => ({ transport, key }))))
+  ("keeps the configured $key task credential authoritative over linked auth during $transport setup", async ({ transport, key }) => {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "native-key-linked-auth-")));
+    const auth = '{"tokens":{"account_id":"unused-subscription","access_token":"unused-subscription-access"}}';
+    try {
+      await writeFile(join(home, "account-store.json"), auth, { mode: 0o600 });
+      await symlink(join(home, "account-store.json"), join(home, "auth.json"));
+      nativeProbe.mockImplementation(async input => {
+        const probeHome = join(input.runtimeDirectory, "codex-home");
+        await prepareIsolatedCodexHome({ context: null, codexHome: probeHome, sourceCodexHome: input.transportOptions.sourceCodexHome,
+          apiKey: input.environment.CODEX_API_KEY ?? input.environment.OPENAI_API_KEY });
+        expect(JSON.parse(await readFile(join(probeHome, "auth.json"), "utf8"))).toEqual({ OPENAI_API_KEY: "configured-fixture-key" });
+        await input.onCleanupConfirmed();
+        return receipt("codex", "gpt-6.1-sol");
+      });
+      const testContext = transport === "remote" ? sshContext : { companyId: "company", adapterType: "paperclip_runner", config: {} };
+      const result = await testNativeRunnerAuthentication({ ...testContext, config: { env: { CODEX_HOME: home, [key]: "configured-fixture-key" } } }, "codex", "gpt-6.1-sol");
+      expect(result.status).toBe("pass");
+      expect(nativeProbe).toHaveBeenCalledOnce();
+      expect(await readFile(join(home, "account-store.json"), "utf8")).toBe(auth);
+      expect(JSON.stringify(result)).not.toContain("configured-fixture-key");
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
   it.each(["local", "remote"].flatMap(transport => [false, true].map(linked => ({ transport, linked }))))
   ("seeds the selected subscription before isolated $transport setup (linked=$linked)", async ({ transport, linked }) => {
     const home = await realpath(await mkdtemp(join(tmpdir(), "native-selected-auth-")));

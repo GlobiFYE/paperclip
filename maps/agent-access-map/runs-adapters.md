@@ -91,8 +91,11 @@ or Legacy CLI check cannot replace that runtime evidence. Missing dependencies,
 credentials, invalid models and incompatible settings fail without silently
 changing runners. Account login remains board/owner-bound.
 
-For a linked Codex subscription, setup checks the resolved credential owner and
-stages a private probe copy before local or remote isolation. The general native
+For a linked Codex subscription with server-resolved managed credential provenance,
+setup checks the resolved owner and stages a private probe copy before local or
+remote isolation. An unbound linked `CODEX_HOME` is rejected with explicit Legacy
+or managed-account guidance. Caller configuration cannot supply that provenance.
+The general native
 home materializer retains its no-follow symlink guard. Refresh still targets the
 checked account source, and confirmed bounded retirement removes its private
 copy. Unconfirmed retirement retains the existing cleanup block and owned state.

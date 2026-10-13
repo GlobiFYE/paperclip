@@ -44,7 +44,29 @@ authored IDs, both review histories and all four incoming recovery states. Its
 27 existing controls, maintained catalog check and35-area/175-ID map check pass.
 Only JavaScript dependencies are prepared locally; native/image builds stay remote.
 
-Next action: finish focused combined-source checks and freeze one candidate. Require fresh
+The combined736 source passes368 focused checks across10 files with zero final
+skips. The initial sandbox listener failures are preserved separately; unchanged
+support probes and owned loopback execution reach the affected tests successfully.
+Incoming master `c7f4b74111d16f0b57112fa6d0b6a59c2d63bfe8` then adds fresh-task
+workspace source isolation. Its eleven server files remain exact master, and281
+affected source/trust/preparation/runtime controls pass without repeating the368.
+The catalog retains263 suites/2503 IDs and both histories.
+
+An actual task bootstrap check finds a narrow compatibility mismatch: an explicitly
+configured or operator `CODEX_HOME` with linked auth can pass setup while task
+isolation omits that link. Ordinary new defaults create no such link; regular host
+logins and server-selected managed account homes seed correctly. Keep the general
+no-follow guard. Use existing server-owned managed credential provenance to reject
+the unbound linked case with explicit Legacy/managed-account guidance, while
+retaining checked setup seeding for resolved accounts. The existing fake bootstrap
+stops before provider launch; it is not live account proof. The existing trusted
+outer managed credential-home context closes this mismatch without a new schema
+or permission field. Four linked cases reproduce false setup success before the
+guard;81 final setup controls, server no-emit and independent source review pass.
+Regular homes, API-key precedence and resolved-account setup aliases remain
+supported. Raw configuration cannot provide the trusted provenance.
+
+Next action: freeze and publish the combined candidate. Require fresh
 CI/review, affected installed-package and managed first-task proof before ready
 or merge. Historical receipts keep their literal sources. The following
 checkpoints are retained history, not the current merge state.

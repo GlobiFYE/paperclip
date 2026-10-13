@@ -855,3 +855,24 @@ visual baseline, provider call or live acceptance is claimed.
 The maintained catalog/index checker, all 27 catalog/generator/map controls and
 the 35-area/175-capability structural map check pass. No unowned generated
 artifacts or authored story files changed during this reconciliation.
+
+## Fresh-task isolation recipe reconciliation — 2026-10-13
+
+Reconciled candidate `736d32682290fe9d6c3157e47a36b31a431fb45c` with master
+`c7f4b74111d16f0b57112fa6d0b6a59c2d63bfe8`. The auto-merged catalog retains
+all 263 suites and 2,503 authored story IDs, both review histories, the Codex
+suite and all four retained-file recovery states. Regenerated the conflicted
+index from that combined catalog. Classifications and simulated-data boundaries
+remain unchanged.
+
+Inspected the incoming workspace recipe: implicit repository defaults must use
+a separately admitted remote checkout when shared Git storage overlaps private
+task work, with lifecycle and current-default provenance guards. Its catalog
+notes explicitly leave cloning, admission and live recovery outside these UI
+fixtures. The incoming reviewed fingerprints already match the merged source;
+none were silently refreshed. This is source inventory reconciliation only,
+not new browser, provider or production acceptance.
+
+The maintained catalog/index checker, all 27 catalog/generator/map controls and
+the 35-area/175-capability structural map check pass. No authored story or
+application source was changed by this reconciliation.

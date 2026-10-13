@@ -1248,7 +1248,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Creation-visibility verification recipes were updated; this story scenario is unchanged and does not prove that journey. The filter uses one lowercase label without helper text. All chat-channel tasks count as bot-created; the focused visibility stories cover human-initiated channel work.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Creation-visibility verification recipes were updated; this story scenario is unchanged and does not prove that journey. The filter uses one lowercase label without helper text. All chat-channel tasks count as bot-created; the focused visibility stories cover human-initiated channel work. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/tasks.md",
@@ -1259,7 +1259,7 @@
         "ui/storybook/fixtures/browser-use.tsx",
         "ui/storybook/stories/workspaces/browser-use-activity.stories.tsx"
       ],
-      "fingerprint": "f0e77b99e99a69532f45d58546a2324893543911771e850a47ca3452818bcf3d",
+      "fingerprint": "00c08cb6566e12b7fd9dce179296397813ea3e2ab4ee47d27cd1ca948496ca15",
       "stableId": "tasks-browser-use-task-activity",
       "sidebarTitle": "Projects and execution/Workspaces, services, and files/Tasks/Browser Use/Task activity"
     },
@@ -1273,7 +1273,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Creation-visibility verification recipes were updated; this story scenario is unchanged and does not prove that journey. The filter uses one lowercase label without helper text. All chat-channel tasks count as bot-created; the focused visibility stories cover human-initiated channel work.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Creation-visibility verification recipes were updated; this story scenario is unchanged and does not prove that journey. The filter uses one lowercase label without helper text. All chat-channel tasks count as bot-created; the focused visibility stories cover human-initiated channel work. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/tasks.md",
@@ -1283,7 +1283,7 @@
         "ui/storybook/fixtures/browser-use.tsx",
         "ui/storybook/stories/workspaces/browser-use-footer.stories.tsx"
       ],
-      "fingerprint": "b60b13c6ff934b038616eee7da6aeeaac0f595aeb7c8d80d2a2f787c7bb0dbac",
+      "fingerprint": "fda7ec26101f5b6fe68da1f7b6a96c364878c5f14884d639e406412e8341959f",
       "stableId": "tasks-browser-use-footer",
       "sidebarTitle": "Projects and execution/Workspaces, services, and files/Tasks/Browser Use/Footer"
     },
@@ -1319,7 +1319,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Creation-visibility verification recipes were updated; this story scenario is unchanged and does not prove that journey. The filter uses one lowercase label without helper text. All chat-channel tasks count as bot-created; the focused visibility stories cover human-initiated channel work.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. Creation-visibility verification recipes were updated; this story scenario is unchanged and does not prove that journey. The filter uses one lowercase label without helper text. All chat-channel tasks count as bot-created; the focused visibility stories cover human-initiated channel work. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/tasks.md",
@@ -1330,7 +1330,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/workspaces/browser-use.stories.tsx"
       ],
-      "fingerprint": "7dea88462587a256933271c48cfef7ff339f55acd1f77a38bf89ad537c63f3ae",
+      "fingerprint": "dafe2721334717ad745e72100e23577dbe3816a3b9ee9224a114ff84fbbb4729",
       "stableId": "tasks-browser-use-panel",
       "sidebarTitle": "Projects and execution/Workspaces, services, and files/Tasks/Browser Use/Panel"
     },
@@ -2732,7 +2732,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/documents-artifacts.md",
@@ -2741,7 +2741,7 @@
         "ui/storybook/stories/documents-artifacts/html-artifacts/01-preview.stories.tsx",
         "ui/storybook/support/html-artifacts/fixtures.ts"
       ],
-      "fingerprint": "9f96f1e4abf214d663906e05b0a8ce231f06217fc5f022415a84df33c1d0ac96",
+      "fingerprint": "404690079b8b85bf7aaab867266a14096f7d57bea2665032efba2f82617008df",
       "stableId": "html-artifacts-01-preview",
       "sidebarTitle": "Tasks and conversations/Documents, attachments, and work products/HTML artifacts/01 Preview"
     },
@@ -2755,7 +2755,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/documents-artifacts.md",
@@ -2765,7 +2765,7 @@
         "ui/storybook/stories/documents-artifacts/html-artifacts/02-workspace.stories.tsx",
         "ui/storybook/support/html-artifacts/fixtures.ts"
       ],
-      "fingerprint": "47c33fce5f296031d43f31d7f099abcef40393cfe51e565db542b7e8230a00a3",
+      "fingerprint": "4ced4be164f64cb1dd0158cf3afc9939e63e4447a3911b33e664544277693f0b",
       "stableId": "html-artifacts-02-workspace",
       "sidebarTitle": "Tasks and conversations/Documents, attachments, and work products/HTML artifacts/02 Workspace"
     },
@@ -2779,7 +2779,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/documents-artifacts.md",
@@ -2792,7 +2792,7 @@
         "ui/storybook/stories/documents-artifacts/html-artifacts/03-task-journey.stories.tsx",
         "ui/storybook/support/html-artifacts/fixtures.ts"
       ],
-      "fingerprint": "470396b938981d10ddc74d03cec0808aaa1fb305dcdeb8056b308c2752f7cea7",
+      "fingerprint": "c5cb892dd95ec005e52e6c61de414aedb5fe2a443a729038767028edd3c52b6d",
       "stableId": "html-artifacts-03-task-journey",
       "sidebarTitle": "Tasks and conversations/Documents, attachments, and work products/HTML artifacts/03 Task journey"
     },
@@ -3254,7 +3254,7 @@
       "status": "current",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. WorktreePicker, ReuseWorktree, CreateWithReusedWorktree and NewWorktreeAfterReuse exercise workspace selection and submitted fixture request values. Actual admission/binding and execution remain outside this story. Creation-visibility verification recipes were updated; this story scenario is unchanged and does not prove that journey. The filter uses one lowercase label without helper text. All chat-channel tasks count as bot-created; the focused visibility stories cover human-initiated channel work.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. WorktreePicker, ReuseWorktree, CreateWithReusedWorktree and NewWorktreeAfterReuse exercise workspace selection and submitted fixture request values. Actual admission/binding and execution remain outside this story. Creation-visibility verification recipes were updated; this story scenario is unchanged and does not prove that journey. The filter uses one lowercase label without helper text. All chat-channel tasks count as bot-created; the focused visibility stories cover human-initiated channel work. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/tasks.md",
@@ -3264,7 +3264,7 @@
         "ui/storybook/stories/tasks/new-task-composer.stories.tsx",
         "maps/feature-map/workspaces.md"
       ],
-      "fingerprint": "db3b18dcf012cfd2174900456dd8f8189b2f0b4287d84fbb62562bb0325a0001",
+      "fingerprint": "efb21d7fdb67867b886668295e55ac1e05f67c71029fb85b7f341c9662217705",
       "stableId": "composer-new-task",
       "sidebarTitle": "Tasks and conversations/Task creation and lifecycle/Composer/New task"
     },
@@ -4037,7 +4037,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/projects.md",
@@ -4046,7 +4046,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/projects/project-execution-workspace-strategy.stories.tsx"
       ],
-      "fingerprint": "618a389f8aa005657fc633c9a0ebdc34e0fc77df6d1cc8d0474330590d4c081c",
+      "fingerprint": "89c541df010f3ea0dafa6ed29e02882ffbbecca1aaa90a2606176ffe6b8f9f4d",
       "stableId": "workspaces-project-runtime-provision-command",
       "sidebarTitle": "Projects and execution/Projects and repositories/Workspaces/Project runtime provision command"
     },
@@ -4090,7 +4090,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed nullable project references and guarded runtime invalidations. Existing summaries remain project-bound and retain their routes; null-project execution workspace rendering and controls remain a coverage gap. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed nullable project references and guarded runtime invalidations. Existing summaries remain project-bound and retain their routes; null-project execution workspace rendering and controls remain a coverage gap. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/goals.md",
@@ -4106,7 +4106,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/projects/projects-goals-workspaces.stories.tsx"
       ],
-      "fingerprint": "83a6815f2ceea9c18eb9145f2abf7f90588dafe833c20abcd93050ee1c66114a",
+      "fingerprint": "e7330baf164a462aaef557989a6334fd61e9b1f378dd6674f34f4e7bbe8f03bb",
       "stableId": "product-projects-goals-workspaces",
       "sidebarTitle": "Projects and execution/Projects and repositories/Product/Projects Goals Workspaces"
     },
@@ -4790,14 +4790,14 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/workspaces.md",
         "ui/src/components/SearchableSelect.tsx",
         "ui/storybook/stories/workspaces/searchable-select.stories.tsx"
       ],
-      "fingerprint": "524803af7c926b60e8c636031f703d4bb4abe45cd4832c7985f81c8f4d0cb035",
+      "fingerprint": "e34c07642d243f0011ef4c589cfd061f1b20477f10ee3e299f5c197982acee3c",
       "stableId": "components-searchableselect-workspace-picker",
       "sidebarTitle": "Projects and execution/Workspaces, services, and files/Components/SearchableSelect/Workspace picker"
     },
@@ -5665,7 +5665,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/workspaces.md",
@@ -5673,7 +5673,7 @@
         "ui/src/components/IssueWorkspaceCard.tsx",
         "ui/storybook/stories/workspaces/workspace-file-browser.stories.tsx"
       ],
-      "fingerprint": "980fcd9a6905ac1eae10efeb7979dd8b3769c2cc7d625d4e0ba4b091f4b4d614",
+      "fingerprint": "a37dfdde49f89e907842859bfebde7d3c88a4ebabce4d003a9e4f722b73bb098",
       "stableId": "issue-workspace-file-browser",
       "sidebarTitle": "Projects and execution/Workspaces, services, and files/Issue/Workspace File Browser"
     },
@@ -5686,14 +5686,14 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed ExecutionWorkspaceDetail null-project handling. This suite mounts only the unchanged RuntimeProvisionStatusValue inside a local context row; it does not exercise the full detail page or projectless queries. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed ExecutionWorkspaceDetail null-project handling. This suite mounts only the unchanged RuntimeProvisionStatusValue inside a local context row; it does not exercise the full detail page or projectless queries. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/workspaces.md",
         "ui/src/pages/ExecutionWorkspaceDetail.tsx",
         "ui/storybook/stories/workspaces/workspace-runtime-provisioning.stories.tsx"
       ],
-      "fingerprint": "f8a7316fb6637151d8da32b637136408cd6fd9d505fe2a2a47f3c0d670b0eeec",
+      "fingerprint": "4a4e9dc99829632e221a1c558f54502bbba8b1547768d0fdce97cad3c0c5fc02",
       "stableId": "workspaces-runtime-provisioning-status",
       "sidebarTitle": "Projects and execution/Workspaces, services, and files/Workspaces/Runtime provisioning status"
     },
@@ -5706,14 +5706,14 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence.",
+      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Task-workspace reconciliation reviewed the expanded workspace recipe; these examples do not establish durable task-folder continuity, repository authorization or sandbox admission. The workspace recipe now requires child boundary, safe reopen and checkpoint ancestry controls; these backend checks are not established by this fixture. The provisioning recipe requires controller script denial for remote selections and copy-only local source choices, including retained denial through metadata changes and reopening; these fixtures do not verify execution placement. Canonical default provisioning follows configured policy, primary, creation time and ID; these fixtures do not run source hooks or establish this backend precedence. The added verification recipe documents remote-source isolation and lifecycle guards; existing fixtures do not establish live provider recovery. The source recipe now excludes literal and task-independent branch templates; these fixtures do not execute that backend admission guard. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/workspaces.md",
         "ui/src/components/WorkspaceServiceControlBar.tsx",
         "ui/storybook/stories/workspaces/workspace-service-control-bar.stories.tsx"
       ],
-      "fingerprint": "b9cd51c58b31ab445e2997b9f2a23c7a7b3f4ecd7b6dd39fc0f35ae0779311df",
+      "fingerprint": "01ffe1c604d850af606be5ebd4a4ba652716ef6b1ca833d6aa6f8d564ced64c1",
       "stableId": "workspaces-service-control-bar",
       "sidebarTitle": "Projects and execution/Workspaces, services, and files/Workspaces/Service control bar"
     },
@@ -5875,7 +5875,7 @@
       "status": "current",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Readiness dialog with loading, inspection failure/403, running-task block and pending/accepted archive response. No real workspace cleanup, Git removal or service shutdown is performed.",
+      "notes": "Readiness dialog with loading, inspection failure/403, running-task block and pending/accepted archive response. No real workspace cleanup, Git removal or service shutdown is performed. The separate remote-source recipe requires Git isolation and preservation of unpublished task work; these close-readiness fixtures do not exercise repository cloning or reconstruction. The remote fallback requires current default provenance; these examples do not prove admission for explicit or inherited checkout bindings.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/workspaces.md",
@@ -5887,7 +5887,7 @@
       ],
       "stableId": "feature-workspace-close",
       "sidebarTitle": "Projects and execution/Workspaces, services, and files/Close readiness",
-      "fingerprint": "b3d1d32d7f1f51f837ecd04f64ca1b6b7e8b36c921d54b638898ef06512617cc"
+      "fingerprint": "08b1e604b188130184296c8aee286f8dde12c8026654f0760388bd492e1ffe5b"
     },
     {
       "file": "ui/storybook/stories/budgets-costs/budget-resolution.stories.tsx",

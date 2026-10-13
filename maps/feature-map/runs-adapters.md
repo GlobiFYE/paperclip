@@ -59,10 +59,13 @@ existing agent, make an unrelated edit, and confirm both its persisted runner an
 next run stay unchanged. Use [hiring/import preservation](./agents.md#hire-agent)
 for approval and portability controls.
 
-Test native Codex with a saved subscription whose auth file is a managed link,
-as well as a regular file and an API-key account. Setup must seed the isolated
-probe from the checked account without exposing credentials or changing its
-saved runner. Dangling or incorrectly owned credentials must fail clearly. The
+Test native Codex with a saved subscription whose setup auth file is a managed
+link, as well as a regular file and an API-key account. Setup must seed the
+isolated probe from the checked account without exposing credentials or changing
+its saved runner. An unbound configured `CODEX_HOME` with linked credentials must
+fail setup with managed-account or explicit Legacy guidance; it must not claim
+readiness when task isolation would omit the file. Dangling or incorrectly owned
+credentials must also fail clearly. The
 private probe copy must be removed after confirmed retirement following success,
 failure or cancellation. Unconfirmed shutdown remains a cleanup failure.
 Existing setup controls use fake credentials; real account execution remains
