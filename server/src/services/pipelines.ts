@@ -3013,6 +3013,7 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
       const caseWorkspace = automation.executionWorkspaceScope === "case"
         ? await resolvePipelineCaseWorkspace(db, {
             companyId: execution.companyId,
+            caseId: execution.caseId,
             workspaceRef: detail.case.workspaceRef,
             projectId: automation.projectId ?? routine.projectId ?? null,
           })

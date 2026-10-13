@@ -367,6 +367,27 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
     expect((await caseRow(created.case.id)).workspaceRef).toEqual({ sourceIssueId: first.id });
   });
 
+  it("a workspace_ref pointing at a workspace no stage task of the case is bound to is not reused", async () => {
+    const { companyId, projectId, pipeline } = await seed({ scope: "case" });
+    const other = await svc.ingestCase({ companyId, pipelineId: pipeline.id, caseKey: "T-6", title: "Other", actor: userActor });
+    const otherIssue = await latestStageIssue(other.case.id);
+    const otherWorkspaceId = await realiseWorkspace({ companyId, projectId, issueId: otherIssue.id });
+
+    const created = await svc.ingestCase({ companyId, pipelineId: pipeline.id, caseKey: "T-7", title: "Ticket", actor: userActor });
+    await latestStageIssue(created.case.id);
+    await svc.patchCaseContent({
+      companyId,
+      caseId: created.case.id,
+      workspaceRef: { sourceIssueId: otherIssue.id, executionWorkspaceId: otherWorkspaceId },
+      actor: userActor,
+    });
+
+    const second = await move(companyId, created.case.id, "in_progress");
+    expect(second.executionWorkspaceId).toBeNull();
+    expect(second.executionWorkspacePreference).not.toBe("reuse_existing");
+    expect((await caseRow(created.case.id)).workspaceRef).toEqual({ sourceIssueId: second.id });
+  });
+
   describe("terminal-workspace reaper", () => {
     // A worktree whose HEAD is the base: delivered by ancestry, so only the guards decide.
     async function seedDeliveredCaseWorkspace(input: {
@@ -375,6 +396,10 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
       openBoundIssue?: boolean;
       /** The case's first task was bound to this already existing workspace. */
       refIssueReusedWorkspace?: boolean;
+      /** A stage of the pipeline opts in to the case scope (default true). */
+      optedIn?: boolean;
+      /** The case's tasks are its own stage tasks (automation links); default true. */
+      linkStageTasks?: boolean;
     }) {
       const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-case-workspace-"));
       tempDirs.add(repoRoot);
@@ -391,7 +416,7 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
       await runGit(repoRoot, ["branch", branchName]);
       await runGit(repoRoot, ["worktree", "add", worktreePath, branchName]);
 
-      const { companyId, projectId, pipeline } = await seed({ scope: null });
+      const { companyId, projectId, pipeline } = await seed({ scope: input.optedIn === false ? null : "case" });
       const [workspace] = await db.insert(executionWorkspaces).values({
         companyId,
         projectId,
@@ -415,8 +440,8 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
         executionWorkspaceId: workspace!.id,
       }).returning();
       await db.update(executionWorkspaces).set({ sourceIssueId: sourceIssue!.id }).where(eq(executionWorkspaces.id, workspace!.id));
-      if (input.openBoundIssue) {
-        await db.insert(issues).values({
+      const openBoundIssueId = input.openBoundIssue
+        ? await db.insert(issues).values({
           companyId,
           projectId,
           title: "Later stage task",
@@ -424,8 +449,8 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
           priority: "medium",
           executionWorkspaceId: workspace!.id,
           executionWorkspacePreference: "reuse_existing",
-        });
-      }
+        }).returning().then((rows) => rows[0]!.id)
+        : null;
       const refIssueId = input.refIssueReusedWorkspace
         ? await db.insert(issues).values({
           companyId,
@@ -448,10 +473,22 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
           : { sourceIssueId: refIssueId },
         actor: userActor,
       });
+      if (input.linkStageTasks !== false) {
+        // What a stage automation records for each stage task it creates.
+        for (const issueId of [refIssueId, openBoundIssueId].filter((id): id is string => id !== null)) {
+          await db.insert(pipelineCaseIssueLinks).values({
+            companyId,
+            caseId: created.case.id,
+            issueId,
+            role: "automation",
+            automationAttemptId: randomUUID(),
+          });
+        }
+      }
       if (input.caseTerminal) {
         await db.update(pipelineCases).set({ terminalKind: "done", terminalAt: new Date() }).where(eq(pipelineCases.id, created.case.id));
       }
-      return workspace!.id;
+      return { workspaceId: workspace!.id, caseId: created.case.id, companyId, refIssueId };
     }
 
     async function statusOf(workspaceId: string) {
@@ -460,8 +497,8 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
     }
 
     it("keeps a workspace an open case holds, by id or by its source issue", async () => {
-      const byId = await seedDeliveredCaseWorkspace({ caseTerminal: false, recordWorkspaceId: true });
-      const bySourceIssue = await seedDeliveredCaseWorkspace({ caseTerminal: false, recordWorkspaceId: false });
+      const { workspaceId: byId } = await seedDeliveredCaseWorkspace({ caseTerminal: false, recordWorkspaceId: true });
+      const { workspaceId: bySourceIssue } = await seedDeliveredCaseWorkspace({ caseTerminal: false, recordWorkspaceId: false });
 
       const sweep = await workspaces.sweepTerminalWorkspaces();
 
@@ -471,7 +508,7 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
     }, 30_000);
 
     it("keeps a workspace an open case's source issue was bound to, before the id is recorded", async () => {
-      const workspaceId = await seedDeliveredCaseWorkspace({
+      const { workspaceId } = await seedDeliveredCaseWorkspace({
         caseTerminal: false,
         recordWorkspaceId: false,
         refIssueReusedWorkspace: true,
@@ -484,7 +521,7 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
     }, 30_000);
 
     it("keeps it while a terminal case still has an open task bound to it", async () => {
-      const workspaceId = await seedDeliveredCaseWorkspace({ caseTerminal: true, recordWorkspaceId: true, openBoundIssue: true });
+      const { workspaceId } = await seedDeliveredCaseWorkspace({ caseTerminal: true, recordWorkspaceId: true, openBoundIssue: true });
 
       const sweep = await workspaces.sweepTerminalWorkspaces();
 
@@ -493,7 +530,40 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
     }, 30_000);
 
     it("reclaims it once the case is terminal and no bound task is open", async () => {
-      const workspaceId = await seedDeliveredCaseWorkspace({ caseTerminal: true, recordWorkspaceId: true });
+      const { workspaceId } = await seedDeliveredCaseWorkspace({ caseTerminal: true, recordWorkspaceId: true });
+
+      const sweep = await workspaces.sweepTerminalWorkspaces();
+
+      expect(sweep).toMatchObject({ archived: 1, skippedNonTerminalTree: 0 });
+      expect(await statusOf(workspaceId)).toBe("archived");
+    }, 30_000);
+
+    it("a workspace_ref set through the case update API does not hold a workspace without an opted-in stage", async () => {
+      const { workspaceId, caseId, companyId, refIssueId } = await seedDeliveredCaseWorkspace({
+        caseTerminal: false,
+        recordWorkspaceId: false,
+        optedIn: false,
+      });
+      await svc.patchCaseContent({
+        companyId,
+        caseId,
+        workspaceRef: { sourceIssueId: refIssueId, executionWorkspaceId: workspaceId },
+        actor: userActor,
+      });
+      expect((await caseRow(caseId)).workspaceRef).toEqual({ sourceIssueId: refIssueId, executionWorkspaceId: workspaceId });
+
+      const sweep = await workspaces.sweepTerminalWorkspaces();
+
+      expect(sweep).toMatchObject({ archived: 1, skippedNonTerminalTree: 0 });
+      expect(await statusOf(workspaceId)).toBe("archived");
+    }, 30_000);
+
+    it("an opted-in case does not hold a workspace none of its stage tasks is bound to", async () => {
+      const { workspaceId } = await seedDeliveredCaseWorkspace({
+        caseTerminal: false,
+        recordWorkspaceId: true,
+        linkStageTasks: false,
+      });
 
       const sweep = await workspaces.sweepTerminalWorkspaces();
 

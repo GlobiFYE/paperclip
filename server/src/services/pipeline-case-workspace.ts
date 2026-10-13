@@ -11,16 +11,48 @@
 //
 // The next scoped stage entry resolves `executionWorkspaceId` from the source issue, so no
 // heartbeat hook is needed. The terminal-workspace reaper keeps a workspace that an open
-// case references (see `pipelineCaseHoldsExecutionWorkspaceSql`).
-import { and, eq, sql, type SQL } from "drizzle-orm";
+// case holds (see `pipelineCaseHoldsExecutionWorkspaceSql`).
+//
+// `workspace_ref` is caller-editable (PATCH /cases/:caseId), so it is only a hint. A case
+// reuses or holds a workspace only when one of its own stage tasks (an automation issue
+// link the server created) is bound to that workspace, and the hold also needs a stage of
+// the case's pipeline that opts in to the case scope.
+import { and, eq, isNotNull, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { executionWorkspaces, issues, pipelineCases } from "@paperclipai/db";
+import { executionWorkspaces, issues, pipelineCaseIssueLinks, pipelineCases, pipelineStages } from "@paperclipai/db";
 import type { IssueExecutionWorkspaceSettings, PipelineCaseWorkspaceRef } from "@paperclipai/shared";
 import { issueExecutionWorkspaceModeForPersistedWorkspace } from "./execution-workspace-policy.js";
 
 type DbReader = Pick<Db, "select" | "update">;
 
 const CLOSED_WORKSPACE_STATUSES = new Set(["archived", "cleanup_failed"]);
+
+/**
+ * True when a stage task of this case is bound to the workspace. Only links the stage
+ * automation created count (role "automation" with an automation attempt); a manual issue
+ * link or a hand-edited workspace_ref does not tie a workspace to the case.
+ */
+async function caseStageTaskBoundToWorkspace(
+  db: DbReader,
+  input: { companyId: string; caseId: string; workspaceId: string },
+) {
+  const rows = await db
+    .select({ id: pipelineCaseIssueLinks.id })
+    .from(pipelineCaseIssueLinks)
+    .innerJoin(
+      issues,
+      and(eq(issues.id, pipelineCaseIssueLinks.issueId), eq(issues.companyId, input.companyId)),
+    )
+    .where(and(
+      eq(pipelineCaseIssueLinks.companyId, input.companyId),
+      eq(pipelineCaseIssueLinks.caseId, input.caseId),
+      eq(pipelineCaseIssueLinks.role, "automation"),
+      isNotNull(pipelineCaseIssueLinks.automationAttemptId),
+      eq(issues.executionWorkspaceId, input.workspaceId),
+    ))
+    .limit(1);
+  return rows.length > 0;
+}
 
 function readId(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
@@ -51,7 +83,9 @@ export type PipelineCaseWorkspaceResolution =
  * Decide which workspace a scoped stage task of this case uses.
  *
  * - A live workspace in `workspace_ref.executionWorkspaceId`, or the workspace of
- *   `workspace_ref.sourceIssueId`, is reused.
+ *   `workspace_ref.sourceIssueId`, is reused, but only when a stage task of this case is
+ *   bound to it. A ref to any other workspace (for example one set through the case update
+ *   API) means a fresh workspace, and the caller records the new stage task.
  * - A workspace from another project than the stage task's project (including a project
  *   workspace for a project-free stage task) is not reused, and the case keeps its ref
  *   (`record: false`).
@@ -63,7 +97,7 @@ export type PipelineCaseWorkspaceResolution =
  */
 export async function resolvePipelineCaseWorkspace(
   db: DbReader,
-  input: { companyId: string; workspaceRef: unknown; projectId: string | null },
+  input: { companyId: string; caseId: string; workspaceRef: unknown; projectId: string | null },
 ): Promise<PipelineCaseWorkspaceResolution> {
   const ref = readPipelineCaseWorkspaceRef(input.workspaceRef);
   let workspaceId = readId(ref.executionWorkspaceId);
@@ -89,6 +123,13 @@ export async function resolvePipelineCaseWorkspace(
     .where(and(eq(executionWorkspaces.id, workspaceId), eq(executionWorkspaces.companyId, input.companyId)))
     .then((rows) => rows[0] ?? null);
   if (!workspace || workspace.closedAt || CLOSED_WORKSPACE_STATUSES.has(workspace.status)) {
+    return { kind: "fresh", record: true };
+  }
+  if (!(await caseStageTaskBoundToWorkspace(db, {
+    companyId: input.companyId,
+    caseId: input.caseId,
+    workspaceId: workspace.id,
+  }))) {
     return { kind: "fresh", record: true };
   }
   // A project-free stage task must not land in a project workspace (and the reverse):
@@ -142,13 +183,18 @@ export async function writePipelineCaseWorkspaceRef(
 }
 
 /**
- * True while a pipeline case holds this workspace: a case references it in workspace_ref
- * (by id, or by its source issue before the id is recorded) and the case is still open,
- * or the case is terminal but an issue bound to the workspace is still open.
- * The source issue match covers both directions: the workspace was realised for that
- * issue (`source_issue_id`), or that issue was bound to an existing workspace
- * (`execution_workspace_id`), in which case the workspace's own source issue differs.
- * Workspaces no case references are unaffected.
+ * True while a pipeline case holds this workspace. All of these must hold:
+ * - the case references it in workspace_ref (by id, or by its source issue before the id
+ *   is recorded). The source issue match covers both directions: the workspace was
+ *   realised for that issue (`source_issue_id`), or that issue was bound to an existing
+ *   workspace (`execution_workspace_id`), in which case the workspace's own source issue
+ *   differs. workspace_ref is caller-editable, so it only selects candidates;
+ * - a stage task of the case (an automation issue link the server created) is bound to
+ *   the workspace;
+ * - a stage of the case's pipeline opts in to `executionWorkspaceScope: "case"`;
+ * - the case is still open, or it is terminal but an issue bound to the workspace is
+ *   still open.
+ * Workspaces no case holds are unaffected.
  */
 export function pipelineCaseHoldsExecutionWorkspaceSql(workspace: {
   id: string;
@@ -173,6 +219,27 @@ export function pipelineCaseHoldsExecutionWorkspaceSql(workspace: {
             AND ref_issue.id::text = held_case.workspace_ref ->> 'sourceIssueId'
             AND ref_issue.execution_workspace_id = ${workspace.id}
         )
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM ${pipelineCaseIssueLinks} held_link
+        JOIN ${issues} held_issue
+          ON held_issue.id = held_link.issue_id
+          AND held_issue.company_id = ${workspace.companyId}
+        WHERE held_link.company_id = ${workspace.companyId}
+          AND held_link.case_id = held_case.id
+          AND held_link.role = 'automation'
+          AND held_link.automation_attempt_id IS NOT NULL
+          AND held_issue.execution_workspace_id = ${workspace.id}
+      )
+      AND EXISTS (
+        SELECT 1
+        FROM ${pipelineStages} held_stage
+        WHERE held_stage.pipeline_id = held_case.pipeline_id
+          AND (
+            held_stage.config -> 'onEnter' ->> 'executionWorkspaceScope' = 'case'
+            OR held_stage.config -> 'automation' ->> 'executionWorkspaceScope' = 'case'
+          )
       )
       AND (
         (held_case.terminal_kind IS NULL AND held_case.retired_at IS NULL)
