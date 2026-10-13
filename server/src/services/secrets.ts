@@ -2895,7 +2895,7 @@ export function secretService(db: Db | DbTransaction) {
         status: companySecrets.status,
       })
       .from(companySecrets)
-      .where(and(eq(companySecrets.companyId, companyId), ne(companySecrets.status, "deleted")));
+      .where(and(eq(companySecrets.companyId, companyId), eq(companySecrets.scope, "company"), ne(companySecrets.status, "deleted")));
     return {
       byProviderConfigExternalRef: new Map(
         activeSecrets
@@ -3472,6 +3472,23 @@ export function secretService(db: Db | DbTransaction) {
 
   return {
     listProviders: () => listSecretProviders(),
+
+    async hasInstanceAccountHomeClaim(companyId: string, accountHomeDir: string): Promise<boolean> {
+      try {
+        const rows = await db.select().from(companySecrets).where(and(eq(companySecrets.companyId, companyId),
+          eq(companySecrets.scope, "instance"), ne(companySecrets.status, "deleted")));
+        for (const row of rows) {
+          if (!row.ownerAgentId || !row.ownerPluginId) return true;
+          const resolved = await resolveSecretValueInternal(companyId, row.id, "latest", {
+            instanceOwner: { agentId: row.ownerAgentId, pluginId: row.ownerPluginId },
+            accessContext: { consumerType: "system", consumerId: DEVICE_LOGIN_SECRET_CHECK_CONSUMER_ID,
+              actorType: "system", actorId: null },
+          });
+          if (resolved.value === accountHomeDir) return true;
+        }
+        return false;
+      } catch { return true; }
+    },
 
     agentInstance: {
       async read(scope: { companyId: string; agentId: string; pluginId: string }): Promise<Record<string, string>> {

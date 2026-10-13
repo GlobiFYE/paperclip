@@ -242,7 +242,9 @@ This uses the existing secret service, `company_secrets`, secret versions, and
 The `instance` scope requires an owning agent and plugin. Agent/plugin deletion
 cascades the native secret records. These secrets are excluded from company
 catalogs, normal secret references, agent access, plugin state, and public agent
-records. The general SDK `ctx.secrets.resolve()` remains read-only.
+records. The general SDK `ctx.secrets.resolve()` remains read-only. Company vault imports
+ignore instance-owned names and keys. Device-login cleanup checks instance-owned
+account-home claims privately and keeps the directory if a value cannot be read.
 
 Trusted server runtime code can resolve values with
 `agentInstanceSecretService(db).read({ companyId, agentId, pluginId })` after its

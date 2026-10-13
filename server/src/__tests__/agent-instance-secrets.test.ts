@@ -12,6 +12,8 @@ import { createLifecycleStore } from "../modules/agent-lifecycle/adapters/postgr
 import { logger } from "../middleware/logger.js";
 import { resolveCodexAuthCacheDir } from "@paperclipai/adapter-codex-local/server";
 import path from "node:path";
+import { mkdir, rm } from "node:fs/promises";
+import { awsSecretsManagerProvider } from "../secrets/aws-secrets-manager-provider.js";
 
 const support = await getEmbeddedPostgresTestSupport();
 (support.supported ? describe : describe.skip)("agent instance secrets use the tenant secret system", () => {
@@ -177,6 +179,50 @@ const support = await getEmbeddedPostgresTestSupport();
       expect(call.mock.calls[0][2].instanceSecrets).toEqual({});
       expect(await f.service.read(f.scope)).toEqual({});
     } finally { vi.stubEnv("PAPERCLIP_SECRETS_MASTER_KEY", masterKey); }
+  });
+
+  it("allows company vault imports with the same name and key as an instance secret", async () => {
+    const f = await fixture();
+    await f.service.apply(f.request, pluginId, { runtime });
+    const secrets = secretService(db);
+    const vault = await secrets.createProviderConfig(companyId, {
+      provider: "aws_secrets_manager", displayName: "Import fixture", config: { region: "us-east-1" },
+    });
+    const externalRef = "arn:aws:secretsmanager:us-east-1:123456789012:secret:runtime";
+    const list = vi.spyOn(awsSecretsManagerProvider, "listRemoteSecrets").mockResolvedValue({
+      secrets: [{ externalRef, name: "runtime", providerVersionRef: null, metadata: {} }],
+    });
+    try {
+      const preview = await secrets.previewRemoteImport(companyId, { providerConfigId: vault.id });
+      expect(preview.candidates[0]).toMatchObject({ status: "ready", importable: true, conflicts: [] });
+      const result = await secrets.importRemoteSecrets(companyId, {
+        providerConfigId: vault.id, secrets: [{ externalRef, name: "runtime", key: "runtime" }],
+      });
+      expect(result).toMatchObject({ importedCount: 1, skippedCount: 0, errorCount: 0 });
+      expect(await f.service.read(f.scope)).toEqual({ runtime });
+      const imported = await secrets.getByName(companyId, "runtime");
+      expect(imported).toMatchObject({ scope: "company", externalRef });
+      await secrets.remove(imported!.id);
+    } finally { list.mockRestore(); }
+  });
+
+  it("protects instance-owned account homes without exposing their values in the company catalog", async () => {
+    const f = await fixture();
+    const accountHome = path.join(resolveCodexAuthCacheDir(undefined, companyId), randomUUID());
+    await mkdir(accountHome, { recursive: true });
+    const secrets = secretService(db);
+    try {
+      await f.service.apply(f.request, pluginId, { account_home: accountHome });
+      expect(await secrets.hasInstanceAccountHomeClaim(companyId, accountHome)).toBe(true);
+      expect(await secrets.hasInstanceAccountHomeClaim(randomUUID(), accountHome)).toBe(false);
+      expect(await secrets.hasInstanceAccountHomeClaim(companyId, accountHome + "-other")).toBe(false);
+      expect((await secrets.list(companyId)).some(secret => secret.ownerAgentId === f.agent.id)).toBe(false);
+      const resolve = vi.spyOn(localEncryptedProvider, "resolveVersion").mockRejectedValueOnce(new Error("unavailable"));
+      try { expect(await secrets.hasInstanceAccountHomeClaim(companyId, accountHome)).toBe(true); }
+      finally { resolve.mockRestore(); }
+      await f.service.apply(f.request, pluginId, { account_home: null });
+      expect(await secrets.hasInstanceAccountHomeClaim(companyId, accountHome)).toBe(false);
+    } finally { await rm(accountHome, { recursive: true, force: true }); }
   });
 
   it("keeps same-named company and other-agent secrets independent", async () => {
