@@ -912,6 +912,7 @@ const chatPrincipalLinkResponseSchema = z
     externalDetail: z.string(),
     paperclipUserId: z.string().nullable(),
     paperclipUserLabel: z.string().nullable(),
+    paperclipUserImage: z.string().nullable(),
     status: chatIdentityLinkStatusSchema,
   })
   .strict();
