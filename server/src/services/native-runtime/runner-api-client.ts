@@ -56,9 +56,6 @@ export function validateRunnerApiCall(value: unknown, context: RunnerApiContext)
   if (input.responseText && operation.method !== "GET") throw badRequest("responseText requires a GET operation; read the saved artifact instead of repeating a mutation");
   if (!operation.allowedModes.includes(context.workMode)) throw forbidden("call_api permits only reads in Ask and Plan modes; use the permitted dedicated tools");
   if (input.pathParams?.companyId && input.pathParams.companyId !== context.companyId) throw forbidden("API call belongs to another company");
-  // The HTTP router owns endpoint and payload authorization, just as it does
-  // for a legacy agent using the same credential and run context. Do not add a
-  // second endpoint/field permission model to the transport.
   const contentType = (input.contentType ?? "application/json").split(";", 1)[0].trim().toLowerCase();
   if (input.body !== undefined && !input.files?.length) {
     const requestSchema = operation.requestBody?.content?.[contentType]?.schema as { type?: string } | undefined;
@@ -191,8 +188,6 @@ export async function executeRunnerApi(input: RunnerApiCall, context: RunnerApiC
     response = await (io.fetch ?? fetch)(url, { method: operation.method, headers, body, redirect: "manual", signal: controller.signal });
     clearTimeout(timeout);
     if (sensitiveResponse) {
-      // Credential responses must not spill into plaintext temporary files or
-      // saved assets. Their replay receipt is encrypted by the tool authority.
       timeout = setTimeout(() => controller.abort(), RUNNER_API_TIMEOUT_MS);
       bytes = await readBoundedResponse(response);
       await io.beforeDispatch?.();

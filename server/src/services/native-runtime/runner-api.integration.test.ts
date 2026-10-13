@@ -186,10 +186,68 @@ else if(m.id!==undefined) send({id:m.id,result:{}});
     const url = `${fixture.apiUrl}/api/assets/${saved.artifact.artifactId}/content`;
     const owner = createLocalAgentJwt(fixture.agentId, fixture.companyId, "paperclip_runner", fixture.runId);
     expect((await fetch(url, { headers: { Authorization: `Bearer ${owner}` } })).status).toBe(200);
-    const [peer] = await server.db.insert(agents).values({ companyId: fixture.companyId, name: "Peer snapshot reader", status: "active" }).returning();
-    const [peerRun] = await server.db.insert(heartbeatRuns).values({ companyId: fixture.companyId, agentId: peer.id, status: "running" }).returning();
+    const [peer] = await server.db.insert(agents).values({ companyId: fixture.companyId, name: "Peer snapshot reader", status: "active", role: "ceo", adapterType: "paperclip_runner" }).returning();
+    const [peerRun] = await server.db.insert(heartbeatRuns).values({ companyId: fixture.companyId, agentId: peer.id, status: "running", runtimeMode: "native", nativeIssueId: fixture.blockerId, contextSnapshot: { issueId: fixture.blockerId } }).returning();
+    await server.db.update(issues).set({ assigneeAgentId: peer.id, status: "in_progress", executionRunId: peerRun.id,
+      description: `![private](/api/assets/${saved.artifact.artifactId}/content)`,
+    }).where(eq(issues.id, fixture.blockerId));
     const token = createLocalAgentJwt(peer.id, fixture.companyId, "codex_local", peerRun.id);
     expect((await fetch(url, { headers: { Authorization: `Bearer ${token}` } })).status).toBe(404);
+    const peerAuthority = new PaperclipRunnerToolAuthority(server.db, {
+      ...fixture.authority.binding, agentId: peer.id, runId: peerRun.id, issueId: fixture.blockerId,
+    });
+    await expect(peerAuthority.execute({ tool: "call_api", callId: "peer-snapshot-upload", arguments: {
+      operationId: "POST /api/companies/{companyId}/issues/{issueId}/attachments", pathParams: { issueId: fixture.blockerId },
+      files: [{ artifactId: saved.artifact.artifactId }],
+    } })).rejects.toThrow("Artifact is not available to this actor");
+    const exported = await peerAuthority.execute({ tool: "call_api", callId: "peer-snapshot-export", arguments: {
+      operationId: "POST /api/companies/{companyId}/exports", body: { include: { issues: true }, issues: [fixture.blockerId] },
+    } }) as any;
+    expect(exported).toMatchObject({ ok: true, status: 200 });
+    for (const [path, file] of Object.entries(exported.data.files)) {
+      if (!path.startsWith("blobs/")) continue;
+      expect(Buffer.from((file as { data: string }).data, "base64").toString("utf8")).not.toContain("Private API response");
+    }
+    expect(await peerAuthority.execute({ tool: "call_api", callId: "peer-snapshot-logo", arguments: {
+      operationId: "PATCH /api/companies/{companyId}/branding", body: { logoAssetId: saved.artifact.artifactId },
+    } })).toMatchObject({ ok: false, status: 422 });
+    const ownUpload = await fixture.authority.execute({ tool: "call_api", callId: "own-snapshot-upload", arguments: {
+      operationId: "POST /api/companies/{companyId}/issues/{issueId}/attachments", pathParams: { issueId: fixture.issueId },
+      files: [{ artifactId: saved.artifact.artifactId }],
+    } });
+    expect(ownUpload).toMatchObject({ ok: true, status: 201 });
+  });
+
+  it("keeps restored webhook secrets inline and encrypts their replay receipts", async () => {
+    const fixture = await server.fixture({ disableWakeOnDemand: true, conversation: true });
+    vi.stubEnv("PAPERCLIP_API_URL", fixture.apiUrl);
+    await server.db.update(issues).set({ responsibleUserId: fixture.responsibleUserId }).where(eq(issues.id, fixture.issueId));
+    const call = (callId: string, args: unknown) => fixture.authority.execute({ tool: "call_api", callId, arguments: args }) as Promise<any>;
+    const created = await call("webhook-routine", { operationId: "POST /api/companies/{companyId}/routines", body: {
+      title: "Restored webhook", assigneeAgentId: fixture.agentId, projectId: fixture.projectId, parentIssueId: fixture.issueId, status: "paused",
+    } });
+    expect(created).toMatchObject({ status: 201 });
+    const routineId = created.data.id;
+    await server.db.update(routines).set({ description: "Restored routine description\n".repeat(2000) }).where(eq(routines.id, routineId));
+    const trigger = await call("webhook-trigger", { operationId: "POST /api/routines/{id}/triggers", pathParams: { id: routineId },
+      body: { kind: "webhook", signingMode: "bearer", replayWindowSec: 300 },
+    });
+    expect(trigger).toMatchObject({ status: 201 });
+    expect(await call("delete-webhook", { operationId: "DELETE /api/routine-triggers/{id}", pathParams: { id: trigger.data.trigger.id } }))
+      .toMatchObject({ status: 204 });
+    const args = { operationId: "POST /api/routines/{id}/revisions/{revisionId}/restore",
+      pathParams: { id: routineId, revisionId: trigger.data.revision.id },
+    };
+    const restored = await call("restore-webhook", args);
+    expect(restored).toMatchObject({ ok: true, status: 200, data: { secretMaterials: [expect.objectContaining({ webhookSecret: expect.any(String) })] } });
+    expect(restored).not.toHaveProperty("artifact");
+    expect(await call("restore-webhook", args)).toEqual(restored);
+    const value = restored.data.secretMaterials[0].webhookSecret;
+    const [run] = await server.db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, fixture.runId));
+    expect(JSON.stringify(run.resultJson)).not.toContain(value);
+    expect(Object.values((run.resultJson as any).apiToolReceipts).find((receipt: any) => receipt.operationId === args.operationId))
+      .toHaveProperty("encryptedResult");
+    expect((await fixture.snapshot()).assets.filter(asset => asset.objectKey.includes("/runner-api/"))).toEqual([]);
   });
 
   it("returns and replays scoped secret values without plaintext receipts or response assets", async () => {

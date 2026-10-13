@@ -42,6 +42,7 @@ import { createLocalAgentJwt } from "../../agent-auth-jwt.js";
 import { getStorageService } from "../../storage/index.js";
 import type { StorageService } from "../../storage/types.js";
 import { assetService } from "../assets.js";
+import { canActorReadAssetContent } from "../asset-content-access.js";
 import { getSecretProvider } from "../../secrets/provider-registry.js";
 import { runnerApiSensitiveResponse } from "./runner-api-sensitive-response.js";
 import { workspaceFileResourceService } from "../workspace-file-resources.js";
@@ -710,8 +711,6 @@ export class PaperclipRunnerToolAuthority {
     issue: { workMode: string };
     run: { responsibleUserId: string | null; contextSnapshot: unknown };
   }) {
-    // Preserve the scope admitted at run creation, even if the task mode is
-    // edited later. This matches the legacy runner's issued REST credential.
     const snapshot = record(context.run.contextSnapshot);
     const skillTest = record(snapshot.paperclipAgentJwtScope).kind === "skill_test" || Boolean(snapshot.paperclipSkillTest)
       || context.issue.workMode === "skill_test";
@@ -782,9 +781,6 @@ export class PaperclipRunnerToolAuthority {
     };
     if (["GET", "HEAD", "OPTIONS"].includes(operation.method)) return execute();
     if (!callId || callId.length > 500) throw badRequest("A bounded runner call id is required");
-    // Prepare encryption before reserving or dispatching a credential call.
-    // A broken secret store must not create an unknown mutation receipt when
-    // no HTTP request has occurred.
     const provider = sensitiveResponse ? getSecretProvider("local_encrypted") : null;
     if (provider) await provider.createSecret({ value: "runner-api-receipt-key-check" });
     // Reserve durably before HTTP dispatch, without holding a DB lock over an
@@ -944,6 +940,12 @@ export class PaperclipRunnerToolAuthority {
     if (file.artifactId) {
       const asset = await assetService(this.db).getById(file.artifactId);
       if (!asset || asset.companyId !== this.binding.companyId) throw forbidden("Artifact is not available in this company");
+      const assertArtifactAccess = async () => {
+        const current = await this.#boundContext();
+        if (!(await canActorReadAssetContent(this.db, this.#privacyActor(current.run), asset)))
+          throw forbidden("Artifact is not available to this actor");
+      };
+      await assertArtifactAccess();
       if (asset.byteSize > RUNNER_API_MAX_BYTES) throw badRequest("Artifact exceeds API transfer limit");
       const object = await (this.binding.storage ?? getStorageService()).getObject(this.binding.companyId, asset.objectKey);
       const chunks: Buffer[] = [];
@@ -956,6 +958,7 @@ export class PaperclipRunnerToolAuthority {
           chunks.push(bytes);
         }
       } finally { object.stream.destroy(); }
+      await assertArtifactAccess();
       return { bytes: Buffer.concat(chunks), filename: asset.originalFilename ?? "file", contentType: asset.contentType };
     }
     const resolved = await workspaceFileResourceService(this.db).prepareDownload(this.binding.issueId, { path: file.path!, workspace: "auto" });

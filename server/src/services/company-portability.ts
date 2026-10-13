@@ -80,6 +80,7 @@ import { accessService } from "./access.js";
 import { agentService } from "./agents.js";
 import { agentInstructionsBundleMode, agentInstructionsService } from "./agent-instructions.js";
 import { assetService } from "./assets.js";
+import { isRunnerApiResponseAsset } from "./asset-content-access.js";
 import { generateReadme } from "./company-export-readme.js";
 import { renderOrgChartPng, type OrgNode } from "../routes/org-chart-svg.js";
 import { companySkillService } from "./company-skills.js";
@@ -4116,6 +4117,8 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         const logoAsset = await assetRecords.getById(company.logoAssetId);
         if (!logoAsset) {
           warnings.push(`Skipped company logo ${company.logoAssetId} because the asset record was not found.`);
+        } else if (await isRunnerApiResponseAsset(db, logoAsset)) {
+          warnings.push("Skipped private API response snapshot used as a company logo.");
         } else {
           try {
             const object = await storage.getObject(company.id, logoAsset.objectKey);
@@ -4659,7 +4662,7 @@ export function companyPortabilityService(db: Db, storage?: StorageService) {
         // Embedded references only pull bytes for assets owned by the
         // exporting company: a crafted URL naming another company's asset id
         // must not leak that asset's bytes into the bundle.
-        if (!asset || asset.companyId !== companyId) {
+        if (!asset || asset.companyId !== companyId || await isRunnerApiResponseAsset(db, asset)) {
           unownedEmbeddedAssetRefCount += 1;
           continue;
         }

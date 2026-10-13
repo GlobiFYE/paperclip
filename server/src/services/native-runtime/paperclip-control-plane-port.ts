@@ -27,6 +27,7 @@ import {
 import { appendHeartbeatRunEvent } from "../heartbeat-run-events.js";
 import { publishChatPublicationCommitSignal } from "../chat-publication-reconciliation.js";
 import { nativeSha256 } from "./canonical.js";
+import { redactRunnerApiPayloads } from "./runner-api-log-redaction.js";
 
 export interface PaperclipControlPlaneBinding {
   companyId: string;
@@ -174,7 +175,7 @@ export class PaperclipControlPlanePort implements ControlPlanePort {
 
   async checkpointSession(snapshot: PersistedNativeSession, options?: { signal: AbortSignal }): Promise<void> {
     this.#assertActive(options);
-    snapshot = this.#identityRedactor.redact(snapshot);
+    snapshot = redactRunnerApiPayloads(this.#identityRedactor.redact(snapshot));
     const identity = snapshot.identity;
     if (
       identity.companyId !== this.#binding.companyId
@@ -251,6 +252,7 @@ export class PaperclipControlPlanePort implements ControlPlanePort {
         }
       }
     }
+    event = redactRunnerApiPayloads(event);
     const persisted = await this.#db.transaction(async tx => {
       this.#assertActive(options);
       const receipt = await appendHeartbeatRunEvent(tx as unknown as Db, {
@@ -331,7 +333,7 @@ export class PaperclipControlPlanePort implements ControlPlanePort {
 
   async completeRun(value: NativeRunResult | CompleteControlPlaneRunInput, options?: { signal: AbortSignal }): Promise<void> {
     this.#assertActive(options);
-    value = this.#identityRedactor.redact(value);
+    value = redactRunnerApiPayloads(this.#identityRedactor.redact(value));
     if (!isCompleteInput(value)) throw new Error("native_structured_result_required");
     // Capture compatibility diagnostics before canonical validation removes
     // legacy/non-actionable attention payloads. They are operator evidence,

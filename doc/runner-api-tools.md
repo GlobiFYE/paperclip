@@ -195,18 +195,28 @@ run. No database migration is needed.
 Workspace uploads use the existing workspace resource containment checks,
 no-symlink file opens covering every path component, and bounded descriptor reads.
 Local uploads require Linux or macOS; authorized artifacts work on other hosts.
-Artifacts must belong to the bound company. Request bodies and uploads go
+Artifacts must belong to the bound company and pass the same actor access checks
+as downloads, before and after reading their bytes. Private API response snapshots
+cannot be used as public company logos or bundled into company exports. An owner
+can explicitly publish a copy through the existing attachment upload path.
+Request bodies and uploads go
 through the route's validation and authorization; the fallback does not reject
 fields that an agent can supply through REST. Route-authorized responses normally use the bounded inline/artifact capture and
 replay mechanism. Credential-bearing responses (secret values, issued keys,
-invites, webhook secrets and gateway credentials) stay inline, with a 10 MiB
+invites, webhook secrets (including restored triggers) and gateway credentials) stay inline, with a 10 MiB
 response bound. They never spill into plaintext files or saved response assets.
 Their durable mutation receipts encrypt the response with the existing local
 secret provider. Replays decrypt it only inside the authorized run; no HTTP
 request repeats. A working secret store is checked before credential dispatch.
 Other API responses retain the existing 24 KiB inline and 1 GiB capture limits.
 
-Agent credentials are never returned to the model. Streaming, WebSocket, MCP and authentication
+API request and response bodies are omitted from persisted native tool events,
+checkpoints and completion results. Saved events retain operation identity, HTTP
+status and a payload digest for replay conflict detection. The model still receives
+the original authorized HTTP response; this redaction affects durable history.
+
+The server-issued REST credential for the bound run is never returned to the model.
+Streaming, WebSocket, MCP and authentication
 handshakes are documented as protocol operations requiring their existing clients.
 
 ## Catalog maintenance

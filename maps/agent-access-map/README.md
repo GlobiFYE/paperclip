@@ -85,13 +85,19 @@ agent does not gain independent native control just because a REST route exists.
 Credential-bearing replies, including company exports and their legacy alias,
 stay inline under a 10 MiB limit and use encrypted mutation receipts. Other saved
 API snapshots are limited to the issuing actor and responsible user, plus authorized
-administrators; explicit deliverables use the existing sharing path.
+administrators. Artifact uploads enforce the same access checks as downloads;
+private snapshots are excluded from company exports and public company logos.
+Explicit deliverables use the existing sharing path. Native event history,
+checkpoints and completion records omit API bodies while preserving receipt
+metadata and replay digests. Restored webhook secrets use the same encrypted
+receipt and inline response policy as newly created webhook secrets.
 
 Sources: [API client](../../server/src/services/native-runtime/runner-api-client.ts),
 [catalog](../../server/src/services/native-runtime/runner-api-catalog.ts),
 [native authority](../../server/src/services/native-runtime/paperclip-runner-tool-authority.ts),
 [credential storage classification](../../server/src/services/native-runtime/runner-api-sensitive-response.ts),
-and [snapshot access](../../server/src/routes/assets.ts). The affected entries remain
+[snapshot access](../../server/src/services/asset-content-access.ts),
+and [history redaction](../../server/src/services/native-runtime/runner-api-log-redaction.ts). The affected entries remain
 `baseline` and `source-only`; this reconciliation does not certify every operation.
 Targeted real-route proof lives in the
 [API integration suite](../../server/src/services/native-runtime/runner-api.integration.test.ts),
