@@ -1,3 +1,6 @@
+import { photonControlTargetsConversation, photonReplyMetadata, recordPhotonInboundActivity } from "./chat-channels/imessage-photon/messages.js";
+import { deferTeamsSetupReply } from "./chat-channels/microsoft-teams/setup-replies.js";
+import { slackOrphanFollowUp, stripSlackTitleMentions } from "./chat-channels/slack/messages.js";
 import { createChatPublicationResolution } from "./chat-channels/publications/resolution.js";
 import { createChatPublicationRequests } from "./chat-channels/publications/requests.js";
 import { createTeamsBoardSendPreparation } from "./chat-channels/microsoft-teams/board-send-preparation.js";
@@ -18,7 +21,7 @@ import { createMessageResourceAdmission } from "./chat-channels/inbound/resource
 import type { DiscordGatewayOwnership } from "./chat-channels/runtime-types.js";
 import { createInboundAdmission } from "./chat-channels/inbound/admission.js";
 import { createInboundEnvelope } from "./chat-channels/inbound/envelope.js";
-import { sameTeamsThreadIdentity, durableExternalThreadIdentity, teamsThreadRootMessageId, canonicalProviderResourceId, nonDirectDestinationAllowed, linearControlCommand, actionThreadMatchesConversation } from "./chat-channels/inbound/surfaces.js";
+import { sameTeamsThreadIdentity, durableExternalThreadIdentity, canonicalProviderResourceId, nonDirectDestinationAllowed, linearControlCommand, actionThreadMatchesConversation } from "./chat-channels/inbound/surfaces.js";
 import { createChatInboundAuthority } from "./chat-channels/inbound/authorization.js";
 import { createTeamsRoutes } from "./chat-channels/microsoft-teams/routes.js";
 import type { LiveInboundMessage } from "./chat-channels/runtime-types.js";
@@ -49,7 +52,7 @@ import { createSlackTaskAuthorityRegistration } from "./chat-channels/slack/task
 import { createGitHubPublicationPolicy } from "./chat-channels/github/publication-policy.js";
 import { createTelegramAttachmentFailure } from "./chat-channels/telegram/attachment-failure.js";
 import { createSlackCommands } from "./chat-channels/slack/commands.js";
-import { createTelegramCommands, telegramGuidanceCommand } from "./chat-channels/telegram/commands.js";
+import { createTelegramCommands, telegramGuidanceCommand, telegramGuidanceResponse, telegramForumControlResponse } from "./chat-channels/telegram/commands.js";
 import { createTeamsFileDelivery } from "./chat-channels/microsoft-teams/file-delivery.js";
 import { createGitHubSetupSecret } from "./chat-channels/github/setup-secret.js";
 import { createSlackInventory } from "./chat-channels/slack/inventory.js";
@@ -97,10 +100,10 @@ import {
   MAX_INBOUND_TEXT,
   stableExternalPrincipalId,
 } from "./chat-channels/message-lifecycle.js";
-import { telegramLifecycleEventFromPayload, isTelegramEditedMessageRaw, isTelegramMigrationRaw, telegramZeroMessageId } from "./chat-channels/telegram/messages.js";
+import { telegramLifecycleEventFromPayload, telegramIgnoresInboundMessage } from "./chat-channels/telegram/messages.js";
 
 import {
-  microsoftTeamsLifecycleEventFromPayload,
+  microsoftTeamsLifecycleEventFromPayload, teamsOrphanFollowUp, teamsAttachmentReferenceText,
 } from "./chat-channels/microsoft-teams/messages.js";
 import {
   type GitHubLifecycleEvent,
@@ -461,8 +464,7 @@ export interface ChatChannelServiceOptions {
 }
 
 function safeTitle(text: string, fallback: string): string {
-  const line = text
-    .replace(/<@[A-Z0-9]+>/gi, "")
+  const line = stripSlackTitleMentions(text)
     .replace(/@[\w.-]+(?:\[bot\])?/gi, "")
     .trim()
     .split(/\r?\n/)[0];
@@ -1432,25 +1434,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     suppressSetupDestinationActivation = false,
     slackSlashControl = false,
   ) {
-    if (
-      endpoint.provider === "telegram" &&
-      (telegramZeroMessageId(message.id) ||
-        (message.raw !== null &&
-          typeof message.raw === "object" &&
-          (message.raw as { message_id?: unknown }).message_id === 0))
-    )
-      return;
-    // The Telegram adapter currently emits edited_message through the normal
-    // message callback with the original message id. Paperclip records that
-    // verified payload through its supplemental message_updated lifecycle
-    // ledger instead; letting it reach normal dedupe would falsely report the
-    // edit as a duplicate provider delivery.
-    if (
-      endpoint.provider === "telegram" &&
-      (isTelegramEditedMessageRaw(message.raw) ||
-        isTelegramMigrationRaw(message.raw))
-    )
-      return;
+    if (endpoint.provider === "telegram" && telegramIgnoresInboundMessage(message)) return;
     if (
       message.author.isMe ||
       message.author.isBot === true ||
@@ -1619,35 +1603,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
 
     try {
       if (admission.provisionalTeamsSetupReply) {
-        const resolutionAt = new Date();
-        const waitForSetupRoot =
-          activeDelivery.attempts <= ORPHAN_FOLLOW_UP_MAX_ATTEMPTS;
-        await db.transaction(async (tx) => {
-          await notifyChatDeliveryWork(tx);
-          return tx
-            .update(chatDeliveries)
-            .set(
-              waitForSetupRoot
-                ? {
-                    state: "retry",
-                    nextAttemptAt: new Date(
-                      resolutionAt.getTime() + ORPHAN_FOLLOW_UP_GRACE_MS,
-                    ),
-                    redactedError: "Waiting briefly for an earlier root mention",
-                    updatedAt: resolutionAt,
-                  }
-                : {
-                    state: "filtered",
-                    normalizedEvent: redactedDestinationNormalized,
-                    principalId: null,
-                    nextAttemptAt: null,
-                    processedAt: resolutionAt,
-                    redactedError: "Destination is not enabled in Paperclip",
-                    updatedAt: resolutionAt,
-                  },
-            )
-            .where(eq(chatDeliveries.id, activeDelivery.id));
-        });
+        await deferTeamsSetupReply(db, activeDelivery, redactedDestinationNormalized, ORPHAN_FOLLOW_UP_MAX_ATTEMPTS, ORPHAN_FOLLOW_UP_GRACE_MS);
         return;
       }
       // A committed inbound message link proves that a prior attempt completed
@@ -1890,23 +1846,10 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         destinationAllowed &&
         principalAllowed &&
         activationAllowed;
-      const slackRootMessageId =
-        endpoint.provider === "slack"
-          ? /^slack:[^:]+:(.+)$/.exec(thread.id)?.[1]
-          : null;
-      const teamsRootMessageId =
-        endpoint.provider === "microsoft-teams"
-          ? teamsThreadRootMessageId(thread.id)
-          : null;
       const isPlausibleOrphanFollowUp =
-        endpoint.provider === "github" ||
-        endpoint.provider === "discord" ||
-        (endpoint.provider === "slack" &&
-          Boolean(slackRootMessageId) &&
-          slackRootMessageId !== message.id) ||
-        (endpoint.provider === "microsoft-teams" &&
-          Boolean(teamsRootMessageId) &&
-          teamsRootMessageId !== message.id);
+        endpoint.provider === "github" || endpoint.provider === "discord" ||
+        (endpoint.provider === "slack" && slackOrphanFollowUp(thread.id, message.id)) ||
+        (endpoint.provider === "microsoft-teams" && teamsOrphanFollowUp(thread.id, message.id));
       const setupDestinationCanBeEnabledByEarlierMention =
         (endpoint.provider === "github" ||
           endpoint.provider === "discord" ||
@@ -2022,19 +1965,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           ? photonReplyReference(message.raw)
           : null;
       if (controlCommand && photonQuote) {
-        const source = await db
-          .select({ conversationId: chatMessageLinks.conversationId })
-          .from(chatMessageLinks)
-          .where(
-            and(
-              eq(chatMessageLinks.companyId, endpoint.companyId),
-              eq(chatMessageLinks.endpointId, endpoint.id),
-              eq(chatMessageLinks.providerMessageId, photonQuote.guid),
-            ),
-          )
-          .limit(1)
-          .then((rows) => rows[0]);
-        if (!source || source.conversationId !== existingConversation?.id) {
+        if (!(await photonControlTargetsConversation(db, endpoint, photonQuote.guid, existingConversation?.id))) {
           await db.transaction(async (tx) => {
             await notifyChatDeliveryWork(tx);
             return tx
@@ -2067,12 +1998,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
                 )
                 .then((rows) => rows[0]?.name ?? "this agent")
             : null;
-        const responseText =
-          guidanceCommand === "start"
-            ? `Send a direct message to start work with ${assignedAgentName}. In a group, use /task@${endpoint.botUsername ?? "your_bot"} followed by your request. Use /status, /new, or /close to manage the active task in this chat.`
-            : guidanceCommand === "task"
-              ? `Please include a request after /task@${endpoint.botUsername ?? "your_bot"}.`
-              : `Available commands: /task@${endpoint.botUsername ?? "your_bot"} followed by your request, /status, /new, and /close.`;
+        const responseText = telegramGuidanceResponse(guidanceCommand, endpoint.botUsername, assignedAgentName);
         const publicationBinding =
           existingConversation && existingIssue
             ? { conversation: existingConversation, issue: existingIssue }
@@ -2169,13 +2095,11 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
               : taskLabel
             : controlCommand === "new"
               ? isTelegramForumTopic
-                ? existingIssue
-                  ? `${taskLabel} stays bound to this forum topic. Open a new Telegram forum topic to start a new Paperclip task.`
-                  : "Open a new Telegram forum topic to start a new Paperclip task."
+                ? telegramForumControlResponse("new", taskLabel, Boolean(existingIssue), Boolean(existingConversation))
                 : "Send your request to start a new Paperclip task."
               : existingConversation
                 ? isTelegramForumTopic
-                  ? "This chat conversation is closed. A later message here will continue the same Paperclip task."
+                  ? telegramForumControlResponse("close", taskLabel, Boolean(existingIssue), true)
                   : "This chat conversation is closed. Send another message to start a new task."
                 : "No task is active. Send a message to start one.";
         const publicationBinding =
@@ -2437,7 +2361,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
             ? taskEndpoint.provider === "microsoft-teams" &&
               !thread.isDM &&
               nativeInboundAttachments.length === 0
-              ? `Shared ${message.attachments.length} Microsoft Teams file reference${message.attachments.length === 1 ? "" : "s"}.${providerUrl ? ` Open in Microsoft Teams: ${providerUrl}` : ""}`
+              ? teamsAttachmentReferenceText(message.attachments.length, providerUrl)
               : `Shared ${message.attachments.length} file${message.attachments.length === 1 ? "" : "s"}.`
             : taskEndpoint.provider === "slack" && (trigger === "mention" || message.isMention === true)
               ? "Started a conversation by mentioning the agent."
@@ -2475,26 +2399,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
                 {
                   title: `${PROVIDER_LABELS[endpoint.provider]} sender`,
                   rows: [
-                    ...(endpoint.provider === "imessage-photon" &&
-                    photonReplyReference(message.raw)
-                      ? [
-                          {
-                            type: "key_value" as const,
-                            label: "Reply to message",
-                            value: photonReplyReference(message.raw)!.guid,
-                          },
-                          ...(photonReplyReference(message.raw)!.part
-                            ? [
-                                {
-                                  type: "key_value" as const,
-                                  label: "Reply part",
-                                  value: photonReplyReference(message.raw)!
-                                    .part!,
-                                },
-                              ]
-                            : []),
-                        ]
-                      : []),
+                    ...(endpoint.provider === "imessage-photon" ? photonReplyMetadata(message.raw) : []),
                     {
                       type: "key_value",
                       label: "Name",
@@ -2594,24 +2499,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           actorUserId: taskUserId,
         });
         if (taskEndpoint.provider === "imessage-photon") {
-          await logActivity(
-            taskTx as Db,
-            {
-              companyId: taskEndpoint.companyId,
-              actorType: taskUserId ? "user" : "system",
-              actorId: taskUserId ?? "chat:imessage-photon",
-              action: "issue.comment_added",
-              entityType: "issue",
-              entityId: issue.id,
-              details: {
-                commentId: comment.id,
-                issueIdentifier: issue.identifier,
-                source: "chat:imessage-photon",
-                endpointId: taskEndpoint.id,
-              },
-            },
-            inboundActivityPublications,
-          );
+          await recordPhotonInboundActivity(taskTx, taskEndpoint, issue, comment.id, taskUserId, inboundActivityPublications);
         }
         return { actorUserId: taskUserId, comment, conversation, issue };
       };
