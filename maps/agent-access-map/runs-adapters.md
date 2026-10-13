@@ -55,6 +55,11 @@ and explicit overrides follow the [shared runner contract](../../packages/shared
 other harness defaults remain unchanged. The board inventory does not grant a
 native agent an equivalent discovery binding. See
 [probe restrictions](./execution-environments.md#probe) for acquiring qualification.
+An absent forced-Kubernetes environment is an unqualified sandbox target, never
+a local target. Discovery and automatic creation keep the Legacy path without
+provisioning it; explicit Paperclip selection returns qualification guidance.
+The existing execution path owns lazy environment creation. Saved runners remain
+unchanged. This is source/control evidence, not live Kubernetes qualification.
 
 ## `validation`
 
@@ -103,6 +108,9 @@ The general native
 home materializer retains its no-follow symlink guard. Refresh still targets the
 checked account source, and confirmed bounded retirement removes its private
 copy. Unconfirmed retirement retains the existing cleanup block and owned state.
+Failures before probe handoff remove only the owned temporary preparation root;
+local daemon resolution occurs before credential staging. Once a probe is handed
+off, unconfirmed retirement still retains its recovery state.
 [Existing fake-credential setup controls](../../server/src/services/native-runtime/setup-readiness.test.ts)
 exercise linked/regular sources and failure cleanup. This adds no credential-read
 API, agent login authority or cross-company account access. Its source-only

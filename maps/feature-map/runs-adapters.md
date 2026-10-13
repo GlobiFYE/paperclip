@@ -45,6 +45,11 @@ and [runtime prerequisites](../../packages/paperclip-runner/README.md) define th
 platform/libc boundary. Windows and Alpine/musl remain Legacy; other harness
 defaults are unchanged. Disabled adapters, external overrides, and selected-target
 qualification also affect availability.
+On a fresh forced-Kubernetes instance without an environment row, inspect discovery
+and create with automatic selection. Both must retain Legacy without provisioning;
+an explicit Paperclip request must give target-qualification guidance. Begin the
+ordinary task to exercise the existing lazy environment path. This live journey
+remains separate from the resolver's source controls.
 
 For sandbox defaults, follow the [environment probe](./execution-environments.md#environment-settings)
 recipe first. Discovery/creation read company-bound immutable-image evidence
@@ -74,6 +79,10 @@ credentials must also fail clearly. A selected `CODEX_API_KEY` or
 dangling and invalid subscription links with that selected key; setup must test
 the key without reading or refreshing the unrelated account. The private probe copy must be removed after confirmed retirement following success,
 failure or cancellation. Unconfirmed shutdown remains a cleanup failure.
+Exercise an unavailable local daemon and a preparation failure before probe
+handoff. No owned temporary credential copy may remain, and original account
+files must be unchanged. A probe whose shutdown is unconfirmed must retain its
+recovery state; do not treat it as a preparation-only failure.
 Existing setup controls use fake credentials; real account execution remains
 a separate acceptance requirement.
 

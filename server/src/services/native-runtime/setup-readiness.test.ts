@@ -7,6 +7,15 @@ import * as localCredentialFile from "../local-ai-credential-file.js";
 import * as codexCredentials from "@paperclipai/adapter-codex-local/server";
 const { prepareIsolatedCodexHome } = await import(new URL("../../../../packages/paperclip-runner/src/drivers/runtime-context-materializer.ts", import.meta.url).href);
 const { execute, nativeProbe, selectedRunner, selectedRemoteRunner, sshExecute, sshRunner, nativeArtifacts, remoteLauncher, registerPrp, ingressConnect } = vi.hoisted(() => ({ execute: vi.fn(), nativeProbe: vi.fn(), selectedRunner: vi.fn(), selectedRemoteRunner: vi.fn(), sshExecute: vi.fn(), sshRunner: vi.fn(), nativeArtifacts: vi.fn(), remoteLauncher: vi.fn(), registerPrp: vi.fn(), ingressConnect: vi.fn() }));
+const nativeProbeRuntimeDirectories = vi.hoisted(() => [] as string[]);
+vi.mock("node:fs/promises", async original => {
+  const filesystem = await original<typeof import("node:fs/promises")>();
+  return { ...filesystem, mkdtemp: async (...args: Parameters<typeof filesystem.mkdtemp>) => {
+    const directory = await filesystem.mkdtemp(...args);
+    if (typeof args[0] === "string" && args[0].endsWith("paperclip-native-setup-") && typeof directory === "string") nativeProbeRuntimeDirectories.push(directory);
+    return directory;
+  } };
+});
 vi.mock("@paperclipai/adapter-utils/execution-target", () => ({ runAdapterExecutionTargetShellCommand: execute }));
 vi.mock("./native-ssh-command-runner.js", () => ({ createNativeSshCommandRunner: sshRunner }));
 vi.mock("../../realtime/runner-prp-ws.js", () => ({ registerRunnerPrpAuthority: registerPrp }));
@@ -22,7 +31,7 @@ const context = {
 describe("Codex selected native account verification", () => {
   const receipt = (provider: "codex", model: string | null) => ({ provider, effectiveModel: model, providerDriver: "codex_app_server", helloProbePassed: true, cleanupConfirmed: true });
   beforeEach(() => {
-    execute.mockReset(); nativeProbe.mockReset();
+    execute.mockReset(); nativeProbe.mockReset(); nativeProbeRuntimeDirectories.splice(0);
     sshExecute.mockReset().mockResolvedValue({ exitCode: 0, timedOut: false, stdout: "", stderr: "" });
     sshRunner.mockReset().mockReturnValue({ execute: sshExecute });
     nativeArtifacts.mockReset().mockReturnValue({ prepare: vi.fn().mockResolvedValue(undefined) });
@@ -40,7 +49,7 @@ describe("Codex selected native account verification", () => {
   afterEach(async () => {
     vi.unstubAllGlobals();
     vi.unstubAllEnvs();
-    for (const [input] of nativeProbe.mock.calls) if (input.runtimeDirectory) await rm(input.runtimeDirectory, { recursive: true, force: true });
+    for (const root of nativeProbeRuntimeDirectories) await rm(root, { recursive: true, force: true });
   });
   it.each([["codex", "gpt-6.1-sol", "OPENAI_API_KEY"]] as const)("requires the native %s host and only the selected credential", async (provider, model, key) => {
     vi.stubEnv(key, "ambient-account");
@@ -58,6 +67,45 @@ describe("Codex selected native account verification", () => {
     else expect(input.reasoningEffort).toBeUndefined();
     await expect(stat(input.runtimeDirectory)).rejects.toThrow();
     expect(execute).not.toHaveBeenCalled();
+  });
+  it("rejects a missing local daemon before creating private credential staging", async () => {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "native-preflight-daemon-")));
+    const auth = '{"tokens":{"account_id":"fixture-account","access_token":"fixture-access"}}';
+    const readCredential = vi.spyOn(localCredentialFile, "readLocalAiCredentialFile");
+    try {
+      await writeFile(join(home, "account-store.json"), auth, { mode: 0o600 });
+      await symlink(join(home, "account-store.json"), join(home, "auth.json"));
+      selectedRunner.mockImplementation(() => { throw new Error("native executable is missing"); });
+      const result = await testNativeRunnerAuthentication({ companyId: "company", adapterType: "paperclip_runner", managedAiCredentialHome: home, config: {} }, "codex", "gpt-6.1-sol");
+      expect(result.status).toBe("fail");
+      expect(result.checks[0].message).toBe("native executable is missing");
+      expect(readCredential).toHaveBeenCalledOnce();
+      expect(nativeProbeRuntimeDirectories).toEqual([]);
+      expect(nativeProbe).not.toHaveBeenCalled();
+      expect(await readFile(join(home, "account-store.json"), "utf8")).toBe(auth);
+      expect(await readlink(join(home, "auth.json"))).toBe(join(home, "account-store.json"));
+      expect((await readdir(home)).sort()).toEqual(["account-store.json", "auth.json"]);
+    } finally { readCredential.mockRestore(); await rm(home, { recursive: true, force: true }); }
+  });
+  it.each(["local", "remote"])("cleans its own private root when %s credential staging fails before probe handoff", async transport => {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "native-preflight-staging-")));
+    const auth = '{"tokens":{"account_id":"fixture-account","access_token":"fixture-access"}}';
+    try {
+      await writeFile(join(home, "account-store.json"), auth, { mode: 0o600 });
+      await symlink(join(home, "account-store.json"), join(home, "auth.json"));
+      await writeFile(join(home, "config.toml"), "x".repeat(1024 * 1024 + 1), { mode: 0o600 });
+      const selectedContext = transport === "remote" ? sshContext : { companyId: "company", adapterType: "paperclip_runner", config: {} };
+      const result = await testNativeRunnerAuthentication({ ...selectedContext, managedAiCredentialHome: home }, "codex", "gpt-6.1-sol");
+      expect(result.status).toBe("fail");
+      expect(result.checks[0].message).toContain("configuration exceeds its size limit");
+      expect(nativeProbe).not.toHaveBeenCalled();
+      expect(sshExecute).not.toHaveBeenCalled();
+      expect(nativeProbeRuntimeDirectories).toHaveLength(1);
+      await expect(stat(nativeProbeRuntimeDirectories[0]!)).rejects.toMatchObject({ code: "ENOENT" });
+      expect(await readFile(join(home, "account-store.json"), "utf8")).toBe(auth);
+      expect((await stat(join(home, "config.toml"))).size).toBe(1024 * 1024 + 1);
+      expect(await readlink(join(home, "auth.json"))).toBe(join(home, "account-store.json"));
+    } finally { await rm(home, { recursive: true, force: true }); }
   });
   it.each(["host-home", "host-codex-home", "configured-home", "managed-home"] as const)("reuses the task's authorized local Codex home before isolation (%s)", async mode => {
     vi.stubEnv("HOME", "/host-home");

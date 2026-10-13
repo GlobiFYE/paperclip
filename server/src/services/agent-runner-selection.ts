@@ -134,7 +134,7 @@ export async function resolveAgentRunnerTargetForCompany(db: Db, companyId: stri
   }
   if (settings.general?.executionMode === "kubernetes") {
     environment = await envs.findKubernetesEnvironment(companyId);
-    if (!environment) throw unprocessable("The required Kubernetes environment is unavailable.", { code: "kubernetes_environment_unavailable" });
+    if (!environment) return { driver: "sandbox" };
   }
   if (environmentId && !environment) throw unprocessable("Environment not found.");
   if (environment) {

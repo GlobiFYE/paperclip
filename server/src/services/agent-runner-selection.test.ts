@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { agentHarnessType, agentRunner, paperclipRunnerProfileForHarness, paperclipRunnerSupportsPlatform, PAPERCLIP_RUNNER_MINIMUM_GLIBC_VERSION, createAgentSchema, updateAgentSchema, testAdapterEnvironmentSchema } from "@paperclipai/shared";
-const state = vi.hoisted(() => ({ disabled: [] as string[], overridden: new Set<string>(), settings: {} as Record<string, unknown>, getEnvironment: vi.fn(), bindings: vi.fn(), managedEnvironment: vi.fn(), ssh: vi.fn(), resolveEnvironment: vi.fn(), sandboxQualification: vi.fn() }));
+const state = vi.hoisted(() => ({ disabled: [] as string[], overridden: new Set<string>(), settings: {} as Record<string, unknown>, getEnvironment: vi.fn(), bindings: vi.fn(), managedEnvironment: vi.fn(), kubernetesEnvironment: vi.fn(), ensureKubernetesEnvironment: vi.fn(), ssh: vi.fn(), resolveEnvironment: vi.fn(), sandboxQualification: vi.fn() }));
 vi.mock("../adapters/registry.js", () => ({ findActiveServerAdapter: (type: string) => ({ type }), hasActiveAdapterOverride: (type: string) => state.overridden.has(type), waitForExternalAdapters: async () => {} }));
 vi.mock("./adapter-plugin-store.js", () => ({ getDisabledAdapterTypes: () => state.disabled }));
 vi.mock("./instance-settings.js", () => ({ instanceSettingsService: () => ({ get: async () => state.settings }) }));
-vi.mock("./environments.js", () => ({ environmentService: () => ({ getById: state.getEnvironment, listBoundCompanyIds: state.bindings, findManagedSandboxEnvironment: state.managedEnvironment, findKubernetesEnvironment: state.managedEnvironment }) }));
+vi.mock("./environments.js", () => ({ environmentService: () => ({ getById: state.getEnvironment, listBoundCompanyIds: state.bindings, findManagedSandboxEnvironment: state.managedEnvironment, findKubernetesEnvironment: state.kubernetesEnvironment, ensureKubernetesEnvironment: state.ensureKubernetesEnvironment }) }));
 vi.mock("./environment-probe.js", () => ({ readSandboxPlatformQualification: state.sandboxQualification }));
 vi.mock("./environment-config.js", () => ({ resolveEnvironmentDriverConfigForRuntime: state.resolveEnvironment }));
 vi.mock("@paperclipai/adapter-utils/ssh", () => ({ runSshCommand: state.ssh }));
@@ -19,7 +19,7 @@ const originalArchitecture = Object.getOwnPropertyDescriptor(process, "arch")!;
 afterEach(() => { vi.restoreAllMocks(); Object.defineProperty(process, "platform", originalPlatform); Object.defineProperty(process, "arch", originalArchitecture); });
 
 describe("server-owned Codex runner selection", () => {
-  beforeEach(() => { state.disabled = []; state.overridden.clear(); state.settings = {}; state.getEnvironment.mockReset(); state.bindings.mockReset().mockResolvedValue([]); state.managedEnvironment.mockReset(); state.ssh.mockReset().mockResolvedValue({ stdout: "Linux\nx86_64\n" }); state.sandboxQualification.mockReset().mockResolvedValue(null); state.resolveEnvironment.mockReset().mockResolvedValue({ driver: "ssh", config: {} }); });
+  beforeEach(() => { state.disabled = []; state.overridden.clear(); state.settings = {}; state.getEnvironment.mockReset(); state.bindings.mockReset().mockResolvedValue([]); state.managedEnvironment.mockReset(); state.kubernetesEnvironment.mockReset().mockResolvedValue(null); state.ensureKubernetesEnvironment.mockReset(); state.ssh.mockReset().mockResolvedValue({ stdout: "Linux\nx86_64\n" }); state.sandboxQualification.mockReset().mockResolvedValue(null); state.resolveEnvironment.mockReset().mockResolvedValue({ driver: "ssh", config: {} }); });
   it.each(["x64", "arm64"])("keeps detected musl/unknown Linux %s legacy and preserves saved execution", architecture => {
     for (const libc of ["musl", "unknown"] as const) {
       const target = { driver: "local", platform: "linux", architecture, libc };
@@ -249,6 +249,58 @@ describe("server-owned Codex runner selection", () => {
 
   it("preserves explicit historical native profiles, including managed configurations", () => {
     for (const config of [{ provider: "acpx", acpxAgent: "claude", model: "claude-sonnet-5" }, { provider: "claude_managed", managedProfileId: "profile", managedAgentsRetentionAcknowledged: true }, { provider: "aws_agentcore", agentCoreProfileId: "profile" }]) expect(resolveNewAgentRunner({ adapterType: "paperclip_runner", adapterConfig: config })).toEqual({ adapterType: "paperclip_runner", adapterConfig: config });
+  });
+  it("advertises Legacy for a forced Kubernetes target before lazy environment creation", async () => {
+    state.settings = { general: { executionMode: "kubernetes" } };
+    const selected = await resolveAgentRunnerTargetForCompany({} as never, "company");
+    expect(selected).toEqual({ driver: "sandbox" });
+    expect(agentRunnerAvailability("codex_local", selected)).toEqual({ supportedRunners: ["legacy"], defaultRunner: "legacy" });
+    expect(state.kubernetesEnvironment).toHaveBeenCalledWith("company");
+    expect(state.ensureKubernetesEnvironment).not.toHaveBeenCalled();
+    expect(state.resolveEnvironment).not.toHaveBeenCalled();
+    expect(state.sandboxQualification).not.toHaveBeenCalled();
+    expect(state.ssh).not.toHaveBeenCalled();
+  });
+  it.each([undefined, "auto"] as const)("preserves Codex %s creation before a forced Kubernetes environment exists", async runner => {
+    state.settings = { general: { executionMode: "kubernetes" } };
+    const adapterConfig = { model: "gpt-5.6-sol", extraArgs: ["--search"], env: { OPENAI_API_KEY: { type: "secret_ref", secretId: "synthetic-secret" } } };
+    const resolved = await resolveNewAgentRunnerForCompany({} as never, "company", { adapterType: "codex_local", adapterConfig, runner });
+    expect(resolved).toEqual({ adapterType: "codex_local", adapterConfig });
+    expect(state.ensureKubernetesEnvironment).not.toHaveBeenCalled();
+    expect(state.resolveEnvironment).not.toHaveBeenCalled();
+    expect(state.sandboxQualification).not.toHaveBeenCalled();
+    expect(state.ssh).not.toHaveBeenCalled();
+  });
+  it("rejects explicit Paperclip execution on an unqualified forced Kubernetes target without provisioning", async () => {
+    state.settings = { general: { executionMode: "kubernetes" } };
+    await expect(resolveNewAgentRunnerForCompany({} as never, "company", { adapterType: "codex_local", runner: "paperclip" }))
+      .rejects.toMatchObject({ status: 422, message: expect.stringContaining("Legacy runner"), details: { code: "agent_runner_unavailable" } });
+    expect(state.ensureKubernetesEnvironment).not.toHaveBeenCalled();
+    expect(state.resolveEnvironment).not.toHaveBeenCalled();
+    expect(state.sandboxQualification).not.toHaveBeenCalled();
+    expect(state.ssh).not.toHaveBeenCalled();
+  });
+  it("preserves explicit Legacy and recorded native execution without reading the forced Kubernetes target", async () => {
+    state.settings = { general: { executionMode: "kubernetes" } };
+    for (const input of [
+      { adapterType: "codex_local", runner: "legacy" as const, adapterConfig: { extraArgs: ["--search"] } },
+      { adapterType: "paperclip_runner", adapterConfig: { provider: "codex", model: "gpt-5.6-sol" } },
+    ]) {
+      expect(await resolveNewAgentRunnerForCompany({} as never, "company", input))
+        .toEqual({ adapterType: input.adapterType, adapterConfig: input.adapterConfig });
+    }
+    expect(state.kubernetesEnvironment).not.toHaveBeenCalled();
+    expect(state.ensureKubernetesEnvironment).not.toHaveBeenCalled();
+  });
+  it("retains company checks for an existing forced Kubernetes environment", async () => {
+    state.settings = { general: { executionMode: "kubernetes" } };
+    state.kubernetesEnvironment.mockResolvedValue({ id: "kubernetes", driver: "sandbox", status: "active", config: { provider: "kubernetes" } });
+    state.bindings.mockResolvedValue(["another-company"]);
+    await expect(resolveNewAgentRunnerForCompany({} as never, "company", { adapterType: "codex_local" }))
+      .rejects.toMatchObject({ status: 403, details: { code: "environment_company_mismatch" } });
+    expect(state.ensureKubernetesEnvironment).not.toHaveBeenCalled();
+    expect(state.sandboxQualification).not.toHaveBeenCalled();
+    expect(state.resolveEnvironment).not.toHaveBeenCalled();
   });
   it("rejects a foreign environment before resolving credentials or probing its platform", async () => {
     state.getEnvironment.mockResolvedValue({ id: "foreign", driver: "ssh", status: "active", config: {} });

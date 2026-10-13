@@ -2,6 +2,19 @@
 
 ## Current Codex merge checkpoint — 2026-10-13
 
+Current published `1173a859baa78af1d382058aa89c25920da25c3d` passes
+the policy, selector and commitperclip gates and is mergeable; full checks and
+fresh review remain incomplete. Two reviewed setup findings have treatments:
+missing forced-Kubernetes environments stay unqualified sandbox targets, so
+automatic Codex creation preserves Legacy without provisioning and explicit
+native selection returns qualification guidance. Four baseline failures become
+161 passing existing selection/environment controls. Local daemon resolution now
+precedes credential staging; preparation errors remove only the owned pre-handoff
+root, while unconfirmed probe retirement retains recovery state. Three original
+filesystem failures become 96 passing setup controls. Fake credentials and service
+controls do not qualify live Kubernetes or provider execution. Matching final
+source review, maps and typecheck are required before publishing the fixes.
+
 Published `2902b72c330d37ddff5d59e07927716dc3e1517c` is blocked before
 main CI by the repository's tracked-lock policy and another master conflict.
 The generated dependency lock is retained as build evidence; the branch restores
