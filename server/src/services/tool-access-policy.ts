@@ -69,6 +69,7 @@ type ToolAccessContext = {
   applicationKey: string | null;
   upstreamToolName: string | null;
   toolName: string;
+  legacyToolNames?: string[];
   riskLevel: ToolRiskLevel | null;
   argumentsHash: string;
   arguments: unknown;
@@ -414,7 +415,7 @@ function selectorMatches(selector: ToolAccessSelector | Record<string, unknown> 
     match("catalogEntryId", "catalogEntryIds", ctx.catalogEntryId) &&
     match("applicationKey", "applicationKeys", ctx.applicationKey) &&
     match("providerType", "providerTypes", ctx.providerType) &&
-    matchAny("toolName", "toolNames", [ctx.toolName, ctx.upstreamToolName]) &&
+    matchAny("toolName", "toolNames", [ctx.toolName, ctx.upstreamToolName, ...(ctx.legacyToolNames ?? [])]) &&
     match("riskLevel", "riskLevels", ctx.riskLevel)
   );
 }
@@ -596,7 +597,7 @@ function profileEntryMatches(entry: typeof toolProfileEntries.$inferSelect, ctx:
   if (entry.selectorType === "application") return entry.applicationId === ctx.applicationId;
   if (entry.selectorType === "connection") return entry.connectionId === ctx.connectionId;
   if (entry.selectorType === "catalog_entry") return entry.catalogEntryId === ctx.catalogEntryId;
-  if (entry.selectorType === "tool_name") return entry.toolName === ctx.toolName;
+  if (entry.selectorType === "tool_name") return entry.toolName === ctx.toolName || Boolean(entry.toolName && ctx.legacyToolNames?.includes(entry.toolName));
   if (entry.selectorType === "risk_level") return entry.riskLevel === ctx.riskLevel;
   return false;
 }
@@ -739,6 +740,7 @@ function scopeAllowsTool(scope: Record<string, unknown> | null, ctx: ToolAccessC
         !values.every((value) => typeof value === "string" && value.trim().length > 0)) return false;
     if (!values.includes(`tool:${ctx.toolName}`) &&
         !(ctx.upstreamToolName && values.includes(`tool:${ctx.upstreamToolName}`)) &&
+        !(ctx.legacyToolNames ?? []).some((name) => values.includes(`tool:${name}`)) &&
         !(ctx.connectionId && values.includes(`connection:${ctx.connectionId}`)) &&
         !(ctx.applicationId && values.includes(`application:${ctx.applicationId}`))) return false;
   }
@@ -1147,6 +1149,7 @@ export function toolAccessPolicyService(db: Db) {
         applicationKey,
         upstreamToolName,
         toolName: input.request.toolName,
+        legacyToolNames: input.request.legacyToolNames ?? [],
         riskLevel,
         argumentsHash: redaction.summary.sha256 ?? sha256(input.request.arguments ?? {}),
         arguments: input.request.arguments ?? {},

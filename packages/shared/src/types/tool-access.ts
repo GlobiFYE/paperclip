@@ -1592,6 +1592,7 @@ export interface ToolAccessDecisionInput {
     providerType?: string | null;
     applicationKey?: string | null;
     upstreamToolName?: string | null;
+    legacyToolNames?: string[];
     riskLevel?: ToolRiskLevel | string | null;
     toolName: string;
     arguments?: unknown;

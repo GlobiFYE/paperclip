@@ -2126,6 +2126,48 @@ rl.on("line", (line) => {
     expect(afterOutage[jiraSecond.catalogEntry.id]).toBeUndefined();
   });
 
+  it("keeps exclusions and blocks saved with the previous gateway tool name", async () => {
+    const company = await createCompany(db);
+    const agent = await createAgent(db, company.id);
+    const { run } = await createIssueAndRun(db, company.id, agent.id);
+    const applicationKey = `app-gallery:link:${randomUUID()}`;
+    const remoteTool = await createRemoteMcpTool(db, company.id, {
+      applicationKey,
+      connectionName: "Jira",
+      toolName: "delete_issue",
+      title: "Delete issue",
+    });
+    const legacyName = `mcp.${applicationKey.replace(/[^a-z0-9]+/g, "-")}-${remoteTool.connection.id.replace(/-/g, "").slice(0, 8)}:delete-issue`;
+    const profile = await allowAllToolsForAgent(db, company.id, agent.id);
+    const gateway = createTestToolGatewayService(db);
+    const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id });
+    const listedNames = async () => (await gateway.listToolsForSession(session.token))
+      .filter((tool) => tool.connectionId === remoteTool.connection.id)
+      .map((tool) => tool.name);
+
+    await expect(listedNames()).resolves.toEqual(["jira:delete-issue"]);
+
+    const [exclusion] = await db.insert(toolProfileEntries).values({
+      companyId: company.id,
+      profileId: profile.id,
+      selectorType: "tool_name",
+      effect: "exclude",
+      toolName: legacyName,
+    }).returning();
+    await expect(listedNames()).resolves.toEqual([]);
+    await db.delete(toolProfileEntries).where(eq(toolProfileEntries.id, exclusion!.id));
+    await expect(listedNames()).resolves.toEqual(["jira:delete-issue"]);
+
+    await db.insert(toolPolicies).values({
+      companyId: company.id,
+      name: "Block legacy name",
+      policyType: "block",
+      priority: 1,
+      selectors: { toolNames: [legacyName] },
+    });
+    await expect(listedNames()).resolves.toEqual([]);
+  });
+
   it("dispatches a bounded alias to the original long upstream tool name", async () => {
     const company = await createCompany(db);
     const agent = await createAgent(db, company.id);

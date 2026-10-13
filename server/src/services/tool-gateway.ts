@@ -309,6 +309,7 @@ export interface ToolGatewayDescriptor extends AgentToolDescriptor {
   connectionId?: string | null;
   catalogEntryId?: string | null;
   upstreamToolName?: string | null;
+  legacyToolNames?: string[];
   providerMetadata?: ConnectedMcpGatewayMetadata | Record<string, unknown>;
 }
 
@@ -1417,6 +1418,12 @@ export function createToolGatewayService(
       },
       new Map(allTools().map((tool) => [tool.name, 1])),
     );
+    const legacyBaseNames = eligibleRows.map(({ catalogEntry, connection, application }) =>
+      `${connection.transport === "rest_api" ? "app" : "mcp"}.${slugSegment(application.applicationKey ?? connection.name ?? application.name, "mcp")}-${shortStableId(connection.id)}:${slugSegment(catalogEntry.toolName, "tool")}`);
+    const legacyBaseNameCounts = new Map<string, number>();
+    for (const name of legacyBaseNames) {
+      legacyBaseNameCounts.set(name, (legacyBaseNameCounts.get(name) ?? 0) + 1);
+    }
 
     return eligibleRows.map(
       ({ catalogEntry, connection, application }, index) => {
@@ -1437,6 +1444,18 @@ export function createToolGatewayService(
           connection.id, application.id, catalogEntry.toolName,
           ...(baseNameCounts.get(baseName)! > 1 ? [catalogEntry.id] : []),
         ]);
+        const legacyBaseName = legacyBaseNames[index]!;
+        const legacyCollides = legacyBaseNameCounts.get(legacyBaseName)! > 1;
+        const unboundedLegacyName = legacyCollides
+          ? `${legacyBaseName}-${shortStableId(catalogEntry.id)}`
+          : legacyBaseName;
+        const legacyToolNames = [...new Set([
+          unboundedLegacyName,
+          boundedMcpToolName(unboundedLegacyName, [
+            connection.id, application.id, catalogEntry.toolName,
+            ...(legacyCollides ? [catalogEntry.id] : []),
+          ]),
+        ])];
         const applicationKey = application.applicationKey ?? null;
         const inputSchema = projectedConnectionToolInputSchema(
           connection,
@@ -1487,6 +1506,7 @@ export function createToolGatewayService(
           connectionId: connection.id,
           catalogEntryId: catalogEntry.id,
           upstreamToolName: catalogEntry.toolName,
+          legacyToolNames,
           providerMetadata,
         };
       },
@@ -2765,6 +2785,7 @@ export function createToolGatewayService(
         catalogEntryId: input.tool.catalogEntryId ?? null,
         providerType: input.tool.providerType,
         upstreamToolName: input.tool.upstreamToolName ?? input.tool.name,
+        legacyToolNames: input.tool.legacyToolNames ?? [],
         riskLevel: input.tool.risk,
         arguments: input.parameters ?? {},
         idempotencyKey: input.idempotencyKey ?? null,
