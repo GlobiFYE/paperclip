@@ -4,7 +4,7 @@
 
 [Contract and maintenance](README.md) · [Review findings](REVIEW.md)
 
-225 story files; 2220 indexed stories. Counts describe inventory, not passed tests or complete feature coverage.
+225 story files; 2221 indexed stories. Counts describe inventory, not passed tests or complete feature coverage.
 
 Status describes product alignment; implementation describes the rendered subject; boundary describes simulated data. Sources and limitations are in catalog.json. Related capabilities cross-list one canonical story file.
 
@@ -339,7 +339,7 @@ Stopped work, workspace repair, bounded continuation, and reconnect.
 | [Projects and execution/Recovery/Paperclip/Source-resolved Fold](../../ui/storybook/stories/recovery/source-resolved-fold.stories.tsx) | `recovery/diagnosis`, `recovery/source-action` | unreviewed / production / fixtures | 5 / 0 | Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. |
 | [Projects and execution/Recovery/Workspace branch recovery/01 Repair card](../../ui/storybook/stories/recovery/workspace-branch-recovery/01-component.stories.tsx) | `recovery/workspace` | unreviewed / production / fixtures | 8 / 4 | Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. |
 | [Projects and execution/Recovery/Workspace branch recovery/02 Task journey](../../ui/storybook/stories/recovery/workspace-branch-recovery/02-task-journey.stories.tsx) | `recovery/workspace` | unreviewed / production / fixtures | 2 / 0 | Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed. Master reconciliation inspected assignment-history recipient suggestions and manual-selection retention; existing stories do not establish the new assignment-history behavior. Expanded upstream verification recipes were inspected; the existing fixture scenarios do not prove the added backend handoff, workspace, recovery or authorization contracts. |
-| [Projects and execution/Recovery/Workspace finalization recovery/01 Notice](../../ui/storybook/stories/recovery/workspace-finalization-recovery/01-notice.stories.tsx) | `recovery/workspace`, `recovery/source-action` | current / production / fixtures | 5 / 1 | Production quiet status; automatic restoration, legacy operator fallback, queued and resolved states. No task repair form, process details or API simulation. Provider proof is verified by separate server and harness tests. |
+| [Projects and execution/Recovery/Workspace finalization recovery/01 Notice](../../ui/storybook/stories/recovery/workspace-finalization-recovery/01-notice.stories.tsx) | `recovery/workspace`, `recovery/source-action` | current / production / fixtures | 6 / 2 | Production quiet status; automatic restoration, legacy operator fallback, queued and resolved states. No task repair form, process details or API simulation. Provider proof is verified by separate server and harness tests. |
 | [Projects and execution/Recovery/Workspace finalization recovery/02 Task journey](../../ui/storybook/stories/recovery/workspace-finalization-recovery/02-task-journey.stories.tsx) | `recovery/workspace`, `recovery/source-action` | unreviewed / mixed / fixtures | 3 / 0 | Production shell, status, bubbles and composer in a local conversation composition; shows restoration and saved work waiting for confirmation. Fixture messages; not the shipped task page or live provider acceptance. |
 
 ## Apps, channels, and extensions

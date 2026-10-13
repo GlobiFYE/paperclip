@@ -19,6 +19,11 @@ export const RestoringSavedWork: Story = { play: async ({ canvasElement }) => {
   await expect(canvas.queryByRole("textbox")).not.toBeInTheDocument();
 } };
 export const NeedsVerification: Story = { args: { action: recoveryAction } };
+export const VerificationUnavailable: Story = { args: { action: {
+  ...automaticAction, evidence: { ...automaticAction.evidence, workspaceOwnerRecovery: { state: "operator_required" } },
+} }, play: async ({ canvasElement }) => {
+  await expect(within(canvasElement).getByRole("status")).toHaveTextContent("operator assistance");
+} };
 export const AlreadyQueued: Story = { args: { action: queuedAction } };
 export const Saved: Story = { args: { action: null } };
 export const Mobile: Story = { globals: { viewport: { value: "mobile", isRotated: false } } };

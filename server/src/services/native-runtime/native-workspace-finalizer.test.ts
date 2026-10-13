@@ -546,11 +546,17 @@ describe("native workspace finalization recovery", () => {
     const worker = { provider: "railway" as const, projectId: "fixture-project", environmentId: "fixture-env", serviceId: "fixture-service", deploymentId: "fixture-old" };
     const owner = { ...seed.owner, worker };
     await db.update(heartbeatRuns).set({ runnerProfileJson: { nativeWorkspaceFinalizationOwner: owner, preserved: "workspace descriptor" } }).where(eq(heartbeatRuns.id, seed.runId));
+    await db.update(issueRecoveryActions).set({ fingerprint: nativeSha256({ runId: seed.runId, owner }), evidence: { runId: seed.runId, owner, preserved: "recovery evidence" } }).where(eq(issueRecoveryActions.id, seed.actionId));
     const [before] = await db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, seed.runId));
     const proof = { v: 1 as const, iss: "paperclip-cloud" as const, aud: "paperclip-workspace-worker-stop/v1" as const, sub: "stack", runId: seed.runId, ownerToken: owner.token, worker, stopped: true as const, iat: 1, exp: 61 };
     const probe = vi.spyOn(platformProof, "requestWorkspaceWorkerStopProof").mockResolvedValue(proof);
     try {
-      const work = vi.fn(async () => "saved workspace copied");
+      const work = vi.fn(async () => {
+        const [recovery] = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, seed.actionId));
+        expect(recovery.evidence?.workspaceOwnerRecovery).toEqual({ state: "resuming" });
+        expect(recovery.evidence?.preserved).toBe("recovery evidence");
+        return "saved workspace copied";
+      });
       expect(await withNativeWorkspaceFinalizationOwnership(seed, work)).toEqual({ acquired: true, value: "saved workspace copied" });
       expect(probe).toHaveBeenCalledWith({ runId: seed.runId, ownerToken: owner.token, worker });
       expect(work).toHaveBeenCalledOnce();
@@ -573,6 +579,8 @@ describe("native workspace finalization recovery", () => {
     const work = vi.fn();
     try {
       expect(await withNativeWorkspaceFinalizationOwnership(seed, work)).toEqual({ acquired: false });
+      const [recovery] = await db.select().from(issueRecoveryActions).where(and(eq(issueRecoveryActions.sourceIssueId, seed.issueId), eq(issueRecoveryActions.fingerprint, nativeSha256({ runId: seed.runId, owner }))));
+      expect(recovery.evidence?.workspaceOwnerRecovery).toEqual({ state: "operator_required" });
       const replacement = { ...owner, token: randomUUID() };
       probe.mockImplementation(async () => {
         await db.update(heartbeatRuns).set({ runnerProfileJson: { nativeWorkspaceFinalizationOwner: replacement } }).where(eq(heartbeatRuns.id, seed.runId));

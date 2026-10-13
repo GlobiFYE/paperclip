@@ -495,3 +495,13 @@ without changing feature order or IDs. Reviewed that generated diff and refreshe
 these four entries, the shared setup and Overview fingerprints. No toast behavior,
 new browser acceptance or visual baseline is claimed. Global catalog validation
 now passes. This supersedes the five inherited-error count above.
+
+### Confirmed recovery status
+
+Reviewed the shipped notice, server evidence contract and both recovery fixtures.
+Platform identity alone no longer means work is restoring: the server marks the
+exact recovery receipt resuming only after verified stop proof and a successful
+owner claim. Missing proof remains operator-required. The new unavailable-proof
+story covers a platform-bound receipt without progress; confirmed and queued
+stories retain the quiet status. Updated only the two affected fingerprints.
+This is component/fixture evidence, not deployed harness acceptance.

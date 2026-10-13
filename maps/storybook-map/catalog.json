@@ -5690,7 +5690,7 @@
         "ui/storybook/stories/recovery/workspace-finalization-recovery/01-notice.stories.tsx",
         "ui/storybook/support/workspace-finalization-recovery/fixtures.tsx"
       ],
-      "fingerprint": "89ce3694844c0fee2d01b49986f7cb1fa70e3727544a2fbdb181550e1fc2f975",
+      "fingerprint": "45bf8c793c91362634b7ce32ed0ec2007861b7fefbfd0e2da692c3dc804a53c9",
       "stableId": "workspace-finalization-recovery-01-notice",
       "sidebarTitle": "Projects and execution/Recovery/Workspace finalization recovery/01 Notice"
     },
@@ -5715,7 +5715,7 @@
         "ui/storybook/stories/recovery/workspace-finalization-recovery/02-task-journey.stories.tsx",
         "ui/storybook/support/workspace-finalization-recovery/fixtures.tsx"
       ],
-      "fingerprint": "fbbe483da81a6b58a51c80b19803cee70bdb04ed5d0e9572a9b5ea7dd32a6d01",
+      "fingerprint": "aa76cd28dde8d50abd208b34283249170f3a85435ba82fff169a1c33433dfca1",
       "stableId": "workspace-finalization-recovery-02-task-journey",
       "sidebarTitle": "Projects and execution/Recovery/Workspace finalization recovery/02 Task journey"
     }

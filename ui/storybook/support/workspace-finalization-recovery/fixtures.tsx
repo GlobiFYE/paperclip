@@ -31,7 +31,7 @@ export const queuedAction: IssueRecoveryAction = {
 };
 
 export const automaticAction: IssueRecoveryAction = {
-  ...recoveryAction, evidence: { ...recoveryAction.evidence, owner: { ...(recoveryAction.evidence.owner as object), worker: {
+  ...recoveryAction, evidence: { ...recoveryAction.evidence, workspaceOwnerRecovery: { state: "resuming" }, owner: { ...(recoveryAction.evidence.owner as object), worker: {
     provider: "railway", projectId: "fixture-project", environmentId: "fixture-environment", serviceId: "fixture-service", deploymentId: "fixture-old-deployment",
   } } },
 };

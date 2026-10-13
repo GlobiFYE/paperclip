@@ -86,8 +86,10 @@ export async function withNativeWorkspaceFinalizationOwnership<T>(
           const existing = run.issueId ? await recovery.getActiveForIssue(input.companyId, run.issueId) : null;
           // Rechecking the same physical owner is not a new recovery attempt.
           if (existing?.cause === NATIVE_WORKSPACE_OWNER_UNVERIFIED && existing.fingerprint === fingerprint) {
-            if (!existing.evidence?.workspaceOwnerStop && existing.nextAction !== nextAction) {
-              await input.db.update(issueRecoveryActions).set({ nextAction, updatedAt: new Date() }).where(and(
+            if (!existing.evidence?.workspaceOwnerStop) {
+              await input.db.update(issueRecoveryActions).set({ nextAction, updatedAt: new Date(),
+                evidence: sql`jsonb_set(coalesce(${issueRecoveryActions.evidence}, '{}'::jsonb), '{workspaceOwnerRecovery}', '{"state":"operator_required"}'::jsonb)`,
+              }).where(and(
                 eq(issueRecoveryActions.companyId, input.companyId), eq(issueRecoveryActions.id, existing.id),
                 eq(issueRecoveryActions.fingerprint, fingerprint), eq(issueRecoveryActions.cause, NATIVE_WORKSPACE_OWNER_UNVERIFIED),
                 inArray(issueRecoveryActions.status, ["active", "escalated"]),
@@ -101,7 +103,7 @@ export async function withNativeWorkspaceFinalizationOwnership<T>(
             kind: "active_run_watchdog", ownerType: "board", returnOwnerAgentId: run.agentId,
             cause: NATIVE_WORKSPACE_OWNER_UNVERIFIED,
             fingerprint,
-            evidence: { runId: input.runId, owner: rawPrior },
+            evidence: { runId: input.runId, owner: rawPrior, workspaceOwnerRecovery: { state: "operator_required" } },
             nextAction,
             wakePolicy: null, maxAttempts: 1, supersedeOnIdentityChange: true,
           });
@@ -165,6 +167,15 @@ export async function withNativeWorkspaceFinalizationOwnership<T>(
         },
       };
       await ownership.assertHeld();
+      if (platformProof && run.issueId) await input.db.update(issueRecoveryActions).set({
+        evidence: sql`jsonb_set(coalesce(${issueRecoveryActions.evidence}, '{}'::jsonb), '{workspaceOwnerRecovery}', '{"state":"resuming"}'::jsonb)`,
+        updatedAt: new Date(),
+      }).where(and(
+        eq(issueRecoveryActions.companyId, input.companyId), eq(issueRecoveryActions.sourceIssueId, run.issueId),
+        eq(issueRecoveryActions.cause, NATIVE_WORKSPACE_OWNER_UNVERIFIED),
+        eq(issueRecoveryActions.fingerprint, nativeSha256({ runId: input.runId, owner: rawPrior })),
+        inArray(issueRecoveryActions.status, ["active", "escalated"]),
+      ));
       actionPromise = action(ownership);
       const value = await actionPromise;
       await ownership.assertHeld();

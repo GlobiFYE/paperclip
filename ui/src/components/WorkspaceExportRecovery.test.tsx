@@ -15,8 +15,12 @@ describe("WorkspaceExportRecovery", () => {
     expect(container.textContent).not.toContain("secret-host");
   }
   it("shows a quiet status while the harness restores work", async () => {
-    await mount({ ...action, evidence: { ...action.evidence, owner: { ...(action.evidence.owner as object), worker: { provider: "railway", deploymentId: "old" } } } });
+    await mount({ ...action, evidence: { ...action.evidence, workspaceOwnerRecovery: { state: "resuming" } } });
     expect(container.querySelector('[role="status"]')?.textContent).toBe("Restoring saved work…");
+  });
+  it("does not mistake platform identity for confirmed recovery", async () => {
+    await mount({ ...action, evidence: { ...action.evidence, owner: { ...(action.evidence.owner as object), worker: { provider: "railway", deploymentId: "old" } } } });
+    expect(container.textContent).toContain("operator assistance");
   });
   it("states that an operator is needed for legacy receipts", async () => {
     await mount(action);
