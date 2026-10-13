@@ -2670,7 +2670,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/skills/github-skills-journey.stories.tsx"
       ],
-      "fingerprint": "dcb8e4ce80ddc71f25542b9d84cdf1ce20e552da2848404e62d61f0687e3fc3f",
+      "fingerprint": "04b12de08d13813c1332d46f9bed8164f329aaf73ea0c57cbf83ecb6d3a4c6b1",
       "stableId": "skills-github-sync-journey",
       "sidebarTitle": "Agents and reusable capabilities/Skills and Skill Studio/Skills/GitHub sync journey"
     },
@@ -2684,8 +2684,8 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "notes": "Production Sources page with fixture APIs. Disconnect and legacy removal stories show a required keep-or-delete choice; the real copy, delete, and reimport flows were also tested locally. Other routes remain unreviewed.",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/skills.md",
         "ui/src/pages/SkillSources.tsx",
@@ -2693,7 +2693,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/skills/github-synced-skills.stories.tsx"
       ],
-      "fingerprint": "f87c8ee2574a097ef4e4828589618ad196f170fb652db022bc7488b3fb7971e2",
+      "fingerprint": "c14509e4b57e7587f560824f417c8439dbb6bc3d303d37dec169ab819c867d36",
       "stableId": "skills-github-synced-skills",
       "sidebarTitle": "Agents and reusable capabilities/Skills and Skill Studio/Skills/GitHub synced skills"
     },
@@ -3738,7 +3738,7 @@
         "maps/feature-map/developer-labs.md"
       ],
       "exception": "Shared foundations or contributor guide; no single business capability owns this suite.",
-      "fingerprint": "e976ac856930f41020485a292121b6a4879c9db1d7014e74d6a7add59acd53ce",
+      "fingerprint": "bfacafe1d48789bac91fb595247ee767edf52cc705ba353031ccb155879b3d4c",
       "stableId": "foundations-primitive-coverage",
       "sidebarTitle": "Foundations/Primitive Coverage",
       "home": "foundations"
@@ -4460,7 +4460,7 @@
       "implementation": "production",
       "boundary": "fixtures",
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/skills.md",
         "ui/src/components/Layout.tsx",
@@ -4472,7 +4472,7 @@
         "ui/storybook/stories/skills/github-skills-journey.stories.tsx",
         "ui/storybook/stories/skills/repository-skill-packages/repository-skill-packages.stories.tsx"
       ],
-      "fingerprint": "a90fb6c9377034d3645b851711ddc84eb3b9945dce0cdea4496cb9a4050fb8ad",
+      "fingerprint": "d8af830b23aa96f0a92b898b16c090e76fe4e9b986517fbf72d9cdedf840e7e4",
       "stableId": "skills-repository-packages",
       "sidebarTitle": "Agents and reusable capabilities/Skills and Skill Studio/Skills/Repository packages"
     },
@@ -4810,7 +4810,7 @@
       "implementation": "production",
       "boundary": "fixtures",
       "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
-      "reviewedAt": "2026-10-12",
+      "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/skills.md",
         "ui/src/pages/skills/SkillImportProgress.tsx",
@@ -4818,7 +4818,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/skills/skill-import-progress.stories.tsx"
       ],
-      "fingerprint": "55477a243eb0cd940e20e47b0c2e388af26268930be5ee516043a8812f3ab0e5",
+      "fingerprint": "4f517ad1f4e9a390e29d2f5f31bd78209179043f4253817b5a2788c8a4824a6c",
       "stableId": "skills-import-progress",
       "sidebarTitle": "Agents and reusable capabilities/Skills and Skill Studio/Skills/Import progress"
     },
