@@ -3,7 +3,7 @@
 The user authorized six hours of sustained work starting at 2026-10-13 02:14 UTC,
 with a target of fewer than 8,000 lines in `server/src/services/chat-channels.ts`.
 The starting commit is `7eaa9cfa9ce04398a5eb0211a86aacaaa01959dd`: 19,153 lines,
-762,442 bytes. The preceding ten PRs are reviewed and green, but not yet merged.
+762,442 bytes. At kickoff, the preceding ten PRs were reviewed and green, but not yet merged.
 The user authorizes publishing and merging reviewed changes to paperclipai/paperclip.
 
 The previous plan prioritized too many small helper cuts. This plan prioritizes
@@ -126,9 +126,34 @@ the original authenticated runtime. No assertion or timeout changed.
 
 ## Stack landing
 
-The ten prior PRs and five workflow PRs have individual behavioral evidence and
-review. Consolidate dependent branches with the supported squash method and
-compare each result with the verified tip tree. Keep the master-targeting root
-open for current-master reconciliation, a fresh aggregate review and CI, and
-repository-wide local verification. Preserve upstream execution-default policy
-in the extracted endpoint and retained task paths.
+The preceding ten PRs reached master through #16058. The five workflow PRs are
+#16080, #16085, #16089, #16096 and #16105. Each extraction has individual behavioral
+evidence and a 5/5 review. The four child PRs merged into their predecessors after
+each combined revision passed its own checks and review. Every consolidation
+preserved the tested tip tree exactly.
+
+The final master integration leaves the service at 7,917 lines and 337,195 bytes.
+The 18-line increase over the extraction tip preserves upstream execution-default
+selection and authorization. Endpoint serialization and credential-leased updates
+retain that policy in the extracted endpoint module. Task creation and failed-run
+recovery retain their upstream behavior. All 107 extracted declarations match
+current master after reversing the documented binding substitutions. The endpoint,
+task-creation and recovery functions also pass exact normalized AST comparisons.
+
+Repository-wide typecheck and build pass on this integration. The first full local
+test command passed 18,391 server tests and skipped 105, but one unchanged tool-access
+test hit its 15-second timeout. That case passed alone. The UI and CLI groups passed
+8,706 tests. Shared and adapter groups passed 4,751 tests and skipped 20. A database
+group could not initialize one PostgreSQL fixture. This Mac has a 32-segment shared
+memory limit and concurrent fixture databases. The unchanged database cases are
+being rerun one file at a time before the remaining chat and serialized route lanes.
+Keep the original failed runs in the verification record. No assertion or timeout
+was changed. The root PR remains open for fresh review and CI against master.
+
+The service now has 67 direct functions. The largest retained paths are message
+task handling (1,449 lines), webhook dispatch (685), operator action resolution
+(488), and publication resolution (343). Provider setup, transport preparation,
+native interactions and destination admission live in their channel folders.
+Shared admission, delivery, lifecycle and publication transactions have named
+workflow modules. The retained message path calls those phases and keeps task
+mutation and per-call ownership together.
