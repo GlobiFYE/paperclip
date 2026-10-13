@@ -83,7 +83,7 @@ export function BudgetIncidentCard({
           <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-950/90 dark:text-amber-50/90">
             <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
             <div>
-              Spending crossed the warning threshold. Work keeps running until spending reaches the budget.
+              Spending crossed the warning threshold. This warning does not pause work.
             </div>
           </div>
         ) : (

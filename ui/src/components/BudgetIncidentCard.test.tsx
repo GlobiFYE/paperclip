@@ -72,6 +72,7 @@ describe("BudgetIncidentCard", () => {
     expect(div.textContent).toContain("agent budget warning");
     expect(div.textContent).not.toContain("hard stop");
     expect(div.textContent).not.toContain("paused");
+    expect(div.textContent).toContain("This warning does not pause work.");
     expect(div.textContent).toContain("Spending reached $800.00 against a limit of $1,000.00.");
     expect(buttons()).toEqual(["Raise budget", "Dismiss warning"]);
     expect(div.querySelector("input")?.value).toBe("1010.00");
