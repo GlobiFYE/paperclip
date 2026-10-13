@@ -74,6 +74,7 @@ import {
   updateCompanyBrandingSchema,
   companyArtifactsQuerySchema,
   companyArtifactsResponseSchema,
+  companyDeliverablesQuerySchema,
   // Decisions
   addDecisionQueueItemSchema,
   createDecisionQueueSchema,
@@ -2006,6 +2007,25 @@ registry.registerPath({
       },
     },
     401: r.unauthorized,
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/api/companies/{companyId}/deliverables",
+  tags: ["companies"],
+  summary: "List company deliverables",
+  description:
+    "One card per completed issue with its stored plain-English summary (TOP-193). Read-only projection; the summary itself is generated offline by the deliverable summary sweeper. Task-bridge keys are rejected.",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    query: companyDeliverablesQuerySchema,
+  },
+  responses: {
+    200: r.ok(),
+    400: r.badRequest,
+    401: r.unauthorized,
+    403: r.forbidden,
   },
 });
 
