@@ -1310,7 +1310,7 @@ export function createToolGatewayService(
     // every tool, and one connection can expose hundreds of tools. Both reads
     // share one read-only snapshot, so they agree like a single join, and the
     // second read gets only the connections that have listed tools.
-    const { connectionRows, catalogRows } = await db.transaction(
+    const { connectionRows, catalogRows, namingRows } = await db.transaction(
       async (tx) => {
         const catalogRows = await tx
           .select({ catalogEntry: toolCatalogEntries })
@@ -1339,7 +1339,7 @@ export function createToolGatewayService(
           ),
         ];
         if (connectionIds.length === 0)
-          return { connectionRows: [], catalogRows };
+          return { connectionRows: [], catalogRows, namingRows: [] };
         const connectionRows = await tx
           .select({
             connection: toolConnections,
@@ -1356,7 +1356,19 @@ export function createToolGatewayService(
               connectedMcpConnectionFilter(companyId),
             ),
           );
-        return { connectionRows, catalogRows };
+        const namingRows = await tx
+          .select({
+            id: toolConnections.id,
+            name: toolConnections.name,
+            applicationName: toolApplications.name,
+          })
+          .from(toolConnections)
+          .innerJoin(
+            toolApplications,
+            eq(toolConnections.applicationId, toolApplications.id),
+          )
+          .where(eq(toolConnections.companyId, companyId));
+        return { connectionRows, catalogRows, namingRows };
       },
       { isolationLevel: "repeatable read", accessMode: "read only" },
     );
@@ -1379,9 +1391,9 @@ export function createToolGatewayService(
           application.type === "mcp_stdio")),
     );
     const connectionSlugs = new Map(
-      eligibleRows.map(({ connection, application }) => [
-        connection.id,
-        slugSegment(connection.name.split("(")[0], slugSegment(application.name, "mcp"))
+      namingRows.map(({ id, name, applicationName }) => [
+        id,
+        slugSegment(name.split("(")[0], slugSegment(applicationName, "mcp"))
           .slice(0, 24)
           .replace(/-+$/, ""),
       ]),

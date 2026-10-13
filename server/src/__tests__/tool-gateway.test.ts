@@ -2120,6 +2120,10 @@ rl.on("line", (line) => {
       expect(name).not.toContain("app-gallery");
     }
     await expect(listNames()).resolves.toEqual(names);
+    await db.update(toolConnections).set({ healthStatus: "error" }).where(eq(toolConnections.id, jiraSecond.connection.id));
+    const afterOutage = await listNames();
+    expect(afterOutage[jira.catalogEntry.id]).toBe(names[jira.catalogEntry.id]);
+    expect(afterOutage[jiraSecond.catalogEntry.id]).toBeUndefined();
   });
 
   it("dispatches a bounded alias to the original long upstream tool name", async () => {
