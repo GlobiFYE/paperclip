@@ -358,6 +358,7 @@ import {
 } from "./heartbeat-run-summary.js";
 import {
   buildHeartbeatRunStopMetadata,
+  classifyRunTimeoutErrorReason,
   mergeHeartbeatRunStopMetadata,
   normalizeMaxTurnStopReason,
 } from "./heartbeat-stop-metadata.js";
@@ -25334,13 +25335,32 @@ export function heartbeatService(
           usageBasis: adapterResult.usageBasis ?? null,
         });
         const normalizedUsage = sessionUsageResolution.normalizedUsage;
+        // TOP-396: a run that settled on its time budget stores a classified
+        // reason ("timed out after Ns (run budget exceeded)") instead of the
+        // raw traceback head a timeout SIGINT leaves in the adapter's parsed
+        // stderr (e.g. "Traceback (most recent call last):"). Genuine
+        // non-timeout crashes keep their real error line.
+        const stopMetadataForError = buildHeartbeatRunStopMetadata({
+          adapterType: agent.adapterType,
+          adapterConfig: parseObject(agent.adapterConfig),
+          outcome,
+          errorCode: adapterResult.errorCode ?? latestRun?.errorCode ?? null,
+          errorMessage: adapterResult.errorMessage ?? null,
+        });
+        const timeoutErrorReason = classifyRunTimeoutErrorReason({
+          outcome,
+          errorCode: adapterResult.errorCode ?? latestRun?.errorCode ?? null,
+          timeoutFired: stopMetadataForError.timeoutFired,
+          effectiveTimeoutSec: stopMetadataForError.effectiveTimeoutSec,
+        });
         const runErrorMessage =
           outcome === "cancelled"
             ? (latestRun?.error ?? adapterResult.errorMessage ?? "Cancelled")
             : outcome === "succeeded"
               ? null
               : redactCurrentUserText(
-                  adapterResult.errorMessage ??
+                  timeoutErrorReason ??
+                    adapterResult.errorMessage ??
                     (outcome === "timed_out" ? "Timed out" : "Adapter failed"),
                   currentUserRedactionOptions,
                 );
