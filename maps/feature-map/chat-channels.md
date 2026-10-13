@@ -54,6 +54,10 @@ Automated: [channel integration](../../server/src/__tests__/chat-channels.integr
 
 Manual: Inspect the bound agent and identity, recent activity, and delivery failure details. Repair a disposable credential, retry a safe message when offered, and verify exactly one external reply. Disable the endpoint and confirm new traffic is not silently processed.
 
+For GitHub, submit a disposable PR and verify the summary heading uses the bot's
+display name and the check remains **Paperclip Review**. For two separate bots on one PR, verify
+their App-scoped checks and comments remain independent.
+
 Configure optional project and workspace defaults at the connection and destination
 levels. Start a new conversation and inspect its task workspace. Verify that
 inheritance, an explicit selection, and clearing a default remain distinct.

@@ -171,3 +171,6 @@ history use the company-scoped `voice-callbacks`, `voice-phone`, and
 `voice-history` routes. Their UI controls do not grant agents board authority.
 See [voice routes](../../server/src/routes/voice-sessions.ts); service-level
 caller/session permissions and real provider delivery need separate verification.
+
+GitHub review summary headings use the bot display name. Checks remain
+independently scoped by GitHub App and endpoint/PR/commit identity.
