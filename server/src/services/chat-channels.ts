@@ -1,3 +1,4 @@
+import { initializeGitHubWebhookRuntime } from "./chat-channels/github/webhook-runtime.js";
 import { githubInboundTaskTitle, githubInboundCommentText, githubAssignedAgentRequiresLowTrust, retainGitHubDeliveryAuthority, retainGitHubReviewReceipt } from "./chat-channels/github/task-preparation.js";
 import { applyChatTaskReviewContainment } from "./chat-channels/inbound/task-trust.js";
 import { photonControlTargetsConversation, photonReplyMetadata, recordPhotonInboundActivity } from "./chat-channels/imessage-photon/messages.js";
@@ -96,7 +97,7 @@ import { createChatPublicationReplacement } from "./chat-channels/publication-re
 import { createChatIdentityLinks } from "./chat-channels/identity-links.js";
 import { createChatResourceReconciliation } from "./chat-channels/resource-reconciliation.js";
 
-import { slackResourceLabelIsFallback } from "./chat-channels/slack/resources.js";
+import { scheduleSlackLifecycleResourceHydration } from "./chat-channels/slack/resources.js";
 
 import {
   MAX_INBOUND_TEXT,
@@ -108,8 +109,7 @@ import {
   microsoftTeamsLifecycleEventFromPayload, teamsOrphanFollowUp, teamsAttachmentReferenceText,
 } from "./chat-channels/microsoft-teams/messages.js";
 import {
-  type GitHubLifecycleEvent,
-  githubLifecycleEventFromRequest,
+  githubSupplementalLifecycleFromRequest,
 } from "./chat-channels/github/messages.js";
 import { nextChatActionAt } from "./chat-action-work.js";
 import type { ScheduledChatAction } from "./chat-work-notifications.js";
@@ -217,9 +217,6 @@ import {
   readRegisteredDiscordCommandRegistration,
 } from "./chat-discord-command-registration-store.js";
 
-import {
-  parseSlackSessionStop,
-} from "./chat-slack-sessions.js";
 
 import {
   parseChatProviderLifecycle,
@@ -889,7 +886,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   });
   const { handleTelegramSlashCommand } = createTelegramCommands({ runtime, runtimeFor, handleSdkMessage });
   const { stageGitHubWebhookIngress, githubIngressAcceptedResponse, processGitHubWebhookIngress, processFailedGitHubWebhookDeliveries, processPendingGitHubWebhookIngress } = createGitHubWebhookIngress(db, { endpointRecord, runtimeContextForRecord, resolveCredentialRefs, runtimeGeneration, credentialFingerprint, getWebhookPublicBaseUrl, redactError, handleWebhook, runtimeCallbackEndpoint, fetchImpl, persistence, withCredentialMutationLease, isShuttingDown: () => shuttingDown, get githubWebhookReplayBarrier() { return options.githubWebhookReplayBarrier; }, supportedWebhookEvents: SUPPORTED_GITHUB_WEBHOOK_EVENTS });
-  const { stageSlackSessionStop, processSlackSessionStop, processPendingSlackSessionStops } = createSlackSessionStop(db, { runtimeCallbackEndpoint, lockCurrentPrincipalAuthorization, nonDirectDestinationAllowed, stageAuthorizedTaskControlPublication, getPublicBaseUrl, get heartbeat() { return options.heartbeat; }, redactError });
+  const { stageSlackSessionStop, processSlackSessionStop, processPendingSlackSessionStops, handleSlackSessionStopPayload } = createSlackSessionStop(db, { scheduleMessageProcessing, get deferWebhookProcessing() { return options.deferWebhookProcessing; }, runtimeCallbackEndpoint, lockCurrentPrincipalAuthorization, nonDirectDestinationAllowed, stageAuthorizedTaskControlPublication, getPublicBaseUrl, get heartbeat() { return options.heartbeat; }, redactError });
   const { stageTelegramMaintenance, processTelegramMaintenance, processPendingTelegramMaintenance, processPendingTelegramActions, processTelegramSubscriptionDiscovery, scheduleTelegramSubscriptionDiscovery, hasPendingTelegramSubscriptionDiscovery, hasTelegramStopSubscription, recordTelegramStopSubscription } = createTelegramMaintenance(db, { endpointRecord, runtimeContextForRecord, withCredentialMutationLease, resolveCredentials, clearCredentials, runtimeCallbackEndpoint, getWebhookPublicBaseUrl, fetchImpl, runtimeGeneration, credentialFingerprint, redactError, credentialCheckTimeoutMs: PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS });
   const { reconcileGitHubWebhookRepository, reconcileProviderResourceRows, listResources, listGitHubRepositories, replaceResources, toggleAllGitHubRepositories, hasNewerProcessedProviderLifecycleEffect, applyProviderAvailability } = createChatResourceReconciliation(db, { endpointRecord, withCredentialMutationLease, runtimeGeneration, maxErrorText: MAX_ERROR_TEXT });
   const { applyGitHubInstallationLifecycle } = createGitHubInstallationLifecycle(db, {
@@ -2979,46 +2976,8 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         effect,
         runtimeContext,
       );
-      if (
-        applied &&
-        endpoint.provider === "slack" &&
-        effect.kind === "resource" &&
-        effect.availability === "available" &&
-        slackResourceLabelIsFallback(effect.providerResourceId, effect.label)
-      ) {
-        const stillAvailable = await db
-          .select({ id: chatEndpointResources.id })
-          .from(chatEndpointResources)
-          .where(
-            and(
-              eq(chatEndpointResources.endpointId, endpoint.id),
-              eq(chatEndpointResources.type, "channel"),
-              eq(
-                chatEndpointResources.providerResourceId,
-                effect.providerResourceId,
-              ),
-              eq(chatEndpointResources.availability, "available"),
-            ),
-          )
-          .limit(1)
-          .then((rows) => rows.length > 0);
-        if (stillAvailable) {
-          scheduleMessageProcessing(async () => {
-            await hydrateSlackResourceLabel(
-              endpoint.id,
-              effect.providerResourceId,
-            ).catch((error) => {
-              logger.warn(
-                {
-                  endpointId: endpoint.id,
-                  providerResourceId: effect.providerResourceId,
-                  error: redactError(error),
-                },
-                "could not hydrate a newly available Slack channel label",
-              );
-            });
-          });
-        }
+      if (applied && endpoint.provider === "slack") {
+        await scheduleSlackLifecycleResourceHydration(db, endpoint, effect, { scheduleMessageProcessing, hydrateSlackResourceLabel, redactError });
       }
     }
   }
@@ -3085,36 +3044,9 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     const githubInspection = provider === "github" ? request.clone() : null;
     recordChatWebhookStage("runtime_requested");
     const runtimePromise = runtimeFor(endpoint);
-    let endpointRuntime: ChatEndpointRuntime;
-    if (githubResponseDeadlineAt !== null) {
-      let timeout: ReturnType<typeof setTimeout> | null = null;
-      try {
-        const outcome = await Promise.race([
-          runtimePromise.then((value) => ({ completed: true as const, value })),
-          new Promise<{ completed: false; value?: never }>((resolve) => {
-            timeout = setTimeout(
-              () => resolve({ completed: false }),
-              Math.max(0, githubResponseDeadlineAt - Date.now()),
-            );
-            timeout.unref?.();
-          }),
-        ]);
-        if (!outcome.completed) {
-          return retryableGitHubWebhookResponse();
-        }
-        endpointRuntime = outcome.value;
-      } catch (error) {
-        logger.warn(
-          { endpointId: endpoint.id, error: redactError(error) },
-          "GitHub runtime initialization failed before durable webhook receipt",
-        );
-        return retryableGitHubWebhookResponse();
-      } finally {
-        if (timeout) clearTimeout(timeout);
-      }
-    } else {
-      endpointRuntime = await runtimePromise;
-    }
+    const initialized = await initializeGitHubWebhookRuntime(endpoint, runtimePromise, githubResponseDeadlineAt, redactError);
+    if (initialized.response) return initialized.response;
+    const endpointRuntime = initialized.runtime;
     recordChatWebhookStage("runtime_ready");
     const runtimeContext = runtimeContexts.get(endpointRuntime as object);
     if (!runtimeContext) {
@@ -3155,26 +3087,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       endpointRuntime.acceptsProviderScope(lifecyclePayload)
     ) {
       if (endpoint.provider === "slack") {
-        const stop = parseSlackSessionStop(
-          lifecyclePayload,
-          endpoint.providerAccountId,
-        );
-        if (stop) {
-          const actionId = await stageSlackSessionStop(
-            endpoint,
-            stop,
-            runtimeContext,
-          );
-          if (actionId) {
-            if (options.deferWebhookProcessing === true) {
-              scheduleMessageProcessing(() =>
-                processSlackSessionStop(actionId),
-              );
-            } else {
-              await processSlackSessionStop(actionId);
-            }
-          }
-        }
+        await handleSlackSessionStopPayload(endpoint, lifecyclePayload, runtimeContext);
       }
       const effects = parseChatProviderLifecycle({
         provider: endpoint.provider,
@@ -3191,13 +3104,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       await recordSlackWebhookCallback(endpoint, request, slackCallbackInspection, runtimeContext);
     }
     if (githubInspection && response.ok) {
-      let lifecycle: GitHubLifecycleEvent | null = null;
-      try {
-        lifecycle = await githubLifecycleEventFromRequest(githubInspection);
-      } catch {
-        // Ignore only malformed or unsupported supplemental payloads. Once an
-        // event is recognized, its durable persistence failure must escape.
-      }
+      const lifecycle = await githubSupplementalLifecycleFromRequest(githubInspection);
       if (lifecycle) {
         await recordLifecycleDelivery(
           {
