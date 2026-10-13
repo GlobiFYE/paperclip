@@ -10,7 +10,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { AdapterRuntimeServiceReport } from "@paperclipai/adapter-utils";
 import type { Db } from "@paperclipai/db";
-import { executionWorkspaces, issueComments, issues, projectWorkspaces, workspaceRuntimeServices } from "@paperclipai/db";
+import { executionWorkspaces, heartbeatRuns, issueComments, issues, projectWorkspaces, workspaceRuntimeServices } from "@paperclipai/db";
 import {
   DEFAULT_TAILSCALE_HTTPS_EXPOSURE,
   deriveViteHmrPort,
@@ -34,7 +34,7 @@ import {
   type WorkspaceRuntimeDesiredState,
   type WorkspaceRuntimeServiceStateMap,
 } from "@paperclipai/shared";
-import { and, desc, eq, gte, inArray, isNull, lte, ne, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lt, lte, ne, notInArray, or } from "drizzle-orm";
 import { asNumber, asString, parseObject, renderTemplate } from "../adapters/utils.js";
 import { conflict, unprocessable } from "../errors.js";
 import { resolveHomeAwarePath } from "../home-paths.js";
@@ -1254,7 +1254,7 @@ function executionWorkspaceUsesInheritedProjectRuntimeServices(
   return !readExecutionWorkspaceConfig((row.metadata as Record<string, unknown> | null) ?? null)?.workspaceRuntime;
 }
 
-async function findActiveRuntimeServiceBlockingDirtyQuarantine(input: {
+async function findActiveRuntimeServiceForWorkspace(input: {
   db: Db;
   workspace: typeof executionWorkspaces.$inferSelect;
 }) {
@@ -1307,7 +1307,7 @@ async function assertDirtyQuarantineRuntimeServicesStopped(input: {
     throw branchIncoherenceValidationFailure(input.evidence);
   }
 
-  const activeService = await findActiveRuntimeServiceBlockingDirtyQuarantine({
+  const activeService = await findActiveRuntimeServiceForWorkspace({
     db: input.db,
     workspace,
   });
@@ -1324,6 +1324,147 @@ async function assertGitIndexIsUnlocked(worktreePath: string) {
     .catch(() => null);
   if (indexLockPath && existsSync(indexLockPath)) {
     throw new Error(`git index lock exists at ${indexLockPath}`);
+  }
+}
+
+const CONFIG_WORKTREE_LOCK_STALE_MS = 30 * 60 * 1000;
+const TERMINAL_HEARTBEAT_RUN_STATUSES = [
+  "succeeded",
+  "interrupted",
+  "failed",
+  "cancelled",
+  "timed_out",
+] as const;
+
+async function hasSafeConfigWorktreeLockRecoveryEvidence(input: {
+  db: Db;
+  companyId: string;
+  issueId: string;
+  executionWorkspaceId: string;
+  heartbeatRunId: string;
+  worktreePath: string;
+  lockMtimeMs: number;
+}) {
+  const [workspace] = await input.db
+    .select()
+    .from(executionWorkspaces)
+    .where(and(
+      eq(executionWorkspaces.id, input.executionWorkspaceId),
+      eq(executionWorkspaces.companyId, input.companyId),
+      eq(executionWorkspaces.sourceIssueId, input.issueId),
+    ))
+    .limit(1);
+  if (!workspace) return false;
+  const persistedPath = workspace.providerRef ?? workspace.cwd;
+  if (!persistedPath || path.resolve(persistedPath) !== path.resolve(input.worktreePath)) return false;
+
+  const [issue] = await input.db
+    .select({ id: issues.id })
+    .from(issues)
+    .where(and(
+      eq(issues.id, input.issueId),
+      eq(issues.companyId, input.companyId),
+      eq(issues.executionWorkspaceId, input.executionWorkspaceId),
+      eq(issues.executionRunId, input.heartbeatRunId),
+    ))
+    .limit(1);
+  if (!issue) return false;
+
+  const [currentRun] = await input.db
+    .select({ status: heartbeatRuns.status, createdAt: heartbeatRuns.createdAt })
+    .from(heartbeatRuns)
+    .where(and(
+      eq(heartbeatRuns.id, input.heartbeatRunId),
+      eq(heartbeatRuns.companyId, input.companyId),
+      eq(heartbeatRuns.issueId, input.issueId),
+    ))
+    .limit(1);
+  if (!currentRun || TERMINAL_HEARTBEAT_RUN_STATUSES.includes(
+    currentRun.status as (typeof TERMINAL_HEARTBEAT_RUN_STATUSES)[number],
+  )) return false;
+
+  const [liveOtherRun] = await input.db
+    .select({ id: heartbeatRuns.id })
+    .from(heartbeatRuns)
+    .where(and(
+      eq(heartbeatRuns.companyId, input.companyId),
+      eq(heartbeatRuns.issueId, input.issueId),
+      ne(heartbeatRuns.id, input.heartbeatRunId),
+      notInArray(heartbeatRuns.status, [...TERMINAL_HEARTBEAT_RUN_STATUSES]),
+    ))
+    .limit(1);
+  if (liveOtherRun) return false;
+
+  const [previousRun] = await input.db
+    .select({ status: heartbeatRuns.status, finishedAt: heartbeatRuns.finishedAt })
+    .from(heartbeatRuns)
+    .where(and(
+      eq(heartbeatRuns.companyId, input.companyId),
+      eq(heartbeatRuns.issueId, input.issueId),
+      ne(heartbeatRuns.id, input.heartbeatRunId),
+      lt(heartbeatRuns.createdAt, currentRun.createdAt),
+    ))
+    .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id))
+    .limit(1);
+  if (
+    !previousRun
+    || !TERMINAL_HEARTBEAT_RUN_STATUSES.includes(
+      previousRun.status as (typeof TERMINAL_HEARTBEAT_RUN_STATUSES)[number],
+    )
+    || !previousRun.finishedAt
+    || input.lockMtimeMs > previousRun.finishedAt.getTime()
+  ) return false;
+
+  return !await findActiveRuntimeServiceForWorkspace({
+    db: input.db,
+    workspace,
+  });
+}
+
+async function recoverStaleConfigWorktreeLock(input: {
+  db?: Db | null;
+  companyId: string;
+  issueId?: string | null;
+  executionWorkspaceId?: string | null;
+  heartbeatRunId?: string | null;
+  worktreePath: string;
+}) {
+  if (!input.db || !input.issueId || !input.executionWorkspaceId || !input.heartbeatRunId) return;
+
+  try {
+    const rawLockPath = await runGit(["rev-parse", "--git-path", "config.worktree.lock"], input.worktreePath);
+    const lockPath = path.isAbsolute(rawLockPath)
+      ? rawLockPath
+      : path.resolve(input.worktreePath, rawLockPath);
+    const first = await fs.lstat(lockPath).catch(() => null);
+    if (!first?.isFile() || Date.now() - first.mtimeMs < CONFIG_WORKTREE_LOCK_STALE_MS) return;
+
+    const evidence = {
+      db: input.db,
+      companyId: input.companyId,
+      issueId: input.issueId,
+      executionWorkspaceId: input.executionWorkspaceId,
+      heartbeatRunId: input.heartbeatRunId,
+      worktreePath: input.worktreePath,
+      lockMtimeMs: first.mtimeMs,
+    };
+    if (!await hasSafeConfigWorktreeLockRecoveryEvidence(evidence)) return;
+
+    const current = await fs.lstat(lockPath).catch(() => null);
+    if (
+      !current?.isFile()
+      || current.dev !== first.dev
+      || current.ino !== first.ino
+      || current.size !== first.size
+      || current.mtimeMs !== first.mtimeMs
+      || current.ctimeMs !== first.ctimeMs
+    ) return;
+
+    if (!await hasSafeConfigWorktreeLockRecoveryEvidence(evidence)) return;
+
+    await fs.unlink(lockPath);
+  } catch {
+    return;
   }
 }
 
@@ -3226,6 +3367,9 @@ async function recordWorkspaceCommandOperation(
 }
 
 async function provisionExecutionWorktree(input: {
+  db?: Db | null;
+  executionWorkspaceId?: string | null;
+  heartbeatRunId?: string | null;
   strategy: Record<string, unknown>;
   base: ExecutionWorkspaceInput;
   repoRoot: string;
@@ -3241,6 +3385,17 @@ async function provisionExecutionWorktree(input: {
   const provisionCommand = resolveWorkspaceProvisionCommand(input.strategy, input.repoRoot);
   if (!provisionCommand) return;
   const resolvedProvisionCommand = resolveRepoManagedWorkspaceCommand(provisionCommand, input.repoRoot);
+
+  if (!input.created) {
+    await recoverStaleConfigWorktreeLock({
+      db: input.db,
+      companyId: input.agent.companyId,
+      issueId: input.issue?.id,
+      executionWorkspaceId: input.executionWorkspaceId,
+      heartbeatRunId: input.heartbeatRunId,
+      worktreePath: input.worktreePath,
+    });
+  }
 
   await recordWorkspaceCommandOperation(input.recorder, {
     phase: "workspace_provision",
@@ -3929,6 +4084,9 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     realized.baseRefSha = refresh.baseRefSha ?? recordedBaseRefSha ?? baseDrift.branchBaseRefSha ?? baseDrift.currentBaseRefSha;
     await input.afterSourceCopy?.(repoRoot, realized.worktreePath ?? cwd);
     await provisionExecutionWorktree({
+      db: input.db,
+      executionWorkspaceId: input.workspace.id,
+      heartbeatRunId: input.heartbeatRunId,
       skipHostProvision: input.skipHostProvision,
       strategy: {
         type: "git_worktree",
@@ -4023,6 +4181,9 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
 
   await input.afterSourceCopy?.(repoRoot, worktreePath);
   await provisionExecutionWorktree({
+    db: input.db,
+    executionWorkspaceId: input.workspace.id,
+    heartbeatRunId: input.heartbeatRunId,
     skipHostProvision: input.skipHostProvision,
     strategy: {
       type: "git_worktree",

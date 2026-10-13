@@ -6304,6 +6304,257 @@ describeEmbeddedPostgres("workspace dirty quarantine branch repair", () => {
     });
   }
 
+  async function createProvisionLockRecoveryFixture(input: {
+    lockAgeMs: number;
+    previousRunStatus: "failed" | "running";
+    activeRuntimeService?: boolean;
+    currentIssueOwnsRun?: boolean;
+  }) {
+    const repoRoot = await createTempRepo();
+    await runGit(repoRoot, ["config", "extensions.worktreeConfig", "true"]);
+    const branchName = `PAP-445-config-worktree-lock-${randomUUID()}`;
+    const worktreePath = path.join(repoRoot, ".paperclip", "worktrees", branchName);
+    await fs.mkdir(path.dirname(worktreePath), { recursive: true });
+    await runGit(repoRoot, ["worktree", "add", "-b", branchName, worktreePath, "HEAD"]);
+
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const projectId = randomUUID();
+    const projectWorkspaceId = randomUUID();
+    const issueId = randomUUID();
+    const executionWorkspaceId = randomUUID();
+    const previousRunId = randomUUID();
+    const currentRunId = randomUUID();
+    const now = new Date();
+    const previousRunStartedAt = new Date(now.getTime() - 2 * 60 * 60 * 1000);
+    const previousRunFinishedAt = input.previousRunStatus === "failed"
+      ? new Date(now.getTime() - 30 * 1000)
+      : null;
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `L${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      requireBoardApprovalForNewAgents: false,
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "Codex Coder",
+      role: "engineer",
+      status: "active",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(projects).values({
+      id: projectId,
+      companyId,
+      name: "Paperclip App",
+      status: "in_progress",
+    });
+    await db.insert(projectWorkspaces).values({
+      id: projectWorkspaceId,
+      companyId,
+      projectId,
+      name: "Primary",
+      cwd: repoRoot,
+      isPrimary: true,
+    });
+    await db.insert(issues).values({
+      id: issueId,
+      companyId,
+      projectId,
+      projectWorkspaceId,
+      title: "Recover config.worktree.lock",
+      status: "in_progress",
+      priority: "high",
+      assigneeAgentId: agentId,
+      identifier: "PAP-445",
+    });
+    await db.insert(heartbeatRuns).values([
+      {
+        id: previousRunId,
+        companyId,
+        agentId,
+        scopeKind: "issue",
+        issueId,
+        invocationSource: "manual",
+        status: input.previousRunStatus,
+        startedAt: previousRunStartedAt,
+        finishedAt: previousRunFinishedAt,
+        createdAt: previousRunStartedAt,
+        updatedAt: previousRunFinishedAt ?? now,
+      },
+      {
+        id: currentRunId,
+        companyId,
+        agentId,
+        scopeKind: "issue",
+        issueId,
+        invocationSource: "manual",
+        status: "running",
+        startedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      },
+    ]);
+    await db.update(issues).set({
+      executionRunId: input.currentIssueOwnsRun === false ? previousRunId : currentRunId,
+    }).where(eq(issues.id, issueId));
+    await db.insert(executionWorkspaces).values({
+      id: executionWorkspaceId,
+      companyId,
+      projectId,
+      projectWorkspaceId,
+      sourceIssueId: issueId,
+      mode: "isolated_workspace",
+      strategyType: "git_worktree",
+      name: branchName,
+      status: "active",
+      cwd: worktreePath,
+      providerRef: worktreePath,
+      baseRef: "HEAD",
+      branchName,
+      providerType: "git_worktree",
+      lastUsedAt: now,
+      updatedAt: now,
+    });
+    await db.update(issues).set({ executionWorkspaceId }).where(eq(issues.id, issueId));
+
+    if (input.activeRuntimeService) {
+      await db.insert(workspaceRuntimeServices).values({
+        id: randomUUID(),
+        companyId,
+        projectId,
+        projectWorkspaceId,
+        executionWorkspaceId,
+        issueId,
+        scopeType: "execution_workspace",
+        scopeId: executionWorkspaceId,
+        serviceName: "paperclip-dev",
+        status: "running",
+        lifecycle: "shared",
+        reuseKey: `execution_workspace:${executionWorkspaceId}:paperclip-dev`,
+        command: "pnpm dev",
+        cwd: worktreePath,
+        port: 49195,
+        url: "http://127.0.0.1:49195",
+        provider: "local_process",
+        providerRef: "999999",
+        ownerAgentId: agentId,
+        startedByRunId: previousRunId,
+        lastUsedAt: now,
+        startedAt: previousRunStartedAt,
+        stoppedAt: null,
+        stopPolicy: { type: "manual" },
+        healthStatus: "healthy",
+      });
+    }
+
+    const rawLockPath = await readGit(worktreePath, ["rev-parse", "--git-path", "config.worktree.lock"]);
+    const lockPath = path.isAbsolute(rawLockPath) ? rawLockPath : path.resolve(worktreePath, rawLockPath);
+    await fs.writeFile(lockPath, "interrupted git config\n", "utf8");
+    const lockTime = new Date(now.getTime() - input.lockAgeMs);
+    await fs.utimes(lockPath, lockTime, lockTime);
+
+    return {
+      lockPath,
+      restore: () => ensurePersistedExecutionWorkspaceAvailable({
+        db,
+        base: {
+          baseCwd: repoRoot,
+          source: "project_primary",
+          projectId,
+          workspaceId: projectWorkspaceId,
+          repoUrl: null,
+          repoRef: "HEAD",
+        },
+        workspace: {
+          id: executionWorkspaceId,
+          mode: "isolated_workspace",
+          strategyType: "git_worktree",
+          cwd: worktreePath,
+          providerRef: worktreePath,
+          projectId,
+          projectWorkspaceId,
+          repoUrl: null,
+          baseRef: "HEAD",
+          branchName,
+          metadata: RUNTIME_OWNED_GIT_BRANCH_METADATA,
+          config: {
+            provisionCommand: "git config --worktree paperclip.lockRecovery recovered",
+          },
+        },
+        issue: {
+          id: issueId,
+          identifier: "PAP-445",
+          title: "Recover config.worktree.lock",
+        },
+        agent: {
+          id: agentId,
+          name: "Codex Coder",
+          companyId,
+        },
+        heartbeatRunId: currentRunId,
+      }),
+      readRecoveredValue: () => readGit(worktreePath, ["config", "--worktree", "--get", "paperclip.lockRecovery"]),
+    };
+  }
+
+  it("removes an old config.worktree.lock before reprovisioning a workspace with a terminal previous run", async () => {
+    const fixture = await createProvisionLockRecoveryFixture({
+      lockAgeMs: 31 * 60 * 1000,
+      previousRunStatus: "failed",
+    });
+
+    await fixture.restore();
+
+    await expect(fs.stat(fixture.lockPath)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fixture.readRecoveredValue()).resolves.toBe("recovered");
+  }, 20_000);
+
+  it.each([
+    {
+      name: "the lock is fresh",
+      lockAgeMs: 60 * 1000,
+      previousRunStatus: "failed" as const,
+      activeRuntimeService: false,
+    },
+    {
+      name: "the previous run is still live",
+      lockAgeMs: 31 * 60 * 1000,
+      previousRunStatus: "running" as const,
+      activeRuntimeService: false,
+    },
+    {
+      name: "a runtime service is active",
+      lockAgeMs: 31 * 60 * 1000,
+      previousRunStatus: "failed" as const,
+      activeRuntimeService: true,
+    },
+    {
+      name: "the issue no longer identifies the current run as its owner",
+      lockAgeMs: 31 * 60 * 1000,
+      previousRunStatus: "failed" as const,
+      activeRuntimeService: false,
+      currentIssueOwnsRun: false,
+    },
+  ])("leaves config.worktree.lock in place and fails provisioning when $name", async (input) => {
+    const fixture = await createProvisionLockRecoveryFixture({
+      lockAgeMs: input.lockAgeMs,
+      previousRunStatus: input.previousRunStatus,
+      activeRuntimeService: input.activeRuntimeService,
+      currentIssueOwnsRun: "currentIssueOwnsRun" in input ? input.currentIssueOwnsRun : undefined,
+    });
+
+    await expect(fixture.restore()).rejects.toThrow(/provision command/i);
+
+    await expect(fs.readFile(fixture.lockPath, "utf8")).resolves.toBe("interrupted git config\n");
+    await expect(fixture.readRecoveredValue()).rejects.toThrow();
+  }, 20_000);
+
   it("quarantines dirty foreign-branch work into a rescue branch before restoring the recorded branch", async () => {
     const expectedBranch = "PAP-455-recorded";
     const actualBranch = "PAP-455-live";
