@@ -2422,7 +2422,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       const saved = await f.management.configuration(f.endpoint.id, "owner-user");
       await f.management.saveConfiguration(f.endpoint.id, { expectedRevision: saved.revision, configuration: {
         ...saved.configuration, defaults: { ...saved.configuration.defaults,
-          instructions: `Use ${ref(common)} and ${ref(foreign)}.`,
+          instructions: `Use ${ref(common)}.`,
           prompts: { ...saved.configuration.defaults.prompts, mention: `Use ${ref(mention)}.`, opened: ref(injected) },
         },
       } }, "owner-user");
@@ -2452,6 +2452,15 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       expect(await resolveRunScopedMentionedSkillKeys(args)).toEqual([common.key, mention.key]);
       expect(await resolveRunScopedMentionedSkillKeys({ ...args, commentIds: all.map((c) => c.id) })).toEqual(expect.arrayContaining([common.key, mention.key, next.key]));
       expect(await resolveRunScopedMentionedSkillKeys({ ...args, commentIds: [] })).toEqual([next.key]);
+      const invalid = await f.management.configuration(f.endpoint.id, "owner-user");
+      await f.management.saveConfiguration(f.endpoint.id, { expectedRevision: invalid.revision, configuration: {
+        ...invalid.configuration, defaults: { ...invalid.configuration.defaults, instructions: ref(foreign) },
+      } }, "owner-user");
+      // Instructions are captured on admission; changing configuration must
+      // not change the already admitted wake above.
+      await deliverMessage({ callbacks: f.callbacks, endpointId: f.endpoint.id, provider: "github", thread,
+        trigger: "subscribed_message", message: makeMessage({ id: "41903", text: 'Check again', userId: "42", userName: "octocat" }) });
+      await expect(resolveRunScopedMentionedSkillKeys({ ...args, commentIds: [] })).rejects.toThrow("referenced skill is unavailable");
     });
     it.each([
       "github:paperclipai/paperclip:issue:419",
