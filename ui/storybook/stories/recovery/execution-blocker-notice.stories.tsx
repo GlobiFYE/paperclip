@@ -10,6 +10,13 @@ client.setQueryData(queryKeys.issues.runs("storybook-recovery"), [
   { runId: "stopped-run", agentId: "agent", status: "failed" },
 ]);
 const meta = {
+  parameters: { paperclip: {
+      "capabilities": [
+        "recovery/diagnosis"
+      ],
+      "implementation": "production",
+      "boundary": "fixtures"
+    } },
   id: "task-chat-recovery-notice",
   title: "Projects and execution/Recovery/Task chat/Recovery notice",
   component: ExecutionBlockerNotice,
