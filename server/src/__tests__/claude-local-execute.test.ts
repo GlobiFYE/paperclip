@@ -490,13 +490,6 @@ describe("claude execute", () => {
     }
   });
 
-  /**
-   * Regression tests for https://github.com/paperclipai/paperclip/issues/2848
-   *
-   * --append-system-prompt-file is passed on fresh and resumed sessions.
-   * Claude Code rebuilds the system prompt on every invocation, so a resume
-   * without the file changes the cached prompt prefix.
-   */
   it("passes --append-system-prompt-file on a fresh session when instructionsFile is set", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-exec-fresh-"));
     const { workspace, commandPath, capturePath, restore } = await setupExecuteEnv(root);
@@ -571,12 +564,6 @@ describe("claude execute", () => {
     }
   });
 
-  /**
-   * Regression tests for commandNotes accuracy (Greptile P2).
-   *
-   * commandNotes should only claim instructions were injected when the flag
-   * was actually passed.
-   */
   it("commandNotes reports injection on a fresh session with instructionsFile", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-claude-exec-notes-fresh-"));
     const { workspace, commandPath, restore } = await setupExecuteEnv(root);
