@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { chmod, mkdir, mkdtemp, readFile, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, readlink, readdir, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, posix } from "node:path";
 import { ADAPTER_AUTH_MISSING_CHECK_CODE } from "@paperclipai/shared";
+import * as localCredentialFile from "../local-ai-credential-file.js";
+import * as codexCredentials from "@paperclipai/adapter-codex-local/server";
 const { prepareIsolatedCodexHome } = await import(new URL("../../../../packages/paperclip-runner/src/drivers/runtime-context-materializer.ts", import.meta.url).href);
 const { execute, nativeProbe, selectedRunner, selectedRemoteRunner, sshExecute, sshRunner, nativeArtifacts, remoteLauncher, registerPrp, ingressConnect } = vi.hoisted(() => ({ execute: vi.fn(), nativeProbe: vi.fn(), selectedRunner: vi.fn(), selectedRemoteRunner: vi.fn(), sshExecute: vi.fn(), sshRunner: vi.fn(), nativeArtifacts: vi.fn(), remoteLauncher: vi.fn(), registerPrp: vi.fn(), ingressConnect: vi.fn() }));
 vi.mock("@paperclipai/adapter-utils/execution-target", () => ({ runAdapterExecutionTargetShellCommand: execute }));
@@ -137,28 +139,45 @@ describe("Codex selected native account verification", () => {
       expect(JSON.stringify(result)).not.toContain("fixture-unbound-access");
     } finally { await rm(home, { recursive: true, force: true }); }
   });
-  it.each(["local", "remote"].flatMap(transport => ["OPENAI_API_KEY", "CODEX_API_KEY"].map(key => ({ transport, key }))))
-  ("keeps the configured $key task credential authoritative over linked auth during $transport setup", async ({ transport, key }) => {
+  it.each(["local", "remote"].flatMap(transport => ["OPENAI_API_KEY", "CODEX_API_KEY"].flatMap(key => ["valid", "dangling", "invalid-store", "probe-error"].map(authState => ({ transport, key, authState })))))
+  ("keeps the configured $key task credential authoritative over $authState linked auth during $transport setup", async ({ transport, key, authState }) => {
     const home = await realpath(await mkdtemp(join(tmpdir(), "native-key-linked-auth-")));
     const auth = '{"tokens":{"account_id":"unused-subscription","access_token":"unused-subscription-access"}}';
+    const stored = join(home, "account-store.json");
+    const readCredential = vi.spyOn(localCredentialFile, "readLocalAiCredentialFile");
+    const copyBack = vi.spyOn(codexCredentials, "copyBackCodexAuth");
     try {
-      await writeFile(join(home, "account-store.json"), auth, { mode: 0o600 });
-      await symlink(join(home, "account-store.json"), join(home, "auth.json"));
+      if (authState === "valid" || authState === "probe-error") await writeFile(stored, auth, { mode: 0o600 });
+      else if (authState === "invalid-store") await mkdir(stored, { mode: 0o700 });
+      await symlink(stored, join(home, "auth.json"));
+      const taskHome = join(home, "actual-key-task-home");
+      await prepareIsolatedCodexHome({ context: null, codexHome: taskHome, sourceCodexHome: home, apiKey: "configured-fixture-key" });
+      expect(JSON.parse(await readFile(join(taskHome, "auth.json"), "utf8"))).toEqual({ OPENAI_API_KEY: "configured-fixture-key" });
       nativeProbe.mockImplementation(async input => {
+        expect(input.onCodexCredentialRefresh).toBeUndefined();
+        expect(input.transportOptions.sourceCodexHome).toBe(home);
         const probeHome = join(input.runtimeDirectory, "codex-home");
         await prepareIsolatedCodexHome({ context: null, codexHome: probeHome, sourceCodexHome: input.transportOptions.sourceCodexHome,
           apiKey: input.environment.CODEX_API_KEY ?? input.environment.OPENAI_API_KEY });
         expect(JSON.parse(await readFile(join(probeHome, "auth.json"), "utf8"))).toEqual({ OPENAI_API_KEY: "configured-fixture-key" });
         await input.onCleanupConfirmed();
+        if (authState === "probe-error") throw new Error("authentication failed: configured-fixture-key");
         return receipt("codex", "gpt-6.1-sol");
       });
       const testContext = transport === "remote" ? sshContext : { companyId: "company", adapterType: "paperclip_runner", config: {} };
       const result = await testNativeRunnerAuthentication({ ...testContext, config: { env: { CODEX_HOME: home, [key]: "configured-fixture-key" } } }, "codex", "gpt-6.1-sol");
-      expect(result.status).toBe("pass");
+      expect(result.status).toBe(authState === "probe-error" ? "fail" : "pass");
+      if (authState === "probe-error") expect(result.checks[0]).toMatchObject({ code: "codex_hello_probe_auth_required", message: "authentication failed: [REDACTED]" });
       expect(nativeProbe).toHaveBeenCalledOnce();
-      expect(await readFile(join(home, "account-store.json"), "utf8")).toBe(auth);
+      expect(readCredential).not.toHaveBeenCalled();
+      expect(copyBack).not.toHaveBeenCalled();
+      expect((await lstat(join(home, "auth.json"))).isSymbolicLink()).toBe(true);
+      expect(await readlink(join(home, "auth.json"))).toBe(stored);
+      if (authState === "valid" || authState === "probe-error") expect(await readFile(stored, "utf8")).toBe(auth);
+      else if (authState === "invalid-store") expect(await readdir(stored)).toEqual([]);
+      else await expect(lstat(stored)).rejects.toMatchObject({ code: "ENOENT" });
       expect(JSON.stringify(result)).not.toContain("configured-fixture-key");
-    } finally { await rm(home, { recursive: true, force: true }); }
+    } finally { readCredential.mockRestore(); copyBack.mockRestore(); await rm(home, { recursive: true, force: true }); }
   });
   it.each(["local", "remote"].flatMap(transport => [false, true].map(linked => ({ transport, linked }))))
   ("seeds the selected subscription before isolated $transport setup (linked=$linked)", async ({ transport, linked }) => {

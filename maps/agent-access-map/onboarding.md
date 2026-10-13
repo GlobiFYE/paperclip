@@ -208,4 +208,7 @@ IDs. [Existing component controls](../../ui/src/components/OnboardingWizard.test
 exercise these presentation and account boundaries. This scoped correction adds
 no server draft API, agent grant or proof of live actor authorization. The
 managed first-task eval still reloads before Get started and remains a separate
-live acceptance gate.
+live acceptance gate. The existing mocked-login browser case also checks the
+same company-scoped active session and saved selection through route reopening
+and a real reload, with one login start and no pending-login hire. These fixture
+assertions do not prove server authorization or live credential use.

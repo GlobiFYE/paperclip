@@ -200,12 +200,12 @@ export async function testNativeRunnerAuthentication(context: AdapterEnvironment
       sourceCodexHome = context.managedAiCredentialHome ?? resolveSourceCodexHome(buildNativeProviderEnvironment(environment));
     }
     let credentialRefreshAuthPath: string | undefined;
-    if (sourceCodexHome && !environment.OPENAI_API_KEY?.trim() && !environment.PAPERCLIP_AI_PROVIDER_KEY?.trim()) {
+    if (sourceCodexHome && !environment.CODEX_API_KEY?.trim() && !environment.OPENAI_API_KEY?.trim() && !environment.PAPERCLIP_AI_PROVIDER_KEY?.trim()) {
       let linked = false;
       try {
         const authPath = join(sourceCodexHome, "auth.json");
         linked = (await lstat(authPath)).isSymbolicLink();
-        if (linked && !context.managedAiCredentialHome?.trim() && !environment.CODEX_API_KEY?.trim()) {
+        if (linked && !context.managedAiCredentialHome?.trim()) {
           const field = environment.CODEX_HOME?.trim() ? "env.CODEX_HOME" : "operator CODEX_HOME";
           throw new Error(`${field} uses a linked auth.json that Paperclip Runner tasks cannot read. Choose Legacy runner in Advanced or use a managed Codex Connection.`);
         }

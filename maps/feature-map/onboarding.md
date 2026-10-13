@@ -106,6 +106,10 @@ and that agent's execution choice. An explicit new-company opening still starts
 fresh. Opening another company must clear the previous company's resource IDs;
 an unauthorized account must not restore its draft. Existing component controls
 cover these boundaries; they do not substitute for the managed first-task eval.
+The existing mocked-login browser case reopens and reloads Connect directly. It
+checks the saved company/name/harness/runner, exact active authorization session,
+one login start and no hire while login is pending. This is login UI evidence,
+not a provider or managed-environment qualification.
 
 ### `cli-setup`
 

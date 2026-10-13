@@ -93,8 +93,12 @@ changing runners. Account login remains board/owner-bound.
 
 For a linked Codex subscription with server-resolved managed credential provenance,
 setup checks the resolved owner and stages a private probe copy before local or
-remote isolation. An unbound linked `CODEX_HOME` is rejected with explicit Legacy
-or managed-account guidance. Caller configuration cannot supply that provenance.
+remote isolation. Without a selected API key, an unbound linked `CODEX_HOME` is
+rejected with explicit Legacy
+or managed-account guidance. Caller configuration cannot supply that provenance. Selected `CODEX_API_KEY` and
+`OPENAI_API_KEY` authentication skips unrelated subscription reads and refresh
+bindings, matching task materialization. The fake-credential controls verify key
+precedence without changing the account source or exposing either credential.
 The general native
 home materializer retains its no-follow symlink guard. Refresh still targets the
 checked account source, and confirmed bounded retirement removes its private

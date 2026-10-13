@@ -66,7 +66,32 @@ guard;81 final setup controls, server no-emit and independent source review pass
 Regular homes, API-key precedence and resolved-account setup aliases remain
 supported. Raw configuration cannot provide the trusted provenance.
 
-Next action: freeze and publish the combined candidate. Require fresh
+Published `1d09569b054e0ad9f4bc9e4d92ad1212d4794f7c` retains that combined
+source. Its exact-head review is4/5 with one additional selected-key precedence
+finding: `CODEX_API_KEY` still enters subscription validation when the task
+materializer would use that key directly. Six local/remote selected-key controls
+reproduce the failure; six `OPENAI_API_KEY` controls retain their behavior. The
+two-line correction skips unrelated subscription reads and refresh binding for
+either selected key. Frozen treatment passes93 setup controls,12 unchanged lower
+controls, server no-emit and independent source review. The first93-control run's
+91 passes and two import-deadline/follow-on failures remain recorded; the unchanged
+standalone run passes without extending a deadline or weakening an assertion.
+
+The [1d CI run](https://github.com/paperclipai/paperclip/actions/runs/38459704117)
+passes build, typecheck and native verification but has two independent blockers.
+The onboarding browser case expects the obsolete return to the Agent step. Its
+captured screen correctly restores Connect, Ada and the original authorization
+link. Update that existing case to verify the exact active session, company,
+name/harness/Auto choice, one login start and no pending-login hire through both
+route reopening and actual reload. Independent source review passes. Local
+baseline reproduces the old assertion; the final local attempt cannot initialize
+its fresh PostgreSQL cluster before browser execution. Preserve that failure and
+require the existing hosted Linux E2E case to prove treatment. The chat shard
+loses its hosted runner connection; no failing chat assertion or test log is
+available. A new ordinary current-head CI run must replace that incomplete gate.
+No new image, package or paid live campaign was dispatched during these fixes.
+
+Next action: publish the reviewed narrow corrections together. Require fresh
 CI/review, affected installed-package and managed first-task proof before ready
 or merge. Historical receipts keep their literal sources. The following
 checkpoints are retained history, not the current merge state.
