@@ -1,3 +1,5 @@
+import { HttpError } from "../errors.js";
+
 export type ChatPublicationErrorDisposition =
   | {
       kind: "retry";
@@ -315,6 +317,20 @@ export function classifyChatPublicationError(
     )
   ) {
     return { kind: "resource_unavailable", reason };
+  }
+
+  if (
+    // Paperclip's own authorization checks (forbidden/unauthorized raised before
+    // any provider request, for example a failure reply whose request binding is
+    // gone) say nothing about provider credentials. Fail only this publication;
+    // never disable the endpoint for them. Provider rejections wrapped by
+    // Paperclip keep their providerStatus and fall through to the checks below.
+    error instanceof HttpError &&
+    (error.status === 401 || error.status === 403) &&
+    typeof (error.details as { providerStatus?: unknown } | undefined)
+      ?.providerStatus !== "number"
+  ) {
+    return { kind: "failed", reason };
   }
 
   if (
