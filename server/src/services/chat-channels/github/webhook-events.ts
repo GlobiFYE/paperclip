@@ -130,7 +130,7 @@ export function createGitHubWebhookEvents(db: Db, options: EventOptions) {
         author: { userId: event.author.id, userName: event.author.login, fullName: event.author.login, isBot: false, isMe: false, isSystem: false },
         metadata: { dateSent: new Date(), edited: false }, attachments: [], links: [], isMention: true,
       } as unknown as Message;
-      githubAutomaticMessages.set(message, { context: event, revision: admission.revision, policy: admission.policy });
+      githubAutomaticMessages.set(message, { context: event, revision: admission.revision, policy: admission.policy, reviewedAuthor: admission.reviewedAuthor === true });
       await processMessage(endpoint, thread, message, "mention", true, `https://github.com/${event.repository}/pull/${event.pullNumber}`, { ...runtimeContext, endpointRuntime }, undefined, null, false);
       return new Response("accepted", { status: 202 });
     }

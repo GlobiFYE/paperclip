@@ -213,15 +213,18 @@ export function githubChatReviewService(db: Db, fetchImpl = fetch) {
       source.endpoint,
       source.delivery.principalId,
     );
-    if (!access?.allowed)
-      throw forbidden("The initiating GitHub person is no longer authorized");
     const automatic = (source.delivery.normalizedEvent.githubAutomatic ?? source.delivery.normalizedEvent.githubIssue) as
       { context: GitHubAutomaticEventContext } | undefined;
-    if (
-      automatic &&
-      !(await githubAutomaticAdmission(db, source.endpoint, automatic.context))
-        ?.allowed
-    )
+    const automaticAdmission = automatic
+      ? await githubAutomaticAdmission(db, source.endpoint, automatic.context)
+      : null;
+    // A reviewed author is admitted only by the automatic review policy.
+    const reviewedAuthorReview =
+      automaticAdmission?.allowed === true &&
+      automaticAdmission.reviewedAuthor === true;
+    if (!access?.allowed && !reviewedAuthorReview)
+      throw forbidden("The initiating GitHub person is no longer authorized");
+    if (automatic && !automaticAdmission?.allowed)
       throw forbidden("Automatic GitHub task authority is no longer available");
     const repositoryId = String(
       source.resource.metadata?.providerRepositoryId ?? "",

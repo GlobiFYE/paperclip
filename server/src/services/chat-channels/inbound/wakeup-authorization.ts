@@ -163,7 +163,10 @@ export function createInboundWakeAuthority(db: Db, options: WakeAuthorityOptions
     if (endpoint.provider === "github") {
       const automatic = await resolveGitHubWakeAuthority(tx, endpoint, delivery);
       if (automatic.kind === "denied") throw deny();
-      if (automatic.kind === "allowed") authorization.userId = automatic.userId;
+      if (automatic.kind === "allowed") {
+        authorization.userId = automatic.userId;
+        if (automatic.reviewedAuthor) authorization.allowed = true;
+      }
     }
     if (!(await canActorReadIssuePrivacy(tx, authorization.userId
       ? { type: "board", userId: authorization.userId }

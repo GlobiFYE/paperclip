@@ -80,7 +80,7 @@ type ConversationDeliveryQueueOptions = {
   settleRejectedInboundWakeups: (onlyDeliveryId?: string) => Promise<unknown>;
   sanitizeFilename: (value: string | undefined) => string | null;
   githubManualMessages: WeakMap<object, { policy: GitHubReviewPolicy; revision: number; event: "mention" | "comment" }>;
-  githubAutomaticMessages: WeakMap<object, { context: GitHubReviewEventContext; revision: number; policy: GitHubReviewPolicy }>;
+  githubAutomaticMessages: WeakMap<object, { context: GitHubReviewEventContext; revision: number; policy: GitHubReviewPolicy; reviewedAuthor?: boolean }>;
   githubIssueMessages: WeakMap<object, { context: GitHubIssueEventContext; revision: number; policy: GitHubReviewPolicy }>;
   conversationDrainKey: (endpointId: string, threadId: string) => string;
   conversationLeaseRenewalIntervalMs?: number;

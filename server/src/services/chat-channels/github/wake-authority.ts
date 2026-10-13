@@ -4,12 +4,12 @@ import { githubResponseCommentService } from "../../chat-github-response-comment
 import type { DbOrTransaction, EndpointRow } from "../runtime-types.js";
 import type { chatDeliveries } from "@paperclipai/db";
 import type { GitHubAutomaticEventContext } from "@paperclipai/shared";
-export async function resolveGitHubWakeAuthority(tx: DbOrTransaction, endpoint: EndpointRow, delivery: typeof chatDeliveries.$inferSelect): Promise<{ kind: "not_automatic" } | { kind: "denied" } | { kind: "allowed"; userId: string | null }> {
+export async function resolveGitHubWakeAuthority(tx: DbOrTransaction, endpoint: EndpointRow, delivery: typeof chatDeliveries.$inferSelect): Promise<{ kind: "not_automatic" } | { kind: "denied" } | { kind: "allowed"; userId: string | null; reviewedAuthor: boolean }> {
   const automatic = (delivery.normalizedEvent.githubAutomatic ?? delivery.normalizedEvent.githubIssue) as { context: GitHubAutomaticEventContext } | undefined;
   if (!automatic) return { kind: "not_automatic" };
   const admission = await githubAutomaticAdmission(tx, endpoint, automatic.context);
   if (!admission?.allowed) return { kind: "denied" };
-  return { kind: "allowed", userId: admission.responsibleUserId ?? null };
+  return { kind: "allowed", userId: admission.responsibleUserId ?? null, reviewedAuthor: admission.reviewedAuthor === true };
 }
 
 export function isGitHubAutomaticDelivery(delivery: Pick<typeof chatDeliveries.$inferSelect, "normalizedEvent">): boolean { return Boolean(delivery.normalizedEvent.githubAutomatic); }
