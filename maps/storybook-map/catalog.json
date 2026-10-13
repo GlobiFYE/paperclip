@@ -2644,7 +2644,7 @@
       "status": "unreviewed",
       "implementation": "production",
       "boundary": "fixtures",
-      "notes": "Shipped subjects identified through imports and local wrappers; full state, fixture-contract and route parity remain unreviewed.",
+      "notes": "Production Sources page with fixture APIs. Disconnect and legacy removal stories show a required keep-or-delete choice; the real copy, delete, and reimport flows were also tested locally. Other routes remain unreviewed.",
       "reviewedAt": "2026-10-13",
       "sources": [
         "maps/feature-map/skills.md",
@@ -2653,7 +2653,7 @@
         "ui/storybook/fixtures/paperclipData.ts",
         "ui/storybook/stories/skills/github-synced-skills.stories.tsx"
       ],
-      "fingerprint": "fd1a82ee74a2958b8769c66c550b293c97b7f9b4cabcc11042f804441f092b36",
+      "fingerprint": "c14509e4b57e7587f560824f417c8439dbb6bc3d303d37dec169ab819c867d36",
       "stableId": "skills-github-synced-skills",
       "sidebarTitle": "Agents and reusable capabilities/Skills and Skill Studio/Skills/GitHub synced skills"
     },

@@ -113,6 +113,6 @@ export const RemoveDisconnectedSource: Story = {
     const page = within(canvasElement.ownerDocument.body);
     await userEvent.click(await page.findByRole('button', { name: 'More actions for acme/team-skills' }));
     await userEvent.click(await page.findByRole('menuitem', { name: 'Remove source' }));
-    await userEvent.click(await page.findByRole('radio', { name: 'Delete skills' }));
+    await userEvent.click(await page.findByRole('radio', { name: /^Delete skills/ }));
   },
 };
