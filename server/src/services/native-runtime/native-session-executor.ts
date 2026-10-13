@@ -6198,6 +6198,7 @@ export function nativeSessionFailureDisposition(
   sourceFailureCode?: ReturnType<typeof nativeSessionFailureSourceCode>,
 ) {
   const permanentFailure =
+    sourceFailureCode === "native_provider_runtime_missing" ||
     sourceFailureCode === "native_provider_model_rejected" ||
     sourceFailureCode === "native_provider_approval_required" ||
     sourceFailureCode === "native_event_replay_conflict" ||
@@ -6271,6 +6272,7 @@ export function nativeSessionFailureSourceCode(
   | "native_runner_process_exited"
   | "planning_mode_unsupported"
   | "native_event_replay_conflict"
+  | "native_provider_runtime_missing"
   | "native_provider_model_rejected"
   | "native_current_wake_comments_unread"
   | "native_current_wake_comments_changed_after_read"
@@ -6293,6 +6295,8 @@ export function nativeSessionFailureSourceCode(
   if (error instanceof NativeSessionCleanupQuarantinedError)
     return "native_session_cleanup_quarantined";
   const message = error instanceof Error ? error.message : String(error);
+  if (/classification=runtime_package_missing\)/.test(message))
+    return "native_provider_runtime_missing";
   if (/native_provider_model_rejected/i.test(message))
     return "native_provider_model_rejected";
   if (/native_adopted_runner_authentication_timeout/i.test(message)) {
@@ -7692,7 +7696,7 @@ async function executePaperclipNativeSessionWithinScope(
   });
   const toolTrace = createNativeToolTrace(trace);
   const taskPrepareScope = trace.start("task.prepare", {
-    parentName: "task.run",
+    parentName: "task.provider_session",
     startedAtMs: preparationStarts.preparationStartedAtMs,
   });
   const environmentSpans = preparationSpans.filter(
@@ -7720,7 +7724,7 @@ async function executePaperclipNativeSessionWithinScope(
     await trace.record({
       ...span,
       parentName: rootMilestone
-        ? "task.run"
+        ? "task.provider_session"
         : environmentSpans.includes(span)
           ? "environment.startup"
           : "task.prepare",
@@ -8281,7 +8285,7 @@ async function executePaperclipNativeSessionWithinScope(
             outcome,
           });
           taskSettleScope = trace.start("task.settle", {
-            parentName: "task.run",
+            parentName: "task.provider_session",
             startedAtMs: milestoneAtMs,
           });
           trace.activate(taskSettleScope);
@@ -8951,7 +8955,7 @@ async function executePaperclipNativeSessionWithinScope(
         });
         return result;
       },
-      { parentName: "task.run" },
+      { parentName: "task.provider_session" },
     );
     // A detached consumer can resolve successfully after its stream closes.
     // Only the replacement controller may settle the run or certify accounting.
@@ -9055,7 +9059,7 @@ async function executePaperclipNativeSessionWithinScope(
       ).slice(-4_096);
       if (!taskSettleScope) {
         taskSettleScope = trace.start("task.settle", {
-          parentName: "task.run",
+          parentName: "task.provider_session",
           startedAtMs: failedAtMs,
         });
       }
