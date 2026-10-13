@@ -50,6 +50,13 @@ reasons rather than invented capabilities. Cross-cutting stories have one source
 and several references. Do not count historical/proposed stories as current
 feature coverage.
 
+For shared foundations that demonstrate a mapped capability, keep their existing
+folder/sidebar with `home: "foundations"` and an exception reason, then add related
+capability references. Inspect the named exports before linking them. Notes must
+name the demonstrated states and remaining limits; an association does not certify
+the whole capability. If a story reveals a shipped capability absent upstream,
+reconcile its feature recipe and access companion through map maintenance first.
+
 Preserve story exports and IDs. Before moves/title changes, capture the existing
 built `index.json`; use explicit meta IDs when needed and compare IDs afterward.
 Place stories under `ui/storybook/stories/<primary-feature-area>/`. Use the feature
@@ -58,6 +65,17 @@ groupings beneath that prefix. Put shared fixture modules in `ui/storybook/suppo
 Keep the catalog's `stableId` equal to the explicit CSF meta ID even when the title
 changes. Unmapped component examples belong under Foundations; the catalog guide
 belongs under Overview. The checker verifies these conventions.
+
+Keep the main guide and every feature Overview congruent with the upstream index:
+same section/feature names and order, all capabilities in recipe order, related
+suite links across primary homes, and explicit missing examples. Regenerate
+`ui/storybook/generated/` and the preview config's inline `storySort.order` through
+the catalog command; never hand-edit generated pages or ordering
+or add generated guides to the authored catalog. Generated guides are not example
+coverage. Preserve their `feature-map-<area>--overview` IDs. When an upstream area
+is removed or renamed, inspect unexpected generated files and resolve them
+explicitly; the generator will not silently delete them.
+
 Keep review links and snapshot names working. Prefer classification/index fixes
 before bulk directory moves. Record every directly rendered production subject in
 the catalog's review sources, including relative imports and primitives when they
@@ -66,7 +84,9 @@ Update review fingerprints only after inspecting the changed source; do not refr
 to silence drift checks.
 
 Update the catalog and run `node scripts/storybook-catalog.mjs --write` to refresh
-its generated index, then run the checker without flags. The script validates
+its generated indexes and feature pages, then run the checker without flags and
+`node --test scripts/storybook-catalog.test.mjs scripts/storybook-feature-index.test.mjs`.
+The script validates
 inventory/references/review fingerprints, not semantic parity or runtime health.
 Use `review-storybook` for affected rendering and interactions. Reuse the existing
 Storybook/Playwright tools; add no separate launcher, runtime, or baseline system.

@@ -119,3 +119,29 @@ remaining operations before qualifying the whole capability.
 
 Gaps: General company search and dedicated task search are different result sets; use
 the appropriate one.
+
+
+## `toasts`
+
+Review: `baseline`.
+
+API: `present` — GET /api/companies/{companyId}/events/ws (WebSocket upgrade); viewer-specific
+`toastEligible` metadata on authorized events. No notification mutation endpoint.
+
+Agent access: `not-applicable` — toast presentation is a human browser concern.
+Agent-authenticated event subscriptions retain authorization but do not qualify
+for human toasts. Agent task mutations may notify participating humans.
+
+Policy: Company membership and task/run read checks precede human participation
+checks. Creator, current human assignee, commenter, deliberate actor, or explicit
+user mention qualifies; agent ownership and responsible-user attribution alone do
+not. See [toast semantics](../../doc/TOASTS.md).
+
+Evidence: `source-only` — [socket projection](../../server/src/realtime/live-events-ws.ts)
+and [eligibility](../../server/src/realtime/task-toast-eligibility.ts).
+
+Verification: `not-run` — Connect two users and an agent; assert per-user eligibility without
+losing authorized cache updates. Deny revoked membership and private task access.
+Confirm relevance lookup failure yields a quiet authorized event.
+
+Gaps: Browser recipes and regression sources are not deployment acceptance proof.

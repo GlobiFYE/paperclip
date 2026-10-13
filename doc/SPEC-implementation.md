@@ -1130,6 +1130,10 @@ identity shows no failed runs. All retains company-wide failed-run visibility.
 Company health alerts do not contribute to the personal inbox badge.
 Run list responses, including summaries, retain `responsibleUserId`.
 
+Live task and run toasts require personal task participation or an explicit user
+mention, independently of read access. Agent ownership and responsible-user
+attribution alone do not qualify. See [toast semantics](TOASTS.md).
+
 Ownership split:
 
 - **Core / Free:** permission key and scoped-grant enforcement; responsible-user resolution; default-open, disabled, and allowlist policy modes; archive/unarchive APIs; per-user archive persistence; resurfacing behavior; activity audit records; and stable denial codes.
@@ -2077,8 +2081,17 @@ unavailable. Preserve current ownership and newer-work fences. See
   runs use local installed snapshots; pinned/active runs retain their versions.
 - Additions require reviewed selection, with new candidates checked by default and
   explicit folder exclusions retained. Upstream deletion keeps installed content with
-  removed status; moves are removal plus discovery. Deselect/disconnect retains content
+  removed status; moves are removal plus discovery. Deselect retains content
   and assignments. Originals are read-only, with the existing independent fork workflow.
+- Source disconnection requires a saved revision and an explicit copy/delete choice.
+  Remove the source and all entries to allow a fresh repository import, including
+  legacy disabled sources. Copy materializes complete local files in the caller's
+  My Skills folder, retaining skill IDs, keys, versions, and agent assignments.
+  Delete applies skills.remove to every linked skill (including deselected entries),
+  rejects skills still used by agents, and removes skills and source atomically with
+  the activity record. Copy applies skills.edit and skills.create to every linked
+  skill; failed writes or audit persistence leave the source and imported skills intact.
+
 - Adopt recognizable existing GitHub imports without provider calls or content changes;
   resolve missing repository IDs and full snapshots on successful refresh. Exclude bundled,
   catalog, local/project, skills.sh, and unsupported hosts. Existing GitHub import and update

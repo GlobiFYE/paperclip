@@ -210,8 +210,8 @@ A board member with runtime management access can complete the saved result:
    the export failure while preserving all user files. Restore transport access
    or other provider prerequisites before retrying. Extending the sandbox
    retention window can be necessary during this repair.
-3. In the task's **Finish saving the agent’s work** notice, describe the repair and
-   choose **Retry workspace export**. The equivalent board API is
+3. Use the operator API to record the repair and request export-only retry. The
+   task shows operator assistance is needed, without an infrastructure form. The board API is
    `POST /api/issues/:id/recovery-actions/retry-workspace-export` with
    `{ "actionId": "<recovery-action-id>", "runId": "<run-id>", "repairNote": "<repair and preservation evidence>" }`.
 4. Confirm the same run commits, the saved result determines the task outcome,

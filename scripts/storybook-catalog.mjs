@@ -4,6 +4,7 @@ import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { featureIndex, reconcileFeatureArtifacts, sidebarLabel } from "./storybook-feature-index.mjs";
 
 const scriptPath = fileURLToPath(import.meta.url);
 const defaultRoot = path.resolve(path.dirname(scriptPath), "..");
@@ -41,14 +42,7 @@ export function capabilities(root) {
 }
 
 export function featureNavigation(root) {
-  const navigation = new Map();
-  let section;
-  for (const line of readFileSync(path.join(root, "maps/feature-map/README.md"), "utf8").split("\n")) {
-    if (line.startsWith("### ")) section = line.slice(4);
-    const match = line.match(/^\| \[([^\]]+)\]\(\.\/([^.)]+)\.md\)/);
-    if (match && section) navigation.set(match[2], `${section}/${match[1]}`);
-  }
-  return navigation;
+  return new Map(featureIndex(root).sections.flatMap(section => section.features.map(feature => [feature.id, `${sidebarLabel(section.title)}/${sidebarLabel(feature.title)}`])));
 }
 
 export function scanStories(root = defaultRoot) {
@@ -58,6 +52,10 @@ export function scanStories(root = defaultRoot) {
     const csf = loadCsf(readFileSync(path.join(root, file), "utf8"), { fileName: file, makeTitle: title => title }).parse();
     return { file, title: csf.meta.title, metaId: csf.meta.id, ids: csf.stories.map(story => story.id), plays: csf.stories.filter(story => story.__stats?.play).length };
   });
+}
+
+function storyHome(entry) {
+  return entry.home ?? entry.capabilities[0]?.split("/")[0] ?? (entry.implementation === "guide" ? "overview" : "foundations");
 }
 
 export function validateCatalog(root, catalog, stories) {
@@ -85,10 +83,12 @@ export function validateCatalog(root, catalog, stories) {
     if (!entry.purpose?.trim() || !entry.notes?.trim()) errors.push(`${label}: purpose and review notes are required`);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(entry.reviewedAt ?? "")) errors.push(`${label}: missing review date`);
     if (!Array.isArray(entry.capabilities)) { errors.push(`${label}: missing capabilities`); continue; }
+    if (entry.home !== undefined && entry.home !== "foundations") errors.push(`${label}: only shared foundations may override the capability home`);
+    if (entry.home === "foundations" && !entry.exception?.trim()) errors.push(`${label}: foundation home needs an explicit reason`);
     for (const ref of entry.capabilities) if (!refs.has(ref)) errors.push(`${label}: unknown feature capability ${ref}`);
     if (!entry.capabilities.length && !entry.exception?.trim()) errors.push(`${label}: unmapped story needs an explicit reason`);
     if (entry.capabilities.length !== new Set(entry.capabilities).size) errors.push(`${label}: duplicate capability references`);
-    const area = entry.capabilities[0]?.split("/")[0] ?? (entry.implementation === "guide" ? "overview" : "foundations");
+    const area = storyHome(entry);
     const prefix = navigation.get(area) ?? ({ overview: "Overview", foundations: "Foundations" })[area];
     const story = byFile.get(label);
     if (!label.startsWith(`${storyRoot}/${area}/`)) errors.push(`${label}: story must live in its primary feature folder ${area}`);
@@ -99,18 +99,19 @@ export function validateCatalog(root, catalog, stories) {
     review(label, entry.sources, entry.fingerprint);
   }
   for (const story of stories) if (!seen.has(story.file)) errors.push(`${story.file}: story missing from catalog`);
-  const ids = stories.flatMap(story => story.ids);
+  const ids = [...stories.flatMap(story => story.ids), ...featureIndex(root).sections.flatMap(section => section.features.map(feature => `feature-map-${feature.id}--overview`))];
   if (ids.length !== new Set(ids).size) errors.push("Duplicate story IDs");
   return errors;
 }
 
 function cell(value) { return String(value).replaceAll("|", "\\|").replaceAll("\n", " "); }
 
-export function renderIndex(catalog, stories, refs) {
+export function renderIndex(catalog, stories, index) {
   const byFile = new Map(stories.map(story => [story.file, story]));
   const groups = new Map();
   for (const entry of catalog.entries) {
-    const area = entry.capabilities[0]?.split("/")[0] ?? "foundations-and-guides";
+    const home = storyHome(entry);
+    const area = ["foundations", "overview"].includes(home) ? "foundations-and-guides" : home;
     if (!groups.has(area)) groups.set(area, []);
     groups.get(area).push(entry);
   }
@@ -118,8 +119,19 @@ export function renderIndex(catalog, stories, refs) {
     "[Contract and maintenance](README.md) · [Review findings](REVIEW.md)", "",
     `${stories.length} story files; ${stories.reduce((n, story) => n + story.ids.length, 0)} indexed stories. Counts describe inventory, not passed tests or complete feature coverage.`, "",
     "Status describes product alignment; implementation describes the rendered subject; boundary describes simulated data. Sources and limitations are in catalog.json. Related capabilities cross-list one canonical story file.", ""];
-  for (const [area, entries] of [...groups].sort(([a], [b]) => a.localeCompare(b))) {
-    lines.push(`## ${area}`, "", ...(area !== "foundations-and-guides" ? [`[Feature recipe](../feature-map/${area}.md)`, ""] : []),
+  const homes = index.sections.flatMap(section => section.features.map(feature => ({ ...feature, section: section.title })));
+  homes.push({ id: "foundations-and-guides", title: "Shared foundations and guides", section: "Foundations", description: "Shared components and contributor guidance outside the product feature index." });
+  let currentSection;
+  for (const feature of homes) {
+    const area = feature.id;
+    const entries = groups.get(area) ?? [];
+    if (feature.section !== currentSection) {
+      lines.push(`## ${feature.section}`, "");
+      currentSection = feature.section;
+    }
+    lines.push(`### ${feature.title}`, "", feature.description, "", ...(area !== "foundations-and-guides" ? [`[Feature recipe](../feature-map/${area}.md)`, ""] : []));
+    if (!entries.length) lines.push("No primary story suite. Check capability lookup below for related examples; this does not imply a missing product feature.", "");
+    else lines.push(
       "| Story suite | Capabilities | Product / implementation / data | Stories / play functions | Review note |",
       "| --- | --- | --- | --- | --- |");
     for (const entry of entries.sort((a, b) => a.file.localeCompare(b.file))) {
@@ -129,11 +141,23 @@ export function renderIndex(catalog, stories, refs) {
     lines.push("");
   }
   lines.push("## Capability lookup", "", "References are navigation links, not proof of parity. An absent link means no cataloged story, not a missing product feature. CLI/operator capabilities may need no Storybook example.", "");
-  for (const ref of refs.keys()) {
+  for (const ref of index.sections.flatMap(section => section.features.flatMap(feature => feature.capabilities.map(capability => capability.id)))) {
     const entries = catalog.entries.filter(entry => entry.capabilities.includes(ref));
     lines.push(`- \`${ref}\`: ${entries.length ? entries.map(entry => `[${cell(byFile.get(entry.file).title)}](../../${entry.file}) (${entry.status})`).join(", ") : "No cataloged story."}`);
   }
   return lines.join("\n") + "\n";
+}
+
+export function reconcileCatalog(root, catalog, stories, write = false) {
+  const index = featureIndex(root);
+  const errors = reconcileFeatureArtifacts(root, index, write);
+  errors.push(...validateCatalog(root, catalog, stories));
+  if (!errors.length) {
+    const generated = renderIndex(catalog, stories, index);
+    if (write) writeFileSync(path.join(root, indexPath), generated);
+    else if (!existsSync(path.join(root, indexPath)) || readFileSync(path.join(root, indexPath), "utf8") !== generated) errors.push("Generated INDEX.md is stale; run with --write after reviewing catalog changes");
+  }
+  return errors;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
@@ -141,12 +165,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
   if (args.some(arg => arg !== "--write")) throw new Error("Usage: node scripts/storybook-catalog.mjs [--write]");
   const catalog = JSON.parse(readFileSync(path.join(defaultRoot, catalogPath), "utf8"));
   const stories = scanStories();
-  const errors = validateCatalog(defaultRoot, catalog, stories);
-  if (!errors.length) {
-    const generated = renderIndex(catalog, stories, capabilities(defaultRoot));
-    if (args.includes("--write")) writeFileSync(path.join(defaultRoot, indexPath), generated);
-    else if (!existsSync(path.join(defaultRoot, indexPath)) || readFileSync(path.join(defaultRoot, indexPath), "utf8") !== generated) errors.push("Generated INDEX.md is stale; run with --write after reviewing catalog changes");
-  }
+  const errors = reconcileCatalog(defaultRoot, catalog, stories, args.includes("--write"));
   if (errors.length) { errors.forEach(error => console.error(error)); process.exitCode = 1; }
   else console.log(`Storybook catalog aligned: ${stories.length} files, ${stories.reduce((n, story) => n + story.ids.length, 0)} stories. Structure and review fingerprints only; no runtime proof.`);
 }

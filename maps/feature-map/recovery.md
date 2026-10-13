@@ -119,20 +119,20 @@ Automated: [disposition notices](../../ui/src/components/DispositionRecoveryNoti
 tests pending/error/gated states and waiting for the real retry acknowledgement.
 The recovery-card suite covers workspace divergence, reissue, reconcile, and
 confirmation. [Workspace export](../../ui/src/components/WorkspaceExportRecovery.test.tsx)
-covers its separate repair surface.
+covers quiet restoration, legacy/operator assistance and resolved states.
 
-For an abandoned native copyback owner, the task notice requires deployment stop
-evidence and an explicit confirmation. Only a company owner, company administrator,
-trusted local board, or instance administrator can submit it. Ordinary runtime
-managers see a read-only notice. The [authorization regressions](../../server/src/__tests__/authorization-service.test.ts),
-[route regressions](../../server/src/__tests__/issue-agent-mutation-ownership-routes.test.ts),
-and [client permission regressions](../../ui/src/lib/recovery-reconcile.test.ts)
+For an abandoned native copyback owner, the harness verifies the exact stopped
+deployment and the reconciler restores saved work automatically. Task users see
+no process details or shutdown form. The documented operator API handles older
+receipts after independent platform verification, through a separate administrator
+gate. The [authorization regressions](../../server/src/__tests__/authorization-service.test.ts)
+and [route regressions](../../server/src/__tests__/issue-agent-mutation-ownership-routes.test.ts)
 cover administrator admission, ordinary-member and agent denial, suspended and
 foreign membership, missing role data, and stale cloud admin rows.
 The [native workspace finalizer suite](../../server/src/services/native-runtime/native-workspace-finalizer.test.ts)
 runs the real reconciler with a valid saved yield from `result_accepted`,
 `workspace_finalizing`, and `retryable_failure`. It verifies physical fencing
-before confirmation, successful export and commitment afterward, hold resolution,
+before verified stop, automatic and operator recovery, successful export and commitment, hold resolution,
 unchanged saved results, retained approval/monitor waits, and no new provider wake.
 These local regressions do not prove a deployment platform stopped a foreign writer.
 
