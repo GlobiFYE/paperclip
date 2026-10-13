@@ -5,8 +5,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, expect, it, vi } from "vitest";
 import { Dialog, DialogContent } from "../ui/dialog";
 import { GrokBotSetup } from "./GrokBotSetup";
+import { GrokBotConnection } from "../GrokBotConnection";
 
-const api = vi.hoisted(() => ({ resume: vi.fn(), connection: vi.fn(), create: vi.fn(), pair: vi.fn(), configure: vi.fn(), verify: vi.fn() }));
+const api = vi.hoisted(() => ({ resume: vi.fn(), connection: vi.fn(), create: vi.fn(), pair: vi.fn(), configure: vi.fn(), verify: vi.fn(), retry: vi.fn() }));
 vi.mock("@/api/grokBot", () => ({ grokBotApi: api }));
 vi.mock("@/api/agents", () => ({ agentsApi: { list: async () => [] } }));
 let root: Root;
@@ -34,4 +35,21 @@ it("restores the same saved agent when a failed initial resume succeeds on retry
   expect(api.connection).toHaveBeenCalledWith(companyId, agentId, expect.any(AbortSignal));
   expect(api.create).not.toHaveBeenCalled();
   expect(api.pair).not.toHaveBeenCalled();
+});
+
+it.each(["rejected", "unknown"])("offers an explicit retry only for a %s delivery", async status => {
+  api.connection.mockResolvedValue({ enabled: true, resourceUrl: "https://paperclip.example/mcp/runner", recoveryNeeded: status === "unknown",
+    binding: { id: "binding-fixture", connected: true, routine: { configured: true, verified: true, botName: "Night Shift", revision: 1,
+      lastExchange: { id: "correlation-fixture", kind: "mailbox_updated", status, expiresAt: new Date(Date.now() + 60_000).toISOString() } } } });
+  api.retry.mockResolvedValue({});
+  cache = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  host = document.createElement("div"); document.body.appendChild(host); root = createRoot(host);
+  flushSync(() => root.render(<QueryClientProvider client={cache}><GrokBotConnection companyId="company-fixture" agentId="agent-fixture" /></QueryClientProvider>));
+  await vi.waitFor(() => expect(host.textContent).toContain("Night Shift"));
+  const retry = [...host.querySelectorAll("button")].find(button => button.textContent === "Retry rejected delivery");
+  expect(Boolean(retry)).toBe(status === "rejected");
+  if (retry) {
+    flushSync(() => retry.click());
+    await vi.waitFor(() => expect(api.retry).toHaveBeenCalledExactlyOnceWith("company-fixture", "agent-fixture", "correlation-fixture"));
+  } else expect(api.retry).not.toHaveBeenCalled();
 });
