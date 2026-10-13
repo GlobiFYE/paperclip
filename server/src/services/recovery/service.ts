@@ -1100,7 +1100,7 @@ export function recoveryService(
         .where(
           and(
             eq(agentWakeupRequests.companyId, companyId),
-            eq(agentWakeupRequests.status, "deferred_issue_execution"),
+            inArray(agentWakeupRequests.status, ["deferred_issue_execution", "agent_runnable"]),
             sql`${agentWakeupRequests.payload} ->> 'issueId' = ${issueId}`,
             agentId ? eq(agentWakeupRequests.agentId, agentId) : sql`true`,
           ),
@@ -1742,7 +1742,7 @@ export function recoveryService(
       .where(
         and(
           eq(agentWakeupRequests.companyId, companyId),
-          eq(agentWakeupRequests.status, "queued"),
+          inArray(agentWakeupRequests.status, ["queued", "agent_runnable"]),
           sql`${agentWakeupRequests.payload} ->> 'issueId' = ${issueId}`,
           agentId ? eq(agentWakeupRequests.agentId, agentId) : sql`true`,
         ),

@@ -9,7 +9,8 @@ import {
 import { createAgentScheduler } from "../index.js";
 import { persistActivity } from "../../../services/activity-log.js";
 import { createPromoteAgentRunnableWork } from "../application/use-cases.js";
-import type { AgentSchedulerDb, AgentSchedulerHost, RunnableWakeRow } from "../application/ports.js";
+import type { AgentSchedulerHost, RunnableWakeRow } from "../application/ports.js";
+import type { AgentSchedulerDb } from "./types.js";
 import {
   AGENT_SCHEDULER_DEQUEUE_REASON as DEQUEUE,
   AGENT_SCHEDULER_ENQUEUE_REASON as ENQUEUE,

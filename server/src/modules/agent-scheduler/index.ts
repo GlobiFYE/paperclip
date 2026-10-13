@@ -1,4 +1,5 @@
 import type { Db } from "@paperclipai/db";
+import type { AgentSchedulerDb } from "./adapters/types.js";
 import { persistActivity } from "../../services/activity-log.js";
 import { createPostgresAgentSchedulerAdapter } from "./adapters/postgres.js";
 import type {
@@ -23,7 +24,7 @@ export { readAgentParallelExecutionAllowed } from "./application/use-cases.js";
 export { AGENT_RUNNABLE_STATUS } from "./adapters/postgres.js";
 
 export type AgentSchedulerDeps = {
-  adapter?: AgentSchedulerWriter;
+  adapter?: AgentSchedulerWriter<AgentSchedulerDb>;
 };
 
 export function createAgentScheduler(db: Db, host: AgentSchedulerHost, deps: AgentSchedulerDeps = {}) {

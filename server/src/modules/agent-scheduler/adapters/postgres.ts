@@ -1,6 +1,7 @@
 import { agentWakeupRequests, heartbeatRuns } from "@paperclipai/db";
 import { and, asc, count, eq, exists, gte, isNull, notExists, notInArray, or, sql } from "drizzle-orm";
-import type { AgentSchedulerDb, AgentSchedulerWriter, RunnableWakeRow } from "../application/ports.js";
+import type { AgentSchedulerWriter, RunnableWakeRow } from "../application/ports.js";
+import type { AgentSchedulerDb } from "./types.js";
 import {
   AGENT_SCHEDULER_DEQUEUE_REASON,
   AGENT_SCHEDULER_ENQUEUE_REASON,
@@ -19,7 +20,7 @@ function toRunnableRow(row: typeof agentWakeupRequests.$inferSelect): RunnableWa
   };
 }
 
-export function createPostgresAgentSchedulerAdapter(db: AgentSchedulerDb): AgentSchedulerWriter {
+export function createPostgresAgentSchedulerAdapter(db: AgentSchedulerDb): AgentSchedulerWriter<AgentSchedulerDb> {
   // Use the persisted foreign key, company and agent. Payload markers and
   // elapsed time are not proof that a previous INSERT did not commit.
   const rootsForWake = () => db.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(and(

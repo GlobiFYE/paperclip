@@ -1,6 +1,6 @@
 import { agentWakeupRequests, companies } from "@paperclipai/db";
 import { and, asc, eq, gte, isNull, or, sql } from "drizzle-orm";
-import type { AgentSchedulerDb } from "../application/ports.js";
+import type { AgentSchedulerDb } from "./types.js";
 import { AGENT_SCHEDULER_ENQUEUE_REASON, AGENT_SCHEDULER_MATERIALIZING_REASON } from "../domain/policy.js";
 import { AGENT_RUNNABLE_STATUS } from "./postgres.js";
 

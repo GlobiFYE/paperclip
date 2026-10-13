@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { AgentSchedulerDb, AgentSchedulerHost, AgentSchedulerWriter, RunnableWakeRow } from "./ports.js";
+import type { AgentSchedulerHost, AgentSchedulerWriter, RunnableWakeRow } from "./ports.js";
 import {
   AGENT_SCHEDULER_DEQUEUE_REASON,
   AGENT_SCHEDULER_ENQUEUE_REASON,
@@ -54,7 +54,7 @@ function createMemoryWriter(now: () => number = Date.now): AgentSchedulerWriter 
       try {
         // This fake models only the atomic port. Actual SQL/rollback/visibility
         // are exercised independently by adapters/postgres.test.ts.
-        const runId = await input.createRun({ ...row, reason: oldReason }, {} as AgentSchedulerDb);
+        const runId = await input.createRun({ ...row, reason: oldReason }, {});
         if (runId === null) {
           if (roots(row).length) throw new Error("null result after write");
           await this.releaseClaimedRunnableWake({ wakeId: row.id, companyId: row.companyId,

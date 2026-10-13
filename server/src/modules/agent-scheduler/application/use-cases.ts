@@ -6,7 +6,6 @@ import {
   type AgentSchedulerCapacityFacts,
 } from "../domain/policy.js";
 import type {
-  AgentSchedulerDb,
   AgentSchedulerEnqueueActivity,
   AgentSchedulerHost,
   AgentSchedulerWriter,
@@ -24,7 +23,7 @@ export type AgentSchedulerAdmissionInput = AgentSchedulerCapacityFacts & {
 
 export function createEvaluateAgentSchedulerAdmission(deps: {
   host: AgentSchedulerHost;
-  writer: AgentSchedulerWriter;
+  writer: Pick<AgentSchedulerWriter, "countRunnableWakes" | "parkWakeAsRunnable">;
 }) {
   return async function evaluateAgentSchedulerAdmission(
     input: AgentSchedulerAdmissionInput,
@@ -79,23 +78,23 @@ export function createEvaluateAgentSchedulerAdmission(deps: {
   };
 }
 
-export type MaterializeRunnableWakeInput = {
+export type MaterializeRunnableWakeInput<Transaction = unknown> = {
   schedulerEnabled: boolean;
   allowParallelExecution: boolean;
   configuredMaxConcurrentRuns: number;
   agentId: string;
   companyId: string;
   /** INSERT through tx only. No provider calls or publication before commit. */
-  createRunForWake: (wake: RunnableWakeRow, tx: AgentSchedulerDb) => Promise<string | null>;
+  createRunForWake: (wake: RunnableWakeRow, tx: Transaction) => Promise<string | null>;
   requestedAtOrAfter?: Date;
 };
 
-export function createPromoteAgentRunnableWork(deps: {
+export function createPromoteAgentRunnableWork<Transaction>(deps: {
   host: AgentSchedulerHost;
-  writer: AgentSchedulerWriter;
+  writer: AgentSchedulerWriter<Transaction>;
 }) {
   return async function promoteAgentRunnableWork(
-    input: MaterializeRunnableWakeInput,
+    input: MaterializeRunnableWakeInput<Transaction>,
   ): Promise<{ promoted: number; runIds: string[] }> {
     if (!input.schedulerEnabled) {
       return { promoted: 0, runIds: [] };

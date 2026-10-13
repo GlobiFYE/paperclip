@@ -100,6 +100,20 @@ describe("findExistingIssueBlockersResolvedWakeForReadyState", () => {
     blockedTransitionAt: secondCycle,
   };
 
+  it.each(["cycle", "old-state", "legacy-edge"])("treats a parked %s dependency wake as still in flight", async (kind) => {
+    const key = kind === "cycle" ? buildIssueBlockersResolvedWakeStateKey(readyState)
+      : kind === "old-state" ? buildIssueBlockersResolvedWakeStateKeyWithoutCycle(readyState)
+      : buildIssueBlockersResolvedWakeIdempotencyKey({ dependentIssueId, resolvedBlockerIssueId: blockerIssueId });
+    const existing = await findExistingIssueBlockersResolvedWakeForReadyState(dbWithWakes([
+      { id: "parked", status: "agent_runnable", idempotencyKey: key, requestedAt: secondCycle },
+    ]), readyState);
+    expect(existing?.id).toBe("parked");
+    const cancelled = await findExistingIssueBlockersResolvedWakeForReadyState(dbWithWakes([
+      { id: "cancelled", status: "cancelled", idempotencyKey: key, requestedAt: secondCycle },
+    ]), readyState);
+    expect(cancelled).toBeNull();
+  });
+
   it("suppresses a completed wake on the cycle-aware state key", async () => {
     const cycleKey = buildIssueBlockersResolvedWakeStateKey(readyState);
     const existing = await findExistingIssueBlockersResolvedWakeForReadyState(

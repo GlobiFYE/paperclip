@@ -1,5 +1,3 @@
-import type { Db } from "@paperclipai/db";
-
 export type RunnableWakeRow = {
   id: string;
   companyId: string;
@@ -31,7 +29,7 @@ export type AgentSchedulerHost = {
   }): Promise<void>;
 };
 
-export type AgentSchedulerWriter = {
+export type AgentSchedulerWriter<Transaction = unknown> = {
   listRunnableWakes(agentId: string, limit: number, options?: {
     excludeWakeIds?: string[];
     requestedAtOrAfter?: Date;
@@ -41,7 +39,7 @@ export type AgentSchedulerWriter = {
    */
   createAndLinkRunnableWake(input: {
     wake: RunnableWakeRow;
-    createRun: (wake: RunnableWakeRow, tx: AgentSchedulerDb) => Promise<string | null>;
+    createRun: (wake: RunnableWakeRow, tx: Transaction) => Promise<string | null>;
     dequeueReason: string;
   }): Promise<string | null>;
   countRunnableWakes(agentId: string): Promise<number>;
@@ -68,5 +66,3 @@ export type AgentSchedulerWriter = {
     dequeueReason: string;
   }): Promise<boolean>;
 };
-
-export type AgentSchedulerDb = Pick<Db, "select" | "insert" | "update" | "transaction">;
