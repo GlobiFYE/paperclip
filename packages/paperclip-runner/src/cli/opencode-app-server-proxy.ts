@@ -3,6 +3,7 @@ import { parseOpenCodeReasoningMode } from "../drivers/opencode/reasoning-mode.j
 import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parseOpenCodeProxyPersistentServer } from "./opencode-proxy-server-config.js";
 
 import type {
   HarnessRuntimeRequestResolution,
@@ -86,30 +87,8 @@ function runtimeDirectory(): string {
   return resolve(configured);
 }
 
-function persistentServer():
-  | { baseUrl: string; authHeader: string; version?: string }
-  | undefined {
-  const baseUrl = process.env.PAPERCLIP_OPENCODE_SERVER_URL?.trim();
-  const authHeader = process.env.PAPERCLIP_OPENCODE_SERVER_AUTH?.trim();
-  if (!baseUrl && !authHeader) return undefined;
-  if (!baseUrl || !authHeader)
-    throw new Error(
-      "PAPERCLIP_OPENCODE_SERVER_URL and PAPERCLIP_OPENCODE_SERVER_AUTH must be provided together",
-    );
-  const parsed = new URL(baseUrl);
-  if (parsed.username || parsed.password || parsed.hash)
-    throw new Error("PAPERCLIP_OPENCODE_SERVER_URL contains forbidden URL data");
-  if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
-    throw new Error("PAPERCLIP_OPENCODE_SERVER_URL must use HTTP or HTTPS");
-  if (!/^(Basic|Bearer)\s+\S+$/i.test(authHeader))
-    throw new Error("PAPERCLIP_OPENCODE_SERVER_AUTH must be an HTTP auth header");
-  return {
-    baseUrl: parsed.toString().replace(/\/$/, ""),
-    authHeader,
-    ...(process.env.PAPERCLIP_OPENCODE_SERVER_VERSION?.trim()
-      ? { version: process.env.PAPERCLIP_OPENCODE_SERVER_VERSION.trim() }
-      : {}),
-  };
+function persistentServer(): ReturnType<typeof parseOpenCodeProxyPersistentServer> {
+  return parseOpenCodeProxyPersistentServer();
 }
 
 async function open(
