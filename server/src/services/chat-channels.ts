@@ -1,3 +1,7 @@
+import { createGitHubInstallationLifecycle } from "./chat-channels/github/installation-lifecycle.js";
+import { createGitHubAppSetup } from "./chat-channels/github/app-setup.js";
+import { createSlackTaskAuthorityRegistration } from "./chat-channels/slack/task-authority.js";
+import { createGitHubPublicationPolicy } from "./chat-channels/github/publication-policy.js";
 import { createTelegramAttachmentFailure } from "./chat-channels/telegram/attachment-failure.js";
 import { createSlackCommands, slackCommandForAgent } from "./chat-channels/slack/commands.js";
 import { createTelegramCommands, telegramGuidanceCommand } from "./chat-channels/telegram/commands.js";
@@ -110,11 +114,11 @@ import { mirrorSlackBoardComment, slackBoardReplyBindings } from "./slack-board-
 import { authorizeSlackBoardPublication } from "./slack-board-authority.js";
 import { assertSlackBoardWorkAllowed } from "./slack-board-resume.js";
 import { slackExplicitPublicationDuplicate, unresolvedSlackPublicationCondition } from "./connectors/slack-publication.js";
-import { rememberVerifiedSlackSearchEvent, slackSearchActionToken } from "./connectors/slack-search-context.js";
-import { slackAuthorizationRevision } from "./connectors/slack-revision.js";
+import { rememberVerifiedSlackSearchEvent } from "./connectors/slack-search-context.js";
+
 import { slackPublicationAllowed } from "./connectors/slack-access.js";
-import { instanceSettingsService } from "./instance-settings.js";
-import { registerSlackTaskAuthority, slackRunOrigin } from "./connectors/slack-authority.js";
+
+
 
 import { buildChatCommunicationGuidance } from "./chat-communication-guidance.js";
 function githubPolicyRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
@@ -129,13 +133,13 @@ import {
   githubMessageAddressesAnotherBot,
 } from "./chat-github-events.js";
 import { githubReviewPrompt, githubManualMessagePrompt, GITHUB_CONFIGURED_SKILL_GUIDANCE } from "./chat-github-review-policy.js";
-import { chatGitHubConfigurations, chatGitHubRegistrations, chatGitHubReviews } from "@paperclipai/db";
+import { chatGitHubConfigurations, chatGitHubReviews } from "@paperclipai/db";
 import type { GitHubReviewEventContext, GitHubIssueEventContext, GitHubAutomaticEventContext, GitHubReviewPolicy } from "@paperclipai/shared";
 import { githubChatReviewService } from "./chat-github-reviews.js";
 import { githubResponseCommentService } from "./chat-github-response-comments.js";
-import { githubChatWizardService } from "./chat-github-wizard.js";
-import { registerGitHubBotCloudIngress } from "./chat-github-cloud-ingress.js";
-import { githubChatRegistrationService } from "./chat-github-registration.js";
+
+
+
 import { githubChatPrincipalAccess } from "./chat-github-access.js";
 import { githubAppJwt } from "./chat-github-client.js";
 import { resumeExternalConversation } from "./slack-conversation-state.js";
@@ -217,7 +221,6 @@ import {
   companyMemberships,
   companySecretBindings,
   heartbeatRuns,
-  nativeRunFinalizations,
   issueComments,
   issueAttachments,
   issueThreadInteractions,
@@ -328,8 +331,6 @@ import { projectSafeChatPublication } from "./chat-publication-projection.js";
 import { safeChatTaskUrl } from "./chat-task-url.js";
 import {
   resyncGitHubAppWebhook,
-  listGitHubAppWebhookDeliveries,
-  requestGitHubAppWebhookRedelivery,
 } from "./chat-github-webhook-config.js";
 import {
   githubAttachmentLimitOmissions,
@@ -375,9 +376,7 @@ import {
 } from "./chat-interaction-publications.js";
 import { chatProviderConversationUrl } from "./chat-provider-links.js";
 import { classifyChatPublicationError } from "./chat-publication-errors.js";
-import {
-  githubRunReplyState,
-} from "./chat-run-publications.js";
+
 import {
   inboundWakePublicationKey,
   inboundWakePublicationText,
@@ -2878,6 +2877,12 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   const { stageSlackSessionStop, processSlackSessionStop, processPendingSlackSessionStops } = createSlackSessionStop(db, { runtimeCallbackEndpoint, lockCurrentPrincipalAuthorization, nonDirectDestinationAllowed, stageAuthorizedTaskControlPublication, getPublicBaseUrl, get heartbeat() { return options.heartbeat; }, redactError });
   const { stageTelegramMaintenance, processTelegramMaintenance, processPendingTelegramMaintenance, hasTelegramStopSubscription, recordTelegramStopSubscription } = createTelegramMaintenance(db, { endpointRecord, runtimeContextForRecord, withCredentialMutationLease, resolveCredentials, clearCredentials, runtimeCallbackEndpoint, getWebhookPublicBaseUrl, fetchImpl, runtimeGeneration, credentialFingerprint, redactError, credentialCheckTimeoutMs: PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS });
   const { reconcileGitHubWebhookRepository, reconcileProviderResourceRows, listResources, listGitHubRepositories, replaceResources, toggleAllGitHubRepositories, hasNewerProcessedProviderLifecycleEffect, applyProviderAvailability } = createChatResourceReconciliation(db, { endpointRecord, withCredentialMutationLease, runtimeGeneration, maxErrorText: MAX_ERROR_TEXT });
+  const { applyGitHubInstallationLifecycle } = createGitHubInstallationLifecycle(db, {
+    endpointRecord, resolveCredentials, runtimeCallbackEndpoint, runtimeGeneration, credentialFingerprint,
+    verifyCredentials, legacyGitHubLabelsMatchVerifiedCredentials, nativeBotIdentityMatches, assertNativeBotIdentityAvailable,
+    prepareProviderInventory, persistCredentials, reconcileProviderResourceRows, redactError,
+    normalizedLifecycleWithRuntimeFence, MAX_ERROR_TEXT,
+  });
 
   async function prepareProviderInventory(
     endpoint: EndpointRow,
@@ -4968,6 +4973,11 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     isShuttingDown: () => shuttingDown,
     wakeup: (...args) => options.heartbeat.wakeup(...args),
     staleProcessingMs: DELIVERY_PROCESSING_STALE_MS,
+  });
+  const { githubCurrentOmissionPreparedText, settleGitHubAutomaticPublication } = createGitHubPublicationPolicy(db, {
+    isExplicitOperatorPublication, getTaskBaseUrl, failedChatRetrySource, isExternalActionAuthorizationChange,
+    FailedChatRetryPublicationReadError, endpointRecord, runIdFromMilestonePublication, fetchImpl,
+    stageTerminalReceiptReactionRemovals, runtimeContextForRecord, scheduleMessageProcessing, processReceiptReaction,
   });
   const { stageTeamsBoardFileIntent, deriveTeamsFileTransferAuthority } = createTeamsFileAuthority({ runtimeGeneration, credentialFingerprint, runtime, runtimeContexts, localRuntimeEpoch, runtimeVersions, lockCurrentPrincipalAuthorization, lifecycleRuntimeFence, assertFailedRetryReceipt, inboundWakeScope, failedChatRetrySource, isExplicitOperatorPublication, retryCommentIds });
   const { teamsTransferProtocol, handleTeamsFileConsent, tryProcessTeamsFilePublication, scheduleTeamsFileMaintenance } = createTeamsFileDelivery(db, {
@@ -12980,402 +12990,15 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         }
 
         if (currentEndpoint.provider === "github") {
-          try {
-            const currentCredentials =
-              await resolveCredentials(currentEndpoint);
-            const lifecycleInstallationId =
-              effect.kind === "endpoint" &&
-              typeof effect.metadata?.installationId === "string"
-                ? effect.metadata.installationId
-                : null;
-            const removesCurrentInstallation =
-              effect.kind === "endpoint" &&
-              effect.availability === "revoked" &&
-              lifecycleInstallationId !== null &&
-              lifecycleInstallationId === currentCredentials.installationId;
-            const currentInstallationRemovalReason =
-              removesCurrentInstallation && effect.kind === "endpoint"
-                ? effect.reason
-                : null;
-            if (removesCurrentInstallation) {
-              // A signed deletion for the installation currently bound to
-              // this endpoint is authoritative provider truth. Inventory now
-              // correctly contains zero active installations, so treating its
-              // empty result as a transient discovery failure would strand the
-              // endpoint in attention and ask GitHub to redeliver forever.
-              // Keep the App key and webhook secret so a later installation
-              // event can recover this same immutable bot identity.
-              const revoked = await db.transaction(async (tx) => {
-                await credentialLease.assertOwned(tx);
-                const current = await runtimeCallbackEndpoint(
-                  tx,
-                  currentEndpoint.id,
-                  admittedRuntimeContext,
-                  ["verifying", "active", "attention", "revoked"],
-                );
-                const revokedAt = new Date();
-                if (!current) {
-                  await notifyChatDeliveryWork(tx);
-                  const [filtered] = await tx
-                    .update(chatDeliveries)
-                    .set({
-                      state: "filtered",
-                      processedAt: revokedAt,
-                      nextAttemptAt: null,
-                      redactedError:
-                        "GitHub installation deletion belonged to a superseded runtime",
-                      updatedAt: revokedAt,
-                    })
-                    .where(
-                      and(
-                        eq(chatDeliveries.id, claimed.id),
-                        eq(chatDeliveries.state, "processing"),
-                        eq(chatDeliveries.attempts, candidate.attempts + 1),
-                      ),
-                    )
-                    .returning({ id: chatDeliveries.id });
-                  if (!filtered) {
-                    throw new Error(
-                      "GitHub installation deletion ownership changed before stale settlement",
-                    );
-                  }
-                  await credentialLease.assertOwned(tx);
-                  return false;
-                }
-                const reason = redactSensitiveText(
-                  currentInstallationRemovalReason ??
-                    "GitHub App installation was removed",
-                ).slice(0, MAX_ERROR_TEXT);
-                await tx
-                  .update(chatEndpoints)
-                  .set({
-                    status: "revoked",
-                    healthMessage: reason,
-                    lastError: reason,
-                    lastEventAt: revokedAt,
-                    setup: {
-                      ...current.setup,
-                      runtimeGeneration: runtimeGeneration(current.setup) + 1,
-                    } as InternalSetupState,
-                    updatedAt: revokedAt,
-                  })
-                  .where(eq(chatEndpoints.id, current.id));
-                await tx
-                  .update(toolConnections)
-                  .set({
-                    status: "disabled",
-                    enabled: false,
-                    healthStatus: "failed",
-                    healthMessage: reason,
-                    lastError: reason,
-                    healthCheckedAt: revokedAt,
-                    updatedAt: revokedAt,
-                  })
-                  .where(eq(toolConnections.id, current.connectionId));
-                await tx
-                  .update(chatEndpointResources)
-                  .set({ availability: "unavailable", updatedAt: revokedAt })
-                  .where(
-                    and(
-                      eq(chatEndpointResources.companyId, current.companyId),
-                      eq(chatEndpointResources.endpointId, current.id),
-                    ),
-                  );
-                await tx
-                  .update(chatConversations)
-                  .set({ state: "unavailable", updatedAt: revokedAt })
-                  .where(
-                    and(
-                      eq(chatConversations.companyId, current.companyId),
-                      eq(chatConversations.endpointId, current.id),
-                      inArray(chatConversations.state, ["active", "waiting"]),
-                    ),
-                  );
-                await notifyChatDeliveryWork(tx);
-                const [processed] = await tx
-                  .update(chatDeliveries)
-                  .set({
-                    state: "processed",
-                    processedAt: revokedAt,
-                    redactedError: null,
-                    nextAttemptAt: null,
-                    updatedAt: revokedAt,
-                  })
-                  .where(
-                    and(
-                      eq(chatDeliveries.id, claimed.id),
-                      eq(chatDeliveries.state, "processing"),
-                      eq(chatDeliveries.attempts, candidate.attempts + 1),
-                    ),
-                  )
-                  .returning({ id: chatDeliveries.id });
-                if (!processed) {
-                  throw new Error(
-                    "GitHub installation deletion ownership changed before revocation settlement",
-                  );
-                }
-                await credentialLease.assertOwned(tx);
-                return true;
-              });
-              stopRuntimeAfterLifecycle = revoked;
-              return;
-            }
-            const identity = await verifyCredentials(
-              "github",
-              currentCredentials,
-            );
-            const upgradingLegacyIdentity =
-              !currentEndpoint.botExternalId &&
-              legacyGitHubLabelsMatchVerifiedCredentials(
-                currentEndpoint,
-                identity,
-              );
-            if (
-              !upgradingLegacyIdentity &&
-              !nativeBotIdentityMatches("github", currentEndpoint, identity)
-            ) {
-              throw conflict(
-                "The GitHub App identity changed while reconciling this connection",
-                {
-                  code: "chat_bot_identity_changed",
-                },
-              );
-            }
-            await assertNativeBotIdentityAvailable(currentEndpoint, identity);
-            if (upgradingLegacyIdentity) {
-              await db.transaction(async (tx) => {
-                await credentialLease.assertOwned(tx);
-                await tx
-                  .update(chatEndpoints)
-                  .set({
-                    botExternalId: identity.botExternalId,
-                    updatedAt: new Date(),
-                  })
-                  .where(eq(chatEndpoints.id, currentEndpoint.id));
-                await credentialLease.assertOwned(tx);
-              });
-            }
-
-            // GitHub lifecycle payloads are wake-up signals, not provider
-            // truth. Re-read the one active App installation and its complete
-            // repository inventory while the credential lease excludes secret
-            // rotation and every other lifecycle callback for this endpoint.
-            const prepared = await prepareProviderInventory(
-              currentEndpoint,
-              currentCredentials,
-            );
-            if (
-              prepared.credentials.installationId !==
-              currentCredentials.installationId
-            ) {
-              await persistCredentials(
-                currentEndpoint,
-                prepared.credentials,
-                credentialLease,
-              );
-              refreshRuntimeAfterLifecycle = true;
-            }
-            if (prepared.inventory)
-              await reconcileProviderResourceRows(
-                currentEndpoint,
-                prepared.inventory,
-                credentialLease,
-              );
-
-            const canonical = await endpointRecord(currentEndpoint.id);
-            if (!canonical) throw notFound("Chat endpoint not found");
-            const now = new Date();
-            const intentionallyUnavailable =
-              canonical.endpoint.status === "paused" ||
-              canonical.endpoint.status === "archived" ||
-              !canonical.endpoint.setup.webhookVerifiedAt;
-            const advanceRuntimeGeneration =
-              refreshRuntimeAfterLifecycle ||
-              !canonical.endpoint.setup.webhookVerifiedAt;
-            await db.transaction(async (tx) => {
-              await credentialLease.assertOwned(tx);
-              if (intentionallyUnavailable) {
-                await tx
-                  .update(chatEndpoints)
-                  .set({
-                    ...(advanceRuntimeGeneration
-                      ? {
-                          setup: {
-                            ...canonical.endpoint.setup,
-                            runtimeGeneration:
-                              runtimeGeneration(canonical.endpoint.setup) + 1,
-                          } as InternalSetupState,
-                        }
-                      : {}),
-                    lastEventAt: now,
-                    updatedAt: now,
-                  })
-                  .where(eq(chatEndpoints.id, canonical.endpoint.id));
-              } else {
-                const status =
-                  canonical.endpoint.setup.step === "complete"
-                    ? "active"
-                    : "verifying";
-                await tx
-                  .update(chatEndpoints)
-                  .set({
-                    status,
-                    healthMessage:
-                      status === "active"
-                        ? "Connected"
-                        : "Waiting for a test conversation",
-                    lastError: null,
-                    lastEventAt: now,
-                    ...(advanceRuntimeGeneration
-                      ? {
-                          setup: {
-                            ...canonical.endpoint.setup,
-                            runtimeGeneration:
-                              runtimeGeneration(canonical.endpoint.setup) + 1,
-                          } as InternalSetupState,
-                        }
-                      : {}),
-                    updatedAt: now,
-                  })
-                  .where(eq(chatEndpoints.id, canonical.endpoint.id));
-                await tx
-                  .update(toolConnections)
-                  .set({
-                    status: "active",
-                    enabled: true,
-                    healthStatus: "healthy",
-                    healthMessage: "Connected",
-                    lastError: null,
-                    healthCheckedAt: now,
-                    updatedAt: now,
-                  })
-                  .where(
-                    eq(toolConnections.id, canonical.endpoint.connectionId),
-                  );
-              }
-              await notifyChatDeliveryWork(tx);
-              await tx
-                .update(chatDeliveries)
-                .set({
-                  state: "processed",
-                  processedAt: now,
-                  redactedError: null,
-                  nextAttemptAt: null,
-                  updatedAt: now,
-                })
-                .where(
-                  and(
-                    eq(chatDeliveries.id, claimed.id),
-                    eq(chatDeliveries.state, "processing"),
-                    eq(chatDeliveries.attempts, candidate.attempts + 1),
-                  ),
-                );
-              await credentialLease.assertOwned(tx);
-            });
-            if (!canonical.endpoint.setup.webhookVerifiedAt) {
-              stopRuntimeAfterLifecycle = true;
-            }
-          } catch (error) {
-            const latest = await endpointRecord(currentEndpoint.id);
-            const preserveIntentionalState =
-              !latest ||
-              latest.endpoint.status === "paused" ||
-              latest.endpoint.status === "archived" ||
-              !latest.endpoint.setup.webhookVerifiedAt;
-            if (!preserveIntentionalState) {
-              const failedAt = new Date();
-              const failure = redactError(error);
-              const nextGeneration =
-                runtimeGeneration(latest.endpoint.setup) + 1;
-              const retryRuntimeContext: LifecycleRuntimeFence = {
-                credentialFingerprint: credentialFingerprint(
-                  latest.credentialSecretRefs,
-                ),
-                generation: nextGeneration,
-              };
-              const terminal = candidate.attempts + 1 >= 5;
-              await db.transaction(async (tx) => {
-                await credentialLease.assertOwned(tx);
-                await tx
-                  .update(chatEndpoints)
-                  .set({
-                    status: "attention",
-                    healthMessage:
-                      "GitHub App credentials, permissions, events, or identity need attention",
-                    lastError: failure,
-                    lastEventAt: failedAt,
-                    setup: {
-                      ...latest.endpoint.setup,
-                      runtimeGeneration: nextGeneration,
-                    } as InternalSetupState,
-                    updatedAt: failedAt,
-                  })
-                  .where(eq(chatEndpoints.id, currentEndpoint.id));
-                await tx
-                  .update(toolConnections)
-                  .set({
-                    status: "disabled",
-                    enabled: false,
-                    healthStatus: "degraded",
-                    healthMessage:
-                      "GitHub App credentials, permissions, events, or identity need attention",
-                    lastError: failure,
-                    healthCheckedAt: failedAt,
-                    updatedAt: failedAt,
-                  })
-                  .where(eq(toolConnections.id, currentEndpoint.connectionId));
-                await tx
-                  .update(chatEndpointResources)
-                  .set({ availability: "unavailable", updatedAt: failedAt })
-                  .where(
-                    and(
-                      eq(
-                        chatEndpointResources.companyId,
-                        currentEndpoint.companyId,
-                      ),
-                      eq(chatEndpointResources.endpointId, currentEndpoint.id),
-                    ),
-                  );
-                await tx
-                  .update(chatConversations)
-                  .set({ state: "unavailable", updatedAt: failedAt })
-                  .where(
-                    and(
-                      eq(
-                        chatConversations.companyId,
-                        currentEndpoint.companyId,
-                      ),
-                      eq(chatConversations.endpointId, currentEndpoint.id),
-                      inArray(chatConversations.state, ["active", "waiting"]),
-                    ),
-                  );
-                await notifyChatDeliveryWork(tx);
-                await tx
-                  .update(chatDeliveries)
-                  .set({
-                    state: terminal ? "failed" : "retry",
-                    normalizedEvent: normalizedLifecycleWithRuntimeFence(
-                      candidate,
-                      retryRuntimeContext,
-                    ),
-                    redactedError: failure,
-                    nextAttemptAt: terminal ? null : failedAt,
-                    updatedAt: failedAt,
-                  })
-                  .where(
-                    and(
-                      eq(chatDeliveries.id, claimed.id),
-                      eq(chatDeliveries.state, "processing"),
-                      eq(chatDeliveries.attempts, candidate.attempts + 1),
-                    ),
-                  );
-                await credentialLease.assertOwned(tx);
-              });
+          const outcome = await applyGitHubInstallationLifecycle({
+            currentEndpoint, effect, credentialLease, admittedRuntimeContext, claimed, candidate,
+            onFailurePersisted: () => {
               stopRuntimeAfterFailure = true;
               lifecycleFailurePersisted = true;
-            }
-            throw error;
-          }
+            },
+          });
+          refreshRuntimeAfterLifecycle = outcome.refreshRuntimeAfterLifecycle;
+          stopRuntimeAfterLifecycle = outcome.stopRuntimeAfterLifecycle;
           return;
         }
 
@@ -16838,169 +16461,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     );
   }
 
-  /** Add navigation only from the exact accepted native input batch. The
-   * omission text/model response is not authority, nor is an older task file. */
-  async function githubCurrentOmissionPreparedText(
-    tx: DbOrTransaction,
-    publication: typeof chatPublications.$inferSelect,
-    endpoint: EndpointRow,
-  ): Promise<string | null | false> {
-    if (endpoint.provider !== "github") return null;
-    const preparationKey = `github-omission-navigation:${publication.id}`;
-    const [prepared] = await tx
-      .select()
-      .from(chatActions)
-      .where(
-        and(
-          eq(chatActions.companyId, publication.companyId),
-          eq(chatActions.endpointId, publication.endpointId),
-          eq(chatActions.conversationId, publication.conversationId),
-          eq(chatActions.providerActionId, preparationKey),
-        ),
-      )
-      .limit(1);
-    // A prepared final cannot become a different kind of publication while
-    // retaining the decorated body. Check its receipt before these exclusions.
-    if (
-      !publication.commentId ||
-      publication.payload.progressState !== undefined ||
-      publication.payload.interactionId ||
-      publication.payload.card ||
-      publication.payload.attachmentIds?.length ||
-      publication.payload.transportPart ||
-      publication.idempotencyKey.startsWith("control:") ||
-      isExplicitOperatorPublication(publication)
-    )
-      return prepared ? false : null;
-    const taskUrl = prepared
-      ? typeof prepared.payload.taskUrl === "string"
-        ? safeChatTaskUrl(prepared.payload.taskUrl, publication.issueId)
-        : null
-      : safeChatTaskUrl(getTaskBaseUrl(), publication.issueId);
-    if (
-      prepared &&
-      (prepared.kind !== "github_omission_navigation" ||
-        prepared.status !== "processed" ||
-        prepared.payload.version !== 1 ||
-        prepared.payload.publicationId !== publication.id ||
-        taskUrl !== prepared.payload.taskUrl ||
-        prepared.payload.preparedTextSha256 !==
-          createHash("sha256").update(publication.payload.text).digest("hex"))
-    )
-      return false;
-    if (!taskUrl) return prepared ? false : null;
-    const [origin] = await tx
-      .select({ run: heartbeatRuns, resultId: nativeRunFinalizations.resultId })
-      .from(issueComments)
-      .innerJoin(
-        heartbeatRuns,
-        and(
-          eq(heartbeatRuns.id, issueComments.createdByRunId),
-          eq(heartbeatRuns.companyId, publication.companyId),
-          eq(heartbeatRuns.nativeIssueId, publication.issueId),
-          eq(heartbeatRuns.agentId, endpoint.assignedAgentId),
-          eq(heartbeatRuns.runtimeMode, "native"),
-          eq(heartbeatRuns.status, "succeeded"),
-          isNotNull(heartbeatRuns.finishedAt),
-        ),
-      )
-      .innerJoin(
-        nativeRunFinalizations,
-        and(
-          eq(nativeRunFinalizations.companyId, publication.companyId),
-          eq(nativeRunFinalizations.issueId, publication.issueId),
-          eq(nativeRunFinalizations.runId, heartbeatRuns.id),
-          eq(nativeRunFinalizations.phase, "committed"),
-        ),
-      )
-      .where(
-        and(
-          eq(issueComments.id, publication.commentId),
-          eq(issueComments.companyId, publication.companyId),
-          eq(issueComments.issueId, publication.issueId),
-          eq(issueComments.authorAgentId, endpoint.assignedAgentId),
-          isNull(issueComments.deletedAt),
-        ),
-      )
-      .limit(1);
-    const presentation = origin?.run.resultJson?.presentationDecision as
-      Record<string, unknown> | undefined;
-    if (!origin?.resultId || presentation?.commentId !== publication.commentId)
-      return prepared ? false : null;
-    if (
-      prepared &&
-      (prepared.payload.runId !== origin.run.id ||
-        prepared.payload.resultId !== origin.resultId)
-    )
-      return false;
-    try {
-      // This existing publication proof includes the accepted response_wake
-      // result, immutable owner/coalesced receipts, every current source,
-      // runtime/generation, source edits/deletes and current principal access.
-      const source = await failedChatRetrySource(tx, {
-        companyId: publication.companyId,
-        issueId: publication.issueId,
-        agentId: origin.run.agentId,
-        failedRunId: origin.run.id,
-        publication: true,
-        committedResponse: { resultId: origin.resultId },
-      });
-      if (
-        source.endpointId !== endpoint.id ||
-        source.conversationId !== publication.conversationId
-      )
-        return prepared ? false : null;
-      const omitted = source.sources.some((entry) => {
-        const count = (
-          entry.omissionReasons as Record<string, unknown> | undefined
-        )?.download_unavailable;
-        return (
-          typeof count === "number" && Number.isSafeInteger(count) && count > 0
-        );
-      });
-      if (!omitted) return prepared ? false : null;
-      if (prepared) return publication.payload.text;
-      const text = publication.payload.text.includes(taskUrl)
-        ? publication.payload.text
-        : `${publication.payload.text}\n\n[Open this Paperclip task](${taskUrl})`;
-      await tx.insert(chatActions).values({
-        companyId: publication.companyId,
-        endpointId: publication.endpointId,
-        conversationId: publication.conversationId,
-        kind: "github_omission_navigation",
-        providerActionId: preparationKey,
-        status: "processed",
-        payload: {
-          version: 1,
-          publicationId: publication.id,
-          runId: origin.run.id,
-          resultId: origin.resultId,
-          taskUrl,
-          preparedTextSha256: createHash("sha256").update(text).digest("hex"),
-        },
-      });
-      return text;
-    } catch (error) {
-      if (
-        isExternalChatWaitAuthorizationContention(error) ||
-        error instanceof NativeChatReviewPresentationContentionError
-      )
-        throw new NativeChatReviewPresentationContentionError();
-      if (
-        isExternalActionAuthorizationChange(error) ||
-        (error &&
-          typeof error === "object" &&
-          "details" in error &&
-          error.details &&
-          typeof error.details === "object" &&
-          "code" in error.details &&
-          error.details.code === "chat_failed_run_retry_not_authorized")
-      )
-        return prepared ? false : null;
-      throw new FailedChatRetryPublicationReadError();
-    }
-  }
-
   async function claimPublicationTransportAuthorization(input: {
     credentialLease: CredentialMutationLeaseGuard;
     endpoint: EndpointRow;
@@ -18292,82 +17752,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     }
   }
 
-  async function settleGitHubAutomaticPublication(
-    publication: typeof chatPublications.$inferSelect,
-    guard?: CredentialMutationLeaseGuard,
-  ): Promise<boolean> {
-    if (isExplicitOperatorPublication(publication) || publication.payload.interactionId) return false;
-    const record = await endpointRecord(publication.endpointId);
-    if (!record || record.endpoint.provider !== "github" || record.endpoint.companyId !== publication.companyId) return false;
-    // Legacy connections cannot use the replacement task-scoped tools yet.
-    const [configuration] = await db.select({ endpointId: chatGitHubConfigurations.endpointId })
-      .from(chatGitHubConfigurations).where(and(
-        eq(chatGitHubConfigurations.companyId, publication.companyId),
-        eq(chatGitHubConfigurations.endpointId, publication.endpointId),
-      )).limit(1);
-    if (!configuration) return false;
-    let runId = runIdFromMilestonePublication(publication);
-    if (!publication.payload.progressState) {
-      // Also settle automatic agent comments retained from an older instance
-      // version, and per-destination finals from a mixed-provider origin.
-      if (!publication.commentId || !publication.idempotencyKey.startsWith("comment:")) return false;
-      const [comment] = await db.select({ runId: issueComments.createdByRunId }).from(issueComments)
-        .where(and(eq(issueComments.id, publication.commentId), eq(issueComments.companyId, publication.companyId),
-          eq(issueComments.issueId, publication.issueId), eq(issueComments.authorType, "agent")));
-      if (!comment) return false;
-      runId = comment.runId;
-    }
-    if (["failed", "completed"].includes(publication.payload.progressState ?? "") && runId) {
-      const reply = await githubRunReplyState(db, {
-        companyId: publication.companyId, endpointId: publication.endpointId, issueId: publication.issueId, runId,
-      });
-      // A pending or ambiguous write may already have arrived. Suppress the
-      // fallback without changing the governed outbox that owns that effect.
-      if (reply === "unsettled") {
-        // Quarantine only the automatic fallback. The governed tool outbox
-        // retains the uncertain write; ordinary board messages and question
-        // cards must not wait behind this notice in the conversation FIFO.
-        await db.transaction(async tx => {
-          await guard?.assertOwned(tx);
-          await notifyChatPublicationWork(tx);
-          await tx.update(chatPublications).set({ state: "cancelled", nextAttemptAt: null,
-            redactedError: "Automatic fallback suppressed while the GitHub tool reply remains unresolved", updatedAt: new Date() })
-            .where(and(eq(chatPublications.id, publication.id), guard
-              ? and(eq(chatPublications.state, "streaming"), eq(chatPublications.attempts, publication.attempts + 1))
-              : inArray(chatPublications.state, ["pending", "retry"])));
-        });
-        return true;
-      }
-      if (reply === "none" && (publication.payload.progressState === "failed" ||
-          await githubResponseCommentService(db, fetchImpl).hasWorkingResponseForRun({
-            companyId: publication.companyId, endpointId: publication.endpointId, issueId: publication.issueId, runId,
-          }))) return false;
-    } else if (publication.payload.progressState === "failed") return false;
-    const actionIds = await db.transaction(async tx => {
-      await guard?.assertOwned(tx);
-      await notifyChatPublicationWork(tx);
-      const [cancelled] = await tx.update(chatPublications).set({ state: "cancelled", nextAttemptAt: null,
-        redactedError: "GitHub replies are sent through task-scoped tools", updatedAt: new Date() })
-        .where(and(eq(chatPublications.id, publication.id), eq(chatPublications.companyId, publication.companyId),
-          guard ? and(eq(chatPublications.state, "streaming"), eq(chatPublications.attempts, publication.attempts + 1))
-            : inArray(chatPublications.state, ["pending", "retry"])))
-        .returning({ id: chatPublications.id });
-      if (!cancelled || !runId) return [];
-      const [run] = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(and(
-        eq(heartbeatRuns.id, runId), eq(heartbeatRuns.companyId, publication.companyId),
-        eq(heartbeatRuns.agentId, record.endpoint.assignedAgentId),
-        sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${publication.issueId}`,
-        inArray(heartbeatRuns.status, ["succeeded", "failed", "interrupted", "timed_out", "cancelled"])));
-      if (!run) return [];
-      return stageTerminalReceiptReactionRemovals(tx as unknown as Db, {
-        endpoint: record.endpoint, publication, payload: publication.payload,
-        runtimeContext: runtimeContextForRecord(record), closedProgressRunId: run.id,
-      });
-    });
-    for (const id of actionIds) scheduleMessageProcessing(() => processReceiptReaction(id));
-    return true;
-  }
-
   async function processSelectedPublication(
     selectedPublication: typeof chatPublications.$inferSelect,
   ): Promise<void> {
@@ -19554,83 +18938,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       : null;
   }
 
-  async function storeGitHubApp(endpointId: string, userId: string, credentials: Record<string, string>, source: "manifest" | "existing_app" = "existing_app") {
-    const initial = await endpointRecord(endpointId);
-    if (!initial || initial.endpoint.provider !== "github") throw notFound("GitHub bot not found");
-    await withCredentialMutationLease(initial.endpoint, async credentialLease => {
-      const record = await endpointRecord(endpointId);
-      if (!record || ["archived", "active", "paused"].includes(record.endpoint.status)) throw conflict("Use the reconnect flow for an existing active bot");
-      const normalized = await normalizedCredentials(record.endpoint, credentials);
-      const identity = await verifyCredentials("github", normalized);
-      if (record.endpoint.botExternalId && !nativeBotIdentityMatches("github", record.endpoint, identity)) throw conflict("This App belongs to a different bot. Create a new connection instead.");
-      await assertNativeBotIdentityAvailable(record.endpoint, identity);
-      // Claim the globally unique App identity before writing credentials.
-      // A losing concurrent registration must never persist usable secrets.
-      if (!record.endpoint.botExternalId) {
-        try {
-          await db.transaction(async tx => {
-            await credentialLease.assertOwned(tx);
-            const [current] = await tx.select({ setup: chatEndpoints.setup }).from(chatEndpoints).where(eq(chatEndpoints.id, endpointId)).for("update");
-            const [resource] = await tx.select({ id: chatEndpointResources.id }).from(chatEndpointResources).where(eq(chatEndpointResources.endpointId, endpointId)).limit(1);
-            // A fresh manual App has no registration session. Record its first
-            // import before vault writes so interrupted credential storage can resume.
-            const initialImport = !current?.setup.github?.repositorySelectionSaved && !resource;
-            const claimed = await tx.update(chatEndpoints).set({ status: "attention", botExternalId: identity.botExternalId, botUsername: identity.botUsername, providerAccountId: identity.providerAccountId, providerAccountLabel: identity.providerAccountLabel,
-              setup: sql`jsonb_set(${chatEndpoints.setup}, '{github}', coalesce(${chatEndpoints.setup}->'github', '{}'::jsonb) || ${JSON.stringify({ initialSetupPending: true, ...(initialImport ? { initialRepositoryImportPending: true } : {}) })}::jsonb)`,
-              healthMessage: "Complete GitHub App setup", updatedAt: new Date() }).where(and(eq(chatEndpoints.id, endpointId), isNull(chatEndpoints.botExternalId))).returning({ id: chatEndpoints.id });
-            if (claimed.length !== 1) throw conflict("The bot changed during registration");
-          });
-        } catch (error) {
-          if (isNativeBotIdentityUniqueViolation(error)) throw nativeBotIdentityConflict("github");
-          throw error;
-        }
-      }
-      await persistCredentials(record.endpoint, normalized, credentialLease, userId);
-      const slug = identity.botUsername?.replace(/\[bot\]$/, "");
-      if (!slug || !/^[a-z0-9-]+$/.test(slug)) throw unprocessable("GitHub did not identify this App");
-      await db.transaction(async tx => {
-        await credentialLease.assertOwned(tx);
-        const [current] = await tx.select({ setup: chatEndpoints.setup, status: chatEndpoints.status }).from(chatEndpoints).where(eq(chatEndpoints.id, endpointId)).for("update");
-        if (!current || ["archived", "active", "paused"].includes(current.status)) throw conflict("Use the reconnect flow for an existing active bot");
-        await tx.update(chatEndpoints).set({
-          status: "attention", botExternalId: identity.botExternalId, botUsername: identity.botUsername,
-          botDisplayName: identity.botLabel, providerAccountId: identity.providerAccountId, providerAccountLabel: identity.providerAccountLabel,
-          setup: { ...current.setup, github: { ...current.setup.github, appOwnerType: identity.githubOwnerType, appOwnerLogin: identity.githubOwnerLogin, stage: "install", appSlug: slug, installationUrl: `https://github.com/apps/${slug}/installations/new`, registrationStatus: "completed" } },
-          healthMessage: "Install the App on GitHub to continue", updatedAt: new Date(),
-        }).where(eq(chatEndpoints.id, endpointId));
-        if (source === "existing_app") {
-          // Explicit recovery uses the existing-App identity path. Only drop the
-          // manifest requirement after the same App's credentials are vaulted;
-          // leave registration incomplete so advance repairs and verifies delivery.
-          await tx.update(chatGitHubRegistrations).set({
-            handoff: sql`${chatGitHubRegistrations.handoff} - 'manifestClaimId'`,
-          }).where(and(
-            eq(chatGitHubRegistrations.companyId, record.endpoint.companyId),
-            eq(chatGitHubRegistrations.endpointId, endpointId),
-            eq(chatGitHubRegistrations.userId, userId),
-            inArray(chatGitHubRegistrations.status, ["pending", "exchanging", "failed"]),
-            sql`${chatGitHubRegistrations.handoff} ? 'manifestClaimId'`,
-          ));
-        }
-        await logActivity(tx as unknown as Db, { companyId: record.endpoint.companyId, actorType: "user", actorId: userId, action: "chat_github.app_connected", entityType: "tool_connection", entityId: record.endpoint.connectionId, details: { endpointId, appId: identity.botExternalId } });
-      });
-    });
-    // Manifest registration can send its ping before the credential exchange
-    // returns. Request a provider-signed replay after vaulting the secret.
-    const stored = await endpointRecord(endpointId);
-    const credentialsNow = await resolveCredentials(stored!.endpoint);
-    try {
-      const appToken = githubAppJwt(credentialsNow.appId, credentialsNow.privateKey);
-      const history = await listGitHubAppWebhookDeliveries({ fetch: fetchImpl, appToken });
-      const ping = history.deliveries.find(delivery => delivery.event === "ping");
-      if (ping) await requestGitHubAppWebhookRedelivery({ fetch: fetchImpl, appToken, deliveryId: ping.id });
-    } catch {
-      // Registration succeeded. The verify screen exposes signed-delivery
-      // recovery rather than reporting credentials as failed or exchanging again.
-    }
-    return get(endpointId);
-  }
-
   const linkSlackAccount: SlackSetupOptions["linkInstaller"] = async (endpointId, user, actor, lease) => {
     const record = await endpointRecord(endpointId);
     if (!record || record.endpoint.provider !== "slack" || record.endpoint.providerAccountId !== user.team_id) throw conflict("Slack setup changed");
@@ -19716,179 +19023,14 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     },
     createLinkIntent,
   });
-
-  const githubRegistration = githubChatRegistrationService(db, {
-    publicOrigin: () => getPublicBaseUrl(), webhookOrigin: () => getWebhookPublicBaseUrl(), fetch: fetchImpl,
-    storeApp: async (endpointId, userId, app) => { await storeGitHubApp(endpointId, userId, { appId: app.appId, privateKey: app.privateKey, webhookSecret: app.webhookSecret, ...(app.clientId ? { clientId: app.clientId } : {}), ...(app.clientSecret ? { clientSecret: app.clientSecret } : {}) }, "manifest"); },
+  const { storeGitHubApp, githubRegistration, refreshGitHubRepositories, githubWizard, unregisterGitHubCloudIngress } = createGitHubAppSetup(db, {
+    endpointRecord, withCredentialMutationLease, normalizedCredentials, verifyCredentials, nativeBotIdentityMatches,
+    assertNativeBotIdentityAvailable, isNativeBotIdentityUniqueViolation, nativeBotIdentityConflict,
+    persistCredentials, resolveCredentials, fetchImpl, get, getPublicBaseUrl, getWebhookPublicBaseUrl,
+    prepareProviderInventory, reconcileProviderResourceRows, listResources, replaceResources, update, configure, test, handleWebhook,
+    get githubWizardOrigin() { return options.githubWizardOrigin; },
   });
-
-  async function refreshGitHubRepositories(endpointId: string, userId: string) {
-    const initial = await endpointRecord(endpointId);
-    if (!initial || initial.endpoint.provider !== "github") throw notFound("GitHub bot not found");
-    await withCredentialMutationLease(initial.endpoint, async lease => {
-      const record = await endpointRecord(endpointId);
-      if (!record) throw notFound("GitHub bot not found");
-      const credentials = await resolveCredentials(record.endpoint);
-      const prepared = await prepareProviderInventory(record.endpoint, credentials);
-      if (prepared.credentials.installationId !== credentials.installationId) await persistCredentials(record.endpoint, prepared.credentials, lease, userId);
-      if (prepared.inventory) await reconcileProviderResourceRows(record.endpoint, prepared.inventory, lease);
-      await lease.assertOwned();
-      await db.update(chatEndpoints).set({ setup: { ...record.endpoint.setup, github: { ...record.endpoint.setup.github, stage: "repositories", managementUrl: prepared.managementUrl } }, updatedAt: new Date() }).where(eq(chatEndpoints.id, endpointId));
-    });
-    return listResources(endpointId);
-  }
-
-  const githubWizard = githubChatWizardService(db, {
-    origin: () => getPublicBaseUrl() ?? options.githubWizardOrigin ?? null, fetch: fetchImpl, startDirect: githubRegistration.start, completeDirect: githubRegistration.complete, resumeDirect: githubRegistration.resumeRegistration,
-    storeApp: (id, userId, credentials) => storeGitHubApp(id, userId, credentials, "manifest"),
-    storeCredentials: async (id, userId, additional) => {
-      const record = await endpointRecord(id);
-      if (!record || record.endpoint.provider !== "github") throw notFound("GitHub bot not found");
-      await withCredentialMutationLease(record.endpoint, async lease => {
-        const current = await endpointRecord(id);
-        if (!current || ["archived", "revoked", "paused"].includes(current.endpoint.status)) throw conflict("GitHub App is unavailable");
-        const credentials = await resolveCredentials(current.endpoint);
-        await persistCredentials(current.endpoint, { ...credentials, ...additional }, lease, userId);
-      });
-    },
-    refreshRepositories: refreshGitHubRepositories, resources: listResources, replaceResources,
-    configure: async (id, userId) => {
-      await update(id, { allowGroupChats: true }, userId);
-      return configure(id, { action: "configure" }, userId);
-    },
-    finish: (id, userId) => test(id, { optionalSlackTestForUser: userId }),
-  });
-  const unregisterGitHubCloudIngress = registerGitHubBotCloudIngress(
-    db,
-    async (endpoint, request) => {
-      const record = await endpointRecord(endpoint.id);
-      if (
-        !record ||
-        record.endpoint.companyId !== endpoint.companyId ||
-        record.endpoint.connectionId !== endpoint.connectionId ||
-        record.endpoint.assignedAgentId !== endpoint.assignedAgentId ||
-        record.endpoint.setup.github?.cloudRegistrationId !==
-          endpoint.setup.github?.cloudRegistrationId
-      )
-        throw forbidden("GitHub Cloud event binding changed");
-      // A manifest ping may arrive before its webhook verifier reaches the vault.
-      // Keep the sealed delivery queued until the stack can authenticate it.
-      if (!record.credentialSecretRefs.some((ref) => ref.configPath === "credentials.webhookSecret"))
-        throw conflict("GitHub webhook credentials are not ready");
-      // Preserve the exact provider payload and signature. Authentication, lifecycle
-      // checks and durable admission all run in the stack's canonical ingress.
-      const response = await handleWebhook(
-        record.endpoint.publicId,
-        "github",
-        request,
-      );
-      if ([400, 401, 403, 404, 413, 422].includes(response.status)) return; // Discard hostile transport without retrying it indefinitely.
-      if (!response.ok)
-        throw conflict("GitHub Cloud ingress could not be durably accepted");
-    },
-  );
-
-  const unregisterSlackTaskAuthority = registerSlackTaskAuthority(db, async (binding) => {
-    if (!(await instanceSettingsService(db).getExperimental()).enableChatConnectors)
-      throw forbidden("Chat connectors are disabled");
-    const identity = await slackRunOrigin(db, binding);
-    const run = identity.run;
-    if ((run.contextSnapshot?.issueId ?? run.contextSnapshot?.taskId) !== binding.issueId || !run.responsibleUserId)
-      throw forbidden("Slack tools require the bound task and an accepted linked user");
-    const resolved = await db.transaction(async (tx) => {
-      const [action] = await tx.select().from(chatActions).where(and(
-        eq(chatActions.companyId, binding.companyId),
-        eq(chatActions.kind, "inbound_wakeup"),
-        sql`${chatActions.payload}->>'issueId' = ${binding.issueId}`,
-        sql`${chatActions.payload}->>'agentId' = ${binding.agentId}`,
-        identity.sourceMessageId
-          ? sql`${chatActions.payload}->>'commentId' = ${identity.sourceMessageId}`
-          : eq(chatActions.id, run.wakeupRequestId ?? "00000000-0000-0000-0000-000000000000"),
-      )).limit(1);
-      if (!action) {
-        // Ordinary tasks and routines use their accepted responsible user, never
-        // an earlier Slack sender or the connection owner's credentials.
-        const [message] = identity.sourceMessageId ? await tx.select().from(issueComments)
-          .where(and(eq(issueComments.companyId, binding.companyId), eq(issueComments.issueId, binding.issueId),
-            eq(issueComments.id, identity.sourceMessageId), isNull(issueComments.deletedAt))) : [];
-        if (identity.sourceMessageId && (!message || message.authorType !== "user" || message.authorUserId !== run.responsibleUserId))
-          throw forbidden("Slack tools require the current task requester's identity");
-        // An external participant may not acquire unrelated bot connections by
-        // falling back to ordinary-task access after source admission fails.
-        if (identity.sourceMessageId) {
-          const [external] = await tx.select({ id: chatMessageLinks.id }).from(chatMessageLinks)
-            .where(and(eq(chatMessageLinks.companyId, binding.companyId), eq(chatMessageLinks.commentId, identity.sourceMessageId), eq(chatMessageLinks.direction, "inbound"))).limit(1);
-          if (external) throw forbidden("External messages require their originating Slack connection");
-        }
-        const endpoints = await tx.select().from(chatEndpoints).where(and(
-          eq(chatEndpoints.companyId, binding.companyId), eq(chatEndpoints.provider, "slack"),
-          eq(chatEndpoints.assignedAgentId, binding.agentId), eq(chatEndpoints.status, "active"),
-          ...(binding.endpointId ? [eq(chatEndpoints.id, binding.endpointId)] : []),
-        )).for("no key update");
-        if (endpoints.length !== 1) throw forbidden("Select an active Slack connection assigned to this agent");
-        const endpoint = endpoints[0]!;
-        const [issue] = await tx.select().from(issues).where(and(eq(issues.companyId, binding.companyId), eq(issues.id, binding.issueId), eq(issues.assigneeAgentId, binding.agentId)));
-        if (!issue) throw forbidden("Slack tools require a task assigned to this agent");
-        const [member] = await tx.select().from(companyMemberships).where(and(
-          eq(companyMemberships.companyId, binding.companyId), eq(companyMemberships.principalType, "user"),
-          eq(companyMemberships.principalId, run.responsibleUserId!), eq(companyMemberships.status, "active"), ne(companyMemberships.membershipRole, "viewer"),
-        ));
-        if (!member) throw forbidden("The responsible user must be an active company operator");
-        const links = await tx.select({ principal: chatExternalPrincipals }).from(chatIdentityLinks)
-          .innerJoin(chatExternalPrincipals, and(eq(chatExternalPrincipals.id, chatIdentityLinks.principalId), eq(chatExternalPrincipals.companyId, binding.companyId)))
-          .where(and(eq(chatIdentityLinks.companyId, binding.companyId), eq(chatIdentityLinks.endpointId, endpoint.id),
-            eq(chatIdentityLinks.paperclipUserId, run.responsibleUserId!), eq(chatIdentityLinks.status, "linked"),
-            eq(chatExternalPrincipals.provider, "slack"), eq(chatExternalPrincipals.providerAccountId, endpoint.providerAccountId!), eq(chatExternalPrincipals.isBot, false)));
-        if (links.length !== 1) throw forbidden("Link your Slack account to this connection before using it from tasks or routines");
-        // A Board message changes who is directing the work, not the privacy
-        // of context already present in its linked Slack conversation.
-        const conversations = await tx.select().from(chatConversations).where(and(
-          eq(chatConversations.companyId, binding.companyId), eq(chatConversations.endpointId, endpoint.id),
-          eq(chatConversations.issueId, binding.issueId),
-        )).limit(2);
-        if (conversations.length > 1) throw forbidden("The task's Slack conversation boundary is ambiguous");
-        return { endpoint, issue, conversation: conversations[0] ?? null, delivery: null, principalId: links[0]!.principal.id, slackUserId: links[0]!.principal.externalId };
-      }
-      if (action.payload.requestedByActorType !== "user" || action.payload.requestedByActorId !== run.responsibleUserId ||
-          (binding.endpointId && action.endpointId !== binding.endpointId))
-        throw forbidden("Slack tools require a verified linked Slack request");
-      // This standalone resolver does not own the scheduler's issue lock. Use
-      // the ingress lock order (endpoint, then issue) so a normal webhook or
-      // endpoint update cannot turn tool setup into a NOWAIT failure. The
-      // scheduler retains its nonblocking check when it owns the issue first.
-      await tx.select({ id: chatEndpoints.id }).from(chatEndpoints).where(and(
-        eq(chatEndpoints.companyId, binding.companyId),
-        eq(chatEndpoints.id, action.endpointId),
-      )).for("no key update");
-      const source = await authorizeInboundWakeup(tx, action);
-      if (source.endpoint.provider !== "slack") throw forbidden("This is not a Slack task");
-      const [principal] = await tx.select().from(chatExternalPrincipals).where(and(
-        eq(chatExternalPrincipals.companyId, binding.companyId),
-        eq(chatExternalPrincipals.id, action.principalId!),
-        eq(chatExternalPrincipals.provider, "slack"),
-        eq(chatExternalPrincipals.providerAccountId, source.endpoint.providerAccountId!),
-        eq(chatExternalPrincipals.isBot, false),
-      ));
-      if (!principal) throw forbidden("Slack sender is no longer available");
-      return { ...source, principalId: principal.id, slackUserId: principal.externalId };
-    });
-    const credentials = await resolveCredentials(resolved.endpoint);
-    if (!credentials.botToken) throw forbidden("Slack bot credential is unavailable");
-    return {
-      endpoint: resolved.endpoint, issueId: binding.issueId, conversation: resolved.conversation,
-      principalId: resolved.principalId, slackUserId: resolved.slackUserId,
-      userId: run.responsibleUserId, deliveryId: resolved.delivery?.id ?? null,
-      identityContextId: identity.context?.id ?? null,
-      workMode: resolved.issue.workMode,
-      revision: createHash("sha256").update(JSON.stringify([
-        resolved.endpoint.status, resolved.endpoint.allowDirectMessages, resolved.conversation?.sessionGeneration ?? null,
-        run.responsibleUserId, credentials.botToken,
-        await slackAuthorizationRevision(db, binding.companyId, resolved.endpoint.id, resolved.endpoint.connectionId, binding.agentId, run.responsibleUserId),
-      ])).digest("hex"),
-      botToken: credentials.botToken,
-      searchActionToken: resolved.delivery ? slackSearchActionToken(db, resolved.endpoint.id, resolved.endpoint.providerAccountId!, resolved.slackUserId, String((resolved.delivery.normalizedEvent.message as Record<string, unknown> | undefined)?.providerMessageId ?? "")) : null,
-    };
-  });
+  const { unregisterSlackTaskAuthority } = createSlackTaskAuthorityRegistration(db, { authorizeInboundWakeup, resolveCredentials });
 
   return {
     voice,
