@@ -16,6 +16,7 @@ import { agentDetailHref } from "./agent-detail-navigation";
 import { ExecutionBlockerNotice } from "../components/ExecutionBlockerNotice";
 import type { TaskComposerPause } from "../components/task-chat/TaskChatPausedTakeover";
 import { TaskDetailTasksPanel } from "@/components/task-detail/TaskDetailTasksPanel";
+import { IssueCreatedFromNote } from "@/components/task-detail/IssueCreatedFromNote";
 import { EmailThreadProvider } from "../components/EmailMessageCard";
 import { EmailTaskActivity } from "../components/EmailTaskActivity";
 import { TaskChatScrollNavigation, taskChatScrollEntry } from "@/components/task-chat/scroll-navigation";
@@ -2496,7 +2497,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
             blockerAttention={blockerAttention}
             successfulRunHandoff={successfulRunHandoff}
             scheduledRetry={scheduledRetry}
-            recoveryAction={recoveryAction ?? null}
+            recoveryAction={recoveryAction?.cause === "native_workspace_finalization_owner_unverified" ? null : recoveryAction ?? null}
             onResolveRecoveryAction={onResolveRecoveryAction}
             onReissueIsolatedRecoveryAction={onReissueIsolatedRecoveryAction}
             reissueIsolatedRecoveryActionPending={
@@ -3654,11 +3655,17 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     const createdTasks = createdTasksQuery.data ?? EMPTY_ISSUES;
     const hasError = createdTasksQuery.isError || childIssuesError;
     return {
-      count: new Set([...(issue?.ancestors ?? []), ...childIssues, ...createdTasks].map((task) => task.id)).size,
+      count: new Set([
+        ...(issue?.createdFrom ? [issue.createdFrom.issue] : []),
+        ...(issue?.ancestors ?? []),
+        ...childIssues,
+        ...createdTasks,
+      ].map((task) => task.id)).size,
       hasError,
       content: (
         <TaskDetailTasksPanel
           ancestors={issue?.ancestors}
+          createdFrom={issue?.createdFrom}
           issueLinkState={resolvedIssueDetailState ?? location.state}
           subtasks={childIssues}
           createdTasks={createdTasks}
@@ -3675,6 +3682,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   }, [
     tasksTab,
     issue?.ancestors,
+    issue?.createdFrom,
     resolvedIssueDetailState,
     location.state,
     streamlinedTaskDetailEnabled,
@@ -3842,14 +3850,22 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     [issue],
   );
 
+  const { data: assignmentActivity } = useQuery({
+    queryKey: queryKeys.issues.activity(issueId!),
+    queryFn: () => activityApi.forIssue(issueId!),
+    enabled: Boolean(issueId && currentUserId && issue?.assigneeUserId === currentUserId),
+  });
+
   const suggestedAssigneeValue = useMemo(
     () =>
       suggestedCommentAssigneeValue(
         issue ?? {},
         mergeIssueComments(comments ?? [], optimisticComments),
         currentUserId,
+        undefined,
+        assignmentActivity,
       ),
-    [issue, comments, optimisticComments, currentUserId],
+    [issue, comments, optimisticComments, currentUserId, assignmentActivity],
   );
 
   const threadComments = useMemo(
@@ -7073,6 +7089,16 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
         </span>
       </nav>
     ) : null;
+  // Creation provenance ("Created from PAP-168 by Paperclip QA"). Distinct from
+  // the parent chain above; the streamlined Tasks tab renders it instead.
+  const createdFromNote =
+    !streamlinedTaskDetailEnabled && issue.createdFrom ? (
+      <IssueCreatedFromNote
+        createdFrom={issue.createdFrom}
+        issueLinkState={resolvedIssueDetailState ?? location.state}
+        className={shellSectionClass}
+      />
+    ) : null;
 
   const issueStatusControl = (
     <StatusIcon
@@ -7593,6 +7619,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   const taskChatThreadHeader = taskChatShellEnabled ? (
     <>
       {ancestorsNav}
+      {createdFromNote}
       {issueHeaderBlock}
       {pluginOutletsBlock}
     </>
@@ -7620,8 +7647,10 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
         >
           {/* Parent chain breadcrumb (redesign: rendered inside the thread viewport) */}
           {taskChatShellEnabled ? null : ancestorsNav}
+          {taskChatShellEnabled ? null : createdFromNote}
 
           <ExternallyConnectedTaskBanner
+            className={cn(shellSectionClass, "mt-3")}
             key={issue.id}
             assigneeAgentId={issue.assigneeAgentId}
             attachments={attachments ?? []}
@@ -7629,6 +7658,17 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
             issueId={issue.id}
             issueCacheRefs={issueCacheRefs}
           />
+
+          {resolvedDetailTab === "chat" && (
+            <WorkspaceExportRecovery key={`workspace-export:${issue.activeRecoveryAction?.id ?? issue.id}`}
+              className={shellSectionClass}
+              action={issue.activeRecoveryAction ?? null} />
+          )}
+          {resolvedDetailTab === "chat" && issue.executionBlocker && (
+            <ExecutionBlockerNotice className={shellSectionClass} companyId={issue.companyId} issueId={issue.id}
+              issueStatus={issue.status} canManage={canManageBoardRuntime && canResolveBoardRecoveryAction}
+              blocker={issue.executionBlocker} onRetried={invalidateIssueDetail} />
+          )}
 
           {issue.status === "in_review" && issue.externalConversationState === "waiting" && (
             <p role="status" className="text-sm text-muted-foreground">Reply sent. Send a message to continue.</p>
@@ -7933,11 +7973,6 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                   : undefined
               }
             >
-              <WorkspaceExportRecovery key={issue.activeRecoveryAction?.id ?? issue.id} issueId={issue.id}
-                action={issue.activeRecoveryAction ?? null} canManage={canManageBoardRuntime} onQueued={invalidateIssueDetail} />
-              {issue.executionBlocker && (
-                <ExecutionBlockerNotice companyId={issue.companyId} issueId={issue.id} blocker={issue.executionBlocker} onRetried={invalidateIssueDetail} />
-              )}
               {resolvedDetailTab === "chat" ? (
                 <WorkspaceBaseRefRecoveryProvider issue={issue} agentMap={agentMap} onRepaired={() => { invalidateIssueDetail(); invalidateIssueCollections(); }}
                   unavailableReason={!canManageBoardRuntime || !canResolveBoardRecoveryAction ? "You don’t have permission to repair this task’s workspace."
@@ -8014,7 +8049,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                   blockerAttention={issue.blockerAttention ?? null}
                   successfulRunHandoff={issue.successfulRunHandoff ?? null}
                   scheduledRetry={issue.scheduledRetry ?? null}
-                  recoveryAction={issue.activeRecoveryAction ?? null}
+                  recoveryAction={issue.activeRecoveryAction?.cause === "native_workspace_finalization_owner_unverified" ? null : issue.activeRecoveryAction ?? null}
                   onResolveRecoveryAction={handleResolveRecoveryAction}
                   onReissueIsolatedRecoveryAction={
                     handleReissueIsolatedRecoveryAction

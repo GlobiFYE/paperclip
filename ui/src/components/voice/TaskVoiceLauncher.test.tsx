@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TaskVoiceLauncher } from "./TaskVoiceLauncher";
-import { spekoEndpoint } from "../../../storybook/fixtures/spekoNative";
+import { spekoEndpoint } from "../../../storybook/support/speko/spekoNative";
 const mocks = vi.hoisted(() => ({ list: vi.fn() }));
 vi.mock("@/api/chatEndpoints", () => ({ chatEndpointsApi: { list: mocks.list } }));
 vi.mock("@/hooks/useChatConnectorsEnabled", () => ({ useChatConnectorsEnabled: () => ({ enabled: true }) }));
