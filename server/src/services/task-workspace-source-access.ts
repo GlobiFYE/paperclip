@@ -47,7 +47,7 @@ export async function assertTaskWorkspaceAccess(
   const sources = await db.select({ id: issues.id }).from(issues).where(and(
     eq(issues.companyId, companyId),
     or(eq(issues.executionWorkspaceId, workspaceId), retainedIssueIds.length > 0
-      ? inArray(sql`${issues.id}`, retainedIssueIds.map(id => canonicalExecutionUuid(sql`${id}`))) : undefined),
+      ? inArray(sql`${issues.id}`, retainedIssueIds.map(id => canonicalExecutionUuid(sql`${id}::text`))) : undefined),
   ));
   const sourceIds = new Set(sources.map(source => source.id));
   if (retainedIssueIds.some(id => !sourceIds.has(id))) throw forbidden("Task workspace source is no longer accessible");
