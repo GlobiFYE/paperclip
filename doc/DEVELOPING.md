@@ -1452,6 +1452,10 @@ as they are available, so later setup failures still clean up acquired resources
 Busy-account deferral returns explicitly before session/workspace preparation.
 Public-path tests are in `server/src/__tests__/heartbeat-execution-configuration.test.ts`.
 
+Browser Use skill assignment first checks for an enabled, active Browser Use
+connection in the run's company. With none, it skips full tool discovery.
+With one, the existing task, tool-policy and credential-grant checks still apply.
+
 Session preparation is in `server/src/services/heartbeat/session-preparation.ts`.
 It selects fresh or resumable sessions from effective config and managed-account
 identity, then resolves adapter session identity and compaction after workspace
