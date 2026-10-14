@@ -150,6 +150,13 @@ describe("infisicalProvider", () => {
         providerVersionRef: "latest",
         providerConfig: vault(),
       })).rejects.toThrow(/positive integer/);
+      for (const providerVersionRef of ["0", "000"]) {
+        await expect(provider.linkExternalSecret({
+          externalRef: "GITHUB_TOKEN",
+          providerVersionRef,
+          providerConfig: vault(),
+        })).rejects.toThrow(/positive integer/);
+      }
     });
   });
 
@@ -253,6 +260,46 @@ describe("infisicalProvider", () => {
       })).resolves.toBe("v7");
       const read = calls.find((call) => call.url.pathname.startsWith("/api/v3/secrets/raw/"));
       expect(read?.url.searchParams.get("version")).toBe("7");
+    });
+
+    it("shares one replacement login across concurrent requests rejected with the same token", async () => {
+      let logins = 0;
+      mockInfisical((call) => {
+        if (call.url.pathname === "/api/v1/auth/universal-auth/login") {
+          logins += 1;
+          return jsonResponse(200, { accessToken: `token-${logins}`, expiresIn: 7200 });
+        }
+        if (call.headers.authorization === "Bearer token-1") {
+          return jsonResponse(401, { message: "Token expired" });
+        }
+        return jsonResponse(200, { secret: { secretValue: "fresh" } });
+      });
+      const provider = createInfisicalProvider();
+      const linked = await provider.linkExternalSecret({ externalRef: "KEY", providerConfig: vault() });
+      const resolve = () => provider.resolveVersion({
+        material: linked.material,
+        externalRef: linked.externalRef,
+        providerConfig: vault(),
+      });
+
+      const results = await Promise.all([resolve(), resolve(), resolve()]);
+
+      expect(results).toEqual(["fresh", "fresh", "fresh"]);
+      expect(logins).toBe(2);
+    });
+
+    it("treats non-JSON success responses as provider errors", async () => {
+      mockInfisical((call) => loginOk(call) ?? new Response("<html>proxy</html>", { status: 200 }));
+      const provider = createInfisicalProvider();
+      const linked = await provider.linkExternalSecret({ externalRef: "KEY", providerConfig: vault() });
+
+      await expect(provider.resolveVersion({
+        material: linked.material,
+        externalRef: linked.externalRef,
+        providerConfig: vault(),
+      })).rejects.toMatchObject({ code: "provider_unavailable" });
+      const health = await provider.healthCheck({ providerConfig: vault() });
+      expect(health.status).toBe("error");
     });
 
     it("re-authenticates once when a cached token is rejected", async () => {

@@ -307,7 +307,10 @@ export class InfisicalHttpGateway implements InfisicalGateway {
       "GET",
       `/api/v3/secrets/raw?${params.toString()}`,
     );
-    return Array.isArray(body.secrets) ? body.secrets : [];
+    if (!Array.isArray(body.secrets)) {
+      throw this.error("listSecrets", 502, "Infisical list response did not include a secrets array");
+    }
+    return body.secrets;
   }
 
   async updateSecret(input: {
@@ -329,7 +332,8 @@ export class InfisicalHttpGateway implements InfisicalGateway {
         type: "shared",
       },
     );
-    return body.secret ?? {};
+    if (!body.secret) throw this.error("updateSecret", 502, "Infisical response did not include a secret");
+    return body.secret;
   }
 
   private cacheKey(credentials: InfisicalCredentials) {
@@ -382,9 +386,14 @@ export class InfisicalHttpGateway implements InfisicalGateway {
     return entry.pending;
   }
 
-  private invalidateToken() {
+  private invalidateToken(rejectedToken: string) {
     const credentials = this.credentials();
-    if (credentials) infisicalTokens.delete(this.cacheKey(credentials));
+    if (!credentials) return;
+    const cached = infisicalTokens.get(this.cacheKey(credentials));
+    if (cached && cached.accessToken === rejectedToken) {
+      cached.accessToken = null;
+      cached.expiresAt = 0;
+    }
   }
 
   private async request<T>(
@@ -398,7 +407,7 @@ export class InfisicalHttpGateway implements InfisicalGateway {
       return await this.send<T>(operation, method, path, payload, token);
     } catch (error) {
       if (error instanceof SecretProviderClientError && error.rawMessage?.startsWith("401:")) {
-        this.invalidateToken();
+        this.invalidateToken(token);
         const retryToken = await this.accessToken();
         return this.send<T>(operation, method, path, payload, retryToken);
       }
@@ -437,17 +446,21 @@ export class InfisicalHttpGateway implements InfisicalGateway {
       });
     }
     const text = await response.text();
-    let parsed: Record<string, unknown> = {};
+    let parsed: Record<string, unknown> | null = null;
     if (text) {
       try {
-        parsed = JSON.parse(text) as Record<string, unknown>;
+        const json: unknown = JSON.parse(text);
+        if (json && typeof json === "object" && !Array.isArray(json)) parsed = json as Record<string, unknown>;
       } catch {
-        parsed = {};
+        parsed = null;
       }
     }
     if (!response.ok) {
-      const message = typeof parsed.message === "string" ? parsed.message : response.statusText || "Request failed";
+      const message = typeof parsed?.message === "string" ? parsed.message : response.statusText || "Request failed";
       throw this.error(operation, response.status, message);
+    }
+    if (!parsed) {
+      throw this.error(operation, 502, "Infisical returned a response that was not a JSON object");
     }
     return parsed as T;
   }

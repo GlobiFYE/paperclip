@@ -118,7 +118,7 @@ function createExternalReferenceMaterial(
 ): PreparedSecretVersion {
   const externalRef = formatInfisicalExternalRef(ref);
   const version = providerVersionRef?.trim() || null;
-  if (version !== null && !/^\d+$/.test(version)) {
+  if (version !== null && !/^[1-9]\d*$/.test(version)) {
     throw unprocessable("Infisical provider version must be a positive integer secret version");
   }
   const fingerprint = sha256Hex(`${INFISICAL_SCHEME}:${externalRef}:${version ?? ""}`);
