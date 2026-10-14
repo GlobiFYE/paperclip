@@ -232,6 +232,23 @@ test.describe("Board send delivery refresh", () => {
             enableClassicTaskInterface: classic,
           }),
         );
+        // Announcements can appear after cross-organization navigation and
+        // cover the modern composer's attachment menu. Dismiss through the
+        // same UI as a Board user before Playwright retries the blocked click.
+        await page.addLocatorHandler(
+          page
+            .getByRole("complementary", {
+              name: "Paperclip announcements",
+              exact: true,
+            })
+            .getByRole("button", {
+              name: "Dismiss announcement",
+              exact: true,
+            }),
+          async (dismiss) => {
+            await dismiss.click();
+          },
+        );
         await page.goto(`/${selected.prefix}/issues`);
         await expect
           .poll(() =>
