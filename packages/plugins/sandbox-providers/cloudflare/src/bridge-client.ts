@@ -139,7 +139,23 @@ async function requestFileTransfer(
     if (!response.ok) throw await bridgeErrorFrom(response);
     if (consume) {
       if (!response.body) throw new Error("Cloudflare sandbox bridge file response had no body.");
-      await consume(response.body);
+      const sizeHeader = response.headers.get("X-File-Size");
+      const expected = sizeHeader === null ? Number.NaN : Number(sizeHeader);
+      let received = 0;
+      const counted = response.body.pipeThrough(
+        new TransformStream<Uint8Array, Uint8Array>({
+          transform(chunk, controller) {
+            received += chunk.byteLength;
+            controller.enqueue(chunk);
+          },
+        }),
+      );
+      await consume(counted);
+      if (Number.isFinite(expected) && expected >= 0 && received !== expected) {
+        throw new Error(
+          `Cloudflare sandbox bridge file download was truncated for ${input.path}: ${received}/${expected} bytes.`,
+        );
+      }
     } else {
       await response.arrayBuffer();
     }

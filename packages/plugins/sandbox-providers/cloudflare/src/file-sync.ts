@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import type { FileHandle } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -103,6 +104,23 @@ async function runSandboxCommand(
   }
 }
 
+async function runRepeatableSandboxCommand(
+  context: FileSyncContext,
+  script: string,
+  options: { cwd?: string; timeoutMs?: number; label: string },
+): Promise<void> {
+  await withTransferRetry(context, () => runSandboxCommand(context, script, options));
+}
+
+async function writeFully(handle: FileHandle, chunk: Uint8Array): Promise<void> {
+  let offset = 0;
+  while (offset < chunk.byteLength) {
+    const { bytesWritten } = await handle.write(chunk, offset, chunk.byteLength - offset);
+    if (bytesWritten <= 0) throw new Error("Cloudflare sync could not write the downloaded bytes to the host.");
+    offset += bytesWritten;
+  }
+}
+
 async function bestEffortRemove(context: FileSyncContext, remotePaths: string[]): Promise<void> {
   if (remotePaths.length === 0) return;
   await runSandboxCommand(context, `rm -f -- ${remotePaths.map(shellQuote).join(" ")}`, { label: "cleanup" }).catch(
@@ -140,7 +158,7 @@ async function downloadToHostFile(
               const { done, value } = await reader.read();
               if (done) break;
               if (value && value.byteLength > 0) {
-                await handle.write(value);
+                await writeFully(handle, value);
                 written += value.byteLength;
               }
             }
@@ -176,15 +194,23 @@ async function uploadHostFile(context: FileSyncContext, hostPath: string, remote
     return buffer;
   };
   try {
-    if (total <= UPLOAD_PART_BYTES) {
-      const bytes = await readPart(0);
-      await withTransferRetry(context, () =>
-        context.bridge.uploadFile({ providerLeaseId: context.providerLeaseId, path: remotePath, bytes }),
-      );
-      return total;
-    }
     const token = randomUUID();
     const staging = `${remotePath}.paperclip-upload.${token}`;
+    if (total <= UPLOAD_PART_BYTES) {
+      const bytes = await readPart(0);
+      try {
+        await withTransferRetry(context, () =>
+          context.bridge.uploadFile({ providerLeaseId: context.providerLeaseId, path: staging, bytes }),
+        );
+        await runRepeatableSandboxCommand(context, `mv -f ${shellQuote(staging)} ${shellQuote(remotePath)}`, {
+          label: "upload commit",
+        });
+      } catch (error) {
+        await bestEffortRemove(context, [staging]);
+        throw error;
+      }
+      return total;
+    }
     const parts: string[] = [];
     try {
       for (let offset = 0, index = 0; offset < total; offset += UPLOAD_PART_BYTES, index += 1) {
@@ -195,7 +221,7 @@ async function uploadHostFile(context: FileSyncContext, hostPath: string, remote
           context.bridge.uploadFile({ providerLeaseId: context.providerLeaseId, path: partPath, bytes }),
         );
       }
-      await runSandboxCommand(
+      await runRepeatableSandboxCommand(
         context,
         `cat ${parts.map(shellQuote).join(" ")} > ${shellQuote(staging)} && mv -f ${shellQuote(staging)} ${shellQuote(remotePath)}`,
         { label: "upload assembly" },
@@ -279,7 +305,7 @@ async function syncOutMapping(context: FileSyncContext, mapping: PluginSyncFileM
   }
   const remoteArchive = `/tmp/.paperclip-sync-out-${randomUUID()}.tar`;
   try {
-    await runSandboxCommand(
+    await runRepeatableSandboxCommand(
       context,
       buildRemoteTarCommand({
         sourceDir: source,

@@ -160,19 +160,17 @@ describe("Cloudflare native file sync", () => {
     ]);
 
     expect(result.operations[0]).toEqual({ operationId: "op-in", filesTransferred: 1, bytesTransferred: 4 });
-    expect(uploadFile).toHaveBeenCalledWith({
-      providerLeaseId: "pc-run-1-abcd1234",
-      path: "/workspace/.paperclip-runtime/workspace.tar",
-      bytes: expect.any(Uint8Array),
-    });
+    const staged = (uploadFile.mock.calls[0]?.[0] as { path: string }).path;
+    expect(staged).toMatch(/^\/workspace\/\.paperclip-runtime\/workspace\.tar\.paperclip-upload\.[0-9a-f-]+$/);
     const scripts = execute.mock.calls.map((call) => (call[0] as { args: string[] }).args[1]);
     expect(scripts).toEqual([
+      `mv -f '${staged}' '/workspace/.paperclip-runtime/workspace.tar'`,
       "chmod 600 '/workspace/.paperclip-runtime/workspace.tar'",
       "tar -xf /workspace/.paperclip-runtime/workspace.tar",
       "rm -f /workspace/.paperclip-runtime/workspace.tar",
     ]);
-    expect(execute.mock.calls[2]?.[0]).toMatchObject({ cwd: "/workspace/.paperclip-runtime", timeoutMs: 5_000 });
-    expect(execute.mock.calls[1]?.[0]).toMatchObject({ cwd: "/", sessionId: "paperclip-bridge" });
+    expect(execute.mock.calls[3]?.[0]).toMatchObject({ cwd: "/workspace/.paperclip-runtime", timeoutMs: 5_000 });
+    expect(execute.mock.calls[2]?.[0]).toMatchObject({ cwd: "/", sessionId: "paperclip-bridge" });
   });
 
   it("stops at the first failing post-upload command", async () => {
@@ -180,6 +178,7 @@ describe("Cloudflare native file sync", () => {
     await fs.writeFile(source, "x");
     const execute = vi
       .fn()
+      .mockResolvedValueOnce(okExec())
       .mockResolvedValueOnce({ ...okExec(), exitCode: 2, stderr: "tar: broken" })
       .mockResolvedValue(okExec());
 
@@ -192,7 +191,7 @@ describe("Cloudflare native file sync", () => {
         },
       ]),
     ).rejects.toThrow(/post-upload command failed \(exit 2\): tar: broken/);
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(2);
   });
 
   it("splits uploads larger than one part and assembles them in the sandbox", async () => {
@@ -231,10 +230,74 @@ describe("Cloudflare native file sync", () => {
       { operationId: "op", files: [{ sourcePath: dir, targetPath: "/workspace/assets", kind: "directory" }] },
     ]);
 
-    const uploaded = (uploadFile.mock.calls[0]?.[0] as { path: string }).path;
-    expect(uploaded).toMatch(/^\/workspace\/assets\.paperclip-syncin\.tar\.[0-9a-f-]+$/);
-    const extract = (execute.mock.calls[0]?.[0] as { args: string[] }).args[1]!;
-    expect(extract).toBe(buildRemoteExtractCommand({ archivePath: uploaded, targetDir: "/workspace/assets" }));
+    const staged = (uploadFile.mock.calls[0]?.[0] as { path: string }).path;
+    expect(staged).toMatch(/^\/workspace\/assets\.paperclip-syncin\.tar\.[0-9a-f-]+\.paperclip-upload\.[0-9a-f-]+$/);
+    const archive = staged.replace(/\.paperclip-upload\.[0-9a-f-]+$/, "");
+    const extract = (execute.mock.calls[1]?.[0] as { args: string[] }).args[1]!;
+    expect(extract).toBe(buildRemoteExtractCommand({ archivePath: archive, targetDir: "/workspace/assets" }));
+  });
+
+  it("stages a small upload and leaves the target untouched when the upload fails", async () => {
+    const source = path.join(tmp, "small.bin");
+    await fs.writeFile(source, "abc");
+    const uploadFile = vi.fn().mockRejectedValue(new CloudflareBridgeError({ status: 400, message: "bad request" }));
+    const execute = vi.fn().mockResolvedValue(okExec());
+
+    await expect(
+      performSyncIn(context({ uploadFile, execute }), [
+        { operationId: "op", files: [{ sourcePath: source, targetPath: "/workspace/keep.bin", kind: "file" }] },
+      ]),
+    ).rejects.toThrow("bad request");
+
+    const staged = (uploadFile.mock.calls[0]?.[0] as { path: string }).path;
+    expect(staged).not.toBe("/workspace/keep.bin");
+    const scripts = execute.mock.calls.map((call) => (call[0] as { args: string[] }).args[1]);
+    expect(scripts.some((script) => script.includes("mv -f"))).toBe(false);
+    expect(scripts).toContain(`rm -f -- '${staged}'`);
+  });
+
+  it("retries a repeatable sandbox command after a transient bridge overload", async () => {
+    const execute = vi
+      .fn()
+      .mockRejectedValueOnce(new CloudflareBridgeError({ status: 503, message: "Durable Object is overloaded." }))
+      .mockResolvedValue(okExec());
+    const downloadFile = vi.fn(async (input: { consume: (body: ReadableStream<Uint8Array>) => Promise<void> }) => {
+      const dir = path.join(tmp, "src");
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, "a.txt"), "a");
+      const archive = path.join(tmp, "a.tar");
+      execFileSync("tar", ["-cf", archive, "-C", dir, "a.txt"]);
+      await input.consume(streamOf(new Uint8Array(await fs.readFile(archive))));
+    });
+
+    await performSyncOut(context({ execute, downloadFile }), [
+      { operationId: "op", files: [{ sourcePath: "/workspace/paperclip", targetPath: path.join(tmp, "out"), kind: "directory" }] },
+    ]);
+
+    const archiveCalls = execute.mock.calls.filter((call) => (call[0] as { args: string[] }).args[1]!.startsWith("cd "));
+    expect(archiveCalls).toHaveLength(2);
+    expect(await fs.readFile(path.join(tmp, "out", "a.txt"), "utf8")).toBe("a");
+  });
+
+  it("does not retry a post-upload command after a transient bridge error", async () => {
+    const source = path.join(tmp, "f2");
+    await fs.writeFile(source, "x");
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce(okExec())
+      .mockRejectedValueOnce(new CloudflareBridgeError({ status: 503, message: "Durable Object is overloaded." }))
+      .mockResolvedValue(okExec());
+
+    await expect(
+      performSyncIn(context({ uploadFile: vi.fn().mockResolvedValue(undefined), execute }), [
+        {
+          operationId: "op",
+          files: [{ sourcePath: source, targetPath: "/tmp/f2", kind: "file" }],
+          postUploadCommands: [{ command: "not-repeatable" }],
+        },
+      ]),
+    ).rejects.toThrow("overloaded");
+    expect(execute).toHaveBeenCalledTimes(2);
   });
 
   it("rejects unconfined paths before any transfer", async () => {

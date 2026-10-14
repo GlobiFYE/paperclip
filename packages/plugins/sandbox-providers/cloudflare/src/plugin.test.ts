@@ -427,9 +427,11 @@ describe("Cloudflare sandbox provider plugin", () => {
     try {
       const source = path.join(dir, "w.tar");
       await fs.writeFile(source, "tar-bytes");
+      const okExec = { exitCode: 0, signal: null, timedOut: false, stdout: "", stderr: "" };
       fetchMock
-        .mockResolvedValueOnce(jsonResponse({ ok: true, path: "/workspace/.paperclip-runtime/w.tar" }))
-        .mockResolvedValueOnce(jsonResponse({ exitCode: 0, signal: null, timedOut: false, stdout: "", stderr: "" }));
+        .mockResolvedValueOnce(jsonResponse({ ok: true, path: "/workspace/.paperclip-runtime/w.tar.staged" }))
+        .mockResolvedValueOnce(jsonResponse(okExec))
+        .mockResolvedValueOnce(jsonResponse(okExec));
 
       await plugin.definition.onEnvironmentSyncIn?.({
         driverKey: "cloudflare",
@@ -453,8 +455,11 @@ describe("Cloudflare sandbox provider plugin", () => {
 
       expect(requestInitAt(0).method).toBe("PUT");
       expect(new TextDecoder().decode(requestInitAt(0).body as Uint8Array)).toBe("tar-bytes");
-      expect(String(fetchMock.mock.calls[1]?.[0])).toBe("https://bridge.example.workers.dev/api/paperclip-sandbox/v1/exec");
-      expect(requestBodyAt(1)).toMatchObject({
+      const staged = new URL(String(fetchMock.mock.calls[0]?.[0])).searchParams.get("path")!;
+      expect(staged).toMatch(/^\/workspace\/\.paperclip-runtime\/w\.tar\.paperclip-upload\./);
+      expect(requestBodyAt(1)).toMatchObject({ args: ["-c", `mv -f '${staged}' '/workspace/.paperclip-runtime/w.tar'`] });
+      expect(String(fetchMock.mock.calls[2]?.[0])).toBe("https://bridge.example.workers.dev/api/paperclip-sandbox/v1/exec");
+      expect(requestBodyAt(2)).toMatchObject({
         providerLeaseId: "pc-run-1-abcd1234",
         command: "sh",
         args: ["-c", "tar -xf /workspace/.paperclip-runtime/w.tar -C /workspace/paperclip"],
@@ -463,7 +468,7 @@ describe("Cloudflare sandbox provider plugin", () => {
         sessionId: "paperclip-bridge",
         streamOutput: false,
       });
-      expect(requestHeadersAt(1).get("X-Paperclip-Issue-Id")).toBe("issue-1");
+      expect(requestHeadersAt(2).get("X-Paperclip-Issue-Id")).toBe("issue-1");
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
