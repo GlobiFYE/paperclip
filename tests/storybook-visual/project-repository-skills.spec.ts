@@ -140,6 +140,18 @@ test('background refresh imports an addition without clicking refresh', async ({
   await page.screenshot({ path: info.outputPath('automatic-update.png') });
 });
 
+test('keeps GitHub connection management in the page actions menu', async ({ page }) => {
+  await page.goto(story('synced'));
+  const source = page.getByRole('region', { name: 'acme/team-skills', exact: true });
+  await expect(source.getByRole('link', { name: 'Manage GitHub connection', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'More source actions', exact: true }).click();
+  const manageConnection = page.getByRole('menuitem', { name: 'Manage GitHub connection', exact: true });
+  await expect(manageConnection).toBeVisible();
+  await expect(manageConnection).toHaveAttribute('href', /\/apps$/);
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('button', { name: 'More source actions', exact: true })).toBeFocused();
+});
+
 test('refresh failure retains content and retry recovers', async ({ page }, info) => {
   await page.goto(story('failed-refresh'));
   const source = page.getByRole('region', { name: 'acme/team-skills', exact: true });

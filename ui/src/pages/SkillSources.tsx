@@ -85,7 +85,17 @@ export function SkillSources() {
   return <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-4 md:p-6">
     <header className="flex flex-wrap items-start justify-between gap-4">
       <div><h1 className="text-xl font-semibold">Skill sources</h1><p className="mt-1 text-sm text-muted-foreground">Skills from your repositories stay up to date automatically.</p></div>
-      <Button onClick={() => navigate('/skills/sources/new')}><Plus className="size-4" />Import from GitHub</Button>
+      <div className="flex items-center gap-2">
+        <Button onClick={() => navigate('/skills/sources/new')}><Plus className="size-4" />Import from GitHub</Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="icon" aria-label="More source actions"><MoreVertical className="size-4" /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem asChild><Link to="/apps">Manage GitHub connection</Link></DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
     </header>
     {query.isPending && <p role="status" className="text-sm text-muted-foreground">Loading sources…</p>}
     {query.error && <p role="alert" className="text-sm text-destructive">{query.error.message} <Button variant="ghost" size="sm" onClick={() => void query.refetch()}>Try again</Button></p>}
@@ -138,7 +148,7 @@ export function SkillSources() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          {projectGroup?.repository.lastError && <SourceErrorNotice message={projectGroup.repository.lastError} action={<Link to="/apps" className="font-medium text-destructive underline underline-offset-2">Manage GitHub connection</Link>} />}
+          {projectGroup?.repository.lastError && <SourceErrorNotice message={projectGroup.repository.lastError} />}
           {installed.length > 0 && <ul className="ml-8 min-w-0" aria-label={`Installed skills from ${source.fullName}`}>
             {installed.map(entry => <li key={entry.id}>
               <Link to={skillRoute(entry.skillId!)} title={entry.path} className="group flex min-w-0 items-center gap-2 rounded-sm py-1 text-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -161,7 +171,6 @@ export function SkillSources() {
           {source.lastError && source.repairAction === 'branch' && (source.accessScope === 'projects' || source.projects?.some(project => project.active)
             ? <div className="flex flex-wrap gap-3">{source.projects?.filter(project => project.active).map(project => <Link key={project.id} to={`/projects/${project.id}`} className="text-sm underline">Update {project.name} repository</Link>)}</div>
             : <Button variant="outline" size="sm" className="self-start" onClick={() => setBranchSourceId(source.id)}>Choose a new branch</Button>)}
-          {source.connectionId && <Link to={`/apps/${source.connectionId}/permissions`} className="text-xs text-muted-foreground hover:text-foreground">Manage GitHub connection</Link>}
         </section>;
       })}
     </div>

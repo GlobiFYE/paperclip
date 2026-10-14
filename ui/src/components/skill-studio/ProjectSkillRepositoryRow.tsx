@@ -1,7 +1,6 @@
 import type { ProjectSkillRepository } from '@paperclipai/shared';
 import { GithubIcon } from '@/components/icons/github-icon';
 import { Button } from '@/components/ui/button';
-import { Link } from '@/lib/router';
 import { LoaderCircle } from 'lucide-react';
 
 export function ProjectSkillRepositoryRow({ repository, pending, backgroundPending, disabled, onImport }: {
@@ -29,6 +28,6 @@ export function ProjectSkillRepositoryRow({ repository, pending, backgroundPendi
     </div>
     {importing && <p role="status" className="ml-8 text-xs text-muted-foreground">{pending ? 'Starting import…' : repository.importState === 'importing'
       ? 'Checking repository for skills… This can take a few minutes for large repositories.' : 'Import queued. Skills will appear here when ready.'}</p>}
-    {repository.lastError && <p role="alert" className="text-sm text-destructive">{repository.lastError} <Link to="/apps" className="underline">Manage GitHub connection</Link></p>}
+    {repository.lastError && <p role="alert" className="text-sm text-destructive">{repository.lastError}</p>}
   </section>;
 }
