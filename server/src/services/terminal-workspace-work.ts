@@ -5,8 +5,8 @@ import { DELIVERY_QUEUES, notifyDeliveryWork } from "./delivery-work-notificatio
 
 export const TERMINAL_WORKSPACE_RETRY_MS = 5 * 60 * 1000;
 
-export function notifyTerminalWorkspaceWork(transaction: object) {
-  return notifyDeliveryWork(transaction, DELIVERY_QUEUES.terminalWorkspaces);
+export function notifyTerminalWorkspaceWork(transaction: object, hint?: string) {
+  return notifyDeliveryWork(transaction, DELIVERY_QUEUES.terminalWorkspaces, hint);
 }
 
 export function terminalWorkspaceDeadlineSql(cooldownMs: number) {
@@ -33,6 +33,7 @@ export function registerTerminalWorkspaceWork(
     sweepTerminalWorkspaces(limit?: number, signal?: AbortSignal): Promise<{ checked: number }>;
     nextTerminalWorkspaceSweepAt(): Promise<number | null>;
     hasTerminalWorkspaceSweepContinuation(): boolean;
+    terminalWorkspaceWorkSettled?(hints?: ReadonlySet<string>): void;
   },
   canRun: () => boolean,
 ) {
@@ -40,6 +41,7 @@ export function registerTerminalWorkspaceWork(
   let recovered = false;
   const worker = coordinator.register(DELIVERY_QUEUES.terminalWorkspaces, {
     retryMs: TERMINAL_WORKSPACE_RETRY_MS,
+    onSettled: service.terminalWorkspaceWorkSettled,
     run: signal => {
       recovered = false;
       next = Date.now() + TERMINAL_WORKSPACE_RETRY_MS;

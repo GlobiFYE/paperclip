@@ -276,6 +276,7 @@ export type ReopenClosedIsolatedExecutionWorkspaceResult =
   | { ok: false; code: "not_reopenable" | "rebuild_failed"; message: string };
 
 export type ExecutionWorkspaceServiceOptions = {
+  terminalWorkspaceInspectionBackoffMs?: number;
   resolvePullRequestDetails?: PullRequestMergeDetailsResolver;
   now?: () => Date;
   beforeTerminalWorkspaceCleanup?: (workspace: ExecutionWorkspaceRow) => Promise<void>;
@@ -1618,6 +1619,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
   // sweep and starves eligible rows behind them. The cursor resets to the start
   // when a sweep reaches the end of the candidate set.
   let terminalSweepCursor: { updatedAt: Date; id: string } | null = null;
+  const terminalInspections = new Map<string, { revision: string; issueIds: Set<string>; nextAt: number }>();
   // The reaper freezes an upper bound on updatedAt at the start of each
   // rotation. The scan only reads candidates at or below the bound, so a steady
   // stream of newer candidates cannot keep every page full and stop the cursor
@@ -1898,7 +1900,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         }
         return input.onSkip();
       }
-      await notifyTerminalWorkspaceWork(tx);
+      await notifyTerminalWorkspaceWork(tx, `workspace:${input.workspaceId}`);
       return input.write({ tx, fresh });
     });
   }
@@ -2877,6 +2879,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           skippedRace: 0,
           skippedReopened: 0,
           skippedCooldown: 0,
+          skippedBackoff: 0,
           clearedStaleReopenPending: 0,
         };
       }
@@ -2941,6 +2944,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         skippedRace: 0,
         skippedReopened: 0,
         skippedCooldown: 0,
+        skippedBackoff: 0,
         clearedStaleReopenPending: 0,
       };
 
@@ -2971,6 +2975,22 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           if (reopenPending) result.skippedReopened += 1;
           else result.skippedActiveRun += 1;
           continue;
+        }
+        if (opts.terminalWorkspaceInspectionBackoffMs) {
+          const revision = createHash("sha256").update(JSON.stringify([
+            workspace.updatedAt, workspace.metadata,
+            [...issueTree].sort((a, b) => a.id.localeCompare(b.id)),
+          ])).digest("hex");
+          const previous = terminalInspections.get(workspace.id);
+          if (previous?.revision === revision && previous.nextAt > now().getTime()) {
+            result.skippedBackoff += 1;
+            continue;
+          }
+          if (terminalInspections.size >= 256) terminalInspections.delete(terminalInspections.keys().next().value!);
+          terminalInspections.set(workspace.id, {
+            revision, issueIds: new Set(issueTree.map(issue => issue.id)),
+            nextAt: now().getTime() + opts.terminalWorkspaceInspectionBackoffMs,
+          });
         }
         const executionWorkspace = toExecutionWorkspace(workspace);
         const { git, statusInspectionSucceeded } = await inspectGitCloseReadiness(executionWorkspace);
@@ -3240,18 +3260,35 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
 
     hasTerminalWorkspaceSweepContinuation: () => terminalSweepCursor !== null,
 
+    terminalWorkspaceWorkSettled: (hints?: ReadonlySet<string>) => {
+      pullRequestStateCache.clear();
+      if (!hints) { terminalInspections.clear(); return; }
+      for (const [id, inspection] of terminalInspections) {
+        if (hints.has(`workspace:${id}`) || [...inspection.issueIds].some(issueId => hints.has(`issue:${issueId}`))) {
+          terminalInspections.delete(id);
+        }
+      }
+    },
+
     nextTerminalWorkspaceSweepAt: async () => {
       const deadline = sql<number | null>`CASE WHEN ${executionWorkspaces.metadata}->>'reopenPendingConsumption' = 'true'
         THEN ${now().getTime()} ELSE ${terminalWorkspaceDeadlineSql(workspaceReaperCooldownMs)} END`;
       const [row] = await db.select({ next: sql<string | null>`min(${deadline})` }).from(executionWorkspaces)
         .where(and(inArray(executionWorkspaces.status, ["active", "idle", "in_review"]),
           isNull(executionWorkspaces.closedAt), sql`${executionWorkspaces.sourceIssueId} IS NOT NULL`));
-      return row?.next == null ? null : Number(row.next);
+      if (row?.next == null) return null;
+      const next = Number(row.next), nowMs = now().getTime();
+      if (next <= nowMs && opts.terminalWorkspaceInspectionBackoffMs) {
+        return Math.min(nowMs + opts.terminalWorkspaceInspectionBackoffMs,
+          ...[...terminalInspections.values()].filter(inspection => inspection.nextAt > nowMs).map(inspection => inspection.nextAt));
+      }
+      return next;
     },
 
     create: async (data: typeof executionWorkspaces.$inferInsert) => {
       const row = await db.transaction(async tx => {
-        await notifyTerminalWorkspaceWork(tx);
+        await notifyTerminalWorkspaceWork(tx, data.id ? `workspace:${data.id}`
+          : data.sourceIssueId ? `issue:${data.sourceIssueId}` : undefined);
         return tx.insert(executionWorkspaces).values(data).returning().then(rows => rows[0] ?? null);
       });
       return row ? toExecutionWorkspace(row) : null;
@@ -3260,7 +3297,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
     update: async (id: string, patch: Partial<typeof executionWorkspaces.$inferInsert>) => {
       if (patch.metadata === undefined && !workspaceSourceKeys.some(key => patch[key] !== undefined)) {
         const row = await db.transaction(async tx => {
-          await notifyTerminalWorkspaceWork(tx);
+          await notifyTerminalWorkspaceWork(tx, `workspace:${id}`);
           return tx.update(executionWorkspaces).set({ ...patch, updatedAt: new Date() })
             .where(eq(executionWorkspaces.id, id)).returning().then(rows => rows[0] ?? null);
         });
@@ -3276,7 +3313,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         )).for("no key update");
         if (!current) return null;
         const nextPatch = await preserveWorkspaceOwnershipForPatch(tx, current, patch);
-        await notifyTerminalWorkspaceWork(tx);
+        await notifyTerminalWorkspaceWork(tx, `workspace:${id}`);
         const [row] = await tx.update(executionWorkspaces).set({ ...nextPatch, updatedAt: new Date() })
           .where(and(eq(executionWorkspaces.id, id), eq(executionWorkspaces.companyId, current.companyId))).returning();
         return row ? toExecutionWorkspace(row) : null;
@@ -3533,7 +3570,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           // generation so a queued cleanup that captured the old generation does
           // nothing. Clear cleanupEligibleAt so the reaper does not destroy the
           // half-built worktree while a later reopen retries.
-          await notifyTerminalWorkspaceWork(tx);
+          await notifyTerminalWorkspaceWork(tx, `workspace:${row.id}`);
           await tx
             .update(executionWorkspaces)
             .set({
@@ -3584,7 +3621,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         // flag stops the terminal reaper and the archive route from archiving and
         // destroying the rebuilt worktree in that window.
         const activeMetadata = setMetadataReopenPendingConsumption(nextMetadata, now());
-        await notifyTerminalWorkspaceWork(tx);
+        await notifyTerminalWorkspaceWork(tx, `workspace:${row.id}`);
         const activeRow = await tx
           .update(executionWorkspaces)
           .set({
@@ -3777,7 +3814,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         const archiveMetadata = clearMetadataReopenPendingConsumption(
           bumpExecutionWorkspaceLifecycleGeneration(baseMetadata),
         );
-        await notifyTerminalWorkspaceWork(tx);
+        await notifyTerminalWorkspaceWork(tx, `workspace:${input.id}`);
         const archived = await tx
           .update(executionWorkspaces)
           .set({
@@ -4042,7 +4079,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
             updatePatch.name = inspection.toBranch;
           }
 
-          await notifyTerminalWorkspaceWork(tx);
+          await notifyTerminalWorkspaceWork(tx, `workspace:${lockedWorkspace.id}`);
           const [branchUpdatedRow] = await tx
             .update(executionWorkspaces)
             .set(updatePatch)

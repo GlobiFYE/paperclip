@@ -978,7 +978,7 @@ export function issueTreeControlService(db: Db) {
       const restored: TreeStatusUpdateResult["updatedIssues"] = [];
       for (const [status, issueIdsForStatus] of issueIdsByStatus) {
         if (issueIdsForStatus.length === 0) continue;
-        await notifyTerminalWorkspaceWork(tx);
+        for (const issueId of issueIdsForStatus) await notifyTerminalWorkspaceWork(tx, `issue:${issueId}`);
         const rows = await tx
           .update(issues)
           .set({

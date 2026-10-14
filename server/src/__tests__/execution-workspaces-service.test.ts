@@ -563,6 +563,49 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
     expect(await fs.readFile(path.join(seed.worktreePath, "unsaved.txt"), "utf8")).toBe("keep this work\n");
   });
 
+  it("backs off unchanged terminal candidates while unrelated commits wake the worker", async () => {
+    await seedTerminalWorkspace();
+    let clock = Date.now();
+    const service = executionWorkspaceService(db, {
+      workspaceReaperCooldownDays: 0, terminalWorkspaceInspectionBackoffMs: 300_000,
+      now: () => new Date(clock),
+    });
+    const scan = vi.spyOn(workspaceGitOperationScheduler, "run");
+    try {
+      expect(await service.sweepTerminalWorkspaces()).toMatchObject({ archived: 0, skippedUndelivered: 1 });
+      const initial = scan.mock.calls.length;
+      expect(initial).toBeGreaterThan(0);
+      service.terminalWorkspaceWorkSettled(new Set(["issue:unrelated"]));
+      expect(await service.sweepTerminalWorkspaces()).toMatchObject({ skippedBackoff: 1 });
+      expect(scan).toHaveBeenCalledTimes(initial);
+      clock += 240_000;
+      expect(await service.nextTerminalWorkspaceSweepAt()).toBe(clock + 60_000);
+      clock += 60_000;
+      await service.sweepTerminalWorkspaces();
+      expect(scan).toHaveBeenCalledTimes(initial * 2);
+    } finally { scan.mockRestore(); }
+  });
+
+  it("invalidates a candidate backoff after its real PR producer commits", async () => {
+    const seed = await seedTerminalWorkspace();
+    const service = executionWorkspaceService(db, {
+      workspaceReaperCooldownDays: 0, terminalWorkspaceInspectionBackoffMs: 300_000,
+      resolvePullRequestDetails: async () => ({ state: "merged", headRef: "PAP-16015-delivery", headSha: seed.headSha }),
+    });
+    expect(await service.sweepTerminalWorkspaces()).toMatchObject({ archived: 0, skippedUndelivered: 1 });
+    const unsubscribe = subscribeDatabaseWork(db, DELIVERY_QUEUES.terminalWorkspaces, (event, hints) => {
+      if (event === "settled") service.terminalWorkspaceWorkSettled(hints);
+    });
+    try {
+      await workProductService(db).createForIssue(seed.sourceIssueId, seed.companyId, {
+        type: "pull_request", provider: "github", title: "PR", status: "merged",
+        url: "https://github.com/paperclipai/paperclip/pull/10623", executionWorkspaceId: seed.executionWorkspaceId,
+      });
+      expect(await service.sweepTerminalWorkspaces()).toMatchObject({ archived: 1 });
+      await expect(fs.access(seed.worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { unsubscribe(); }
+  });
+
   it("signals real issue producers before writes and waits for the outer transaction", async () => {
     const seed = await seedTerminalWorkspace();
     const events: string[] = [];

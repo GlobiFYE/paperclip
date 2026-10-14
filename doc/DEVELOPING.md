@@ -2285,7 +2285,11 @@ transaction settles and holds idle admission while writes or cleanup are active.
 Empty and nonterminal-only lanes have no recurring timer or query. Terminal trees
 schedule their actual cooldown deadline; unresolved delivery or cleanup eligibility
 is checked again after five minutes. Nonterminal trees, cooldowns, and active runs
-are checked before Git. Final cleanup still checks the current task tree,
+are checked before Git. Unchanged terminal candidates also back off for five
+minutes during unrelated commit wakes. Scoped task/workspace hints invalidate
+affected candidates; changed tree or workspace revisions invalidate them too.
+The backoff retains at most 256 candidates and only applies to the background
+worker. Final cleanup still checks the current task tree,
 delivery evidence, ownership, lifecycle generation, and Git state under the
 existing cleanup locks.
 

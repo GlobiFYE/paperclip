@@ -10377,7 +10377,8 @@ export function issueService(db: Db) {
         );
 
         if (values.parentId || values.executionWorkspaceId || values.status === "done" || values.status === "cancelled") {
-          await notifyTerminalWorkspaceWork(tx);
+          await notifyTerminalWorkspaceWork(tx, values.executionWorkspaceId ? `workspace:${values.executionWorkspaceId}`
+            : values.parentId ? `issue:${values.parentId}` : undefined);
         }
         const [issue] = await tx.insert(issues).values(values).returning();
         await attachOwnedDraftImages(tx, issue, issue.description, { userId: issueData.createdByUserId, agentId: issueData.createdByAgentId });
@@ -11199,7 +11200,7 @@ export function issueService(db: Db) {
         if ((patch.status !== undefined && patch.status !== receiptExisting.status)
           || patch.completedAt !== undefined || patch.cancelledAt !== undefined
           || issueData.parentId !== undefined || issueData.executionWorkspaceId !== undefined) {
-          await notifyTerminalWorkspaceWork(tx);
+          await notifyTerminalWorkspaceWork(tx, `issue:${id}`);
         }
         const updated = await tx
           .update(issues)
@@ -11602,7 +11603,7 @@ export function issueService(db: Db) {
 
         let removedIssue;
         try {
-          await notifyTerminalWorkspaceWork(tx);
+          await notifyTerminalWorkspaceWork(tx, `issue:${id}`);
           removedIssue = await tx
             .delete(issues)
             .where(eq(issues.id, id))
@@ -12102,7 +12103,7 @@ export function issueService(db: Db) {
         const isTerminal = existing.status === "done" || existing.status === "cancelled";
         const releaseStatus =
           existing.status === "in_progress" ? "todo" : existing.status;
-        await notifyTerminalWorkspaceWork(tx);
+        await notifyTerminalWorkspaceWork(tx, `issue:${id}`);
         const updated = await tx
           .update(issues)
           .set({
@@ -12152,7 +12153,7 @@ export function issueService(db: Db) {
           patch.assigneeAgentId = null;
         }
 
-        await notifyTerminalWorkspaceWork(tx);
+        await notifyTerminalWorkspaceWork(tx, `issue:${id}`);
         const updated = await tx
           .update(issues)
           .set(patch)
