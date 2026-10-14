@@ -266,6 +266,13 @@ export interface ConnectionGrant {
       lastWebhookAt?: string;
       webhookHealth?: "pending" | "healthy" | "unhealthy";
     };
+    /** The GitHub account a personal access token authenticates as (`GET /user`). */
+    githubAccount?: {
+      userId: string;
+      login: string;
+      avatarUrl?: string;
+      verifiedAt: string;
+    };
   } | null;
   credentialSecretRefs: ToolCredentialSecretRef[];
   externalCredential?: VercelConnectGrantSummary | null;
