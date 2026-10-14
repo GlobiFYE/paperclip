@@ -165,7 +165,11 @@ async function scanRepository(input: SkillScanInput, providerRead: GitHubRead, o
     const readable = repositoryInventory?.filter(entry => entry.type === 'blob' && ['100644', '100755'].includes(entry.mode) && (entry.size ?? 0) <= MAX_FILE_BYTES);
     if (readable && readable.reduce((sum, entry) => sum + (entry.size ?? 0), 0) > MAX_REPOSITORY_BYTES) throw unprocessable('Repository package exceeds the 61 MB runtime limit.');
     // A single bounded batch supplies both skill manifests and support files.
-    const blobs = readable && snapshot.readBlobs ? await snapshot.readBlobs(readable, options.signal) : dependencyBlobs;
+    const blobs = dependencyBlobs;
+    if (readable && snapshot.readBlobs) {
+      const remaining = readable.filter(entry => !blobs.has(entry.sha));
+      if (remaining.length) for (const [sha, bytes] of await snapshot.readBlobs(remaining, options.signal)) blobs.set(sha, bytes);
+    }
     let totalBytes = 0;
     const readBlob = async (entry: TreeEntry) => {
       if ((entry.size ?? 0) > MAX_FILE_BYTES) return null;

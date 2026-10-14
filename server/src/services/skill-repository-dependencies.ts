@@ -32,7 +32,7 @@ export async function skillRepositoryDependencies(
     let root = path.posix.dirname(entry.path);
     while (root !== '.' && !skillDirectories.has(root)) root = path.posix.dirname(root);
     const file = snapshotFile(path.posix.relative(root, entry.path), 'reference', content);
-    const inspection = inspectSkillPackage(path.posix.join(root, 'SKILL.md'), [file], paths, {}, []);
+    const inspection = inspectSkillPackage(path.posix.join(root, 'SKILL.md'), [file], paths, {}, [], new Set([entry.path]));
     for (const reference of inspection.references) {
       const target = reference.resolvedPath;
       if (target === '..' || target.startsWith('../') || path.posix.isAbsolute(target)) continue;

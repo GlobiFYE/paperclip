@@ -17,8 +17,9 @@ describe('GitHub skill repository discovery', () => {
     const fixture = githubFixture({
       'skills/main/SKILL.md': md('main') + '\nRead [shared](../../shared/guide.md) and [helper](../helper/SKILL.md).',
       'skills/helper/SKILL.md': md('helper'),
-      'shared/guide.md': 'Shared instructions. Read [details](details.md).',
+      'shared/guide.md': 'Shared instructions. Read [details](details.md) and [examples](./).',
       'shared/details.md': 'Read [guide](guide.md).',
+      'shared/example.json': '{"example":true}',
       ...Object.fromEntries(Array.from({ length: 62 }, (_, i) => [`generated/${i}.bin`, 'x'])),
     });
     const open = fixture.openSnapshot;
@@ -33,11 +34,29 @@ describe('GitHub skill repository discovery', () => {
     expect(scan.candidates.find(skill => skill.name === 'main')?.error).toBeNull();
     expect(scan.candidates.find(skill => skill.name === 'main')?.inspection?.references).toEqual([]);
     expect(scan.repositoryFiles?.map(file => file.path).sort()).toEqual([
-      'shared/details.md', 'shared/guide.md', 'skills/helper/SKILL.md', 'skills/main/SKILL.md',
+      'shared/details.md', 'shared/example.json', 'shared/guide.md', 'skills/helper/SKILL.md', 'skills/main/SKILL.md',
     ]);
     const preview = await previewGitHubSkillFile({ repositoryUrl: 'https://github.com/acme/skills', packageMode: 'repository',
       commitSha: sha, skillPath: 'skills/main/SKILL.md', filePath: 'shared/details.md' }, fixture);
     expect(preview.content).toBe('Read [guide](guide.md).');
+  });
+
+  it('reuses dependency reads when the snapshot supports batch reads', async () => {
+    const fixture = githubFixture({
+      'skills/main/SKILL.md': md('main') + '\n[Guide](../../shared/guide.md)',
+      'shared/guide.md': 'Read [data](data.json).',
+      'shared/data.json': '{"example":true}',
+      ...Object.fromEntries(Array.from({ length: 10_000 }, (_, i) => [`unrelated/${i}.txt`, ''])),
+    });
+    const snapshot = await fixture.openSnapshot({ repositoryUrl: '', ref: 'main' });
+    const readBlob = vi.spyOn(snapshot, 'readBlob');
+    snapshot.readBlobs = async entries => new Map(await Promise.all(entries.map(async entry => [entry.sha, await snapshot.readBlob(entry)] as const)));
+    fixture.openSnapshot = async () => snapshot;
+    const scan = await scanGitHubSkillsWithPackageFallback({ repositoryUrl: 'https://github.com/acme/skills', packageMode: 'repository' }, fixture);
+    expect(scan.repositoryFiles?.map(file => file.path).sort()).toEqual(['shared/data.json', 'shared/guide.md', 'skills/main/SKILL.md']);
+    for (const file of scan.repositoryFiles!) {
+      expect(readBlob.mock.calls.filter(([entry]) => entry.path === file.path)).toHaveLength(1);
+    }
   });
 
   it('treats missing references as warnings and still audits recovered supporting files', async () => {

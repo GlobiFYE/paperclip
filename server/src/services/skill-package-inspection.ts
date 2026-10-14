@@ -47,9 +47,10 @@ export function inspectSkillPackage(
   repositoryPaths: ReadonlySet<string>,
   frontmatter: Record<string, unknown>,
   findings: CompanySkillAuditFinding[],
+  includedPaths?: ReadonlySet<string>,
 ): SkillPackageInspection {
   const root = path.posix.dirname(skillPath);
-  const inPackage = indexSkillPackagePaths(files.map(file => file.path === 'SKILL.md' ? skillPath : path.posix.join(root, file.path)));
+  const inPackage = includedPaths ?? indexSkillPackagePaths(files.map(file => file.path === 'SKILL.md' ? skillPath : path.posix.join(root, file.path)));
   const references = new Map<string, SkillPackageReference>();
   const contains = (paths: ReadonlySet<string>, target: string) => paths.has(target);
   for (const file of files) {
