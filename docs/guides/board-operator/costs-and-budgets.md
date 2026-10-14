@@ -117,14 +117,16 @@ Pacing fails open. When quota data is missing, or older than three poll
 intervals, the provider runs at `full` and the server logs a warning. A
 failed poll keeps the last good result and backs off.
 
-Pacing and the Costs page share one quota request per provider. The server
-reuses a result for 60 seconds (a failed result for 10 seconds), so opening
-the page does not add provider requests on top of the pacing poll.
+Pacing sends at most one quota request per provider at a time. The server
+reuses a result for 60 seconds (a failed result for 10 seconds), so
+overlapping polls do not add provider requests.
 
 Pacing reads the quota of the subscription login on the machine that runs
 Paperclip. Agents that run under another account use that login's windows.
 On macOS, quota polling reads the Claude Code login from the Keychain when
 no credentials file exists.
+The quota cards on the Costs page show the organization's AI connections, so
+they can differ from the login that pacing reads.
 
 The current state is available at
 `GET /api/companies/{companyId}/costs/quota-pacing`.

@@ -138,8 +138,8 @@ export async function fetchCompanyQuotaWindows(db: Db, companyId: string, userId
 const QUOTA_PROVIDER_TIMEOUT_MS = 20_000;
 
 /**
- * How long a successful quota result is reused. The Costs page route and the
- * pacing controller both read quota through fetchAllQuotaWindows(), so each
+ * How long a successful quota result is reused. Every caller of
+ * fetchAllQuotaWindows() (today the pacing controller) shares it, so each
  * provider gets about one request per minute at most, however many callers
  * there are. Provider usage endpoints rate limit fast polling
  * (https://github.com/paperclipai/paperclip/issues/14096).

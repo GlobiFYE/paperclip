@@ -302,9 +302,8 @@ export interface QuotaPacingControllerOptions {
   /** Reads the stored pacing settings. */
   loadSettings: () => Promise<QuotaPacingSettings>;
   /**
-   * Reads the quota windows. Defaults to the shared read that the Costs page
-   * also uses, so a poll right after a page load reuses its result instead of
-   * sending a second provider request.
+   * Reads the quota windows. Defaults to the shared, cached read of the local
+   * adapters' quota, so overlapping polls send one provider request.
    */
   fetchQuotaWindows?: () => Promise<ProviderQuotaResult[]>;
   /** Called when a provider's mode relaxes, so queued runs can start at once. */
