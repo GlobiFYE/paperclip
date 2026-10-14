@@ -1,6 +1,7 @@
 import type { Sandbox as CloudflareSandbox } from "@cloudflare/sandbox";
 import { isAuthorizedRequest } from "./auth.js";
 import { executeInSandbox } from "./exec.js";
+import { FILES_ROUTE, handleFileTransfer } from "./files.js";
 import { shellQuote } from "./helpers.js";
 import {
   buildLeaseSandboxId,
@@ -214,6 +215,7 @@ export async function handleBridgeRequest(request: Request, env: BridgeEnv): Pro
         reuseLease: true,
         namedSessions: true,
         previewUrls: false,
+        fileTransfer: true,
       },
     });
   }
@@ -320,6 +322,7 @@ export async function handleBridgeRequest(request: Request, env: BridgeEnv): Pro
         sleepAfter,
         normalizeId,
         resumedLease: false,
+        fileTransfer: true,
       },
     });
   }
@@ -373,6 +376,7 @@ export async function handleBridgeRequest(request: Request, env: BridgeEnv): Pro
         sleepAfter,
         normalizeId,
         resumedLease: true,
+        fileTransfer: true,
       },
     });
   }
@@ -475,6 +479,10 @@ export async function handleBridgeRequest(request: Request, env: BridgeEnv): Pro
       sessionId,
     });
     return toJsonResponse(result);
+  }
+
+  if (pathname === FILES_ROUTE) {
+    return await handleFileTransfer(request, env, url);
   }
 
   return toErrorResponse(404, "not_found", `No bridge route matched ${request.method} ${pathname}.`);

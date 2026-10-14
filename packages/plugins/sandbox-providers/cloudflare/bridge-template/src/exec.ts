@@ -224,7 +224,8 @@ export async function executeInSandbox(params: BridgeExecuteParams) {
     }
     throw error;
   } finally {
-    const cleanup = [capture.stdoutFile, capture.stderrFile, capture.exitCodeFile];
+    const cleanup = [capture.stdoutFile, capture.stderrFile];
+    if (capture.teeStdout) cleanup.push(capture.exitCodeFile);
     if (stdinFile) cleanup.push(stdinFile);
     await Promise.all(
       cleanup.map((file) =>

@@ -113,7 +113,7 @@ describe("bridge exec", () => {
     expect(err).toBeTruthy();
     for (const file of [out, err]) expect(deleteFile).toHaveBeenCalledWith(file, "paperclip");
     const deleted = deleteFile.mock.calls.map((call) => String(call[0]));
-    expect(deleted.some((path) => path.startsWith("/tmp/.paperclip-bridge-rc-"))).toBe(true);
+    expect(deleted.some((path) => path.startsWith("/tmp/.paperclip-bridge-rc-"))).toBe(false);
     expect(deleteFile.mock.calls.every((call) => call[1] === "paperclip")).toBe(true);
   });
 
@@ -313,7 +313,8 @@ describe("bridge exec", () => {
       expect(deleteSession).toHaveBeenCalledWith("paperclip");
       expect(destroy).not.toHaveBeenCalled();
       const deleted = deleteFile.mock.calls.map((call) => String(call[0]));
-      expect(deleted.filter((path) => /^\/tmp\/\.paperclip-bridge-(out|err|rc)-/.test(path))).toHaveLength(3);
+      expect(deleted.filter((path) => /^\/tmp\/\.paperclip-bridge-(out|err)-/.test(path))).toHaveLength(2);
+      expect(deleted.some((path) => path.startsWith("/tmp/.paperclip-bridge-rc-"))).toBe(false);
       expect(deleteFile.mock.calls.every((call) => call[1] === "paperclip")).toBe(true);
     });
 
@@ -337,7 +338,7 @@ describe("bridge exec", () => {
       expect(result.stderr).toBe("Command timed out after 5000ms\n");
       expect(destroy).toHaveBeenCalledTimes(1);
       expect(deleteSession).not.toHaveBeenCalled();
-      expect(deleteFile).toHaveBeenCalledTimes(3);
+      expect(deleteFile).toHaveBeenCalledTimes(2);
       expect(deleteFile.mock.calls.every((call) => call[1] === undefined)).toBe(true);
     });
 
@@ -352,8 +353,25 @@ describe("bridge exec", () => {
         sessionId: "paperclip",
         timeoutMs: 5_000,
       })).rejects.toThrow("sandbox destroyed");
-      expect(deleteFile).toHaveBeenCalledTimes(3);
+      expect(deleteFile).toHaveBeenCalledTimes(2);
     });
+  });
+
+  it("deletes the exit-code file only for streamed execs", async () => {
+    const exec = vi.fn().mockResolvedValue({ exitCode: 0, stdout: "", stderr: "" });
+    const deleteFile = vi.fn().mockResolvedValue(undefined);
+    const readFile = vi.fn().mockRejectedValue(new Error("missing"));
+    const sandbox = { getSession: vi.fn().mockResolvedValue({ exec }), readFile, writeFile: vi.fn(), deleteFile };
+    await executeInSandbox({
+      sandbox: sandbox as never,
+      command: "pwd",
+      sessionStrategy: "named",
+      sessionId: "paperclip",
+      timeoutMs: 5_000,
+      onOutput: async () => undefined,
+    });
+    const deleted = deleteFile.mock.calls.map((call) => String(call[0]));
+    expect(deleted.filter((path) => /^\/tmp\/\.paperclip-bridge-(out|err|rc)-/.test(path))).toHaveLength(3);
   });
 
   it("keeps the plain exec line when no capture is requested", () => {
