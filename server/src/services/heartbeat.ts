@@ -858,6 +858,14 @@ export const PROCESS_LOSS_RETRY_MAX_ATTEMPTS =
 const PROCESS_LOSS_ERROR_CODE = "process_lost";
 const PROCESS_LOSS_RETRY_REASON = "process_lost";
 const PROCESS_LOSS_RETRY_WAKE_REASON = "process_lost_retry";
+// Restart-kill attribution (TOP-529). A run whose child was killed by the
+// control plane's own teardown (SIGINT/SIGTERM drain) settles as
+// `server_shutdown_interrupted`; a run orphaned by a hard relaunch (SIGKILL /
+// crash, no drain and no hot-restart snapshot) settles as
+// `server_restart_interrupted`. Neither is an agent failure: both park on the
+// retry lanes instead of landing as `adapter_failed`/`process_lost`.
+const SERVER_SHUTDOWN_INTERRUPTED_ERROR_CODE = "server_shutdown_interrupted";
+const SERVER_RESTART_INTERRUPTED_ERROR_CODE = "server_restart_interrupted";
 export {
   INTERACTION_CONTINUATION_INFRA_RETRY_REASON,
   INTERACTION_CONTINUATION_INFRA_WAKE_REASON,
@@ -9499,6 +9507,27 @@ export function heartbeatService(
   options: HeartbeatServiceOptions = {},
 ) {
   let shutdownInProgress = false;
+  // Set at SIGINT/SIGTERM receipt, before any drain work: a run whose child
+  // dies while the control plane is tearing down must settle as a restart
+  // kill, not as an adapter failure (TOP-529).
+  let shutdownStartedAt: Date | null = null;
+  let shutdownStartedSignal: "SIGINT" | "SIGTERM" | null = null;
+  // The moment this OS server process started. A run whose child was spawned
+  // before it belongs to a previous server process (TOP-529). Derived from
+  // process uptime rather than service construction so the boundary is the
+  // server process itself, not when this service object happened to be built.
+  const serverProcessStartedAtMs =
+    Date.now() - Math.floor(process.uptime() * 1000);
+  function markShutdownStarted(
+    signal: "SIGINT" | "SIGTERM",
+    now = new Date(),
+  ): void {
+    shutdownInProgress = true;
+    if (!shutdownStartedAt) {
+      shutdownStartedAt = now;
+      shutdownStartedSignal = signal;
+    }
+  }
   const instanceSettings = instanceSettingsService(db);
   const getCurrentUserRedactionOptions = async () => ({
     enabled: (await instanceSettings.getGeneral()).censorUsernameInLogs,
@@ -14468,12 +14497,14 @@ export function heartbeatService(
     // (see PROCESS_LOSS_RETRY_DELAYS_MS) but reschedules on escalating delays
     // with a taller ceiling than the generic transient lane, so a child reaped
     // by host memory pressure reschedules instead of stranding the agent.
-    // Only a genuinely reaped child (errorCode `process_lost`) rides that lane.
-    // Other interruption families — notably graceful shutdown drains — keep
-    // the generic transient lane and its tighter ceiling, so a spent budget
-    // stays spent across restarts (TOP-253).
+    // A genuinely reaped child (errorCode `process_lost`, or a run orphaned by
+    // a control-plane restart and reaped as `server_restart_interrupted`)
+    // rides that lane. Other interruption families — notably graceful shutdown
+    // drains — keep the generic transient lane and its tighter ceiling, so a
+    // spent budget stays spent across restarts (TOP-253).
     const scheduled =
-      run.errorCode === PROCESS_LOSS_ERROR_CODE
+      run.errorCode === PROCESS_LOSS_ERROR_CODE ||
+      run.errorCode === SERVER_RESTART_INTERRUPTED_ERROR_CODE
         ? await scheduleBoundedRetryForRun(run, agent, {
             now,
             retryReason: PROCESS_LOSS_RETRY_REASON,
@@ -14540,7 +14571,7 @@ export function heartbeatService(
     signal: "SIGINT" | "SIGTERM",
     now = new Date(),
   ) {
-    shutdownInProgress = true;
+    markShutdownStarted(signal);
     const idleSessions = await closeIdleWarmNativeSessionsForRestart();
     if (idleSessions.failed > 0) {
       logger.warn({ idleSessions }, "idle native sessions could not checkpoint before controller shutdown");
@@ -19421,7 +19452,42 @@ export function heartbeatService(
           (!!run.processPid || !!run.processGroupId)) ||
           monitorDispatchLostWithoutFutureWake);
       if (!(await revokeExpiredLegacyController(db, run))) continue;
-      const baseMessage = buildProcessLossMessage(run);
+      // Restart-kill attribution (TOP-529): the orphan reaper can see two
+      // kinds of control-plane kills, and neither is an agent failure.
+      // 1. Shutdown window — this server is tearing down (SIGINT/SIGTERM
+      //    already received) and the child died before the drain settled the
+      //    run. Code it exactly like `drainHeartbeatRunsForShutdown` codes its
+      //    own kills so the drain's race losers stop landing `process_lost`.
+      // 2. Restart orphan — the child spawn evidence (`processStartedAt`,
+      //    written with the pid at spawn) predates the current server process,
+      //    so the run was orphaned by a hard relaunch (SIGKILL/crash — no
+      //    drain ran and no hot-restart snapshot existed). Reap it
+      //    restart-coded and let the retry logic below park it.
+      // A run spawned by *this* server with a vanished child is a genuine
+      // process loss and keeps `process_lost`. Runs without spawn evidence
+      // cannot prove their child predates this server, so they stay
+      // `process_lost` — conservative attribution: a genuine agent failure
+      // must never be masked as a restart kill.
+      const reapRunSpawnedAtMs = run.processStartedAt
+        ? new Date(run.processStartedAt).getTime()
+        : Number.NaN;
+      const shutdownKill = shutdownStartedAt !== null;
+      const restartKill =
+        !shutdownKill &&
+        Number.isFinite(reapRunSpawnedAtMs) &&
+        reapRunSpawnedAtMs < serverProcessStartedAtMs;
+      const controlPlaneKill = shutdownKill || restartKill;
+      const reapErrorCode = shutdownKill
+        ? SERVER_SHUTDOWN_INTERRUPTED_ERROR_CODE
+        : restartKill
+          ? SERVER_RESTART_INTERRUPTED_ERROR_CODE
+          : PROCESS_LOSS_ERROR_CODE;
+      const reapStatus = controlPlaneKill ? "interrupted" : "failed";
+      const baseMessage = shutdownKill
+        ? `Interrupted by graceful server shutdown (${shutdownStartedSignal ?? "SIGTERM"}): ${buildProcessLossMessage(run)}`
+        : restartKill
+          ? `Interrupted by a server restart: ${buildProcessLossMessage(run)}`
+          : buildProcessLossMessage(run);
       const conversationContinuationEligible = await runUsedConversationAdapter(db, run);
 
       const failureMessage = shouldRetry
@@ -19429,20 +19495,20 @@ export function heartbeatService(
         : baseMessage;
       const failureWrite = await setRunStatusFromLive(
         run.id,
-        "failed",
+        reapStatus,
         ["running"],
         {
           error: failureMessage,
-          errorCode: "process_lost",
+          errorCode: reapErrorCode,
           finishedAt: now,
           resultJson: (() => {
             const result = mergeRunStopMetadataForAgent(
               { adapterType, adapterConfig },
-              "failed",
+              reapStatus,
               {
                 conversationContinuationEligible,
                 resultJson: parseObject(run.resultJson),
-                errorCode: "process_lost",
+                errorCode: reapErrorCode,
                 errorMessage: failureMessage,
               },
             );
@@ -19453,10 +19519,16 @@ export function heartbeatService(
       if (!failureWrite.updated || !failureWrite.run) continue;
       let finalizedRun: typeof heartbeatRuns.$inferSelect | null =
         failureWrite.run;
-      await setWakeupStatus(run.wakeupRequestId, "failed", {
-        finishedAt: now,
-        error: failureMessage,
-      });
+      await setWakeupStatus(
+        run.wakeupRequestId,
+        controlPlaneKill ? "cancelled" : "failed",
+        {
+          finishedAt: now,
+          // A control-plane kill is not a wakeup failure; code it exactly like
+          // `drainHeartbeatRunsForShutdown` codes its own kills (TOP-529).
+          error: controlPlaneKill ? null : failureMessage,
+        },
+      );
       if (!finalizedRun) finalizedRun = await getRun(run.id);
       if (!finalizedRun) continue;
       finalizedRun =
@@ -19498,25 +19570,34 @@ export function heartbeatService(
       await appendRunEvent(finalizedRun, {
         eventType: "lifecycle",
         stream: "system",
-        level: "error",
+        level: controlPlaneKill ? "warn" : "error",
         message: shouldRetry
           ? `${baseMessage}; queued retry ${retriedRun?.id ?? ""}`.trim()
           : baseMessage,
         payload: {
+          ...(restartKill ? { restartKill: true } : {}),
+          ...(shutdownKill
+            ? { shutdownKill: true, signal: shutdownStartedSignal ?? "SIGTERM" }
+            : {}),
           ...(run.processPid ? { processPid: run.processPid } : {}),
           ...(run.processGroupId ? { processGroupId: run.processGroupId } : {}),
           ...(retriedRun ? { retryRunId: retriedRun.id } : {}),
         },
       });
 
-      await finalizeAgentStatus(run.agentId, "failed", baseMessage, {
-        wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
-        // A scheduled retry is live continuation, not a dead agent: keep the
-        // agent idle so a transiently reaped child reschedules without the
-        // agent page surfacing `error` between attempts (TOP-253). Only a
-        // terminal, un-retried process loss marks the agent error.
-        keepIdleOnFailure: Boolean(retriedRun),
-      });
+      await finalizeAgentStatus(
+        run.agentId,
+        controlPlaneKill ? "interrupted" : "failed",
+        baseMessage,
+        {
+          wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
+          // A scheduled retry is live continuation, not a dead agent: keep the
+          // agent idle so a transiently reaped child reschedules without the
+          // agent page surfacing `error` between attempts (TOP-253). Only a
+          // terminal, un-retried process loss marks the agent error.
+          keepIdleOnFailure: Boolean(retriedRun),
+        },
+      );
       await startNextQueuedRunForAgent(run.agentId);
       runningProcesses.delete(run.id);
       reaped.push(run.id);
@@ -26063,7 +26144,7 @@ export function heartbeatService(
         // A process adapter may throw while its owned Stop is joining the
         // child. Let the cancellation write settle before attempting failure.
         await processRunCancellationSettlements.get(run.id)?.settled;
-        const message = redactCurrentUserText(
+        let message = redactCurrentUserText(
           err instanceof Error ? err.message : "Unknown adapter failure",
           await getCurrentUserRedactionOptions(),
         );
@@ -26137,13 +26218,36 @@ export function heartbeatService(
 
         const stoppedDuringFailure = executionControl.controller.signal.aborted;
         const stopSnapshot = stoppedDuringFailure ? await getRun(run.id) : null;
-        const failureOutcome = stoppedDuringFailure ? "cancelled" : "failed";
+        // A child dying while the control plane is tearing down (SIGINT/SIGTERM
+        // already received) is a restart kill, not an agent failure. The
+        // adapter surfaces the signalled child as an error, and this settlement
+        // would otherwise win the race against the graceful drain and land
+        // `adapter_failed` on a run the control plane was about to interrupt
+        // anyway (TOP-529). Re-code it exactly like the drain codes its own
+        // kills; the retry lane is opened in the tail below just like the drain
+        // does, so the run parks as a scheduled retry instead of dying here.
+        const restartKillDuringFailure =
+          !stoppedDuringFailure && shutdownStartedAt !== null;
+        const failureOutcome = stoppedDuringFailure
+          ? "cancelled"
+          : restartKillDuringFailure
+            ? "interrupted"
+            : "failed";
+        if (restartKillDuringFailure) {
+          message = `Interrupted by graceful server shutdown (${shutdownStartedSignal ?? "SIGTERM"})`;
+        }
         const failedRunWrite = await setRunStatusIfRunning(run.id, failureOutcome, {
           error: message,
-          errorCode: stopSnapshot?.errorCode ?? failureErrorCode,
+          errorCode:
+            stopSnapshot?.errorCode ??
+            (restartKillDuringFailure
+              ? SERVER_SHUTDOWN_INTERRUPTED_ERROR_CODE
+              : failureErrorCode),
           finishedAt: new Date(),
           resultJson: mergeRunStopMetadataForAgent(agent, failureOutcome, {
-            errorCode: failureErrorCode,
+            errorCode: restartKillDuringFailure
+              ? SERVER_SHUTDOWN_INTERRUPTED_ERROR_CODE
+              : failureErrorCode,
             errorMessage: message,
             resultJson: {
               ...parseObject(stopSnapshot?.resultJson),
@@ -26184,16 +26288,16 @@ export function heartbeatService(
         }
 
         const failedRun = failedRunWrite.run;
-        await setWakeupStatus(run.wakeupRequestId, "failed", {
+        await setWakeupStatus(run.wakeupRequestId, restartKillDuringFailure ? "cancelled" : "failed", {
           finishedAt: new Date(),
           error: message,
         });
 
         if (failedRun) {
           await appendRunEvent(failedRun, {
-            eventType: "error",
+            eventType: restartKillDuringFailure ? "lifecycle" : "error",
             stream: "system",
-            level: "error",
+            level: restartKillDuringFailure ? "warn" : "error",
             message,
           });
           const livenessRun =
@@ -26219,17 +26323,31 @@ export function heartbeatService(
           ) {
             await finalizeIssueCommentPolicy(livenessRun, agent);
           }
-          await scheduleInteractionContinuationInfrastructureRetryIfEligible(
-            livenessRun,
-            agent,
-          );
-          await releaseIssueExecutionAndPromote(livenessRun, {
-            // Native recovery owns the original heartbeat run through
-            // exhaustion. Once its durable coordinator has classified a
-            // terminal failure, generic issue recovery must not create a
-            // replacement retryOfRunId chain for the same provider work.
-            suppressImmediateRecovery: nativeTerminalFailureCode !== null,
-          });
+          // Mirror the graceful drain's tail for restart kills: park the run on
+          // the retry lane and let the retry run hold the issue execution
+          // instead of releasing it outright (TOP-529). Without this the drain
+          // skips the run (it already left `running`) and the interruption
+          // loses its scheduled retry entirely.
+          const restartKillRetryRun = restartKillDuringFailure
+            ? await enqueueProcessLossRetry(livenessRun, agent, new Date()).catch(
+                () => null,
+              )
+            : null;
+          if (!restartKillRetryRun) {
+            await scheduleInteractionContinuationInfrastructureRetryIfEligible(
+              livenessRun,
+              agent,
+            );
+          }
+          if (!restartKillRetryRun) {
+            await releaseIssueExecutionAndPromote(livenessRun, {
+              // Native recovery owns the original heartbeat run through
+              // exhaustion. Once its durable coordinator has classified a
+              // terminal failure, generic issue recovery must not create a
+              // replacement retryOfRunId chain for the same provider work.
+              suppressImmediateRecovery: nativeTerminalFailureCode !== null,
+            });
+          }
           await handleIssueReviewPathDisposition(livenessRun);
 
           await updateRuntimeState(
@@ -26274,12 +26392,17 @@ export function heartbeatService(
           }
         }
 
-        await finalizeAgentStatus(agent.id, "failed", message, {
-          wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
-          keepIdleOnFailure:
-            Boolean(nonRetryablePreflightFailureCode(err)) ||
-            isWorkspaceSyncConflictFailure(message),
-        });
+        await finalizeAgentStatus(
+          agent.id,
+          failureOutcome === "interrupted" ? "interrupted" : "failed",
+          message,
+          {
+            wasFirstHeartbeat: timerClaimWasFirstHeartbeat(run),
+            keepIdleOnFailure:
+              Boolean(nonRetryablePreflightFailureCode(err)) ||
+              isWorkspaceSyncConflictFailure(message),
+          },
+        );
       }
     } catch (outerErr) {
       if (
@@ -30205,6 +30328,7 @@ export function heartbeatService(
 
     prepareHotRestartShutdown,
     reconcileHotRestartAdoption,
+    markShutdownStarted,
     recoverNativeRunsAfterRestart,
     reapOrphanedRuns,
     sweepOrphanedActiveLeases,

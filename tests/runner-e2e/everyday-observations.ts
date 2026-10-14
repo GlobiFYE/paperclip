@@ -216,7 +216,9 @@ export function isExpectedStoryInterruption(
   if (!allowedRunIds.includes(run.id)) return false;
   return (
     (run.status === "cancelled" && (!run.errorCode || run.errorCode === "cancelled")) ||
-    (run.status === "interrupted" && run.errorCode === "server_shutdown_interrupted") ||
+    (run.status === "interrupted" &&
+      (run.errorCode === "server_shutdown_interrupted" ||
+        run.errorCode === "server_restart_interrupted")) ||
     (run.status === "failed" && run.errorCode === "process_lost")
   );
 }

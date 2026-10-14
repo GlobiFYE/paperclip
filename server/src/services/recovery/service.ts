@@ -395,6 +395,11 @@ function resolveStrandedRecoveryCause(
   if (explicitCause) return explicitCause;
   if (isProviderQuotaRecovery(latestRun)) return "provider_quota";
   if (latestRun?.errorCode === "process_lost") return "process_lost";
+  // A restart kill (run orphaned by a control-plane relaunch, reaped as
+  // `server_restart_interrupted`) is a process loss from the recovery lane's
+  // point of view: route it back to the original agent to resume from durable
+  // progress (TOP-529).
+  if (latestRun?.errorCode === "server_restart_interrupted") return "process_lost";
   if (latestRun?.errorCode === "codex_output_inactivity_monitor") {
     return "codex_output_inactivity_monitor";
   }

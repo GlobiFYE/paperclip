@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -75,7 +76,7 @@ describeEmbeddedPostgres("heartbeat task-drain admission release", () => {
     await tempDb?.cleanup();
   });
 
-  async function seedAgentAndIssue() {
+  async function seedAgentAndIssue(adapterType = "process") {
     const companyId = randomUUID();
     const agentId = randomUUID();
     const issueId = randomUUID();
@@ -93,7 +94,7 @@ describeEmbeddedPostgres("heartbeat task-drain admission release", () => {
       name: "Drain Race Agent",
       role: "engineer",
       status: "idle",
-      adapterType: "process",
+      adapterType,
       adapterConfig: {
         command: process.execPath,
         args: ["-e", "process.exit(0)"],
@@ -411,5 +412,163 @@ describeEmbeddedPostgres("heartbeat task-drain admission release", () => {
       .where(eq(issues.id, issueId))
       .then((rows) => rows[0] ?? null);
     expect(reapedIssue?.executionRunId).not.toBe(runId);
+  }, 20_000);
+
+  function deadChildPid() {
+    // A spawned-and-exited child's pid is guaranteed gone by reap time.
+    return spawnSync(process.execPath, ["-e", ""]).pid ?? process.pid;
+  }
+
+  it("reaps a restart-orphaned run as server_restart_interrupted and parks a scheduled retry (TOP-529)", async () => {
+    const { companyId, agentId, issueId } = await seedAgentAndIssue("claude_local");
+    const deadPid = deadChildPid();
+    // The run's child started a minute ago; the service constructed below is
+    // the "current server process", so the run predates it exactly like a run
+    // orphaned by a control-plane relaunch.
+    const runStart = new Date(Date.now() - 60_000);
+    const runId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "running",
+      startedAt: runStart,
+      processStartedAt: runStart,
+      processPid: deadPid,
+      processGroupId: deadPid,
+      // The server persists the claimed adapter on dispatch; recovery only
+      // infers the run's historical adapter from this immutable evidence
+      // (never from the agent's mutable settings). With it, the reap marks the
+      // run conversation-continuation eligible and the retry lane can park it.
+      runnerProfileJson: { adapterDispatch: { adapterType: "claude_local" } },
+      contextSnapshot: { issueId, wakeReason: "issue_assigned" },
+    });
+
+    const heartbeat = heartbeatService(db);
+    const reapResult = await heartbeat.reapOrphanedRuns();
+    expect(reapResult.runIds).toContain(runId);
+
+    const reapedRun = await db
+      .select({ status: heartbeatRuns.status, errorCode: heartbeatRuns.errorCode })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(reapedRun).toMatchObject({
+      status: "interrupted",
+      errorCode: "server_restart_interrupted",
+    });
+
+    // The restart kill parks on the process-loss retry lane: a scheduled retry
+    // points back at the interrupted run instead of it dying as an agent
+    // failure.
+    const retry = await db
+      .select({ id: heartbeatRuns.id, status: heartbeatRuns.status })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.retryOfRunId, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(retry?.status).toBe("scheduled_retry");
+
+    const events = await db
+      .select({ level: heartbeatRunEvents.level, payload: heartbeatRunEvents.payload })
+      .from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.runId, runId));
+    const killEvent = events.find((event) => event.payload?.restartKill === true);
+    expect(killEvent?.level).toBe("warn");
+  }, 20_000);
+
+  it("reaps a run killed during the shutdown window as server_shutdown_interrupted (TOP-529)", async () => {
+    const { companyId, agentId, issueId } = await seedAgentAndIssue("claude_local");
+    const heartbeat = heartbeatService(db);
+    // SIGTERM received; the drain would settle this run but the reaper wins the
+    // race instead. It must be coded exactly like the drain's own kills.
+    heartbeat.markShutdownStarted("SIGTERM");
+    const deadPid = deadChildPid();
+    // Spawned by *this* server (no restart boundary), so without the shutdown
+    // window this would be a genuine process loss.
+    const runStart = new Date();
+    const runId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "running",
+      startedAt: runStart,
+      processStartedAt: runStart,
+      processPid: deadPid,
+      processGroupId: deadPid,
+      runnerProfileJson: { adapterDispatch: { adapterType: "claude_local" } },
+      contextSnapshot: { issueId, wakeReason: "issue_assigned" },
+    });
+
+    const reapResult = await heartbeat.reapOrphanedRuns();
+    expect(reapResult.runIds).toContain(runId);
+
+    const reapedRun = await db
+      .select({ status: heartbeatRuns.status, errorCode: heartbeatRuns.errorCode })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(reapedRun).toMatchObject({
+      status: "interrupted",
+      errorCode: "server_shutdown_interrupted",
+    });
+
+    // The drain parks its own kills on a retry lane; the reaper's shutdown
+    // branch must do the same instead of letting the interruption die here.
+    const retry = await db
+      .select({ id: heartbeatRuns.id, status: heartbeatRuns.status })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.retryOfRunId, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(retry?.status).toBe("scheduled_retry");
+
+    // Coded exactly like the drain's lifecycle event: warn, not error, with a
+    // shutdown-kill marker instead of an agent-failure error event.
+    const events = await db
+      .select({ level: heartbeatRunEvents.level, payload: heartbeatRunEvents.payload })
+      .from(heartbeatRunEvents)
+      .where(eq(heartbeatRunEvents.runId, runId));
+    const killEvent = events.find((event) => event.payload?.shutdownKill === true);
+    expect(killEvent?.level).toBe("warn");
+  }, 20_000);
+
+  it("still reaps a run that started under the current server as process_lost (TOP-529)", async () => {
+    const heartbeat = heartbeatService(db);
+    const { companyId, agentId, issueId } = await seedAgentAndIssue("claude_local");
+    const deadPid = deadChildPid();
+    // Started after the service above was constructed: a genuinely lost child
+    // of *this* server, not a restart kill.
+    const runStart = new Date();
+    const runId = randomUUID();
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      invocationSource: "assignment",
+      triggerDetail: "system",
+      status: "running",
+      startedAt: runStart,
+      processStartedAt: runStart,
+      processPid: deadPid,
+      processGroupId: deadPid,
+      contextSnapshot: { issueId, wakeReason: "issue_assigned" },
+    });
+
+    const reapResult = await heartbeat.reapOrphanedRuns();
+    expect(reapResult.runIds).toContain(runId);
+
+    const reapedRun = await db
+      .select({ status: heartbeatRuns.status, errorCode: heartbeatRuns.errorCode })
+      .from(heartbeatRuns)
+      .where(eq(heartbeatRuns.id, runId))
+      .then((rows) => rows[0] ?? null);
+    expect(reapedRun).toMatchObject({
+      status: "failed",
+      errorCode: "process_lost",
+    });
   }, 20_000);
 });

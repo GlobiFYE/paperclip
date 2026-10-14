@@ -1933,6 +1933,10 @@ async function startServerWithDatabaseTeardown(
     signal: "SIGINT" | "SIGTERM",
     exitProcess: boolean,
   ) => {
+    // Mark the teardown window first, before any drain or snapshot work: a run
+    // whose child dies while we are shutting down must be attributed to the
+    // control plane's restart, not to the agent (TOP-529).
+    heartbeat?.markShutdownStarted(signal);
     await systemdNotify(["--stopping", `--status=Stopping after ${signal}`]);
     heartbeatSchedulerStopped = true;
     unsubscribeChatCompletions();
