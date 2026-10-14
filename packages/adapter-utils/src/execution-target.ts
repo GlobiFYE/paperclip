@@ -2892,18 +2892,9 @@ function nextProbeFileName() {
 // so this wrapper leaves that entry untouched instead of removing it. This
 // covers a peer's replacement file, a peer's replacement directory, and a
 // peer's replacement symbolic link alike, because all three change the
-// identity this wrapper reads back. This wrapper keeps its probe file
-// descriptor open until the removal decision is made, so its inode stays
-// allocated even after a peer unlinks the path: no filesystem can hand that
-// inode number to a peer's replacement while the descriptor names it, and a
-// peer's entry therefore always reads back a different (dev, ino). Closing
-// first is not enough: ext4 hands the freed inode number straight back out
-// to the very next create, and ctimeMs cannot separate the two when the
-// kernel's file timestamp clock is coarser than the swap (both creates land
-// in one tick), so (dev, ino, ctimeMs) can match a path this call no longer
-// owns. ctimeMs stays in the check as a second signal. Node's filesystem
-// API has no call that removes a path only when its identity still matches
-// an earlier read as one atomic step, so a gap remains between this wrapper's final identity read and the
+// identity this wrapper reads back. Node's filesystem API has no call that removes a
+// path only when its identity still matches an earlier read as one atomic
+// step, so a gap remains between this wrapper's final identity read and the
 // removal call itself. A peer that wins this gap can put any entry at the
 // probe path before the removal call runs. This can include a pre-existing
 // file the peer renames into place, not only a file the peer creates fresh.
@@ -2934,8 +2925,6 @@ async function birthtimeSurvivesProbe(dirPath) {
   let ownedIdentity = null;
   try {
     const createdStats = await handle.stat();
-    // The open descriptor keeps this inode allocated, so its number cannot
-    // be reused by a peer's replacement; see the function comment above.
     ownedIdentity = { dev: createdStats.dev, ino: createdStats.ino, ctimeMs: createdStats.ctimeMs };
   } catch {
     ownedIdentity = null;

@@ -1001,22 +1001,6 @@ describe("deterministic remote process-session wrapper shutdown (PAP-5316)", () 
   // still leaves the peer's entry untouched under this preload proves the
   // fix for every less-adversarial timing too. It never runs unless a test
   // opts in, and it never touches this test file's own process.
-  //
-  // With PAPERCLIP_TEST_PROBE_SWAP_REUSE_IDENTITY=1 the swapped entry reads
-  // back with the most adversarial identity a filesystem may legally give it,
-  // so the result does not depend on the filesystem the test runs on:
-  // - It always carries the wrapper's own probe ctimeMs. That is what a
-  //   kernel whose file timestamp clock is coarser than the swap produces:
-  //   both creates land in one clock tick.
-  // - It also carries the probe's own (dev, ino) when the wrapper has no open
-  //   descriptor on the probe file at the swap. The unlink then frees the
-  //   inode, and a filesystem may hand that number straight to the peer's
-  //   create (ext4 does, every time). While a descriptor stays open, the
-  //   inode stays allocated, so no filesystem can reuse its number.
-  // A wrapper that closes its descriptor before the identity check then sees
-  // a full (dev, ino, ctimeMs) match on the peer's entry and removes it, on
-  // any filesystem. Only a wrapper that keeps its own inode allocated until
-  // the removal decision can tell the two apart.
   let probeSwapPreloadDir: string | null = null;
   afterAll(async () => {
     if (probeSwapPreloadDir) await rm(probeSwapPreloadDir, { recursive: true, force: true }).catch(() => undefined);
