@@ -946,26 +946,15 @@ async function inspectGitCloseReadiness(workspace: ExecutionWorkspace): Promise<
   if (repoRoot && baseRef) {
     try {
       const counts = (await runGit(["rev-list", "--left-right", "--count", `${baseRef}...HEAD`], workspacePath)).stdout.trim();
-      const [behindRaw, aheadRaw] = counts.split(/\s+/);
-      behindCount = behindRaw ? Number.parseInt(behindRaw, 10) : 0;
-      aheadCount = aheadRaw ? Number.parseInt(aheadRaw, 10) : 0;
+      const match = /^(\d+)\s+(\d+)$/.exec(counts);
+      if (!match) throw new Error("Git returned invalid ahead/behind counts");
+      behindCount = Number(match[1]);
+      aheadCount = Number(match[2]);
+      isMergedIntoBase = aheadCount === 0;
     } catch (error) {
       warnings.push(
         `Could not compare this workspace against ${baseRef}: ${error instanceof Error ? error.message : String(error)}`,
       );
-    }
-
-    try {
-      await runGit(["merge-base", "--is-ancestor", "HEAD", baseRef], workspacePath);
-      isMergedIntoBase = true;
-    } catch (error) {
-      const code = typeof error === "object" && error && "code" in error ? (error as { code?: unknown }).code : null;
-      if (code === 1) isMergedIntoBase = false;
-      else {
-        warnings.push(
-          `Could not determine whether this workspace is merged into ${baseRef}: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
     }
   }
 
@@ -1717,7 +1706,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
     }
     let mergedPullRequest = false;
     let pullRequestStateUnknown = false;
-    const workspaceHeadSha = git?.repoRoot && git.workspacePath
+    const workspaceHeadSha = sourceIssueTerminal && git?.repoRoot && git.workspacePath
       ? await runGit(["rev-parse", "HEAD"], git.workspacePath)
         .then((result) => result.stdout.trim() || null)
         .catch(() => null)
@@ -2579,6 +2568,12 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       }
 
       return null;
+    },
+
+    getStoredById: async (companyId: string, id: string) => {
+      const [row] = await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, id));
+      if (row && row.companyId !== companyId) throw forbidden("Task workspace access is no longer available");
+      return row ? toExecutionWorkspace(row) : null;
     },
 
     getById: async (id: string) => {
