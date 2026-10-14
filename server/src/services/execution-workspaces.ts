@@ -3074,8 +3074,9 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       };
     },
 
-    // `compact: false` skips workspace compaction for this sweep only. Pending
-    // compactions keep their deadlines, so a later sweep runs them.
+    // `compact: false` skips workspace compaction and compaction-trash deletion
+    // for this sweep only. Pending compactions keep their deadlines, so a later
+    // sweep runs them.
     sweepTerminalWorkspaces: async (limit = 50, signal?: AbortSignal, options: { compact?: boolean } = {}) => {
       // Skip this sweep while another sweep runs. A concurrent sweep would share
       // the cursor and the boundary and could corrupt the rotation state. A
@@ -3172,7 +3173,9 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
 
       for (const workspace of candidates) {
         signal?.throwIfAborted();
-        await purgeCompactionTrashIfDue(workspace);
+        // Trash deletion is part of compaction, so a sweep that skips compaction
+        // also leaves leftover trash for a later sweep.
+        if (options.compact !== false) await purgeCompactionTrashIfDue(workspace);
         const issueTree = await listWorkspaceIssueTree(workspace);
         const sourceIssue = issueTree.find((issue) => issue.id === workspace.sourceIssueId);
         const reopenPending = metadataHasReopenPendingConsumption(
