@@ -51,13 +51,13 @@ export function SkillSources() {
     setResults(prev => ({ ...prev, [result.source.id]: null })); await invalidate();
   }, onError: (error, id) => { setResults(prev => ({ ...prev, [id]: { message: error.message, failedAt: Date.now(), operation: 'refresh' } })); void invalidate(); } });
   const adopt = useMutation({ mutationFn: async (group: ReturnType<typeof groupProjectSkillRepositories>[number]) => {
-    for (const workspace of group.workspaces) await skillSourcesApi.adoptProject(companyId, workspace.workspaceId);
+    for (const workspace of group.importableWorkspaces) await skillSourcesApi.adoptProject(companyId, workspace.workspaceId);
   }, onSuccess: invalidate, onError: () => { void invalidate(); } });
   const settings = useMutation({ mutationFn: ({ source, enabled }: { source: SkillSource; enabled: boolean }) => skillSourcesApi.settings(companyId, source.id, { revision: source.revision, automaticUpdates: enabled }),
     onSuccess: async (_result, variables) => { setResults(prev => ({ ...prev, [variables.source.id]: null })); await invalidate(); },
     onError: (error, variables) => setResults(prev => ({ ...prev, [variables.source.id]: { message: error.message, failedAt: Date.now(), operation: 'settings' } })) });
   const repairBranch = useMutation({ mutationFn: (source: SkillSource) => skillSourcesApi.settings(companyId, source.id, { revision: source.revision, trackingRef: 'HEAD' }),
-    onSuccess: async (_result, source) => { setResults(prev => ({ ...prev, [source.id]: null })); await invalidate(); },
+    onSuccess: async (_result, source) => { setResults(prev => ({ ...prev, [source.id]: null })); await invalidate(); sourceActionButtons.current[source.id]?.focus(); },
     onError: (error, source) => { setResults(prev => ({ ...prev, [source.id]: { message: error.message, failedAt: Date.now(), operation: 'settings' } })); void invalidate(); } });
   const availableProjects = groupProjectSkillRepositories(Array.isArray(projectRepositories.data) ? projectRepositories.data.filter(repo => !repo.sourceId) : []);
   const groupSource = (group: typeof availableProjects[number]) => query.data?.find(source => source.repositoryUrl.toLowerCase() === group.repository.repositoryUrl.toLowerCase() && source.trackingRef === group.repository.trackingRef);
@@ -94,7 +94,7 @@ export function SkillSources() {
     {projectRepositories.error && <p role="alert" className="text-sm text-destructive">{projectRepositories.error.message} <Button variant="ghost" size="sm" onClick={() => void projectRepositories.refetch()}>Try again</Button></p>}
     {adopt.error && <p role="alert" className="text-sm text-destructive">{adopt.error.message}</p>}
     {uninstalledProjects.length > 0 && <div className="divide-y divide-border" aria-label="Project repositories">
-      {uninstalledProjects.map(group => <ProjectSkillRepositoryRow key={group.key} repository={group.repository} disabled={adopt.isPending}
+      {uninstalledProjects.map(group => <ProjectSkillRepositoryRow key={group.key} repository={group.repository} backgroundPending={group.hasPending} disabled={adopt.isPending}
         pending={adopt.isPending && adopt.variables?.key === group.key} onImport={() => adopt.mutate(group)} />)}
     </div>}
     <div className="divide-y divide-border">
@@ -135,7 +135,7 @@ export function SkillSources() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          {projectGroup && <ProjectSkillRepositoryRow repository={projectGroup.repository} showRepository={false} disabled={adopt.isPending}
+          {projectGroup && <ProjectSkillRepositoryRow repository={projectGroup.repository} backgroundPending={projectGroup.hasPending} showRepository={false} disabled={adopt.isPending}
             pending={adopt.isPending && adopt.variables?.key === projectGroup.key} onImport={() => adopt.mutate(projectGroup)} />}
           {installed.length > 0 && <ul className="ml-8 min-w-0" aria-label={`Installed skills from ${source.fullName}`}>
             {installed.map(entry => <li key={entry.id}>

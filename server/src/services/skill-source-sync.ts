@@ -224,6 +224,10 @@ export function skillSourceSyncService(db: Db, options: { context?: (setup: Setu
         const [source] = await tx.select().from(companySkillSources).where(and(
           eq(companySkillSources.companyId, binding.companyId), eq(companySkillSources.id, sourceId))).for('update');
         if (!source || source.removedAt) throw conflict('Source was removed during import. Retry to start independent tracking.');
+        if (source.trackingRef !== binding.trackingRef || source.repositoryUrl.toLowerCase() !== scan.repositoryUrl.toLowerCase()
+          || (source.repositoryId && source.repositoryId !== scan.repositoryId)) {
+          throw conflict('Source repository or branch changed during import. Retry from Skills.');
+        }
         const linked = await tx.update(projectSkillSources).set({ sourceId, status: 'ready', lastError: null, failureCount: 0, leaseToken: null, leaseExpiresAt: null })
           .where(and(eq(projectSkillSources.id, binding.id), eq(projectSkillSources.companyId, binding.companyId),
             eq(projectSkillSources.active, true), eq(projectSkillSources.leaseToken, token))).returning({ id: projectSkillSources.id });

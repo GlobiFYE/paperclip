@@ -109,6 +109,21 @@ describe('GitHub skill source import', () => {
     expect(document.querySelector('[role="status"]')?.textContent).toContain('queued');
   });
 
+  it('allows remaining project imports while another matching workspace is pending', async () => {
+    context.sourceId = '';
+    const repository = { projectId: 'one', projectName: 'Paperclip', projectVisibility: 'open' as const, workspaceId: 'already-pending',
+      repositoryUrl: 'https://github.com/acme/skills', trackingRef: 'HEAD', bindingId: 'binding', sourceId: null, status: 'pending' as const, lastError: null };
+    vi.mocked(skillSourcesApi.projectRepositories).mockResolvedValue([repository,
+      { ...repository, projectId: 'two', projectName: 'Sentry', workspaceId: 'available-workspace', status: 'available', bindingId: null }]);
+    vi.mocked(skillSourcesApi.adoptProject).mockResolvedValue({ bindingId: 'second-binding' });
+    await mount();
+    expect(document.querySelector('[role="status"]')?.textContent).toContain('queued');
+    expect(button('Import remaining skills')?.disabled).toBe(false);
+    await act(async () => button('Import remaining skills').click()); await flush();
+    expect(skillSourcesApi.adoptProject).toHaveBeenCalledTimes(1);
+    expect(skillSourcesApi.adoptProject).toHaveBeenCalledWith('company-1', 'available-workspace');
+  });
+
   it('retains the selected connection and repairs a missing branch directly from connection setup', async () => {
     context.sourceId = '';
     const source = { ...sourceFixture(), connectionId: 'personal', lastError: 'Choose a GitHub connection to enable automatic updates.', repairAction: 'connection' as const };

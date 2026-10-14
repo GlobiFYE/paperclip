@@ -19,6 +19,7 @@ test('repairs a missing branch without prompting for another connection', async 
   await expect(page.getByRole('alert')).toHaveCount(0);
   await expect(page.getByText(/Default branch · Updated/)).toBeVisible();
   await expect(page.getByRole('region', { name: 'acme/team-skills', exact: true }).getByText('Code review', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'More actions for acme/team-skills', exact: true })).toBeFocused();
 });
 
 test('creating a project imports repository skills without another setup flow', async ({ page }) => {

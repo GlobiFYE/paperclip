@@ -4,14 +4,16 @@ import { Button } from '@/components/ui/button';
 import { Link } from '@/lib/router';
 import { LoaderCircle } from 'lucide-react';
 
-export function ProjectSkillRepositoryRow({ repository, pending, disabled, showRepository = true, onImport }: {
+export function ProjectSkillRepositoryRow({ repository, pending, backgroundPending, disabled, showRepository = true, onImport }: {
   repository: ProjectSkillRepository;
   pending?: boolean;
+  backgroundPending?: boolean;
   disabled?: boolean;
   showRepository?: boolean;
   onImport: () => void;
 }) {
-  const importing = pending || repository.status === 'pending';
+  const actionPending = pending || repository.status === 'pending';
+  const importing = actionPending || backgroundPending;
   return <section className="flex flex-col gap-2 py-3" aria-label={`Skills from ${repository.projectName}`} aria-busy={Boolean(importing)}>
     <div className="flex items-center gap-3">
       <GithubIcon className="size-5 shrink-0 text-muted-foreground" />
@@ -21,9 +23,9 @@ export function ProjectSkillRepositoryRow({ repository, pending, disabled, showR
         </a>}
         <p className="truncate text-xs text-muted-foreground">{repository.projectName} · {repository.trackingRef === 'HEAD' ? 'Default branch' : repository.trackingRef}{repository.projectVisibility === 'private' ? ' · Project access' : ''}</p>
       </div>
-      <Button size="sm" variant="outline" disabled={importing || disabled} onClick={onImport}>
+      <Button size="sm" variant="outline" disabled={actionPending || disabled} onClick={onImport}>
         {importing && <LoaderCircle className="size-3.5 animate-spin motion-reduce:animate-none" />}
-        {importing ? 'Importing…' : repository.status === 'error' ? 'Retry import' : 'Import skills'}
+        {actionPending ? 'Importing…' : repository.status === 'error' ? 'Retry import' : backgroundPending ? 'Import remaining skills' : 'Import skills'}
       </Button>
     </div>
     {importing && <p role="status" className="ml-8 text-xs text-muted-foreground">{pending ? 'Starting import…' : repository.importState === 'importing'
