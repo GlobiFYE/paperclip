@@ -3074,7 +3074,9 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       };
     },
 
-    sweepTerminalWorkspaces: async (limit = 50, signal?: AbortSignal) => {
+    // `compact: false` skips workspace compaction for this sweep only. Pending
+    // compactions keep their deadlines, so a later sweep runs them.
+    sweepTerminalWorkspaces: async (limit = 50, signal?: AbortSignal, options: { compact?: boolean } = {}) => {
       // Skip this sweep while another sweep runs. A concurrent sweep would share
       // the cursor and the boundary and could corrupt the rotation state. A
       // skipped tick is safe: the next tick runs the sweep with intact state.
@@ -3199,7 +3201,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         const archiveDueAt = latestTerminalAt + workspaceReaperCooldownMs;
         terminalWorkspaceDeadlines.set(workspace.id, reopenPending ? now().getTime()
           : compactionPending ? Math.min(compactionDueAt, archiveDueAt) : archiveDueAt);
-        if (compactionPending && compactionDueAt <= now().getTime()) {
+        if (compactionPending && options.compact !== false && compactionDueAt <= now().getTime()) {
           try {
             const outcome = await compactTerminalWorkspace(workspace, signal);
             if (outcome === "compacted") result.compacted += 1;

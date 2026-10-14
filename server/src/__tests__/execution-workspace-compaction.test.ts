@@ -291,6 +291,21 @@ describeEmbeddedPostgres("terminal workspace compaction", () => {
     expect(await exists(path.join(seeded.worktreePath, "notes/findings.md"))).toBe(true);
   }, 30_000);
 
+  it("defers compaction when a sweep skips it, and compacts on the next sweep", async () => {
+    const seeded = await seedWorkspace();
+    const svc = service({ workspaceReaperCooldownDays: 7 });
+
+    expect(await svc.sweepTerminalWorkspaces(50, undefined, { compact: false })).toMatchObject({ compacted: 0 });
+    await expectRegenerablePresent(seeded.worktreePath, true);
+    // The skipped compaction stays scheduled, so the worker wakes for it.
+    const next = await svc.nextTerminalWorkspaceSweepAt();
+    expect(next).not.toBeNull();
+    expect(next!).toBeLessThanOrEqual(Date.now());
+
+    expect(await svc.sweepTerminalWorkspaces()).toMatchObject({ compacted: 1 });
+    await expectRegenerablePresent(seeded.worktreePath, false);
+  }, 30_000);
+
   it("waits for the compaction delay after the issue tree becomes terminal", async () => {
     const seeded = await seedWorkspace({ terminalAgoMs: 10 * 60 * 1000 });
     const svc = service({ workspaceReaperCooldownDays: 7, workspaceCompactionDelayMs: HOUR_MS });

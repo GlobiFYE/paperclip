@@ -1395,8 +1395,8 @@ async function startServerWithDatabaseTeardown(
     let lastTerminalWorkspaceSkipLogAt = 0;
     const terminalWorkspaceWorker = registerTerminalWorkspaceWork(deliveryWork, {
       ...terminalWorkspaces,
-      sweepTerminalWorkspaces: async (limit, signal) => {
-        const result = await terminalWorkspaces.sweepTerminalWorkspaces(limit, signal);
+      sweepTerminalWorkspaces: async (limit, signal, options) => {
+        const result = await terminalWorkspaces.sweepTerminalWorkspaces(limit, signal, options);
         if (result.archived > 0 || result.cleanupFailed > 0 || result.compacted > 0 || result.compactionFailed > 0) {
           logger.info(result, "terminal issue workspace reaper changed workspace state");
         } else if (result.checked > 0 && Date.now() - lastTerminalWorkspaceSkipLogAt >= 10 * 60 * 1000) {

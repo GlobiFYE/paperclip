@@ -2359,7 +2359,9 @@ finished task does not hold gigabytes while it waits for the reaper (or forever,
 when it has no merged pull request or has leftover files).
 
 The reaper compacts a workspace once per terminal cycle, after
-`PAPERCLIP_WORKSPACE_COMPACTION_DELAY_HOURS`, when all of these hold:
+`PAPERCLIP_WORKSPACE_COMPACTION_DELAY_HOURS`. Server startup waits for the
+reaper's first sweep, so that sweep never compacts; later sweeps do. A workspace
+qualifies when all of these hold:
 
 - the workspace is an isolated linked Git worktree (never a shared workspace or a
   project's main checkout);
