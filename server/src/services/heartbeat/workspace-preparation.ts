@@ -1151,7 +1151,7 @@ export async function prepareHeartbeatWorkspace(db: Db, input: HeartbeatWorkspac
     }
     const cwd = reference
       ? await readNativeWorkspaceSyncLocalCwd({ companyId: agent.companyId, runId: run.id, workspaceId, reference })
-      : persistedNativeExecutionInput && persistedNativeExecutionInput.schema !== "paperclip.native-execution-input.v6"
+      : persistedNativeExecutionInput && persistedNativeExecutionInput.schema !== "paperclip.native-execution-input.v6" && persistedNativeExecutionInput.schema !== "paperclip.native-execution-input.v7"
         && executionTarget?.kind !== "remote"
         ? persistedNativeExecutionInput.workspace.cwd
         : executionWorkspace.cwd;

@@ -2874,6 +2874,8 @@ export { AGENT_LIFECYCLE_STATES, type AgentLifecycleState, type AgentLifecycleOp
 
 export type { AgentLifecycleRequest, AgentLifecycleResult } from "./types/agent-lifecycle.js";
 
+export * from "./muse-protocol.js";
+export * from "./muse-invitations.js";
 export * from "./types/task-workspace.js";
 export * from "./validators/task-workspace.js";
 
