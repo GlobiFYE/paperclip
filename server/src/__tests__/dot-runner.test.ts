@@ -16,7 +16,7 @@ import express, { type Request } from "express";
 import request from "supertest";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { grokBotRoutines, grokBotDispatches, agents, authUsers, companies, companyMemberships, createDb, dotAgentBindings, dotMailboxItems, dotRunnerAssignments, dotRunnerOperations,
-  heartbeatRuns, agentWakeupRequests, issueComments, issues, nativeRunResults, nativeRunFinalizations, completionContracts, mcpEventDeliveries, mcpEventSubscriptions, workspaceOperations, workAssessments, statusDecisions, issueThreadInteractions } from "@paperclipai/db";
+  heartbeatRuns, mcpOauthGrants, issueAttachments, agentWakeupRequests, issueComments, issues, nativeRunResults, nativeRunFinalizations, completionContracts, mcpEventDeliveries, mcpEventSubscriptions, workspaceOperations, workAssessments, statusDecisions, issueThreadInteractions } from "@paperclipai/db";
 import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { createPublicMcpOAuth, DEVICE_GRANT } from "../services/public-mcp/oauth.js";
 import { createPublicMcpExecutor } from "../services/public-mcp/capabilities.js";
@@ -768,10 +768,11 @@ describe("durable Dot Runner integration", () => {
   }, 30000);
 
   it.each([
-    { name: "Dot local Rust", managed: false, provider: "openai_dot" as const },
-    { name: "Grok local Rust", managed: false, provider: "grok_bot" as const },
-    ...(process.env.PAPERCLIP_DOT_DAYTONA_LIVE === "1" ? [{ name: "private Daytona Rust", managed: true, provider: "openai_dot" as const }] : []),
-  ])("signed readiness, native tools and finalization through $name", async ({ managed, provider }) => {
+    { name: "Dot local Rust", managed: false, provider: "openai_dot" as const, revokeDuringUpload: false },
+    { name: "Grok local Rust", managed: false, provider: "grok_bot" as const, revokeDuringUpload: false },
+    { name: "Grok upload revocation Rust", managed: false, provider: "grok_bot" as const, revokeDuringUpload: true },
+    ...(process.env.PAPERCLIP_DOT_DAYTONA_LIVE === "1" ? [{ name: "private Daytona Rust", managed: true, provider: "openai_dot" as const, revokeDuringUpload: false }] : []),
+  ])("signed readiness, native tools and finalization through $name", async ({ managed, provider, revokeDuringUpload }) => {
     const remote = managed ? await (await import("./helpers/dot-daytona.js")).startDotDaytona(root) : null;
     try {
       const f = await fixture({ provider });
@@ -838,10 +839,14 @@ describe("durable Dot Runner integration", () => {
         let uploadedDeliverableId: string | undefined;
         if (provider === "grok_bot") {
           const files = new Map<string, Buffer>();
+          let storingUpload = false;
+          let releaseUploadStorage!: () => void;
+          const uploadStorageRelease = new Promise<void>(resolve => { releaseUploadStorage = resolve; });
           const transfers = createPublicMcpTransfers(db, f.oauth, async () => { throw new Error("Personal API dispatch forbidden"); }, {
             provider: "local_disk", putFile: async input => {
               if (!Buffer.isBuffer(input.body)) throw new Error("Expected bounded bytes");
               const objectKey = input.objectKey!; files.set(objectKey, input.body);
+              if (revokeDuringUpload) { storingUpload = true; await uploadStorageRelease; }
               return { provider: "local_disk", objectKey, contentType: input.contentType, byteSize: input.body.length,
                 sha256: createHash("sha256").update(input.body).digest("hex"), originalFilename: input.originalFilename };
             }, getObject: async (_company, key) => ({ stream: Readable.from(files.get(key)!) }),
@@ -852,6 +857,31 @@ describe("durable Dot Runner integration", () => {
           const args = { companyId: f.company.id, taskId: issue!.id, requestId: uploadId, filename: "report.txt", contentType: "text/plain", byteSize: body.length, sha256: createHash("sha256").update(body).digest("hex") };
           const grant = await transfers.getUploadUrl(f.principal, args, assignment!.id);
           const url = new URL(String(grant.url));
+          if (revokeDuringUpload) {
+            const uploading = request(api).put(url.pathname + url.search).set("Content-Type", "text/plain").send(body)
+              .then(response => response);
+            let revoked = false;
+            let revoking: Promise<void> | undefined;
+            try {
+              await vi.waitFor(() => expect(storingUpload).toBe(true), { timeout: 10000, interval: 20 });
+              revoking = f.broker.revoke(f.company.id, f.agent.id, f.userId).then(() => { revoked = true; });
+              void revoking.catch(() => {});
+              // Revocation must not wait for remote storage, and late bytes
+              // cannot produce accepted artifacts or completion evidence.
+              await vi.waitFor(() => expect(revoked).toBe(true), { timeout: 3000, interval: 20 });
+            } finally { releaseUploadStorage(); }
+            await revoking;
+            expect((await uploading).status).toBe(403);
+            await resultPromise.catch(() => {});
+            const [revokedGrant] = await db.select().from(mcpOauthGrants).where(eq(mcpOauthGrants.id, f.principal.grant.id));
+            expect(revokedGrant!.revokedAt).not.toBeNull();
+            expect((await db.select().from(dotRunnerAssignments).where(eq(dotRunnerAssignments.id, assignment!.id)))[0]!.status).toBe("fenced");
+            expect(await db.select().from(issueAttachments).where(eq(issueAttachments.issueId, issue!.id))).toHaveLength(0);
+            const [cancelledRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run!.id));
+            expect(Object.keys((cancelledRun?.resultJson?.semanticToolReceipts ?? {}) as Record<string, unknown>)
+              .filter(key => key.startsWith("external-upload:"))).toHaveLength(0);
+            return;
+          }
           // Hold the document transaction at its task lock, then start the real
           // HTTP upload. The native document write must still acquire its run
           // lock and commit; a run-before-task upload deadlocks this overlap.

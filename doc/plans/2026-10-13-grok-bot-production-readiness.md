@@ -213,3 +213,12 @@ original run-before-task upload order, the upload returned 503. With the shared
 task-before-run order, both writes and their durable receipts committed, and
 normal file completion passed. This is protocol evidence; it does not replace
 the remaining real-client acceptance gates.
+
+A second overlap regression uses an actual admitted Rust Grok session and holds
+the upload's storage response while disconnect runs. The former assignment-first
+order prevented disconnect from completing. Preliminary upload access now stays
+read-only for agent sessions; publication acquires the grant before retaining
+assignment authority. Disconnect completes while storage is pending, and the
+late upload returns 403 with no attachment or publication receipt. Person write
+checks remain in place. The full repository command was interrupted when this
+new review finding arrived; its partial output is not a passing test result.
