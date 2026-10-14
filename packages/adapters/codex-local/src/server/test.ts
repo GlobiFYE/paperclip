@@ -245,6 +245,7 @@ async function prepareCodexHelloProbe(input: {
 
 export async function testEnvironment(
   ctx: AdapterEnvironmentTestContext,
+  options: { isResolvedCodexCommand?: boolean } = {},
 ): Promise<AdapterEnvironmentTestResult> {
   const engineSelection = await resolveCodexExecutionEngineForRun({
     config: parseObject(ctx.config),
@@ -272,6 +273,7 @@ export async function testEnvironment(
   const checks: AdapterEnvironmentCheck[] = [];
   const config = parseObject(ctx.config);
   const command = asString(config.command, "codex");
+  const isCodexCommand = options.isResolvedCodexCommand === true || commandLooksLike(command, "codex");
   const target = ctx.executionTarget ?? null;
   const targetIsRemote = target?.kind === "remote";
   const targetIsSandbox = target?.kind === "remote" && target.transport === "sandbox";
@@ -375,7 +377,7 @@ export async function testEnvironment(
   const canRunProbe =
     checks.every((check) => check.code !== "codex_cwd_invalid" && check.code !== "codex_command_unresolvable");
   if (canRunProbe) {
-    if (!commandLooksLike(command, "codex")) {
+    if (!isCodexCommand) {
       checks.push({
         code: "codex_hello_probe_skipped_custom_command",
         level: "info",
