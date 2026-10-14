@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 
 vi.mock("@cloudflare/sandbox", () => ({ getSandbox: vi.fn() }));
 
-import { executeInSandbox } from "./exec.js";
+import { LIVE_OUTPUT_LIMIT_BYTES, executeInSandbox } from "./exec.js";
 
 const BASE = process.env.BRIDGE_IT_BASE_URL ?? "";
 const PROBE_FILE =
@@ -130,6 +130,28 @@ describe.skipIf(!BASE)("bridge exec against a real cloudflare/sandbox container"
       const result = await run({ command: "sh", args: ["-c", "pwd -P"], cwd, onOutput });
       expect(result.exitCode).toBe(0);
       expect(result.stdout.trim()).toBe(cwd);
+    });
+
+    it(`${mode}: a 3 MiB base64 chunk read is byte-exact and the live stream stays capped`, async () => {
+      await run({ command: "sh", args: ["-c", "head -c 3145728 /dev/urandom > /tmp/it-blob && sha256sum /tmp/it-blob | cut -d' ' -f1 > /tmp/it-blob.sha"], cwd: "/" });
+      const expectedSha = (await run({ command: "cat", args: ["/tmp/it-blob.sha"], cwd: "/" })).stdout.trim();
+      const live: string[] = [];
+      const result = await run({
+        command: "sh",
+        args: ["-c", "dd if=/tmp/it-blob bs=3145728 skip=0 count=1 2>/dev/null | base64"],
+        cwd: "/",
+        onOutput: mode === "streaming" ? (_stream, data) => { live.push(data); } : undefined,
+      });
+      expect(result.exitCode).toBe(0);
+      const decoded = Buffer.from(result.stdout.replace(/\s+/g, ""), "base64");
+      expect(decoded.byteLength).toBe(3145728);
+      expect(createHash("sha256").update(decoded).digest("hex")).toBe(expectedSha);
+      if (mode === "streaming") {
+        expect(live.join("").length).toBeLessThan(LIVE_OUTPUT_LIMIT_BYTES + 4096);
+        expect(live.join("")).toContain("[paperclip-bridge] live stdout truncated");
+        expect(result.stdout).not.toContain("[paperclip-bridge]");
+        expect(result.stderr).not.toContain("[paperclip-bridge]");
+      }
     });
 
     it(`${mode}: wrapper failure before redirect still reports an error`, async () => {

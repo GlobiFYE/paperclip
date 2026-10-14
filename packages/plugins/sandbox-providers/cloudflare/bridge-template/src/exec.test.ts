@@ -4,7 +4,7 @@ vi.mock("@cloudflare/sandbox", () => ({
   getSandbox: vi.fn(),
 }));
 
-import { buildLoginShellScript, executeInSandbox } from "./exec.js";
+import { LIVE_OUTPUT_LIMIT_BYTES, buildLoginShellScript, executeInSandbox } from "./exec.js";
 
 function b64(value: string): string {
   return Buffer.from(value, "utf8").toString("base64");
@@ -236,7 +236,19 @@ describe("bridge exec", () => {
       capture: { stdoutFile: "/tmp/o", stderrFile: "/tmp/e", exitCodeFile: "/tmp/r", teeStdout: true },
     });
     expect(script).toContain("mkdir -p '/missing' && cd '/missing' && {");
-    expect(script).toMatch(/cd '\/missing' && \{ \( \( exec 'pwd' \) 2>'\/tmp\/e'; echo \$\? >'\/tmp\/r' \) \| tee '\/tmp\/o'; cat '\/tmp\/e' >&2; exit "\$\(cat '\/tmp\/r'\)"; \}$/);
+    expect(script).toMatch(/cd '\/missing' && \{ \( \( exec 'pwd' \) 2>'\/tmp\/e'; echo \$\? >'\/tmp\/r' \) \| tee '\/tmp\/o' \| /);
+    expect(script.endsWith(`exit "$(cat '/tmp/r')"; }`)).toBe(true);
+  });
+
+  it("caps the live stream per output while still draining it", () => {
+    const script = buildLoginShellScript({
+      command: "cat",
+      args: ["big"],
+      capture: { stdoutFile: "/tmp/o", stderrFile: "/tmp/e", exitCodeFile: "/tmp/r", teeStdout: true },
+    });
+    expect(script).toContain(`| tee '/tmp/o' | { head -c ${LIVE_OUTPUT_LIMIT_BYTES}; n=$(wc -c);`);
+    expect(script).toContain(`head -c ${LIVE_OUTPUT_LIMIT_BYTES} '/tmp/e' >&2;`);
+    expect(script).not.toContain("cat '/tmp/e' >&2");
   });
 
   it("preserves a leading UTF-8 BOM in both captured streams", async () => {

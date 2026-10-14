@@ -16,6 +16,8 @@ export interface BridgeExecuteParams {
   onOutput?: (stream: "stdout" | "stderr", data: string) => void | Promise<void>;
 }
 
+export const LIVE_OUTPUT_LIMIT_BYTES = 256 * 1024;
+
 export interface OutputCapture {
   stdoutFile: string;
   stderrFile: string;
@@ -80,9 +82,14 @@ export function buildLoginShellScript(input: {
   const err = shellQuote(capture.stderrFile);
   const rc = shellQuote(capture.exitCodeFile);
   if (capture.teeStdout) {
+    const limit = LIVE_OUTPUT_LIMIT_BYTES;
+    const note = (stream: string) =>
+      `printf '\\n[paperclip-bridge] live ${stream} truncated after ${limit} bytes (%s more); full output is in the result\\n' "$n" >&2`;
     lines.push(
-      `{ ( ( ${execLine} ) 2>${err}; echo $? >${rc} ) | tee ${out}; ` +
-        `cat ${err} >&2; exit "$(cat ${rc})"; }`,
+      `{ ( ( ${execLine} ) 2>${err}; echo $? >${rc} ) | tee ${out} | ` +
+        `{ head -c ${limit}; n=$(wc -c); [ "$n" -eq 0 ] || ${note("stdout")}; }; ` +
+        `head -c ${limit} ${err} >&2; n=$(( $(wc -c <${err}) - ${limit} )); [ "$n" -le 0 ] || ${note("stderr")}; ` +
+        `exit "$(cat ${rc})"; }`,
     );
   } else {
     lines.push(`( ${execLine} ) >${out} 2>${err}`);
