@@ -347,6 +347,8 @@ describeEmbeddedPostgres("reportRunFailure", () => {
     wakes: Array<{ status: "rejected" | "accepted" | "acknowledged" | "unknown"; httpStatus: number | null }>;
     acceptedAt?: Date | null;
     originalFailureCode?: string;
+    finalization?: boolean;
+    offers?: number;
   }) {
     await seedCompanyAndAgent({ adapterType: "paperclip_runner", adapterConfig: { provider: "grok_bot" } });
     const userId = randomUUID();
@@ -363,11 +365,15 @@ describeEmbeddedPostgres("reportRunFailure", () => {
     const run = buildRun({ errorCode: "native_provider_terminal_failed", error: "Dot assignment acceptance or execution authority expired.",
       nativeIssueId: issue!.id, runtimeMode: "native", executionStage: "preparing", nativePhase: "terminal_failure", exitCode: null, signal: null });
     await db.insert(heartbeatRuns).values(run);
-    await db.insert(nativeRunFinalizations).values({ runId: run.id, companyId, issueId: run.nativeIssueId!, phase: "terminal_failure",
-      failureCode: "native_provider_terminal_failed", failureDetail: { originalFailureCode: input.originalFailureCode ?? "dot_assignment_expired" } });
-    const [assignment] = await db.insert(dotRunnerAssignments).values({ companyId, agentId, bindingId: binding!.id, bindingGeneration: 1,
-      runId: run.id, normalizedSessionId: randomUUID(), turnId: randomUUID(), controllerGeneration: 1, catalogDigest: "fixture", projection: {},
-      status: "fenced", acceptBy: new Date(Date.now() - 1000), expiresAt: new Date(Date.now() + 3_600_000), acceptedAt: input.acceptedAt ?? null }).returning();
+    if (input.finalization !== false) {
+      await db.insert(nativeRunFinalizations).values({ runId: run.id, companyId, issueId: run.nativeIssueId!, phase: "terminal_failure",
+        failureCode: "native_provider_terminal_failed", failureDetail: { originalFailureCode: input.originalFailureCode ?? "dot_assignment_expired" } });
+    }
+    const offers = await db.insert(dotRunnerAssignments).values(Array.from({ length: input.offers ?? 1 }, () => ({ companyId, agentId,
+      bindingId: binding!.id, bindingGeneration: 1, runId: run.id, normalizedSessionId: randomUUID(), turnId: randomUUID(), controllerGeneration: 1,
+      catalogDigest: "fixture", projection: {}, status: "fenced" as const, acceptBy: new Date(Date.now() - 1000),
+      expiresAt: new Date(Date.now() + 3_600_000), acceptedAt: input.acceptedAt ?? null }))).returning();
+    const assignment = offers[0];
     for (const wake of input.wakes) {
       await db.insert(grokBotDispatches).values({ companyId, routineId: routine!.id, bindingId: binding!.id, bindingGeneration: 1,
         grantId: grant!.id, routineRevision: 1, assignmentId: assignment!.id, sourceEventId: randomUUID(), kind: "mailbox_updated",
@@ -389,9 +395,25 @@ describeEmbeddedPostgres("reportRunFailure", () => {
     ["delivery is uncertain", { wakes: [{ status: "unknown", httpStatus: 503 }] }],
     ["the bot accepted the work", { wakes: [{ status: "rejected", httpStatus: 400 }], acceptedAt: new Date() }],
     ["the run failed for another provider reason", { wakes: [{ status: "rejected", httpStatus: 400 }], originalFailureCode: "provider_failed" }],
+    ["the run has no finalization", { wakes: [{ status: "rejected", httpStatus: 400 }], finalization: false }],
+    ["the run has more than one offer", { wakes: [{ status: "rejected", httpStatus: 400 }], offers: 2 }],
   ] as const)("keeps an expired Grok offer reportable when %s", async (_label, input) => {
     const run = await expiredGrokOffer({ ...input, wakes: [...input.wakes] });
     await reportRunFailure(db, run, { phase: "execute" });
+    expect(mockCaptureRunFailure).toHaveBeenCalledOnce();
+  });
+
+  it("keeps an expired Grok offer reportable when its receipts cannot be read", async () => {
+    const run = await expiredGrokOffer({ wakes: [{ status: "rejected", httpStatus: 400 }] });
+    const select = db.select.bind(db);
+    // The agent lookup succeeds; the receipt reads fail.
+    const spy = vi.spyOn(db, "select").mockImplementationOnce(select as typeof db.select)
+      .mockImplementation(() => { throw new Error("fixture receipt read failed"); });
+    try {
+      await reportRunFailure(db, run, { phase: "execute" });
+    } finally {
+      spy.mockRestore();
+    }
     expect(mockCaptureRunFailure).toHaveBeenCalledOnce();
   });
 

@@ -243,7 +243,12 @@ async function captureTerminalRunFailure(
       .then((rows) => rows[0] ?? null);
 
     if (isHermesConnectionFailure(run, options, agent?.adapterType)) return;
-    if (await isRejectedExternalBotWake(db, run)) return;
+    // An unreadable receipt proves nothing; keep the failure reportable.
+    const rejectedExternally = await isRejectedExternalBotWake(db, run).catch((err) => {
+      logger.warn({ err, runId: run.id }, "failed to read bot wake receipts for run failure report");
+      return false;
+    });
+    if (rejectedExternally) return;
 
     const taskId = readTaskId(run);
     if (!taskId) {
