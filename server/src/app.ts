@@ -1061,7 +1061,7 @@ export async function createApp(
   let publicMcpEvents: PublicMcpEvents | null = null;
   let dotMcpEvents: PublicMcpEvents | null = null;
   if (publicMcpOAuth) {
-    const dispatch = createMcpApiDispatch(api);
+    const dispatch = createMcpApiDispatch(api, app.locals);
     publicMcpEvents = createPublicMcpEvents(db, publicMcpOAuth, dispatch, {
       isBackgroundWorkEnabled: () => !isWarmStandby() && !isIdleTaskDrainActive(),
     });
