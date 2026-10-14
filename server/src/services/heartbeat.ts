@@ -24403,14 +24403,9 @@ export function heartbeatService(
           adapter.supportsLocalAgentJwt &&
           !authToken
         ) {
-          logger.warn(
-            {
-              companyId: agent.companyId,
-              agentId: agent.id,
-              runId: run.id,
-              adapterType: agent.adapterType,
-            },
-            "local agent jwt secret missing or invalid; running without injected PAPERCLIP_API_KEY",
+          throw new ConfigurationIncompleteFailure(
+            "Agent run credentials are unavailable. Configure PAPERCLIP_AGENT_JWT_SECRET or BETTER_AUTH_SECRET on the Paperclip server and restart it before retrying this task.",
+            { configurationIncomplete: { reason: "agent_jwt_secret_missing", companyId: agent.companyId, agentId: agent.id } },
           );
         }
         let adapterFinalizeOutcome: "succeeded" | "failed" | null = null;
