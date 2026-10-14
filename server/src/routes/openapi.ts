@@ -1,5 +1,6 @@
 import { createGrokInvitationSchema, configureGrokRoutineSchema, verifyGrokRoutineSchema, recoverGrokRoutineSchema, pairGrokBindingSchema, stopGrokWorkSchema, retryGrokDeliverySchema } from "@paperclipai/shared";
 import { updateFastResponseSchema } from "@paperclipai/shared";
+import { revokeAgentJwtSchema } from "@paperclipai/shared";
 import { slackTestMessageSchema, slackTestMessageResultSchema, slackManagerAuthorizationSchema, slackSetupOptionsSchema, slackManagedProvisionSchema, slackManagedResultSchema, slackRegistrationSchema, slackSetupActionSchema, slackInstallAuthorizationSchema, slackRegistrationStateSchema, slackAppConfigurationSchema, slackAvatarStateSchema, slackAccountStateSchema } from "@paperclipai/shared";
 import { experimentalApiMetadata } from "./experimental-api-metadata.js";
 import {
@@ -1647,6 +1648,8 @@ const INSTANCE_ADMIN_OPERATIONS = new Set([
   "POST /api/admin/users/{userId}/promote-instance-admin",
   "POST /api/admin/users/{userId}/demote-instance-admin",
   "PUT /api/admin/users/{userId}/company-access",
+  "POST /api/companies/{companyId}/agent-jwt-revocations",
+  "POST /api/companies/{companyId}/agent-jwt-revocations/cleanup",
 ]);
 
 const CREATED_OPERATIONS = new Set([
@@ -1660,6 +1663,7 @@ const CREATED_OPERATIONS = new Set([
   "POST /api/companies/{companyId}/assets/images",
   "POST /api/companies/{companyId}/logo",
   "POST /api/companies/{companyId}/onboarding-seed",
+  "POST /api/companies/{companyId}/agent-jwt-revocations",
   "POST /api/cli-auth/challenges",
   "POST /api/board-api-keys",
   "POST /api/companies",
@@ -8204,6 +8208,42 @@ registry.registerPath({
   summary: "Upload company logo",
   request: { params: z.object({ companyId: z.string() }) },
   responses: { 200: r.ok(), 401: r.unauthorized },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/agent-jwt-revocations",
+  tags: ["companies"],
+  summary: "Revoke an issued agent run JWT",
+  description:
+    "Requires an instance admin with access to the company. The handle is either jti:<token id> or sha256:<token digest>.",
+  request: {
+    params: z.object({ companyId: z.string() }),
+    body: jsonBody(revokeAgentJwtSchema),
+  },
+  responses: {
+    200: r.ok(),
+    401: r.unauthorized,
+    403: r.forbidden,
+    404: r.notFound,
+    409: r.conflict,
+    422: r.unprocessable,
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/api/companies/{companyId}/agent-jwt-revocations/cleanup",
+  tags: ["companies"],
+  summary: "Delete expired agent run JWT revocations for a company",
+  description: "Requires an instance admin with access to the company.",
+  request: { params: z.object({ companyId: z.string() }) },
+  responses: {
+    200: r.ok(),
+    401: r.unauthorized,
+    403: r.forbidden,
+    404: r.notFound,
+  },
 });
 
 registry.registerPath({
