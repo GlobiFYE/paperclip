@@ -101,6 +101,18 @@ describe("findRegenerableWorkspaceDirs", () => {
     ]);
   });
 
+  it("finds dependencies below an ignored parent directory", async () => {
+    const { worktreePath } = await createRepoWithWorktree(["vendor/", "node_modules/"]);
+    await write(path.join(worktreePath, "vendor/tool/source.c"));
+    await write(path.join(worktreePath, "vendor/tool/node_modules/dep/index.js"));
+    // A single nested candidate once made `ls-files --directory` fail.
+    expect(await findRegenerableWorkspaceDirs(worktreePath)).toEqual(["vendor/tool/node_modules"]);
+
+    await write(path.join(worktreePath, "node_modules/a/index.js"));
+    expect((await findRegenerableWorkspaceDirs(worktreePath)).sort())
+      .toEqual(["node_modules", "vendor/tool/node_modules"]);
+  });
+
   it("stops when the sweep is aborted", async () => {
     const { worktreePath } = await createRepoWithWorktree(["node_modules/"]);
     await write(path.join(worktreePath, "node_modules/a/index.js"));

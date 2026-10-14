@@ -1,7 +1,7 @@
+import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { workspaceGitOperationScheduler } from "./workspace-git-operation-scheduler.js";
 
 // Directory names that hold regenerable output: installed dependencies, build
 // output, and tool caches. Compaction removes a directory only when its name is
@@ -37,40 +37,59 @@ export const WORKSPACE_COMPACTION_TRASH_DIR = ".paperclip-compaction-trash";
 
 const MAX_WALK_DEPTH = 12;
 
-// Git reads go through the shared workspace Git scheduler, so each call has a
-// deadline, honors the sweep's abort signal, and shares the scan concurrency
-// limit with the other workspace inspections.
-async function runGitStdout(worktreePath: string, args: string[], signal?: AbortSignal) {
-  const result = await workspaceGitOperationScheduler.run({
-    workspacePath: worktreePath,
-    args,
-    operation: "execution_workspaces.compaction_scan",
-    cacheTtlMs: 0,
-    signal,
-    maxStdoutBytes: 8 * 1024 * 1024,
+// Each Git read has a deadline and stops when the sweep is aborted, so a stalled
+// Git process cannot hold the reaper.
+const GIT_READ_TIMEOUT_MS = 60_000;
+
+async function runGitRead(
+  worktreePath: string,
+  args: string[],
+  options: { signal?: AbortSignal; input?: string; okExitCodes?: number[] } = {},
+) {
+  return await new Promise<string>((resolve, reject) => {
+    const child = execFile(
+      "git",
+      ["-C", worktreePath, ...args],
+      { cwd: worktreePath, timeout: GIT_READ_TIMEOUT_MS, signal: options.signal, maxBuffer: 16 * 1024 * 1024 },
+      (error, stdout) => {
+        const exitCode = (error as { code?: unknown } | null)?.code;
+        if (!error || (typeof exitCode === "number" && options.okExitCodes?.includes(exitCode))) {
+          resolve(stdout);
+          return;
+        }
+        reject(error);
+      },
+    );
+    child.stdin?.end(options.input ?? "");
   });
-  return result.stdout;
 }
 
 function splitNul(output: string) {
-  return output.split("\0").filter((entry) => entry.length > 0);
+  return output.split("\0");
 }
 
-// Keeps the candidates that Git ignores as a whole and that hold no tracked
-// file. `ls-files --others --ignored --directory` lists a directory as "dir/"
-// only when the whole directory is ignored and untracked; it lists the files
-// one by one otherwise.
+// Keeps the candidates that Git ignores and that hold no tracked file.
+// `check-ignore` answers per path, also for a path below an ignored parent.
+// It exits 1 when no path is ignored, which is a normal answer.
 async function filterRemovableCandidates(worktreePath: string, candidates: string[], signal?: AbortSignal) {
-  const ignoredOutput = await runGitStdout(
+  // With --verbose --non-matching -z, each path yields four fields: source,
+  // line number, pattern, and path. The source is empty for a path that no
+  // pattern ignores.
+  const fields = splitNul(await runGitRead(
     worktreePath,
-    ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory", "--", ...candidates],
-    signal,
-  );
-  const ignoredDirs = new Set(splitNul(ignoredOutput).filter((entry) => entry.endsWith("/")));
-  const ignored = candidates.filter((candidate) => ignoredDirs.has(`${candidate}/`));
-  if (ignored.length === 0) return [];
-  const tracked = splitNul(await runGitStdout(worktreePath, ["ls-files", "-z", "--", ...ignored], signal));
-  return ignored.filter((candidate) =>
+    ["check-ignore", "--stdin", "-z", "--verbose", "--non-matching"],
+    { signal, input: candidates.map((candidate) => `${candidate}\0`).join(""), okExitCodes: [1] },
+  ));
+  const ignored = new Set<string>();
+  for (let index = 0; index + 3 < fields.length; index += 4) {
+    if (fields[index]) ignored.add(fields[index + 3]!);
+  }
+  const ignoredCandidates = candidates.filter((candidate) => ignored.has(candidate));
+  if (ignoredCandidates.length === 0) return [];
+  // A directory that holds a tracked file is source, even when Git ignores it.
+  const tracked = splitNul(await runGitRead(worktreePath, ["ls-files", "-z", "--", ...ignoredCandidates], { signal }))
+    .filter((entry) => entry.length > 0);
+  return ignoredCandidates.filter((candidate) =>
     !tracked.some((trackedPath) => trackedPath === candidate || trackedPath.startsWith(`${candidate}/`)));
 }
 

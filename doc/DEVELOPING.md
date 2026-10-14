@@ -2346,8 +2346,10 @@ Compaction removes only directories that have a regenerable name
 that Git ignores, and that hold no tracked file. A directory with such a name
 that does not qualify (for example a tracked `build/`) is searched in turn, so
 ignored dependencies inside it still go. It never enters `.git` or
-`.paperclip`, and it never follows a symlink. Its Git reads go through the
-workspace Git scheduler, so they have a deadline and stop when the sweep stops. Tracked files, uncommitted changes,
+`.paperclip`, and it never follows a symlink. It checks each directory's ignore
+status on its own, so dependencies below an ignored parent (for example
+`vendor/tool/node_modules`) are found. Its Git reads have a deadline and stop
+when the sweep stops. Tracked files, uncommitted changes,
 untracked files, other ignored files (such as `.env` or local data), the branch,
 and its commits all stay. The workspace row stays active.
 
