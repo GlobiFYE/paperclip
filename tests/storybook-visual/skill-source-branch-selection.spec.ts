@@ -75,7 +75,7 @@ test('keeps an invalid selection and permits correction after a save error', asy
   await search(page, 'feature/missing');
   await page.getByRole('option', { name: 'Use “feature/missing”', exact: true }).click();
   await dialog.getByRole('button', { name: 'Change branch', exact: true }).click();
-  await expect(dialog.getByRole('alert')).toContainText('GitHub could not find “feature/missing”');
+  await expect(dialog.getByRole('alert')).toContainText('GitHub could not find that branch or revision');
   await expect(dialog.getByRole('combobox', { name: 'Branch', exact: true })).toContainText('feature/missing');
   await expect(page.getByText(/main · Updated/)).toBeVisible();
   await search(page, 'master');
@@ -113,6 +113,33 @@ test('cancel preserves the tracked branch and clears the next draft', async ({ p
   await openRepair(page);
   await expect(dialog.getByRole('combobox', { name: 'Branch', exact: true })).toContainText('Choose a branch');
   await expect(dialog.getByRole('button', { name: 'Change branch', exact: true })).toBeDisabled();
+});
+
+test('retains a selection across a concurrent source update and retries with the new revision', async ({ page }) => {
+  await page.goto(story('save-conflict'));
+  const dialog = await openRepair(page);
+  await search(page, 'master');
+  await page.getByRole('option', { name: 'master Default', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Change branch', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toContainText('Your branch is still selected');
+  await expect(dialog.getByRole('combobox', { name: 'Branch', exact: true })).toContainText('master');
+  await dialog.getByRole('button', { name: 'Change branch', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByText(/master · Updated/)).toBeVisible();
+});
+
+test('uses the selected connection when repairing an unavailable branch', async ({ page }) => {
+  await page.goto(story('connection-repair'));
+  await page.getByRole('button', { name: 'Choose connection', exact: true }).click();
+  await page.getByRole('button', { name: 'Save connection', exact: true }).click();
+  await page.getByRole('button', { name: 'Choose a new branch', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Choose a new branch', exact: true });
+  await search(page, 'master');
+  await page.getByRole('option', { name: 'master Default', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Change branch', exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(page.getByRole('dialog', { name: 'Choose GitHub connection', exact: true })).toHaveCount(0);
+  await expect(page.getByText(/master · Updated/)).toBeVisible();
 });
 
 test.describe('mobile', () => {

@@ -8,16 +8,17 @@ import { Link } from '@/lib/router';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { RadioCardGroup } from '@/components/ui/radio-card';
+import { SkillSourceBranchRepair } from './SkillSourceBranchRepair';
 
 export function SkillSourceConnectionRepair({ companyId, source, onClose, onSaved, onReturnFocus }: {
   companyId: string; source: SkillSource; onClose: () => void; onSaved: () => Promise<void>;
   onReturnFocus?: () => void;
 }) {
   const [connectionId, setConnectionId] = useState(source.connectionId ?? '');
+  const [chooseBranch, setChooseBranch] = useState(false);
   const client = useQueryClient();
   const query = useQuery({ queryKey: queryKeys.skillSources.repositories(companyId), queryFn: () => skillSourcesApi.repositories(companyId), refetchOnMount: 'always', retry: false });
-  const save = useMutation({ mutationFn: (useDefaultBranch: boolean) => skillSourcesApi.settings(companyId, source.id, { revision: source.revision, connectionId,
-    ...(useDefaultBranch ? { trackingRef: 'HEAD' as const } : {}) }),
+  const save = useMutation({ mutationFn: () => skillSourcesApi.settings(companyId, source.id, { revision: source.revision, connectionId }),
     onError: async error => {
       if (error instanceof ApiError && error.status === 409) {
         await client.invalidateQueries({ queryKey: queryKeys.skillSources.all(companyId) });
@@ -27,6 +28,8 @@ export function SkillSourceConnectionRepair({ companyId, source, onClose, onSave
   const connections = query.data?.connections ?? [];
   const branchMissing = save.error instanceof ApiError && (save.error.body as { code?: string } | null)?.code === 'skill_source_ref_unavailable';
   const canSave = connections.some(connection => connection.id === connectionId);
+  if (chooseBranch) return <SkillSourceBranchRepair companyId={companyId} source={source} connectionId={connectionId}
+    onClose={() => setChooseBranch(false)} onReturnFocus={onReturnFocus} onSaved={async () => { await onSaved(); onClose(); }} />;
   return <Dialog open onOpenChange={open => { if (!open && !save.isPending) onClose(); }}>
     <DialogContent className="flex max-h-(--sz-calc-18) flex-col overflow-hidden sm:max-w-md"
       onCloseAutoFocus={event => { if (onReturnFocus) { event.preventDefault(); onReturnFocus(); } }}>
@@ -43,11 +46,11 @@ export function SkillSourceConnectionRepair({ companyId, source, onClose, onSave
       <Button asChild variant="link" className="justify-start p-0"><Link to="/apps">Manage GitHub connections</Link></Button>
       {save.error && <p role="alert" className="text-sm text-destructive">{save.error instanceof ApiError && save.error.status === 409
         ? 'This source was updated. Your connection is still selected. Save again to apply it.' : save.error.message}</p>}
-      {branchMissing && source.accessScope !== 'projects' && !source.projects?.some(project => project.active) && <Button variant="outline" disabled={!canSave || save.isPending} onClick={() => save.mutate(true)}>Use default branch</Button>}
+      {branchMissing && source.accessScope !== 'projects' && !source.projects?.some(project => project.active) && <Button variant="outline" disabled={!canSave || save.isPending} onClick={() => setChooseBranch(true)}>Choose a new branch</Button>}
       </div>
       <footer className="flex shrink-0 items-center justify-between gap-3 border-t border-border pt-4">
         <Button variant="ghost" disabled={save.isPending} onClick={onClose}>Cancel</Button>
-        <Button disabled={!canSave || save.isPending} onClick={() => save.mutate(false)}>{save.isPending ? 'Saving…' : 'Save connection'}</Button>
+        <Button disabled={!canSave || save.isPending} onClick={() => save.mutate()}>{save.isPending ? 'Saving…' : 'Save connection'}</Button>
       </footer>
     </DialogContent>
   </Dialog>;

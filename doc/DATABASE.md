@@ -814,11 +814,15 @@ source identity even if it currently resolves to that default branch. API-key
 agents without an authenticated run may attach repositories; their durable import
 jobs have no setup person and require adoption by an authorized person.
 
-Independent legacy sources with a missing branch can explicitly switch to `HEAD`
-through source settings. Validate the repository identity and default-branch read
+Independent sources can change their tracked branch or revision through source
+settings, including `HEAD` to follow the default branch. Validate the repository
+identity and the requested commit read
 before changing the ref; preserve installed skill IDs, versions and selection. Active
 project bindings must change their ref through the project configuration. `HEAD`
 remains the default-branch alias after refresh, including for independent sources.
+Branch changes use the source revision and lease fence, reject duplicate repository/ref
+sources, keep installed version rows unchanged, and enqueue the normal refresh path.
+Branch listing uses the caller's authorized connection, not the stored setup identity.
 
 ### Task workspace records (2026-10-09)
 
