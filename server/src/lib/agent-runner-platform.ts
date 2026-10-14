@@ -26,14 +26,10 @@ async function detectLocalRunnerTarget(): Promise<LocalRunnerTarget> {
       target.libc = "glibc";
       target.glibcVersion = version;
     }
-  } catch {
-    // An unavailable or unidentified libc must not select a GNU/Linux binary.
-  }
+  } catch {}
   return target;
 }
 
-// Platform facts cannot change in this process. Resolve them before callers can
-// serve requests, without blocking the event loop or generating a full report.
 const localTarget = await detectLocalRunnerTarget();
 
 export function localAgentRunnerTarget(): LocalRunnerTarget {

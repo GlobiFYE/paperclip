@@ -49,7 +49,6 @@ describe("local runner platform probe", () => {
     probe.execFile.mockImplementation((_command, _args, _options, done) => { callback = done; });
     const loaded = import("../lib/agent-runner-platform.js");
     await vi.waitFor(() => expect(probe.execFile).toHaveBeenCalledTimes(1));
-    // Timers can run while the subprocess is outstanding.
     await new Promise<void>(resolve => setTimeout(resolve, 0));
     callback(null, "glibc 2.41\n", "");
     const module = await loaded;
