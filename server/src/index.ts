@@ -1552,6 +1552,13 @@ async function startServerWithDatabaseTeardown(
           );
         }
 
+        // With pacing on, wait for its first quota poll (bounded by the quota
+        // timeout) before the first step that can start a queued run: the
+        // reaper starts the next queued run of each agent that it frees. Thus
+        // a restart with a full queue does not start every queued run at the
+        // configured limit. The steps above only reattach runs that were
+        // already running.
+        await quotaPacing.ready;
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
             const result = await heartbeat.reapOrphanedRuns();
@@ -1573,10 +1580,6 @@ async function startServerWithDatabaseTeardown(
         }
 
         const promotion = await heartbeat.promoteDueScheduledRetries();
-        // With pacing on, wait for its first quota poll (bounded by the quota
-        // timeout), so a restart with a full queue does not start every queued
-        // run at the configured limit.
-        await quotaPacing.ready;
         await heartbeat.resumeQueuedRuns();
         const recoveredGoalActions = await heartbeat.recoverPendingSessionGoalActions();
         if (
