@@ -1,4 +1,5 @@
 import { chatCredentialMutationLease } from "./chat-credential-mutation-lease.js";
+import { notifyChatEndpointWork } from "./chat-work-notifications.js";
 import { removeSlackRegistration } from "./chat-slack-registration-cleanup.js";
 import { chatEndpoints } from "@paperclipai/db";
 import { AGGREGATOR_NAMES, isAppAggregator, type AggregatorAppsResponse, type ArcadeDiscoverySetupInput } from "@paperclipai/shared/aggregator-apps";
@@ -2564,6 +2565,12 @@ function managedConnectorProfile(value: string | undefined): {
   return null;
 }
 
+function gitHubRepositoryOwnerType(repository: Record<string, unknown>) {
+  const type = recordValue(repository.owner) ? repository.owner.type : undefined;
+  return type === "Organization" ? "organization" as const
+    : type === "User" ? "personal" as const : undefined;
+}
+
 export async function loadGitHubTokenRepositories(
   headers: Record<string, string>,
   request: typeof fetch = fetch,
@@ -2571,6 +2578,7 @@ export async function loadGitHubTokenRepositories(
   const repositories: Array<{
     id: string;
     fullName: string;
+    ownerType?: "personal" | "organization";
     private?: boolean;
   }> = [];
   for (let page = 1; ; page += 1) {
@@ -2607,6 +2615,7 @@ export async function loadGitHubTokenRepositories(
       repositories.push({
         id: githubId(row.id)!,
         fullName: row.full_name,
+        ...(gitHubRepositoryOwnerType(row) ? { ownerType: gitHubRepositoryOwnerType(row) } : {}),
         ...(typeof row.private === "boolean" ? { private: row.private } : {}),
       });
     }
@@ -2633,6 +2642,7 @@ export async function loadGitHubGrantMetadata(
     id: string;
     fullName: string;
     installationId: string;
+    ownerType?: "personal" | "organization";
     private?: boolean;
   }>;
   installationUrl: string;
@@ -2714,7 +2724,7 @@ export async function loadGitHubGrantMetadata(
   const managementUrls = new Set<string>();
   const repositories = new Map<
     string,
-    { id: string; fullName: string; installationId: string; private?: boolean }
+    { id: string; fullName: string; installationId: string; ownerType?: "personal" | "organization"; private?: boolean }
   >();
   for (const installation of installations) {
     const installationId = githubId(installation.id);
@@ -2764,6 +2774,7 @@ export async function loadGitHubGrantMetadata(
         id,
         fullName,
         installationId,
+        ...(gitHubRepositoryOwnerType(repository) ? { ownerType: gitHubRepositoryOwnerType(repository) } : {}),
         ...(typeof repository.private === "boolean"
           ? { private: repository.private }
           : {}),
@@ -10665,6 +10676,8 @@ export function toolAccessService(
     });
     const headers: Record<string, string> = {
       "content-type": "application/x-www-form-urlencoded",
+      // Some providers otherwise return a legacy form-encoded token response.
+      accept: "application/json",
     };
     if (tokenEndpointAuthMethod === "client_secret_basic") {
       if (!input.clientSecret) {
@@ -15566,7 +15579,13 @@ export function toolAccessService(
         : suggestedAgentIds.length > 0
           ? { agentIds: suggestedAgentIds }
           : "all_agents";
-    const remoteMcpAccess = isRemoteMcpConnectorMethod(input.connection.config.sourceTemplateKey, input.connection.config.connectionMethodKey);
+    // An explicitly saved empty Access selection means no agents. A missing
+    // selection must still use managed OAuth's subject/recommended defaults.
+    const remoteMcpAccess = isRemoteMcpConnectorMethod(
+      input.connection.config.sourceTemplateKey,
+      input.connection.config.connectionMethodKey,
+    ) || (input.connection.transport === "mcp_remote"
+      && input.connection.config.mcpAgentAccessConfigured === true);
     const access: FinishToolApp["access"] = deferTaskAccess
       ? { agentIds: [] }
       : installs.length === 0
@@ -19044,12 +19063,26 @@ export function toolAccessService(
           );
         }
       }
+      const markMcpAccessConfigured = connection.transport === "mcp_remote"
+        && connection.config.mcpAgentAccessConfigured !== true;
       const accessExtensions: Array<{
         targetType: "company" | "agent";
         targetId: string;
         profileId: string;
       }> = [];
       await db.transaction(async (tx) => {
+        if (markMcpAccessConfigured) {
+          // Preserve an explicit zero-agent selection through OAuth. Merge the
+          // marker in SQL so concurrent credential/config changes are retained.
+          await tx.update(toolConnections).set({
+            config: sql`${toolConnections.config} || '{"mcpAgentAccessConfigured":true}'::jsonb`,
+            transportConfig: sql`${toolConnections.transportConfig} || '{"mcpAgentAccessConfigured":true}'::jsonb`,
+            updatedAt: now(),
+          }).where(and(
+            eq(toolConnections.companyId, connection.companyId),
+            eq(toolConnections.id, connection.id),
+          ));
+        }
         const existing = await tx
           .select()
           .from(toolConnectionInstalls)
@@ -19158,7 +19191,7 @@ export function toolAccessService(
               });
           }
         }
-        if (removeIds.length > 0 || additions.length > 0) {
+        if (markMcpAccessConfigured || removeIds.length > 0 || additions.length > 0) {
           const binding = actorBinding(actor);
           await tx.insert(toolAccessAuditEvents).values({
             companyId: connection.companyId,
@@ -19169,6 +19202,7 @@ export function toolAccessService(
             outcome: "success",
             reasonCode: "installs_changed",
             details: {
+              ...(markMcpAccessConfigured ? { mcpAgentAccessConfigured: true } : {}),
               added: additions.map((install) => ({
                 targetType: install.targetType,
                 targetId: install.targetId,
@@ -19232,7 +19266,7 @@ export function toolAccessService(
         ...(input.credentialRefs ?? existing.credentialRefs),
         ...(input.credentialSecretRefs ?? existing.credentialSecretRefs),
       ]);
-      const [row] = await db
+      const write = (database: Db) => database
         .update(toolConnections)
         .set({
           name: input.name ?? existing.name,
@@ -19251,7 +19285,17 @@ export function toolAccessService(
         })
         .where(eq(toolConnections.id, connectionId))
         .returning();
-      await syncCredentialBindings(row);
+      const [row] = existing.transport === "chat_sdk"
+        ? await db.transaction(async tx => {
+            await notifyChatEndpointWork(tx, existing.id);
+            const rows = await write(tx as unknown as Db);
+            // Credential resolution must never observe the binding rebuild's
+            // delete/insert gap after a configuration wake.
+            await syncCredentialBindings(rows[0]!, [], tx);
+            return rows;
+          })
+        : await write(db);
+      if (existing.transport !== "chat_sdk") await syncCredentialBindings(row);
       await ensureRuntimeSlot(row);
       emitConnectionUpdated(row, existing, "api");
       return toConnection(row);

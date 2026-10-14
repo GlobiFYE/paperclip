@@ -1,3 +1,5 @@
+import { grokBotApi } from "@/api/grokBot";
+import { WorkspaceBaseRefRecoveryProvider } from "../components/WorkspaceBaseRefRecovery";
 import { isLockedIssueStub, LockedIssueChip } from "@/components/LockedIssueChip";
 import { canManageIssuePrivacy } from "../lib/issuePrivacy";
 import { TextAttachmentContext } from "../context/TextAttachmentContext";
@@ -15,6 +17,7 @@ import { agentDetailHref } from "./agent-detail-navigation";
 import { ExecutionBlockerNotice } from "../components/ExecutionBlockerNotice";
 import type { TaskComposerPause } from "../components/task-chat/TaskChatPausedTakeover";
 import { TaskDetailTasksPanel } from "@/components/task-detail/TaskDetailTasksPanel";
+import { IssueCreatedFromNote } from "@/components/task-detail/IssueCreatedFromNote";
 import { EmailThreadProvider } from "../components/EmailMessageCard";
 import { EmailTaskActivity } from "../components/EmailTaskActivity";
 import { TaskChatScrollNavigation, taskChatScrollEntry } from "@/components/task-chat/scroll-navigation";
@@ -1627,6 +1630,16 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
     () => resolveInterruptibleIssueRun(resolvedActiveRun, resolvedLiveRuns),
     [resolvedActiveRun, resolvedLiveRuns],
   );
+  const currentRunAgent = interruptibleIssueRun ? agentMap.get(interruptibleIssueRun.agentId) : null;
+  const grokWork = currentRunAgent?.adapterType === "paperclip_runner" && currentRunAgent.adapterConfig.provider === "grok_bot";
+  const stopGrokWork = useMutation({
+    mutationFn: (run: { id: string; agentId: string }) => grokBotApi.stop(companyId, run.agentId, run.id),
+    onSettled: (_data, _error, run) => Promise.all([
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.detail(issueId) }),
+      queryClient.invalidateQueries({ queryKey: queryKeys.issues.runs(issueId) }),
+      queryClient.invalidateQueries({ queryKey: ["grok-binding", companyId, run.agentId] }),
+    ]),
+  });
   const liveRunIds = useMemo(() => {
     const ids = new Set<string>();
     for (const run of resolvedLiveRuns) ids.add(run.id);
@@ -2495,7 +2508,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
             blockerAttention={blockerAttention}
             successfulRunHandoff={successfulRunHandoff}
             scheduledRetry={scheduledRetry}
-            recoveryAction={recoveryAction ?? null}
+            recoveryAction={recoveryAction?.cause === "native_workspace_finalization_owner_unverified" ? null : recoveryAction ?? null}
             onResolveRecoveryAction={onResolveRecoveryAction}
             onReissueIsolatedRecoveryAction={onReissueIsolatedRecoveryAction}
             reissueIsolatedRecoveryActionPending={
@@ -2549,18 +2562,27 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
             onCancelQueued={onCancelQueued}
             interruptingQueuedRunId={interruptingQueuedRunId}
             stoppingRunId={
-              pauseWorkPending
+              stopGrokWork.isPending ? stopGrokWork.variables.id : pauseWorkPending
                 ? (pausingWorkRunId ?? interruptibleIssueRun?.id ?? null)
                 : pausingWorkRunId
             }
             onStopRun={
-              onPauseWorkRun
-                ? (runId) => onPauseWorkRun(runId).catch(() => undefined)
+              grokWork || onPauseWorkRun
+                ? async (runId) => {
+                    const selectedRun = resolvedLiveRuns.find(run => run.id === runId)
+                      ?? (resolvedActiveRun?.id === runId ? resolvedActiveRun : null);
+                    const selectedAgent = selectedRun ? agentMap.get(selectedRun.agentId) : null;
+                    if (selectedRun && selectedAgent?.adapterType === "paperclip_runner" && selectedAgent.adapterConfig.provider === "grok_bot") {
+                      await stopGrokWork.mutateAsync(selectedRun).catch(() => undefined);
+                    } else if (onPauseWorkRun) {
+                      await onPauseWorkRun(runId).catch(() => undefined);
+                    }
+                  }
                 : undefined
             }
-            stopRunLabel="Pause work"
-            stoppingRunLabel="Pausing..."
-            stopRunVariant="pause"
+            stopRunLabel={grokWork ? "Stop Paperclip work" : "Pause work"}
+            stoppingRunLabel={grokWork ? "Stopping Paperclip work…" : "Pausing..."}
+            stopRunVariant={grokWork ? "stop" : "pause"}
             runFinalizationActions={runFinalizationActions}
             onAcceptInteraction={onAcceptInteraction}
             onRejectInteraction={onRejectInteraction}
@@ -2572,9 +2594,9 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
             onSubmitInteractionVerdicts={onSubmitInteractionVerdicts}
             issueWorkMode={issueWorkMode}
             onWorkModeChange={onWorkModeChange}
-            stopPending={stopResponsePending}
+            stopPending={grokWork ? stopGrokWork.isPending : stopResponsePending}
             onCancelRun={
-              interruptibleIssueRun && onStopResponse
+              grokWork && interruptibleIssueRun ? () => stopGrokWork.mutateAsync(interruptibleIssueRun).then(() => undefined) : interruptibleIssueRun && onStopResponse
                 ? () => onStopResponse(interruptibleIssueRun.id)
                 : undefined
             }
@@ -2589,14 +2611,12 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
             tryAgainNoLiveExecutionPathPending={
               tryAgainNoLiveExecutionPathPending
             }
-            footer={classicQueuedDeliveryError ? (
-              <>
-                <p role="status" className="text-sm text-destructive">
-                  {classicQueuedDeliveryError}
-                </p>
-                {footer}
-              </>
-            ) : footer}
+            footer={grokWork || stopGrokWork.error || classicQueuedDeliveryError ? <>
+              {grokWork && <p className="text-xs text-muted-foreground">Runs in Grok Bot · Usage not reported. Stop Paperclip work revokes this session’s authority; remote execution may continue. Open the Grok Bot desktop app to inspect it.</p>}
+              {stopGrokWork.error && <p role="alert" className="text-sm text-destructive">{stopGrokWork.error.message}</p>}
+              {classicQueuedDeliveryError && <p role="status" className="text-sm text-destructive">{classicQueuedDeliveryError}</p>}
+              {footer}
+            </> : footer}
             externalReferences={externalReferences}
             linkCaseReferences={linkCaseReferences}
           />
@@ -3653,11 +3673,17 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     const createdTasks = createdTasksQuery.data ?? EMPTY_ISSUES;
     const hasError = createdTasksQuery.isError || childIssuesError;
     return {
-      count: new Set([...(issue?.ancestors ?? []), ...childIssues, ...createdTasks].map((task) => task.id)).size,
+      count: new Set([
+        ...(issue?.createdFrom ? [issue.createdFrom.issue] : []),
+        ...(issue?.ancestors ?? []),
+        ...childIssues,
+        ...createdTasks,
+      ].map((task) => task.id)).size,
       hasError,
       content: (
         <TaskDetailTasksPanel
           ancestors={issue?.ancestors}
+          createdFrom={issue?.createdFrom}
           issueLinkState={resolvedIssueDetailState ?? location.state}
           subtasks={childIssues}
           createdTasks={createdTasks}
@@ -3674,6 +3700,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   }, [
     tasksTab,
     issue?.ancestors,
+    issue?.createdFrom,
     resolvedIssueDetailState,
     location.state,
     streamlinedTaskDetailEnabled,
@@ -3841,14 +3868,22 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
     [issue],
   );
 
+  const { data: assignmentActivity } = useQuery({
+    queryKey: queryKeys.issues.activity(issueId!),
+    queryFn: () => activityApi.forIssue(issueId!),
+    enabled: Boolean(issueId && currentUserId && issue?.assigneeUserId === currentUserId),
+  });
+
   const suggestedAssigneeValue = useMemo(
     () =>
       suggestedCommentAssigneeValue(
         issue ?? {},
         mergeIssueComments(comments ?? [], optimisticComments),
         currentUserId,
+        undefined,
+        assignmentActivity,
       ),
-    [issue, comments, optimisticComments, currentUserId],
+    [issue, comments, optimisticComments, currentUserId, assignmentActivity],
   );
 
   const threadComments = useMemo(
@@ -4566,6 +4601,28 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
       handleChildIssueUpdate,
     ],
   );
+
+  const cancelIssueMonitor = useMutation({
+    mutationKey: ["cancel-issue-monitor", issueId],
+    mutationFn: async () => {
+      const current = await issuesApi.get(issueId!);
+      const { monitor: _monitor, ...policy } = current.executionPolicy ?? { mode: "normal" as const, commentRequired: true, stages: [] };
+      return issuesApi.update(current.id, {
+        expectedExecutionPolicy: current.executionPolicy ?? null,
+        executionPolicy: {
+          ...policy,
+          mode: policy.mode ?? "normal",
+          commentRequired: policy.commentRequired ?? true,
+          stages: policy.stages ?? [],
+        },
+      });
+    },
+    onSuccess: () => {
+      invalidateIssueDetail();
+      invalidateIssueRunState();
+      invalidateIssueCollections();
+    },
+  });
 
   const checkIssueMonitorNow = useMutation({
     mutationKey: ["check-issue-monitor-now", issueId],
@@ -7050,6 +7107,16 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
         </span>
       </nav>
     ) : null;
+  // Creation provenance ("Created from PAP-168 by Paperclip QA"). Distinct from
+  // the parent chain above; the streamlined Tasks tab renders it instead.
+  const createdFromNote =
+    !streamlinedTaskDetailEnabled && issue.createdFrom ? (
+      <IssueCreatedFromNote
+        createdFrom={issue.createdFrom}
+        issueLinkState={resolvedIssueDetailState ?? location.state}
+        className={shellSectionClass}
+      />
+    ) : null;
 
   const issueStatusControl = (
     <StatusIcon
@@ -7486,6 +7553,8 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
         : null}
 
       <IssueMonitorBanner
+        key={issue.id}
+        onCancelMonitor={() => cancelIssueMonitor.mutateAsync()}
         issue={issue}
         workProducts={workProducts}
         checkError={checkIssueMonitorNow.error?.message}
@@ -7568,6 +7637,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   const taskChatThreadHeader = taskChatShellEnabled ? (
     <>
       {ancestorsNav}
+      {createdFromNote}
       {issueHeaderBlock}
       {pluginOutletsBlock}
     </>
@@ -7595,14 +7665,28 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
         >
           {/* Parent chain breadcrumb (redesign: rendered inside the thread viewport) */}
           {taskChatShellEnabled ? null : ancestorsNav}
+          {taskChatShellEnabled ? null : createdFromNote}
 
           <ExternallyConnectedTaskBanner
+            className={cn(shellSectionClass, "mt-3")}
             key={issue.id}
+            assigneeAgentId={issue.assigneeAgentId}
             attachments={attachments ?? []}
             companyId={issue.companyId}
             issueId={issue.id}
             issueCacheRefs={issueCacheRefs}
           />
+
+          {resolvedDetailTab === "chat" && (
+            <WorkspaceExportRecovery key={`workspace-export:${issue.activeRecoveryAction?.id ?? issue.id}`}
+              className={shellSectionClass}
+              action={issue.activeRecoveryAction ?? null} />
+          )}
+          {resolvedDetailTab === "chat" && issue.executionBlocker && (
+            <ExecutionBlockerNotice className={shellSectionClass} companyId={issue.companyId} issueId={issue.id}
+              issueStatus={issue.status} canManage={canManageBoardRuntime && canResolveBoardRecoveryAction}
+              blocker={issue.executionBlocker} onRetried={invalidateIssueDetail} />
+          )}
 
           {issue.status === "in_review" && issue.externalConversationState === "waiting" && (
             <p role="status" className="text-sm text-muted-foreground">Reply sent. Send a message to continue.</p>
@@ -7907,12 +7991,13 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                   : undefined
               }
             >
-              <WorkspaceExportRecovery key={issue.activeRecoveryAction?.id ?? issue.id} issueId={issue.id}
-                action={issue.activeRecoveryAction ?? null} canManage={canManageBoardRuntime} onQueued={invalidateIssueDetail} />
-              {issue.executionBlocker && (
-                <ExecutionBlockerNotice companyId={issue.companyId} issueId={issue.id} blocker={issue.executionBlocker} onRetried={invalidateIssueDetail} />
-              )}
               {resolvedDetailTab === "chat" ? (
+                <WorkspaceBaseRefRecoveryProvider issue={issue} agentMap={agentMap} onRepaired={() => { invalidateIssueDetail(); invalidateIssueCollections(); }}
+                  unavailableReason={!canManageBoardRuntime || !canResolveBoardRecoveryAction ? "You don’t have permission to repair this task’s workspace."
+                    : treeControlStateError ? "Couldn’t check whether this task is paused. Refresh to try again."
+                    : activePauseHold ? "Resume the task before retrying."
+                    : issue.project?.pausedAt ? "Resume the project before retrying."
+                    : interactions.some(i => i.status === "pending") ? "Respond to the pending question or confirmation before retrying." : null}>
                 <DispositionRecoveryProvider value={{
                   issue,
                   agentMap,
@@ -7982,7 +8067,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                   blockerAttention={issue.blockerAttention ?? null}
                   successfulRunHandoff={issue.successfulRunHandoff ?? null}
                   scheduledRetry={issue.scheduledRetry ?? null}
-                  recoveryAction={issue.activeRecoveryAction ?? null}
+                  recoveryAction={issue.activeRecoveryAction?.cause === "native_workspace_finalization_owner_unverified" ? null : issue.activeRecoveryAction ?? null}
                   onResolveRecoveryAction={handleResolveRecoveryAction}
                   onReissueIsolatedRecoveryAction={
                     handleReissueIsolatedRecoveryAction
@@ -8184,6 +8269,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
                   linkCaseReferences={casesChipsEnabled}
                 />
                 </DispositionRecoveryProvider>
+                </WorkspaceBaseRefRecoveryProvider>
               ) : null}
             </TabsContent>
 
