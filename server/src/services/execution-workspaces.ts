@@ -1382,6 +1382,11 @@ async function hasPendingTaskWorkspaceRecovery(tx: DbTransaction, input: {
   });
 }
 
+// Compaction trash older than this belongs to no compaction in progress: the
+// move and the guard finish in one short transaction.
+const WORKSPACE_COMPACTION_TRASH_STALE_MS = 60 * 60 * 1000;
+const WORKSPACE_COMPACTION_TRASH_PURGE_INTERVAL_MS = 30 * 60 * 1000;
+
 export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServiceOptions = {}) {
   async function resolveSourceWorkspaceStrategy(input: {
     companyId: string; issueId?: string | null; assigneeAgentId?: string | null;
@@ -1628,6 +1633,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
   // files, and the next terminal cycle compacts them again. The memo is only a
   // cache; after a restart compaction re-scans, finds nothing, and records it.
   const compactedTerminalAt = new Map<string, number>();
+  const compactionTrashPurgedAt = new Map<string, number>();
   const pullRequestStateCache = new Map<
     string,
     {
@@ -2070,6 +2076,25 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
     return rows[0]?.allowed === true;
   }
 
+  // Deletes compaction trash that an interrupted compaction or a failed delete
+  // left beside a worktree. The sweep calls this for every worktree candidate,
+  // independent of the per-cycle compaction memo, so leftover trash is found
+  // after a restart and after a workspace has nothing left to compact. Each
+  // worktree parent directory is checked at most once per interval.
+  async function purgeCompactionTrashIfDue(workspace: ExecutionWorkspaceRow) {
+    const worktreePath = workspace.providerRef ?? workspace.cwd;
+    if (workspace.providerType !== "git_worktree" || !worktreePath) return;
+    const parentDir = path.dirname(path.resolve(worktreePath));
+    const nowMs = now().getTime();
+    const lastPurgedAt = compactionTrashPurgedAt.get(parentDir);
+    if (lastPurgedAt !== undefined && nowMs - lastPurgedAt < WORKSPACE_COMPACTION_TRASH_PURGE_INTERVAL_MS) return;
+    if (compactionTrashPurgedAt.size >= 1024) compactionTrashPurgedAt.delete(compactionTrashPurgedAt.keys().next().value!);
+    compactionTrashPurgedAt.set(parentDir, nowMs);
+    await purgeStaleWorkspaceCompactionTrash(parentDir, WORKSPACE_COMPACTION_TRASH_STALE_MS).catch((error) => {
+      logger.warn({ err: error, parentDir }, "failed to purge stale workspace compaction trash");
+    });
+  }
+
   // Removes regenerable files (installed dependencies, build output, tool
   // caches) from a terminal workspace. The workspace row stays active and the
   // worktree, its branch, its commits, and every tracked or untracked source
@@ -2079,6 +2104,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
   // still inside the archive cooldown.
   async function compactTerminalWorkspace(
     workspace: ExecutionWorkspaceRow,
+    signal?: AbortSignal,
   ): Promise<"compacted" | "nothing_to_compact" | "not_compactable" | "busy"> {
     const worktreePath = workspace.providerRef ?? workspace.cwd;
     if (
@@ -2104,7 +2130,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       return "not_compactable";
     }
 
-    const relativePaths = await findRegenerableWorkspaceDirs(worktreePath);
+    const relativePaths = await findRegenerableWorkspaceDirs(worktreePath, { signal });
     if (relativePaths.length === 0) return "nothing_to_compact";
 
     const snapshotGeneration = readExecutionWorkspaceLifecycleGeneration(
@@ -2158,7 +2184,6 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         "failed to delete compacted workspace files; a later compaction retries",
       );
     });
-    await purgeStaleWorkspaceCompactionTrash(path.dirname(worktreePath), 60 * 60 * 1000).catch(() => {});
     if (move.moved.length === 0) return "nothing_to_compact";
     await logActivity(db, {
       companyId: workspace.companyId,
@@ -3147,6 +3172,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
 
       for (const workspace of candidates) {
         signal?.throwIfAborted();
+        await purgeCompactionTrashIfDue(workspace);
         const issueTree = await listWorkspaceIssueTree(workspace);
         const sourceIssue = issueTree.find((issue) => issue.id === workspace.sourceIssueId);
         const reopenPending = metadataHasReopenPendingConsumption(
@@ -3177,7 +3203,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           : compactionPending ? Math.min(compactionDueAt, archiveDueAt) : archiveDueAt);
         if (compactionPending && compactionDueAt <= now().getTime()) {
           try {
-            const outcome = await compactTerminalWorkspace(workspace);
+            const outcome = await compactTerminalWorkspace(workspace, signal);
             if (outcome === "compacted") result.compacted += 1;
             if (outcome !== "busy") {
               if (compactedTerminalAt.size >= 4096) compactedTerminalAt.delete(compactedTerminalAt.keys().next().value!);
@@ -3185,6 +3211,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
               terminalWorkspaceDeadlines.set(workspace.id, archiveDueAt);
             }
           } catch (error) {
+            if (signal?.aborted) throw error;
             result.compactionFailed += 1;
             logger.warn(
               { err: error, executionWorkspaceId: workspace.id, sourceIssueId: workspace.sourceIssueId },

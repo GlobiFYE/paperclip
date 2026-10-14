@@ -84,6 +84,31 @@ describe("findRegenerableWorkspaceDirs", () => {
     expect(await findRegenerableWorkspaceDirs(worktreePath)).toEqual([]);
   });
 
+  it("searches inside a regenerable-named directory that is source", async () => {
+    const { worktreePath } = await createRepoWithWorktree(["node_modules/"]);
+    // `build/` holds tracked source, so it stays, but its ignored dependencies go.
+    await write(path.join(worktreePath, "build/scripts/release.ts"));
+    await git(worktreePath, ["add", "build/scripts/release.ts"]);
+    await write(path.join(worktreePath, "build/node_modules/tool/index.js"));
+    // An untracked, not-ignored `dist/` is work in progress; its ignored
+    // dependencies still go.
+    await write(path.join(worktreePath, "dist/notes.md"));
+    await write(path.join(worktreePath, "dist/node_modules/dep/index.js"));
+
+    expect((await findRegenerableWorkspaceDirs(worktreePath)).sort()).toEqual([
+      "build/node_modules",
+      "dist/node_modules",
+    ]);
+  });
+
+  it("stops when the sweep is aborted", async () => {
+    const { worktreePath } = await createRepoWithWorktree(["node_modules/"]);
+    await write(path.join(worktreePath, "node_modules/a/index.js"));
+    const controller = new AbortController();
+    controller.abort();
+    await expect(findRegenerableWorkspaceDirs(worktreePath, { signal: controller.signal })).rejects.toThrow();
+  });
+
   it("returns nothing when no directory qualifies", async () => {
     const { worktreePath } = await createRepoWithWorktree(["node_modules/"]);
     await write(path.join(worktreePath, "src/index.ts"));

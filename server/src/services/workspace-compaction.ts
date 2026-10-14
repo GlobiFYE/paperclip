@@ -1,10 +1,7 @@
-import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
+import { workspaceGitOperationScheduler } from "./workspace-git-operation-scheduler.js";
 
 // Directory names that hold regenerable output: installed dependencies, build
 // output, and tool caches. Compaction removes a directory only when its name is
@@ -40,28 +37,41 @@ export const WORKSPACE_COMPACTION_TRASH_DIR = ".paperclip-compaction-trash";
 
 const MAX_WALK_DEPTH = 12;
 
-async function runGitStdout(args: string[], cwd: string, input?: string) {
-  const child = execFileAsync("git", ["-C", cwd, ...args], { cwd, maxBuffer: 64 * 1024 * 1024 });
-  if (input !== undefined) {
-    child.child.stdin?.end(input);
-  }
-  return (await child).stdout;
-}
-
-async function runGitCheckIgnore(cwd: string, paths: string[]) {
-  // `git check-ignore` exits 1 when no path is ignored. That is a normal
-  // answer, not a failure.
-  try {
-    return await runGitStdout(["check-ignore", "--stdin", "-z"], cwd, paths.map((p) => `${p}\0`).join(""));
-  } catch (error) {
-    const exitCode = (error as { code?: unknown }).code;
-    if (exitCode === 1) return "";
-    throw error;
-  }
+// Git reads go through the shared workspace Git scheduler, so each call has a
+// deadline, honors the sweep's abort signal, and shares the scan concurrency
+// limit with the other workspace inspections.
+async function runGitStdout(worktreePath: string, args: string[], signal?: AbortSignal) {
+  const result = await workspaceGitOperationScheduler.run({
+    workspacePath: worktreePath,
+    args,
+    operation: "execution_workspaces.compaction_scan",
+    cacheTtlMs: 0,
+    signal,
+    maxStdoutBytes: 8 * 1024 * 1024,
+  });
+  return result.stdout;
 }
 
 function splitNul(output: string) {
   return output.split("\0").filter((entry) => entry.length > 0);
+}
+
+// Keeps the candidates that Git ignores as a whole and that hold no tracked
+// file. `ls-files --others --ignored --directory` lists a directory as "dir/"
+// only when the whole directory is ignored and untracked; it lists the files
+// one by one otherwise.
+async function filterRemovableCandidates(worktreePath: string, candidates: string[], signal?: AbortSignal) {
+  const ignoredOutput = await runGitStdout(
+    worktreePath,
+    ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory", "--", ...candidates],
+    signal,
+  );
+  const ignoredDirs = new Set(splitNul(ignoredOutput).filter((entry) => entry.endsWith("/")));
+  const ignored = candidates.filter((candidate) => ignoredDirs.has(`${candidate}/`));
+  if (ignored.length === 0) return [];
+  const tracked = splitNul(await runGitStdout(worktreePath, ["ls-files", "-z", "--", ...ignored], signal));
+  return ignored.filter((candidate) =>
+    !tracked.some((trackedPath) => trackedPath === candidate || trackedPath.startsWith(`${candidate}/`)));
 }
 
 // Returns true only for a linked Git worktree: its `.git` entry is a file that
@@ -73,11 +83,17 @@ export async function isLinkedGitWorktree(worktreePath: string) {
 }
 
 // Lists the regenerable directories in a worktree, as paths relative to the
-// worktree root. Symlinks are never followed or returned.
-export async function findRegenerableWorkspaceDirs(worktreePath: string): Promise<string[]> {
-  const candidates: string[] = [];
+// worktree root. Symlinks are never followed or returned. A directory with a
+// regenerable name that does not qualify (for example a tracked `build/`) is
+// searched in turn, so eligible directories inside it are still found.
+export async function findRegenerableWorkspaceDirs(
+  worktreePath: string,
+  options: { signal?: AbortSignal } = {},
+): Promise<string[]> {
+  const removable: string[] = [];
 
-  async function visit(relativeDir: string, depth: number) {
+  async function collect(relativeDir: string, depth: number, candidates: string[]) {
+    options.signal?.throwIfAborted();
     if (depth > MAX_WALK_DEPTH) return;
     const entries = await fs.readdir(path.join(worktreePath, relativeDir), { withFileTypes: true })
       .catch(() => []);
@@ -89,22 +105,22 @@ export async function findRegenerableWorkspaceDirs(worktreePath: string): Promis
         candidates.push(relativePath);
         continue;
       }
-      await visit(relativePath, depth + 1);
+      await collect(relativePath, depth + 1, candidates);
     }
   }
 
-  await visit("", 0);
-  if (candidates.length === 0) return [];
-
-  const ignored = new Set(splitNul(await runGitCheckIgnore(worktreePath, candidates)));
-  const ignoredCandidates = candidates.filter((candidate) => ignored.has(candidate));
-  if (ignoredCandidates.length === 0) return [];
-
-  // A directory that holds a tracked file is source, even when its name looks
-  // like build output.
-  const tracked = splitNul(await runGitStdout(["ls-files", "-z", "--", ...ignoredCandidates], worktreePath));
-  return ignoredCandidates.filter((candidate) =>
-    !tracked.some((trackedPath) => trackedPath === candidate || trackedPath.startsWith(`${candidate}/`)));
+  let roots = [""];
+  while (roots.length > 0) {
+    const candidates: string[] = [];
+    for (const root of roots) {
+      await collect(root, root ? root.split("/").length : 0, candidates);
+    }
+    if (candidates.length === 0) break;
+    const eligible = new Set(await filterRemovableCandidates(worktreePath, candidates, options.signal));
+    removable.push(...candidates.filter((candidate) => eligible.has(candidate)));
+    roots = candidates.filter((candidate) => !eligible.has(candidate));
+  }
+  return removable;
 }
 
 export type MovedWorkspaceDir = { relativePath: string; trashPath: string };

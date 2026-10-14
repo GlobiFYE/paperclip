@@ -2343,8 +2343,11 @@ The reaper compacts a workspace once per terminal cycle, after
 Compaction removes only directories that have a regenerable name
 (`node_modules`, `dist`, `build`, `coverage`, `storybook-static`, `target`,
 `.cache`, `.next`, `.nuxt`, `.parcel-cache`, `.svelte-kit`, `.turbo`, `.vite`),
-that Git ignores, and that hold no tracked file. It never enters `.git` or
-`.paperclip`, and it never follows a symlink. Tracked files, uncommitted changes,
+that Git ignores, and that hold no tracked file. A directory with such a name
+that does not qualify (for example a tracked `build/`) is searched in turn, so
+ignored dependencies inside it still go. It never enters `.git` or
+`.paperclip`, and it never follows a symlink. Its Git reads go through the
+workspace Git scheduler, so they have a deadline and stop when the sweep stops. Tracked files, uncommitted changes,
 untracked files, other ignored files (such as `.env` or local data), the branch,
 and its commits all stay. The workspace row stays active.
 
@@ -2352,8 +2355,10 @@ The removal is a rename into `.paperclip-compaction-trash` beside the worktree,
 made while the reaper holds the workspace lifecycle lock. The reaper checks the
 conditions above before the rename and again after it, in the same transaction.
 If the task reopened or a run started in between, the directories move back.
-Otherwise the trash is deleted. Leftover trash from an interrupted compaction is
-deleted on a later compaction.
+Otherwise the trash is deleted. Trash that an interrupted compaction or a failed
+delete leaves behind is deleted by a later sweep once it is more than an hour
+old. The sweep checks each worktree parent directory at most every 30 minutes,
+whether or not anything is left to compact.
 
 A compacted worktree is in the same state as a freshly created one, so when the
 task resumes, whatever produced those files the first time produces them again:

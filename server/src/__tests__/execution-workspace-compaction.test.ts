@@ -483,6 +483,19 @@ describeEmbeddedPostgres("terminal workspace compaction", () => {
     expect(await git(first.cwd, ["rev-parse", "HEAD"])).toBe(head);
   }, 60_000);
 
+  it("purges leftover trash even when the workspace has nothing left to compact", async () => {
+    const seeded = await seedWorkspace({ populate: false });
+    const trashEntry = path.join(path.dirname(seeded.worktreePath), WORKSPACE_COMPACTION_TRASH_DIR, "interrupted");
+    await writeFile(path.join(trashEntry, "0/left-pad/index.js"), "module.exports = 1;\n");
+    const twoHoursAgo = new Date(Date.now() - 2 * HOUR_MS);
+    await fs.utimes(trashEntry, twoHoursAgo, twoHoursAgo);
+
+    const sweep = await service().sweepTerminalWorkspaces();
+
+    expect(sweep).toMatchObject({ compacted: 0, compactionFailed: 0 });
+    expect(await exists(trashEntry)).toBe(false);
+  }, 30_000);
+
   it("does not compact when compaction is disabled", async () => {
     const seeded = await seedWorkspace();
     expect(await service({ workspaceCompactionDelayMs: null }).sweepTerminalWorkspaces()).toMatchObject({ compacted: 0 });
