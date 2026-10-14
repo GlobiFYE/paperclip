@@ -679,6 +679,18 @@ Activity-only reorderings wait for one second without further activity changes;
 new and removed tasks appear immediately. Titles, status, and live indicators stay
 current during that delay.
 
+### Local Linux runner qualification
+
+Before serving requests, the server reads `getconf GNU_LIBC_VERSION` once with
+an asynchronous subprocess, a one-second timeout, and a 1 KiB output limit.
+Runner discovery reuses those immutable platform facts. This check does not
+generate a Node diagnostic report or resolve socket hostnames.
+
+If `getconf` is missing, fails, times out, or returns an unrecognized version,
+the local libc remains unknown and automatic GNU/Linux runner selection stays
+disabled. Qualified Linux targets still require GNU libc 2.39 or newer. Existing
+saved execution choices remain unchanged.
+
 ### OpenCode native runtime
 
 Paperclip Runner resolves the pinned OpenCode platform package installed with
