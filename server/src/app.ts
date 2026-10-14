@@ -1,3 +1,4 @@
+import { agentJwtRevocationRoutes } from "./routes/agent-jwt-revocations.js";
 import { voiceSessionRoutes, voiceWebhookRoutes } from "./routes/voice-sessions.js";
 import { eq } from "drizzle-orm";
 import { chatEndpoints } from "@paperclipai/db";
@@ -863,6 +864,7 @@ export async function createApp(
   api.use(executionWorkspaceRoutes(db, { pluginWorkerManager: workerManager }));
   api.use(emailRoutes(db, emailChannels));
   api.use(goalRoutes(db));
+  api.use(agentJwtRevocationRoutes(db));
   api.use(onboardingSeedRoutes(db));
   api.use(boardChatRoutes(db, { deploymentMode: opts.deploymentMode }));
   api.use(voiceSessionRoutes(db, chatChannels.voice));

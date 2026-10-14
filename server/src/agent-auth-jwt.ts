@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { normalizeAgentApiKeyScope, type AgentApiKeyScope } from "@paperclipai/shared";
 import { resolvePaperclipInstanceId } from "./home-paths.js";
 
@@ -24,10 +24,37 @@ export interface LocalAgentJwtClaims {
 
 const JWT_ALGORITHM = "HS256";
 
-function parseNumber(value: string | undefined, fallback: number) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return Math.floor(parsed);
+export const MAX_AGENT_JWT_TTL_SECONDS = 48 * 60 * 60;
+
+function validatedTtl(value: unknown, name: string): number {
+  const parsed = typeof value === "string" && /^\d+$/.test(value) ? Number(value) : value;
+  if (typeof parsed !== "number" || !Number.isSafeInteger(parsed) || parsed < 1 || parsed > MAX_AGENT_JWT_TTL_SECONDS) {
+    throw new Error(`${name} must be an integer between 1 and ${MAX_AGENT_JWT_TTL_SECONDS} seconds`);
+  }
+  return parsed;
+}
+
+/** Adapter override > global override > compatibility default. Validate the whole map. */
+export function resolveAgentJwtTtlSeconds(adapterType: string): number {
+  const globalValue = process.env.PAPERCLIP_AGENT_JWT_TTL_SECONDS;
+  const fallback = globalValue === undefined ? MAX_AGENT_JWT_TTL_SECONDS
+    : validatedTtl(globalValue, "PAPERCLIP_AGENT_JWT_TTL_SECONDS");
+  const raw = process.env.PAPERCLIP_AGENT_JWT_TTL_BY_ADAPTER;
+  if (raw === undefined) return fallback;
+  let overrides: unknown;
+  try { overrides = JSON.parse(raw); } catch {
+    throw new Error("PAPERCLIP_AGENT_JWT_TTL_BY_ADAPTER must be a JSON object");
+  }
+  if (!overrides || typeof overrides !== "object" || Array.isArray(overrides)) {
+    throw new Error("PAPERCLIP_AGENT_JWT_TTL_BY_ADAPTER must be a JSON object");
+  }
+  for (const [adapter, ttl] of Object.entries(overrides)) {
+    if (!/^[a-z][a-z0-9_-]{0,63}$/.test(adapter)) throw new Error("Invalid JWT TTL adapter name");
+    validatedTtl(ttl, `JWT TTL for ${adapter}`);
+  }
+  return Object.hasOwn(overrides, adapterType)
+    ? validatedTtl((overrides as Record<string, unknown>)[adapterType], `JWT TTL for ${adapterType}`)
+    : fallback;
 }
 
 function parseBooleanEnv(value: string | undefined): boolean {
@@ -42,13 +69,6 @@ function jwtConfig() {
 
   return {
     secret,
-    // 48h default, matching DEFAULT_AGENT_JWT_TTL_SECONDS in cli/src/commands/env.ts
-    // and the agent-authentication design doc. Run tokens are minted once at
-    // adapter spawn and injected as env, so the TTL must cover the entire run —
-    // including host-suspension gaps: heartbeats scheduled while a laptop lid is
-    // closed fire during ~2s dark wakes, and the spawned session can then sit
-    // frozen for over an hour before it first executes.
-    ttlSeconds: parseNumber(process.env.PAPERCLIP_AGENT_JWT_TTL_SECONDS, 60 * 60 * 48),
     issuer: process.env.PAPERCLIP_AGENT_JWT_ISSUER ?? "paperclip",
     audience: process.env.PAPERCLIP_AGENT_JWT_AUDIENCE ?? "paperclip-api",
     // The control-plane instance this process belongs to. The live plane runs as
@@ -139,7 +159,8 @@ export function createLocalAgentJwt(
     responsible_user_id: responsibleUserId?.trim() || null,
     ...(keyScope.kind === "standard" ? {} : { key_scope: keyScope }),
     iat: now,
-    exp: now + config.ttlSeconds,
+    exp: now + resolveAgentJwtTtlSeconds(adapterType),
+    jti: randomUUID(),
     iss: config.issuer,
     aud: config.audience,
     instance_id: config.instanceId,
@@ -222,7 +243,10 @@ export function verifyLocalAgentJwt(token: string, options: { strictRunAuthority
   const companyId = claimedCompanyId;
 
   const now = Math.floor(Date.now() / 1000);
-  if (exp < now) return null;
+  if (!Number.isSafeInteger(iat) || !Number.isSafeInteger(exp)
+    || iat > now || exp <= now || exp <= iat || exp - iat > MAX_AGENT_JWT_TTL_SECONDS) return null;
+  if (Object.hasOwn(claims, "jti") && (typeof claims.jti !== "string"
+    || !/^[A-Za-z0-9_-]{1,128}$/.test(claims.jti))) return null;
 
   const issuer = typeof claims.iss === "string" ? claims.iss : undefined;
   const audience = typeof claims.aud === "string" ? claims.aud : undefined;

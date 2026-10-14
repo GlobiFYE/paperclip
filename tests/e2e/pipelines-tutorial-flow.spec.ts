@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { expect, request as pwRequest, test, type APIRequestContext, type APIResponse, type Locator, type Page } from "@playwright/test";
 import { createLocalAgentJwt } from "../../server/src/agent-auth-jwt";
 
@@ -107,7 +106,14 @@ async function createPipelineWriterAgentKey(board: APIRequestContext, companyId:
   await expectOk(approveResponse, "approve pipeline-writer join");
   const approved = await approveResponse.json() as { createdAgentId: string };
 
-  const runId = randomUUID();
+  // JWTs require a persisted run. This bounded (<4 minute) scenario can use
+  // the terminal grace after the no-op process completes.
+  await expectOk(await board.patch(`/api/agents/${approved.createdAgentId}`, {
+    data: { adapterConfig: { command: process.execPath, args: ["-e", "process.exit(0)"] } },
+  }), "configure pipeline writer");
+  const runResponse = await board.post(`/api/agents/${approved.createdAgentId}/heartbeat/invoke`);
+  await expectOk(runResponse, "start pipeline writer run");
+  const { id: runId } = await runResponse.json() as { id: string };
   const token = createLocalAgentJwt(approved.createdAgentId, companyId, "process", runId);
   if (!token) throw new Error("PAPERCLIP_AGENT_JWT_SECRET is required for pipeline writer JWT setup");
   return { agentId: approved.createdAgentId, runId, token };
