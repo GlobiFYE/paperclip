@@ -415,6 +415,11 @@ the issue lock and preserves all existing execution gates. If every candidate
 is rejected, the timer does not start a generic run. Agents that do not opt into
 this policy retain their generic timer behavior.
 
+Expected admission denials do not stop later candidates or agents. The scheduler
+logs their status, reason and task identity even when a failed transaction leaves
+no skipped-wake record. Existing skipped records remain intact. Unexpected
+server errors remain visible and are not treated as ordinary admission denials.
+
 After a successful legacy checkpoint, this timer owns the short continuation
 gap through `checkpoint.finishedAt + intervalSec + 60 seconds`. Rejected timer
 claims and unrelated agent runs cannot extend this checkpoint deadline. Recovery does not

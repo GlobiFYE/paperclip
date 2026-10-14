@@ -8,6 +8,7 @@ import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "../../__tests__/helpers/embedded-postgres.js";
 import { conflict, HttpError } from "../../errors.js";
+import { logger } from "../../middleware/logger.js";
 import { createHeartbeatRunPreparation } from "./run-preparation.js";
 import { createHeartbeatRunState } from "./run-state.js";
 import { createHeartbeatScheduling, type HeartbeatSchedulingDependencies } from "./scheduling.js";
@@ -284,6 +285,26 @@ describe.skipIf(!postgres.supported)("heartbeat scheduling database boundary", (
     });
     expect(await f.scheduler.tickTimers(now)).toEqual({ checked: 2, enqueued: 1, skipped: 1 });
     expect(f.deps.enqueueWakeup).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([true, false])("logs admission denials without a committed receipt for task-only=%s timers", async taskOnly => {
+    const f = await fixture();
+    f.deps.parseHeartbeatPolicy.mockReturnValue({ ...timerPolicy, enabled: true, skipTimerWhenNoActionableWork: taskOnly });
+    await db.update(issues).set({ monitorNextCheckAt: null }).where(eq(issues.id, f.issue.id));
+    f.deps.enqueueWakeup.mockRejectedValueOnce(conflict("A responsible user is required", { code: "responsible_user_unresolved" }));
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+    try {
+      expect(await f.scheduler.tickTimers(now)).toEqual({ checked: 1, enqueued: 0, skipped: 1 });
+      expect(warn).toHaveBeenCalledExactlyOnceWith({
+        agentId: f.agent.id,
+        issueId: taskOnly ? f.issue.id : null,
+        status: 409,
+        code: "responsible_user_unresolved",
+        reason: "A responsible user is required",
+      }, "heartbeat timer admission denied");
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it.each([new Error("Storage unavailable"), new HttpError(500, "Server failure")])("keeps unexpected scheduler errors visible: %s", async error => {

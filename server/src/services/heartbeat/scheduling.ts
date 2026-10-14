@@ -1271,6 +1271,13 @@ export function createHeartbeatScheduling(
             }
           } catch (err) {
             if (!(err instanceof HttpError && err.status >= 400 && err.status < 500)) throw err;
+            logger.warn({
+              agentId: agent.id,
+              issueId: candidate?.id ?? null,
+              status: err.status,
+              code: readNonEmptyString(parseObject(err.details).code),
+              reason: err.message,
+            }, "heartbeat timer admission denied");
           }
         }
         if (!admitted) skipped += 1;
