@@ -2594,6 +2594,46 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       )))[0];
       return { ...f, service, head, assessment, provider, action, inline, checks, writes };
     }
+    it.each([false, true])("recovers an approved queued GitHub review without another approval (revoked: %s)", async revoked => {
+      const f = await publicationRetryFixture();
+      let unavailable = true;
+      let attempts = 0;
+      f.setSupplementalProviderFetch(async (input, init) => {
+        if (String(input).includes("/issues/comments/") && init?.method === "PATCH") {
+          attempts++;
+          if (unavailable) return new Response("Unavailable", { status: 503, headers: { "retry-after": "120" } });
+        }
+        return f.provider(input, init);
+      });
+      vi.stubGlobal("fetch", f.providerFetch);
+      onTestFinished(() => { vi.unstubAllGlobals(); });
+      await initializeRunIdentity(db, { companyId: f.companyId, runId: f.run.id, issueId: f.conversation.issueId!,
+        responsibleUserId: null, cause: "company_default" });
+      const { createToolGatewayService } = await import("../services/tool-gateway.js");
+      const gateway = createToolGatewayService(db, { toolActionSigningSecret: "github-approval-retry-test-secret" });
+      const session = await gateway.createSession({ companyId: f.companyId, agentId: f.assignedAgentId, runId: f.run.id });
+      const tool = (await githubBotToolsForSession(db, f.session)).find(tool => tool.upstreamToolName === "submit_review")!;
+      await db.insert(toolPolicies).values({ companyId: f.companyId, name: "Review publication approval", policyType: "require_approval",
+        priority: 0, selectors: { catalogEntryId: tool.catalogEntryId! } });
+      await expect(gateway.executeTool({ sessionToken: session.token, tool: tool.name, parameters: f.assessment }))
+        .rejects.toMatchObject({ reasonCode: "approval_required" });
+      const [approval] = await db.select().from(toolActionRequests).where(eq(toolActionRequests.companyId, f.companyId));
+      expect(await gateway.approveActionRequest({ companyId: f.companyId, actionRequestId: approval.id, actor: { userId: "owner-user" } }))
+        .toMatchObject({ status: "executed" });
+      const action = await f.action();
+      expect(action).toMatchObject({ status: "failed", result: { retryable: true } });
+      unavailable = false;
+      if (revoked) await db.insert(toolPolicies).values({ companyId: f.companyId, name: "Revoke approved publication", policyType: "block",
+        priority: -1, selectors: { catalogEntryId: tool.catalogEntryId! } });
+      await db.update(chatActions).set({ result: { ...action.result, retryAt: new Date(0).toISOString() } }).where(eq(chatActions.id, action.id));
+      await f.service.processPending();
+      expect((await f.action()).status).toBe(revoked ? "cancelled" : "processed");
+      if (revoked) await expect(gateway.executeTool({ sessionToken: session.token, tool: tool.name, parameters: f.assessment })).rejects.toThrow();
+      else expect(await gateway.executeTool({ sessionToken: session.token, tool: tool.name, parameters: f.assessment }))
+        .toMatchObject({ status: "replayed", result: { data: { status: "processed", score: 3 } } });
+      expect(attempts).toBe(revoked ? 1 : 2);
+      expect(await db.select().from(toolActionRequests).where(eq(toolActionRequests.companyId, f.companyId))).toHaveLength(1);
+    }, 25_000);
     it("recovers lost inline and check responses without duplicate GitHub publications", async () => {
       const f = await publicationRetryFixture();
       const lost = new Set<string>();

@@ -240,6 +240,11 @@ still pending. Claim publication only after `status: processed`. Receipt recover
 does not itself mark a task Done; the agent must finish its task after confirming
 the receipt.
 
+For a call that required human approval, the durable publication keeps that
+verified approval for its exact operation. An exact caller retry only reads the
+current receipt; the worker owns provider retries. A new policy denial or revoked
+authority still stops recovery, and new content still requires its own approval.
+
 ## Hosted ingress
 
 Dedicated Apps use Cloud as a sealed transport gateway. Cloud routes opaque

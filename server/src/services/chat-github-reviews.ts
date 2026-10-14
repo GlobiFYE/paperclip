@@ -545,6 +545,28 @@ export function githubChatReviewService(db: Db, fetchImpl = fetch) {
     }
     return receipt(actionId);
   }
+  async function readPublicationReceipt(session: Session, name: string, input: unknown, invocationId: string) {
+    const source = await scope(session);
+    const [action] = await db.select().from(chatActions).where(and(
+      eq(chatActions.companyId, session.companyId), eq(chatActions.endpointId, source.endpoint.id),
+      eq(chatActions.conversationId, source.conversation.id), eq(chatActions.kind, "github_review_publication"),
+      sql`${chatActions.payload}->>'invocationId' = ${invocationId}`, sql`${chatActions.payload}->>'toolName' = ${name}`,
+    ));
+    if (!action) return null;
+    const binding = action.payload.session as Session;
+    if (binding.companyId !== session.companyId || binding.agentId !== session.agentId || binding.runId !== session.runId ||
+      binding.issueId !== session.issueId || hash(action.payload.parameters) !== hash(input))
+      throw conflict("This GitHub invocation is bound to a different publication");
+    await assertPublicationAuthority(source, action);
+    const result = await receipt(action.id);
+    if (name !== "submit_review") return result;
+    const [review] = await db.select().from(chatGitHubReviews).where(and(
+      eq(chatGitHubReviews.companyId, session.companyId), eq(chatGitHubReviews.id, String(action.payload.reviewId)),
+      eq(chatGitHubReviews.runId, session.runId!), eq(chatGitHubReviews.endpointId, source.endpoint.id),
+    ));
+    if (!review?.assessment) throw conflict("GitHub publication assessment is unavailable");
+    return { reviewId: review.id, ...result, score: review.assessment.score, conclusion: review.conclusion };
+  }
   async function execute(
     session: Session,
     name: string,
@@ -977,7 +999,7 @@ export function githubChatReviewService(db: Db, fetchImpl = fetch) {
         );
       if (
         invocation?.approvalState === "approved" &&
-        ["executing", "completed"].includes(invocation.status)
+        ["executing", "completed", "succeeded", "failed", "timed_out"].includes(invocation.status)
       )
         return;
     }
@@ -1527,5 +1549,5 @@ export function githubChatReviewService(db: Db, fetchImpl = fetch) {
     ));
     return row?.at ? new Date(row.at).getTime() : null;
   }
-  return { execute, processPending, nextPendingAt, scope };
+  return { execute, readPublicationReceipt, processPending, nextPendingAt, scope };
 }

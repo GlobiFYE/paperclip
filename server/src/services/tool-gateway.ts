@@ -10150,12 +10150,21 @@ export function createToolGatewayService(
           argumentsHash: argumentValidation.summary.sha256 ?? "",
         });
         if (replay?.matched) {
+          let replayResult: unknown = replay.result;
+          if (tool.providerType === "paperclip_github_chat" && ["comment", "update_comment", "submit_review"].includes(tool.upstreamToolName ?? "")) {
+            const access = await policyService.decide(policyInputForTool({ session, tool, parameters: effectiveParameters, consumeRateLimit: false }));
+            if (!access.allowed && access.decision !== "require_approval")
+              throw new ToolGatewayHttpError(policyErrorStatus(access), access.explanation, access.reasonCode);
+            const receipt = await githubChatReviewService(db).readPublicationReceipt(session, tool.upstreamToolName ?? "", effectiveParameters, replay.invocationId);
+            if (receipt) replayResult = validateToolContent({ value: { content: JSON.stringify(receipt), data: receipt },
+              direction: "result", sensitiveMode: "redact", promptInjectionMode: "block" }).value;
+          }
           return {
             invocationId: replay.invocationId,
             status: "replayed" as const,
             tool: virtualToolName ?? tool.name,
             targetTool: virtualToolName ? tool.name : undefined,
-            result: replay.result,
+            result: replayResult,
           };
         }
       }
@@ -10546,14 +10555,19 @@ export function createToolGatewayService(
           tool.providerType === "paperclip_github_chat" &&
           ["comment", "update_comment", "submit_review"].includes(tool.upstreamToolName ?? "") &&
           recorded.invocation.approvalState === "not_required";
-        const retryingGitHubPublication = gitHubPublicationReplay && accessDecision.allowed &&
+        const gitHubReplayPolicyAllowed = accessDecision.allowed;
+        const gitHubReplayBindingMatches =
           recorded.invocation.agentId === session.agentId && recorded.invocation.runId === session.runId &&
           recorded.invocation.issueId === session.issueId && recorded.invocation.connectionId === tool.connectionId &&
           recorded.invocation.toolName === tool.name && recorded.invocation.argumentsHash === effectiveArgumentsSummary.sha256 &&
           ["authorized", "executing", "succeeded", "failed", "timed_out"].includes(recorded.invocation.status);
-        if (gitHubPublicationReplay && accessDecision.allowed && !retryingGitHubPublication)
+        if (gitHubPublicationReplay && gitHubReplayPolicyAllowed && !gitHubReplayBindingMatches)
           throw new ToolGatewayHttpError(409, "Idempotency key belongs to a different GitHub publication", "github_idempotency_conflict");
-        if (recorded.replayed && !retryingSlackRateLimit && !gitHubPublicationReplay) {
+        const retryingGitHubPublication = gitHubPublicationReplay && accessDecision.allowed &&
+          recorded.invocation.approvalState === "not_required" && gitHubReplayBindingMatches;
+        if (recorded.replayed && !retryingSlackRateLimit && !retryingGitHubPublication) {
+          if (gitHubPublicationReplay && !gitHubReplayPolicyAllowed)
+            throw new ToolGatewayHttpError(policyErrorStatus(accessDecision), accessDecision.explanation, accessDecision.reasonCode);
           await writeAudit({
             session,
             companyId: session.companyId,
