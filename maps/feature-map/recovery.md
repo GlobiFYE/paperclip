@@ -137,6 +137,13 @@ cover evidence/confirmation, read-only access, stale or missing stop proof,
 source-only repair, and preserved task status. These tests use fixtures; separately
 verify original files and their attached artifact before recording a real repair.
 
+Repeat source-only repair with a `succeeded` legacy run that still has a retained
+file obligation. Its result must remain successful, its current task owner and
+status must stay unchanged, and later saved input must become eligible for normal
+admission. A running or queued source and a normal retry of a successful turn
+remain denied. The [reconciliation regressions](../../server/src/services/workspace-restore-reconciliation.test.ts)
+cover these cases and stop-receipt validation without claiming live provider proof.
+
 For an abandoned native copyback owner, the harness verifies the exact stopped
 deployment and the reconciler restores saved work automatically. Task users see
 no process details or shutdown form. The documented operator API handles older
