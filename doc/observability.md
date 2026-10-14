@@ -229,6 +229,17 @@ provider startup; they are not agent-run durations. A disabled endpoint takes
 the direct work path without a tracer lookup or additional log messages.
 Tracing failures cannot repeat recovery or replace its result or error.
 
+Native recovery and orphan reaping each run a native finalization
+reconciliation pass; the periodic recovery loop runs it on every scheduler tick.
+With an endpoint, a pass that takes at least one second records, after it ends,
+a `controller.native_reconciliation` root span from `paperclip.native-reconciliation`
+with one child span per phase: `legacy_workspace_exports`,
+`obsolete_policy_reviews`, `automatic_completion_reviews`, `candidate_scan` and
+`candidates`. The pass span carries `paperclip.native_reconciliation.scoped` and,
+once known, `paperclip.native_reconciliation.candidates` (a count). A failed
+pass marks the pass span and the phase that was running with an error status.
+Faster passes record nothing.
+
 ## Native Runner Trace Spans
 
 Paperclip Runner task runs emit a single foldable OpenTelemetry trace. This is

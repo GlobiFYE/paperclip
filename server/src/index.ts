@@ -1624,39 +1624,6 @@ async function startServerWithDatabaseTeardown(
       await startupHeartbeatRecovery;
     }
 
-    const setupCleanup = await environmentCustomImages.cleanupExpiredSetupSessions();
-    if (setupCleanup.timedOut > 0 || setupCleanup.failed > 0) {
-      logger.warn({ ...setupCleanup }, "startup environment customImage setup cleanup changed sessions");
-    }
-
-    const toolHealthSweep = await tools.sweepConnectionHealth();
-    if (toolHealthSweep.failed > 0) {
-      logger.warn({ ...toolHealthSweep }, "startup tool connection health sweep found failing connections");
-    }
-    await decisionExecutor.sweepExpired();
-
-    // Run the adapter login reaper once at startup, so a login sandbox that
-    // outlived a server restart is deleted before timer ticks start.
-    await adapterLoginReaper
-      .sweep()
-      .then(logAdapterLoginReaperResult)
-      .catch((err) => {
-        logger.error({ err }, "startup adapter login reaper sweep failed");
-      });
-
-    // Run the setup-token login reaper once at startup, so a login sandbox lease
-    // that outlived a server restart releases before timer ticks start.
-    await setupTokenReaper
-      .sweep()
-      .then(logSetupTokenReaperResult)
-      .catch((err) => {
-        logger.error({ err }, "startup setup-token login reaper sweep failed");
-      });
-
-    // Retry any orphan sandbox teardown left by a failed acquire before a server
-    // restart, so a leaked sandbox does not stay allocated across the restart.
-    await runEnvironmentLeaseCleanupSweep(0);
-
     const runRetentionSweep = async () => {
       const activeCompanies = await db.select({ id: companies.id }).from(companies).where(eq(companies.status, "active"));
       let archived = 0;
@@ -1674,9 +1641,43 @@ async function startServerWithDatabaseTeardown(
       const notifications = await retentionExecutor.deliverNotifications();
       return { archived, ...notifications };
     };
-    await runRetentionSweep();
+    // Startup housekeeping: provider and connection sweeps that every timer tick
+    // repeats and that neither serving requests nor run recovery depends on.
+    // Readiness does not wait for it. It is tracked as scheduler work, so idle
+    // sleep and shutdown wait for it. Each step logs its own failure and the
+    // next step still runs. The scheduler interval starts after it, so the login
+    // reapers and the lease cleanup still finish before the first timer tick.
+    const runStartupHousekeeping = async () => {
+      const step = (name: string, work: () => Promise<unknown>) =>
+        work().catch((err: unknown) => {
+          logger.error({ err, startupStep: name }, "startup housekeeping step failed");
+        });
+      await step("custom_image_setup_cleanup", async () => {
+        const setupCleanup = await environmentCustomImages.cleanupExpiredSetupSessions();
+        if (setupCleanup.timedOut > 0 || setupCleanup.failed > 0) {
+          logger.warn({ ...setupCleanup }, "startup environment customImage setup cleanup changed sessions");
+        }
+      });
+      await step("tool_connection_health", async () => {
+        const toolHealthSweep = await tools.sweepConnectionHealth();
+        if (toolHealthSweep.failed > 0) {
+          logger.warn({ ...toolHealthSweep }, "startup tool connection health sweep found failing connections");
+        }
+      });
+      await step("decision_expiry", () => decisionExecutor.sweepExpired());
+      // A login sandbox that outlived a server restart is deleted before timer
+      // ticks start.
+      await step("adapter_login_reaper", () => adapterLoginReaper.sweep().then(logAdapterLoginReaperResult));
+      // A setup-token login sandbox lease that outlived a server restart
+      // releases before timer ticks start.
+      await step("setup_token_reaper", () => setupTokenReaper.sweep().then(logSetupTokenReaperResult));
+      // Retry any orphan sandbox teardown left by a failed acquire before a
+      // server restart, so a leaked sandbox does not stay allocated.
+      await step("environment_lease_cleanup", () => runEnvironmentLeaseCleanupSweep(0));
+      await step("retention_sweep", runRetentionSweep);
+    };
 
-    startHeartbeatSchedulerInterval(() => {
+    const startHeartbeatScheduler = () => startHeartbeatSchedulerInterval(() => {
       // Track the outer async callback as well as the work it starts. Shutdown
       // can then wait through an already-running suppression check before it
       // captures the authoritative set of running heartbeat rows.
@@ -1855,6 +1856,9 @@ async function startServerWithDatabaseTeardown(
         logger.error({ err }, "heartbeat scheduler tick failed");
       }));
     });
+    trackHeartbeatSchedulerWork(runStartupHousekeeping().then(() => {
+      if (!heartbeatSchedulerStopped) startHeartbeatScheduler();
+    }));
   } else {
     // The heartbeat scheduler is disabled, but the orphan-sandbox cleanup sweep
     // is still required. A failed acquire can leak a paid provider sandbox, so
