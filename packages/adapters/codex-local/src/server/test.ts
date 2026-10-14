@@ -60,7 +60,7 @@ function firstNonEmptyLine(text: string): string {
 
 function commandLooksLike(command: string, expected: string): boolean {
   const base = path.basename(command).toLowerCase();
-  return base === expected || base === `${expected}.cmd` || base === `${expected}.exe`;
+  return base === expected || base === `${expected}.cmd` || base === `${expected}.exe` || base === `${expected}.js`;
 }
 
 function summarizeProbeDetail(stdout: string, stderr: string, parsedError: string | null): string | null {
