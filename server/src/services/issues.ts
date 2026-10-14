@@ -96,7 +96,7 @@ import {
   isUuidLike,
   normalizeIssueIdentifier as normalizeIssueReferenceIdentifier,
 } from "@paperclipai/shared";
-import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
+import { badRequest, conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import { isForeignKeyViolation } from "../db-errors.js";
 import { logger } from "../middleware/logger.js";
 import { parseObject } from "../adapters/utils.js";
@@ -1715,6 +1715,8 @@ export function deriveIssueCommentRunLogAttribution(
 // so a request like `?status=todo&status=in_progress` arrives here as an
 // array. Single-key + comma-separated forms remain valid too; normalize the
 // supported shapes once so the service contract matches runtime reality.
+// Unknown statuses are rejected with a 400 so a typo does not read as
+// "no matching issues".
 export function parseStatusFilter(
   input: string | readonly string[] | undefined,
 ): string[] {
@@ -1724,10 +1726,17 @@ export function parseStatusFilter(
     : typeof input === "string"
       ? [input]
       : [];
-  return entries
+  const statuses = entries
     .flatMap((entry) => (typeof entry === "string" ? entry.split(",") : []))
     .map((status) => status.trim())
     .filter(Boolean);
+  const unknown = statuses.filter((status) => !ALL_ISSUE_STATUSES.includes(status));
+  if (unknown.length > 0) {
+    throw badRequest(`Unknown issue status: ${unknown.join(", ")}`, {
+      allowed: ALL_ISSUE_STATUSES,
+    });
+  }
+  return statuses;
 }
 
 export interface IssueFilters {
