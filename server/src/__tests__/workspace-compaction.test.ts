@@ -132,6 +132,19 @@ describe("findRegenerableWorkspaceDirs", () => {
     expect(await findRegenerableWorkspaceDirs(worktreePath)).toEqual(["pkg1/node_modules"]);
   });
 
+  it("ignores global and repository-local exclude files", async () => {
+    const { root, repoRoot, worktreePath } = await createRepoWithWorktree(["dist/"]);
+    const globalExcludes = path.join(root, "global-gitignore");
+    await write(globalExcludes, "build/\n");
+    await git(repoRoot, ["config", "core.excludesFile", globalExcludes]);
+    await write(path.join(repoRoot, ".git/info/exclude"), "coverage/\n");
+    await write(path.join(worktreePath, "build/draft.md"));
+    await write(path.join(worktreePath, "coverage/report.html"));
+    await write(path.join(worktreePath, "dist/bundle.js"));
+
+    expect(await findRegenerableWorkspaceDirs(worktreePath)).toEqual(["dist"]);
+  });
+
   it("stops when the sweep is aborted", async () => {
     const { worktreePath } = await createRepoWithWorktree(["node_modules/"]);
     await write(path.join(worktreePath, "node_modules/a/index.js"));

@@ -2343,7 +2343,9 @@ The reaper compacts a workspace once per terminal cycle, after
 Compaction removes only directories that have a regenerable name
 (`node_modules`, `dist`, `build`, `coverage`, `storybook-static`, `target`,
 `.cache`, `.next`, `.nuxt`, `.parcel-cache`, `.svelte-kit`, `.turbo`, `.vite`),
-that Git ignores, and that hold no tracked file. A directory with such a name
+that the repository's own `.gitignore` files ignore (a negated pattern, a global
+excludes file, or `.git/info/exclude` does not count), and that hold no tracked
+file. A directory with such a name
 that does not qualify (for example a tracked `build/`) is searched in turn, so
 ignored dependencies inside it still go. It never enters `.git` or
 `.paperclip`, and it never follows a symlink. It checks each directory's ignore

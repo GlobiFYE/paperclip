@@ -68,6 +68,12 @@ function splitNul(output: string) {
   return output.split("\0");
 }
 
+function isRepositoryGitignore(source: string) {
+  return !path.isAbsolute(source)
+    && !source.split("/").includes("..")
+    && path.posix.basename(source) === ".gitignore";
+}
+
 // Keeps the candidates that Git ignores and that hold no tracked file.
 // `check-ignore` answers per path, also for a path below an ignored parent.
 // It exits 1 when no path is ignored, which is a normal answer.
@@ -76,7 +82,9 @@ async function filterRemovableCandidates(worktreePath: string, candidates: strin
   // line number, pattern, and path. The source is empty for a path that no
   // pattern matches. Verbose output also reports a negating pattern such as
   // `!build/`, which means Git does NOT ignore the path, so only a match by a
-  // non-negated pattern counts.
+  // non-negated pattern counts. Only the repository's own `.gitignore` files
+  // count as evidence: a user's global excludes file or `.git/info/exclude`
+  // says nothing about whether this repository's directory is regenerable.
   const fields = splitNul(await runGitRead(
     worktreePath,
     ["check-ignore", "--stdin", "-z", "--verbose", "--non-matching"],
@@ -85,7 +93,7 @@ async function filterRemovableCandidates(worktreePath: string, candidates: strin
   const ignored = new Set<string>();
   for (let index = 0; index + 3 < fields.length; index += 4) {
     const [source, , pattern, candidate] = fields.slice(index, index + 4);
-    if (source && pattern && !pattern.startsWith("!")) ignored.add(candidate!);
+    if (source && pattern && !pattern.startsWith("!") && isRepositoryGitignore(source)) ignored.add(candidate!);
   }
   const ignoredCandidates = candidates.filter((candidate) => ignored.has(candidate));
   if (ignoredCandidates.length === 0) return [];
