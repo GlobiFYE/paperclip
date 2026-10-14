@@ -3154,7 +3154,7 @@ function RunListItem({ run, isSelected, agentId }: { run: HeartbeatRun; isSelect
   );
 }
 
-function RunsTab({
+export function RunsTab({
   runs,
   companyId,
   agentId,
@@ -3189,7 +3189,7 @@ function RunsTab({
       {selection.error && <Button variant="outline" onClick={() => { void selection.retry(); }}>Try again</Button>}
     </div>;
   }
-  if (runs.length === 0) return <p className="text-sm text-muted-foreground">No runs yet.</p>;
+  if (runs.length === 0 && !selectedRun) return <p className="text-sm text-muted-foreground">No runs yet.</p>;
 
   // Mobile: show either run list OR run detail with back button
   if (isMobile) {
