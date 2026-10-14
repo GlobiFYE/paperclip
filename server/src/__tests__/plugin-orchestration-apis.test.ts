@@ -173,11 +173,6 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
     const all = await services.issues.list(params);
     expect(all).toHaveLength(5);
 
-    // A caller paging with limit=2 (e.g. the HA plugin's listAllIssues) must see
-    // every row exactly once across pages, including page 1+ (offset >= limit).
-    // Before the fix, issues.list() already windowed the SQL result to `limit`
-    // rows and the host re-sliced that already-trimmed array a second time, so
-    // offset >= limit always returned [] regardless of how many rows existed.
     const page0 = await services.issues.list({ ...params, limit: 2, offset: 0 });
     const page1 = await services.issues.list({ ...params, limit: 2, offset: 2 });
     const page2 = await services.issues.list({ ...params, limit: 2, offset: 4 });
