@@ -781,6 +781,22 @@ async function awaitRunnerSuspensionBarrier(input: {
   deadline: number;
   pollIntervalMs?: number;
 }): Promise<boolean> {
+  if (Date.now() >= input.deadline) return false;
+  const readRunnerState = async (): Promise<Record<string, unknown> | undefined> => {
+    const remainingMs = input.deadline - Date.now();
+    if (remainingMs <= 0) return undefined;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        input.readRunnerState(),
+        new Promise<undefined>(resolveDeadline => {
+          timer = setTimeout(() => resolveDeadline(undefined), remainingMs);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  };
   let existing = [...input.commands()]
     .reverse()
     .find(
@@ -793,13 +809,16 @@ async function awaitRunnerSuspensionBarrier(input: {
     // Reuse its receipt only when the current exact durable state is already
     // suspended; otherwise issue a new command rather than waiting on history.
     try {
-      if ((await input.readRunnerState()).lifecycle === "suspended")
+      const state = await readRunnerState();
+      if (state === undefined) return false;
+      if (state.lifecycle === "suspended")
         return Date.now() < input.deadline;
     } catch {
       // The normal bounded barrier below handles unavailable state.
     }
     existing = undefined;
   }
+  if (Date.now() >= input.deadline) return false;
   const commandId =
     existing?.commandId ??
     `command_close_suspend_${randomUUID().replaceAll("-", "")}`;
@@ -819,11 +838,14 @@ async function awaitRunnerSuspensionBarrier(input: {
     }
     let lifecycle: unknown;
     try {
-      lifecycle = (await input.readRunnerState()).lifecycle;
+      const state = await readRunnerState();
+      if (state === undefined) return false;
+      lifecycle = state.lifecycle;
     } catch {
       // A remote filesystem can lag the command-result delivery by a small
       // amount. Keep the single close deadline as the fail-closed bound.
     }
+    if (Date.now() >= input.deadline) return false;
     if (
       command?.status === "completed" &&
       lifecycle === "suspended" &&

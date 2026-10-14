@@ -202,3 +202,13 @@ Scoped Verification: `not-run` — verify allowed/denied access using the actual
 actor independently from the credential-free ownership controls. This correction
 adds no account-setup, cleanup-override or session-reset authority. The real native
 readiness/recovery fixtures and installed provider acceptance remain separate gates.
+
+Scoped shutdown source review: 2026-10-14, against literal
+`651a3de64fc943216cc414b64b1443809f9499da`. The suspension barrier bounds remote
+state reads by its remaining deadline and rejects late proof. Intentional
+[provider ingress shutdown](../../server/src/realtime/runner-prp-outbound.ts)
+joins physical socket closure and retires the connection owner before endpoint
+release. Unconfirmed termination stays blocked. Existing fake-peer and delayed
+read controls are source evidence; this changes no actor, company, account or
+session-reset permission. Operation-level verification remains `not-run` and
+the failed Test setup does not qualify successful live cleanup.

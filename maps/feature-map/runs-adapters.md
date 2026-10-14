@@ -124,3 +124,13 @@ state. Readiness observes shutdown; resumed startup cannot reactivate ingress
 after close. These are lifecycle controls, separate from installed provider proof.
 The real daemon readiness and recovery controls require their existing native
 fixtures in hosted CI; passing credential-free controls does not qualify them.
+
+For remote setup shutdown, verify that each durable-state read respects the
+remaining suspension deadline. A late result cannot establish suspension or
+queue a replacement command after that deadline. An intentional ingress close
+must observe physical socket closure before retiring its connection owner and
+releasing the endpoint; an unresponsive peer must not extend the setup budget.
+The existing transport and ingress suites exercise these conditions without a
+provider. Repeat the actual managed setup and useful task journey separately;
+the literal `651a3de64fc943216cc414b64b1443809f9499da` Test attempt failed
+cleanup before hire and retains its unconfirmed recovery state.

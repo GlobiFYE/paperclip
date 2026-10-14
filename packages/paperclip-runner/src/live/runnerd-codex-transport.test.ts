@@ -1405,6 +1405,61 @@ it("reserves a bounded suspension window after close preparation", () => {
 });
 
 it.each([
+  { existingCommand: false, rejectLateRead: false },
+  { existingCommand: false, rejectLateRead: true },
+  { existingCommand: true, rejectLateRead: false },
+  { existingCommand: true, rejectLateRead: true },
+])("returns unconfirmed suspension at its deadline while a remote state read is still pending ($existingCommand, $rejectLateRead)", async ({ existingCommand, rejectLateRead }) => {
+  vi.useFakeTimers();
+  const commands: { commandId: string; type: string; status: string }[] = existingCommand
+    ? [{ commandId: "exact-suspend", type: "runner.suspend", status: "completed" }]
+    : [];
+  const readRunnerState = vi.fn(async () => {
+    await new Promise<void>(resolveRead => setTimeout(resolveRead, 10_000));
+    if (rejectLateRead) throw new Error("remote state unavailable after its own timeout");
+    return { lifecycle: "suspended" };
+  });
+  const unhandled = vi.fn();
+  process.on("unhandledRejection", unhandled);
+  const queueSuspend = vi.fn((commandId: string) => commands.push({ commandId, type: "runner.suspend", status: "completed" }));
+  const release = vi.fn();
+  let settled = false;
+  let suspended: boolean | undefined;
+  const result = runnerdRecoveryInternals.awaitRunnerSuspensionBarrier({
+    commands: () => commands,
+    queueSuspend,
+    readRunnerState,
+    runnerHasExited: async () => true,
+    pump: () => undefined,
+    deadline: Date.now() + 2_500,
+    pollIntervalMs: 0,
+  }).then(value => {
+    settled = true;
+    suspended = value;
+    if (value) release();
+    return value;
+  });
+  try {
+    await vi.advanceTimersByTimeAsync(2_500);
+    expect(readRunnerState).toHaveBeenCalledOnce();
+    expect(settled).toBe(true);
+    expect(suspended).toBe(false);
+    expect(queueSuspend).toHaveBeenCalledTimes(existingCommand ? 0 : 1);
+    expect(release).not.toHaveBeenCalled();
+  } finally {
+    try {
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(result).resolves.toBe(false);
+      expect(release).not.toHaveBeenCalled();
+      expect(unhandled).not.toHaveBeenCalled();
+    } finally {
+      process.off("unhandledRejection", unhandled);
+      vi.useRealTimers();
+    }
+  }
+});
+
+it.each([
   { provider: "acpx" as const, acpxAgent: "pi" as const, closeGraceMs: undefined, drained: true },
   { provider: "codex" as const, acpxAgent: undefined, closeGraceMs: undefined, drained: false },
   { provider: "acpx" as const, acpxAgent: "pi" as const, closeGraceMs: 400, drained: false },
