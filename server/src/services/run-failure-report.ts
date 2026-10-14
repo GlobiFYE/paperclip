@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { agents, heartbeatRuns, type Db } from "@paperclipai/db";
+import { agents, dotRunnerAssignments, grokBotDispatches, heartbeatRuns, nativeRunFinalizations, type Db } from "@paperclipai/db";
 import { captureRunFailure, type RunFailureStatus } from "../sentry.js";
 import {
   collectRunFailureDiagnostics,
@@ -175,6 +175,27 @@ function isProviderQuotaFailure(run: HeartbeatRun, options: RunFailureReportOpti
 }
 
 /**
+ * The Grok endpoint refused every work wake with an HTTP 4xx, so the offer
+ * expired unaccepted. Durable delivery receipts prove the external cause. A
+ * local rejection (no HTTP status), any delivered wake, or accepted work stays
+ * reportable.
+ */
+async function isRejectedExternalBotWake(db: Db, run: HeartbeatRun): Promise<boolean> {
+  if (run.status !== "failed" || run.runtimeMode !== "native" || run.errorCode !== "native_provider_terminal_failed") return false;
+  const [finalization] = await db.select({ failureDetail: nativeRunFinalizations.failureDetail }).from(nativeRunFinalizations)
+    .where(and(eq(nativeRunFinalizations.runId, run.id), eq(nativeRunFinalizations.companyId, run.companyId)));
+  if (finalization?.failureDetail?.originalFailureCode !== "dot_assignment_expired") return false;
+  const offers = await db.select({ id: dotRunnerAssignments.id, acceptedAt: dotRunnerAssignments.acceptedAt }).from(dotRunnerAssignments)
+    .where(and(eq(dotRunnerAssignments.runId, run.id), eq(dotRunnerAssignments.companyId, run.companyId)));
+  if (offers.length !== 1 || offers[0]!.acceptedAt) return false;
+  const wakes = await db.select({ status: grokBotDispatches.status, httpStatus: grokBotDispatches.httpStatus }).from(grokBotDispatches)
+    .where(and(eq(grokBotDispatches.assignmentId, offers[0]!.id), eq(grokBotDispatches.companyId, run.companyId),
+      eq(grokBotDispatches.kind, "mailbox_updated")));
+  return wakes.length > 0 && wakes.every((wake) =>
+    wake.status === "rejected" && wake.httpStatus != null && wake.httpStatus >= 400 && wake.httpStatus < 500);
+}
+
+/**
  * Report a terminal run failure to Sentry. Returns at once for any status
  * other than failures and unexpected started cancellations. Never throws — a Sentry failure or a
  * database read failure must not change the caller's control flow.
@@ -222,6 +243,7 @@ async function captureTerminalRunFailure(
       .then((rows) => rows[0] ?? null);
 
     if (isHermesConnectionFailure(run, options, agent?.adapterType)) return;
+    if (await isRejectedExternalBotWake(db, run)) return;
 
     const taskId = readTaskId(run);
     if (!taskId) {

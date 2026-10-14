@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import os from "node:os";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { agents, applyPendingMigrations, closeRegisteredClients, companies, createDb, heartbeatRuns, type Db } from "@paperclipai/db";
+import { agents, applyPendingMigrations, authUsers, closeRegisteredClients, companies, companySecrets, createDb, dotAgentBindings,
+  dotRunnerAssignments, grokBotDispatches, grokBotRoutines, heartbeatRuns, issues, mcpOauthClients, mcpOauthGrants, nativeRunFinalizations,
+  type Db } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
   startEmbeddedPostgresTestDatabase,
@@ -67,9 +69,15 @@ describeEmbeddedPostgres("reportRunFailure", () => {
     vi.clearAllMocks();
     vi.unstubAllEnvs();
     process.env = inheritedEnv;
+    await db.delete(grokBotRoutines);
+    await db.delete(companySecrets);
+    await db.delete(nativeRunFinalizations);
     await db.delete(heartbeatRuns);
+    await db.delete(issues);
     await db.delete(agents);
     await db.delete(companies);
+    await db.delete(mcpOauthClients);
+    await db.delete(authUsers);
   });
 
   afterAll(async () => {
@@ -332,6 +340,58 @@ describeEmbeddedPostgres("reportRunFailure", () => {
   it("keeps a provider quota code reportable during setup", async () => {
     await seedCompanyAndAgent({ adapterType: "claude_local" });
     await reportRunFailure(db, providerQuotaRun(), { phase: "setup" });
+    expect(mockCaptureRunFailure).toHaveBeenCalledOnce();
+  });
+
+  async function expiredGrokOffer(input: {
+    wakes: Array<{ status: "rejected" | "accepted" | "acknowledged" | "unknown"; httpStatus: number | null }>;
+    acceptedAt?: Date | null;
+    originalFailureCode?: string;
+  }) {
+    await seedCompanyAndAgent({ adapterType: "paperclip_runner", adapterConfig: { provider: "grok_bot" } });
+    const userId = randomUUID();
+    await db.insert(authUsers).values({ id: userId, name: "Operator", email: `${userId}@example.test`, createdAt: new Date(), updatedAt: new Date() });
+    await db.insert(mcpOauthClients).values({ id: userId, name: "Grok", redirectUris: ["https://client.example/callback"] });
+    const [grant] = await db.insert(mcpOauthGrants).values({ companyId, userId, clientId: userId, resource: "https://paperclip.example/mcp/runner",
+      purpose: "agent", agentId, scopes: ["paperclip:agent"] }).returning();
+    const [binding] = await db.insert(dotAgentBindings).values({ companyId, agentId, operatorId: userId, grantId: grant!.id,
+      providerKind: "grok_bot", status: "ready" }).returning();
+    const [secret] = await db.insert(companySecrets).values({ companyId, key: `grok-${binding!.id}`, name: "Grok routine" }).returning();
+    const [routine] = await db.insert(grokBotRoutines).values({ companyId, agentId, bindingId: binding!.id, bindingGeneration: 1,
+      botName: "Grok", secretId: secret!.id, secretVersion: 1 }).returning();
+    const [issue] = await db.insert(issues).values({ companyId, title: "Grok task", assigneeAgentId: agentId, status: "in_progress" }).returning();
+    const run = buildRun({ errorCode: "native_provider_terminal_failed", error: "Dot assignment acceptance or execution authority expired.",
+      nativeIssueId: issue!.id, runtimeMode: "native", executionStage: "preparing", nativePhase: "terminal_failure", exitCode: null, signal: null });
+    await db.insert(heartbeatRuns).values(run);
+    await db.insert(nativeRunFinalizations).values({ runId: run.id, companyId, issueId: run.nativeIssueId!, phase: "terminal_failure",
+      failureCode: "native_provider_terminal_failed", failureDetail: { originalFailureCode: input.originalFailureCode ?? "dot_assignment_expired" } });
+    const [assignment] = await db.insert(dotRunnerAssignments).values({ companyId, agentId, bindingId: binding!.id, bindingGeneration: 1,
+      runId: run.id, normalizedSessionId: randomUUID(), turnId: randomUUID(), controllerGeneration: 1, catalogDigest: "fixture", projection: {},
+      status: "fenced", acceptBy: new Date(Date.now() - 1000), expiresAt: new Date(Date.now() + 3_600_000), acceptedAt: input.acceptedAt ?? null }).returning();
+    for (const wake of input.wakes) {
+      await db.insert(grokBotDispatches).values({ companyId, routineId: routine!.id, bindingId: binding!.id, bindingGeneration: 1,
+        grantId: grant!.id, routineRevision: 1, assignmentId: assignment!.id, sourceEventId: randomUUID(), kind: "mailbox_updated",
+        payload: {}, status: wake.status, httpStatus: wake.httpStatus, expiresAt: new Date(Date.now() + 600_000) });
+    }
+    return run;
+  }
+
+  it("keeps a Grok offer local when the endpoint rejected every work wake with HTTP 4xx", async () => {
+    const run = await expiredGrokOffer({ wakes: [{ status: "rejected", httpStatus: 400 }, { status: "rejected", httpStatus: 400 }] });
+    await reportRunFailure(db, run, { phase: "execute" });
+    expect(mockCaptureRunFailure).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["no wake was sent", { wakes: [] }],
+    ["a wake was rejected locally without HTTP evidence", { wakes: [{ status: "rejected", httpStatus: 400 }, { status: "rejected", httpStatus: null }] }],
+    ["the endpoint accepted a wake", { wakes: [{ status: "rejected", httpStatus: 400 }, { status: "acknowledged", httpStatus: 200 }] }],
+    ["delivery is uncertain", { wakes: [{ status: "unknown", httpStatus: 503 }] }],
+    ["the bot accepted the work", { wakes: [{ status: "rejected", httpStatus: 400 }], acceptedAt: new Date() }],
+    ["the run failed for another provider reason", { wakes: [{ status: "rejected", httpStatus: 400 }], originalFailureCode: "provider_failed" }],
+  ] as const)("keeps an expired Grok offer reportable when %s", async (_label, input) => {
+    const run = await expiredGrokOffer({ ...input, wakes: [...input.wakes] });
+    await reportRunFailure(db, run, { phase: "execute" });
     expect(mockCaptureRunFailure).toHaveBeenCalledOnce();
   });
 
