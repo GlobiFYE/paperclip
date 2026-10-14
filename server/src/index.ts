@@ -2,8 +2,9 @@ import { skillSourceSyncService } from "./services/skill-source-sync.js";
 import { subscribeAllCompanyLiveEvents } from "./services/live-events.js";
 import { DELIVERY_QUEUES } from "./services/delivery-work-notifications.js";
 import type { createDeliveryWorkCoordinator } from "./services/delivery-work-coordinator.js";
+import { registerTerminalWorkspaceWork } from "./services/terminal-workspace-work.js";
 import { isIdleTaskDrainActive, beginIdleTrackedWork, trackIdleWork } from "./services/task-admission.js";
-import { markIdleStartupComplete } from "./services/idle-local-work.js";
+import { markIdleStartupComplete, registerIdleLocalWorkProbe } from "./services/idle-local-work.js";
 import { clearIdleBackupWakeRequired, idleBackupWakeMarker, markIdleBackupWakeRequired, verifyIdleDatabaseBackup } from "./services/idle-database-backup.js";
 import { cloudWarmStandbyServerOptions } from "./middleware/cloud-warm-standby.js";
 import { createCloudWarmStandby } from "./services/cloud-warm-standby.js";
@@ -1386,36 +1387,22 @@ async function startServerWithDatabaseTeardown(
           logger.error({ err }, "merged pull-request confirmation sweep failed");
         }));
     };
-    // Emit a periodic signal when the reaper inspects candidates but archives
-    // none, so an inert reaper that skips every candidate is never fully silent.
-    // The throttle keeps the 30s cadence from flooding the log.
     let lastTerminalWorkspaceSkipLogAt = 0;
-    const terminalWorkspaceSkipLogIntervalMs = 10 * 60 * 1000;
-    const scheduleTerminalWorkspaceSweep = () => {
-      if (isIdleTaskDrainActive() || heartbeatSchedulerStopped) return;
-      trackHeartbeatSchedulerWork(terminalWorkspaces
-        .sweepTerminalWorkspaces()
-        .then((result) => {
-          if (result.archived > 0 || result.cleanupFailed > 0) {
-            logger.info(result, "terminal issue workspace reaper changed workspace state");
-            return;
-          }
-          const skipped =
-            result.skippedActiveRun
-            + result.skippedNonTerminalTree
-            + result.skippedUndelivered
-            + result.skippedRace
-            + result.skippedCooldown;
-          const nowMs = Date.now();
-          if (skipped > 0 && nowMs - lastTerminalWorkspaceSkipLogAt >= terminalWorkspaceSkipLogIntervalMs) {
-            lastTerminalWorkspaceSkipLogAt = nowMs;
-            logger.info(result, "terminal issue workspace reaper skipped all candidates");
-          }
-        })
-        .catch((err) => {
-          logger.error({ err }, "terminal issue workspace reaper failed");
-        }));
-    };
+    const terminalWorkspaceWorker = registerTerminalWorkspaceWork(deliveryWork, {
+      ...terminalWorkspaces,
+      sweepTerminalWorkspaces: async (limit, signal) => {
+        const result = await terminalWorkspaces.sweepTerminalWorkspaces(limit, signal);
+        if (result.archived > 0 || result.cleanupFailed > 0) {
+          logger.info(result, "terminal issue workspace reaper changed workspace state");
+        } else if (result.checked > 0 && Date.now() - lastTerminalWorkspaceSkipLogAt >= 10 * 60 * 1000) {
+          lastTerminalWorkspaceSkipLogAt = Date.now();
+          logger.info(result, "terminal issue workspace reaper skipped all candidates");
+        }
+        return result;
+      },
+    }, () => !isIdleTaskDrainActive() && !isWarmStandby() && !heartbeatSchedulerStopped);
+    registerIdleLocalWorkProbe(() => terminalWorkspaceWorker.hasUnrecoveredWork() ? "present" : "none");
+    await terminalWorkspaceWorker.ready;
 
     // The restart-safe cleanup backstop for adapter login sessions. The
     // in-process five-minute timer stays the primary control. This reaper runs
@@ -1723,7 +1710,6 @@ async function startServerWithDatabaseTeardown(
         scheduleMergedPullRequestConfirmationSweep();
         scheduleGitHubConnectionEventPoll();
         scheduleGitHubConnectionContinuitySweep();
-        scheduleTerminalWorkspaceSweep();
         scheduleAdapterLoginReaperSweep();
         scheduleSetupTokenReaperSweep();
         scheduleEnvironmentLeaseCleanupSweep();

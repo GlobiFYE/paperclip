@@ -11,6 +11,7 @@ import { taskWorkspaceSelectionSchema, type TaskWorkspaceSelection, type TaskWor
 import { authorizationService, executionWorkspaceReadSqlCondition, projectReadSqlCondition, issueReadSqlCondition, type AuthorizationActor } from "./authorization.js";
 import type { SQL } from "drizzle-orm";
 import { createWorkspaceGitInspectionCache } from "./workspace-git-inspection-cache.js";
+import { notifyTerminalWorkspaceWork, terminalWorkspaceDeadlineSql } from "./terminal-workspace-work.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
@@ -1897,6 +1898,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         }
         return input.onSkip();
       }
+      await notifyTerminalWorkspaceWork(tx);
       return input.write({ tx, fresh });
     });
   }
@@ -2859,7 +2861,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       };
     },
 
-    sweepTerminalWorkspaces: async (limit = 50) => {
+    sweepTerminalWorkspaces: async (limit = 50, signal?: AbortSignal) => {
       // Skip this sweep while another sweep runs. A concurrent sweep would share
       // the cursor and the boundary and could corrupt the rotation state. A
       // skipped tick is safe: the next tick runs the sweep with intact state.
@@ -2943,6 +2945,33 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       };
 
       for (const workspace of candidates) {
+        signal?.throwIfAborted();
+        const issueTree = await listWorkspaceIssueTree(workspace);
+        const sourceIssue = issueTree.find((issue) => issue.id === workspace.sourceIssueId);
+        const reopenPending = metadataHasReopenPendingConsumption(
+          workspace.metadata as Record<string, unknown> | null,
+        );
+        if (!sourceIssue || issueTree.some(issue => !TERMINAL_ISSUE_STATUSES.has(issue.status))) {
+          if (reopenPending) {
+            await clearReopenPendingConsumptionUnderLock(workspace.id, {
+              expectedGeneration: readExecutionWorkspaceLifecycleGeneration(
+                workspace.metadata as Record<string, unknown> | null,
+              ),
+            });
+          }
+          result.skippedNonTerminalTree += 1;
+          continue;
+        }
+        const latestTerminalAt = Math.max(...issueTree.map(issue => issueTerminalTimestamp(issue)!.getTime()));
+        if (workspaceReaperCooldownMs > 0 && latestTerminalAt + workspaceReaperCooldownMs > now().getTime()) {
+          result.skippedCooldown += 1;
+          continue;
+        }
+        if (await workspaceHasActiveRun(workspace)) {
+          if (reopenPending) result.skippedReopened += 1;
+          else result.skippedActiveRun += 1;
+          continue;
+        }
         const executionWorkspace = toExecutionWorkspace(workspace);
         const { git, statusInspectionSucceeded } = await inspectGitCloseReadiness(executionWorkspace);
         if (!statusInspectionSucceeded) {
@@ -2950,9 +2979,6 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           continue;
         }
         const assessment = await assessDelivery(workspace, git);
-        const reopenPending = metadataHasReopenPendingConsumption(
-          workspace.metadata as Record<string, unknown> | null,
-        );
         if (!assessment.sourceIssueTerminal || !assessment.subtreeTerminal) {
           if (reopenPending) {
             // The source issue left the terminal state, so the reopen transition
@@ -3212,19 +3238,32 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       }
     },
 
+    hasTerminalWorkspaceSweepContinuation: () => terminalSweepCursor !== null,
+
+    nextTerminalWorkspaceSweepAt: async () => {
+      const deadline = sql<number | null>`CASE WHEN ${executionWorkspaces.metadata}->>'reopenPendingConsumption' = 'true'
+        THEN ${now().getTime()} ELSE ${terminalWorkspaceDeadlineSql(workspaceReaperCooldownMs)} END`;
+      const [row] = await db.select({ next: sql<string | null>`min(${deadline})` }).from(executionWorkspaces)
+        .where(and(inArray(executionWorkspaces.status, ["active", "idle", "in_review"]),
+          isNull(executionWorkspaces.closedAt), sql`${executionWorkspaces.sourceIssueId} IS NOT NULL`));
+      return row?.next == null ? null : Number(row.next);
+    },
+
     create: async (data: typeof executionWorkspaces.$inferInsert) => {
-      const row = await db
-        .insert(executionWorkspaces)
-        .values(data)
-        .returning()
-        .then((rows) => rows[0] ?? null);
+      const row = await db.transaction(async tx => {
+        await notifyTerminalWorkspaceWork(tx);
+        return tx.insert(executionWorkspaces).values(data).returning().then(rows => rows[0] ?? null);
+      });
       return row ? toExecutionWorkspace(row) : null;
     },
 
     update: async (id: string, patch: Partial<typeof executionWorkspaces.$inferInsert>) => {
       if (patch.metadata === undefined && !workspaceSourceKeys.some(key => patch[key] !== undefined)) {
-        const row = await db.update(executionWorkspaces).set({ ...patch, updatedAt: new Date() })
-          .where(eq(executionWorkspaces.id, id)).returning().then(rows => rows[0] ?? null);
+        const row = await db.transaction(async tx => {
+          await notifyTerminalWorkspaceWork(tx);
+          return tx.update(executionWorkspaces).set({ ...patch, updatedAt: new Date() })
+            .where(eq(executionWorkspaces.id, id)).returning().then(rows => rows[0] ?? null);
+        });
         return row ? toExecutionWorkspace(row) : null;
       }
       const [identity] = await db.select({ companyId: executionWorkspaces.companyId }).from(executionWorkspaces)
@@ -3237,6 +3276,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         )).for("no key update");
         if (!current) return null;
         const nextPatch = await preserveWorkspaceOwnershipForPatch(tx, current, patch);
+        await notifyTerminalWorkspaceWork(tx);
         const [row] = await tx.update(executionWorkspaces).set({ ...nextPatch, updatedAt: new Date() })
           .where(and(eq(executionWorkspaces.id, id), eq(executionWorkspaces.companyId, current.companyId))).returning();
         return row ? toExecutionWorkspace(row) : null;

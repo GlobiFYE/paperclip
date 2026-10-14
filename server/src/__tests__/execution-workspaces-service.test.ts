@@ -14,6 +14,7 @@ import {
   agents,
   companies,
   createDb,
+  databaseWorkPending,
   executionWorkspaces,
   heartbeatRuns,
   issueComments,
@@ -23,6 +24,7 @@ import {
   issues,
   projectWorkspaces,
   projects,
+  subscribeDatabaseWork,
   workspaceRuntimeServices,
 } from "@paperclipai/db";
 import {
@@ -41,6 +43,8 @@ import {
   readMetadataReopenPendingConsumptionSince,
 } from "../services/execution-workspaces.ts";
 import { issueService } from "../services/issues.ts";
+import { workProductService } from "../services/work-products.js";
+import { DELIVERY_QUEUES } from "../services/delivery-work-notifications.js";
 import {
   startRuntimeServicesForWorkspaceControl,
   stopRuntimeServicesForExecutionWorkspace,
@@ -518,6 +522,69 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
     }
     return { companyId, projectId, executionWorkspaceId, sourceIssueId, identifier, repoRoot, worktreePath, headSha };
   }
+
+  it("skips nonterminal trees, cooldowns, and active runs without a Git scan", async () => {
+    await seedTerminalWorkspace({ childStatus: "todo" });
+    const recent = await seedTerminalWorkspace({ mergedPr: true });
+    const running = await seedTerminalWorkspace({ activeRun: true });
+    await db.update(issues).set({ completedAt: new Date("2020-01-01") }).where(eq(issues.id, running.sourceIssueId));
+    await db.update(issues).set({ completedAt: new Date() }).where(eq(issues.id, recent.sourceIssueId));
+    const service = executionWorkspaceService(db, { workspaceReaperCooldownDays: 7 });
+    const scan = vi.spyOn(workspaceGitOperationScheduler, "run");
+    try {
+      expect(await service.sweepTerminalWorkspaces()).toMatchObject({
+        archived: 0, skippedNonTerminalTree: 1, skippedCooldown: 1, skippedActiveRun: 1,
+      });
+      expect(scan).not.toHaveBeenCalled();
+    } finally { scan.mockRestore(); }
+  });
+
+  it("derives cooldown deadlines from the full company-scoped terminal tree", async () => {
+    const seed = await seedTerminalWorkspace({ childStatus: "done" });
+    const [child] = await db.select().from(issues).where(eq(issues.parentId, seed.sourceIssueId));
+    const sourceDone = new Date("2026-01-01T00:00:00Z"), childCancelled = new Date("2026-01-02T00:00:00Z");
+    await db.update(issues).set({ completedAt: sourceDone }).where(eq(issues.id, seed.sourceIssueId));
+    await db.update(issues).set({ status: "cancelled", cancelledAt: childCancelled }).where(eq(issues.id, child!.id));
+    const unrelated = await seedTerminalWorkspace();
+    await db.update(issues).set({ parentId: seed.sourceIssueId, status: "todo" }).where(eq(issues.id, unrelated.sourceIssueId));
+    const service = executionWorkspaceService(db, { workspaceReaperCooldownDays: 7 });
+    expect(await service.nextTerminalWorkspaceSweepAt()).toBe(childCancelled.getTime() + 7 * 86_400_000);
+    await db.update(issues).set({ status: "todo" }).where(eq(issues.id, child!.id));
+    expect(await service.nextTerminalWorkspaceSweepAt()).toBeNull();
+    await db.update(issues).set({ status: "done", completedAt: null, updatedAt: sourceDone }).where(eq(issues.id, child!.id));
+    expect(await service.nextTerminalWorkspaceSweepAt()).toBe(sourceDone.getTime() + 7 * 86_400_000);
+  });
+
+  it("does not use cached display Git state to remove a worktree", async () => {
+    const seed = await seedTerminalWorkspace({ mergedPr: true });
+    await svc.getById(seed.executionWorkspaceId);
+    await fs.writeFile(path.join(seed.worktreePath, "unsaved.txt"), "keep this work\n");
+    expect(await svc.sweepTerminalWorkspaces()).toMatchObject({ archived: 0, skippedUndelivered: 1 });
+    expect(await fs.readFile(path.join(seed.worktreePath, "unsaved.txt"), "utf8")).toBe("keep this work\n");
+  });
+
+  it("signals real issue producers before writes and waits for the outer transaction", async () => {
+    const seed = await seedTerminalWorkspace();
+    const events: string[] = [];
+    const unsubscribe = subscribeDatabaseWork(db, DELIVERY_QUEUES.terminalWorkspaces, event => events.push(event));
+    try {
+      await db.transaction(async tx => {
+        await issueService(db).update(seed.sourceIssueId, { status: "cancelled" }, tx);
+        expect(events).toEqual(["intent"]);
+        expect(databaseWorkPending(db, DELIVERY_QUEUES.terminalWorkspaces)).toBe(true);
+        const [outside] = await db.select().from(issues).where(eq(issues.id, seed.sourceIssueId));
+        expect(outside?.status).toBe("done");
+      });
+      expect(events).toEqual(["intent", "settled"]);
+      expect(databaseWorkPending(db, DELIVERY_QUEUES.terminalWorkspaces)).toBe(false);
+      await workProductService(db).createForIssue(seed.sourceIssueId, seed.companyId, {
+        type: "pull_request", provider: "github", title: "PR", status: "merged", url: "https://github.com/paperclipai/paperclip/pull/10623",
+      });
+      expect(events.slice(-2)).toEqual(["intent", "settled"]);
+      await svc.update(seed.executionWorkspaceId, { status: "idle" });
+      expect(events).toHaveLength(6);
+    } finally { unsubscribe(); }
+  });
 
   it("reports a squash cross-branch delivery as merged_via_pr and suppresses the ancestry warning", async () => {
     const repoRoot = await createTempRepo();
