@@ -352,12 +352,19 @@ function buildInput(ctx: AdapterExecutionContext, paperclipApiUrl: string | null
   // Stable session keys (issue/agent strategy) resume the same remote Hermes
   // conversation across runs; a stored session id from a prior run means that
   // conversation already received the task brief, so pick the compact
-  // task-context variant under the shared resume rules. An explicitly
-  // selected existing Hermes conversation is also a continuation: the brief
-  // already lives in that conversation, so use the compact variant too.
+  // task-context variant under the shared resume rules. An explicitly selected
+  // existing Hermes conversation only counts as a continuation once this task
+  // actually ran in it (a recorded prior run): pointing a task at a
+  // conversation that has never seen this task's brief must deliver the full
+  // instructions. Addressing (session_id) is decided separately in
+  // buildRunBody and does not depend on the brief variant.
   const sessionKeyStrategy = normalizeSessionKeyStrategy(ctx.config.sessionKeyStrategy);
+  const explicitSessionPriorRun =
+    Boolean(existingHermesSessionIdFromConfig(ctx.config)) &&
+    (Boolean(nonEmpty(ctx.runtime?.sessionId)) ||
+      Boolean(nonEmpty(ctx.runtime?.sessionParams?.hermesCanonicalSessionId)));
   const resumedSession =
-    Boolean(existingHermesSessionIdFromConfig(ctx.config)) ||
+    explicitSessionPriorRun ||
     ((sessionKeyStrategy === "issue" || sessionKeyStrategy === "agent") &&
       Boolean(nonEmpty(ctx.runtime?.sessionId)));
   const { taskContextNote: taskMarkdown, wakePrompt } = selectPaperclipPromptSections(ctx.context, {
@@ -565,6 +572,22 @@ function markTerminal(state: ExecutionState, terminal: TerminalState): void {
 /** Redaction placeholder markers must never be persisted as session ids. */
 function isRedactionPlaceholder(value: string): boolean {
   return /\[redacted/i.test(value);
+}
+
+/**
+ * A session id is a confirmed tip candidate only when the redactor leaves it
+ * untouched and it is not itself a redaction marker. Hermes echoing back a
+ * previously redacted marker (for example `[redacted-session-key]` copied
+ * through the conversation) must never become a persisted session id.
+ */
+function acceptTipCandidate(
+  value: string | null | undefined,
+  redactText: TextRedactor,
+): string | null {
+  const id = nonEmpty(value);
+  if (!id) return null;
+  if (isRedactionPlaceholder(id)) return null;
+  return redactText(id) === id ? id : null;
 }
 
 function extractStatus(value: unknown): string | null {
@@ -800,8 +823,7 @@ export function mapFinalResultForTest(input: {
   // example a Paperclip session key echoed back) is not a confirmed Hermes
   // tip and must not be stored. Acceptance of the run create request (202)
   // is not confirmation, and neither is the id we sent.
-  const confirmedTip =
-    payloadSessionId && sessionDisplayId === payloadSessionId ? payloadSessionId : null;
+  const confirmedTip = acceptTipCandidate(payloadSessionId, redactText);
   // The explicitly selected conversation id is stored separately as the
   // canonical target; the confirmed tip lives in the legacy hermesSessionId
   // slot. When the terminal payload carries no session id, the last
@@ -876,16 +898,30 @@ async function fetchFinalStatus(input: {
 }): Promise<Record<string, unknown> | null> {
   const deadline = Date.now() + input.deadlineMs;
   while (Date.now() < deadline) {
+    // The deadline bounds the whole attempt: the request AND its body read.
+    // fetchJson has no timeout of its own, so a hung endpoint would otherwise
+    // keep execute() alive after the run already finished.
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) return null;
+    const attemptController = new AbortController();
+    const attemptTimer = setTimeout(() => attemptController.abort(), remainingMs);
     try {
       const status = await fetchJson(apiUrl(input.baseUrl, `/v1/runs/${encodeURIComponent(input.runId)}`), {
         method: "GET",
         headers: input.headers,
+        signal: attemptController.signal,
       });
       const record = asRecord(status);
       const normalized = extractStatus(status);
       if (normalized && TERMINAL_STATUSES.has(normalized)) return record;
+      // Not terminal yet: release the attempt and continue polling.
     } catch {
+      // Abort (deadline reached mid-attempt) or a transport error: the run's
+      // confirmed terminal data — already captured in the SSE terminal — stays
+      // intact either way. Return without a filled payload.
       return null;
+    } finally {
+      clearTimeout(attemptTimer);
     }
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
@@ -1125,10 +1161,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     let timeoutTip: string | null = null;
     if (existingSessionId) {
       const finalSessionId = extractSessionId(finalStatus);
-      timeoutTip =
-        finalSessionId && redactText(finalSessionId) === finalSessionId
-          ? finalSessionId
-          : nonEmpty(ctx.runtime?.sessionParams?.hermesSessionId);
+      timeoutTip = acceptTipCandidate(finalSessionId, redactText) ??
+        nonEmpty(ctx.runtime?.sessionParams?.hermesSessionId);
     }
     return {
       exitCode: 1,
@@ -1149,7 +1183,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         ...(existingSessionId ? { hermesCanonicalSessionId: existingSessionId } : {}),
         strategy,
       },
-      sessionDisplayId: sessionKey ? redactText(sessionKey) : null,
+      // The tip is a real Hermes id; the Paperclip session key is not. Prefer
+      // the tip for display so a redaction placeholder never becomes the
+      // persisted display/legacy session identity on a timed-out run.
+      sessionDisplayId: timeoutTip
+        ? redactText(timeoutTip)
+        : sessionKey
+          ? redactText(sessionKey)
+          : null,
     };
   }
 
@@ -1175,7 +1216,15 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           ...(terminal as TerminalState).payload,
           ...Object.fromEntries(
             Object.entries(authoritative).filter(
-              ([key, value]) => value !== null && value !== undefined && (terminal as TerminalState).payload?.[key] === undefined,
+              ([key, value]) => {
+                // Fill ONLY missing fields: undefined, null, and empty strings
+                // all count as missing so an empty SSE session_id cannot block
+                // the authoritative GET value. Present non-empty values stay.
+                const missing = (terminal as TerminalState).payload?.[key] === undefined ||
+                  (terminal as TerminalState).payload?.[key] === null ||
+                  (terminal as TerminalState).payload?.[key] === "";
+                return value !== null && value !== undefined && value !== "" && missing;
+              },
             ),
           ),
         },
