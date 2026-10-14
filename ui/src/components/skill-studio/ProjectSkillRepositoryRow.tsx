@@ -4,12 +4,11 @@ import { Button } from '@/components/ui/button';
 import { Link } from '@/lib/router';
 import { LoaderCircle } from 'lucide-react';
 
-export function ProjectSkillRepositoryRow({ repository, pending, backgroundPending, disabled, showRepository = true, onImport }: {
+export function ProjectSkillRepositoryRow({ repository, pending, backgroundPending, disabled, onImport }: {
   repository: ProjectSkillRepository;
   pending?: boolean;
   backgroundPending?: boolean;
   disabled?: boolean;
-  showRepository?: boolean;
   onImport: () => void;
 }) {
   const actionPending = pending || repository.status === 'pending';
@@ -18,9 +17,9 @@ export function ProjectSkillRepositoryRow({ repository, pending, backgroundPendi
     <div className="flex items-center gap-3">
       <GithubIcon className="size-5 shrink-0 text-muted-foreground" />
       <div className="min-w-0 flex-1">
-        {showRepository && <a href={repository.repositoryUrl} target="_blank" rel="noreferrer" className="block truncate text-sm font-medium hover:underline">
+        <a href={repository.repositoryUrl} target="_blank" rel="noreferrer" className="block truncate text-sm font-medium hover:underline">
           {repository.repositoryUrl.replace('https://github.com/', '')}
-        </a>}
+        </a>
         <p className="truncate text-xs text-muted-foreground">{repository.projectName} · {repository.trackingRef === 'HEAD' ? 'Default branch' : repository.trackingRef}{repository.projectVisibility === 'private' ? ' · Project access' : ''}</p>
       </div>
       <Button size="sm" variant="outline" disabled={actionPending || disabled} onClick={onImport}>

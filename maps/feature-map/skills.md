@@ -69,9 +69,11 @@ Manual: Enable the skill for one test agent and leave another without access. Ru
 ### Project repository source behavior
 
 New GitHub project repositories import skills automatically. Skills → Sources lists
-accessible legacy repositories with Import skills, shows source/project provenance,
-groups matching repository/ref workspaces into one row, and shows queued/importing feedback,
-and provides Refresh and Automatic updates in its source menu. Verify future additions,
+accessible legacy repositories with Import skills, shows each saved repository once with
+its access scope but without project names, and groups matching repository/ref workspaces.
+Additional legacy imports for an existing source live in its More menu. Import progress
+appears in the source metadata; Refresh and Automatic updates are also available.
+Verify future additions,
 retained exclusions, error recovery and reload persistence. Private-only sources must
 be absent for unrelated people/agents; access through either originating project is sufficient.
 
