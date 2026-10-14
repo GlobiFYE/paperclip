@@ -75,6 +75,8 @@ consumed message whose send response and queue snapshot arrive late. A started
 run's input receipt removes that message from pending, while a separate unsent
 message stays queued. Admission to a run that has not started is not delivery.
 A later retry of the same message remains visible in its new authoritative queue.
+Receipts retain the primary wake and coalesced source queue IDs. They clear a late
+snapshot even when its target names the preceding run or is null.
 
 ```sh
 pnpm exec vitest run ui/src/components/task-chat/TaskChatQueuedMessages.test.tsx server/src/__tests__/issue-queued-comments-routes.test.ts

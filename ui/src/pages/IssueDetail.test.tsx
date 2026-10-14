@@ -3994,17 +3994,19 @@ describe("IssueDetail", () => {
     });
   });
 
-  it.each([
+  it.each(([
     ["history", "before"],
     ["history", "after"],
     ["live", "before"],
     ["live", "after"],
-  ] as const)("retires a consumed follow-up from %s when its post resolves %s delivery", async (receiptSource, postOrder) => {
+  ] as const).flatMap(([source, order]) =>
+    (["same-run", "previous-run", "queued", "adopted"] as const).map(queueTarget => [source, order, queueTarget] as const),
+  ))("retires a consumed follow-up from %s when its post resolves %s delivery with a %s snapshot", async (receiptSource, postOrder, queueTarget) => {
     const postedComment = createDeferred<IssueComment>();
     const delivered = createIssueComment({ id: "delivered", body: "Use this direction" });
     const waiting = createIssueComment({ id: "still-waiting", body: "Keep this queued" });
     const run = {
-      id: "run-native", runtimeMode: "native" as const, status: "running",
+      id: queueTarget === "same-run" ? "run-native" : "run-original", runtimeMode: "native" as const, status: "running",
       invocationSource: "issue", triggerDetail: null,
       contextCommentId: null, contextWakeCommentId: null,
       startedAt: "2026-04-21T00:00:01.000Z", finishedAt: null,
@@ -4035,7 +4037,8 @@ describe("IssueDetail", () => {
     }
 
     const staleQueue = createQueuedCommentQueue({
-      targetRunId: run.id,
+      state: queueTarget === "queued" ? "queued" : "deferred",
+      targetRunId: queueTarget === "queued" ? null : run.id,
       entries: [delivered, waiting].map((comment, position) => ({
         comment, position, canEdit: true, canDiscard: true,
       })),
@@ -4047,11 +4050,19 @@ describe("IssueDetail", () => {
       queryClient.setQueryData(queryKeys.issues.queuedComments("issue-1"), staleQueue);
       if (receiptSource === "history") {
         queryClient.setQueryData(queryKeys.issues.runs("PAP-1"), [{
-          ...run, runId: run.id, wakeCommentIds: [delivered.id],
+          ...run, runId: "run-native",
+          wakeupRequestId: queueTarget === "adopted" ? "other-wake" : staleQueue.queueId,
+          queuedCommentSourceWakeIds: queueTarget === "adopted" ? [staleQueue.queueId] : null,
+          wakeCommentIds: [delivered.id],
           contextIssueId: "issue-1", logBytes: 1,
         }]);
       } else {
-        const consumingRun = { ...run, contextCommentId: delivered.id, contextWakeCommentId: delivered.id };
+        const consumingRun = {
+          ...run, id: "run-native",
+          wakeupRequestId: queueTarget === "adopted" ? "other-wake" : staleQueue.queueId,
+          queuedCommentSourceWakeIds: queueTarget === "adopted" ? [staleQueue.queueId] : null,
+          contextCommentId: delivered.id, contextWakeCommentId: delivered.id,
+        };
         mockHeartbeatsApi.liveRunsForIssue.mockResolvedValue([consumingRun]);
         mockHeartbeatsApi.activeRunForIssue.mockResolvedValue(consumingRun);
         queryClient.setQueryData(queryKeys.issues.liveRuns("PAP-1"), [consumingRun]);
@@ -4064,7 +4075,7 @@ describe("IssueDetail", () => {
     await waitForAssertion(() => {
       expect(props().queuedCommentQueue?.entries.map(entry => entry.comment.id)).toEqual([waiting.id]);
       const comment = props().comments.find(comment => comment.id === delivered.id);
-      expect(comment).toMatchObject({ consumedByRunId: run.id });
+      expect(comment).toMatchObject({ consumedByRunId: "run-native" });
       expect(comment?.queueState).toBeUndefined();
       expect(comment?.clientStatus).toBeUndefined();
       expect(props().comments.filter(comment => comment.body === delivered.body)).toHaveLength(1);
@@ -4087,6 +4098,7 @@ describe("IssueDetail", () => {
       runId: "run-queued", agentId: "agent-1", adapterType: "paperclip_runner",
       status: "queued", startedAt: null, finishedAt: null,
       createdAt: "2026-04-21T00:00:01.000Z", wakeCommentIds: [queued.id],
+      wakeupRequestId: "wake-queue-1",
       contextIssueId: "issue-1",
     }]);
     await act(async () => renderIssueView());
@@ -4105,17 +4117,28 @@ describe("IssueDetail", () => {
       state, targetRunId: state === "deferred" ? "run-new" : null,
       entries: [{ comment: retry, position: 0, canEdit: true, canDiscard: true }],
     }));
-    mockActivityApi.runsForIssue.mockResolvedValue([{
+    const originalRun = {
       runId: "run-old", agentId: "agent-1", adapterType: "paperclip_runner",
       status: "failed", startedAt: "2026-04-21T00:00:01.000Z",
       finishedAt: "2026-04-21T00:00:02.000Z",
       createdAt: "2026-04-21T00:00:01.000Z", wakeCommentIds: [retry.id],
+      wakeupRequestId: "old-wake-queue",
       contextIssueId: "issue-1",
-    }]);
+    };
+    mockActivityApi.runsForIssue.mockResolvedValue([originalRun]);
     await act(async () => renderIssueView());
     await waitForAssertion(() => {
       const props = mockIssueChatThreadRender.mock.calls.at(-1)![0];
       expect(props.queuedCommentQueue?.entries.map((entry: { comment: IssueComment }) => entry.comment.id)).toEqual([retry.id]);
+    });
+    await act(async () => {
+      queryClient.setQueryData(queryKeys.issues.runs("PAP-1"), [originalRun, {
+        ...originalRun, runId: "run-new", status: "running", finishedAt: null,
+        startedAt: "2026-04-21T00:00:06.000Z", wakeupRequestId: "wake-queue-1",
+      }]);
+    });
+    await waitForAssertion(() => {
+      expect(mockIssueChatThreadRender.mock.calls.at(-1)![0].queuedCommentQueue).toBeNull();
     });
   });
 
