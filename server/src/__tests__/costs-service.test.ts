@@ -317,7 +317,7 @@ describe("cost routes", () => {
       ],
     };
 
-    it("returns the cached pacing state to board users with company access", async () => {
+    it("returns the cached pacing state to instance admins", async () => {
       mockCompanyService.getById.mockResolvedValue({ id: "company-1", name: "Paperclip" });
       mockGetQuotaPacingState.mockReturnValue(pacingState);
       const app = createApp();
@@ -350,6 +350,40 @@ describe("cost routes", () => {
       const res = await request(app).get("/api/companies/company-1/costs/quota-pacing");
 
       expect(res.status).toBe(403);
+      expect(mockGetQuotaPacingState).not.toHaveBeenCalled();
+    });
+
+    it("returns the state to an instance admin who signed in", async () => {
+      mockCompanyService.getById.mockResolvedValue({ id: "company-1", name: "Paperclip" });
+      mockGetQuotaPacingState.mockReturnValue(pacingState);
+      const app = createAppWithActor({
+        type: "board",
+        userId: "admin-user",
+        source: "session",
+        isInstanceAdmin: true,
+        companyIds: ["company-1"],
+      });
+
+      const res = await request(app).get("/api/companies/company-1/costs/quota-pacing");
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(pacingState);
+    });
+
+    it("rejects company members who are not instance admins", async () => {
+      mockCompanyService.getById.mockResolvedValue({ id: "company-1", name: "Paperclip" });
+      const app = createAppWithActor({
+        type: "board",
+        userId: "board-user",
+        source: "session",
+        isInstanceAdmin: false,
+        companyIds: ["company-1"],
+      });
+
+      const res = await request(app).get("/api/companies/company-1/costs/quota-pacing");
+
+      expect(res.status).toBe(403);
+      expect(res.body).toMatchObject({ error: "Instance admin access required" });
       expect(mockGetQuotaPacingState).not.toHaveBeenCalled();
     });
 

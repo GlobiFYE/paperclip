@@ -57,7 +57,8 @@ Returns the run pacing state: `enabled`, `settings`, `lastPolledAt`,
 constraining `session` and `weekly` window (`usedPercent`, `targetPercent`,
 `aheadPercent`, `elapsedPercent`, `resetsAt`, `windowSeconds`),
 `lastPolledAt`, and `lastError`. The route returns cached state and does not poll a provider.
-Board access to the company is required.
+Instance admin access is required, because the state shows the quota of the
+server's own subscription login.
 
 Change pacing settings with `PATCH /api/instance/settings/general` and a
 `quotaPacing` object (instance admins only). See

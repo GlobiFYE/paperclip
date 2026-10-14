@@ -77,7 +77,8 @@ PATCH /api/instance/settings/general
 { "quotaPacing": { "enabled": true } }
 ```
 
-Only instance admins can change pacing. A PATCH may send any subset of the
+Only instance admins can change pacing or see its state; other board users
+do not see the **Run pacing** panel. A PATCH may send any subset of the
 fields; the other fields keep their stored values.
 
 | Field | Default | Range | Meaning |

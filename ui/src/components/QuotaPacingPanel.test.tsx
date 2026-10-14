@@ -332,7 +332,7 @@ describe("QuotaPacingPanel", () => {
     await vi.waitFor(() => expect(container.textContent).toContain("Instance admin access required"));
   });
 
-  it("locks the controls for board users who are not instance admins", async () => {
+  it("hides run pacing from board users who are not instance admins", async () => {
     mockAccessApi.getCurrentBoardAccess.mockResolvedValue({
       userId: "user-1",
       isInstanceAdmin: false,
@@ -341,11 +341,34 @@ describe("QuotaPacingPanel", () => {
       keyId: null,
       user: null,
     });
-    await renderPanel();
+    root = createRoot(container);
+    flushSync(() => {
+      root?.render(
+        <QueryClientProvider client={queryClient}>
+          <QuotaPacingPanel companyId="company-1" />
+        </QueryClientProvider>,
+      );
+    });
 
-    await vi.waitFor(() => expect(container.textContent).toContain("Only instance admins can change run pacing."));
-    expect(container.querySelector<HTMLButtonElement>('[aria-label="Toggle run pacing"]')?.disabled).toBe(true);
-    expect(input("Session reserve (%)").disabled).toBe(true);
+    await vi.waitFor(() => expect(queryClient.getQueryState(queryKeys.access.currentBoardAccess)?.status).toBe("success"));
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    expect(container.textContent).toBe("");
+    expect(mockCostsApi.quotaPacing).not.toHaveBeenCalled();
+  });
+
+  it("loads run pacing when the access check fails and shows the server's answer", async () => {
+    mockAccessApi.getCurrentBoardAccess.mockRejectedValue(new Error("Unauthorized"));
+    mockCostsApi.quotaPacing.mockRejectedValue(new Error("Instance admin access required"));
+    root = createRoot(container);
+    flushSync(() => {
+      root?.render(
+        <QueryClientProvider client={queryClient}>
+          <QuotaPacingPanel companyId="company-1" />
+        </QueryClientProvider>,
+      );
+    });
+
+    await vi.waitFor(() => expect(container.textContent).toContain("Instance admin access required"));
   });
 
   it("explains that agents keep their limits while pacing is off", async () => {

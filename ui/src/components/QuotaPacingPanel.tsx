@@ -257,7 +257,8 @@ function ProviderPacing({ state }: { state: QuotaPacingProviderState }) {
 /**
  * Instance-wide run pacing: settings plus the live mode per provider. Pacing
  * state is served through the company-scoped costs routes, so the panel takes
- * the selected company only to build that path.
+ * the selected company only to build that path. The state shows the quota of
+ * the server's own subscription login, so only instance admins see the panel.
  */
 export function QuotaPacingPanel({ companyId }: { companyId: string }) {
   const queryClient = useQueryClient();
@@ -267,20 +268,28 @@ export function QuotaPacingPanel({ companyId }: { companyId: string }) {
   const setDraft = (update: (current: PacingDraft) => PacingDraft) =>
     setForm((current) => ({ ...current, draft: update(current.draft) }));
 
+  const accessQuery = useQuery({
+    queryKey: queryKeys.access.currentBoardAccess,
+    queryFn: () => accessApi.getCurrentBoardAccess(),
+    retry: false,
+  });
+  // The server allows only instance admins to read the pacing state and to
+  // change the settings. When the access check fails, the panel still loads
+  // and shows the server's answer.
+  const boardAccess = accessQuery.data;
+  const visible =
+    accessQuery.isFetched && (!boardAccess || boardAccess.source === "local_implicit" || boardAccess.isInstanceAdmin);
   const settingsQuery = useQuery({
     queryKey: queryKeys.instance.generalSettings,
     queryFn: () => instanceSettingsApi.getGeneral(),
+    enabled: visible,
   });
   const stateQuery = useQuery({
     queryKey: queryKeys.usageQuotaPacing(companyId),
     queryFn: () => costsApi.quotaPacing(companyId),
+    enabled: visible,
     refetchInterval: 60_000,
     staleTime: 30_000,
-  });
-  const { data: boardAccess } = useQuery({
-    queryKey: queryKeys.access.currentBoardAccess,
-    queryFn: () => accessApi.getCurrentBoardAccess(),
-    retry: false,
   });
 
   const settings = settingsQuery.data?.quotaPacing ?? null;
@@ -301,10 +310,7 @@ export function QuotaPacingPanel({ companyId }: { companyId: string }) {
     },
   });
 
-  // The server enforces instance-admin writes. Only lock the controls when
-  // the current access is known and is not an instance admin.
-  const canManage = !boardAccess || boardAccess.source === "local_implicit" || boardAccess.isInstanceAdmin;
-  const editable = Boolean(settings) && canManage && !updateMutation.isPending;
+  const editable = Boolean(settings) && !updateMutation.isPending;
   const { sessionReservePercent: sessionReserve, weeklyAllowancePercent: weeklyAllowance } = parseDraft(draft);
   const patch = pacingPatch(form);
   const canSave = editable && patch != null && Object.keys(patch).length > 0;
@@ -319,6 +325,8 @@ export function QuotaPacingPanel({ companyId }: { companyId: string }) {
   const state = stateQuery.data ?? null;
   const loadError = settingsQuery.error ?? stateQuery.error;
   const saveError = updateMutation.error;
+
+  if (!visible) return null;
 
   return (
     <section className="border border-border px-4 py-4" aria-labelledby={`${fieldId}-title`}>
@@ -420,9 +428,7 @@ export function QuotaPacingPanel({ companyId }: { companyId: string }) {
         ) : null}
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-muted-foreground">
-            {canManage
-              ? `Quota is checked every ${Math.round((settings?.pollIntervalSec ?? DEFAULT_QUOTA_PACING_SETTINGS.pollIntervalSec) / 60)} min while pacing is on.`
-              : "Only instance admins can change run pacing."}
+            {`Quota is checked every ${Math.round((settings?.pollIntervalSec ?? DEFAULT_QUOTA_PACING_SETTINGS.pollIntervalSec) / 60)} min while pacing is on.`}
           </p>
           <Button type="submit" size="sm" className="w-full sm:w-auto" disabled={!canSave}>
             {updateMutation.isPending ? "Saving…" : "Save pacing"}
