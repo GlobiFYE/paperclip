@@ -2731,6 +2731,36 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       expect(f.responseComments.size).toBe(1);
       expect(f.runtime.endpoints.get(f.endpoint.id)?.posts).toEqual([]);
     });
+    it.each([false, true])("finishes the same GitHub working comment after an authorized same-App reconnect (legacy: %s)", async legacy => {
+      const f = await toolReplyFixture();
+      const originalId = f.responseWrites[0].id;
+      if (legacy) await db.update(chatActions).set({ payload: { runtimeGeneration: f.endpoint.setup.runtimeGeneration ?? 0, agentId: f.assignedAgentId } })
+        .where(and(eq(chatActions.endpointId, f.endpoint.id), eq(chatActions.kind, "github_response_comment")));
+      await f.service.configure(f.endpoint.id, { action: "reconnect" }, "owner-user");
+      const result = await githubChatReviewService(db, f.providerFetch).execute(f.session, "comment", {
+        body: "Review complete after reconnect", idempotencyKey: "reconnected-final",
+      });
+      expect(result.status).toBe("processed");
+      expect(f.responseWrites.map(write => write.method)).toEqual(["POST", "PATCH"]);
+      expect(f.responseWrites.every(write => write.id === originalId)).toBe(true);
+      expect([...f.responseComments.values()][0].body).toContain("Review complete after reconnect");
+    });
+    it("still fences a GitHub publication when reconnect races the provider read", async () => {
+      const f = await toolReplyFixture();
+      let reconnected = false;
+      f.setSupplementalProviderFetch(async (input, init) => {
+        if (!reconnected && String(input).includes("/issues/comments/") && (!init?.method || init.method === "GET")) {
+          reconnected = true;
+          await f.service.configure(f.endpoint.id, { action: "reconnect" }, "owner-user");
+        }
+        return undefined;
+      });
+      const result = await githubChatReviewService(db, f.providerFetch).execute(f.session, "comment", {
+        body: "Stale attempt", idempotencyKey: "reconnect-race",
+      });
+      expect(result.status).toBe("cancelled");
+      expect(f.responseWrites).toHaveLength(1);
+    });
     it("adds the progress tool to an existing enabled bot without restoring disabled tools", async () => {
       const f = await toolReplyFixture();
       await db.delete(toolCatalogEntries).where(and(eq(toolCatalogEntries.connectionId, f.endpoint.connectionId), eq(toolCatalogEntries.name, "github_bot:update_comment")));
@@ -4078,6 +4108,22 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       expect((await context.service.listResources(context.endpoint.id)).every(resource => !resource.enabled)).toBe(true);
       expect(await management.configuration(context.endpoint.id, "owner-user")).toMatchObject({ revision: 1, configuration: { toolsEnabled: false } });
     });
+    it.each(["current", "foreign", "invalid_signature"] as const)("verifies a repaired GitHub webhook only from a %s installation delivery", async kind => {
+      const f = await reviewBotFixture();
+      const [endpoint] = await readChatEndpointsById(f.endpoint.id);
+      await db.update(chatEndpoints).set({ setup: { ...endpoint.setup, webhookVerifiedAt: null } }).where(eq(chatEndpoints.id, endpoint.id));
+      const response = await f.service.handleWebhook(endpoint.publicId, "github", signedGitHubWebhookRequest({
+        event: "issue_comment", delivery: randomUUID(), webhookSecret: kind === "invalid_signature" ? "wrong-secret" : f.webhookSecret,
+        payload: { action: "created", installation: { id: kind === "foreign" ? 9999 : 2468 },
+          repository: { id: 97531, full_name: "paperclipai/paperclip", owner: { id: 1357, login: "paperclipai" } },
+          issue: { number: 418 }, comment: { id: 41801, body: "Ordinary comment", user: { id: 42, login: "octocat" } }, sender: { id: 42, login: "octocat" } },
+      }));
+      if (kind === "invalid_signature") expect(response.status).toBe(401);
+      else expect(response.status).toBeLessThan(300);
+      const current = await f.service.get(endpoint.id);
+      if (kind === "current") expect(current.setup.webhookVerifiedAt).toEqual(expect.any(String));
+      else expect(current.setup.webhookVerifiedAt).toBeNull();
+    });
     it("stack rejects forged raw gateway deliveries without changing verification or waking an agent", async () => {
       const f = await reviewBotFixture();
       await db
@@ -4921,6 +4967,37 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         details_url: `https://current-vanity.example/${company.issuePrefix}/apps/chat/${f.endpoint.id}/reviews`,
       })]);
       expect(await readChatGitHubReviewsByEndpointId(f.endpoint.id)).toHaveLength(0);
+    });
+    it.each(["succeeded", "failed", "cancelled"] as const)("keeps a report-only GitHub check neutral after a %s run without an assessment", async status => {
+      const f = await toolReplyFixture("github:paperclipai/paperclip:418");
+      const config = await f.management.configuration(f.endpoint.id, "owner-user");
+      await f.management.saveConfiguration(f.endpoint.id, { expectedRevision: config.revision,
+        configuration: { ...config.configuration, defaults: { ...config.configuration.defaults, ratingThreshold: null } },
+      }, "owner-user");
+      const event = githubAutomaticReviewEvent({ action: "opened", repository: { id: 97531, full_name: "paperclipai/paperclip" }, sender: { id: 42, login: "octocat" },
+        pull_request: { number: 418, title: "Review", body: "", draft: false, base: { sha: "a".repeat(40), ref: "master" }, head: { sha: "b".repeat(40) }, user: { id: 42, login: "octocat" }, labels: [] } }, randomUUID())!;
+      const [review] = await db.insert(chatGitHubReviews).values({ companyId: f.companyId, endpointId: f.endpoint.id,
+        issueId: f.conversation.issueId!, runId: f.run.id, repositoryId: "97531", repository: event.repository, pullNumber: 418, headSha: event.headSha,
+        deliveryId: event.deliveryId, configurationRevision: config.revision + 1, policySnapshot: { ...config.configuration.defaults, ratingThreshold: null }, event }).returning();
+      await db.update(heartbeatRuns).set({ status }).where(eq(heartbeatRuns.id, f.run.id));
+      const writes: Record<string, unknown>[] = [];
+      f.setSupplementalProviderFetch(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/pulls/418")) return Response.json({ head: { sha: event.headSha } });
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [] });
+        if (url.endsWith("/check-runs") && init?.method === "POST") {
+          writes.push(JSON.parse(String(init.body)));
+          return Response.json({ id: 418, html_url: "https://github.com/checks/418" });
+        }
+        return undefined;
+      });
+      const checks = githubReviewCheckService(db, f.providerFetch);
+      const [endpoint] = await readChatEndpointsById(f.endpoint.id);
+      await checks.enqueue(endpoint, event, true, "authorized");
+      await checks.processPending();
+      expect(writes).toEqual([expect.objectContaining({ status: "completed", conclusion: "neutral" })]);
+      expect(writes[0].output).toMatchObject({ title: status === "succeeded" ? "Agent finished without a complete assessment" : "Review execution did not complete" });
+      expect((await db.select().from(chatGitHubReviews).where(eq(chatGitHubReviews.id, review.id)))[0].conclusion).toBe("neutral");
     });
     it("uses task-bound bot tools and deterministic checks, then denies revoked people", async () => {
       const publicOrigin = vi.spyOn(cloudRuntimeIdentity, "runtimePublicOrigin").mockReturnValue("https://current-vanity.example");
@@ -12915,6 +12992,23 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     expect(recoveredRuntime.webhookRequest).toBeNull();
     await restarted.shutdown();
     await configured.service.shutdown();
+  });
+
+  it("leaves Cloud-managed GitHub webhook recovery to the relay", async () => {
+    const context = await githubPreIngressRecoveryFixture();
+    try {
+      const [endpoint] = await readChatEndpointsById(context.endpoint.id);
+      await db.update(chatEndpoints).set({ setup: { ...endpoint.setup,
+        github: { ...endpoint.setup.github, cloudRegistrationId: "cloud-registration" },
+      } }).where(eq(chatEndpoints.id, endpoint.id));
+      const checkpoint = await context.checkpoint();
+      await db.update(chatSdkState).set({ value: { ...(checkpoint.value as Record<string, unknown>), outcome: "callback_mismatch" } }).where(eq(chatSdkState.id, checkpoint.id));
+      await context.makeScanDue();
+      await context.service.processFailedGitHubWebhookDeliveries(5, endpoint.id);
+      expect((await context.service.listActivity(endpoint.id)).some(row => row.summary === "GitHub webhook recovery needs attention")).toBe(false);
+      expect(context.requests).toEqual([]);
+      expect(context.posts).toEqual([]);
+    } finally { await context.service.shutdown(); }
   });
 
   it("automatically recovers a pre-ingress GitHub failure only through a genuine callback and normal durable workers", async () => {

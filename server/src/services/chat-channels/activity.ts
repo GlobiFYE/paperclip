@@ -20,6 +20,7 @@ import {
   chatDeliveries,
   chatPublications,
   chatSdkState,
+  chatEndpoints,
   chatTeamsFileTransfers,
   issues,
 } from "@paperclipai/db";
@@ -271,13 +272,15 @@ export function createChatActivity(db: Db, options: ChatActivityOptions) {
         .orderBy(desc(sql`date_trunc('milliseconds', ${chatActions.updatedAt})`), desc(chatActions.id))
         .limit(limit),
       db
-        .select()
+        .select({ id: chatSdkState.id, value: chatSdkState.value, updatedAt: chatSdkState.updatedAt })
         .from(chatSdkState)
+        .innerJoin(chatEndpoints, eq(chatEndpoints.id, chatSdkState.endpointId))
         .where(
           and(
             eq(chatSdkState.endpointId, endpointId),
             before(chatSdkState.updatedAt, chatSdkState.id),
             eq(chatSdkState.stateKey, GITHUB_RECOVERY_STATE_KEY),
+            sql`nullif(${chatEndpoints.setup}#>>'{github,cloudRegistrationId}', '') is null`,
           ),
         )
         .limit(1),
