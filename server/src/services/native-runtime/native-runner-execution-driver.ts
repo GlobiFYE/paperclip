@@ -189,6 +189,9 @@ export function createNativeRunnerExecutionDriver(input: NativeRunnerExecutionDr
           );
 
           if (transport.mode === "direct_outbound") {
+            const caBundlePath = transport.caBundlePath && input.mapCaBundle
+              ? await input.mapCaBundle(transport.caBundlePath)
+              : transport.caBundlePath;
             const inbound = await measureNativeRunnerSpan(
               input.trace,
               "runner.prp.route.register",
@@ -202,9 +205,6 @@ export function createNativeRunnerExecutionDriver(input: NativeRunnerExecutionDr
                 }),
               { parentName: "runner.transport.connect" },
             );
-            const caBundlePath = transport.caBundlePath && input.mapCaBundle
-              ? await input.mapCaBundle(transport.caBundlePath)
-              : transport.caBundlePath;
             return {
               connection: {
                 mode: "connect" as const,

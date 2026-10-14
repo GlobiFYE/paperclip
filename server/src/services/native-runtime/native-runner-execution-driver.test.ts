@@ -91,6 +91,17 @@ describe("shared Runner execution driver", () => {
     const connection = await driver.controlPlaneRegistration!(authority);
     expect(mapCaBundle).toHaveBeenCalledWith(process.execPath);
     expect(connection.connection).toEqual(expect.objectContaining({ caBundlePath: "/remote/ca.pem" }));
+    expect(mapCaBundle.mock.invocationCallOrder[0]).toBeLessThan(transport.register.mock.invocationCallOrder[0]);
+  });
+
+  it("does not register an authority route when CA staging fails", async () => {
+    const driver = createNativeRunnerExecutionDriver({
+      target: ssh, binding, prepareRemote: async () => {}, runnerPublicUrl: "wss://core.example",
+      runnerCaBundlePath: process.execPath,
+      mapCaBundle: async () => { throw new Error("ca_copy_failed"); },
+    });
+    await expect(driver.controlPlaneRegistration!(authority)).rejects.toThrow("ca_copy_failed");
+    expect(transport.register).not.toHaveBeenCalled();
   });
 
   it("stages before acquiring ingress and waits for process dispatch before connecting", async () => {
