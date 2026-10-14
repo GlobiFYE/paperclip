@@ -5,7 +5,7 @@ import { access, readFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { eq } from "drizzle-orm";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { agents, companies, companyMemberships, companySkills, createDb, heartbeatRunEvents, heartbeatRuns, issues, projects } from "@paperclipai/db";
 import { companySkillService } from "../services/company-skills.js";
 import { registerServerAdapter, unregisterServerAdapter, type AdapterExecutionContext } from "../adapters/index.js";
@@ -241,3 +241,6 @@ describePostgres("heartbeat execution configuration through adapter dispatch", (
     expect(input).toBeUndefined();
   });
 });
+
+beforeEach(() => { vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", "unexpected"); });
+afterEach(() => { vi.unstubAllEnvs(); });

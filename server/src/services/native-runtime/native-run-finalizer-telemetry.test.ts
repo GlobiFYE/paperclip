@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   agents,
   companies,
@@ -917,3 +917,6 @@ describeEmbeddedPostgres("native run finalizer / status decision committer — a
     expect(agentTaskRunCalls(callsBefore)).toHaveLength(1);
   });
 });
+
+beforeEach(() => { vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", "unexpected"); });
+afterEach(() => { vi.unstubAllEnvs(); });

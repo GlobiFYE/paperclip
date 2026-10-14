@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { agents, companies, completionContracts, createDb, heartbeatRuns, issues, issueRecoveryActions, issueThreadInteractions, nativeRunResults, statusDecisions, workAssessments } from "@paperclipai/db";
 import {
   getEmbeddedPostgresTestSupport,
@@ -187,3 +187,6 @@ describeEmbeddedPostgres("native review execution reconciliation admission", () 
     expect(review?.status).toBe("pending");
   });
 });
+
+beforeEach(() => { vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", "unexpected"); });
+afterEach(() => { vi.unstubAllEnvs(); });

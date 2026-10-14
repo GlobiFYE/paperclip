@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import {
   activityLog,
@@ -1457,3 +1457,6 @@ describe.each(["unchanged", "newer_active", "stale_idle"] as const)(
     }, 30_000);
   },
 );
+
+beforeEach(() => { vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", "unexpected"); });
+afterEach(() => { vi.unstubAllEnvs(); });

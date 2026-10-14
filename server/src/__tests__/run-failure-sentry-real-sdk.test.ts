@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { buildHeartbeatRunStopMetadata, mergeHeartbeatRunStopMetadata } from "../services/heartbeat-stop-metadata.js";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
 import { collectRunFailureDiagnostics, sanitizeRunFailureDiagnostics } from "../services/run-failure-diagnostics.js";
 import type { heartbeatRuns } from "@paperclipai/db";
 import {
@@ -374,6 +374,8 @@ describe.skipIf(!sentryPackage)("run failure context with the real Sentry SDK", 
     await sentryReady;
 
     const first = {
+      companyId: "55555555-5555-4555-8555-555555555555",
+      agentId: "66666666-6666-4666-8666-666666666666",
       taskId: "11111111-1111-4111-8111-111111111111",
       runId: "22222222-2222-4222-8222-222222222222",
       errorMessage: "first run failed",
@@ -432,7 +434,7 @@ describe.skipIf(!sentryPackage)("run failure context with the real Sentry SDK", 
         contexts: { run_failure: { runId: run.runId, taskId: run.taskId,
           errorMessage: run.errorMessage, errorCode: run.errorCode, agentAdapter: run.agentAdapter,
           exitCode: run.exitCode, signal: run.signal } },
-        fingerprint: [run.errorCode, run.agentAdapter],
+        fingerprint: [run.errorCode, run.agentAdapter, ...(run === first ? ["execute", "ECONNRESET"] : [])],
       });
     }
     expect(captured("malformed process metadata")).toMatchObject({
@@ -441,6 +443,7 @@ describe.skipIf(!sentryPackage)("run failure context with the real Sentry SDK", 
     });
     expect(JSON.stringify(events)).not.toContain("private-signal-payload");
     const firstCapture = captured(first.errorMessage)!;
+    expect(firstCapture).toHaveProperty("contexts.paperclip.runPath", `/api/heartbeat-runs/${first.runId}`);
     const exceptions = (firstCapture.exception as { values: Array<Record<string, unknown>> }).values;
     expect(exceptions).toHaveLength(2);
     expect(JSON.stringify(exceptions)).toContain("originalAdapter");
@@ -610,3 +613,6 @@ describe.skipIf(!sentryPackage)("run failure context with the real Sentry SDK", 
   });
 
 });
+
+beforeEach(() => { vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", "unexpected"); });
+afterEach(() => { vi.unstubAllEnvs(); });

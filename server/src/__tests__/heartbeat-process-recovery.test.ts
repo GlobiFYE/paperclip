@@ -16789,3 +16789,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
   });
 
 });
+
+beforeEach(() => { vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", "unexpected"); });
+afterEach(() => { vi.unstubAllEnvs(); });

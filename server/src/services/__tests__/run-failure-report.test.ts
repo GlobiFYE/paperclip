@@ -63,6 +63,7 @@ describeEmbeddedPostgres("reportRunFailure", () => {
       ["PATH", "HOME", "USER", "USERNAME", "LOGNAME", "USERPROFILE", "TMPDIR", "TEMP", "TMP"]
         .flatMap((key) => inheritedEnv[key] === undefined ? [] : [[key, inheritedEnv[key]]]),
     );
+    process.env.PAPERCLIP_SENTRY_RUN_FAILURES = "unexpected";
   });
 
   afterEach(async () => {
@@ -125,6 +126,55 @@ describeEmbeddedPostgres("reportRunFailure", () => {
       ...overrides,
     } as unknown as typeof heartbeatRuns.$inferSelect;
   }
+
+  it.each([undefined, "", "off", "true", "invalid"])("does no reporting work without an explicit valid mode: %s", async mode => {
+    vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", mode);
+    if (mode === undefined) delete process.env.PAPERCLIP_SENTRY_RUN_FAILURES;
+    const select = vi.fn();
+    await reportRunFailure({ select } as unknown as Db, buildRun());
+    expect(select).not.toHaveBeenCalled();
+    expect(mockCaptureRunFailure).not.toHaveBeenCalled();
+  });
+
+  it.each(["quota", "git", "secret", "selection", "workspace", "hermes"])("reports known %s failures in all mode", async kind => {
+    vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", "all");
+    await seedCompanyAndAgent(kind === "hermes" ? { adapterType: "hermes_gateway" } : {});
+    const fixtures = {
+      quota: providerQuotaRun,
+      git: gitConnectionRun,
+      secret: missingSecretRun,
+      selection: aiSelectionRun,
+      workspace: localPathConfigurationRun,
+      hermes: hermesConnectionRun,
+    };
+    const fixture = fixtures[kind as keyof typeof fixtures]();
+    const phase = ["git", "secret", "selection", "workspace"].includes(kind) ? "setup" : "execute";
+    const before = structuredClone(fixture);
+    await reportRunFailure(db, fixture, { phase });
+    expect(mockCaptureRunFailure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      companyId, agentId, runId: fixture.id, runStatus: "failed", errorCode: fixture.errorCode,
+    }));
+    expect(fixture).toEqual(before);
+  });
+
+  it("reports company-scoped runs that have no task", async () => {
+    await seedCompanyAndAgent();
+    const fixture = buildRun({ nativeIssueId: null, contextSnapshot: null });
+    await reportRunFailure(db, fixture);
+    expect(mockCaptureRunFailure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      companyId, agentId, taskId: null, runId: fixture.id,
+    }));
+  });
+
+  it.each(["succeeded", "queued", "running", "interrupted", "cancelled"])("all mode excludes %s runs and expected operator stops", async status => {
+    vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", "all");
+    const select = vi.fn();
+    await reportRunFailure({ select } as unknown as Db, buildRun({ status, startedAt: new Date(), resultJson: {
+      cancellation: { source: "operator", expected: true, initiator: { type: "user" }, reason: "Stopped", recordedAt: new Date().toISOString() },
+    } }));
+    expect(select).not.toHaveBeenCalled();
+    expect(mockCaptureRunFailure).not.toHaveBeenCalled();
+  });
 
   it.each(["fresh", "resume", "provider_started"] as const)("keeps workspace base-ref observations reportable: %s", async mode => {
     await seedCompanyAndAgent();
@@ -386,6 +436,15 @@ describeEmbeddedPostgres("reportRunFailure", () => {
     const run = await expiredGrokOffer({ wakes: [{ status: "rejected", httpStatus: 400 }, { status: "rejected", httpStatus: 400 }] });
     await reportRunFailure(db, run, { phase: "execute" });
     expect(mockCaptureRunFailure).not.toHaveBeenCalled();
+  });
+
+  it("reports a rejected Grok wake in all mode", async () => {
+    vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", "all");
+    const run = await expiredGrokOffer({ wakes: [{ status: "rejected", httpStatus: 400 }] });
+    await reportRunFailure(db, run);
+    expect(mockCaptureRunFailure).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+      companyId, agentId, runId: run.id, errorCode: "native_provider_terminal_failed",
+    }));
   });
 
   it.each([

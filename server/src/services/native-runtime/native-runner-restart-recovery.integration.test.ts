@@ -18,7 +18,7 @@ import {
   nativeRunFinalizations,
   nativeRunResults,
 } from "@paperclipai/db";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   canonicalNativeRuntimeContextDigest,
@@ -1151,3 +1151,6 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
     ).toBe(true);
   }, 30_000);
 });
+
+beforeEach(() => { vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", "unexpected"); });
+afterEach(() => { vi.unstubAllEnvs(); });
