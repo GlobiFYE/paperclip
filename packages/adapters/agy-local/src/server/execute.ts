@@ -342,6 +342,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     effectiveExecutionCwd,
   );
 
+  const runtimeMcpServers = ctx.runtimeMcp?.getServers() ?? [];
+  const runtimeMcpIdentity = JSON.stringify(
+    runtimeMcpServers.map(({ name, url, connectionId }) => ({ name, url, connectionId })),
+  );
+
   const runtimeSessionParams = parseObject(runtime.sessionParams);
   const runtimeSessionId =
     asString(runtimeSessionParams.sessionId, "") ||
@@ -349,11 +354,26 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     asString(runtime.sessionId, "");
   const runtimeSessionCwd = asString(runtimeSessionParams.cwd, "");
   const runtimeRemoteExecution = parseObject(runtimeSessionParams.remoteExecution);
+  const runtimeMcpServerIdentity = asString(runtimeSessionParams.mcpServerIdentity, "");
+  const hasMatchingMcpServers =
+    runtimeMcpServerIdentity.length === 0
+      ? runtimeMcpServers.length === 0
+      : runtimeMcpServerIdentity === runtimeMcpIdentity;
   const canResumeSession =
     runtimeSessionId.length > 0 &&
     (runtimeSessionCwd.length === 0 || path.resolve(runtimeSessionCwd) === path.resolve(effectiveExecutionCwd)) &&
     adapterExecutionTargetSessionMatches(runtimeRemoteExecution, runtimeExecutionTarget);
   const sessionId = canResumeSession ? runtimeSessionId : null;
+  if (runtimeSessionId && canResumeSession && !hasMatchingMcpServers) {
+    // Each agy invocation loads mcp_config.json fresh, including resumed
+    // conversations, so a changed tool set does not invalidate the saved
+    // session (the same reasoning claude-local documents for --mcp-config).
+    // The identity is still stored per session so the change is observable.
+    await onLog(
+      "stdout",
+      `[paperclip] Antigravity runtime MCP server set changed; loading current tools when resuming session "${runtimeSessionId}".\n`,
+    );
+  }
 
   const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
   const resolvedInstructionsFilePath = instructionsFilePath
@@ -598,7 +618,9 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           ...(workspaceId ? { workspaceId } : {}),
           ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
           ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
-          ...(runtimeMcpServers.length > 0 ? { mcpServerIdentity: runtimeMcpIdentity } : {}),
+          ...(runtimeMcpServers.length > 0 && !executionTargetIsRemote
+            ? { mcpServerIdentity: runtimeMcpIdentity }
+            : {}),
           ...(executionTargetIsRemote
             ? {
                 remoteExecution: adapterExecutionTargetSessionIdentity(runtimeExecutionTarget),
@@ -668,11 +690,6 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   if (resolvedModelEffort.warning) {
     await onLog("stdout", `[paperclip] Warning: ${resolvedModelEffort.warning}\n`);
   }
-
-  const runtimeMcpServers = ctx.runtimeMcp?.getServers() ?? [];
-  const runtimeMcpIdentity = JSON.stringify(
-    runtimeMcpServers.map(({ name, url, connectionId }) => ({ name, url, connectionId })),
-  );
 
   let mcpCleanup: (() => Promise<void>) | null = null;
   if (runtimeMcpServers.length > 0 && !executionTargetIsRemote) {
