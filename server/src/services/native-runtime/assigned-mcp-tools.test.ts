@@ -26,7 +26,7 @@ describe("assigned MCP runner tools", () => {
     const direct = assigned.definitions();
     expect(direct).toHaveLength(2);
     expect(assigned.definitions(tools => tools.length <= 2)).toEqual(direct);
-    expect(assigned.definitions(tools => tools.length <= 1).map(tool => tool.name)).toEqual([searchName, callName]);
+    expect(assigned.definitions(tools => tools[0]?.name === searchName).map(tool => tool.name)).toEqual([searchName, callName]);
     await expect(assigned.execute({ tool: searchName, arguments: { query: "" } }, "planning"))
       .resolves.toEqual({ tools: [direct[0]], nextOffset: null });
     await assigned.execute({ tool: callName, arguments: { name: direct[0]!.name, arguments: { query: "fixture" } } });
