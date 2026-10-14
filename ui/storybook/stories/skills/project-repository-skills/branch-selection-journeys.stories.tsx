@@ -3,6 +3,7 @@ import type { Meta, StoryObj } from '@storybook/react-vite';
 import { useQueryClient } from '@tanstack/react-query';
 import { Layout } from '@/components/Layout';
 import { SkillSources } from '@/pages/SkillSources';
+import { CompanySkills } from '@/pages/CompanySkills';
 import { PluginLauncherProvider } from '@/plugins/launchers';
 import { Route, Routes, useNavigate } from '@/lib/router';
 import { installBranchSelectionFixtures, type BranchSelectionScenario } from '../../../support/skillSourceBranchSelection';
@@ -19,7 +20,11 @@ function BranchSelectionJourney({ scenario = 'ready' }: { scenario?: BranchSelec
   }, [client, scenario]);
   if (!ready) return null;
   return <PluginLauncherProvider>
-    <Routes><Route path="/:companyPrefix" element={<Layout />}><Route path="skills/sources" element={<SkillSources />} /></Route></Routes>
+    <Routes><Route path="/:companyPrefix" element={<Layout />}>
+      <Route path="skills/sources" element={<SkillSources />} />
+      <Route path="skills/sources/:sourceId" element={<SkillSources />} />
+      <Route path="skills/*" element={<CompanySkills />} />
+    </Route></Routes>
   </PluginLauncherProvider>;
 }
 const meta = {

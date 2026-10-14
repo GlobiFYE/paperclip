@@ -25,9 +25,10 @@ export function installBranchSelectionFixtures(scenario: BranchSelectionScenario
   let attempts = 0, revision = 0, conflict = scenario === 'save-conflict';
   skillSourcesApi.list = async companyId => (await originalList(companyId)).map(source => {
     const selection = selections.get(source.id);
-    return selection === undefined ? { ...source, revision: source.revision + revision,
+    const visible = scenario === 'connection-repair' ? { ...source, accessScope: 'company' as const, projects: [] } : source;
+    return selection === undefined ? { ...visible, revision: source.revision + revision,
       ...(scenario === 'connection-repair' ? {} : { lastError: 'The tracked branch is unavailable. Choose a new branch.' }) }
-      : { ...source, trackingRef: selection.branch, ...(selection.connectionId === undefined ? {} : { connectionId: selection.connectionId }), lastError: null, repairAction: null, syncState: 'ready', revision: source.revision + revision };
+      : { ...visible, trackingRef: selection.branch, ...(selection.connectionId === undefined ? {} : { connectionId: selection.connectionId }), lastError: null, repairAction: null, syncState: 'ready', revision: source.revision + revision };
   });
   skillSourcesApi.branches = async () => {
       await delay(scenario === 'loading' ? 4000 : 350);
@@ -44,6 +45,7 @@ export function installBranchSelectionFixtures(scenario: BranchSelectionScenario
       await delay(900);
       if (scenario === 'save-error' && input.trackingRef === 'feature/missing') throw new ApiError('The branch is unavailable.', 422, { code: 'skill_source_ref_unavailable' });
       if (conflict) { conflict = false; revision++; throw new ApiError('The source changed.', 409, null); }
+      await originalSettings(companyId, sourceId, input);
       selections.set(sourceId, { branch: input.trackingRef, connectionId: input.connectionId }); revision++;
       return (await skillSourcesApi.list(companyId)).find(source => source.id === sourceId)!;
   };
