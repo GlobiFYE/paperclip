@@ -2101,7 +2101,13 @@ export function buildHostServices(
           },
           onDeduplicated: () => { deduplicated = true; },
         })) as Issue;
-        if (deduplicated) return issue;
+        if (deduplicated) {
+          return pluginRedactRelationSummary(companyId, {
+            ...issue,
+            blockedBy: issue.blockedBy ?? [],
+            blocks: issue.blocks ?? [],
+          });
+        }
         await logPluginActivity({
           companyId,
           action: "issue.created",
