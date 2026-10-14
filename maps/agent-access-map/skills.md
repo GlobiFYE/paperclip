@@ -146,7 +146,10 @@ admitted skill-test JWT scope.
 Project-source API additions: GET `/api/companies/{companyId}/skill-sources/project-repositories`,
 POST `/api/companies/{companyId}/skill-sources/adopt-project` with `workspaceId`, and
 PATCH `/api/companies/{companyId}/skill-sources/{sourceId}/settings` with expected revision
-and update/connection preferences. Native API discovery uses the OpenAPI registration.
+and update/connection preferences. `trackingRef: "HEAD"` explicitly restores an independent
+source's default-branch tracking; active project bindings must be edited through their
+project configuration. Responses identify branch, connection, or retry repair and distinguish
+queued imports from imports under an active worker lease. Native API discovery uses the OpenAPI registration.
 
 Project-derived read/use permission follows current project authorization, with access
 through either originating project. File/version reads, source metadata, mutations,

@@ -42,7 +42,8 @@ export async function projectSkillRepositories(db: Db, companyId: string, actor:
     const binding = bindings.find(item => (item.active || (!item.sourceId && item.lastError !== null)) && item.workspaceId === workspace.id && item.repositoryUrl === repo.repositoryUrl && item.trackingRef === repo.trackingRef);
     result.push({ projectId: project.id, projectName: project.name, projectVisibility: project.visibility as 'open' | 'private',
       workspaceId: workspace.id, ...repo, bindingId: binding?.id ?? null, sourceId: binding?.sourceId && !removed.has(binding.sourceId) ? binding.sourceId : null,
-      status: binding?.sourceId && removed.has(binding.sourceId) ? 'available' : binding?.status ?? 'available', lastError: binding?.lastError ?? null });
+      status: binding?.sourceId && removed.has(binding.sourceId) ? 'available' : binding?.status ?? 'available', lastError: binding?.lastError ?? null,
+      ...(binding?.status === 'pending' ? { importState: binding.leaseToken && binding.leaseExpiresAt && binding.leaseExpiresAt > new Date() ? 'importing' as const : 'queued' as const } : {}) });
   }
   return result;
 }

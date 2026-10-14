@@ -788,6 +788,12 @@ source identity even if it currently resolves to that default branch. API-key
 agents without an authenticated run may attach repositories; their durable import
 jobs have no setup person and require adoption by an authorized person.
 
+Independent legacy sources with a missing branch can explicitly switch to `HEAD`
+through source settings. Validate the repository identity and default-branch read
+before changing the ref; preserve installed skill IDs, versions and selection. Active
+project bindings must change their ref through the project configuration. `HEAD`
+remains the default-branch alias after refresh, including for independent sources.
+
 ### Task workspace records (2026-10-09)
 
 Migration [0336_big_crystal.sql](../packages/db/src/migrations/0336_big_crystal.sql) makes `execution_workspaces.project_id` nullable and changes its project reference to `ON DELETE RESTRICT`: source-project policy cannot disappear while a workspace still depends on it. `issues.execution_workspace_id` remains the sole active task binding. Versioned selection/pending-selection JSON and a binding revision record intent and protect transitions; they are not additional active bindings. Accepting a new pending choice advances the revision without changing the active folder. Its receipt retains the original request revision, so current-choice retries are idempotent and superseded retries fail the revision check.

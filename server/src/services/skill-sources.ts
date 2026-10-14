@@ -1,4 +1,5 @@
 import { reserveAutomaticSkillWork, settleAutomaticSkillWork } from './skill-source-refresh-budget.js';
+import { skillSourceRepairAction } from './skill-source-problems.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { skillSourceRetryAt } from './skill-source-retry.js';
 import path from 'node:path';
@@ -51,7 +52,7 @@ export function skillSourceService(db: Db) {
     const refreshing = leaseToken && leaseExpiresAt && leaseExpiresAt > new Date();
     const trackingActive = source.accessScope === 'company' || associated.some(project => project.active);
     const selected = await database.select().from(entries).where(and(eq(entries.companyId, companyId), eq(entries.sourceId, id))).orderBy(entries.path);
-    return { ...source, trackingActive, entries: selected, projects: [...visibleProjects.values()].map(project => ({ ...project, visibility: project.visibility as 'open' | 'private' })),
+    return { ...source, repairAction: skillSourceRepairAction(source.lastError), trackingActive, entries: selected, projects: [...visibleProjects.values()].map(project => ({ ...project, visibility: project.visibility as 'open' | 'private' })),
       syncState: !source.enabled || !source.automaticUpdates || !trackingActive ? 'paused' : refreshing ? 'refreshing' : source.lastError ? 'error' : source.lastSuccessAt ? 'ready' : 'pending' };
   }
   async function list(companyId: string) {
@@ -178,18 +179,10 @@ export function skillSourceService(db: Db) {
         if (current) await tx.update(companySkills).set({ metadata: { ...current.metadata, skillSourceId: source.id, skillSourcePath: old.path, skillSourceState: 'removed' } }).where(and(eq(companySkills.companyId, source.companyId), eq(companySkills.id, old.skillId)));
       }
     }
-    // Two old imports can represent distinct installed skills under HEAD and an
-    // explicit branch. Keep HEAD as Git's default-branch alias when resolving it
-    // would collide; merging their entries could discard skill IDs or selections.
-    const [existingBranch] = source.trackingRef === 'HEAD' ? await tx.select({ id: sources.id }).from(sources).where(and(
-      eq(sources.companyId, source.companyId), eq(sources.trackingRef, scan.trackingRef),
-      or(eq(sources.repositoryId, scan.repositoryId), eq(sources.repositoryUrl, scan.repositoryUrl)),
-    )) : [];
-    const [defaultBinding] = source.trackingRef === 'HEAD' ? await tx.select({ id: projectSkillSources.id }).from(projectSkillSources)
-      .where(and(eq(projectSkillSources.companyId, source.companyId), eq(projectSkillSources.sourceId, source.id), eq(projectSkillSources.trackingRef, 'HEAD'))).limit(1) : [];
+    // HEAD remains the default-branch alias across refreshes and branch renames.
     await tx.update(sources).set({ repositoryId: scan.repositoryId, repositoryUrl: scan.repositoryUrl, fullName: scan.fullName,
       packageMode: mode, repositoryPackage: scan.repositoryPackage ?? null,
-      trackingRef: existingBranch || defaultBinding || (source.accessScope === 'projects' && source.trackingRef === 'HEAD') ? 'HEAD' : scan.trackingRef, excludedFolders, lastSuccessAt: new Date(), lastScanCommit: scan.commitSha, lastScanTreeSha: scan.treeSha ?? null, lastError: null,
+      trackingRef: source.trackingRef === 'HEAD' ? 'HEAD' : scan.trackingRef, excludedFolders, lastSuccessAt: new Date(), lastScanCommit: scan.commitSha, lastScanTreeSha: scan.treeSha ?? null, lastError: null,
       revision: source.revision + 1, leaseToken: null, leaseExpiresAt: null, failureCount: 0, nextSyncAt: new Date(Date.now() + 5 * 60_000) }).where(scope(source.companyId, source.id));
     await context.audit(tx, source.id, 'company.skill_source_refreshed', { commit: scan.commitSha, importedCount: imported.length, updatedCount: updated.length, unchanged, warningCount: warnings.length });
     return { imported, updated, unchanged, warnings: [...new Set(warnings)] };
@@ -307,21 +300,41 @@ export function skillSourceService(db: Db) {
     await context.authorize('skills.edit', { sourceType: 'git', sourceLocator: source.repositoryUrl });
     // Validate a replacement connection before binding unattended work to it.
     let reader: GitHubRead | undefined;
-    if (input.connectionId !== undefined) {
-      reader = context.read(input.connectionId);
-      await reader(`/repos/${source.fullName}`);
+    if (input.trackingRef !== undefined) {
+      const [binding] = await db.select({ id: projectSkillSources.id }).from(projectSkillSources)
+        .where(and(eq(projectSkillSources.companyId, companyId), eq(projectSkillSources.sourceId, id), eq(projectSkillSources.active, true))).limit(1);
+      if (source.accessScope === 'projects' || binding) throw unprocessable('Update the repository branch in its project settings.');
+    }
+    if (input.connectionId !== undefined || input.trackingRef !== undefined) {
+      reader = context.read(input.connectionId !== undefined ? input.connectionId : source.connectionId);
+      const repository = await reader(`/repos/${source.fullName}`) as { id: number; default_branch: string };
+      if (source.repositoryId && String(repository.id) !== source.repositoryId) throw conflict('The repository at this URL has changed identity. Add it as a new source.');
+      const ref = (input.trackingRef ?? source.trackingRef) === 'HEAD' ? repository.default_branch : source.trackingRef;
+      await reader(`/repos/${source.fullName}/commits/${encodeURIComponent(ref)}`);
     }
     return db.transaction(async tx => {
+      if (input.trackingRef !== undefined) {
+        // Attachment/removal lock the source before changing its project bindings.
+        await tx.select({ id: sources.id }).from(sources).where(scope(companyId, id)).for('update');
+        const [binding] = await tx.select({ id: projectSkillSources.id }).from(projectSkillSources)
+          .where(and(eq(projectSkillSources.companyId, companyId), eq(projectSkillSources.sourceId, id), eq(projectSkillSources.active, true))).limit(1);
+        if (binding) throw unprocessable('Update the repository branch in its project settings.');
+        const [duplicate] = await tx.select({ id: sources.id }).from(sources).where(and(
+          eq(sources.companyId, companyId), eq(sources.repositoryUrl, source.repositoryUrl), eq(sources.trackingRef, input.trackingRef), isNull(sources.removedAt), sql`${sources.id} <> ${id}`));
+        if (duplicate) throw conflict('This repository’s default branch is already in Sources. Use that source; installed skills were kept.');
+      }
       const [updated] = await tx.update(sources).set({
         ...(input.automaticUpdates !== undefined ? { automaticUpdates: input.automaticUpdates } : {}),
         ...(input.importNewSkills !== undefined ? { importNewSkills: input.importNewSkills } : {}),
         ...(input.connectionId !== undefined ? { connectionId: reader?.connectionId ?? input.connectionId,
           refreshUserId: context.setup?.userId, refreshAgentId: context.setup?.agentId ?? null,
           refreshLocalTrusted: context.setup?.localTrusted ?? false, refreshGrantId: reader?.grantId ?? null, lastError: null } : {}),
+        ...(input.trackingRef !== undefined ? { trackingRef: input.trackingRef, lastError: null, failureCount: 0 } : {}),
         revision: sql`${sources.revision} + 1`, nextSyncAt: new Date(),
       }).where(and(scope(companyId, id), eq(sources.revision, input.revision), or(isNull(sources.leaseToken), lt(sources.leaseExpiresAt, new Date())))).returning();
       if (!updated) throw conflict('This source is refreshing or changed. Reload before saving.');
-      await context.audit(tx, id, 'company.skill_source_settings_updated', { automaticUpdates: updated.automaticUpdates, importNewSkills: updated.importNewSkills, connectionChanged: input.connectionId !== undefined });
+      await context.audit(tx, id, 'company.skill_source_settings_updated', { automaticUpdates: updated.automaticUpdates, importNewSkills: updated.importNewSkills, connectionChanged: input.connectionId !== undefined,
+        ...(input.trackingRef !== undefined ? { previousRef: source.trackingRef, trackingRef: updated.trackingRef } : {}) });
       return detail(companyId, id, tx);
     });
   }

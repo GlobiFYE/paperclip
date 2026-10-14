@@ -37,6 +37,30 @@ describe.skipIf(!support.supported)('skill source persistence', () => {
     if (originalHome === undefined) delete process.env.PAPERCLIP_HOME; else process.env.PAPERCLIP_HOME = originalHome;
     await testDb?.cleanup(); if (home) await fs.rm(home, { recursive: true, force: true });
   });
+  it('explicitly repairs a missing branch while retaining connection, selection and installed versions', async () => {
+    const companyId = randomUUID();
+    await db.insert(companies).values({ id: companyId, name: 'Branch repair', issuePrefix: 'BRP' });
+    const service = skillSourceService(db);
+    const created = await service.create(companyId, { repositoryUrl: 'https://github.com/acme/skills', trackingRef: 'missing-branch', commitSha: sha, selectedPaths: ['deep/one/SKILL.md'] }, context);
+    const reader = githubFixture(initial);
+    const read = vi.fn(reader);
+    Object.assign(read, { openSnapshot: reader.openSnapshot });
+    const failedRead = Object.assign(async (request: string) => {
+      if (request.endsWith('/commits/missing-branch')) throw unprocessable('The tracked GitHub branch or revision is unavailable.', { code: 'skill_source_ref_unavailable' });
+      return reader(request);
+    }, { openSnapshot: reader.openSnapshot });
+    await expect(service.settings(companyId, created.source.id, { revision: created.source.revision, connectionId: randomUUID() }, { ...context, read: () => failedRead }))
+      .rejects.toMatchObject({ details: { code: 'skill_source_ref_unavailable' } });
+    expect((await service.detail(companyId, created.source.id)).connectionId).toBe(created.source.connectionId);
+    const repaired = await service.settings(companyId, created.source.id, { revision: created.source.revision, trackingRef: 'HEAD' }, { ...context, read: () => read });
+    expect(repaired.trackingRef).toBe('HEAD');
+    expect(repaired.entries).toEqual(created.source.entries);
+    expect(read).toHaveBeenCalledWith('/repos/acme/skills');
+    expect(read).toHaveBeenCalledWith('/repos/acme/skills/commits/main');
+    const refreshed = await service.refresh(companyId, repaired.id, context);
+    expect(refreshed.source.trackingRef).toBe('HEAD');
+    expect(refreshed.source.entries[0]?.skillId).toBe(created.source.entries[0]?.skillId);
+  });
   it('checks a new commit with an unchanged tree without downloading or replacing versions', async () => {
     const originalFiles = files, originalCommit = commit;
     try {
@@ -175,7 +199,7 @@ describe.skipIf(!support.supported)('skill source persistence', () => {
     await expect(skillSourceService(db).create(companyId, { repositoryUrl: 'https://github.com/acme/skills', trackingRef: 'rollback', commitSha: sha, selectedPaths: ['SKILL.md'] }, { ...context, audit: async () => { throw new Error('audit unavailable'); } })).rejects.toThrow('audit unavailable');
     expect(await db.select().from(companySkills).where(eq(companySkills.companyId, companyId))).toHaveLength(before.length);
     expect((await skillSourceService(db).list(companyId)).some(source => source.trackingRef === 'rollback')).toBe(false);
-    expect((await db.select().from(companySkillVersions)).every(version => before.some(skill => skill.id === version.companySkillId))).toBe(true);
+    expect((await db.select().from(companySkillVersions).where(eq(companySkillVersions.companyId, companyId))).every(version => before.some(skill => skill.id === version.companySkillId))).toBe(true);
   });
   it('retains excluded folders, reviews additions, restores removed paths and preserves pinned versions and copies', async () => {
     const service = skillSourceService(db), skills = companySkillService(db);
@@ -331,7 +355,7 @@ describe.skipIf(!support.supported)('skill source persistence', () => {
       return read(request);
     }, { openSnapshot: read.openSnapshot }) });
     expect(refreshed.imported[0]).toMatchObject({ id: legacy!.id, sourceRef: commit });
-    expect((await service.sourceForSkill(legacyCompany, legacy!.id))?.trackingRef).toBe('main');
+    expect((await service.sourceForSkill(legacyCompany, legacy!.id))?.trackingRef).toBe('HEAD');
     expect(await service.list(legacyCompany)).toHaveLength(2);
   });
 
