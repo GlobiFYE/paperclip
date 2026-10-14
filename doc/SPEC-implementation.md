@@ -2108,11 +2108,15 @@ unavailable. Preserve current ownership and newer-work fences. See
   be paused independently of selection. Project sources select future additions unless
   excluded; existing manually imported sources retain their selections. Legacy projects
   adopt through an explicit company-scoped, project-authorized endpoint, never a GET.
-- Repository size fallback must not discard installed shared dependencies or
-  publish packages with detected omitted dependencies. Retain affected versions
-  and report the size problem. Self-contained packages can still update through
-  fallback. Project sources retry complete repository packaging and return to it
-  when supported; selections and exclusions remain unchanged.
+- Repository size fallback first retains skill folders and transitively referenced
+  repository files within the existing file/byte limits, preserving original paths.
+  If that set is still too large, bounded skill folders remain importable. Missing
+  references are advisory and do not invalidate otherwise valid selected skills.
+  Web routes and inline Markdown examples are not package dependencies. Preserve
+  installed versions if fallback would omit their previously installed shared files.
+  Project sources retry complete packaging; selections and exclusions remain unchanged.
+  Refresh reinspects cached dependency-rejection errors once even at an unchanged
+  upstream commit. Content validation and company/project access remain enforced.
 - Unattended refresh stores setup identity and connection/grant identifiers, never token
   values. Current membership, connection authorization and skill policy are revalidated.
   Unrecoverable legacy setup identities require explicit connection repair. Retries are

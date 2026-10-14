@@ -75,6 +75,13 @@ and provides Refresh and Automatic updates in its source menu. Verify future add
 retained exclusions, error recovery and reload persistence. Private-only sources must
 be absent for unrelated people/agents; access through either originating project is sufficient.
 
+For an oversized repository, preview and import a skill that links to shared files
+outside its folder. Its saved version should include those files under the original
+repository paths. Missing references remain visible warnings and must not disable
+an otherwise valid skill's selection. Verify an existing source with cached dependency
+errors recovers on refresh without requiring a new upstream commit. A refresh that
+cannot preserve installed shared files retains the prior version.
+
 Storybook/browser coverage uses scoped fixtures. Live GitHub-to-routine execution
 must be verified separately; inspect resolved version IDs across an upstream update.
 
