@@ -60,7 +60,9 @@ async function measure(query: Query) {
   let rows: unknown[] = [];
   for (let sample = 0; sample < 7; sample++) {
     const start = performance.now();
-    rows = await db.$client.unsafe(query.sql, query.params as never[]);
+    // Positional rows retain every column, including unnamed SQL projections
+    // whose duplicate names would overwrite one another in object results.
+    rows = await db.$client.unsafe(query.sql, query.params as never[]).values();
     if (sample > 1) samples.push(performance.now() - start);
   }
   const [explain] = await db.$client.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query.sql}`, query.params as never[]);
@@ -172,8 +174,11 @@ try {
   console.log(JSON.stringify({ baselineRevision, postgres: (await db.$client`SELECT version()`)[0].version,
     fixture: { issues: 335, runs: 1400, wakes: 13000, actions: 377, promptBytes: Buffer.byteLength(prompt) }, results }, null, 2));
 } finally {
-  clearInterval(keepAlive);
-  await db.$client.end({ timeout: 0 });
-  await database.cleanup();
-  if (baselineModuleDir) await fs.rm(baselineModuleDir, { recursive: true, force: true });
+  try {
+    await db.$client.end({ timeout: 0 });
+    await database.cleanup();
+    if (baselineModuleDir) await fs.rm(baselineModuleDir, { recursive: true, force: true });
+  } finally {
+    clearInterval(keepAlive);
+  }
 }
