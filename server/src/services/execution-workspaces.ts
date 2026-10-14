@@ -3533,6 +3533,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           // generation so a queued cleanup that captured the old generation does
           // nothing. Clear cleanupEligibleAt so the reaper does not destroy the
           // half-built worktree while a later reopen retries.
+          await notifyTerminalWorkspaceWork(tx);
           await tx
             .update(executionWorkspaces)
             .set({
@@ -3583,6 +3584,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         // flag stops the terminal reaper and the archive route from archiving and
         // destroying the rebuilt worktree in that window.
         const activeMetadata = setMetadataReopenPendingConsumption(nextMetadata, now());
+        await notifyTerminalWorkspaceWork(tx);
         const activeRow = await tx
           .update(executionWorkspaces)
           .set({
@@ -3775,6 +3777,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         const archiveMetadata = clearMetadataReopenPendingConsumption(
           bumpExecutionWorkspaceLifecycleGeneration(baseMetadata),
         );
+        await notifyTerminalWorkspaceWork(tx);
         const archived = await tx
           .update(executionWorkspaces)
           .set({
@@ -4039,6 +4042,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
             updatePatch.name = inspection.toBranch;
           }
 
+          await notifyTerminalWorkspaceWork(tx);
           const [branchUpdatedRow] = await tx
             .update(executionWorkspaces)
             .set(updatePatch)
