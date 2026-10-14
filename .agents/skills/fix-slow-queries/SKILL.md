@@ -1,10 +1,10 @@
 ---
 name: fix-slow-queries
 description: >-
-  Diagnose and fix slow Paperclip PostgreSQL queries from Cloud and Neon evidence
-  through local reproduction, measured performance and correctness comparisons,
-  regression tests, and a pull request with passing checks. Use for slow queries,
-  costly database polling, or database work contributing to slow requests.
+  Diagnose and fix slow Paperclip PostgreSQL queries using Cloud and Neon evidence,
+  local reproduction, performance and result comparisons, regression tests, and
+  a PR with passing checks. Use for costly queries, repeated database work, or
+  slow requests with a suspected database cause.
 ---
 
 # Fix Slow Queries
