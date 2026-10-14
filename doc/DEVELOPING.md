@@ -1883,6 +1883,10 @@ automatically alongside it; see [Agent commentary](agent-commentary.md).
 Other runtime skills remain controlled by
 `paperclipSkillSync.desiredSkills`. The native `paperclip_runner` does not use
 this legacy default because its protocol supplies the control-plane contract.
+An empty native runtime selection returns before company skill inventory work.
+An explicit empty stored key set does the same. Nonempty selections still use
+the current inventory, version and access checks. Legacy automatic selections
+still resolve their operational and feedback skills.
 
 Validate the catalog without writing the manifest:
 
