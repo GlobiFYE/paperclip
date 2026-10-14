@@ -4097,6 +4097,28 @@ describe("IssueDetail", () => {
     });
   });
 
+  it.each(["queued", "deferred"] as const)("preserves an authoritative %s retry after an older run took the same input", async state => {
+    const retry = createIssueComment({ id: "retry-message" });
+    mockIssuesApi.get.mockResolvedValue(createIssue({ status: "in_progress", assigneeAgentId: "agent-1" }));
+    mockIssuesApi.listComments.mockResolvedValue([retry]);
+    mockIssuesApi.getQueuedComments.mockResolvedValue(createQueuedCommentQueue({
+      state, targetRunId: state === "deferred" ? "run-new" : null,
+      entries: [{ comment: retry, position: 0, canEdit: true, canDiscard: true }],
+    }));
+    mockActivityApi.runsForIssue.mockResolvedValue([{
+      runId: "run-old", agentId: "agent-1", adapterType: "paperclip_runner",
+      status: "failed", startedAt: "2026-04-21T00:00:01.000Z",
+      finishedAt: "2026-04-21T00:00:02.000Z",
+      createdAt: "2026-04-21T00:00:01.000Z", wakeCommentIds: [retry.id],
+      contextIssueId: "issue-1",
+    }]);
+    await act(async () => renderIssueView());
+    await waitForAssertion(() => {
+      const props = mockIssueChatThreadRender.mock.calls.at(-1)![0];
+      expect(props.queuedCommentQueue?.entries.map((entry: { comment: IssueComment }) => entry.comment.id)).toEqual([retry.id]);
+    });
+  });
+
   it("does not rebind a queued message when another run becomes live before its request settles", async () => {
     const postedComment = createDeferred<IssueComment>();
     mockIssuesApi.get.mockResolvedValue(

@@ -1685,7 +1685,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
 
     for (const run of resolvedLinkedRuns) {
       agentIdByRunId.set(run.runId, run.agentId);
-      if (!run.startedAt) continue;
+      if (run.status === "queued" || !run.startedAt) continue;
       const batchedIds = Array.isArray(run.wakeCommentIds)
         ? run.wakeCommentIds.filter(
             (value): value is string =>
@@ -2065,23 +2065,28 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   ]);
   const effectiveQueuedCommentQueue = useMemo(() => {
     if (!queuedCommentQueueEnabled) return null;
-    const deliveredCommentIds = new Set(consumedQueuedCommentIds);
+    const deliveredCommentRunIds = new Map<string, string>();
     for (const comment of commentsWithRunMeta) {
-      if (comment.consumedByRunId) deliveredCommentIds.add(comment.id);
+      if (comment.consumedByRunId) {
+        deliveredCommentRunIds.set(comment.id, comment.consumedByRunId);
+      }
     }
     const visibleAuthoritativeQueue = authoritativeQueuedCommentQueue
       ? {
           ...authoritativeQueuedCommentQueue,
           entries: authoritativeQueuedCommentQueue.entries.filter(
             (entry) =>
-              !deliveredCommentIds.has(entry.comment.id) &&
-              !discardedQueuedCommentIds.has(entry.comment.id),
+              !consumedQueuedCommentIds.has(entry.comment.id) &&
+              !discardedQueuedCommentIds.has(entry.comment.id) &&
+              deliveredCommentRunIds.get(entry.comment.id) !==
+                authoritativeQueuedCommentQueue.targetRunId,
           ),
         }
       : null;
     const pendingComments = commentsWithRunMeta.flatMap((comment) => {
       if (
-        deliveredCommentIds.has(comment.id) ||
+        consumedQueuedCommentIds.has(comment.id) ||
+        deliveredCommentRunIds.has(comment.id) ||
         discardedQueuedCommentIds.has(comment.id) ||
         comment.steeredIntoRunId
       ) {
