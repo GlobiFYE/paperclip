@@ -1,4 +1,10 @@
+import { HttpError } from "./errors.js";
+
 export type StartupRecoveryPhase = "starting" | "recovering" | "ready";
+
+export function isRecoverableStartupHeartbeatError(error: unknown): boolean {
+  return error instanceof HttpError && error.status === 422;
+}
 
 let phase: StartupRecoveryPhase = "ready";
 let updatedAt = new Date().toISOString();

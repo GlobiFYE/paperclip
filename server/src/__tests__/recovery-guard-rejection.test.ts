@@ -15,7 +15,7 @@ import {
 } from "./helpers/embedded-postgres.js";
 import { HttpError } from "../errors.js";
 import { issueService } from "../services/issues.js";
-import { recoveryService } from "../services/recovery/service.js";
+import { isRecoverableStartupHeartbeatError } from "../startup-recovery-state.js";
 
 // A consistency guard rejecting one write (here `assertNoBlockingCycles`
 // throwing HttpError 422) is a data condition about a single issue, not a
@@ -125,37 +125,14 @@ describeEmbeddedPostgres("startup recovery guard rejection", () => {
     return { companyId, sourceIssueId, childIssueId };
   }
 
-  it("resolves the startup recovery promise when a consistency guard rejects a recovery write", async () => {
-    const { sourceIssueId } = await seedCyclicRecoveryAction();
-    const recovery = recoveryService(db, { enqueueWakeup: async () => null });
-
-    // Mirror index.ts:1563-1568: startup recovery runs through a `.catch()`
-    // that logs and rethrows, and the boot path awaits the promise. Before the
-    // fix the rethrow rejected this await and terminated the process.
-    let reconciled: Awaited<
-      ReturnType<typeof recovery.reconcileStrandedAssignedIssues>
-    > | null = null;
-    const startupHeartbeatRecovery = (async () => {
-      reconciled = await recovery.reconcileStrandedAssignedIssues();
-    })().catch((err) => {
-      throw err;
-    });
-
-    await expect(startupHeartbeatRecovery).resolves.toBeUndefined();
-
-    // The rejected write was skipped, not applied: the action is left active
-    // for the next pass and the source keeps its pre-recovery status.
-    expect(reconciled!.skipped).toBeGreaterThanOrEqual(1);
-    const [action] = await db
-      .select()
-      .from(issueRecoveryActions)
-      .where(eq(issueRecoveryActions.sourceIssueId, sourceIssueId));
-    expect(action.status).toBe("active");
-    const [source] = await db
-      .select()
-      .from(issues)
-      .where(eq(issues.id, sourceIssueId));
-    expect(source.status).toBe("blocked");
+  it("continues startup only for consistency guard rejections", () => {
+    expect(
+      isRecoverableStartupHeartbeatError(
+        new HttpError(422, "Blocking relations cannot contain cycles"),
+      ),
+    ).toBe(true);
+    expect(isRecoverableStartupHeartbeatError(new HttpError(409, "Conflict"))).toBe(false);
+    expect(isRecoverableStartupHeartbeatError(new Error("Database unavailable"))).toBe(false);
   });
 
   it("still rejects the same write with 422 on the ordinary request path", async () => {

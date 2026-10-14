@@ -993,38 +993,48 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
     run: typeof heartbeatRuns.$inferSelect,
     companyAgents?: AgentOrgRow[],
     deferredPostCommitEffects?: WakeQueuePostCommitEffect[],
+    deferredClaimEffects?: Array<() => Promise<void>>,
   ) {
+    async function applyClaimEffect(effect: () => Promise<void>) {
+      if (deferredClaimEffects) {
+        deferredClaimEffects.push(effect);
+        return;
+      }
+      await effect();
+    }
     if (run.status !== "queued") return run;
     // Claim is the first execution boundary. startedAt survives same-run
     // retries; restart recovery may also enter executeRun already running.
     // Neither may reinterpret an admitted, already-started message as new work.
     if (!run.startedAt && !(await slackMentionAllowsRunStart(db, run))) {
-      const now = new Date();
-      const reason = "Message did not @mention the bot";
-      // This runs under the agent start lock. Do not use cancelRunInternal,
-      // which recursively starts the next run and reacquires that lock.
-      const cancelled = await setRunStatus(run.id, "cancelled", {
-        finishedAt: now,
-        error: reason,
-        errorCode: "chat_mention_required",
+      await applyClaimEffect(async () => {
+        const now = new Date();
+        const reason = "Message did not @mention the bot";
+        const cancelled = await setRunStatus(run.id, "cancelled", {
+          finishedAt: now,
+          error: reason,
+          errorCode: "chat_mention_required",
+        });
+        if (cancelled) {
+          await setWakeupStatus(run.wakeupRequestId, "skipped", { finishedAt: now, error: reason });
+          await appendRunEvent(cancelled, {
+            eventType: "lifecycle", stream: "system", level: "warn", message: reason,
+          });
+          await releaseIssueExecutionAndPromote(cancelled, {
+            suppressImmediateRecovery: true, deferredPostCommitEffects,
+          });
+        }
       });
-      if (cancelled) {
-        await setWakeupStatus(run.wakeupRequestId, "skipped", { finishedAt: now, error: reason });
-        await appendRunEvent(cancelled, {
-          eventType: "lifecycle", stream: "system", level: "warn", message: reason,
-        });
-        await releaseIssueExecutionAndPromote(cancelled, {
-          suppressImmediateRecovery: true, deferredPostCommitEffects,
-        });
-      }
       return null;
     }
 
     const agent = await getAgent(run.agentId);
     if (!agent) {
-      await cancelRunInternal(
-        run.id,
-        "Cancelled because the agent no longer exists",
+      await applyClaimEffect(() =>
+        cancelRunInternal(
+          run.id,
+          "Cancelled because the agent no longer exists",
+        ).then(() => undefined),
       );
       return null;
     }
@@ -1034,9 +1044,11 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
       ? evaluateAgentInvokability(toAgentOrgRow(agent), companyAgents)
       : await getAgentInvokability(agent);
     if (!invokability.invokable) {
-      await cancelRunInternal(
-        run.id,
-        `Cancelled because the agent is not invokable: ${invokability.reason}`,
+      await applyClaimEffect(() =>
+        cancelRunInternal(
+          run.id,
+          `Cancelled because the agent is not invokable: ${invokability.reason}`,
+        ).then(() => undefined),
       );
       return null;
     }
@@ -1051,7 +1063,9 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
       },
     );
     if (budgetBlock) {
-      await cancelRunInternal(run.id, budgetBlock.reason);
+      await applyClaimEffect(() =>
+        cancelRunInternal(run.id, budgetBlock.reason).then(() => undefined),
+      );
       return null;
     }
 
@@ -1065,7 +1079,9 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
       },
     );
     if (dailyCapBlock) {
-      await cancelQueuedRunForHeartbeatDailyCap(run, dailyCapBlock);
+      await applyClaimEffect(() =>
+        cancelQueuedRunForHeartbeatDailyCap(run, dailyCapBlock).then(() => undefined),
+      );
       return null;
     }
 
@@ -1103,9 +1119,11 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
           contextSnapshot: context,
         }));
       if (activePauseHold && !treeHoldInteractionWake) {
-        await cancelRunInternal(
-          run.id,
-          "Cancelled because issue is held by an active subtree pause hold",
+        await applyClaimEffect(() =>
+          cancelRunInternal(
+            run.id,
+            "Cancelled because issue is held by an active subtree pause hold",
+          ).then(() => undefined),
         );
         await logActivity(db, {
           companyId: run.companyId,
@@ -1145,10 +1163,12 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
           ISSUE_TREE_CONTROL_INTERACTION_WAKE_REASONS,
         )
       ) {
-        await cancelQueuedRunForBlockedDependencies(
-          run,
-          issueId,
-          readiness?.unresolvedBlockerIssueIds ?? [],
+        await applyClaimEffect(() =>
+          cancelQueuedRunForBlockedDependencies(
+            run,
+            issueId,
+            readiness?.unresolvedBlockerIssueIds ?? [],
+          ).then(() => undefined),
         );
         logger.info(
           { runId: run.id, issueId, unresolvedBlockerCount },
@@ -1163,7 +1183,9 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         expectedStatus: "queued",
       });
       if (staleness.outcome === "cancelled" || staleness.outcome === "deferred") {
-        applyRunDispatchPostCommitEffects(staleness.postCommitEffects);
+        await applyClaimEffect(async () => {
+          applyRunDispatchPostCommitEffects(staleness.postCommitEffects);
+        });
         logger.info(
           {
             runId: run.id,
@@ -1960,6 +1982,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
     // agent's next queued run, which takes this same lock.
     const rejectedClaims: Array<{ run: typeof heartbeatRuns.$inferSelect; err: HttpError }> = [];
     const deferredPostCommitEffects: WakeQueuePostCommitEffect[] = [];
+    const deferredClaimEffects: Array<() => Promise<void>> = [];
     let cancellationReason: string | undefined;
 
     return withAgentStartLock(agentId, () =>
@@ -2076,7 +2099,12 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         if (claimedRuns.length >= availableSlots) break;
         let claimed: typeof heartbeatRuns.$inferSelect | null;
         try {
-          claimed = await claimQueuedRun(queuedRun, companyAgents, deferredPostCommitEffects);
+          claimed = await claimQueuedRun(
+            queuedRun,
+            companyAgents,
+            deferredPostCommitEffects,
+            deferredClaimEffects,
+          );
         } catch (err) {
           if (isPermanentClaimRejection(err)) {
             rejectedClaims.push({ run: queuedRun, err });
@@ -2115,12 +2143,15 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
       }
       return claimedRuns;
     })).finally(async () => {
-      // Dispatch promoted inputs after the agent start lock is released.
       try {
-        await applyWakeQueuePostCommitEffects(deferredPostCommitEffects);
+        for (const effect of deferredClaimEffects) await effect();
       } finally {
-        if (cancellationReason) await cancelActiveForAgentInternal(agentId, cancellationReason);
-        await cancelRejectedQueuedRuns(rejectedClaims);
+        try {
+          await applyWakeQueuePostCommitEffects(deferredPostCommitEffects);
+        } finally {
+          if (cancellationReason) await cancelActiveForAgentInternal(agentId, cancellationReason);
+          await cancelRejectedQueuedRuns(rejectedClaims);
+        }
       }
     });
   }

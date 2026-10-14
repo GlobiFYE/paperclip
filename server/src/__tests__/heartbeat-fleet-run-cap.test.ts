@@ -504,12 +504,10 @@ describeEmbeddedPostgres("fleet-wide agent run ceiling", () => {
     const { companyId, seeded } = await seedCompanyWithQueuedRuns();
     const seededRunIds = seeded.map((s) => s.runId);
 
-    // This test is about the queue draining, not about the cap: let executions
-    // finish immediately and sweep repeatedly, as the 30 s scheduler tick does.
     blockExecutions = false;
     const drainDeadline = Date.now() + 45_000;
     while (Date.now() < drainDeadline) {
-      await heartbeat.resumeQueuedRuns();
+      await heartbeatAtCeilingTwo.resumeQueuedRuns();
       if (await isIdle()) break;
       await new Promise((resolve) => setTimeout(resolve, 300));
     }
@@ -529,16 +527,31 @@ describeEmbeddedPostgres("fleet-wide agent run ceiling", () => {
 
   it("keeps every ticket when the ceiling is one and the backlog drains", async () => {
     const { companyId, seeded } = await seedCompanyWithQueuedRuns(3);
+    const seededRunIds = seeded.map((s) => s.runId);
 
     await heartbeatAtCeilingOne.resumeQueuedRuns();
-    expect(await waitForExecutionsOf(seeded.map((s) => s.runId), 1)).toBe(true);
+    expect(await waitForExecutionsOf(seededRunIds, 1)).toBe(true);
     const firstPass = await listRuns(companyId);
     const runningIds = firstPass.filter((run) => run.status === "running").map((run) => run.id);
     expect(runningIds).toHaveLength(1);
     expect(runningIds[0]).toBe(seeded[0]!.runId);
-    // The remaining two tickets are still queued, not cancelled.
     expect(firstPass.filter((run) => run.status === "queued")).toHaveLength(2);
     expect(firstPass.filter((run) => run.status === "cancelled")).toHaveLength(0);
-    expect(firstPass.map((run) => run.id).sort()).toEqual(seeded.map((s) => s.runId).sort());
+    expect(firstPass.map((run) => run.id).sort()).toEqual(seededRunIds.slice().sort());
+
+    blockExecutions = false;
+    await releaseExecution(seeded[0]!.runId);
+    const drainDeadline = Date.now() + 45_000;
+    while (Date.now() < drainDeadline) {
+      await heartbeatAtCeilingOne.resumeQueuedRuns();
+      if (await isIdle()) break;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+
+    const runs = await listRuns(companyId);
+    const seededRows = runs.filter((run) => seededRunIds.includes(run.id));
+    expect(seededRows.map((run) => run.id).sort()).toEqual(seededRunIds.slice().sort());
+    expect(seededRows.every((run) => run.status === "succeeded")).toBe(true);
+    expect([...new Set(executionsOf(seededRunIds))].sort()).toEqual(seededRunIds.slice().sort());
   }, 120_000);
 });

@@ -52,7 +52,7 @@ function callbacks(db: Db) {
     applyWakeQueuePostCommitEffects: vi.fn(async () => undefined),
     releaseIssueExecutionAndPromote: vi.fn(async () => undefined),
     publishRunLifecyclePluginEvent: vi.fn(),
-    cancelRunInternal: vi.fn(async () => undefined),
+    cancelRunInternal: vi.fn<HeartbeatQueueDependencies["cancelRunInternal"]>(async () => undefined),
     cancelActiveForAgentInternal: vi.fn(async () => undefined),
     resumeExecutionWaitComments: vi.fn(async () => undefined),
     resumeQueuedCommentInterrupt: vi.fn(async () => undefined),
@@ -170,6 +170,26 @@ describe.skipIf(!support.supported)("heartbeat queue database wiring", () => {
     await createHeartbeatQueue(db, callbacks(db)).releaseRunClaimedJustBeforeSuppression(run.id);
     const [current] = await db.select().from(issues).where(eq(issues.id, issue.id));
     expect(current.executionRunId).toBe(newOwner.id);
+  });
+
+  it("defers claim cancellation until admission locks are released", async () => {
+    const { run, agent } = await fixture("queued");
+    const deps = callbacks(db);
+    deps.getAgent.mockResolvedValue(agent);
+    deps.budgets.getInvocationBlock.mockResolvedValue({ reason: "budget blocked" } as never);
+    const queue = createHeartbeatQueue(db, deps);
+    deps.cancelRunInternal.mockImplementation(async (runId) => {
+      await db
+        .update(heartbeatRuns)
+        .set({ status: "cancelled", finishedAt: new Date() })
+        .where(eq(heartbeatRuns.id, runId));
+      await queue.startNextQueuedRunForAgent(agent.id);
+    });
+
+    await expect(queue.startNextQueuedRunForAgent(agent.id)).resolves.toEqual([]);
+    expect(deps.cancelRunInternal).toHaveBeenCalledWith(run.id, "budget blocked");
+    const [cancelled] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
+    expect(cancelled.status).toBe("cancelled");
   });
 
   it("cancels at the daily run cap before claiming or dispatching", async () => {
