@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { ISSUE_STATUSES } from "@paperclipai/shared";
 import { HttpError } from "../errors.ts";
 import { parseStatusFilter } from "../services/issues.ts";
 
@@ -128,5 +129,19 @@ describe("parseStatusFilter (services barrel export)", () => {
   it("is re-exported from the services barrel", async () => {
     const mod = await import("../services/index.ts");
     expect(mod.parseStatusFilter).toBe(parseStatusFilter);
+  });
+});
+
+describe("parseStatusFilter – error details", () => {
+  it("names only the unknown values and lists the allowed ones", () => {
+    let caught: unknown;
+    try {
+      parseStatusFilter(["todo", "done,bogus", "nope"]);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(HttpError);
+    expect((caught as HttpError).message).toBe("Unknown issue status: bogus, nope");
+    expect((caught as HttpError).details).toEqual({ allowed: ISSUE_STATUSES });
   });
 });

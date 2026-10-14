@@ -171,12 +171,12 @@ import {
   documentService,
   documentAnnotationService,
   logActivity,
-  parseStatusFilter,
   publishActivity,
   projectService,
   routineService,
   workProductService,
 } from "../services/index.js";
+import { parseStatusFilter } from "../services/issue-status-filter.js";
 import {
   runnerGoalService,
   RunnerGoalActionError,
