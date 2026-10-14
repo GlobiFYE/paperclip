@@ -1,5 +1,7 @@
 import { idleWorkSnapshot } from "../services/task-admission.js";
+import type { Db } from "@paperclipai/db";
 import * as activityLogModule from "../services/activity-log.js";
+import * as connectionCredentialBindings from "../services/connection-credential-bindings.js";
 import { chatSlackManagerGrants, chatSlackRegistrations, toolOauthStates } from "@paperclipai/db";
 import type { PaperclipCloudConnector, SealedConnectorCredentials } from "../services/paperclip-cloud-connector.js";
 import { buildSlackAppManifest, SLACK_MANAGER_SCOPES } from "@paperclipai/shared";
@@ -2453,7 +2455,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       const saved = await f.management.configuration(f.endpoint.id, "owner-user");
       await f.management.saveConfiguration(f.endpoint.id, { expectedRevision: saved.revision, configuration: {
         ...saved.configuration, defaults: { ...saved.configuration.defaults,
-          instructions: `Use ${ref(common)} and ${ref(foreign)}.`,
+          instructions: `Use ${ref(common)}.`,
           prompts: { ...saved.configuration.defaults.prompts, mention: `Use ${ref(mention)}.`, opened: ref(injected) },
         },
       } }, "owner-user");
@@ -2483,6 +2485,15 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       expect(await resolveRunScopedMentionedSkillKeys(args)).toEqual([common.key, mention.key]);
       expect(await resolveRunScopedMentionedSkillKeys({ ...args, commentIds: all.map((c) => c.id) })).toEqual(expect.arrayContaining([common.key, mention.key, next.key]));
       expect(await resolveRunScopedMentionedSkillKeys({ ...args, commentIds: [] })).toEqual([next.key]);
+      const invalid = await f.management.configuration(f.endpoint.id, "owner-user");
+      await f.management.saveConfiguration(f.endpoint.id, { expectedRevision: invalid.revision, configuration: {
+        ...invalid.configuration, defaults: { ...invalid.configuration.defaults, instructions: ref(foreign) },
+      } }, "owner-user");
+      // Instructions are captured on admission; changing configuration must
+      // not change the already admitted wake above.
+      await deliverMessage({ callbacks: f.callbacks, endpointId: f.endpoint.id, provider: "github", thread,
+        trigger: "subscribed_message", message: makeMessage({ id: "41903", text: 'Check again', userId: "42", userName: "octocat" }) });
+      await expect(resolveRunScopedMentionedSkillKeys({ ...args, commentIds: [] })).rejects.toThrow("referenced skill is unavailable");
     });
     it.each([
       "github:paperclipai/paperclip:issue:419",
@@ -2752,6 +2763,36 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       await enqueueChatRunMilestones(db); await f.service.processPendingPublications();
       expect(f.responseComments.size).toBe(1);
       expect(f.runtime.endpoints.get(f.endpoint.id)?.posts).toEqual([]);
+    });
+    it.each([false, true])("finishes the same GitHub working comment after an authorized same-App reconnect (legacy: %s)", async legacy => {
+      const f = await toolReplyFixture();
+      const originalId = f.responseWrites[0].id;
+      if (legacy) await db.update(chatActions).set({ payload: { runtimeGeneration: f.endpoint.setup.runtimeGeneration ?? 0, agentId: f.assignedAgentId } })
+        .where(and(eq(chatActions.endpointId, f.endpoint.id), eq(chatActions.kind, "github_response_comment")));
+      await f.service.configure(f.endpoint.id, { action: "reconnect" }, "owner-user");
+      const result = await githubChatReviewService(db, f.providerFetch).execute(f.session, "comment", {
+        body: "Review complete after reconnect", idempotencyKey: "reconnected-final",
+      });
+      expect(result.status).toBe("processed");
+      expect(f.responseWrites.map(write => write.method)).toEqual(["POST", "PATCH"]);
+      expect(f.responseWrites.every(write => write.id === originalId)).toBe(true);
+      expect([...f.responseComments.values()][0].body).toContain("Review complete after reconnect");
+    });
+    it("still fences a GitHub publication when reconnect races the provider read", async () => {
+      const f = await toolReplyFixture();
+      let reconnected = false;
+      f.setSupplementalProviderFetch(async (input, init) => {
+        if (!reconnected && String(input).includes("/issues/comments/") && (!init?.method || init.method === "GET")) {
+          reconnected = true;
+          await f.service.configure(f.endpoint.id, { action: "reconnect" }, "owner-user");
+        }
+        return undefined;
+      });
+      const result = await githubChatReviewService(db, f.providerFetch).execute(f.session, "comment", {
+        body: "Stale attempt", idempotencyKey: "reconnect-race",
+      });
+      expect(result.status).toBe("cancelled");
+      expect(f.responseWrites).toHaveLength(1);
     });
     it("adds the progress tool to an existing enabled bot without restoring disabled tools", async () => {
       const f = await toolReplyFixture();
@@ -4100,6 +4141,53 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       expect((await context.service.listResources(context.endpoint.id)).every(resource => !resource.enabled)).toBe(true);
       expect(await management.configuration(context.endpoint.id, "owner-user")).toMatchObject({ revision: 1, configuration: { toolsEnabled: false } });
     });
+    it.each([
+      ["active", "current", "enabled"], ["active", "foreign", "enabled"], ["active", "invalid_signature", "enabled"], ["active", "missing_installation", "enabled"],
+      ["attention", "current", "enabled"], ["attention", "foreign", "enabled"], ["attention", "invalid_signature", "enabled"], ["attention", "missing_installation", "enabled"],
+      ["attention", "current", "disabled"], ["attention", "current", "unavailable"],
+    ] as const)("verifies a repaired GitHub webhook in %s only from a %s installation delivery with %s repository", async (status, kind, resourceState) => {
+      const f = await reviewBotFixture();
+      const [endpoint] = await readChatEndpointsById(f.endpoint.id);
+      if (resourceState !== "enabled") {
+        await db.update(chatEndpointResources).set(resourceState === "disabled" ? { enabled: false } : { availability: "unavailable" }).where(eq(chatEndpointResources.endpointId, endpoint.id));
+      }
+      if (status === "attention") await db.update(toolConnections).set({ status: "disabled", enabled: false }).where(eq(toolConnections.id, endpoint.connectionId));
+      const resourcesBefore = await f.service.listResources(endpoint.id);
+      const conversationsBefore = await readChatConversationsByEndpointId(endpoint.id);
+      const actionsBefore = await db.select().from(chatActions).where(eq(chatActions.endpointId, endpoint.id));
+      f.wakeup.mockClear();
+      await db.update(chatEndpoints).set({ status, setup: { ...endpoint.setup, webhookVerifiedAt: null } }).where(eq(chatEndpoints.id, endpoint.id));
+      const response = await f.service.handleWebhook(endpoint.publicId, "github", signedGitHubWebhookRequest({
+        event: "issue_comment", delivery: randomUUID(), webhookSecret: kind === "invalid_signature" ? "wrong-secret" : f.webhookSecret,
+        payload: { action: "created", ...(kind === "missing_installation" ? {} : { installation: { id: kind === "foreign" ? 9999 : 2468 } }),
+          repository: { id: 97531, full_name: "paperclipai/paperclip", owner: { id: 1357, login: "paperclipai" } },
+          issue: { number: 418 }, comment: { id: 41801, body: status === "attention" ? `@${endpoint.botUsername} please review` : "Ordinary comment", user: { id: 42, login: "octocat" } }, sender: { id: 42, login: "octocat" } },
+      }));
+      if (kind === "invalid_signature") expect(response.status).toBe(401);
+      else expect(response.status).toBeLessThan(300);
+      const current = await f.service.get(endpoint.id);
+      if (kind === "current") expect(current.setup.webhookVerifiedAt).toEqual(expect.any(String));
+      else expect(current.setup.webhookVerifiedAt).toBeNull();
+      if (status === "attention") {
+        expect(current.status).toBe("attention");
+        expect(await f.service.listResources(endpoint.id)).toEqual(resourcesBefore);
+        expect(await readChatConversationsByEndpointId(endpoint.id)).toEqual(conversationsBefore);
+        expect(await db.select().from(chatActions).where(eq(chatActions.endpointId, endpoint.id))).toEqual(actionsBefore);
+        expect(f.wakeup).not.toHaveBeenCalled();
+        if (kind === "current") {
+          expect(current.setup.step).toBe("provider_setup");
+          await f.service.handleWebhook(endpoint.publicId, "github", signedGitHubWebhookRequest({
+            event: "installation_repositories", delivery: randomUUID(), webhookSecret: f.webhookSecret,
+            payload: { action: "added", installation: { id: 2468 }, repositories_added: [], repositories_removed: [] },
+          }));
+          expect((await f.service.get(endpoint.id)).status).toBe("attention");
+          expect((await readToolConnectionsById(endpoint.connectionId))[0]).toMatchObject({ status: "disabled", enabled: false });
+          expect(f.wakeup).not.toHaveBeenCalled();
+          const configured = await f.service.configure(endpoint.id, { action: "reconnect" }, "owner-user");
+          expect(configured.status).toBe("verifying");
+        }
+      }
+    });
     it("stack rejects forged raw gateway deliveries without changing verification or waking an agent", async () => {
       const f = await reviewBotFixture();
       await db
@@ -4944,6 +5032,37 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       })]);
       expect(await readChatGitHubReviewsByEndpointId(f.endpoint.id)).toHaveLength(0);
     });
+    it.each(["succeeded", "failed", "cancelled"] as const)("keeps a report-only GitHub check neutral after a %s run without an assessment", async status => {
+      const f = await toolReplyFixture("github:paperclipai/paperclip:418");
+      const config = await f.management.configuration(f.endpoint.id, "owner-user");
+      await f.management.saveConfiguration(f.endpoint.id, { expectedRevision: config.revision,
+        configuration: { ...config.configuration, defaults: { ...config.configuration.defaults, ratingThreshold: null } },
+      }, "owner-user");
+      const event = githubAutomaticReviewEvent({ action: "opened", repository: { id: 97531, full_name: "paperclipai/paperclip" }, sender: { id: 42, login: "octocat" },
+        pull_request: { number: 418, title: "Review", body: "", draft: false, base: { sha: "a".repeat(40), ref: "master" }, head: { sha: "b".repeat(40) }, user: { id: 42, login: "octocat" }, labels: [] } }, randomUUID())!;
+      const [review] = await db.insert(chatGitHubReviews).values({ companyId: f.companyId, endpointId: f.endpoint.id,
+        issueId: f.conversation.issueId!, runId: f.run.id, repositoryId: "97531", repository: event.repository, pullNumber: 418, headSha: event.headSha,
+        deliveryId: event.deliveryId, configurationRevision: config.revision + 1, policySnapshot: { ...config.configuration.defaults, ratingThreshold: null }, event }).returning();
+      await db.update(heartbeatRuns).set({ status }).where(eq(heartbeatRuns.id, f.run.id));
+      const writes: Record<string, unknown>[] = [];
+      f.setSupplementalProviderFetch(async (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/pulls/418")) return Response.json({ head: { sha: event.headSha } });
+        if (url.includes("/check-runs?")) return Response.json({ check_runs: [] });
+        if (url.endsWith("/check-runs") && init?.method === "POST") {
+          writes.push(JSON.parse(String(init.body)));
+          return Response.json({ id: 418, html_url: "https://github.com/checks/418" });
+        }
+        return undefined;
+      });
+      const checks = githubReviewCheckService(db, f.providerFetch);
+      const [endpoint] = await readChatEndpointsById(f.endpoint.id);
+      await checks.enqueue(endpoint, event, true, "authorized");
+      await checks.processPending();
+      expect(writes).toEqual([expect.objectContaining({ status: "completed", conclusion: "neutral" })]);
+      expect(writes[0].output).toMatchObject({ title: status === "succeeded" ? "Agent finished without a complete assessment" : "Review execution did not complete" });
+      expect((await db.select().from(chatGitHubReviews).where(eq(chatGitHubReviews.id, review.id)))[0].conclusion).toBe("neutral");
+    });
     it("uses task-bound bot tools and deterministic checks, then denies revoked people", async () => {
       const publicOrigin = vi.spyOn(cloudRuntimeIdentity, "runtimePublicOrigin").mockReturnValue("https://current-vanity.example");
       onTestFinished(() => publicOrigin.mockRestore());
@@ -5015,6 +5134,10 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       for (const comment of f.responseComments.values()) comments.set(comment.id, comment);
       let head = "b".repeat(40);
       let check = { id: 99, status: "completed", external_id: `${f.endpoint.id}:91:${head}`, app: { id: Number(f.endpoint.botExternalId) } };
+      // Other bots can publish the same named check on this PR. Neither another
+      // App nor a different endpoint's review may be selected for our updates.
+      const peerCheck = { ...check, id: 9901, app: { id: Number(f.endpoint.botExternalId) + 1 } };
+      const otherEndpointCheck = { ...check, id: 9902, external_id: `other-bot:91:${head}` };
       const pull = () => ({
         number: 91,
         title: "Test PR",
@@ -5085,7 +5208,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
             },
           ]);
         if (url.includes("/check-runs?"))
-          return Response.json({ check_runs: [check] });
+          return Response.json({ check_runs: [peerCheck, otherEndpointCheck, check] });
         return Response.json([]);
       });
       const service = githubChatReviewService(db, f.providerFetch);
@@ -5173,6 +5296,11 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         conclusion: "failure",
         details_url: `https://current-vanity.example/${company.issuePrefix}/issues/${conversation.issueId}`,
       });
+      const postedSummary = mutations.find((m) => typeof m.body.body === "string" && m.body.body.includes("Addition subtracts"));
+      expect(postedSummary?.body.body).toContain(`## ${f.endpoint.botLabel} — 2/5`);
+      const publishedCheck = mutations.find((m) => m.body.conclusion === "failure");
+      expect(publishedCheck?.url).toBe(`https://api.github.com/repos/paperclipai/paperclip/check-runs/${check.id}`);
+      expect(mutations.some((m) => /\/check-runs\/990[12]$/.test(m.url))).toBe(false);
       const publishedCount = mutations.length;
       const retried = await service.execute(
         session,
@@ -8053,7 +8181,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     await service.shutdown();
   });
 
-  it.each([false, true])("requires at-mentions by default for new Slack connections (DM=%s)", async (isDM) => {
+  it.each([false, true])("requires at-mentions by default only in Slack channels (DM=%s)", async (isDM) => {
     const fixture = await seedCompany();
     const { callbacks, endpoint, service, wakeup } = await configuredSlackEndpoint(fixture, { requireAtMention: true });
     // The returned endpoint is the original creation result, before fixture updates.
@@ -8063,12 +8191,12 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     const send = (id: string, mentioned: boolean) => deliverMessage({ callbacks, endpointId: endpoint.id, thread: thread.thread,
       message: makeMessage({ id, text: mentioned ? "@maya start" : "Start", mentioned }), trigger: isDM ? "direct_message" : mentioned ? "mention" : "subscribed_message" });
     await send("7500.1", false);
-    expect(wakeup).not.toHaveBeenCalled();
+    expect(wakeup).toHaveBeenCalledTimes(isDM ? 1 : 0);
     await send("7500.2", true);
-    expect(wakeup).toHaveBeenCalledTimes(1);
+    expect(wakeup).toHaveBeenCalledTimes(isDM ? 2 : 1);
     await service.update(endpoint.id, { requireAtMention: false });
     await send("7500.3", false);
-    expect(wakeup).toHaveBeenCalledTimes(2);
+    expect(wakeup).toHaveBeenCalledTimes(isDM ? 3 : 2);
     const other = await service.create(fixture.companyId, { provider: "github", assignedAgentId: fixture.assignedAgentId });
     expect(other.requireAtMention).toBe(false);
     expect((await service.get(endpoint.id)).requireAtMention).toBe(false);
@@ -8096,11 +8224,11 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     await expect(resolveSlackTaskAuthority(db, binding)).resolves.toMatchObject({ slackUserId: "UBOARD" });
   });
 
-  it.each([false, true])("requires Slack at-mentions for every message when enabled (DM=%s)", async (isDM) => {
+  it.each([false, true])("applies Slack mention settings to channel replies while exempting DMs (DM=%s)", async (isDM) => {
     const fixture = await seedCompany();
     const { callbacks, endpoint, service, wakeup } = await configuredSlackEndpoint(fixture);
     expect((await service.get(endpoint.id)).requireAtMention).toBe(false);
-    const thread = makeThread({ channelId: isDM ? "D-MENTION" : "C-MENTION", id: `slack:${isDM ? "D-MENTION" : "C-MENTION"}:7100.1`, isDM });
+    const thread = makeThread({ channelId: isDM ? "D-MENTION" : "C-MENTION", id: isDM ? "slack:D-MENTION:" : "slack:C-MENTION:7100.1", isDM });
     const send = (id: string, mentioned: boolean, trigger: ChatSdkMessageTrigger = isDM ? "direct_message" : "subscribed_message") =>
       deliverMessage({ callbacks, endpointId: endpoint.id, thread: thread.thread,
         message: makeMessage({ id, text: mentioned ? "@maya continue" : "Continue", mentioned }), trigger });
@@ -8109,47 +8237,53 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     await send("7100.2", false);
     expect(wakeup).toHaveBeenCalledTimes(2);
     expect((await service.update(endpoint.id, { requireAtMention: true })).requireAtMention).toBe(true);
-    await send("7100.3", false);
-    expect(wakeup).toHaveBeenCalledTimes(2);
+    await send("7100.3", false, "subscribed_message");
+    expect(wakeup).toHaveBeenCalledTimes(isDM ? 3 : 2);
     const [filtered] = await db.select().from(chatDeliveries).where(and(
       eq(chatDeliveries.endpointId, endpoint.id), eq(chatDeliveries.state, "filtered")));
-    expect(filtered.redactedError).toBe("Message did not @mention the bot");
-    expect(filtered.normalizedEvent).toMatchObject({ filtering: { contentRetained: false } });
-    expect(filtered.normalizedEvent).not.toHaveProperty("message.text");
+    if (isDM) {
+      expect(filtered).toBeUndefined();
+    } else {
+      expect(filtered.redactedError).toBe("Message did not @mention the bot");
+      expect(filtered.normalizedEvent).toMatchObject({ filtering: { contentRetained: false } });
+      expect(filtered.normalizedEvent).not.toHaveProperty("message.text");
+    }
     // Both Slack callback kinds can carry an explicit mention. Retries cannot
     // produce a second wakeup for the same provider message.
     await send("7100.4", true);
     await send("7100.4", true, "mention");
-    expect(wakeup).toHaveBeenCalledTimes(3);
+    expect(wakeup).toHaveBeenCalledTimes(isDM ? 4 : 3);
     const conversations = await readChatConversationsByEndpointId(endpoint.id);
     expect(conversations).toHaveLength(1);
     const comments = await readIssueCommentsByIssueId(conversations[0].issueId);
-    expect(comments).toHaveLength(3);
+    expect(comments).toHaveLength(isDM ? 4 : 3);
+    expect(conversations[0].externalThreadId).toBe(thread.thread.id);
     await service.update(endpoint.id, { requireAtMention: false });
     await send("7100.5", false);
-    expect(wakeup).toHaveBeenCalledTimes(4);
+    expect(wakeup).toHaveBeenCalledTimes(isDM ? 5 : 4);
     if (isDM) {
       await service.update(endpoint.id, { requireAtMention: true, allowDirectMessages: false });
-      await send("7100.6", true);
-      expect(wakeup).toHaveBeenCalledTimes(4);
+      await send("7100.6", false);
+      expect(wakeup).toHaveBeenCalledTimes(5);
     }
   });
 
-  it("filters a queued Slack message when Require at-mention is enabled before drain", async () => {
+  it.each([false, true])("rechecks queued Slack channel mentions but exempts DMs before drain (DM=%s)", async (isDM) => {
     const fixture = await seedCompany();
     const { callbacks, endpoint, service, wakeup } = await configuredSlackEndpoint(fixture, {
       deferWebhookProcessing: true, scheduleDeferredWork: () => undefined,
     });
-    const thread = makeThread({ channelId: "D-QUEUED-MENTION", id: "slack:D-QUEUED-MENTION:7300.1", isDM: true });
+    const channelId = isDM ? "D-QUEUED-MENTION" : "C-QUEUED-MENTION";
+    const thread = makeThread({ channelId, id: `slack:${channelId}:${isDM ? "" : "7300.1"}`, isDM });
     await deliverMessage({ callbacks, endpointId: endpoint.id, thread: thread.thread,
-      message: makeMessage({ id: "7300.1", text: "Start work" }), trigger: "direct_message" });
+      message: makeMessage({ id: "7300.1", text: "Start work" }), trigger: isDM ? "direct_message" : "subscribed_message" });
     await service.update(endpoint.id, { requireAtMention: true });
     const [delivery] = await readChatDeliveriesByEndpointId(endpoint.id);
     await db.update(chatDeliveries).set({ nextAttemptAt: new Date(0) }).where(eq(chatDeliveries.id, delivery.id));
     await service.processPendingDeliveries(25, delivery.id);
-    expect(wakeup).not.toHaveBeenCalled();
-    expect(await readChatConversationsByEndpointId(endpoint.id)).toHaveLength(0);
-    expect((await readChatDeliveriesById(delivery.id))[0].state).toBe("filtered");
+    expect(wakeup).toHaveBeenCalledTimes(isDM ? 1 : 0);
+    expect(await readChatConversationsByEndpointId(endpoint.id)).toHaveLength(isDM ? 1 : 0);
+    expect((await readChatDeliveriesById(delivery.id))[0].state).toBe(isDM ? "processed" : "filtered");
   });
 
   it("snapshots channel workspace defaults on new tasks and preserves them on replies", async () => {
@@ -12922,6 +13056,23 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     expect(recoveredRuntime.webhookRequest).toBeNull();
     await restarted.shutdown();
     await configured.service.shutdown();
+  });
+
+  it("leaves Cloud-managed GitHub webhook recovery to the relay", async () => {
+    const context = await githubPreIngressRecoveryFixture();
+    try {
+      const [endpoint] = await readChatEndpointsById(context.endpoint.id);
+      await db.update(chatEndpoints).set({ setup: { ...endpoint.setup,
+        github: { ...endpoint.setup.github, cloudRegistrationId: "cloud-registration" },
+      } }).where(eq(chatEndpoints.id, endpoint.id));
+      const checkpoint = await context.checkpoint();
+      await db.update(chatSdkState).set({ value: { ...(checkpoint.value as Record<string, unknown>), outcome: "callback_mismatch" } }).where(eq(chatSdkState.id, checkpoint.id));
+      await context.makeScanDue();
+      await context.service.processFailedGitHubWebhookDeliveries(5, endpoint.id);
+      expect((await context.service.listActivity(endpoint.id)).some(row => row.summary === "GitHub webhook recovery needs attention")).toBe(false);
+      expect(context.requests).toEqual([]);
+      expect(context.posts).toEqual([]);
+    } finally { await context.service.shutdown(); }
   });
 
   it("automatically recovers a pre-ingress GitHub failure only through a genuine callback and normal durable workers", async () => {
@@ -33088,7 +33239,8 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     try {
       for (const kind of Object.keys(CHAT_ACTION_QUEUES) as (keyof typeof CHAT_ACTION_QUEUES)[]) {
         const [action] = await db.insert(chatActions).values({ companyId: f.companyId, endpointId: lane.endpoint.id,
-          kind, providerActionId: randomUUID(), status: "received", updatedAt: at }).returning();
+          kind, providerActionId: randomUUID(), status: "received", updatedAt: at,
+          ...(kind === "telegram_maintenance" ? { payload: { operation: "register_commands" } } : {}) }).returning();
         const set = (status: string, result: Record<string, unknown> = {}) => db.update(chatActions)
           .set({ status, result, updatedAt: at }).where(eq(chatActions.id, action!.id));
         const due = async () => db.select({ id: chatActions.id }).from(chatActions)
@@ -70662,6 +70814,195 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       };
     }
 
+    it.each(["startup", "connection_commit", "rollback", "retry", "stale_claim"] as const)(
+      "recovers Telegram maintenance from committed work and becomes SQL quiet: %s",
+      async mode => {
+        const lane = await draftFixture();
+        const onError = vi.fn();
+        const coordinator = createDeliveryWorkCoordinator({ owner: db, canRun: () => true, onError });
+        const maintenance = () => db.select().from(chatActions).where(and(
+          eq(chatActions.endpointId, lane.endpoint.id), eq(chatActions.kind, "telegram_maintenance"),
+          sql`${chatActions.payload}->>'operation' = 'stop_subscription'`,
+        ));
+        try {
+          await db.delete(chatActions).where(and(eq(chatActions.endpointId, lane.endpoint.id),
+            eq(chatActions.kind, "telegram_stop_subscription")));
+          lane.setSubscriptionInfo({});
+          if (mode === "connection_commit" || mode === "rollback") {
+            await toolAccessService(db).updateConnection(lane.endpoint.connectionId, { enabled: false });
+          }
+          if (mode === "stale_claim") {
+            // Leave committed legacy work behind before starting the workers.
+            await lane.context.service.processTelegramSubscriptionDiscovery();
+            const [action] = await maintenance();
+            expect(action).toBeDefined();
+            await db.update(chatActions).set({ status: "processing", updatedAt: new Date(Date.now() - 120_000) })
+              .where(eq(chatActions.id, action!.id));
+          }
+          let failedAt = 0;
+          let sends = 0;
+          if (mode === "retry") lane.setMaintenanceHook(async method => {
+            if (method === "setWebhook" && sends++ === 0) {
+              failedAt = Date.now();
+              throw new Error("temporary subscription transport outage");
+            }
+            if (method === "setWebhook") expect(Date.now() - failedAt).toBeGreaterThanOrEqual(1000);
+            return undefined;
+          });
+          await registerChatActionWork(coordinator, lane.context.service, () => true).ready;
+          if (mode === "connection_commit" || mode === "rollback") {
+            expect(lane.maintenanceRequests).toEqual([]);
+            if (mode === "rollback") {
+              await expect(db.transaction(async tx => {
+                await toolAccessService(tx as unknown as Db).updateConnection(lane.endpoint.connectionId, { enabled: true });
+                await new Promise(resolve => setTimeout(resolve, 25));
+                expect(lane.maintenanceRequests).toEqual([]);
+                throw new Error("rollback connection wake");
+              })).rejects.toThrow("rollback connection wake");
+              await vi.waitFor(() => {
+                expect(coordinator.nextWakeAt()).toBeNull();
+                expect(idleWorkSnapshot().active).toBe(0);
+              }, { timeout: 10_000 });
+              expect(lane.maintenanceRequests).toEqual([]);
+              expect(await maintenance()).toEqual([]);
+            }
+            await db.transaction(async tx => {
+              await toolAccessService(tx as unknown as Db).updateConnection(lane.endpoint.connectionId, { enabled: true });
+              await new Promise(resolve => setTimeout(resolve, 25));
+              expect(lane.maintenanceRequests).toEqual([]);
+            });
+          }
+          await vi.waitFor(async () => {
+            const actions = await maintenance();
+            expect(actions).toHaveLength(1);
+            expect(actions[0]?.status).toBe("processed");
+            expect(actions[0]?.result.attempts).toBe(mode === "retry" ? 2 : 1);
+            expect(coordinator.nextWakeAt()).toBeNull();
+            expect(idleWorkSnapshot().active).toBe(0);
+          }, { timeout: 10_000 });
+          expect(lane.maintenanceRequests.filter(x => x.method === "setWebhook")).toHaveLength(mode === "retry" ? 2 : 1);
+          expect(await db.select().from(chatActions).where(and(eq(chatActions.endpointId, lane.endpoint.id),
+            eq(chatActions.kind, "telegram_stop_subscription"), eq(chatActions.status, "processed")))).toHaveLength(1);
+          const scans = vi.spyOn(db, "select");
+          try {
+            await new Promise(resolve => setTimeout(resolve, 1200));
+            expect(scans).not.toHaveBeenCalled();
+          } finally { scans.mockRestore(); }
+          expect(onError).not.toHaveBeenCalled();
+        } finally { await coordinator.stop(); await lane.close(); }
+      },
+    );
+
+    it("commits chat connection credentials atomically before waking maintenance", async () => {
+      const lane = await draftFixture();
+      const onError = vi.fn();
+      const coordinator = createDeliveryWorkCoordinator({ owner: db, canRun: () => true, onError });
+      const bindings = () => db.select({ secretId: companySecretBindings.secretId, configPath: companySecretBindings.configPath })
+        .from(companySecretBindings).where(and(eq(companySecretBindings.companyId, lane.fixture.companyId),
+          eq(companySecretBindings.targetType, "tool_connection"), eq(companySecretBindings.targetId, lane.endpoint.connectionId)))
+        .orderBy(asc(companySecretBindings.configPath));
+      let release!: () => void;
+      let entered!: () => void;
+      const held = new Promise<void>(resolve => { release = resolve; });
+      const rebuilding = new Promise<void>(resolve => { entered = resolve; });
+      let update: Promise<unknown> | undefined;
+      const original = connectionCredentialBindings.syncConnectionCredentialBindings;
+      const spy = vi.spyOn(connectionCredentialBindings, "syncConnectionCredentialBindings");
+      try {
+        await db.delete(chatActions).where(and(eq(chatActions.endpointId, lane.endpoint.id),
+          eq(chatActions.kind, "telegram_stop_subscription")));
+        lane.setSubscriptionInfo({});
+        await lane.context.service.processTelegramSubscriptionDiscovery();
+        await toolAccessService(db).updateConnection(lane.endpoint.connectionId, { enabled: false });
+        await registerChatActionWork(coordinator, lane.context.service, () => true).ready;
+        const before = await bindings();
+        expect(before.length).toBeGreaterThan(0);
+        spy.mockImplementation(async (database, connection, refs, client = database) => {
+          if (connection.id === lane.endpoint.connectionId) {
+            // Hold the real binding rebuild after its delete boundary. Another
+            // connection must still see the old bindings until outer commit.
+            await client.delete(companySecretBindings).where(and(eq(companySecretBindings.companyId, connection.companyId),
+              eq(companySecretBindings.targetType, "tool_connection"), eq(companySecretBindings.targetId, connection.id)));
+            entered();
+            await held;
+          }
+          return original(database, connection, refs, client);
+        });
+        update = toolAccessService(db).updateConnection(lane.endpoint.connectionId, { name: "Renamed fixture", enabled: true });
+        await rebuilding;
+        expect(await bindings()).toEqual(before);
+        await new Promise(resolve => setTimeout(resolve, 25));
+        expect(lane.maintenanceRequests).toEqual([]);
+        release();
+        await update;
+        await vi.waitFor(async () => {
+          expect(await db.select({ status: chatActions.status }).from(chatActions).where(and(
+            eq(chatActions.endpointId, lane.endpoint.id), eq(chatActions.kind, "telegram_maintenance"),
+            sql`${chatActions.payload}->>'operation' = 'stop_subscription'`,
+          ))).toEqual([{ status: "processed" }]);
+          expect(coordinator.nextWakeAt()).toBeNull();
+        }, { timeout: 10_000 });
+        expect(await bindings()).toEqual(before);
+        expect(lane.maintenanceRequests.filter(x => x.method === "setWebhook")).toHaveLength(1);
+        expect(onError).not.toHaveBeenCalled();
+      } finally { release(); await update; spy.mockRestore(); await coordinator.stop(); await lane.close(); }
+    });
+
+    it.each(["endpoint", "connection"] as const)("parks pending Telegram subscription repair while its %s is inactive", async inactive => {
+      const lane = await draftFixture();
+      const onError = vi.fn();
+      const coordinator = createDeliveryWorkCoordinator({ owner: db, canRun: () => true, onError });
+      const actions = () => db.select().from(chatActions).where(and(
+        eq(chatActions.endpointId, lane.endpoint.id), eq(chatActions.kind, "telegram_maintenance"),
+        sql`${chatActions.payload}->>'operation' = 'stop_subscription'`,
+      ));
+      try {
+        await db.delete(chatActions).where(and(eq(chatActions.endpointId, lane.endpoint.id),
+          eq(chatActions.kind, "telegram_stop_subscription")));
+        lane.setSubscriptionInfo({});
+        await lane.context.service.processTelegramSubscriptionDiscovery();
+        expect(await actions()).toEqual([expect.objectContaining({ status: "received" })]);
+        if (inactive === "endpoint") {
+          await lane.context.service.configure(lane.endpoint.id, { action: "pause" }, "owner-user");
+        } else {
+          await toolAccessService(db).updateConnection(lane.endpoint.connectionId, { enabled: false });
+        }
+        await registerChatActionWork(coordinator, lane.context.service, () => true).ready;
+        await vi.waitFor(() => {
+          expect(coordinator.nextWakeAt()).toBeNull();
+          expect(idleWorkSnapshot().active).toBe(0);
+        }, { timeout: 10_000 });
+        expect(await lane.context.service.nextChatActionAt("telegram_maintenance")).toBeNull();
+        expect(lane.maintenanceRequests).toEqual([]);
+        expect(await actions()).toEqual([expect.objectContaining({ status: "received" })]);
+        const scans = vi.spyOn(db, "select");
+        try {
+          await new Promise(resolve => setTimeout(resolve, 1200));
+          expect(scans).not.toHaveBeenCalled();
+        } finally { scans.mockRestore(); }
+        if (inactive === "endpoint") {
+          await lane.context.service.configure(lane.endpoint.id, { action: "resume" }, "owner-user");
+        } else {
+          await toolAccessService(db).updateConnection(lane.endpoint.connectionId, { enabled: true });
+        }
+        await vi.waitFor(async () => {
+          const rows = await actions();
+          expect(rows.filter(row => row.status === "processed")).toEqual([
+            expect.objectContaining({ result: expect.objectContaining({ attempts: 1 }) }),
+          ]);
+          // Endpoint pause/resume advances its ownership generation. The old
+          // obligation must settle without touching the provider again.
+          expect(rows.filter(row => row.status !== "processed")).toEqual(inactive === "endpoint" ? [
+            expect.objectContaining({ status: "cancelled", result: expect.objectContaining({ code: "telegram_maintenance_credentials_superseded" }) }),
+          ] : []);
+          expect(coordinator.nextWakeAt()).toBeNull();
+          expect(idleWorkSnapshot().active).toBe(0);
+        }, { timeout: 10_000 });
+        expect(lane.maintenanceRequests.filter(x => x.method === "setWebhook")).toHaveLength(1);
+        expect(onError).not.toHaveBeenCalled();
+      } finally { await coordinator.stop(); await lane.close(); }
+    });
+
     it("durably stops during the first draft RPC without cancelling a run, and never reuses its ID after restart", async () => {
       const lane = await draftFixture();
       try {
@@ -70877,11 +71218,14 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       },
     );
 
-    it.each(["explicit", "empty", "omitted"] as const)(
+    it.each(["explicit", "empty", "omitted", "worker"] as const)(
       "automatically repairs an existing %s subscription after restart without dropping updates",
-      async (shape) => {
+      async (mode) => {
+        const shape = mode === "worker" ? "explicit" : mode;
         const lane = await draftFixture();
         const prefixIds: string[] = [];
+        const onError = vi.fn();
+        const coordinator = mode === "worker" ? createDeliveryWorkCoordinator({ owner: db, canRun: () => true, onError }) : null;
         try {
           // Scheduler-only fixtures model a full already-confirmed first page.
           // They have no credentials; no provider qualification is claimed for
@@ -70889,7 +71233,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
           const [templateEndpoint] = await readChatEndpointsById(lane.endpoint.id);
           const [templateConnection] = await readToolConnectionsById(lane.endpoint.connectionId);
           const fingerprint = createHash("sha256").update("[]").digest("hex");
-          for (let index = 0; index < 25; index++) {
+          for (let index = 0; index < (mode === "worker" ? 105 : 25); index++) {
             const id = `00000000-${randomUUID().slice(9)}`;
             expect(id < lane.endpoint.id).toBe(true);
             const connectionId = randomUUID();
@@ -70986,7 +71330,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
           const targetIndex = eligible.findIndex(
             ({ id }) => id === lane.endpoint.id,
           );
-          expect(targetIndex).toBeGreaterThanOrEqual(25);
+          expect(targetIndex).toBeGreaterThanOrEqual(mode === "worker" ? 105 : 25);
           const discoveryPasses = Math.floor(targetIndex / 25) + 1;
           const targetActions = () =>
             db
@@ -70999,7 +71343,17 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
                   sql`${chatActions.payload}->>'operation' = 'stop_subscription'`,
                 ),
               );
-          for (let page = 1; page <= discoveryPasses; page++) {
+          if (coordinator) {
+            await registerChatActionWork(coordinator, lane.context.service, () => true).ready;
+            // Startup recovery uses successive bounded pages. The target is
+            // beyond a complete 100-row confirmed prefix and is not in page one.
+            expect(await targetActions()).toEqual([]);
+            await vi.waitFor(async () => {
+              expect((await targetActions())[0]?.status).toBe("processed");
+              expect(coordinator.nextWakeAt()).toBeNull();
+            }, { timeout: 30_000 });
+            expect(onError).not.toHaveBeenCalled();
+          } else for (let page = 1; page <= discoveryPasses; page++) {
             await lane.context.service.processPendingDeliveries();
             if (page < discoveryPasses) {
               expect(await targetActions()).toEqual([]);
@@ -71052,6 +71406,21 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
             ({ method }) => method === "setWebhook",
           );
           expect(mutations).toHaveLength(1);
+          if (coordinator) {
+            // A committed edit must not rediscover another connection, even
+            // when its durable proof is absent. Startup covers that inventory.
+            const foreignEndpoint = prefixIds[0]!;
+            await db.delete(chatActions).where(and(eq(chatActions.endpointId, foreignEndpoint),
+              eq(chatActions.kind, "telegram_stop_subscription")));
+            await toolAccessService(db).updateConnection(lane.endpoint.connectionId, { name: "Scoped Telegram edit" });
+            await vi.waitFor(() => {
+              expect(coordinator.nextWakeAt()).toBeNull();
+              expect(idleWorkSnapshot().active).toBe(0);
+            }, { timeout: 10_000 });
+            expect(await db.select().from(chatActions).where(and(eq(chatActions.endpointId, foreignEndpoint),
+              eq(chatActions.kind, "telegram_maintenance")))).toEqual([]);
+            expect(lane.maintenanceRequests.filter(({ method }) => method === "setWebhook")).toHaveLength(1);
+          }
           expect(mutations[0]!.body).toEqual({
             url: lane.configuredWebhook.url,
             secret_token: lane.configuredWebhook.secret_token,
@@ -71098,6 +71467,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
           ).toHaveLength(1);
         } finally {
           try {
+            await coordinator?.stop();
             if (prefixIds.length)
               await db
                 .update(chatEndpoints)
@@ -74535,13 +74905,18 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
 
     it("rejects an explicit private task that the sending agent cannot read", async () => {
       const f = await agentSendFixture();
-      const privateIssue = await issueService(db).create(f.fixture.companyId, {
-        title: "Private report task",
-        status: "in_progress",
-        priority: "medium",
-        assigneeAgentId: f.fixture.replacementAgentId,
-        visibility: "private",
-      });
+      const [privateIssue] = await db
+        .insert(issues)
+        .values({
+          companyId: f.fixture.companyId,
+          title: "Private report task",
+          status: "in_progress",
+          priority: "medium",
+          assigneeAgentId: f.fixture.replacementAgentId,
+          responsibleUserId: "owner-user",
+          visibility: "private",
+        })
+        .returning();
       await expect(
         f.service.createAgentThread(
           f.endpoint.id,

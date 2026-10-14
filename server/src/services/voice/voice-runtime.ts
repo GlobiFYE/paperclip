@@ -45,5 +45,6 @@ export function createVoiceRuntime(options: CreateVoiceRuntimeOptions): ChatEndp
     acceptsProviderScope: () => false, attachmentRecoveryDescriptor: () => null, rehydrateAttachment: () => null,
     applyGitHubReceiptReaction: unsupported, applySlackReceiptReaction: unsupported, sendTelegramCallbackNotice: unsupported,
     fetchTeamsInlineImage: unsupported, resolveGitHubAttachmentComment: unsupported,
+    ensureThreadFromMessage: unsupported,
   };
 }

@@ -273,6 +273,7 @@ import {
 } from "../services/change-consent-gate.js";
 import {
   canActorReadHeartbeatRun,
+  getHeartbeatRunReadDecisions,
   canActorReadWorkspaceOperation,
   redactHeartbeatRunListRow,
 } from "../services/heartbeat-run-privacy.js";
@@ -280,6 +281,7 @@ import {
   PaperclipRunnerProviderProfileError,
   resolvePaperclipRunnerProviderProfile,
   validatePaperclipRunnerDotConfig,
+  validatePaperclipRunnerGrokConfig,
 } from "../services/native-runtime/provider-profile.js";
 import { managedAgentProfileService } from "../services/managed-agent-profiles.js";
 import { remoteAgentProfileService } from "../services/remote-agent-profiles.js";
@@ -420,6 +422,7 @@ const ACCOUNT_HOME_CLAIM_SCAN_MAX_PASSES = 5;
 
 async function anySecretNamesAccountHome(
   secretsSvc: {
+    hasInstanceAccountHomeClaim: (companyId: string, accountHomeDir: string) => Promise<boolean>;
     list: (companyId: string) => Promise<Array<{ id: string; name: string; provider: string }>>;
     resolveSecretValueForDeviceLoginCheck: (
       companyId: string,
@@ -430,6 +433,7 @@ async function anySecretNamesAccountHome(
   companyId: string,
   accountHomeDir: string,
 ): Promise<boolean> {
+  if (await secretsSvc.hasInstanceAccountHomeClaim(companyId, accountHomeDir)) return true;
   const checkedSecretIds = new Set<string>();
   for (let pass = 0; pass < ACCOUNT_HOME_CLAIM_SCAN_MAX_PASSES; pass += 1) {
     const secrets = await secretsSvc.list(companyId);
@@ -796,12 +800,6 @@ export function agentRoutes(
     if (await actorCanReadRun(req, run)) return true;
     res.status(404).json({ error: notFoundMessage });
     return false;
-  }
-
-  async function serializeRunListRow<
-    T extends Record<string, unknown> & RunReadBinding & { id: string },
-  >(req: Request, run: T) {
-    return await actorCanReadRun(req, run) ? run : redactHeartbeatRunListRow(run);
   }
 
   // The company-scoped adapter login-session service. It runs the device-login
@@ -1844,6 +1842,8 @@ export function agentRoutes(
           "OpenAI Dot is experimental and disabled on this instance.",
           { code: "paperclip_runner_dot_disabled" },
         );
+      } else if (asRecord(config)?.provider === "grok_bot" && (experimental.enableGrokBot !== true || experimental.enablePublicMcp !== true || experimental.enableNativeRunner !== true)) {
+        throw unprocessable("Enable Grok Bot, Assistant connections (MCP), and Paperclip Runner before connecting this agent.", { code: "paperclip_runner_grok_disabled" });
       } else if (experimental.enableNativeRunner !== true) {
         throw unprocessable(
           "Paperclip Runner is experimental and disabled on this instance.",
@@ -1871,6 +1871,10 @@ export function agentRoutes(
     if (adapterType !== "paperclip_runner") return;
     let profile;
     try {
+      if (adapterConfig.provider === "grok_bot") {
+        validatePaperclipRunnerGrokConfig(adapterConfig, false);
+        return;
+      }
       if (adapterConfig.provider === "openai_dot") {
         validatePaperclipRunnerDotConfig(adapterConfig, false);
         return;
@@ -2558,8 +2562,8 @@ export function agentRoutes(
     adapterConfig: Record<string, unknown>,
     path = "adapterConfig",
   ) {
-    if (req.actor.type === "agent" && ["dotAttachmentAccess", "dotWorkspaceAccess", "dotBindingId"].some(key => hasOwn(adapterConfig, key)))
-      throw forbidden("Only an operator can configure Dot attachment access, workspace access, or pairing.");
+    if (req.actor.type === "agent" && ["dotAttachmentAccess", "dotWorkspaceAccess", "dotBindingId", "externalBindingId"].some(key => hasOwn(adapterConfig, key)))
+      throw forbidden("Only an operator can configure external-agent pairing, attachment access, or workspace access.");
     assertNoAgentInstructionsConfigMutation(req, adapterConfig, path);
     assertNoAgentHostWorkspaceCommandMutation(
       req,
@@ -2675,7 +2679,7 @@ export function agentRoutes(
     boardOnboardingFirstAgent = false,
     adapterConfig?: Record<string, unknown>,
   ): AgentDesiredSkillEntry[] | undefined {
-    if (adapterType === "paperclip_runner" && adapterConfig?.provider === "openai_dot") return undefined;
+    if (adapterType === "paperclip_runner" && ["openai_dot", "grok_bot"].includes(String(adapterConfig?.provider))) return undefined;
     if (role !== "ceo" && !boardOnboardingFirstAgent) return undefined;
     const adapter = findActiveServerAdapter(adapterType);
     if (!adapter?.listSkills && !adapter?.syncSkills) return undefined;
@@ -6614,7 +6618,9 @@ export function agentRoutes(
     const limit = limitParam ? Math.max(1, Math.min(1000, parseInt(limitParam, 10) || 200)) : undefined;
     const summary = req.query.summary === "true" || req.query.summary === "1";
     const runs = await heartbeat.list(companyId, agentId, limit, { summary });
-    res.json(await runRedactions.redactForRuns(companyId, await Promise.all(runs.map(run => serializeRunListRow(req, run))),
+    const readDecisions = await getHeartbeatRunReadDecisions(db, access, req.actor, runs);
+    res.json(await runRedactions.redactForRuns(companyId, runs.map((run, index) =>
+      readDecisions[index] ? run : redactHeartbeatRunListRow(run)),
       req.actor.type === "board" ? getActorInfo(req).actorId : null));
   });
 

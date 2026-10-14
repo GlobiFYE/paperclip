@@ -1,4 +1,8 @@
-# Skill discovery, authoring, and policy
+---
+navigation: {"section":"Agents and reusable capabilities","sectionOrder":30,"order":30}
+---
+
+# Skills and Skill Studio
 
 Operators discover or import skills, author and test them in Skill Studio, manage source versions, and decide which agents may use them.
 
@@ -61,3 +65,37 @@ Manual: Enable the skill for one test agent and leave another without access. Ru
 - Installed does not mean enabled for every agent.
 - Read-only GitHub/bundled skills may require a writable copy rather than an in-place edit.
 - Studio interaction coverage is in [questions and approvals](./questions-and-approvals.md); a passing mock is not a live harness test.
+
+### Project repository source behavior
+
+New GitHub project repositories import skills automatically. Skills → Sources lists
+accessible legacy repositories with Import skills, shows source/project provenance,
+groups matching repository/ref workspaces into one row, and shows queued/importing feedback,
+and provides Refresh and Automatic updates in its source menu. Verify future additions,
+retained exclusions, error recovery and reload persistence. Private-only sources must
+be absent for unrelated people/agents; access through either originating project is sufficient.
+
+Storybook/browser coverage uses scoped fixtures. Live GitHub-to-routine execution
+must be verified separately; inspect resolved version IDs across an upstream update.
+
+### Connection repair during an update
+
+A missing tracked branch is a branch repair, not a credential failure. On an independent
+source, choose Use default branch explicitly; installed identities, selections and version
+pins remain. Project-tracked branches are changed in project settings. A saved connection
+is validated against both the repository and tracked revision before repair succeeds.
+
+Open Choose connection while a source is being refreshed. Select an authorized account and save. If the source changes, the dialog must retain that selection, load the current revision, and allow a second save without reopening. The [project repository browser suite](../../tests/storybook-visual/project-repository-skills.spec.ts) covers this recovery with simulated upstream data.
+
+### Storybook verification
+
+#### `testing`
+
+Scope: ui
+Storybook: Studio test inputs/configuration, running, question/approval, result and failed test states.
+Production: Run bounded test of actual saved version with correct selected account/environment; inspect persisted test detail and eligible interaction response.
+Sources: Source: [SkillStudio.tsx](../../ui/src/pages/SkillStudio.tsx), [companySkills.ts](../../ui/src/api/companySkills.ts). Tests: [SkillStudio.test.tsx](../../ui/src/pages/SkillStudio.test.tsx), [company-skill-test-runs-service.test.ts](../../server/src/__tests__/company-skill-test-runs-service.test.ts)
+
+### Documentation scope: Skills, Skill Studio, and teams
+
+Main library/Studio/source/policy and CLI team-install paths are mapped. Full source-provider conflicts, harness sync, and remote package variants remain; catalog UI is not a current top-level route.

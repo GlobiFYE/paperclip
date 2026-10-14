@@ -352,6 +352,16 @@ describeEmbeddedPostgres(
       await expect(enqueueIssueInteractionChatPublications(failingDb, interaction))
         .rejects.toThrow("Token write failed");
       expect(await publicationsForInteraction(fixture.companyId, interaction.id)).toEqual([]);
+
+      await enqueueIssueInteractionChatPublications(db, interaction);
+      const [publication] = await publicationsForInteraction(fixture.companyId, interaction.id);
+      expect(publication).toBeDefined();
+      const actions = await db
+        .select()
+        .from(chatActions)
+        .where(eq(chatActions.companyId, fixture.companyId));
+      expect(actions).toHaveLength(2);
+      expect(actions.every((action) => action.payload.publicationId === publication!.id)).toBe(true);
     });
 
     it("keeps unsupported governance interactions authoritative in Paperclip", async () => {
