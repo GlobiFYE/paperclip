@@ -118,9 +118,19 @@ it("reports how long the authenticated Runner has been disconnected", async () =
   try {
     await core.start();
     expect(core.runnerDisconnectedForMs()).toBeNull();
-    // An unauthenticated socket is not a Runner disconnect.
-    const { socket } = await upgradeSocket(core.connectUrl);
-    socket.destroy();
+    // An unauthenticated peer closing is not a Runner disconnect.
+    let closeUnauthenticated = () => {};
+    const unauthenticated = core.attachWireConnection({
+      onJson: () => {},
+      onClose: (listener) => {
+        closeUnauthenticated = () => listener({ message: "closed" });
+      },
+      close: () => closeUnauthenticated(),
+      sendJson: () => {},
+    });
+    expect(unauthenticated.isAuthenticated()).toBe(false);
+    closeUnauthenticated();
+    expect(core.runnerDisconnectedForMs()).toBeNull();
     const client = (await authenticate(core, core.issueBootstrapTicket()))!;
     expect(core.runnerDisconnectedForMs()).toBeNull();
     const before = Date.now();
