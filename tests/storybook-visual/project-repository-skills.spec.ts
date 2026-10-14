@@ -24,8 +24,10 @@ test('keeps an existing source compact while allowing project import from its me
   await page.screenshot({ path: info.outputPath('existing-source-more-projects.png') });
   await source.getByRole('button', { name: 'More actions for acme/team-skills', exact: true }).click();
   await page.getByRole('menuitem', { name: 'Import project skills', exact: true }).click();
+  await expect(source.getByRole('status')).toContainText('Importing skills');
+  await expect(source.getByRole('status')).toHaveCount(0);
   await source.getByRole('button', { name: 'More actions for acme/team-skills', exact: true }).click();
-  await expect(page.getByRole('menuitem', { name: 'Import project skills', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('menuitem', { name: /^(Import (remaining )?project skills|Retry project import)$/ })).toHaveCount(0);
   await page.keyboard.press('Escape');
   await expect(source).toBeVisible();
   await expect(source).not.toContainText('Paperclip Cloud');
