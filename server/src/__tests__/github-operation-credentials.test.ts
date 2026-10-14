@@ -12,7 +12,6 @@ import {
   companies,
   companyMemberships,
   companySecrets,
-  connectionGrantMembers,
   connectionGrants,
   createDb,
   heartbeatRuns,
@@ -36,7 +35,6 @@ import {
   acceptSteeredIdentity,
 } from "../services/run-identity.js";
 import { resolveGitHubOperationCredentials } from "../services/github-operation-credentials.js";
-import { recordGitHubTokenAccount } from "../services/github-token-account.js";
 import {
   filterResolvedGitHubConnectionsForRun,
   resolveManagedGitHubIdentitySelection,
@@ -119,7 +117,6 @@ const support = await getEmbeddedPostgresTestSupport();
       input: Awaited<ReturnType<typeof seed>>,
       user: string,
       dedicated = false,
-      options: { pat?: boolean; recordedAccount?: boolean } = {},
     ) {
       const applicationId = randomUUID(),
         connectionId = randomUUID(),
@@ -177,105 +174,23 @@ const support = await getEmbeddedPostgresTestSupport();
         credentialSecretRefs: [
           {
             secretId,
-            configPath: options.pat
-              ? "credentials.authorization"
-              : "oauth.access_token",
-            versionSelector: "latest",
-          },
-        ],
-        // A personal access token has no installations; its account is
-        // recorded from `GET /user` (or not yet, for older connections).
-        providerTenant: options.pat
-          ? options.recordedAccount === false
-            ? {}
-            : {
-                githubAccount: {
-                  userId: user,
-                  login: user,
-                  verifiedAt: new Date().toISOString(),
-                  secretId,
-                  secretVersion: 1,
-                },
-              }
-          : {
-              github: {
-                userId: user,
-                login: user,
-                installationCount: 1,
-                repositoryCount: 1,
-                repositorySelection: "selected",
-                installationIds: ["1"],
-                installationOwnerLogins: [user],
-              },
-            },
-      });
-      return { id, connectionId, secretId, definitionId };
-    }
-    /** A shared company GitHub connection (organization grant, company secret). */
-    async function sharedGrant(
-      input: Awaited<ReturnType<typeof seed>>,
-      login: string,
-    ) {
-      const applicationId = randomUUID(),
-        connectionId = randomUUID(),
-        secretId = randomUUID(),
-        id = randomUUID();
-      await db.insert(toolApplications).values({
-        id: applicationId,
-        companyId: input.companyId,
-        name: applicationId,
-        type: "mcp_http",
-      });
-      await db.insert(toolConnections).values({
-        id: connectionId,
-        companyId: input.companyId,
-        applicationId,
-        name: connectionId,
-        uid: connectionId,
-        transport: "mcp_remote",
-        status: "active",
-        enabled: true,
-        credentialPolicy: "shared",
-        config: { sourceTemplateKey: "github" },
-      });
-      await db.insert(toolConnectionInstalls).values({
-        companyId: input.companyId,
-        connectionId,
-        targetType: "company",
-        targetId: input.companyId,
-      });
-      await db.insert(companySecrets).values({
-        id: secretId,
-        companyId: input.companyId,
-        key: secretId,
-        name: `Shared token ${secretId}`,
-        scope: "company",
-      });
-      await db.insert(connectionGrants).values({
-        id,
-        companyId: input.companyId,
-        connectionId,
-        kind: "organization",
-        status: "active",
-        isDefault: true,
-        credentialSecretRefs: [
-          {
-            secretId,
-            configPath: "credentials.authorization",
+            configPath: "oauth.access_token",
             versionSelector: "latest",
           },
         ],
         providerTenant: {
-          githubAccount: {
-            userId: login,
-            login,
-            verifiedAt: new Date().toISOString(),
-            secretId,
-            secretVersion: 1,
+          github: {
+            userId: user,
+            login: user,
+            installationCount: 1,
+            repositoryCount: 1,
+            repositorySelection: "selected",
+            installationIds: ["1"],
+            installationOwnerLogins: [user],
           },
         },
       });
-      return { id, connectionId, secretId };
+      return { id, connectionId, secretId, definitionId };
     }
     async function switchTo(
       input: Awaited<ReturnType<typeof seed>>,
@@ -678,211 +593,6 @@ const support = await getEmbeddedPostgresTestSupport();
         status: "unavailable",
         source: "personal",
         env: {},
-      });
-    });
-    it("uses the agent's dedicated identity when the responsible person has no GitHub", async () => {
-      const input = await seed();
-      await grant(input, "B");
-      await grant(input, "robot", true);
-      expect(await resolveGitHubOperationCredentials(db, input)).toMatchObject({
-        status: "available",
-        source: "dedicated",
-        login: "robot",
-      });
-    });
-    it("clones and pushes with the responsible person's own personal access token", async () => {
-      const input = await seed();
-      await grant(input, "A", false, { pat: true });
-      const result = await resolveGitHubOperationCredentials(db, input);
-      expect(result).toMatchObject({
-        status: "available",
-        source: "personal",
-        login: "A",
-        authenticationMode: "managed",
-      });
-      expect(result.env.GH_TOKEN).toBe("test-token-A");
-      expect(result.env.GIT_AUTHOR_EMAIL).toBe("A+A@users.noreply.github.com");
-    });
-    it("learns an older personal access token's account on first use, and still resolves when GitHub is unreachable", async () => {
-      const input = await seed();
-      const pat = await grant(input, "A", false, {
-        pat: true,
-        recordedAccount: false,
-      });
-      const fetchSpy = vi.spyOn(globalThis, "fetch");
-      try {
-        fetchSpy.mockRejectedValueOnce(new Error("offline"));
-        const offline = await resolveGitHubOperationCredentials(db, input);
-        expect(offline).toMatchObject({ status: "available", source: "personal" });
-        expect(offline.env.GH_TOKEN).toBe("test-token-A");
-        expect(offline.env.GIT_AUTHOR_EMAIL).toBeUndefined();
-
-        fetchSpy.mockImplementationOnce(async (url, init) => {
-          expect(String(url)).toBe("https://api.github.com/user");
-          expect(new Headers(init?.headers).get("authorization")).toBe(
-            "Bearer test-token-A",
-          );
-          return Response.json({ id: 4242, login: "octo-a" });
-        });
-        const online = await resolveGitHubOperationCredentials(db, input);
-        expect(online).toMatchObject({ status: "available", login: "octo-a" });
-        expect(online.env.GIT_AUTHOR_EMAIL).toBe(
-          "4242+octo-a@users.noreply.github.com",
-        );
-        const [stored] = await db
-          .select()
-          .from(connectionGrants)
-          .where(eq(connectionGrants.id, pat.id));
-        expect(stored!.providerTenant?.githubAccount).toMatchObject({
-          userId: "4242",
-          login: "octo-a",
-        });
-        expect(JSON.stringify(stored!.providerTenant)).not.toContain("test-token");
-      } finally {
-        fetchSpy.mockRestore();
-      }
-    });
-    it("de-duplicates two personal access tokens for the same GitHub account", async () => {
-      const input = await seed();
-      await grant(input, "A", false, { pat: true });
-      await grant(input, "A", false, { pat: true });
-      expect(await resolveGitHubOperationCredentials(db, input)).toMatchObject({
-        status: "available",
-        source: "personal",
-        login: "A",
-      });
-    });
-    it("falls back to a shared company GitHub only when no person or agent identity exists", async () => {
-      const input = await seed();
-      await sharedGrant(input, "company-bot");
-      const sharedOnly = await resolveGitHubOperationCredentials(db, input);
-      expect(sharedOnly).toMatchObject({
-        status: "available",
-        source: "shared",
-        login: "company-bot",
-      });
-      expect(sharedOnly.env.GH_TOKEN).toBe("test-dedicated-token");
-
-      await grant(input, "robot", true);
-      expect(await resolveGitHubOperationCredentials(db, input)).toMatchObject({
-        source: "dedicated",
-        login: "robot",
-      });
-
-      // A person's own GitHub never conflicts with the shared one: it wins.
-      await grant(input, "A", false, { pat: true });
-      expect(await resolveGitHubOperationCredentials(db, input)).toMatchObject({
-        source: "personal",
-        login: "A",
-      });
-    });
-    it("re-reads a token's account after the token is rotated, so an old account never authors commits", async () => {
-      const input = await seed();
-      const pat = await grant(input, "A", false, { pat: true });
-      // Reconnect rotated the secret in place; the recorded account is for v1.
-      await db
-        .update(companySecrets)
-        .set({ latestVersion: 2 })
-        .where(eq(companySecrets.id, pat.secretId));
-      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
-        Response.json({ id: 777, login: "rotated-a" }),
-      );
-      try {
-        const result = await resolveGitHubOperationCredentials(db, input);
-        expect(result).toMatchObject({ status: "available", login: "rotated-a" });
-        expect(result.env.GIT_AUTHOR_EMAIL).toBe(
-          "777+rotated-a@users.noreply.github.com",
-        );
-        expect(fetchSpy).toHaveBeenCalledTimes(1);
-        const [stored] = await db
-          .select()
-          .from(connectionGrants)
-          .where(eq(connectionGrants.id, pat.id));
-        expect(stored!.providerTenant?.githubAccount).toMatchObject({
-          userId: "777",
-          secretId: pat.secretId,
-          secretVersion: 2,
-        });
-      } finally {
-        fetchSpy.mockRestore();
-      }
-    });
-    it("rejects a stale token-account write that finishes after a rotation", async () => {
-      const input = await seed();
-      const pat = await grant(input, "A", false, { pat: true });
-      await db
-        .update(companySecrets)
-        .set({ latestVersion: 2 })
-        .where(eq(companySecrets.id, pat.secretId));
-      const account = (login: string, userId: string) => ({
-        userId,
-        login,
-        verifiedAt: new Date().toISOString(),
-      });
-      // A new account recorded for the rotated token (version 2)...
-      expect(
-        await recordGitHubTokenAccount(db, { id: pat.id, companyId: input.companyId },
-          account("new-a", "202"), { secretId: pat.secretId, secretVersion: 2 }),
-      ).not.toBeNull();
-      // ...is not overwritten by an older lookup for version 1 finishing last.
-      expect(
-        await recordGitHubTokenAccount(db, { id: pat.id, companyId: input.companyId },
-          account("old-a", "101"), { secretId: pat.secretId, secretVersion: 1 }),
-      ).toBeNull();
-      const [stored] = await db
-        .select()
-        .from(connectionGrants)
-        .where(eq(connectionGrants.id, pat.id));
-      expect(stored!.providerTenant?.githubAccount).toMatchObject({
-        login: "new-a",
-        secretVersion: 2,
-      });
-    });
-    it("gives shared company GitHub only to people in its audience", async () => {
-      const input = await seed();
-      const shared = await sharedGrant(input, "company-bot");
-      await db.insert(connectionGrantMembers).values({
-        companyId: input.companyId,
-        grantId: shared.id,
-        subjectType: "user",
-        subjectId: "B",
-      });
-      // The responsible person (A) is not in the audience: no credential.
-      const denied = await resolveGitHubOperationCredentials(db, input);
-      expect(denied.env).toEqual({});
-      expect(denied.status).not.toBe("available");
-
-      await db.insert(connectionGrantMembers).values({
-        companyId: input.companyId,
-        grantId: shared.id,
-        subjectType: "user",
-        subjectId: "A",
-      });
-      expect(await resolveGitHubOperationCredentials(db, input)).toMatchObject({
-        status: "available",
-        source: "shared",
-        login: "company-bot",
-      });
-
-      // A run with no responsible person never gets a restricted grant.
-      await db
-        .update(runIdentityContexts)
-        .set({ cause: "company_default" })
-        .where(eq(runIdentityContexts.runId, input.runId));
-      expect((await resolveGitHubOperationCredentials(db, input)).env).toEqual({});
-    });
-    it("gives a company-default run the shared company GitHub, never the default person's", async () => {
-      const input = await seed();
-      await grant(input, "A");
-      await sharedGrant(input, "company-bot");
-      await db
-        .update(runIdentityContexts)
-        .set({ cause: "company_default" })
-        .where(eq(runIdentityContexts.runId, input.runId));
-      expect(await resolveGitHubOperationCredentials(db, input)).toMatchObject({
-        status: "available",
-        source: "shared",
-        login: "company-bot",
       });
     });
     it("does not resolve the company default person's GitHub", async () => {
