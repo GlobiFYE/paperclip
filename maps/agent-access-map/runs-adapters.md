@@ -128,6 +128,8 @@ Review: `baseline`.
 
 Scoped source-only timing evidence: workspace preparation spans carry only the
 existing hashed run ID. Controller startup phase spans carry no custom attributes.
+Native controller setup and settlement phases use that same run hash, including
+assigned MCP discovery; neither tool definitions nor credentials are recorded.
 Both retain operator-controlled tracing; unconfigured clients stay silent.
 This adds no agent API, credential access, run-log write, or recovery authority.
 See [the tracing contract](../../doc/observability.md#controller-preparation-phases).

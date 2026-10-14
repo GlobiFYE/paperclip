@@ -175,7 +175,7 @@ GitHub identity selection, secret resolution, managed AI runtime preparation,
 skill inventory, connector assignments, connector skill preparation and delivery,
 connection instructions, and agent identity. Their names are
 `heartbeat.prepare.configuration_<step>`, using the closed names in
-`server/src/services/heartbeat/preparation-timing.ts`. These intervals are inside
+`server/src/services/execution-preparation-timing.ts`. These intervals are inside
 `execution_configuration`; do not add them to its duration. They remain available
 when a later setup step fails before the provider lifecycle trace starts.
 
@@ -202,6 +202,22 @@ project repositories, and recovery-root reservation. These intervals are inside
 `heartbeat.prepare.workspace`. Repeated bindings or updates have separate spans.
 Do not add these intervals to the containing workspace duration. They use the
 same run hash and contain no workspace paths, commands, or returned records.
+
+The `paperclip.native-controller` tracer records separate
+`native.controller.<phase>` root spans around GitHub access setup, wake binding,
+backend construction, connector assignments, assigned MCP discovery, tool
+authority, companion selection and Runner binary resolution. It also records
+GitHub shutdown, coordinator release, instruction checkpoints and collection,
+and warm-session release. These intervals can occur between the existing native
+preparation, execution and settlement spans. They are controller work, not model
+turn time, and carry only the existing run hash. Nested phases overlap their
+containing backend or lifecycle intervals; do not add both durations.
+
+All preparation timing uses the endpoint gate, even when another library has
+registered a tracer provider. Tracer lookup, callback, status or ending failures
+cannot repeat work or replace its result or error. Automatic database children
+are not guaranteed: an aggregate workspace trace can contain just one span.
+If a process exits before an operation settles, its open span may not be exported.
 
 With an endpoint, `paperclip.controller-startup` records independent
 `controller.startup.<phase>` root spans for tool reviews, gateway sessions,

@@ -124,6 +124,8 @@ describe.skipIf(!support.supported)("heartbeat workspace preparation boundary", 
 
   it("records workspace steps around real persistence before environment acquisition", async () => {
     const { input, source, issue, envOrchestrator } = await fixture();
+    const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.test");
     const exporter = new InMemorySpanExporter();
     const provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
     expect(trace.setGlobalTracerProvider(provider)).toBe(true);
@@ -155,6 +157,7 @@ describe.skipIf(!support.supported)("heartbeat workspace preparation boundary", 
         expect(JSON.stringify(span.attributes)).not.toContain(source);
       }
     } finally {
+      vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint);
       trace.disable();
       await provider.shutdown();
     }

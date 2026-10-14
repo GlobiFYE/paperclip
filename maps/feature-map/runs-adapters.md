@@ -33,6 +33,9 @@ without restricting the root span name. Compare workspace preparation with its
 `controller.startup.<phase>`. A recovery pause or deployment drain is not model
 execution time. See the [tracing contract](../../doc/observability.md#controller-preparation-phases).
 These source-level diagnostics do not establish a live response-time budget.
+Inspect `native.controller.<phase>` for backend construction, assigned-tool
+discovery and post-turn cleanup. Compare those intervals with the actual model
+turn; do not count a nested discovery interval twice.
 
 ## Driving it with Playwright and the Paperclip CLI
 
