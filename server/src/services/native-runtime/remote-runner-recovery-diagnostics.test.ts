@@ -57,4 +57,14 @@ describe("remote recovery diagnostic shell receipts", () => {
     cyclic.cause = cyclic;
     expect(readRemoteRunnerRecoveryError(cyclic)).toBeNull();
   });
+
+  it("reports a retired owned child as unavailable before checking its command line", async () => {
+    const root = await mkdtemp(join(tmpdir(), "remote-recovery-retired-"));
+    const marker = join(root, "marker");
+    const pid = execFileSync("sh", ["-c", "printf '%s' $$"], { encoding: "utf8" }).trim();
+    try {
+      await writeFile(marker, `nonce\n${pid}\n2026-10-14T00:00:00.000Z\nrunner\n`);
+      expect(shellExit(REMOTE_RECOVERY_PROCESS_CHECK_SCRIPT, [marker, "nonce", "runner", pid])).toBe(45);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
 });

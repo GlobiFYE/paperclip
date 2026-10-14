@@ -624,7 +624,7 @@ describe("remote controller restart adoption", () => {
     if (failure === "transport") expect(error).toBe(transportError);
     else expect(error).toMatchObject({ message: "runner_remote_process_identity_unavailable" });
   });
-  it.each(["start ticks", "boot identity"])("rejects PID reuse after the live %s changes", async (change) => {
+  it.each(["start ticks", "boot identity", "fingerprint probe"])("rejects a changed or unavailable live %s", async (change) => {
     const root = await mkdtemp(join(tmpdir(), "remote-generation-"));
     const proc = join(root, "proc");
     const markerPath = join(root, "runner-process.identity");
@@ -651,17 +651,38 @@ describe("remote controller restart adoption", () => {
         args[1] = args[1].replaceAll("/proc/", `${proc}/`);
         args[3] = markerPath;
         let exitCode = 0;
-        try { execFileSync("sh", args, { stdio: "pipe" }); } catch { exitCode = 4; }
+        try { execFileSync("sh", args, { stdio: "pipe" }); } catch (error) { exitCode = (error as { status?: number }).status ?? 4; }
         return { stdout: "", stderr: "", exitCode, timedOut: false };
       });
       const adopted = await verifyRemoteRunnerReattachment({ claim, target: target as never, identity, runId: "run", normalizedSessionId: "session" });
       expect(await adopted.isAlive()).toBe(true);
       if (change === "start ticks") await writeFile(join(proc, String(pid), "stat"), stat(101));
-      else await writeFile(join(proc, "sys/kernel/random/boot_id"), "abcd-5678\n");
+      else if (change === "boot identity") await writeFile(join(proc, "sys/kernel/random/boot_id"), "abcd-5678\n");
+      else await rm(join(proc, String(pid), "stat"));
       expect(await adopted.isAlive()).toBe(false);
       await expect(verifyRemoteRunnerReattachment({ claim, target: target as never, identity, runId: "run", normalizedSessionId: "session" }))
-        .rejects.toThrow("runner_remote_process_identity_unavailable");
+        .rejects.toMatchObject({ message: "runner_remote_process_identity_unavailable", remoteRunnerRecovery: {
+          stage: "process_verification", reason: change === "fingerprint probe" ? "fingerprint_unavailable" : "process_generation_changed",
+        } });
     } finally { await rm(root, { recursive: true, force: true }); }
+  });
+  it.each(["liveness", "timeout", "transport"] as const)("retains the reason for a failed process %s probe", async failure => {
+    const { target, execute } = fixture();
+    const original = execute.getMockImplementation()!;
+    const transportError = new Error("provider_transport_failed: private bridge response");
+    execute.mockImplementation(async request => {
+      if (request.args[2] !== "paperclip-runner-recovery-check") return original(request);
+      if (failure === "transport") throw transportError;
+      return { stdout: "", stderr: "private probe output", exitCode: failure === "liveness" ? 45 : -1, timedOut: failure === "timeout" };
+    });
+    const error = await verifyRemoteRunnerReattachment({ claim, target: target as never, identity, runId: "run", normalizedSessionId: "session" }).catch(error => error);
+    const diagnostic = readRemoteRunnerRecoveryError(error);
+    expect(diagnostic).toEqual({ stage: "process_verification", reason: failure === "liveness" ? "process_not_running" : failure === "timeout" ? "probe_timeout" : "probe_transport_failed" });
+    expect(JSON.stringify(diagnostic)).not.toContain("private");
+    if (failure === "transport") {
+      expect(error).toBe(transportError);
+      expect(nativeSessionFailureSourceCode(error)).toBe("provider_transport_failed");
+    }
   });
   it("rejects a stale process marker", async () => {
     const { execute, target } = fixture();
