@@ -712,7 +712,7 @@ export function createHeartbeatScheduling(
         claimed,
         policy,
         scheduledAtIso,
-        nextAttemptCount,
+        nextAttemptCount: claimed.monitorAttemptCount ?? 0,
         clearReason,
         recoveryPolicy,
         monitor,
