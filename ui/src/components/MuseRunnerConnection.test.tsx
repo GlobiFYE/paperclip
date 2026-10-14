@@ -8,7 +8,7 @@ import { MuseConnectionChecks } from "./new-agent/ExternalAgentInviteContent";
 import { museConnectionState } from "@/hooks/useMuseConnection";
 import { museConnection, stoppedMuseConnection, museStopBoundary, musePairing } from "../../storybook/support/external-agent-invite/muse-fixtures";
 import { museInvitationsApi } from "@/api/museInvitations";
-import type { MuseConnection } from "@paperclipai/shared";
+import { MUSE_CLIENT_VERSION, type MuseConnection } from "@paperclipai/shared";
 
 vi.mock("@/api/companies-query", () => ({ useAccountIdentity: () => ({ userId: "operator", settled: true, failed: false }) }));
 
@@ -34,17 +34,19 @@ it("does not treat receiver contact as worker verification or lifecycle readines
 });
 it("shows contact lag, exact last verified reply, version, and unavailable costs", async () => {
   await render();
-  expect(container.textContent).toContain("Last persisted receiver contact");
+  expect(container.textContent).toContain("Last persisted public receiver contact");
   expect(container.textContent).toContain("Authenticated worker activity");
   expect(container.textContent).toContain("Last verified replyNot observed");
-  expect(container.textContent).toContain("Client version1");
-  expect(container.textContent).toContain("may lag by up to 10 seconds");
+  expect(container.textContent).toContain(`Client version${MUSE_CLIENT_VERSION}`);
+  expect(container.textContent).toContain("may lag by up to 30 seconds");
   expect(container.textContent).toContain("Usage and costUnavailable");
   expect(container.textContent).not.toContain("$0");
 });
 it("retains cleanup and precise worker attestation while disabled without resolving unknown effects", async () => {
   await render(stoppedMuseConnection);
-  expect(container.textContent).toContain("Detector removal: acknowledged. Worker quiescence: not confirmed");
+  expect(container.textContent).toContain("Detector removal: not confirmed. Worker quiescence: not confirmed");
+  expect(container.textContent).toContain("Cleanup cannot be confirmed through the revoked connection");
+  expect(container.textContent).not.toContain("Cleanup capability expires");
   expect(container.textContent).toContain("Native effect outcomes remain unknown");
   await act(async () => button("Attest this worker stopped").click());
   expect(container.textContent).toContain(museStopBoundary.runId);
@@ -191,4 +193,26 @@ it("finishes a current retest only after the server confirms a new background re
   expect(container.textContent).not.toContain("Waiting for Muse to reply to the current background test");
   expect(lastVerifiedReply()).not.toBe(previousReply);
   expect(button("Test background reply").disabled).toBe(false);
+});
+
+
+it("marks public contact unverified and does not promise cleanup through a revoked Vault connection",async()=>{
+  const connection=structuredClone(stoppedMuseConnection);
+  connection.binding!.cleanup.authenticatedAfterRevocation=false;
+  connection.binding!.cleanup.expiresAt=null;
+  await render(connection);
+  expect(container.textContent).toContain("Public receiver checks are unverified");
+  expect(container.textContent).toContain("Cleanup cannot be confirmed through the revoked connection");
+  expect(container.textContent).not.toContain("Cleanup capability expires");
+});
+
+it("does not reuse historical readiness after the authenticated connection expires", async () => {
+  const expired: MuseConnection = { ...museConnection, agentLifecycleState: "ready", binding: {
+    ...museConnection.binding!, status: "ready", credentialState: "expired", refreshExpiresAt: null,
+    paired: true, receiverDetected: true, backgroundReplyVerified: true,
+  } };
+  expect(museConnectionState(expired).ready).toBe(false);
+  await render(expired);
+  expect(container.textContent).toContain("This Muse connection expired. Reconnect Muse with a fresh setup prompt.");
+  expect(container.textContent).not.toContain("Muse is ready for tasks");
 });

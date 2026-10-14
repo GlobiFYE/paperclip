@@ -1,15 +1,16 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import { MUSE_ASSET_VERSION } from "@paperclipai/shared";
 import { expect, userEvent, within, waitFor, fn } from "storybook/test";
 import { ExternalAgentInvitePreview } from "../../../support/external-agent-invite/ExternalAgentInvitePreview";
 import { MuseConnectionDetails } from "@/components/MuseRunnerConnection";
-import { museConnection, stoppedMuseConnection } from "../../../support/external-agent-invite/muse-fixtures";
+import { createMuseCopyFeedbackGate, museConnection, stoppedMuseConnection } from "../../../support/external-agent-invite/muse-fixtures";
 
 const meta = {
   id: "onboarding-external-agent-invitation-muse-personal-agent",
   title: "Agents and reusable capabilities/Hiring, configuration, and organization/Onboarding/External agent invitation/Muse personal agent",
   component: ExternalAgentInvitePreview,
   parameters: { layout: "fullscreen", initialEntries: ["/PAP/agents"],
-    docs: { description: { component: "Uses the production agent entry point, ExternalAgentInviteContent, and app shell. Local simulation shows pairing, persisted receiver contact, independent background reply, and lifecycle readiness separately. No Muse installation or credentials are used. Connection settings use the production MuseConnectionDetails. The connected worker’s private tools and cost remain unavailable." } },
+    docs: { description: { component: `Uses the production agent entry point, ExternalAgentInviteContent, app shell, and MuseConnectionDetails with non-routable, nonsecret asset ${MUSE_ASSET_VERSION} illustrations. The supported production flow keeps OAuth credentials and refresh in SecureVault/authd and records standing delegation for the exact company, agent and binding. That delegates validating and accepting in-scope work; task effects still require the native accepted lease and Muse permission/safety gates. Local simulation separates public untrusted receiver contact (up to 30 seconds persistence lag), independent authenticated background reply, and lifecycle readiness. Disconnect revokes OAuth authority immediately; there is no authenticated post-revocation cleanup lane or confirmed detector removal/worker stop in these fixtures. Unknown native effects retain their exact stop boundary. No live installation, work acceptance, provider behavior, private tools or cost is established.` } },
     paperclip: {
       capabilities: ["agents/hire", "agents/lifecycle", "access/invitations"],
       implementation: "production",
@@ -39,11 +40,15 @@ export const Mobile: Story = { name: "Mobile · Copy setup", args: { initialScre
 export const MobileDetails: Story = { name: "Mobile · Name and role", args: { initialScreen: "setup", museDetails: true, simulate: false }, globals: { viewport: { value: "mobile1", isRotated: false } } };
 export const Light: Story = { name: "Light · Name and role", args: { initialScreen: "setup", museDetails: true, simulate: false }, globals: { theme: "light" } };
 export const CopyAndVerify: Story = { name: "Test · Copy, three milestones, then ready", args: { initialScreen: "setup", stepDelayMs: 300 },
-  play: async ({ canvasElement }) => {
+  loaders: [() => ({ copyFeedbackGate: createMuseCopyFeedbackGate() })],
+  render: (args, { loaded }) => <ExternalAgentInvitePreview key={JSON.stringify(args)} {...args} beforeMuseSimulation={loaded.copyFeedbackGate.waitForFeedback} />,
+  play: async ({ canvasElement, loaded }) => {
     const page = within(canvasElement.ownerDocument.body);
     await userEvent.click(await page.findByRole("button", { name: "Copy setup prompt" }));
-    await expect(await page.findByText("Copied to clipboard")).toBeVisible();
-    await waitFor(() => expect(page.getByText("Receiver detected", { exact: false })).toHaveTextContent("complete"));
+    const copiedFeedback = await page.findByText("Copied to clipboard");
+    await waitFor(() => expect(copiedFeedback).toBeVisible());
+    loaded.copyFeedbackGate.feedbackObserved();
+    await waitFor(() => expect(page.getByText("Receiver detected", { exact: true })).toHaveTextContent("complete"));
     await expect(page.queryByRole("button", { name: "Done" })).not.toBeInTheDocument();
     await waitFor(() => expect(page.getByRole("heading", { name: "Muse is connected" })).toBeVisible());
     await userEvent.click(page.getByRole("button", { name: "Done" }));
@@ -51,3 +56,9 @@ export const CopyAndVerify: Story = { name: "Test · Copy, three milestones, the
 };
 export const Settings: Story = { name: "Settings · Persisted evidence and controls", render: () => <div className="max-w-2xl p-6"><MuseConnectionDetails connection={museConnection} onTest={fn()} onRepair={fn()} onPause={fn()} onDisconnect={fn()} onRefresh={fn()} onAttest={fn()} /></div> };
 export const StopBoundary: Story = { name: "Settings · Disabled, cleanup, uncertain work, exact stop boundary", render: () => <div className="max-w-2xl p-6"><MuseConnectionDetails connection={stoppedMuseConnection} onTest={fn()} onRepair={fn()} onPause={fn()} onDisconnect={fn()} onRefresh={fn()} onAttest={fn()} /></div> };
+
+export const ExpiredConnection: Story = { name: "Recovery · Expired Vault connection", args: {
+  initialScreen: "setup", simulate: false, initialMuseConnection: {
+    paired: true, receiverDetected: true, backgroundReplyVerified: true, ready: false, problem: "connection_expired",
+  },
+} };

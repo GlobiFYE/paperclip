@@ -103,11 +103,8 @@ async function until<T>(name: string, read: () => Promise<T>, predicate: (value:
   throw new Error(`Deadline while waiting for ${name}`);
 }
 async function signal() {
-  // This fallback belongs only to this synthetic operator peer. Real Muse
-  // detectors cannot use credentials; their contract is the public binding header.
-  const legacySyntheticToken = typeof credentials?.signalToken === "string" ? credentials.signalToken : undefined;
-  await http("/api/muse/v1/signal", "GET", undefined, legacySyntheticToken, false,
-    legacySyntheticToken ? {} : { "X-Paperclip-Muse-Binding": string(credentials?.bindingId) });
+  await http("/api/muse/v1/signal", "GET", undefined, undefined, false,
+    { "X-Paperclip-Muse-Binding": string(credentials?.bindingId) });
   detectorRequests++;
 }
 async function assignment(): Promise<Json> {
@@ -189,9 +186,34 @@ try {
   const pairing = object(await board(bindingPath, "POST", previous && previous.status !== "revoked"
     ? { replaceBindingId: previous.id, expectedRevision: previous.revision } : {}));
   createdBindingId = string(pairing.bindingId);
-  credentials = object(await http("/api/muse/v1/pair", "POST", { version: 1, ticket: pairing.ticket, clientVersion: "1" }));
-  assert.equal(credentials.companyId, companyId); assert.equal(credentials.agentId, agentId);
-  evidence.signalMode = typeof credentials.signalToken === "string" ? "authenticated_synthetic" : "public_binding_header";
+  // Synthetic peer exercises the production public-client OAuth flow. Tokens
+  // stay in this process; actual Muse uses Secure Vault/authd instead.
+  const redirectUri = "https://synthetic-muse.example/oauth/callback";
+  const client = object(await http("/api/muse/v1/oauth/register", "POST", {
+    client_name: "Bounded synthetic Muse smoke", redirect_uris: [redirectUri],
+    token_endpoint_auth_method: "none", grant_types: ["authorization_code", "refresh_token"], response_types: ["code"],
+  }));
+  const verifier = randomUUID() + randomUUID(), state = randomUUID();
+  const authorization = new URL("/api/muse/v1/oauth/authorize", base);
+  authorization.search = new URLSearchParams({ client_id: string(client.client_id), redirect_uri: redirectUri,
+    response_type: "code", scope: "paperclip:agent offline_access", state,
+    code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256",
+    pairing_ticket: string(pairing.ticket) }).toString();
+  const authorized = await fetch(authorization, { redirect: "manual", signal: AbortSignal.timeout(15000) });
+  assert.equal(authorized.status, 303, "Muse pairing must use the dedicated PKCE authorization flow");
+  const callback = new URL(string(authorized.headers.get("location")));
+  assert.equal(callback.origin + callback.pathname, redirectUri);
+  assert.equal(callback.searchParams.get("state"), state);
+  const tokens = object(await http("/api/muse/v1/oauth/token", "POST", {
+    grant_type: "authorization_code", client_id: client.client_id, redirect_uri: redirectUri,
+    code: string(callback.searchParams.get("code")), code_verifier: verifier,
+  }));
+  assert.equal(tokens.expires_in, 900);
+  credentials = { bindingId: pairing.bindingId, generation: pairing.generation, accessToken: string(tokens.access_token) };
+  const identified = await query({ query: "identify" });
+  assert.equal(identified.companyId, companyId); assert.equal(identified.agentId, agentId);
+  evidence.authentication = "synthetic DCR + single-use pairing ticket + S256 PKCE; tokens only in memory";
+  evidence.signalMode = "public_binding_header";
   evidence.liveMuseDetectorCompatible = evidence.signalMode === "public_binding_header";
   await signal(); detectorTimer = setInterval(() => {
     if (detectorFlight) return;
@@ -281,7 +303,7 @@ try {
     nativeInputSchema: object(object(run.runnerProfileJson).nativeExecutionInput).schema,
     finalizationPhase: object(run.resultJson ?? {}).finalizationPhase }));
   assert.equal(detectorError, false); evidence.detector = { syntheticContacts: detectorRequests, cadenceMs: 5000,
-    signalMode: evidence.signalMode, secretUsed: evidence.signalMode === "authenticated_synthetic",
+    signalMode: evidence.signalMode, secretUsed: false,
     realHooksInstalled: false, liveMuseCompatible: evidence.liveMuseDetectorCompatible };
   evidence.passed = true; step("passed", { nativeTurns: 2 });
 } catch (error) {
@@ -302,7 +324,9 @@ try {
       assert.equal(binding?.id, createdBindingId, "Never revoke an unrelated connection during cleanup");
       if (binding && binding.status !== "revoked") await board(`${bindingPath}/revoke`, "POST", { bindingId: binding.id, generation: binding.generation, expectedRevision: binding.revision });
     } else cleanup.noAuthorityCreated = true;
-    if (credentials) await http("/api/muse/v1/detector-cleanup", "POST", { version: 1, requestId: randomUUID(), bindingId: credentials.bindingId, generation: credentials.generation, detectorRemoved: true }, string(credentials.detectorCleanupToken));
+    // Revocation deliberately removes all OAuth authority. The synthetic
+    // detector is stopped locally; no post-revocation acknowledgement is forged.
+    cleanup.authenticatedRemoteCleanup = "unconfirmed after strict revocation";
     cleanup.normalAuthorityRevoked = true; cleanup.syntheticDetectorStopped = true;
     if (createdBindingId) {
       const after = object(object(await board(bindingPath)).binding);

@@ -89,19 +89,20 @@ export type MuseConnectionState = {
   ready: boolean;
   finishing?: boolean;
   testing?: boolean;
-  problem?: "no_recent_response" | "prompt_unavailable" | "offline" | "agent_unavailable" | "disconnected" | "disabled";
+  problem?: "no_recent_response" | "prompt_unavailable" | "offline" | "agent_unavailable" | "disconnected" | "disabled" | "connection_expired";
 };
 
 /** Receiver contact is separate from an authenticated, independent worker reply. */
 export function MuseConnectionChecks({ state }: { state: MuseConnectionState }) {
   const milestones = [
-    { title: "Paired with Paperclip", done: state.paired, description: "Muse exchanged the one-use setup ticket." },
-    { title: "Receiver detected", done: state.receiverDetected, description: "Paperclip observed a receiver check. This does not prove Muse is ready to work." },
+    { title: "Paired with Paperclip", done: state.paired, description: "Paperclip authorized the scoped Muse agent connection." },
+    { title: "Receiver detected", done: state.receiverDetected, description: "Paperclip observed a public receiver check. Only an authenticated reply confirms Muse can work." },
     { title: "Background reply verified", done: state.backgroundReplyVerified, description: "Muse replied to an independent background test." },
   ];
   const checksPassed = milestones.every(item => item.done);
   const message = state.problem === "offline" ? "Connection updates paused. Refresh to check the latest evidence."
     : state.problem === "disconnected" ? "Disconnected. These are the last observed connection checks. Detector cleanup and worker stop evidence remain separate."
+    : state.problem === "connection_expired" ? "This Muse connection expired. Reconnect Muse with a fresh setup prompt. Previous checks do not restore access."
     : state.problem === "disabled" ? "Muse is disabled. These are the last observed connection checks; new work cannot start."
     : state.problem === "prompt_unavailable" ? "This setup prompt was replaced or expired. Create a fresh prompt to continue."
     : state.problem === "agent_unavailable" ? "Connection checks passed. Resolve this agent’s setup or approval blocker before assigning tasks."
@@ -184,7 +185,7 @@ export function ExternalAgentInviteContent({
               : museAwaitingInvitation ? "Muse requires an authenticated Paperclip instance with a public HTTPS URL and a company operator account."
               : ready ? `Muse can receive assignments and work with ${companyName}.`
               : !prompt && !museConnection?.paired ? "We’re checking whether this instance can prepare Muse setup."
-              : "Paste the setup prompt into your current Muse conversation. Approve this Paperclip hostname in Muse’s own permission UI. That standing permission applies to the hostname, including future requests."
+              : "Paste the setup prompt into your current Muse conversation. Complete Connect Paperclip if Muse asks, then approve this Paperclip hostname. Muse keeps the connection credential in its secure vault. The hostname permission applies to future requests."
               : ready ? `Your Dot can now receive assignments and work with ${companyName}.`
               : connection.problem === "agent_unavailable" ? "Your Dot is connected. This agent must be available in Paperclip before it can receive assignments."
               : connection.phase === "finishing" ? "Your Dot has connected and confirmed task updates. Paperclip is preparing it for assignments."
@@ -238,7 +239,7 @@ export function ExternalAgentInviteContent({
         : museDetails ? <Button type="submit" form={detailsId} disabled={busy || !museDraft.name.trim()}>{busy ? "Preparing…" : "Continue"}</Button>
         : ready ? <Button onClick={onClose}>Done</Button>
         : museAwaitingInvitation ? <Button disabled={busy} onClick={onRetry}>{busy ? "Loading setup…" : "Refresh setup"}</Button>
-        : muse ? museConnection?.problem === "disconnected" ? <Button disabled={busy} onClick={onNewPrompt}>Reconnect Muse</Button>
+        : muse ? museConnection?.problem === "disconnected" || museConnection?.problem === "connection_expired" ? <Button disabled={busy} onClick={onNewPrompt}>Reconnect Muse</Button>
           : museConnection?.problem === "prompt_unavailable" ? <Button disabled={busy} onClick={onNewPrompt}>Create a new prompt</Button>
           : !museConnection?.paired && prompt ? <AgentSetupPrompt key={prompt} prompt={prompt} label="Copy setup prompt" title="Connect your Muse" agent={{ name: "Muse", icon: <Bot className="size-5" /> }} description="Send this whole prompt to your current Muse conversation." align="end" className="min-w-0 shrink" onCopied={onCopied} />
           : busy ? <Button disabled>Preparing…</Button>

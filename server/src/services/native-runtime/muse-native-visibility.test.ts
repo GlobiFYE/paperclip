@@ -152,7 +152,10 @@ describe("Muse native visibility intersection", () => {
     const authority = new PaperclipRunnerToolAuthority(db, { companyId: f.companyId, agentId: f.agentId, issueId: f.issue.id, runId: randomUUID(), museRuntime: true, apiToolsEnabled: true, workspaceBridge: true });
     const names = authority.definitions().map(tool => tool.name);
     expect(names).toContain("get_identity"); expect(names).toContain("get_task_context"); expect(names).toContain("write_document");
-    for (const excluded of ["search_api", "call_api", "request_human_input", "connections_search", "workspace_command", "read_workspace_file", "register_deliverable"]) expect(names).not.toContain(excluded);
+    for (const excluded of ["search_api", "call_api", "request_human_input", "connections_search", "workspace_command", "read_workspace_file", "register_deliverable", "get_workspace", "list_workspaces", "select_workspace", "prepare_repository"]) expect(names).not.toContain(excluded);
+    for (const tool of ["get_workspace", "list_workspaces", "select_workspace", "prepare_repository"]) {
+      await expect(authority.execute({ tool, callId: tool, arguments: {} })).rejects.toThrow("first-party runtime profile");
+    }
     await expect(authority.execute({ tool: "get_task_context", callId: "test", arguments: {} })).rejects.toThrow("authorizer");
   });
 });

@@ -8,6 +8,7 @@ import { getNativeReviewAssignment, readNativeReviewAssignmentContext } from "..
 import { conflict, forbidden } from "../../errors.js";
 import { externalOperationDigest, digestPaperclipSemanticContent, parsePaperclipQuestionSet, type ExternalProviderOperation, type ExternalProviderPort, type DotBindingSnapshot } from "../../vendor/paperclip-runner/index.js";
 import { consumeDotHistoryReceipt } from "../../services/dot-assignment-follow-up.js";
+import { inspectMuseConnectionCredential } from "../../services/muse-identity.js";
 import { consumeMuseHistoryReceipt } from "../../services/muse-assignment-follow-up.js";
 import { withExternalAdmissionGuard, type ExternalAdmissionTransaction } from "./admission.js";
 
@@ -23,7 +24,12 @@ interface Binding extends Record<string,unknown> {id:string;companyId:string;age
 interface Assignment extends Record<string,unknown> {id:string;companyId:string;agentId:string;bindingId:string;bindingGeneration:number;runId:string;normalizedSessionId:string;turnId:string;revision:number;controllerGeneration:number;status:string;acceptBy:Date;expiresAt:Date;createdAt:Date;claimedAt:Date|null;projection:Record<string,unknown>}
 interface Receipt extends Record<string,unknown> {id:string;companyId:string;assignmentId:string;requestId:string;digest:string;command:Record<string,unknown>;status:string;outcome:Record<string,unknown>|null;continuationReceiptId:string|null}
 interface Authority {binding:{id:string;companyId:string;agentId:string;generation:number};assignment:Pick<Assignment,"id"|"companyId"|"agentId"|"bindingId"|"bindingGeneration"|"runId"|"normalizedSessionId"|"turnId"|"revision"|"controllerGeneration"|"status"|"expiresAt"|"createdAt"> & {claimedAt?:Date|null}}
-interface Identity<S> {authorize(subject:S,assignmentId:string,settled?:boolean):Promise<Authority>;enabled():Promise<boolean>}
+interface Identity<S> {
+  authorize(subject:S,assignmentId:string,settled?:boolean):Promise<Authority>;
+  enabled():Promise<boolean>;
+  expectedResource?():string;
+  assertSubjectCredential?(tx:ExternalAdmissionTransaction,subject:S):Promise<void>;
+}
 type Execution={binding:{companyId:string;agentId:string;runId:string};provider:{binding:DotBindingSnapshot}};
 const bindingSchema=z.object({bindingId:z.uuid(),bindingGeneration:z.number().int().positive(),companyId:z.uuid(),agentId:z.uuid(),runId:z.uuid(),normalizedSessionId:z.string().min(1),turnId:z.string().min(1),assignmentRevision:z.number().int().positive()});
 const commandSchema=z.object({requestId:z.uuid(),bindingId:z.uuid(),bindingGeneration:z.number().int().positive(),runId:z.uuid(),normalizedSessionId:z.string().min(1),turnId:z.string().min(1),assignmentRevision:z.number().int().positive(),digest:z.string(),action:z.enum(["accept","tool","progress","finish","renew","request_user_input","consume_input"]),input:z.record(z.string(),z.unknown())}).strict();
@@ -33,7 +39,7 @@ export function createNativeExternalBroker<S>(db:Db,provider:Provider,identity:I
   const store=STORES[provider];
   const bindingTable=sql.raw(store.binding),assignmentTable=sql.raw(store.assignment),operationTable=sql.raw(store.operation),mailboxTable=sql.raw(store.mailbox);
   const ports=new Map<string,{token:symbol;generation:number;send:(command:ExternalProviderOperation)=>Promise<void>;revoke?:()=>Promise<void>}>();
-  const bindingColumns=sql.raw(`id,company_id AS "companyId",agent_id AS "agentId",generation,operator_id AS "operatorId",status,revoked_at AS "revokedAt",${provider==="openai_dot"?"grant_id":"NULL::uuid"} AS "grantId"`);
+  const bindingColumns=sql.raw(`id,company_id AS "companyId",agent_id AS "agentId",generation,operator_id AS "operatorId",status,revoked_at AS "revokedAt",grant_id AS "grantId"`);
   const assignmentColumns=sql.raw(`id,company_id AS "companyId",agent_id AS "agentId",binding_id AS "bindingId",binding_generation AS "bindingGeneration",run_id AS "runId",normalized_session_id AS "normalizedSessionId",turn_id AS "turnId",revision,controller_generation AS "controllerGeneration",status,accept_by AS "acceptBy",expires_at AS "expiresAt",created_at AS "createdAt",${provider==="muse"?"claimed_at":"accepted_at"} AS "claimedAt",projection`);
   const receiptColumns=sql.raw(`id,company_id AS "companyId",assignment_id AS "assignmentId",request_id AS "requestId",digest,command,status,outcome,${provider==="muse"?"continuation_receipt_id":"NULL::uuid"} AS "continuationReceiptId"`);
   async function withExecutionAdmission<T>(tx:ExternalAdmissionTransaction,companyId:string,agentId:string,runId:string,action:()=>Promise<T>) {
@@ -60,8 +66,9 @@ export function createNativeExternalBroker<S>(db:Db,provider:Provider,identity:I
     if(!agent||["paused","terminated","pending_approval"].includes(agent.status)||agent.adapterType!=="paperclip_runner"||agent.adapterConfig.provider!==provider||agent.adapterConfig[provider==="muse"?"museBindingId":"dotBindingId"]!==b.id||company?.status!=="active"||!user||!membership||membership.membershipRole==="viewer")throw forbidden("Current external agent or authorizer authority is unavailable.");
     if(provider==="muse") {
       const [member]=await database.select({id:companyMemberships.id}).from(companyMemberships).where(and(eq(companyMemberships.companyId,b.companyId),eq(companyMemberships.principalType,"agent"),eq(companyMemberships.principalId,b.agentId),eq(companyMemberships.status,"active")));
-      const [binding]=await database.select({deadline:museAgentBindings.qualificationExpiresAt}).from(museAgentBindings).where(eq(museAgentBindings.id,b.id));
-      if(!member||binding?.deadline&&binding.deadline<=new Date())throw forbidden("Current Muse membership or qualification authority expired.");
+      const [binding]=await database.select().from(museAgentBindings).where(and(eq(museAgentBindings.id,b.id),eq(museAgentBindings.generation,b.generation),eq(museAgentBindings.companyId,b.companyId),eq(museAgentBindings.agentId,b.agentId),eq(museAgentBindings.operatorId,b.operatorId)));
+      if(!member||!binding||binding.qualificationExpiresAt&&binding.qualificationExpiresAt<=new Date())throw forbidden("Current Muse membership or qualification authority expired.");
+      if((await inspectMuseConnectionCredential(database,binding,binding.grantId?identity.expectedResource?.():undefined)).state!=="active")throw forbidden("Current Muse credential authority is unavailable for native effects.");
     }
     if(provider==="openai_dot") {
       const [grant]=b.grantId?await database.select().from(mcpOauthGrants).where(and(eq(mcpOauthGrants.id,b.grantId),isNull(mcpOauthGrants.revokedAt))):[];
@@ -111,13 +118,21 @@ export function createNativeExternalBroker<S>(db:Db,provider:Provider,identity:I
       else throw error;
     }
   }
-  async function reserveNativeOperation(authority:Authority,command:ExternalProviderOperation,proof?:{continuationReceiptId:string;continuationPersisted:true}) {
+  async function reserveNativeOperation(subject:S,authority:Authority,command:ExternalProviderOperation,proof?:{continuationReceiptId:string;continuationPersisted:true}) {
     const id=authority.assignment.id;
     return db.transaction(tx=>withExecutionAdmission(tx,authority.binding.companyId,authority.binding.agentId,authority.assignment.runId,async()=>{
       const b=await currentBinding(tx,authority.binding.id,authority.binding.generation);await assertCurrentAuthority(tx,b);
       const [a]=await tx.execute<Assignment>(sql`select ${assignmentColumns} from ${assignmentTable} where id=${id}::uuid and company_id=${b.companyId}::uuid and agent_id=${b.agentId}::uuid and binding_id=${b.id}::uuid and binding_generation=${b.generation} for update`);
       if(!a||a.status==="fenced"||a.status==="settled"||a.expiresAt<=new Date()||a.controllerGeneration!==authority.assignment.controllerGeneration)throw conflict("Assignment changed before operation admission.");
       await authorizeController(tx,a,a.controllerGeneration);
+      if(provider==="muse") {
+        // Validate the presented access after every admission lock wait, before
+        // this request can reserve or claim anything. A durable reservation is
+        // recovered by forward/attach under current native and grant authority;
+        // it does not retain the obsolete bearer across normal token rotation.
+        if(!identity.assertSubjectCredential)throw forbidden("Muse credential admission is unavailable.");
+        await identity.assertSubjectCredential(tx,subject);
+      }
       const [old]=await tx.execute<Receipt>(sql`select ${receiptColumns} from ${operationTable} where assignment_id=${id}::uuid and request_id=${command.requestId}::uuid`);
       if(old){if(old.digest!==command.digest||old.continuationReceiptId!==(proof?.continuationReceiptId??null))throw conflict("requestId was reused with different arguments.");return old;}
       const [count]=await tx.execute<{count:number}>(sql`select count(*)::int as count from ${operationTable} where assignment_id=${id}::uuid`);if(count&&count.count>=4000)throw conflict("Assignment operation limit reached.");
@@ -147,7 +162,7 @@ export function createNativeExternalBroker<S>(db:Db,provider:Provider,identity:I
     if(action==="request_user_input")parsePaperclipQuestionSet(input.questionSet);
     if(action==="renew"&&(!Number.isSafeInteger(input.expiresAtUnixMs)||Number(input.expiresAtUnixMs)<=Date.now()||Number(input.expiresAtUnixMs)>Date.now()+2*60*60_000||Number(input.expiresAtUnixMs)>a.createdAt.getTime()+24*60*60_000))throw conflict("Renewal must stay within the two-hour rolling and 24-hour total lease bounds.");
     const command:ExternalProviderOperation={requestId,bindingId:b.id,bindingGeneration:b.generation,runId:a.runId,normalizedSessionId:a.normalizedSessionId,turnId:a.turnId,assignmentRevision:a.revision,action,input,digest:externalOperationDigest(action,input)};
-    const reserved=await reserveNativeOperation(authority,command,proof);
+    const reserved=await reserveNativeOperation(subject,authority,command,proof);
     if(store.replay.some(status=>status===reserved.status))void forward(reserved).catch(()=>{});
     const deadline=Date.now()+1500;
     while(Date.now()<deadline) {

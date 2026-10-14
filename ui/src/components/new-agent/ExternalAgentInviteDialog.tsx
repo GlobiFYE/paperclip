@@ -197,7 +197,7 @@ function MuseInvitationController({ companyId, companyName, onClose, onBack, ini
     }
   }, [canPrepare, muse.state.isFetchedAfterMount, muse.state.isFetching, muse.pair.isPending, muse.pairing, b?.id, b?.revision]);
   useEffect(() => {
-    if (b?.paired && b.receiverDetected && !b.backgroundReplyVerified && !b.challengeExpiresAt
+    if (b?.paired && b.credentialState === "active" && b.receiverDetected && !b.backgroundReplyVerified && !b.challengeExpiresAt
       && muse.state.data?.enabled && muse.state.data.canConfigureConnection
       && muse.state.isFetchedAfterMount && !muse.state.isFetching && !muse.verify.isPending && !muse.verify.isError) {
       const identity = `${b.id}:${b.generation}`;

@@ -96,6 +96,7 @@ it("keeps every connection milestone behind the real hire approval", async () =>
   expect(museApi.pair).not.toHaveBeenCalled();
   expect([...document.querySelectorAll("button")].some(b => b.textContent === "Done")).toBe(false);
 });
+
 it("keeps a resumed hire when a readiness refetch omits completed invitations", async () => {
   museApi.resume.mockResolvedValue({ agent, approvalId: null, binding: museBinding });
   museApi.connection.mockResolvedValue(museConnection);
@@ -221,4 +222,19 @@ it("continues the same newly hired Muse after approval in another window", async
   expect([...document.querySelectorAll("button")].some(b => b.textContent === "Done")).toBe(true);
   expect(document.querySelector('input[placeholder="Muse"]')).toBeNull();
   expect(museApi.create).toHaveBeenCalledTimes(1);
+});
+
+it("reconnects an expired Vault connection on the existing agent without a background-test loop", async () => {
+  const expired = { ...museBinding, credentialState: "expired", refreshExpiresAt: null };
+  museApi.resume.mockResolvedValue({ agent, approvalId: null, binding: expired });
+  museApi.connection.mockResolvedValue({ ...museConnection, binding: expired });
+  await render(); await click("Muse — Personal agentYour personal Muse at muse.ai");
+  expect(document.body.textContent).toContain("This Muse connection expired.");
+  expect(museApi.verify).not.toHaveBeenCalled();
+  expect(museApi.pair).not.toHaveBeenCalled();
+  await click("Reconnect Muse");
+  expect(museApi.pair).toHaveBeenCalledWith("company", agent.id, {
+    replaceBindingId: museBinding.id, expectedRevision: museBinding.revision,
+  });
+  expect(museApi.create).not.toHaveBeenCalled();
 });

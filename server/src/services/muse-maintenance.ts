@@ -1,6 +1,6 @@
 import { logger } from "../middleware/logger.js";
 import { and, asc, eq, gt, isNull, lte } from "drizzle-orm";
-import { museAgentBindings as bindings, type Db } from "@paperclipai/db";
+import { museAgentBindings as bindings, mcpOauthGrants, type Db } from "@paperclipai/db";
 import { museRunnerBroker } from "./muse-runner-broker.js";
 import { museReceiver } from "./muse-receiver.js";
 /** Deadline authority lives in the database; every fresh process recovers it. */
@@ -19,7 +19,13 @@ export function startMuseMaintenance(db:Db) {
       after=undefined;
       while(true) {
         const active=await db.select().from(bindings).where(and(isNull(bindings.revokedAt),after?gt(bindings.id,after):undefined)).orderBy(asc(bindings.id)).limit(100);
-        for(const b of active)try{await broker.reconcileTerminalAssignments(b.companyId,b.agentId,b.id);}catch{logger.warn({bindingId:b.id},"Muse terminal reconciliation failed; unresolved holds remain and will retry.");}
+        for(const b of active)try{
+          if(b.grantId){
+            const [grant]=await db.select({revokedAt:mcpOauthGrants.revokedAt}).from(mcpOauthGrants).where(and(eq(mcpOauthGrants.id,b.grantId),eq(mcpOauthGrants.companyId,b.companyId),eq(mcpOauthGrants.agentId,b.agentId),eq(mcpOauthGrants.userId,b.operatorId)));
+            if(!grant||grant.revokedAt){await broker.revokeOAuthGrant({grantId:b.grantId,companyId:b.companyId,agentId:b.agentId,authorizingUserId:b.operatorId});continue;}
+          }
+          await broker.reconcileTerminalAssignments(b.companyId,b.agentId,b.id);
+        }catch{logger.warn({bindingId:b.id},"Muse authority or terminal reconciliation failed; unresolved holds remain and will retry.");}
         if(active.length<100)break;after=active.at(-1)!.id;
       }
     }finally{running=false;}

@@ -10,14 +10,14 @@ export function museConnectionState(connection: MuseConnection | undefined,
   const b = connection?.binding;
   const passed = !!b?.paired && b.receiverDetected && b.backgroundReplyVerified;
   const finishing = connection?.canConfigureConnection && ["preparing", "verifying"].includes(connection.agentLifecycleState);
-  const ready = passed && b.status === "ready" && connection?.agentLifecycleState === "ready"
+  const ready = passed && b.credentialState === "active" && b.status === "ready" && connection?.agentLifecycleState === "ready"
     && connection.canConfigureConnection && connection.enabled && connection.agentStatus !== "pending_approval";
   const testing = !!b?.challengeExpiresAt && Date.parse(b.challengeExpiresAt) > Date.now();
   const expiredTest = !!b?.challengeExpiresAt && Date.parse(b.challengeExpiresAt) <= Date.now();
   return {
     paired: b?.paired ?? false, receiverDetected: b?.receiverDetected ?? false,
     backgroundReplyVerified: b?.backgroundReplyVerified ?? false, ready, finishing, testing,
-    problem: offline ? "offline" : b?.status === "revoked" ? "disconnected" : connection && !connection.enabled ? "disabled" : promptUnavailable && !b?.paired ? "prompt_unavailable"
+    problem: offline ? "offline" : b?.status === "revoked" ? "disconnected" : b?.credentialState === "expired" ? "connection_expired" : b?.credentialState === "revoked" ? "disconnected" : connection && !connection.enabled ? "disabled" : promptUnavailable && !b?.paired ? "prompt_unavailable"
       : passed && !ready && !finishing ? "agent_unavailable" : expiredTest ? "no_recent_response" : undefined,
   };
 }

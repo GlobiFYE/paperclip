@@ -1,7 +1,9 @@
-import { randomUUID } from "node:crypto";
-import { and, asc, eq, gt, isNull, sql } from "drizzle-orm";
-import { museAgentBindings as bindings, museMailboxItems as mailbox, museRunnerAssignments as assignments, museReceiverContactBuckets as buckets, type Db } from "@paperclipai/db";
-import type { AgentConnectionSubject } from "@paperclipai/shared";
+import { createHash, randomUUID } from "node:crypto";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { museAgentBindings as bindings, museMailboxItems as mailbox, museRunnerAssignments as assignments, museReceiverContactBuckets as buckets, externalAgentHolds as holds, type Db } from "@paperclipai/db";
+import { assertMuseReceiverAuthority, assertMuseCurrentAuthority, inspectMuseConnectionCredential, museIdentity, museStopControlBoundaryIds, hasMuseStopControlAccess } from "./muse-identity.js";
+import { canConfigureAgentConnection } from "../modules/agent-lifecycle/index.js";
+import { HttpError } from "../errors.js";
 const PERSISTENCE_LAG_MS=30_000;
 const instances=new WeakMap<Db,ReturnType<typeof createReceiver>>();
 export function museReceiver(db:Db) {let receiver=instances.get(db);if(!receiver){receiver=createReceiver(db);instances.set(db,receiver);}return receiver;}
@@ -33,25 +35,76 @@ function createReceiver(db:Db) {
       }
     })().finally(()=>{flushPromise=undefined;});return flushPromise;
   }
-  async function signal(s:AgentConnectionSubject) {
-    const now=Date.now(),key=`${s.bindingId}:${s.generation}:${Math.floor(now/PERSISTENCE_LAG_MS)}`;
-    const gap=previous.has(s.bindingId)?now-previous.get(s.bindingId)!:0;previous.set(s.bindingId,now);
-    let bucket=pending.get(key);
-    if(!bucket){bucket={companyId:s.companyId,bindingId:s.bindingId,bindingGeneration:s.generation,bucketAt:new Date(Math.floor(now/PERSISTENCE_LAG_MS)*PERSISTENCE_LAG_MS),firstAt:new Date(now),lastAt:new Date(now),contacts:0,gapsAtMostSevenSeconds:0,maxGapMs:0,timestamps:[],incomplete:false};pending.set(key,bucket);}
-    bucket.contacts++;bucket.lastAt=new Date(now);if(gap>0&&gap<=7000)bucket.gapsAtMostSevenSeconds++;bucket.maxGapMs=Math.max(bucket.maxGapMs,gap);
-    if(bucket.timestamps.length<60)bucket.timestamps.push(new Date(now).toISOString());else bucket.incomplete=true;
-    const [b]=await db.select().from(bindings).where(and(eq(bindings.id,s.bindingId),eq(bindings.generation,s.generation),isNull(bindings.revokedAt)));
-    if(!b)return {version:1 as const,signal:null};
-    return db.transaction(async tx=>{
-      const [current]=await tx.select().from(bindings).where(and(eq(bindings.id,b.id),eq(bindings.generation,b.generation),isNull(bindings.revokedAt))).for("update");
-      if(!current)return {version:1 as const,signal:null};
-      const [item]=await tx.select({item:mailbox}).from(mailbox).leftJoin(assignments,eq(assignments.id,mailbox.assignmentId)).where(and(eq(mailbox.bindingId,b.id),eq(mailbox.bindingGeneration,b.generation),sql`((${mailbox.kind} = 'assignment' and ${assignments.claimedAt} is null and ${assignments.status} = 'offered') or (${mailbox.kind} = 'readiness_challenge' and ${!!current.challengeHash && !!current.challengeExpiresAt && current.challengeExpiresAt > new Date()} and ${mailbox.id} > ${current.workerCursor} and encode(sha256(convert_to(${mailbox.references}->>'nonce','UTF8')),'hex') = ${current.challengeHash}) or (${mailbox.kind} not in ('assignment','readiness_challenge') and ${mailbox.id} > ${current.workerCursor}))`)).orderBy(asc(mailbox.id)).limit(1);
-      if(!item)return {version:1 as const,signal:null};
-      const rearm=!item.item.signalNotifiedAt||item.item.signalNotifiedAt.getTime()<=now-30_000;
-      const attempt=item.item.signalAttempt+(rearm?1:0);
-      if(rearm)await tx.update(mailbox).set({signalAttempt:attempt,signalNotifiedAt:new Date(now)}).where(eq(mailbox.id,item.item.id));
-      return {version:1 as const,signal:{reference:`${b.id}:${b.generation}:${item.item.id}:${attempt}`}};
+  function recordPublicContact(b: typeof bindings.$inferSelect, now: number) {
+    const key = `${b.id}:${b.generation}:${Math.floor(now / PERSISTENCE_LAG_MS)}`;
+    const gap = previous.has(b.id) ? now - previous.get(b.id)! : 0;
+    previous.set(b.id, now);
+    let bucket = pending.get(key);
+    if (!bucket) {
+      bucket = { companyId: b.companyId, bindingId: b.id, bindingGeneration: b.generation,
+        bucketAt: new Date(Math.floor(now / PERSISTENCE_LAG_MS) * PERSISTENCE_LAG_MS),
+        firstAt: new Date(now), lastAt: new Date(now), contacts: 0,
+        gapsAtMostSevenSeconds: 0, maxGapMs: 0, timestamps: [], incomplete: false };
+      pending.set(key, bucket);
+    }
+    bucket.contacts++; bucket.lastAt = new Date(now);
+    if (gap > 0 && gap <= 7000) bucket.gapsAtMostSevenSeconds++;
+    bucket.maxGapMs = Math.max(bucket.maxGapMs, gap);
+    if (bucket.timestamps.length < 60) bucket.timestamps.push(new Date(now).toISOString());
+    else bucket.incomplete = true;
+  }
+  /** A public binding reference is presence evidence, never worker authority. */
+  async function signal(bindingId: string, expectedResource?:string) {
+    const idle = { version: 1 as const, signal: null };
+    const unavailable = () => new HttpError(410, "Muse receiver is unavailable.");
+    const [candidate] = await db.select().from(bindings).where(eq(bindings.id, bindingId));
+    if (!candidate || candidate.revokedAt || !candidate.pairedAt) throw unavailable();
+    if (candidate.qualificationExpiresAt && candidate.qualificationExpiresAt <= new Date()) {
+      const { museRunnerBroker } = await import("./muse-runner-broker.js");
+      await museRunnerBroker(db).endQualification({ companyId: candidate.companyId, agentId: candidate.agentId,
+        bindingId: candidate.id, qualificationId: candidate.qualificationId!, operatorId: candidate.operatorId });
+      throw unavailable();
+    }
+    let contacted: typeof bindings.$inferSelect | undefined;
+    const result = await db.transaction(async tx => {
+      const [current] = await tx.select().from(bindings).where(and(eq(bindings.id, candidate.id),
+        eq(bindings.generation, candidate.generation), isNull(bindings.revokedAt))).for("update");
+      if (!current) throw unavailable();
+      let agent;
+      try {
+        const credential=await inspectMuseConnectionCredential(tx,current,expectedResource);
+        if(credential.state==="pending"){
+          await assertMuseCurrentAuthority(tx,current,true,true);contacted=current;return idle;
+        }
+        agent = await assertMuseReceiverAuthority(tx, current,expectedResource);
+      }
+      catch (error) {
+        // Infrastructure failures must not permanently uninstall a healthy hook.
+        if (error instanceof HttpError && [401, 403, 404, 410].includes(error.status)) throw unavailable();
+        throw error;
+      }
+      contacted = current;
+      // Pausing suppresses ordinary work, while the worker still needs its
+      // exact stop boundary to quiesce and report through authenticated control.
+      const disabled=!await museIdentity(db).enabled();
+      if(disabled&&!await hasMuseStopControlAccess(tx,current))return idle;
+      const stopOnly = disabled || (agent.status === "paused" && !canConfigureAgentConnection(agent));
+      const boundaries=tx.select({boundary:holds.stopBoundary}).from(holds).where(inArray(holds.id,museStopControlBoundaryIds(tx,current)));
+      const [item] = await tx.select({ item: mailbox }).from(mailbox).leftJoin(assignments, eq(assignments.id, mailbox.assignmentId))
+        .where(and(eq(mailbox.bindingId, current.id), eq(mailbox.bindingGeneration, current.generation),
+          stopOnly ? and(eq(mailbox.kind,"authority_revoked"),sql`${mailbox.id} > ${current.workerCursor}`,inArray(sql`${mailbox.references}->'boundary'`,boundaries))
+            : sql`((${mailbox.kind} = 'assignment' and ${assignments.claimedAt} is null and ${assignments.status} = 'offered') or (${mailbox.kind} = 'readiness_challenge' and ${!!current.challengeHash && !!current.challengeExpiresAt && current.challengeExpiresAt > new Date()} and ${mailbox.id} > ${current.workerCursor} and encode(sha256(convert_to(${mailbox.references}->>'nonce','UTF8')),'hex') = ${current.challengeHash}) or (${mailbox.kind} not in ('assignment','readiness_challenge') and ${mailbox.id} > ${current.workerCursor}))`))
+        .orderBy(asc(mailbox.id)).limit(1);
+      if (!item) return idle;
+      const now = Date.now(), rearm = !item.item.signalNotifiedAt || item.item.signalNotifiedAt.getTime() <= now - 30_000;
+      const attempt = item.item.signalAttempt + (rearm ? 1 : 0);
+      if (rearm) await tx.update(mailbox).set({ signalAttempt: attempt, signalNotifiedAt: new Date(now) }).where(eq(mailbox.id, item.item.id));
+      // UUID-bearing event identity prevents enumeration of global mailbox IDs.
+      const reference = "sha256:" + createHash("sha256").update(`${current.id}:${current.generation}:${item.item.sourceEventId}:${attempt}`).digest("hex");
+      return { version: 1 as const, signal: { reference } };
     });
+    if (contacted) recordPublicContact(contacted, Date.now());
+    return result;
   }
   let timer:NodeJS.Timeout|undefined;
   function start() {if(timer)return;timer=setInterval(()=>void flush().catch(()=>{}),PERSISTENCE_LAG_MS);timer.unref();}
