@@ -1,6 +1,9 @@
 import { retainProjectSkillAccess, skillAccessService } from "./skill-access.js";
 import type { AuthorizationActor } from "./authorization.js";
 import { updateAgentConfigurationInTransaction } from "./agent-configuration-transaction.js";
+import { withAccountingTransaction } from "./accounting-transaction.js";
+import { changeConsentGateService, type ChangeConsentTarget } from "./change-consent-gate.js";
+import type { UpdateAgentOptions } from "../lib/agent-records.js";
 import { logger } from "../middleware/logger.js";
 import { removeRuntimeSkillCache, resolveRuntimeSkillCache, runtimeSkillCacheSpec } from "./runtime-skill-cache.js";
 import { createHash, randomUUID } from "node:crypto";
@@ -2963,6 +2966,28 @@ async function listLastEditorsBySkillId(
 }
 
 export function companySkillService(db: Db, options: { actor?: AuthorizationActor } = {}) {
+  async function applyConsentedAgentSkillAssignment(input: {
+    companyId: string;
+    agentId: string;
+    adapterConfig: Record<string, unknown>;
+    consent: {
+      companyId: string;
+      actorAgentId: string | null | undefined;
+      actorRunId: string | null | undefined;
+      targets: ChangeConsentTarget[];
+    };
+    updateOptions?: UpdateAgentOptions;
+  }) {
+    return withAccountingTransaction(db, input.companyId, async (tx) => {
+      await changeConsentGateService(tx).assertConsented(input.consent);
+      const updated = await updateAgentConfigurationInTransaction(tx, input.agentId, {
+        adapterConfig: input.adapterConfig,
+      }, input.updateOptions);
+      if (!updated) throw notFound("Agent not found");
+      return updated;
+    });
+  }
+
   const visibility = (database: DbOrTransaction = db) => skillAccessService(database as Db, options.actor);
   const folderSvc = folderService(db);
   const agents = agentService(db);
@@ -7357,6 +7382,7 @@ export function companySkillService(db: Db, options: { actor?: AuthorizationActo
   }
 
   return {
+    applyConsentedAgentSkillAssignment,
     list,
     listFull,
     getById,

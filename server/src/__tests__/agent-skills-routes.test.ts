@@ -44,6 +44,7 @@ const mockAgentInstructionsService = vi.hoisted(() => ({
 }));
 
 const mockCompanySkillService = vi.hoisted(() => ({
+  applyConsentedAgentSkillAssignment: vi.fn(),
   listRuntimeSkillEntries: vi.fn(),
   resolveRequestedSkillEntries: vi.fn(),
   resolveRequestedSkillKeys: vi.fn(),
@@ -640,6 +641,10 @@ describe("agent skill routes", () => {
     mockUpdateAgentConfigurationInTransaction.mockImplementation(
       async (_tx, _id, patch) => ({ ...target, ...patch }),
     );
+    const { companySkillService: createCompanySkillService } = await import("../services/company-skills.js");
+    mockCompanySkillService.applyConsentedAgentSkillAssignment.mockImplementation(
+      (input) => createCompanySkillService(db as any).applyConsentedAgentSkillAssignment(input),
+    );
     mockAccessService.decide
       .mockResolvedValueOnce({
         allowed: false,
@@ -680,6 +685,13 @@ describe("agent skill routes", () => {
       consume: false,
     });
     expect(mockChangeConsentGate.assertConsented).toHaveBeenNthCalledWith(2, consentInput);
+    expect(mockCompanySkillService.applyConsentedAgentSkillAssignment).toHaveBeenCalledWith({
+      agentId: target.id,
+      companyId: target.companyId,
+      adapterConfig: expect.any(Object),
+      consent: consentInput,
+      updateOptions: expect.any(Object),
+    });
     expect(db.transaction).toHaveBeenCalledOnce();
     expect(mockUpdateAgentConfigurationInTransaction).toHaveBeenCalledWith(
       mockTransactionDb,

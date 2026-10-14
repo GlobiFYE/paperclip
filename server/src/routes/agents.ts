@@ -1,8 +1,6 @@
 import { cancellationRequestId } from "../services/native-runtime/native-cancellation-request.js";
 import { agentEnvironmentTestService } from "../services/agent-environment-test.js";
 import { createAgentLifecycle, scheduleAgentLifecycle } from "../services/agent-lifecycle.js";
-import { withAccountingTransaction } from "../services/accounting-transaction.js";
-import { updateAgentConfigurationInTransaction } from "../services/agent-configuration-transaction.js";
 
 import { agentIdentityService } from "../services/agent-identity.js";
 import { aiConnectionRouterService, poolMemberRuntimeConfig } from "../services/ai-connection-router.js";
@@ -3761,18 +3759,17 @@ export function agentRoutes(
         },
       } as const;
       const updated = consentContext
-        ? await withAccountingTransaction(db, agent.companyId, async (tx) => {
-            await changeConsentGateService(tx).assertConsented({
+        ? await companySkills.applyConsentedAgentSkillAssignment({
+            companyId: agent.companyId,
+            agentId: agent.id,
+            adapterConfig: nextAdapterConfig,
+            consent: {
               companyId: consentContext.companyId,
               actorAgentId: consentContext.actorAgentId,
               actorRunId: consentContext.actorRunId,
               targets: [consentContext.target],
-            });
-            const result = await updateAgentConfigurationInTransaction(tx, agent.id, {
-              adapterConfig: nextAdapterConfig,
-            }, updateOptions);
-            if (!result) throw notFound("Agent not found");
-            return result;
+            },
+            updateOptions,
           })
         : await svc.update(agent.id, {
             adapterConfig: nextAdapterConfig,
