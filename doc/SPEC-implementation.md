@@ -1355,6 +1355,8 @@ The current app also exposes V1-supporting surfaces for:
   derive `deliveryState` as `merged_via_pr | merged_by_ancestry | unmerged | unknown`; terminal issue trees with a
   merged delivery and no active checkout run become cleanup-eligible with reason `issue_terminal` and are archived
   through the workspace cleanup path. Reopening the source issue records activity but does not restore that workspace.
+  Before that, terminal isolated worktrees are compacted: ignored, untracked dependency, build, and cache directories
+  are removed while the workspace, its branch, and all source changes stay, and reuse regenerates them.
 - task watchdog configuration and reusable watchdog issue orchestration for explicitly watched issue subtrees
 - routines and scheduled/API/webhook triggers
 - plugin installation, configuration, state, jobs, logs, webhooks, and plugin database namespace migration
