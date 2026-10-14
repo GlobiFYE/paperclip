@@ -3994,6 +3994,109 @@ describe("IssueDetail", () => {
     });
   });
 
+  it.each([
+    ["history", "before"],
+    ["history", "after"],
+    ["live", "before"],
+    ["live", "after"],
+  ] as const)("retires a consumed follow-up from %s when its post resolves %s delivery", async (receiptSource, postOrder) => {
+    const postedComment = createDeferred<IssueComment>();
+    const delivered = createIssueComment({ id: "delivered", body: "Use this direction" });
+    const waiting = createIssueComment({ id: "still-waiting", body: "Keep this queued" });
+    const run = {
+      id: "run-native", runtimeMode: "native" as const, status: "running",
+      invocationSource: "issue", triggerDetail: null,
+      contextCommentId: null, contextWakeCommentId: null,
+      startedAt: "2026-04-21T00:00:01.000Z", finishedAt: null,
+      createdAt: "2026-04-21T00:00:01.000Z", agentId: "agent-1",
+      agentName: "Runner", adapterType: "paperclip_runner", issueId: "issue-1",
+    };
+    mockIssuesApi.get.mockResolvedValue(createIssue({ status: "in_progress", executionRunId: run.id }));
+    mockAgentsApi.list.mockResolvedValue([createAgent({ adapterType: "paperclip_runner" })]);
+    mockHeartbeatsApi.activeRunForIssue.mockResolvedValue(run);
+    mockHeartbeatsApi.liveRunsForIssue.mockResolvedValue([run]);
+    mockIssuesApi.addComment.mockReturnValue(postedComment.promise);
+    await act(async () => renderIssueView());
+    await flushReact();
+
+    type Props = {
+      onAdd: (body: string) => Promise<void>;
+      comments: Array<Record<string, unknown>>;
+      queuedCommentQueue: IssueQueuedCommentQueue | null;
+    };
+    const props = () => mockIssueChatThreadRender.mock.calls.at(-1)![0] as Props;
+    await act(async () => { void props().onAdd(delivered.body); });
+    await waitForAssertion(() => {
+      expect(props().queuedCommentQueue?.entries[0]?.comment.body).toBe(delivered.body);
+    });
+    if (postOrder === "before") {
+      await act(async () => postedComment.resolve(delivered));
+      await flushReact();
+    }
+
+    const staleQueue = createQueuedCommentQueue({
+      targetRunId: run.id,
+      entries: [delivered, waiting].map((comment, position) => ({
+        comment, position, canEdit: true, canDiscard: true,
+      })),
+    });
+    mockIssuesApi.listComments.mockResolvedValue([delivered, waiting]);
+    mockIssuesApi.getQueuedComments.mockResolvedValue(staleQueue);
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.issues.comments("PAP-1") });
+      queryClient.setQueryData(queryKeys.issues.queuedComments("issue-1"), staleQueue);
+      if (receiptSource === "history") {
+        queryClient.setQueryData(queryKeys.issues.runs("PAP-1"), [{
+          ...run, runId: run.id, wakeCommentIds: [delivered.id],
+          contextIssueId: "issue-1", logBytes: 1,
+        }]);
+      } else {
+        const consumingRun = { ...run, contextCommentId: delivered.id, contextWakeCommentId: delivered.id };
+        mockHeartbeatsApi.liveRunsForIssue.mockResolvedValue([consumingRun]);
+        mockHeartbeatsApi.activeRunForIssue.mockResolvedValue(consumingRun);
+        queryClient.setQueryData(queryKeys.issues.liveRuns("PAP-1"), [consumingRun]);
+        queryClient.setQueryData(queryKeys.issues.activeRun("PAP-1"), consumingRun);
+      }
+    });
+    if (postOrder === "after") {
+      await act(async () => postedComment.resolve(delivered));
+    }
+    await waitForAssertion(() => {
+      expect(props().queuedCommentQueue?.entries.map(entry => entry.comment.id)).toEqual([waiting.id]);
+      const comment = props().comments.find(comment => comment.id === delivered.id);
+      expect(comment).toMatchObject({ consumedByRunId: run.id });
+      expect(comment?.queueState).toBeUndefined();
+      expect(comment?.clientStatus).toBeUndefined();
+      expect(props().comments.filter(comment => comment.body === delivered.body)).toHaveLength(1);
+    });
+    await act(async () => {
+      await queryClient.invalidateQueries({ queryKey: queryKeys.issues.queuedComments("issue-1") });
+    });
+    expect(props().queuedCommentQueue?.entries.map(entry => entry.comment.id)).toEqual([waiting.id]);
+  });
+
+  it("keeps an admitted message pending until its queued run starts", async () => {
+    const queued = createIssueComment({ id: "not-started" });
+    mockIssuesApi.get.mockResolvedValue(createIssue({ status: "in_progress", assigneeAgentId: "agent-1", executionRunId: "run-queued" }));
+    mockIssuesApi.listComments.mockResolvedValue([queued]);
+    mockIssuesApi.getQueuedComments.mockResolvedValue(createQueuedCommentQueue({
+      state: "queued", targetRunId: null,
+      entries: [{ comment: queued, position: 0, canEdit: true, canDiscard: true }],
+    }));
+    mockActivityApi.runsForIssue.mockResolvedValue([{
+      runId: "run-queued", agentId: "agent-1", adapterType: "paperclip_runner",
+      status: "queued", startedAt: null, finishedAt: null,
+      createdAt: "2026-04-21T00:00:01.000Z", wakeCommentIds: [queued.id],
+      contextIssueId: "issue-1",
+    }]);
+    await act(async () => renderIssueView());
+    await waitForAssertion(() => {
+      const props = mockIssueChatThreadRender.mock.calls.at(-1)![0];
+      expect(props.queuedCommentQueue?.entries.map((entry: { comment: IssueComment }) => entry.comment.id)).toEqual([queued.id]);
+      expect(props.comments.find((comment: IssueComment) => comment.id === queued.id)?.consumedByRunId).toBeUndefined();
+    });
+  });
+
   it("does not rebind a queued message when another run becomes live before its request settles", async () => {
     const postedComment = createDeferred<IssueComment>();
     mockIssuesApi.get.mockResolvedValue(

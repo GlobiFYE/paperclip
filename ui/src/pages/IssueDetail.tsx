@@ -1685,6 +1685,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
 
     for (const run of resolvedLinkedRuns) {
       agentIdByRunId.set(run.runId, run.agentId);
+      if (!run.startedAt) continue;
       const batchedIds = Array.isArray(run.wakeCommentIds)
         ? run.wakeCommentIds.filter(
             (value): value is string =>
@@ -1713,6 +1714,20 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
           kind: "run_start",
         });
       });
+    }
+    for (const run of [resolvedActiveRun, ...resolvedLiveRuns]) {
+      if (!run || run.status !== "running" || !run.startedAt) continue;
+      const anchorAt = new Date(run.startedAt).toISOString();
+      for (const commentId of [run.contextCommentId, run.contextWakeCommentId]) {
+        if (!commentId || inputPlacementByCommentId.has(commentId)) continue;
+        inputPlacementByCommentId.set(commentId, {
+          runId: run.id,
+          anchorAt,
+          sequence: 0,
+          anchorMs: new Date(anchorAt).getTime(),
+          kind: "run_start",
+        });
+      }
     }
     // Same-turn steering has a durable PRP acknowledgement and a matching
     // activity fact keyed by commentId/targetRunId. Its acknowledgement time,
@@ -1886,8 +1901,14 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
         locallyQueuedCommentRunIds.get(comment.id) ??
         nextComment.queueTargetRunId ??
         null;
-      if (inputPlacement?.kind === "steer") {
-        return nextComment;
+      if (inputPlacement) {
+        return {
+          ...nextComment,
+          clientStatus: undefined,
+          queueState: undefined,
+          queueTargetRunId: null,
+          queueReason: undefined,
+        };
       }
       const locallyQueuedComment = applyLocalQueuedIssueCommentState(
         nextComment,
@@ -2038,23 +2059,29 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
     queuedCommentReason,
     resolvedActivity,
     resolvedLinkedRuns,
+    resolvedActiveRun,
+    resolvedLiveRuns,
     interruptibleIssueRun,
   ]);
   const effectiveQueuedCommentQueue = useMemo(() => {
     if (!queuedCommentQueueEnabled) return null;
+    const deliveredCommentIds = new Set(consumedQueuedCommentIds);
+    for (const comment of commentsWithRunMeta) {
+      if (comment.consumedByRunId) deliveredCommentIds.add(comment.id);
+    }
     const visibleAuthoritativeQueue = authoritativeQueuedCommentQueue
       ? {
           ...authoritativeQueuedCommentQueue,
           entries: authoritativeQueuedCommentQueue.entries.filter(
             (entry) =>
-              !consumedQueuedCommentIds.has(entry.comment.id) &&
+              !deliveredCommentIds.has(entry.comment.id) &&
               !discardedQueuedCommentIds.has(entry.comment.id),
           ),
         }
       : null;
     const pendingComments = commentsWithRunMeta.flatMap((comment) => {
       if (
-        consumedQueuedCommentIds.has(comment.id) ||
+        deliveredCommentIds.has(comment.id) ||
         discardedQueuedCommentIds.has(comment.id) ||
         comment.steeredIntoRunId
       ) {
