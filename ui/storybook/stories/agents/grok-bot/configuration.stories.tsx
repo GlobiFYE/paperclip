@@ -57,7 +57,8 @@ const meta = {
   id: "grok-bot-configuration",
   title: "Agents and reusable capabilities/Hiring, configuration, and organization/Onboarding/Grok Bot/Configuration",
   component: Configuration,
-  parameters: { layout: "fullscreen", paperclip: { capabilities: ["agents/grok-bot"], status: "proposed", implementation: "production", boundary: "fixtures", notes: "Production configuration page with synthetic connection observations. No Grok or authorization calls." } },
+  tags: ["autodocs"],
+  parameters: { layout: "fullscreen", docs: { story: { inline: false } }, paperclip: { capabilities: ["agents/grok-bot"], status: "proposed", implementation: "production", boundary: "fixtures", notes: "Production configuration page with synthetic connection observations. No Grok or authorization calls." } },
 } satisfies Meta<typeof Configuration>;
 export default meta;
 type Story = StoryObj<typeof meta>;
