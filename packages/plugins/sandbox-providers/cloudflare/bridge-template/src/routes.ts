@@ -9,6 +9,7 @@ import {
   DEFAULT_SESSION_ID,
   DEFAULT_TIMEOUT_MS,
   resolveSandbox,
+  destroySandbox,
   applySandboxKeepAlive,
   toErrorResponse,
   toJsonResponse,
@@ -256,7 +257,7 @@ export async function handleBridgeRequest(request: Request, env: BridgeEnv): Pro
         },
       });
     } finally {
-      await sandbox.destroy().catch(() => undefined);
+      await destroySandbox(sandbox, { route: "probe", providerLeaseId: sandboxId });
     }
   }
 
@@ -302,7 +303,7 @@ export async function handleBridgeRequest(request: Request, env: BridgeEnv): Pro
       });
     } catch (err) {
       if (!reuseLease) {
-        await sandbox.destroy().catch(() => undefined);
+        await destroySandbox(sandbox, { route: "leases/acquire", providerLeaseId });
       }
       throw err;
     }
@@ -385,7 +386,13 @@ export async function handleBridgeRequest(request: Request, env: BridgeEnv): Pro
       return toJsonResponse({ ok: true });
     }
     const sandbox = await resolveSandbox(env, body.providerLeaseId, { normalizeId: true });
-    await sandbox.destroy().catch(() => undefined);
+    const destroyed = await destroySandbox(sandbox, { route: "leases/release", providerLeaseId: body.providerLeaseId });
+    if (!destroyed.ok) {
+      return toErrorResponse(502, "sandbox_destroy_failed", `Sandbox teardown failed after ${destroyed.attempts} attempts: ${destroyed.error}`, {
+        providerLeaseId: body.providerLeaseId,
+        attempts: destroyed.attempts,
+      });
+    }
     return toJsonResponse({ ok: true });
   }
 
@@ -395,7 +402,13 @@ export async function handleBridgeRequest(request: Request, env: BridgeEnv): Pro
       return toErrorResponse(400, "invalid_request", "providerLeaseId path parameter is required.");
     }
     const sandbox = await resolveSandbox(env, providerLeaseId, { normalizeId: true });
-    await sandbox.destroy().catch(() => undefined);
+    const destroyed = await destroySandbox(sandbox, { route: "leases/destroy", providerLeaseId });
+    if (!destroyed.ok) {
+      return toErrorResponse(502, "sandbox_destroy_failed", `Sandbox teardown failed after ${destroyed.attempts} attempts: ${destroyed.error}`, {
+        providerLeaseId: providerLeaseId,
+        attempts: destroyed.attempts,
+      });
+    }
     return toJsonResponse({ ok: true });
   }
 
