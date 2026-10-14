@@ -1,3 +1,4 @@
+import { resolveInboundConversationBinding } from "./chat-channels/inbound/conversation-binding.js";
 import { createGitHubMaintenance } from "./chat-channels/github/maintenance.js";
 import { createSpekoChannelService, authorizeSpekoPublicVoiceTask, replaceSpekoChannelRuntime } from "./chat-channels/speko/runtime.js";
 import { prepareDiscordRuntimeCommand } from "./chat-channels/discord/runtime-commands.js";
@@ -6,7 +7,7 @@ import { isSupportedTelegramWebhookBaseUrl } from "./chat-channels/telegram/setu
 import { initializeGitHubWebhookRuntime } from "./chat-channels/github/webhook-runtime.js";
 import { githubInboundTaskTitle, githubInboundCommentText, githubAssignedAgentRequiresLowTrust, retainGitHubDeliveryAuthority, retainGitHubReviewReceipt } from "./chat-channels/github/task-preparation.js";
 import { applyChatTaskReviewContainment } from "./chat-channels/inbound/task-trust.js";
-import { photonControlTargetsConversation, photonReplyMetadata, recordPhotonInboundActivity } from "./chat-channels/imessage-photon/messages.js";
+import { photonConversationBindingIsComplete, photonControlTargetsConversation, photonReplyMetadata, recordPhotonInboundActivity } from "./chat-channels/imessage-photon/messages.js";
 import { deferTeamsSetupReply } from "./chat-channels/microsoft-teams/setup-replies.js";
 import { slackOrphanFollowUp, stripSlackTitleMentions } from "./chat-channels/slack/messages.js";
 import { createChatPublicationResolution } from "./chat-channels/publications/resolution.js";
@@ -60,7 +61,7 @@ import { createSlackTaskAuthorityRegistration } from "./chat-channels/slack/task
 import { createGitHubPublicationPolicy } from "./chat-channels/github/publication-policy.js";
 import { createTelegramAttachmentFailure } from "./chat-channels/telegram/attachment-failure.js";
 import { createSlackCommands } from "./chat-channels/slack/commands.js";
-import { createTelegramCommands, telegramGuidanceCommand, telegramGuidanceResponse, telegramForumControlResponse } from "./chat-channels/telegram/commands.js";
+import { createTelegramCommands, telegramInboundControls, telegramGuidanceResponse, telegramForumControlResponse } from "./chat-channels/telegram/commands.js";
 import { createTeamsFileDelivery } from "./chat-channels/microsoft-teams/file-delivery.js";
 import { createGitHubSetupSecret } from "./chat-channels/github/setup-secret.js";
 import { createSlackInventory } from "./chat-channels/slack/inventory.js";
@@ -1679,72 +1680,25 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         })
         .where(eq(chatDeliveries.id, activeDelivery.id));
 
-      const latestConversation =
-        endpoint.provider === "microsoft-teams"
-          ? await conversationForThread(endpoint.id, thread.id)
-          : await db
-              .select()
-              .from(chatConversations)
-              .where(
-                and(
-                  eq(chatConversations.endpointId, endpoint.id),
-                  eq(
-                    chatConversations.externalConversationId,
-                    thread.channelId,
-                  ),
-                  eq(chatConversations.externalThreadId, thread.id),
-                ),
-              )
-              .orderBy(desc(chatConversations.sessionGeneration))
-              .then((rows) => rows[0] ?? null);
-      const isLinear = endpoint.provider !== "speko" && surfaceKind !== "native_thread";
-      let existingConversation: ConversationRow | null = latestConversation;
-      let existingIssue: typeof issues.$inferSelect | null =
-        existingConversation
-          ? await db
-              .select()
-              .from(issues)
-              .where(
-                and(
-                  eq(issues.companyId, endpoint.companyId),
-                  eq(issues.id, existingConversation.issueId),
-                ),
-              )
-              .then((rows) => rows[0] ?? null)
-          : null;
-      if (
-        isLinear &&
-        existingConversation &&
-        (endpoint.provider === "imessage-photon"
-          // A reply finishes an iMessage turn, not the conversation. Only a
-          // delivered /new or /close releases this chat's task binding. Use
-          // the durable control receipt so pre-fix completed rows also resume.
-          ? await hasCommittedTaskControlCompletion(existingConversation.id)
-          : existingConversation.state === "completed" ||
-            existingIssue?.status === "done" ||
-            existingIssue?.status === "cancelled")
-      ) {
-        if (existingConversation.state !== "completed") {
-          await db
-            .update(chatConversations)
-            .set({ state: "completed", updatedAt: new Date() })
-            .where(eq(chatConversations.id, existingConversation.id));
-        }
-        existingConversation = null;
-        existingIssue = null;
-      }
-      // Telegram exposes its small command vocabulary in forum topics too.
-      // A forum topic is a native provider thread and therefore stays bound to
-      // one immutable Paperclip task, but the command must still be consumed
-      // as control-plane input instead of becoming a task comment/wakeup.
-      const controlCommand =
-        isLinear || endpoint.provider === "telegram"
-          ? linearControlCommand(message.text)
-          : null;
-      const guidanceCommand =
-        endpoint.provider === "telegram"
-          ? telegramGuidanceCommand(message.text)
-          : null;
+      let { conversation: existingConversation, issue: existingIssue, latestConversation, isLinear } =
+        await resolveInboundConversationBinding(db, {
+          endpoint, thread,
+          isLinear: () => endpoint.provider !== "speko" && surfaceKind !== "native_thread",
+          lookupConversation: endpoint.provider === "microsoft-teams"
+            ? () => conversationForThread(endpoint.id, thread.id)
+            : undefined,
+          conversationIsComplete: endpoint.provider === "imessage-photon"
+            ? (conversationId) => photonConversationBindingIsComplete(conversationId, hasCommittedTaskControlCompletion)
+            : undefined,
+        });
+      const telegramControls = endpoint.provider === "telegram"
+        ? telegramInboundControls(message.text, surfaceKind)
+        : null;
+      const controlCommand = telegramControls
+        ? telegramControls.controlCommand
+        : isLinear ? linearControlCommand(message.text) : null;
+      const guidanceCommand = telegramControls?.guidanceCommand ?? null;
+      const bypassesControlChronology = telegramControls?.bypassesControlChronology ?? controlCommand === "status";
       const endpointAllowed =
         endpoint.status === "verifying" || endpoint.status === "active";
       const destinationAllowed = thread.isDM
@@ -1852,11 +1806,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
 
       const filterPreControlSource = async (database: DbOrTransaction) => {
         if (
-          controlCommand === "status" ||
-          (controlCommand === "new" &&
-            endpoint.provider === "telegram" &&
-            surfaceKind === "native_thread") ||
-          guidanceCommand ||
+          bypassesControlChronology ||
           (await readChatControlChronology(
             database,
             endpoint,
@@ -2009,8 +1959,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       }
 
       if (controlCommand) {
-        const isTelegramForumTopic =
-          endpoint.provider === "telegram" && surfaceKind === "native_thread";
+        const isTelegramForumTopic = telegramControls?.isForumTopic === true;
         const taskLabel = existingIssue
           ? `${existingIssue.identifier}: ${existingIssue.title}`
           : "No task is active in this conversation.";
