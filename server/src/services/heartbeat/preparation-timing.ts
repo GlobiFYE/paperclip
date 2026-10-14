@@ -7,7 +7,21 @@ type PreparationPhase = "environment_selection" | "execution_configuration" | "s
   | "configuration_mentions" | "configuration_github_identity" | "configuration_secrets"
   | "configuration_ai_runtime" | "configuration_skills" | "configuration_connector_assignments"
   | "configuration_connector_skills" | "configuration_connector_delivery"
-  | "configuration_connection_instructions" | "configuration_agent_identity";
+  | "configuration_connection_instructions" | "configuration_agent_identity"
+  | "workspace_source_resolution"
+  | "workspace_provision_policy"
+  | "workspace_base_validation"
+  | "workspace_source_authorization"
+  | "workspace_provision"
+  | "workspace_source_retention"
+  | "workspace_binding"
+  | "workspace_record_update"
+  | "workspace_record_create"
+  | "workspace_operation_binding"
+  | "workspace_config_recording"
+  | "workspace_repository_admission"
+  | "workspace_project_repositories"
+  | "workspace_recovery_root";
 
 export function createHeartbeatPreparationTiming(runId: string) {
   const runIdHash = createHash("sha256").update(runId).digest("hex").slice(0, 12);

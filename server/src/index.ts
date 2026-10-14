@@ -1,3 +1,4 @@
+import { timeStartupRecovery } from "./startup-recovery-timing.js";
 import { skillSourceSyncService } from "./services/skill-source-sync.js";
 import { subscribeAllCompanyLiveEvents } from "./services/live-events.js";
 import { DELIVERY_QUEUES } from "./services/delivery-work-notifications.js";
@@ -1347,9 +1348,9 @@ async function startServerWithDatabaseTeardown(
       }));
   };
 
-  await app.locals.toolGateway.sweepActionReviews().catch((err: unknown) => logger.error({ err }, "startup tool review recovery failed"));
-  await app.locals.toolGateway.cleanupExpiredSessions().catch((err: unknown) => logger.error({ err }, "startup gateway token cleanup failed"));
-  await Promise.all([fastResponseWorker, ...deliveryWorkers].map(worker => worker.ready));
+  await timeStartupRecovery("tool_reviews", () => app.locals.toolGateway.sweepActionReviews()).catch((err: unknown) => logger.error({ err }, "startup tool review recovery failed"));
+  await timeStartupRecovery("gateway_sessions", () => app.locals.toolGateway.cleanupExpiredSessions()).catch((err: unknown) => logger.error({ err }, "startup gateway token cleanup failed"));
+  await timeStartupRecovery("delivery_workers", () => Promise.all([fastResponseWorker, ...deliveryWorkers].map(worker => worker.ready)));
   scheduleGitHubConnectionEventPoll();
   scheduleGitHubConnectionContinuitySweep();
 
@@ -1480,7 +1481,7 @@ async function startServerWithDatabaseTeardown(
       },
       "worktree run-execution cutoff state",
     );
-    await accountingHeartbeat.reconcileCostAccounting().catch((err) => logger.error({ err }, "Cost accounting recovery failed; pending receipts will retry"));
+    await timeStartupRecovery("accounting", () => accountingHeartbeat.reconcileCostAccounting()).catch((err) => logger.error({ err }, "Cost accounting recovery failed; pending receipts will retry"));
     const heartbeatSchedulingSuppression = await heartbeat.resolveSchedulingSuppression();
 
     // Reap orphaned runs before timer ticks start so wakeups cannot coalesce
@@ -1494,9 +1495,9 @@ async function startServerWithDatabaseTeardown(
       const startupHeartbeatRecovery = (async () => {
         // Legacy remote recovery releases sandbox leases. Wait for provider
         // workers before cleanup or retry admission, including unmanaged installs.
-        await app.locals.bundledPluginsStartup;
+        await timeStartupRecovery("plugin_workers", () => app.locals.bundledPluginsStartup);
         try {
-          const nativeRecovery = await heartbeat.recoverNativeRunsAfterRestart();
+          const nativeRecovery = await timeStartupRecovery("native_recovery", () => heartbeat.recoverNativeRunsAfterRestart());
           if (nativeRecovery.dispositions.length > 0) {
             logger.info(
               {
@@ -1521,7 +1522,7 @@ async function startServerWithDatabaseTeardown(
           throw err;
         }
         try {
-          const hotRestart = await heartbeat.reconcileHotRestartAdoption();
+          const hotRestart = await timeStartupRecovery("hot_restart", () => heartbeat.reconcileHotRestartAdoption());
           if (hotRestart.mode === "reported") {
             logger.info(
               hotRestart,
@@ -1537,7 +1538,7 @@ async function startServerWithDatabaseTeardown(
 
         for (let attempt = 1; attempt <= 2; attempt++) {
           try {
-            const result = await heartbeat.reapOrphanedRuns();
+            const result = await timeStartupRecovery("orphan_reaping", () => heartbeat.reapOrphanedRuns());
             logger.info(
               { reaped: result.reaped, runIds: result.runIds },
               "startup reap of orphaned heartbeat runs complete",
@@ -1555,9 +1556,9 @@ async function startServerWithDatabaseTeardown(
           }
         }
 
-        const promotion = await heartbeat.promoteDueScheduledRetries();
-        await heartbeat.resumeQueuedRuns();
-        const recoveredGoalActions = await heartbeat.recoverPendingSessionGoalActions();
+        const promotion = await timeStartupRecovery("scheduled_retries", () => heartbeat.promoteDueScheduledRetries());
+        await timeStartupRecovery("queued_runs", () => heartbeat.resumeQueuedRuns());
+        const recoveredGoalActions = await timeStartupRecovery("goal_actions", () => heartbeat.recoverPendingSessionGoalActions());
         if (
           recoveredGoalActions.enqueued > 0 ||
           recoveredGoalActions.invalid > 0
@@ -1567,7 +1568,7 @@ async function startServerWithDatabaseTeardown(
             "startup session-goal action outbox recovery reconciled pending controls",
           );
         }
-        const recoveredGoals = await heartbeat.recoverActiveSessionGoals();
+        const recoveredGoals = await timeStartupRecovery("active_goals", () => heartbeat.recoverActiveSessionGoals());
         if (recoveredGoals.enqueued > 0) {
           logger.warn(
             recoveredGoals,
@@ -1859,7 +1860,7 @@ async function startServerWithDatabaseTeardown(
     // is still required. A failed acquire can leak a paid provider sandbox, so
     // this path retries the teardown at startup and on the interval, exactly as
     // the enabled path does.
-    await accountingHeartbeat.reconcileCostAccounting().catch((err) => logger.error({ err }, "Cost accounting recovery failed; pending receipts will retry"));
+    await timeStartupRecovery("accounting", () => accountingHeartbeat.reconcileCostAccounting()).catch((err) => logger.error({ err }, "Cost accounting recovery failed; pending receipts will retry"));
     await runEnvironmentLeaseCleanupSweep(0);
     startHeartbeatSchedulerInterval(() => {
       trackHeartbeatSchedulerWork(accountingHeartbeat.reconcileCostAccounting().catch((err) => logger.error({ err }, "Cost accounting recovery failed")));

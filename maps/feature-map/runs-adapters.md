@@ -27,6 +27,13 @@ Open an agent’s model/adapter configuration or the instance adapter settings p
 
 Open an agent run at `/agents/:agentId/runs/:runId` from the agent or task activity.
 
+For latency diagnosis with an operator OTLP endpoint, search the hashed run ID
+without restricting the root span name. Compare workspace preparation with its
+`workspace_<step>` intervals. Measure controller readiness separately through
+`controller.startup.<phase>`. A recovery pause or deployment drain is not model
+execution time. See the [tracing contract](../../doc/observability.md#controller-preparation-phases).
+These source-level diagnostics do not establish a live response-time budget.
+
 ## Driving it with Playwright and the Paperclip CLI
 
 Preconditions: follow the [baseline](./README.md#before-driving-a-journey). Record adapter, model, account, native/legacy runtime, and environment. Capabilities vary; one harness result is not a matrix-wide qualification.

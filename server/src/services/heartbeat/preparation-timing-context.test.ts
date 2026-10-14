@@ -77,7 +77,7 @@ it("honors an operator sampler that disables root traces even when the trigger i
   }
 });
 
-it.each(["workspace", "configuration_ai_runtime", "configuration_skills", "configuration_agent_identity"] as const)("stays silent and preserves values and errors without a tracer provider for %s", async phase => {
+it.each(["workspace", "configuration_ai_runtime", "configuration_skills", "configuration_agent_identity", "workspace_source_resolution", "workspace_provision_policy", "workspace_base_validation", "workspace_source_authorization", "workspace_provision", "workspace_source_retention", "workspace_binding", "workspace_record_update", "workspace_record_create", "workspace_operation_binding", "workspace_config_recording", "workspace_repository_admission", "workspace_project_repositories", "workspace_recovery_root"] as const)("stays silent and preserves values and errors without a tracer provider for %s", async phase => {
   trace.disable();
   context.disable();
   const messages = ["log", "info", "warn", "error", "debug"] as const;

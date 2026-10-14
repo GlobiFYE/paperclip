@@ -194,6 +194,25 @@ traces; the provider lifecycle trace is created later and can have a different
 trace ID. Without an endpoint, tracing remains a no-op. These spans add no
 first-party Telemetry events or database run-log writes.
 
+Workspace preparation also records `heartbeat.prepare.workspace_<step>` spans
+for source resolution, provisioning policy, base validation, source access,
+provisioning, retained source access, workspace record creation and updates,
+task binding, operation binding, configuration records, repository admission,
+project repositories, and recovery-root reservation. These intervals are inside
+`heartbeat.prepare.workspace`. Repeated bindings or updates have separate spans.
+Do not add these intervals to the containing workspace duration. They use the
+same run hash and contain no workspace paths, commands, or returned records.
+
+With an endpoint, `paperclip.controller-startup` records independent
+`controller.startup.<phase>` root spans for tool reviews, gateway sessions,
+delivery-worker readiness, accounting, plugin-worker readiness, native recovery,
+hot-restart adoption, orphan reaping, scheduled retries, queued runs, and goal
+recovery. These spans have no custom attributes. Each ends when its awaited
+phase settles, including failures. They separate controller readiness from
+provider startup; they are not agent-run durations. A disabled endpoint takes
+the direct work path without a tracer lookup or additional log messages.
+Tracing failures cannot repeat recovery or replace its result or error.
+
 ## Native Runner Trace Spans
 
 Paperclip Runner task runs emit a single foldable OpenTelemetry trace. This is
