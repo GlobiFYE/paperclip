@@ -14571,6 +14571,7 @@ export function issueRoutes(
                     actor.actorType === "user" ? actor.actorId : undefined,
                   runId: actor.runId,
                   onBehalfOfUserId: authenticatedActorResponsibleUserId(req),
+                  authSource: actor.actorSource,
                 },
                 {
                   attachmentIds: commentAttachmentIds,
@@ -15184,6 +15185,7 @@ export function issueRoutes(
             userId: actor.actorType === "user" ? actor.actorId : undefined,
             runId: actor.runId,
             onBehalfOfUserId: authenticatedActorResponsibleUserId(req),
+            authSource: actor.actorSource,
           },
           {
             authorizationReason: issueMutationAuthorizationReason,
@@ -18179,7 +18181,7 @@ export function issueRoutes(
             eq(issueComments.issueId, issue.id), eq(issueComments.authorUserId, userId),
             eq(issueComments.clientRequestId, req.body.clientRequestId),
           ));
-          const saved = await svc.addComment(issue.id, req.body.body, { userId }, {
+          const saved = await svc.addComment(issue.id, req.body.body, { userId, runId: actor.runId, authSource: actor.actorSource }, {
             clientRequestId: req.body.clientRequestId, authorType: "user", attachmentIds: req.body.attachmentIds,
           }, tx);
           if (!existing) await logActivity(tx as unknown as Db, {
@@ -18589,6 +18591,7 @@ export function issueRoutes(
                 userId: actor.actorType === "user" ? actor.actorId : undefined,
                 runId: actor.runId,
                 onBehalfOfUserId: authenticatedActorResponsibleUserId(req),
+                authSource: actor.actorSource,
               },
               {
                 ...commentOptions,
@@ -18696,6 +18699,7 @@ export function issueRoutes(
               userId: actor.actorType === "user" ? actor.actorId : undefined,
               runId: actor.runId,
               onBehalfOfUserId: authenticatedActorResponsibleUserId(req),
+              authSource: actor.actorSource,
             },
             commentOptions,
             dbOrTx,
