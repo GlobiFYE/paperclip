@@ -547,11 +547,21 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
     await db.update(issues).set({ status: "cancelled", cancelledAt: childCancelled }).where(eq(issues.id, child!.id));
     const unrelated = await seedTerminalWorkspace();
     await db.update(issues).set({ parentId: seed.sourceIssueId, status: "todo" }).where(eq(issues.id, unrelated.sourceIssueId));
-    const service = executionWorkspaceService(db, { workspaceReaperCooldownDays: 7 });
-    expect(await service.nextTerminalWorkspaceSweepAt()).toBe(childCancelled.getTime() + 7 * 86_400_000);
+    const service = executionWorkspaceService(db, {
+      workspaceReaperCooldownDays: 7, now: () => new Date("2026-01-03T00:00:00Z"),
+    });
+    await service.sweepTerminalWorkspaces();
+    const select = vi.spyOn(db, "select");
+    try {
+      expect(await service.nextTerminalWorkspaceSweepAt()).toBe(childCancelled.getTime() + 7 * 86_400_000);
+      expect(await service.nextTerminalWorkspaceSweepAt()).toBe(childCancelled.getTime() + 7 * 86_400_000);
+      expect(select).not.toHaveBeenCalled();
+    } finally { select.mockRestore(); }
     await db.update(issues).set({ status: "todo" }).where(eq(issues.id, child!.id));
+    await service.sweepTerminalWorkspaces();
     expect(await service.nextTerminalWorkspaceSweepAt()).toBeNull();
     await db.update(issues).set({ status: "done", completedAt: null, updatedAt: sourceDone }).where(eq(issues.id, child!.id));
+    await service.sweepTerminalWorkspaces();
     expect(await service.nextTerminalWorkspaceSweepAt()).toBe(sourceDone.getTime() + 7 * 86_400_000);
   });
 
@@ -604,6 +614,25 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
       expect(await service.sweepTerminalWorkspaces()).toMatchObject({ archived: 1 });
       await expect(fs.access(seed.worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
     } finally { unsubscribe(); }
+  });
+
+  it("rescans committed changes that arrive behind a bounded recovery cursor", async () => {
+    const seed = await seedTerminalWorkspace();
+    const service = executionWorkspaceService(db, {
+      workspaceReaperCooldownDays: 0,
+      resolvePullRequestDetails: async () => ({ state: "merged", headRef: "PAP-16015-delivery", headSha: seed.headSha }),
+    });
+    expect(await service.sweepTerminalWorkspaces(1)).toMatchObject({ checked: 1, skippedUndelivered: 1 });
+    await workProductService(db).createForIssue(seed.sourceIssueId, seed.companyId, {
+      type: "pull_request", provider: "github", title: "PR", status: "merged",
+      url: "https://github.com/paperclipai/paperclip/pull/10623",
+    });
+    service.terminalWorkspaceWorkSettled(new Set([`issue:${seed.sourceIssueId}`]));
+    expect(await service.sweepTerminalWorkspaces(1)).toMatchObject({ checked: 0 });
+    expect(service.hasTerminalWorkspaceSweepContinuation()).toBe(true);
+    expect(await service.sweepTerminalWorkspaces(2)).toMatchObject({ checked: 1, archived: 1 });
+    expect(service.hasTerminalWorkspaceSweepContinuation()).toBe(false);
+    expect(await service.nextTerminalWorkspaceSweepAt()).toBeNull();
   });
 
   it("signals real issue producers before writes and waits for the outer transaction", async () => {

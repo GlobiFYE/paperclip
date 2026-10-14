@@ -11,7 +11,7 @@ import { taskWorkspaceSelectionSchema, type TaskWorkspaceSelection, type TaskWor
 import { authorizationService, executionWorkspaceReadSqlCondition, projectReadSqlCondition, issueReadSqlCondition, type AuthorizationActor } from "./authorization.js";
 import type { SQL } from "drizzle-orm";
 import { createWorkspaceGitInspectionCache } from "./workspace-git-inspection-cache.js";
-import { notifyTerminalWorkspaceWork, terminalWorkspaceDeadlineSql } from "./terminal-workspace-work.js";
+import { notifyTerminalWorkspaceWork } from "./terminal-workspace-work.js";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
@@ -1620,6 +1620,8 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
   // when a sweep reaches the end of the candidate set.
   let terminalSweepCursor: { updatedAt: Date; id: string } | null = null;
   const terminalInspections = new Map<string, { revision: string; issueIds: Set<string>; nextAt: number }>();
+  const terminalWorkspaceDeadlines = new Map<string, number>();
+  let terminalSweepRescanRequested = false;
   // The reaper freezes an upper bound on updatedAt at the start of each
   // rotation. The scan only reads candidates at or below the bound, so a steady
   // stream of newer candidates cannot keep every page full and stop the cursor
@@ -2902,6 +2904,8 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       // rotation cover a finite set, so the cursor always reaches a short page.
       if (!cursor) {
         terminalSweepBoundary = now();
+        terminalWorkspaceDeadlines.clear();
+        terminalSweepRescanRequested = false;
       }
       const boundary = terminalSweepBoundary;
       const boundaryFilter = boundary
@@ -2955,6 +2959,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         const reopenPending = metadataHasReopenPendingConsumption(
           workspace.metadata as Record<string, unknown> | null,
         );
+        if (reopenPending) terminalWorkspaceDeadlines.set(workspace.id, now().getTime());
         if (!sourceIssue || issueTree.some(issue => !TERMINAL_ISSUE_STATUSES.has(issue.status))) {
           if (reopenPending) {
             await clearReopenPendingConsumptionUnderLock(workspace.id, {
@@ -2967,6 +2972,8 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           continue;
         }
         const latestTerminalAt = Math.max(...issueTree.map(issue => issueTerminalTimestamp(issue)!.getTime()));
+        terminalWorkspaceDeadlines.set(workspace.id, reopenPending ? now().getTime()
+          : latestTerminalAt + workspaceReaperCooldownMs);
         if (workspaceReaperCooldownMs > 0 && latestTerminalAt + workspaceReaperCooldownMs > now().getTime()) {
           result.skippedCooldown += 1;
           continue;
@@ -3204,6 +3211,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           result.skippedRace += 1;
           continue;
         }
+        terminalWorkspaceDeadlines.delete(workspace.id);
 
         await logActivity(db, {
           companyId: archived.companyId,
@@ -3258,9 +3266,10 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       }
     },
 
-    hasTerminalWorkspaceSweepContinuation: () => terminalSweepCursor !== null,
+    hasTerminalWorkspaceSweepContinuation: () => terminalSweepCursor !== null || terminalSweepRescanRequested,
 
     terminalWorkspaceWorkSettled: (hints?: ReadonlySet<string>) => {
+      if (terminalSweepInProgress || terminalSweepCursor !== null) terminalSweepRescanRequested = true;
       pullRequestStateCache.clear();
       if (!hints) { terminalInspections.clear(); return; }
       for (const [id, inspection] of terminalInspections) {
@@ -3271,13 +3280,9 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
     },
 
     nextTerminalWorkspaceSweepAt: async () => {
-      const deadline = sql<number | null>`CASE WHEN ${executionWorkspaces.metadata}->>'reopenPendingConsumption' = 'true'
-        THEN ${now().getTime()} ELSE ${terminalWorkspaceDeadlineSql(workspaceReaperCooldownMs)} END`;
-      const [row] = await db.select({ next: sql<string | null>`min(${deadline})` }).from(executionWorkspaces)
-        .where(and(inArray(executionWorkspaces.status, ["active", "idle", "in_review"]),
-          isNull(executionWorkspaces.closedAt), sql`${executionWorkspaces.sourceIssueId} IS NOT NULL`));
-      if (row?.next == null) return null;
-      const next = Number(row.next), nowMs = now().getTime();
+      if (terminalWorkspaceDeadlines.size === 0) return null;
+      const next = [...terminalWorkspaceDeadlines.values()].reduce((earliest, deadline) => Math.min(earliest, deadline), Infinity);
+      const nowMs = now().getTime();
       if (next <= nowMs && opts.terminalWorkspaceInspectionBackoffMs) {
         return Math.min(nowMs + opts.terminalWorkspaceInspectionBackoffMs,
           ...[...terminalInspections.values()].filter(inspection => inspection.nextAt > nowMs).map(inspection => inspection.nextAt));

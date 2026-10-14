@@ -2288,6 +2288,9 @@ is checked again after five minutes. Nonterminal trees, cooldowns, and active ru
 are checked before Git. Unchanged terminal candidates also back off for five
 minutes during unrelated commit wakes. Scoped task/workspace hints invalidate
 affected candidates; changed tree or workspace revisions invalidate them too.
+Deadline selection reuses task trees read by those pages and performs no separate
+full-inventory query. Commits during a paged rotation request another bounded
+rotation so changes behind its cursor are recovered.
 The backoff retains at most 256 candidates and only applies to the background
 worker. Final cleanup still checks the current task tree,
 delivery evidence, ownership, lifecycle generation, and Git state under the
