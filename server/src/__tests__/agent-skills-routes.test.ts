@@ -63,6 +63,9 @@ const mockLogActivity = vi.hoisted(() => vi.fn());
 const mockTrackAgentCreated = vi.hoisted(() => vi.fn());
 const mockGetTelemetryClient = vi.hoisted(() => vi.fn());
 const mockSyncInstructionsBundleConfigFromFilePath = vi.hoisted(() => vi.fn());
+const mockChangeConsentGate = vi.hoisted(() => ({
+  assertConsented: vi.fn(),
+}));
 
 const mockAdapter = vi.hoisted(() => ({
   listSkills: vi.fn(),
@@ -121,6 +124,11 @@ vi.mock("../adapters/index.js", () => ({
   detectAdapterModel: vi.fn(),
 }));
 
+vi.mock("../services/change-consent-gate.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/change-consent-gate.js")>()),
+  changeConsentGateService: () => mockChangeConsentGate,
+}));
+
 function registerModuleMocks() {
   vi.doMock("@paperclipai/shared/telemetry", () => ({
     trackAgentCreated: mockTrackAgentCreated,
@@ -164,6 +172,11 @@ function registerModuleMocks() {
       : mockAdapter),
     listAdapterModels: vi.fn(),
     detectAdapterModel: vi.fn(),
+  }));
+
+  vi.doMock("../services/change-consent-gate.js", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../services/change-consent-gate.js")>()),
+    changeConsentGateService: () => mockChangeConsentGate,
   }));
 }
 
@@ -280,9 +293,11 @@ describe("agent skill routes", () => {
     mockTrackAgentCreated.mockReset();
     mockGetTelemetryClient.mockReset();
     mockSyncInstructionsBundleConfigFromFilePath.mockReset();
+    mockChangeConsentGate.assertConsented.mockReset();
     mockAdapter.listSkills.mockReset();
     mockAdapter.syncSkills.mockReset();
     mockSyncInstructionsBundleConfigFromFilePath.mockImplementation((_agent, config) => config);
+    mockChangeConsentGate.assertConsented.mockResolvedValue(true);
     mockGetTelemetryClient.mockReturnValue({ track: vi.fn() });
     let persistedAgent: Record<string, unknown> | null = null;
     mockAgentService.resolveByReference.mockResolvedValue({
@@ -594,6 +609,74 @@ describe("agent skill routes", () => {
       }),
       expect.any(Object),
     );
+  });
+
+  it("applies an exact accepted additive skill assignment for a suggest-only agent", async () => {
+    const target = makeAgent("claude_local");
+    mockAgentService.getById.mockResolvedValue(target);
+    mockAccessService.decide
+      .mockResolvedValueOnce({
+        allowed: false,
+        reason: "deny_missing_consent",
+        explanation: "Accepted consent is required.",
+      })
+      .mockResolvedValueOnce({
+        allowed: true,
+        reason: "allow_consented_change",
+        explanation: "Allowed after accepted consent.",
+      });
+
+    const res = await requestApp(
+      await createApp(createDb(), {
+        type: "agent",
+        agentId: "reflection-coach",
+        companyId: "company-1",
+        source: "agent_key",
+        runId: "apply-run",
+      }),
+      (baseUrl) => request(baseUrl)
+        .post(`/api/agents/${target.id}/skills/sync?companyId=company-1`)
+        .send({ desiredSkills: ["paperclip"], mode: "add" }),
+    );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(mockChangeConsentGate.assertConsented).toHaveBeenCalledWith({
+      companyId: "company-1",
+      actorAgentId: "reflection-coach",
+      actorRunId: "apply-run",
+      targets: [{
+        key: `agent:${target.id}:skills`,
+        revisionId: "add:sha256:1cf2787a24321bdb04b1a0b686220206e66bc7aa14d1cf49ec8d634a8fbb8d3f",
+      }],
+    });
+    expect(mockAgentService.update).toHaveBeenCalled();
+  });
+
+  it.each(["remove", "replace"])("does not use additive consent for %s skill sync", async (mode) => {
+    const target = makeAgent("claude_local");
+    mockAgentService.getById.mockResolvedValue(target);
+    mockAccessService.decide.mockResolvedValue({
+      allowed: false,
+      reason: "deny_missing_consent",
+      explanation: "Accepted consent is required.",
+    });
+
+    const res = await requestApp(
+      await createApp(createDb(), {
+        type: "agent",
+        agentId: "reflection-coach",
+        companyId: "company-1",
+        source: "agent_key",
+        runId: "apply-run",
+      }),
+      (baseUrl) => request(baseUrl)
+        .post(`/api/agents/${target.id}/skills/sync?companyId=company-1`)
+        .send({ desiredSkills: ["paperclip"], mode }),
+    );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(mockChangeConsentGate.assertConsented).not.toHaveBeenCalled();
+    expect(mockAgentService.update).not.toHaveBeenCalled();
   });
 
   it("removes only named desired skills while preserving other assignments", async () => {

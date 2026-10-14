@@ -67,7 +67,7 @@ This routine is **paused by default** and spends no tokens until an operator ena
 
 - Proposal-only. This routine must not edit any agent's live AGENTS.md, skill assignments, or tool descriptions directly.
 - Any actual instruction/skill/tool-description change requires a displayed diff and an **accepted** `request_confirmation` task interaction, applied only in a separate follow-up run.
-- Mutation confirmations must bind the exact resource key they will apply, using `agent:<agentId>:instructions`, `agent:<agentId>:profile`, `skill:<skillId>`, `skill-slug:<slug>`, `skill-import:<source>`, or `skills:scan-projects`.
+- Mutation confirmations must bind the exact resource key they will apply, using `agent:<agentId>:instructions`, `agent:<agentId>:profile`, `agent:<agentId>:skills`, `skill:<skillId>`, `skill-slug:<slug>`, `skill-import:<source>`, or `skills:scan-projects`. An agent-skill assignment is additive only and must bind `revisionId` to `add:sha256:<hex>` of the normalized, deduplicated, key-sorted request selections, with a visible label naming the target agent and skills.
 - Keep every read company-scoped. Do not cross company boundaries.
 - Every proposed rule needs linked issue/comment evidence or it is dropped. No scoring without trajectories.
 - Respect the size caps: AGENTS.md +20% max per proposal, skills 15KB max, tool descriptions 500 chars max.

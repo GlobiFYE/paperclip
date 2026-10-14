@@ -33,6 +33,7 @@ Server-enforced target keys:
 
 - `agent:<agentId>:instructions`
 - `agent:<agentId>:profile`
+- `agent:<agentId>:skills` for additive assignment only; bind `revisionId` to `add:sha256:<hex>` of the normalized, deduplicated, key-sorted request selections and set a visible label naming the target agent and skills
 - `skill:<skillId>`
 - `skill-slug:<slug>`
 - `skill-import:<source>`

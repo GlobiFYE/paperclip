@@ -1,7 +1,12 @@
+import { createHash } from "node:crypto";
 import type { Db } from "@paperclipai/db";
 import { issueThreadInteractions } from "@paperclipai/db";
 import { and, desc, eq, or, sql } from "drizzle-orm";
-import type { RequestConfirmationPayload, RequestConfirmationResult } from "@paperclipai/shared";
+import type {
+  AgentDesiredSkillEntry,
+  RequestConfirmationPayload,
+  RequestConfirmationResult,
+} from "@paperclipai/shared";
 import { forbidden } from "../errors.js";
 
 export const AGENT_PROFILE_CHANGE_CONSENT_FIELDS = ["name", "role", "title", "capabilities"] as const;
@@ -11,12 +16,37 @@ type ConsumedRequestConfirmationResult = RequestConfirmationResult & {
   consumedByRunId?: string | null;
 };
 
+export type ChangeConsentTarget = {
+  key: string;
+  revisionId?: string | null;
+};
+
 export function agentInstructionsChangeTargetKey(agentId: string) {
   return `agent:${agentId}:instructions`;
 }
 
 export function agentProfileChangeTargetKey(agentId: string) {
   return `agent:${agentId}:profile`;
+}
+
+export function agentSkillAssignmentChangeTargetKey(agentId: string) {
+  return `agent:${agentId}:skills`;
+}
+
+export function agentSkillAssignmentChangeRevisionId(desiredSkills: AgentDesiredSkillEntry[]) {
+  const selectionsByKey = new Map<string, AgentDesiredSkillEntry>();
+  for (const entry of desiredSkills) {
+    const key = entry.key.trim();
+    if (key && !selectionsByKey.has(key)) {
+      selectionsByKey.set(key, { key, versionId: entry.versionId ?? null });
+    }
+  }
+  const canonicalSelections = [...selectionsByKey.values()]
+    .sort((left, right) => left.key < right.key ? -1 : left.key > right.key ? 1 : 0);
+  const digest = createHash("sha256")
+    .update(JSON.stringify(canonicalSelections))
+    .digest("hex");
+  return `add:sha256:${digest}`;
 }
 
 export function skillChangeTargetKey(skillId: string) {
@@ -101,15 +131,31 @@ function legacyTargetKeysFor(targetKey: string) {
   return [];
 }
 
-function expandTargetKeysForLegacyCompatibility(targetKeys: string[]) {
-  const expanded = new Set<string>();
-  for (const targetKey of targetKeys) {
-    expanded.add(targetKey);
-    for (const legacyTargetKey of legacyTargetKeysFor(targetKey)) {
-      expanded.add(legacyTargetKey);
+function normalizeConsentTargets(input: {
+  targetKeys?: string[];
+  targets?: ChangeConsentTarget[];
+}) {
+  const exactTargets = (input.targets ?? []).flatMap((target) => {
+    const key = readNonEmptyString(target.key);
+    if (!key) return [];
+    return [{ key, revisionId: readNonEmptyString(target.revisionId) }];
+  });
+  const keyOnlyTargets = (input.targetKeys ?? [])
+    .map(readNonEmptyString)
+    .filter((key): key is string => Boolean(key))
+    .map((key) => ({ key, revisionId: null }));
+  const targets = [...exactTargets, ...keyOnlyTargets];
+  const expanded = new Map<string, ChangeConsentTarget>();
+  for (const target of targets) {
+    expanded.set(`${target.key}\u0000${target.revisionId ?? ""}`, target);
+    for (const legacyKey of legacyTargetKeysFor(target.key)) {
+      expanded.set(`${legacyKey}\u0000${target.revisionId ?? ""}`, {
+        key: legacyKey,
+        revisionId: target.revisionId,
+      });
     }
   }
-  return [...expanded];
+  return [...expanded.values()];
 }
 
 export function changeConsentGateService(db: Db | Parameters<Parameters<Db["transaction"]>[0]>[0]) {
@@ -118,7 +164,8 @@ export function changeConsentGateService(db: Db | Parameters<Parameters<Db["tran
       companyId: string;
       actorAgentId: string | null | undefined;
       actorRunId: string | null | undefined;
-      targetKeys: string[];
+      targetKeys?: string[];
+      targets?: ChangeConsentTarget[];
     }): Promise<boolean> => {
       const actorAgentId = readNonEmptyString(input.actorAgentId);
       if (!actorAgentId) return false;
@@ -130,16 +177,16 @@ export function changeConsentGateService(db: Db | Parameters<Parameters<Db["tran
         });
       }
 
-      const targetKeys = [...new Set(input.targetKeys.map(readNonEmptyString).filter((key): key is string => Boolean(key)))];
-      if (targetKeys.length === 0) {
+      const targets = normalizeConsentTargets(input);
+      if (targets.length === 0) {
         throw forbidden("Reflection Coach mutation target is not gateable", {
           code: "reflection_coach_mutation_target_required",
         });
       }
-      const queryTargetKeys = expandTargetKeysForLegacyCompatibility(targetKeys);
+      const targetKeys = [...new Set(targets.map((target) => target.key))];
 
       const targetKeyPredicate = or(
-        ...queryTargetKeys.map((targetKey) =>
+        ...targetKeys.map((targetKey) =>
           sql`${issueThreadInteractions.payload}->'target'->>'key' = ${targetKey}`,
         ),
       );
@@ -165,8 +212,12 @@ export function changeConsentGateService(db: Db | Parameters<Parameters<Db["tran
       const accepted = rows.find((row) => {
         const payload = row.payload as RequestConfirmationPayload;
         const result = row.result as RequestConfirmationResult | null;
+        const matchingTarget = payload.target?.type === "custom"
+          ? targets.find((target) => target.key === payload.target?.key)
+          : null;
         return payload.target?.type === "custom"
-          && queryTargetKeys.includes(payload.target.key)
+          && Boolean(matchingTarget)
+          && (!matchingTarget?.revisionId || payload.target.revisionId === matchingTarget.revisionId)
           && result?.outcome === "accepted"
           && !requestConfirmationResultConsumed(result)
           && payloadHasDisplayedDiff(payload)

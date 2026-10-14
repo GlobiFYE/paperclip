@@ -14,12 +14,36 @@ import {
   startEmbeddedPostgresTestDatabase,
 } from "./helpers/embedded-postgres.js";
 import {
+  agentSkillAssignmentChangeRevisionId,
+  agentSkillAssignmentChangeTargetKey,
   changeConsentGateService,
   skillChangeTargetKey,
 } from "../services/change-consent-gate.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
+
+describe("agent skill assignment consent target", () => {
+  it("binds the target agent and canonical additive skill selection", () => {
+    expect(agentSkillAssignmentChangeTargetKey("agent-1")).toBe("agent:agent-1:skills");
+    expect(agentSkillAssignmentChangeRevisionId([
+      { key: "company/company-1/wetstone-engineering", versionId: null },
+    ])).toBe("add:sha256:7f8603730423386ef114153fe50fc9de2047403954294d1d14f2094a02e09661");
+  });
+
+  it("treats additive skill selections as a set", () => {
+    const first = agentSkillAssignmentChangeRevisionId([
+      { key: "company/company-1/b", versionId: null },
+      { key: "company/company-1/a", versionId: null },
+    ]);
+    const second = agentSkillAssignmentChangeRevisionId([
+      { key: "company/company-1/a", versionId: null },
+      { key: "company/company-1/b", versionId: null },
+    ]);
+
+    expect(first).toBe(second);
+  });
+});
 
 describeEmbeddedPostgres("changeConsentGateService", () => {
   let db!: ReturnType<typeof createDb>;
@@ -175,6 +199,111 @@ describeEmbeddedPostgres("changeConsentGateService", () => {
       version: 1,
     });
     expect((stored?.result as { consumedAt?: unknown } | undefined)?.consumedAt).toEqual(expect.any(String));
+  });
+
+  it("allows an accepted interaction for the exact agent skill assignment revision", async () => {
+    const { companyId, coachId, sourceRunId, proposalIssueId } = await seedGateFixture();
+    await db.insert(issueThreadInteractions).values({
+      id: randomUUID(),
+      companyId,
+      issueId: proposalIssueId,
+      kind: "request_confirmation",
+      status: "accepted",
+      continuationPolicy: "wake_assignee_on_accept",
+      sourceRunId,
+      createdByAgentId: coachId,
+      payload: {
+        version: 1,
+        prompt: "Assign the approved skill?",
+        detailsMarkdown: "```diff\n+Assign wetstone-engineering.\n```",
+        target: {
+          type: "custom",
+          key: "agent:target-agent:skills",
+          revisionId: "add:sha256:approved",
+        },
+      },
+      result: { version: 1, outcome: "accepted" },
+      resolvedByUserId: "board-user",
+      resolvedAt: new Date(),
+    });
+
+    await expect(changeConsentGateService(db).assertConsented({
+      companyId,
+      actorAgentId: coachId,
+      actorRunId: randomUUID(),
+      targets: [{ key: "agent:target-agent:skills", revisionId: "add:sha256:approved" }],
+    })).resolves.toBe(true);
+  });
+
+  it("rejects an exact agent skill assignment interaction that is not accepted", async () => {
+    const { companyId, coachId, sourceRunId, proposalIssueId } = await seedGateFixture();
+    await db.insert(issueThreadInteractions).values({
+      id: randomUUID(),
+      companyId,
+      issueId: proposalIssueId,
+      kind: "request_confirmation",
+      status: "pending",
+      continuationPolicy: "wake_assignee_on_accept",
+      sourceRunId,
+      createdByAgentId: coachId,
+      payload: {
+        version: 1,
+        prompt: "Assign the approved skill?",
+        detailsMarkdown: "```diff\n+Assign wetstone-engineering.\n```",
+        target: {
+          type: "custom",
+          key: "agent:target-agent:skills",
+          revisionId: "add:sha256:approved",
+        },
+      },
+    });
+
+    await expect(changeConsentGateService(db).assertConsented({
+      companyId,
+      actorAgentId: coachId,
+      actorRunId: randomUUID(),
+      targets: [{ key: "agent:target-agent:skills", revisionId: "add:sha256:approved" }],
+    })).rejects.toMatchObject({
+      status: 403,
+      details: { code: "reflection_coach_mutation_gate_required" },
+    });
+  });
+
+  it.each([
+    ["different agent", "agent:another-agent:skills", "add:sha256:approved"],
+    ["different skill set", "agent:target-agent:skills", "add:sha256:different"],
+    ["stale revision", "agent:target-agent:skills", "add:sha256:stale"],
+  ])("rejects an accepted agent skill assignment interaction for a %s", async (_case, interactionKey, interactionRevisionId) => {
+    const { companyId, coachId, sourceRunId, proposalIssueId } = await seedGateFixture();
+    await db.insert(issueThreadInteractions).values({
+      id: randomUUID(),
+      companyId,
+      issueId: proposalIssueId,
+      kind: "request_confirmation",
+      status: "accepted",
+      continuationPolicy: "wake_assignee_on_accept",
+      sourceRunId,
+      createdByAgentId: coachId,
+      payload: {
+        version: 1,
+        prompt: "Assign the approved skill?",
+        detailsMarkdown: "```diff\n+Assign wetstone-engineering.\n```",
+        target: { type: "custom", key: interactionKey, revisionId: interactionRevisionId },
+      },
+      result: { version: 1, outcome: "accepted" },
+      resolvedByUserId: "board-user",
+      resolvedAt: new Date(),
+    });
+
+    await expect(changeConsentGateService(db).assertConsented({
+      companyId,
+      actorAgentId: coachId,
+      actorRunId: randomUUID(),
+      targets: [{ key: "agent:target-agent:skills", revisionId: "add:sha256:approved" }],
+    })).rejects.toMatchObject({
+      status: 403,
+      details: { code: "reflection_coach_mutation_gate_required" },
+    });
   });
 
   it("rejects reusing an accepted interaction after it is consumed by a mutation", async () => {

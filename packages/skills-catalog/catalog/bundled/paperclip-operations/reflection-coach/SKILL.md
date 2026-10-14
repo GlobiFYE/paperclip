@@ -166,10 +166,24 @@ Server-enforced mutation target keys:
 
 - Agent instructions: `agent:<agentId>:instructions`
 - Agent/tool description fields: `agent:<agentId>:profile`
+- Add skills to one agent: `agent:<agentId>:skills`
 - Existing company skill: `skill:<skillId>`
 - New local company skill by slug: `skill-slug:<slug>`
 - Imported or catalog skill source: `skill-import:<source>`
 - Project workspace skill scan: `skills:scan-projects`
+
+An additive agent-skill assignment gets its own confirmation card; a skill-create
+confirmation does not also authorize assignment. Set the card's custom target to:
+
+- `key`: `agent:<targetAgentId>:skills`
+- `revisionId`: `add:sha256:<hex>`, where `<hex>` is SHA-256 of the JSON array of
+  normalized `{ "key": "<requested-skill-key>", "versionId": null | "<version-id>" }`
+  request selections, deduplicated by key and sorted by key
+- `label`: a visible summary naming the target agent and every skill to add
+
+The follow-up `POST /api/agents/<targetAgentId>/skills/sync` must send `mode: "add"`
+and exactly those request selections. A different agent, skill set,
+mode, or revision needs a new confirmation.
 
 ### 10) Apply only after acceptance, in a follow-up run
 

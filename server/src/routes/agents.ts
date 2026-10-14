@@ -269,6 +269,8 @@ import {
   AGENT_PROFILE_CHANGE_CONSENT_FIELDS,
   agentInstructionsChangeTargetKey,
   agentProfileChangeTargetKey,
+  agentSkillAssignmentChangeRevisionId,
+  agentSkillAssignmentChangeTargetKey,
   changeConsentGateService,
   touchesAgentProfileChangeConsentFields,
 } from "../services/change-consent-gate.js";
@@ -1778,6 +1780,54 @@ export function agentRoutes(
       resource: { type: "agent", companyId: targetAgent.companyId, agentId: targetAgent.id },
     });
     if (decision.allowed) return;
+    throw forbidden(decision.explanation, authorizationDeniedDetails(decision));
+  }
+
+  async function assertCanApplyAgentSkillAssignment(
+    req: Request,
+    targetAgent: { id: string; companyId: string },
+    requestedSkills: AgentDesiredSkillEntry[],
+    mode: AgentSkillAssignmentMode,
+  ) {
+    if (!hasCompanyAccess(req, targetAgent.companyId)) {
+      throw notFound("Agent not found");
+    }
+    assertCompanyAccess(req, targetAgent.companyId);
+    const decision = await access.decide({
+      actor: req.actor,
+      action: "agent_config:update",
+      resource: { type: "agent", companyId: targetAgent.companyId, agentId: targetAgent.id },
+    });
+    if (decision.allowed) return;
+
+    if (decision.reason === "deny_missing_consent" && req.actor.type === "agent" && mode === "add") {
+      try {
+        await changeConsentGateService(db).assertConsented({
+          companyId: targetAgent.companyId,
+          actorAgentId: req.actor.agentId,
+          actorRunId: req.actor.runId ?? null,
+          targets: [{
+            key: agentSkillAssignmentChangeTargetKey(targetAgent.id),
+            revisionId: agentSkillAssignmentChangeRevisionId(requestedSkills),
+          }],
+        });
+      } catch (err) {
+        if (err instanceof HttpError && err.status === 403) {
+          throw forbidden(decision.explanation, authorizationDeniedDetails(decision));
+        }
+        throw err;
+      }
+
+      const consentedDecision = await access.decide({
+        actor: req.actor,
+        action: "agent_config:update",
+        resource: { type: "agent", companyId: targetAgent.companyId, agentId: targetAgent.id },
+        scope: { consentedChange: true },
+      });
+      if (consentedDecision.allowed) return;
+      throw forbidden(consentedDecision.explanation, authorizationDeniedDetails(consentedDecision));
+    }
+
     throw forbidden(decision.explanation, authorizationDeniedDetails(decision));
   }
 
@@ -3653,9 +3703,12 @@ export function agentRoutes(
       const id = req.params.id as string;
       const agent = await getAccessibleResource(req, res, svc.getById(id), "Agent not found");
       if (!agent) return;
-      await assertCanUpdateAgent(req, agent);
 
       const requestedSkills = normalizeDesiredSkillSelections(req.body.desiredSkills);
+      if (!requestedSkills) {
+        throw unprocessable("Skill sync requires desiredSkills.");
+      }
+      await assertCanApplyAgentSkillAssignment(req, agent, requestedSkills, req.body.mode);
       const {
         adapterConfig: nextAdapterConfig,
         desiredSkills,
