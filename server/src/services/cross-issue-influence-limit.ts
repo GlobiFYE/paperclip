@@ -34,7 +34,8 @@ export function crossIssueInfluenceRunContextError() {
   return forbidden(body.error, body.details);
 }
 
-function readRunSourceIssueId(contextSnapshot: unknown) {
+function readRunSourceIssueId(run: { issueId: unknown; contextSnapshot: unknown }, contextSnapshot: unknown) {
+  if (run.issueId != null && typeof run.issueId === "string" && run.issueId.trim()) return run.issueId.trim();
   if (!contextSnapshot || typeof contextSnapshot !== "object" || Array.isArray(contextSnapshot)) return null;
   const context = contextSnapshot as Record<string, unknown>;
   for (const candidate of [context.issueId, context.taskId]) {
@@ -91,6 +92,7 @@ export async function observeCrossIssueInfluence(
         companyId: heartbeatRuns.companyId,
         agentId: heartbeatRuns.agentId,
         responsibleUserId: heartbeatRuns.responsibleUserId,
+        issueId: heartbeatRuns.issueId,
         contextSnapshot: heartbeatRuns.contextSnapshot,
       })
       .from(heartbeatRuns)
@@ -109,7 +111,7 @@ export async function observeCrossIssueInfluence(
       throw crossIssueInfluenceRunContextError();
     }
 
-    const sourceIssueId = readRunSourceIssueId(run.contextSnapshot);
+    const sourceIssueId = readRunSourceIssueId(run, run.contextSnapshot);
     if (!sourceIssueId) throw crossIssueInfluenceRunContextError();
     if (
       sourceIssueId === input.targetIssueId ||
