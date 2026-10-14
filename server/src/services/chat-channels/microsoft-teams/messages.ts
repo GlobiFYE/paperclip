@@ -115,3 +115,9 @@ export function teamsWebhookLifecycleEventFromPayload(
   if (!payload || !endpointRuntime.acceptsProviderScope(payload)) return null;
   return microsoftTeamsLifecycleEventFromPayload(payload, endpointRuntime);
 }
+
+export function teamsRootMentionCanEnableSetupDestination(
+  resource: { type: string } | null | undefined,
+): boolean {
+  return resource?.type === "channel";
+}
