@@ -25,7 +25,10 @@ not output quotas. Reserve time for verification and reporting.
    follow the agreed policy: <skip new work or maintain existing owned PRs>.
 2. Fetch the target branch and record the base revision. Work in an isolated
    workspace/branch for this execution issue; use the repository's branch
-   convention and include the issue/run identifier. Preserve unrelated work.
+   convention and a descriptive name. Record the issue/run-to-branch mapping
+   on the Paperclip execution issue. Include internal identifiers in published
+   branch names only when the target repository's rules permit them.
+   Preserve unrelated work.
    Do not edit a shared live checkout or reuse another active run's worktree.
 3. Apply the maintenance skill within scope. Establish the relevant baseline,
    retain the skill's evidence and safety requirements, and make the smallest
@@ -36,7 +39,9 @@ not output quotas. Reserve time for verification and reporting.
 5. If a useful validated diff exists, commit, push, and open/update the owned
    PR against <target branch>, using the repository's PR template. Explain
    the problem, change, evidence, risks, and verification. Requested PR state:
-   <draft or ready>. Link this routine/run issue for future deduplication.
+   <draft or ready>. Record the PR URL, branch, and head on the Paperclip
+   execution issue for future deduplication. Include routine/run issue links
+   in the published PR only when the target repository's rules permit them.
    Monitor the PR and revise it until all required checks pass on its current
    head. Wait for pending checks; inspect failing checks and their logs, fix
    actionable failures, verify locally, commit, and push. After every push,
@@ -66,7 +71,9 @@ not output quotas. Reserve time for verification and reporting.
   open; open issues can suppress the next run under concurrency controls.
 - **Backpressure:** an issue being complete does not mean its PR is merged.
   Count still-open owned PRs independently on every run. Search the named repo
-  using routine/issue links and recorded branch identities, not only titles.
+  using the PR URLs and branch identities recorded on the Paperclip execution
+  issues, not only titles. Do not require public PRs to contain private links
+  or identifiers when the target repository prohibits them.
   Never close other people's PRs or push to branches the bot does not own.
 - **Failures:** retry only plausibly transient failures within a bounded limit.
   Authentication, approval, and permission failures need resolution, not repeated
