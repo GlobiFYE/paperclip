@@ -2555,6 +2555,20 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       const session = { companyId: f.companyId, agentId: f.assignedAgentId, issueId: conversation.issueId, runId: run.id };
       return { ...f, conversation, run, session };
     }
+    it("lists each GitHub bot tool once when an inline thread shares the task", async () => {
+      const f = await toolReplyFixture("github:paperclipai/paperclip:418");
+      const { id: _id, ...conversation } = f.conversation;
+      await db.insert(chatConversations).values({
+        ...conversation,
+        externalThreadId: "github:paperclipai/paperclip:418:rc:41901",
+        providerUrl: "https://github.com/paperclipai/paperclip/pull/418#discussion_r41901",
+      });
+      const tools = await githubBotToolsForSession(db, f.session);
+      expect(tools).toHaveLength(7);
+      expect(new Set(tools.map(tool => tool.name)).size).toBe(7);
+      expect(await githubBotToolsForSession(db, { ...f.session, issueId: randomUUID() })).toEqual([]);
+      expect(await readChatConversationsByEndpointId(f.endpoint.id)).toHaveLength(2);
+    });
     it.each([
       { label: "returns the confirmed GitHub assessment when publication takes longer than ten seconds", delayMs: 11_000, timeoutMs: undefined },
       { label: "preserves an explicit shorter GitHub tool deadline and reconciles without duplicate publication", delayMs: 200, timeoutMs: 50 },
