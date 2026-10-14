@@ -404,6 +404,27 @@ markers. Before dispatch, Paperclip verifies the recovery run's task ownership
 and current conversation, endpoint, and principal access for every message.
 Missing message references or revoked access still prevent execution.
 
+### Task-bound timer continuation
+
+With `heartbeat.enabled=true`, a positive `intervalSec`, and
+`skipTimerWhenNoActionableWork=true`, the scheduler selects assigned, visible,
+non-conversation `todo` or `in_progress` work before starting a timer run. It
+orders candidates by priority, creation time, then ID. The wake includes the
+issue ID and observed status version. Admission rechecks task eligibility under
+the issue lock and preserves all existing execution gates. If every candidate
+is rejected, the timer does not start a generic run. Agents that do not opt into
+this policy retain their generic timer behavior.
+
+After a successful legacy checkpoint, this timer owns the short continuation
+gap through `checkpoint.finishedAt + intervalSec + 60 seconds`. Rejected timer
+claims and unrelated agent runs cannot extend this checkpoint deadline. Recovery does not
+start a competing disposition-repair run in that window. An overdue or disabled
+timer still permits normal bounded recovery. This does not resume blocked,
+human-owned, review, paused or stopped work, and does not replace native
+finalization. An active self-wake may coalesce into the current run; it is not
+proof of a separate successor. Verify a distinct `invocationSource=timer` run
+and its startup task identity before claiming automatic continuation.
+
 ### Durable external waits and heartbeat finalization
 
 An external wait counts as a live or waiting path only when the next move survives the current heartbeat and is represented in Paperclip's durable control-plane state. Valid external-wait shapes are:

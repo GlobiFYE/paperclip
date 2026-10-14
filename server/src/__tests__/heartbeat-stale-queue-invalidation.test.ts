@@ -3,9 +3,11 @@ import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   agents,
+  authUsers,
   agentWakeupRequests,
   agentRuntimeState,
   companies,
+  companyMemberships,
   costEvents,
   createDb,
   documentRevisions,
@@ -17,6 +19,7 @@ import {
   issueDocuments,
   issueThreadInteractions,
   issues,
+  projects,
 } from "@paperclipai/db";
 import { ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY } from "@paperclipai/shared";
 import {
@@ -995,6 +998,79 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
     await waitForCondition(async () => countExecuteCallsForRun(run!.id) > 0);
 
     expect(countExecuteCallsForRun(run!.id)).toBe(1);
+  });
+
+  it("starts a distinct task-bound timer after a successful checkpoint without disposition repair", async () => {
+    const { companyId, agentId } = await seedCompanyAndAgent({ heartbeatConfig: {
+      enabled: true, intervalSec: 120, skipTimerWhenNoActionableWork: true,
+    } });
+    await db.insert(authUsers).values({ id: "responsible-user", name: "Task sponsor", email: "sponsor@example.test", emailVerified: true, createdAt: new Date(), updatedAt: new Date() }).onConflictDoNothing();
+    await db.insert(companyMemberships).values([
+      { companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "operator" },
+      { companyId, principalType: "agent", principalId: agentId, status: "active", membershipRole: "member" },
+    ]);
+    const [issue] = await db.insert(issues).values({ companyId, title: "Continue implementation", status: "in_progress", assigneeAgentId: agentId }).returning();
+    const first = await heartbeat.wakeup(agentId, { source: "automation", reason: "issue_commented", payload: { issueId: issue.id } });
+    await heartbeat.drainActiveRunExecutions();
+    expect((await heartbeat.getRun(first!.id))?.status).toBe("succeeded");
+    expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.reason, "issue_disposition_repair"))).toHaveLength(0);
+    const due = new Date();
+    await db.update(agents).set({ lastHeartbeatAt: new Date(due.getTime() - 121_000) }).where(eq(agents.id, agentId));
+    expect((await heartbeat.tickTimers(due)).enqueued).toBe(1);
+    await heartbeat.drainActiveRunExecutions();
+    const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+    const timer = runs.find(run => run.invocationSource === "timer")!;
+    expect(timer.id).not.toBe(first!.id);
+    expect(timer.status).toBe("succeeded");
+    expect(timer.contextSnapshot).toMatchObject({ issueId: issue.id, taskId: issue.id, wakeReason: "heartbeat_timer" });
+    const invocation = mockAdapterExecute.mock.calls.find(([context]) => context.runId === timer.id)![0];
+    expect(invocation.context).toMatchObject({ issueId: issue.id, taskId: issue.id });
+    expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.reason, "issue_disposition_repair"))).toHaveLength(0);
+  });
+
+  it.each(["hidden", "harness", "human", "conversation"])("rejects a selected task that becomes %s before timer admission", async change => {
+    const { companyId, agentId } = await seedCompanyAndAgent({ heartbeatConfig: { enabled: true } });
+    const [issue] = await db.insert(issues).values({ companyId, title: "Selected candidate", status: "todo", assigneeAgentId: agentId }).returning();
+    await db.update(issues).set(change === "hidden" ? { hiddenAt: new Date() } : change === "harness" ? { harnessKind: "skill_test" } : change === "human" ? { assigneeUserId: "responsible-user" } : { conversationAgentId: agentId, conversationUserId: "responsible-user", conversationState: "active" }).where(eq(issues.id, issue.id));
+    expect(await heartbeat.wakeup(agentId, {
+      source: "timer", payload: { issueId: issue.id },
+      issueStateGuard: { statuses: ["todo", "in_progress"], assigneeAgentId: agentId, statusVersion: issue.statusVersion },
+    })).toBeNull();
+    expect(mockAdapterExecute).not.toHaveBeenCalled();
+    const receipts = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.agentId, agentId));
+    if (change !== "conversation") expect(receipts[0].reason).toBe("issue_state_guard_mismatch");
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId))).toHaveLength(0);
+  });
+
+  it("preserves project budget denials and dispatches the next eligible timer task", async () => {
+    const { companyId, agentId } = await seedCompanyAndAgent({ heartbeatConfig: { enabled: true, intervalSec: 120, skipTimerWhenNoActionableWork: true } });
+    const [project] = await db.insert(projects).values({ companyId, name: "Budget stopped", pauseReason: "budget", pausedAt: new Date() }).returning();
+    const [blocked] = await db.insert(issues).values({ companyId, projectId: project.id, title: "Blocked first", status: "todo", priority: "critical", assigneeAgentId: agentId }).returning();
+    const [runnable] = await db.insert(issues).values({ companyId, title: "Runnable next", status: "todo", assigneeAgentId: agentId }).returning();
+    const due = new Date();
+    await db.update(agents).set({ lastHeartbeatAt: new Date(due.getTime() - 121_000) }).where(eq(agents.id, agentId));
+    expect((await heartbeat.tickTimers(due)).enqueued).toBe(1);
+    await heartbeat.drainActiveRunExecutions();
+    const receipts = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.agentId, agentId));
+    expect(receipts).toEqual(expect.arrayContaining([expect.objectContaining({ reason: "budget.blocked", status: "skipped" })]));
+    const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ status: "succeeded", invocationSource: "timer", contextSnapshot: expect.objectContaining({ issueId: runnable.id }) });
+    expect(runs[0].contextSnapshot.issueId).not.toBe(blocked.id);
+    expect(mockAdapterExecute).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not defer an overdue checkpoint because unrelated timer claims refreshed the agent heartbeat", async () => {
+    const { companyId, agentId } = await seedCompanyAndAgent({ heartbeatConfig: { enabled: true, intervalSec: 120, skipTimerWhenNoActionableWork: true } });
+    const [issue] = await db.insert(issues).values({ companyId, title: "Overdue checkpoint", status: "in_progress", assigneeAgentId: agentId }).returning();
+    const [run] = await db.insert(heartbeatRuns).values({ companyId, agentId, status: "succeeded", runtimeMode: "legacy", invocationSource: "automation", contextSnapshot: { issueId: issue.id }, startedAt: new Date(Date.now() - 300_000), finishedAt: new Date(Date.now() - 181_000) }).returning();
+    await db.update(agents).set({ lastHeartbeatAt: new Date() }).where(eq(agents.id, agentId));
+    const enqueueWakeup = vi.fn(heartbeat.wakeup);
+    expect(await recoveryService(db, { enqueueWakeup }).reconcileLegacyContinuation(run.id)).toBe("queued");
+    await heartbeat.drainActiveRunExecutions();
+    expect(enqueueWakeup).toHaveBeenCalledOnce();
+    expect(enqueueWakeup).toHaveBeenCalledWith(agentId, expect.objectContaining({ reason: "issue_disposition_repair", payload: expect.objectContaining({ issueId: issue.id }) }));
+    expect(mockAdapterExecute).toHaveBeenCalledTimes(1);
   });
 
   it("allows legacy generic timer wakes by default when no skip policy is set", async () => {

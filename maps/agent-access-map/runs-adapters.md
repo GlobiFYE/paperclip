@@ -92,6 +92,13 @@ remaining operations before qualifying the whole capability.
 Gaps: Provider trace reveals/downloads require instance-admin and cannot be counted as
 ordinary run output access.
 
+Opt-in task timers now bind the selected task before adapter startup. They use
+the existing issue admission path and do not widen agent access. A task changed
+to human ownership, hidden state or conversation state is rejected under its
+issue lock. [Database regressions](../../server/src/__tests__/heartbeat-stale-queue-invalidation.test.ts)
+exercise startup binding and those denied states; they do not qualify all run
+APIs or provider tools. Generic opt-out timers retain their existing scope.
+
 ## `session`
 
 Review: `baseline`.

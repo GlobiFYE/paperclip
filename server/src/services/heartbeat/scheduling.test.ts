@@ -7,7 +7,7 @@ import {
 import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "../../__tests__/helpers/embedded-postgres.js";
-import { conflict } from "../../errors.js";
+import { conflict, HttpError } from "../../errors.js";
 import { createHeartbeatRunPreparation } from "./run-preparation.js";
 import { createHeartbeatRunState } from "./run-state.js";
 import { createHeartbeatScheduling, type HeartbeatSchedulingDependencies } from "./scheduling.js";
@@ -213,6 +213,92 @@ describe.skipIf(!postgres.supported)("heartbeat scheduling database boundary", (
     await db.update(issues).set({ monitorNextCheckAt: null }).where(eq(issues.id, f.issue.id));
     f.deps.claimDueTimerHeartbeat.mockResolvedValue(null);
     expect(await f.scheduler.tickTimers(now)).toEqual({ checked: 1, enqueued: 0, skipped: 0 });
+    expect(f.deps.enqueueWakeup).not.toHaveBeenCalled();
+  });
+
+  it("binds an opt-in timer to the highest-priority eligible task before admission", async () => {
+    const f = await fixture();
+    f.deps.parseHeartbeatPolicy.mockReturnValue({ ...timerPolicy, enabled: true, skipTimerWhenNoActionableWork: true });
+    await db.update(issues).set({ monitorNextCheckAt: null }).where(eq(issues.id, f.issue.id));
+    await db.insert(issues).values({ companyId: f.company.id, title: "Hidden critical", priority: "critical", status: "todo", assigneeAgentId: f.agent.id, hiddenAt: now });
+    await db.insert(issues).values({ companyId: f.company.id, title: "Hidden skill test", priority: "critical", status: "todo", assigneeAgentId: f.agent.id, harnessKind: "skill_test" });
+    const [selected] = await db.insert(issues).values({ companyId: f.company.id, title: "High priority", priority: "high", status: "todo", assigneeAgentId: f.agent.id }).returning();
+    expect(await f.scheduler.tickTimers(now)).toEqual({ checked: 1, enqueued: 1, skipped: 0 });
+    expect(f.deps.enqueueWakeup).toHaveBeenCalledExactlyOnceWith(f.agent.id, expect.objectContaining({
+      source: "timer", payload: { issueId: selected.id },
+      issueStateGuard: { statuses: ["todo", "in_progress"], assigneeAgentId: f.agent.id, statusVersion: selected.statusVersion },
+      contextSnapshot: expect.objectContaining({ issueId: selected.id, taskId: selected.id }),
+    }));
+  });
+
+  it("tries another candidate after rejected admission without an unbound fallback", async () => {
+    const f = await fixture();
+    f.deps.parseHeartbeatPolicy.mockReturnValue({ ...timerPolicy, enabled: true, skipTimerWhenNoActionableWork: true });
+    await db.update(issues).set({ monitorNextCheckAt: null }).where(eq(issues.id, f.issue.id));
+    const [other] = await db.insert(issues).values({ companyId: f.company.id, title: "Other candidate", status: "todo", priority: "high", assigneeAgentId: f.agent.id }).returning();
+    f.deps.enqueueWakeup.mockResolvedValueOnce(null).mockResolvedValueOnce(admitted);
+    expect(await f.scheduler.tickTimers(now)).toEqual({ checked: 1, enqueued: 1, skipped: 0 });
+    expect(f.deps.enqueueWakeup.mock.calls.map(([, opts]) => opts?.payload?.issueId)).toEqual([other.id, f.issue.id]);
+    f.deps.enqueueWakeup.mockClear().mockResolvedValue(null);
+    expect(await f.scheduler.tickTimers(now)).toEqual({ checked: 1, enqueued: 0, skipped: 1 });
+    expect(f.deps.enqueueWakeup.mock.calls.every(([, opts]) => Boolean(opts?.contextSnapshot?.issueId))).toBe(true);
+  });
+
+  it("does not launch an unbound opt-in timer when all work is hidden, conversational or before the cutoff", async () => {
+    const f = await fixture();
+    f.deps.parseHeartbeatPolicy.mockReturnValue({ ...timerPolicy, enabled: true, skipTimerWhenNoActionableWork: true });
+    await db.update(issues).set({ monitorNextCheckAt: null, hiddenAt: now, createdAt: now }).where(eq(issues.id, f.issue.id));
+    await db.insert(issues).values({ companyId: f.company.id, title: "Conversation", status: "todo", assigneeAgentId: f.agent.id, conversationAgentId: f.agent.id, conversationUserId: "operator", conversationState: "active", createdAt: now });
+    await db.insert(issues).values({ companyId: f.company.id, title: "Old task", status: "todo", assigneeAgentId: f.agent.id, createdAt: dueAt });
+    f.deps.getWorktreeExecutionCutoff.mockResolvedValue(now);
+    expect(await f.scheduler.tickTimers(now)).toEqual({ checked: 1, enqueued: 0, skipped: 1 });
+    expect(f.deps.enqueueWakeup).not.toHaveBeenCalled();
+  });
+
+  it.each([400, 403, 409, 429])("continues to another candidate and later agents after admission denial %s", async status => {
+    const f = await fixture();
+    f.deps.parseHeartbeatPolicy.mockReturnValue({ ...timerPolicy, enabled: true, skipTimerWhenNoActionableWork: true });
+    await db.update(issues).set({ monitorNextCheckAt: null }).where(eq(issues.id, f.issue.id));
+    const [blocked] = await db.insert(issues).values({ companyId: f.company.id, title: "Denied first", status: "todo", priority: "critical", assigneeAgentId: f.agent.id }).returning();
+    const [laterAgent] = await db.insert(agents).values({ companyId: f.company.id, name: "Later agent", adapterType: "paperclip_runner", createdAt: dueAt }).returning();
+    const [laterTask] = await db.insert(issues).values({ companyId: f.company.id, title: "Later work", status: "todo", assigneeAgentId: laterAgent.id }).returning();
+    f.deps.enqueueWakeup.mockImplementation(async (_id, opts) => {
+      if (opts?.payload?.issueId === blocked.id) throw new HttpError(status, "Admission denied");
+      return admitted;
+    });
+    expect(await f.scheduler.tickTimers(now)).toEqual({ checked: 2, enqueued: 2, skipped: 0 });
+    expect(f.deps.enqueueWakeup.mock.calls).toHaveLength(3);
+    expect(f.deps.enqueueWakeup.mock.calls.filter(([id]) => id === f.agent.id).map(([, opts]) => opts?.payload?.issueId)).toEqual([blocked.id, f.issue.id]);
+    expect(f.deps.enqueueWakeup.mock.calls.filter(([id]) => id === laterAgent.id).map(([, opts]) => opts?.payload?.issueId)).toEqual([laterTask.id]);
+  });
+
+  it("continues later agents when every candidate for one agent is denied", async () => {
+    const f = await fixture();
+    f.deps.parseHeartbeatPolicy.mockReturnValue({ ...timerPolicy, enabled: true, skipTimerWhenNoActionableWork: true });
+    await db.update(issues).set({ monitorNextCheckAt: null }).where(eq(issues.id, f.issue.id));
+    const [laterAgent] = await db.insert(agents).values({ companyId: f.company.id, name: "Later agent", adapterType: "paperclip_runner", createdAt: dueAt }).returning();
+    await db.insert(issues).values({ companyId: f.company.id, title: "Later work", status: "todo", assigneeAgentId: laterAgent.id });
+    f.deps.enqueueWakeup.mockImplementation(async id => {
+      if (id === f.agent.id) throw conflict("Project budget blocked");
+      return admitted;
+    });
+    expect(await f.scheduler.tickTimers(now)).toEqual({ checked: 2, enqueued: 1, skipped: 1 });
+    expect(f.deps.enqueueWakeup).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([new Error("Storage unavailable"), new HttpError(500, "Server failure")])("keeps unexpected scheduler errors visible: %s", async error => {
+    const f = await fixture();
+    f.deps.parseHeartbeatPolicy.mockReturnValue({ ...timerPolicy, enabled: true, skipTimerWhenNoActionableWork: true });
+    await db.update(issues).set({ monitorNextCheckAt: null }).where(eq(issues.id, f.issue.id));
+    f.deps.enqueueWakeup.mockRejectedValueOnce(error);
+    await expect(f.scheduler.tickTimers(now)).rejects.toBe(error);
+  });
+
+  it("does not dispatch a generic timer when only skill-test harness tasks remain", async () => {
+    const f = await fixture();
+    f.deps.parseHeartbeatPolicy.mockReturnValue({ ...timerPolicy, enabled: true, skipTimerWhenNoActionableWork: true });
+    await db.update(issues).set({ monitorNextCheckAt: null, harnessKind: "skill_test" }).where(eq(issues.id, f.issue.id));
+    expect(await f.scheduler.tickTimers(now)).toEqual({ checked: 1, enqueued: 0, skipped: 1 });
     expect(f.deps.enqueueWakeup).not.toHaveBeenCalled();
   });
 

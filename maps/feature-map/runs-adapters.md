@@ -43,6 +43,13 @@ Automated: [live run routes](../../server/src/__tests__/agent-live-run-routes.te
 
 Manual: Start a disposable task, open its running transcript, and follow it to a terminal outcome. Reload and compare task/run IDs, status, output, and cost. Verify a failed run remains distinguishable from a completed run with useful output.
 
+For opt-in task timers, verify a distinct timer run has its task ID before
+adapter startup. [Scheduling regressions](../../server/src/services/heartbeat/scheduling.test.ts)
+cover candidate selection and rejection. The
+[assembled heartbeat regressions](../../server/src/__tests__/heartbeat-stale-queue-invalidation.test.ts)
+cover a successful checkpoint followed by a task-bound timer and locked
+eligibility changes. These database tests do not qualify a live provider.
+
 ## Gotchas
 
 - Model accounts are managed in Apps and inline agent account controls.

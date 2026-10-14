@@ -1,4 +1,6 @@
 import { isAgentAwaitingSetup } from "../../modules/agent-lifecycle/index.js";
+import { readHeartbeatTimerPolicy, TIMER_ACTIONABLE_ISSUE_STATUSES } from "./task-timer-policy.js";
+import { visibleIssueCondition } from "../issue-visibility.js";
 import { normalizeAgentNameKey } from "./retries.js";
 import { publishActiveDotComment } from "../dot-assignment-follow-up.js";
 import {
@@ -222,8 +224,6 @@ export const EXECUTION_PATH_HEARTBEAT_RUN_STATUSES = [
   "scheduled_retry",
 ] as const;
 
-const TIMER_ACTIONABLE_ISSUE_STATUSES = ["todo", "in_progress"] as const;
-
 export class ChatControlRecoveryUnresolvedError extends Error {
   constructor() {
     super(
@@ -393,20 +393,13 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
     const heartbeat = parseObject(runtimeConfig.heartbeat);
 
     return {
-      enabled: asBoolean(heartbeat.enabled, false),
-      intervalSec: Math.max(0, asNumber(heartbeat.intervalSec, 0)),
+      ...readHeartbeatTimerPolicy(agent.runtimeConfig),
       wakeOnDemand: isHeartbeatWakeOnDemandEnabled(agent),
       // A Dot binding has one external turn. Competing assignments must retain
       // their queue position instead of claiming a second run that cannot bind.
       maxConcurrentRuns: agent.adapterType === "paperclip_runner" &&
         ["openai_dot", "grok_bot"].includes(String(parseObject(agent.adapterConfig).provider))
         ? 1 : normalizeMaxConcurrentRuns(heartbeat.maxConcurrentRuns),
-      skipTimerWhenNoActionableWork: asBoolean(
-        heartbeat.skipTimerWhenNoActionableWork ??
-          heartbeat.requireActionableTimerWork ??
-          heartbeat.issueOnlyTimer,
-        false,
-      ),
       maxDailyRuns: normalizeOptionalNonNegativeInteger(
         heartbeat.maxDailyRuns ??
           heartbeat.dailyRunLimit ??
@@ -578,7 +571,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
           eq(issues.companyId, agent.companyId),
           eq(issues.assigneeAgentId, agent.id),
           isNull(issues.assigneeUserId),
-          isNull(issues.hiddenAt),
+          visibleIssueCondition(),
           inArray(issues.status, [...TIMER_ACTIONABLE_ISSUE_STATUSES]),
           isNull(issues.conversationAgentId),
           nonIdleSlackIssueCondition(),
@@ -2884,6 +2877,8 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
               executionWorkspaceSettings: issues.executionWorkspaceSettings,
               assigneeAgentId: issues.assigneeAgentId,
               assigneeUserId: issues.assigneeUserId,
+              hiddenAt: issues.hiddenAt,
+              harnessKind: issues.harnessKind,
               monitorNextCheckAt: issues.monitorNextCheckAt,
               monitorWakeRequestedAt: issues.monitorWakeRequestedAt,
               executionRunId: issues.executionRunId,
@@ -2928,6 +2923,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
             (!issueStateGuard.statuses.includes(issue.status) ||
               issue.assigneeAgentId !== issueStateGuard.assigneeAgentId ||
               (issueStateGuard.statusVersion !== undefined && issue.statusVersion !== issueStateGuard.statusVersion) ||
+              (source === "timer" && (issue.assigneeUserId !== null || issue.hiddenAt !== null || issue.harnessKind !== null || issue.conversationAgentId !== null)) ||
               (issueStateGuard.monitorNextCheckAt !== undefined && (
                 activeMonitorRun !== null || issue.assigneeUserId !== null ||
                 issue.monitorNextCheckAt?.toISOString() !== issueStateGuard.monitorNextCheckAt ||

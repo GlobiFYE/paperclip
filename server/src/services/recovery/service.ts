@@ -1,4 +1,5 @@
 import { isAgentAwaitingSetup } from "../../modules/agent-lifecycle/index.js";
+import { hasPendingTaskBoundTimer } from "../heartbeat/task-timer-policy.js";
 import { isAiAuthenticationBlocked } from "../ai-auth-failure.js";
 import { hasCommittedNativePlanWait } from "../native-runtime/native-plan-wait.js";
 import { isNativeWorkspaceExportRepairCause } from "@paperclipai/shared";
@@ -3743,7 +3744,7 @@ export function recoveryService(
         paused: pause, budgetBlocked: budget,
         pendingWait: state.hasDurableWaitingPath || durableWait || parseIssueExecutionState(issue.executionState)?.status === "pending" || Boolean(issue.monitorNextCheckAt),
         activeExecution: state.hasActiveExecutionPath || latest?.id !== (dispatchRunId ?? run.id),
-        ownedLifecycle: run.issueCommentStatus === "retry_queued" || run.issueCommentStatus === "retry_exhausted" ||
+        ownedLifecycle: hasPendingTaskBoundTimer(issue, agent, run.finishedAt) || run.issueCommentStatus === "retry_queued" || run.issueCommentStatus === "retry_exhausted" ||
           Boolean(readNonEmptyString(context.goalControlRequestId)) || context.resumeSessionGoalHeartbeat === true ||
           isPluginManagedIssueLifecycle(issue) || routine.length > 0 || workspaceChildren.length > 0 ||
           Boolean(goal[0]?.status && goal[0].status !== "complete") || Boolean(active && !ownsRepair),
