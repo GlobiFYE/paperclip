@@ -384,11 +384,7 @@ export async function handleBridgeRequest(request: Request, env: BridgeEnv): Pro
     if (readBoolean(body.reuseLease, false)) {
       return toJsonResponse({ ok: true });
     }
-    const sandbox = await resolveSandbox(env, body.providerLeaseId, {
-      keepAlive: readBoolean(body.keepAlive, false),
-      sleepAfter: "10m",
-      normalizeId: true,
-    });
+    const sandbox = await resolveSandbox(env, body.providerLeaseId, { normalizeId: true });
     await sandbox.destroy().catch(() => undefined);
     return toJsonResponse({ ok: true });
   }
@@ -398,11 +394,7 @@ export async function handleBridgeRequest(request: Request, env: BridgeEnv): Pro
     if (providerLeaseId.length === 0) {
       return toErrorResponse(400, "invalid_request", "providerLeaseId path parameter is required.");
     }
-    const sandbox = await resolveSandbox(env, providerLeaseId, {
-      keepAlive: false,
-      sleepAfter: "10m",
-      normalizeId: true,
-    });
+    const sandbox = await resolveSandbox(env, providerLeaseId, { normalizeId: true });
     await sandbox.destroy().catch(() => undefined);
     return toJsonResponse({ ok: true });
   }
@@ -414,11 +406,9 @@ export async function handleBridgeRequest(request: Request, env: BridgeEnv): Pro
     }
     const sessionStrategy = readSessionStrategy(body.sessionStrategy);
     const sessionId = readString(body.sessionId, DEFAULT_SESSION_ID);
-    const sandbox = await resolveSandbox(env, body.providerLeaseId, {
-      keepAlive: false,
-      sleepAfter: "10m",
-      normalizeId: true,
-    });
+    // Never pass keepAlive/sleepAfter here: the lease routes configured them
+    // and `getSandbox()` would overwrite the stored values on every command.
+    const sandbox = await resolveSandbox(env, body.providerLeaseId, { normalizeId: true });
     if (body.streamOutput === true) {
       const encoder = new TextEncoder();
       const stream = new ReadableStream<Uint8Array>({

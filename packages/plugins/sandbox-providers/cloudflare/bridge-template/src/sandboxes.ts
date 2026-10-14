@@ -8,8 +8,15 @@ export interface BridgeEnv {
 }
 
 export interface BridgeLeaseConfig {
-  keepAlive: boolean;
-  sleepAfter: string;
+  /**
+   * Lease-management routes (probe/acquire/resume) own these two values.
+   * Exec/release/destroy must leave them undefined: `getSandbox()` re-applies
+   * any value it is given, so passing a default here would silently replace
+   * the lease's configured `sleepAfter`/`keepAlive` on every command and let
+   * the container be reaped mid-run.
+   */
+  keepAlive?: boolean;
+  sleepAfter?: string;
   normalizeId: boolean;
 }
 
@@ -42,8 +49,8 @@ export async function resolveSandbox(
   // `applySandboxKeepAlive` and is invoked only from lease-management routes,
   // so exec calls don't accidentally overwrite the lease's keepAlive policy.
   return getSandbox(env.Sandbox, sandboxId, {
-    keepAlive: config.keepAlive,
-    sleepAfter: config.sleepAfter,
+    ...(config.keepAlive !== undefined ? { keepAlive: config.keepAlive } : {}),
+    ...(config.sleepAfter !== undefined ? { sleepAfter: config.sleepAfter } : {}),
   });
 }
 
