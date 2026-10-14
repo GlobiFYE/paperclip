@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { AGENT_STATUSES, issueExecutionMonitorPolicySchema, PROVIDER_QUOTA_MONITOR_SERVICE_NAME } from "@paperclipai/shared";
 import type { ScheduledWake } from "./idle-scheduled-work.js";
+import { onboardingFirstTaskAwaitingUserSql } from "./recovery/onboarding-first-task-wait.js";
 
 const processGeneration = randomUUID();
 const limit = 10_000;
@@ -24,12 +25,16 @@ export async function readIdleIssueSchedule(tx: Pick<Db, "execute">, ownerId: st
     monitor_wake_requested_at: Date | string | null; monitor_attempt_count: number;
     company_status: string; company_updated: Date | string; agent_status: string | null;
     agent_updated: Date | string | null; scoped: boolean; unsafe_dependencies: boolean; dependency_ready: boolean;
+    untouched_onboarding: boolean;
   }>(sql`SELECT i.id, i.company_id, i.status, i.updated_at, i.assignee_agent_id, i.assignee_user_id,
       i.checkout_run_id, i.execution_run_id, i.execution_policy, i.execution_state, i.unblock_descriptor,
       i.conversation_agent_id, i.monitor_next_check_at, i.monitor_wake_requested_at, i.monitor_attempt_count,
       c.status AS company_status, c.updated_at AS company_updated,
       a.status AS agent_status, a.updated_at AS agent_updated,
       (i.assignee_agent_id IS NULL OR a.id IS NOT NULL) AS scoped,
+      (${onboardingFirstTaskAwaitingUserSql(sql`i.company_id`, sql`i.id`, sql`i.origin_kind`)}
+        AND NOT EXISTS (SELECT 1 FROM heartbeat_runs h WHERE h.company_id = i.company_id
+          AND (h.context_snapshot ->> 'issueId' = i.id::text OR h.context_snapshot ->> 'taskId' = i.id::text))) AS untouched_onboarding,
       EXISTS (SELECT 1 FROM issue_relations r LEFT JOIN issues b ON b.id = r.issue_id
         WHERE r.related_issue_id = i.id AND (r.company_id <> i.company_id OR b.company_id <> i.company_id
           OR b.id IS NULL OR r.type <> 'blocks' OR b.status NOT IN ('backlog', 'todo', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled'))) AS unsafe_dependencies,
@@ -69,6 +74,7 @@ export async function readIdleIssueSchedule(tx: Pick<Db, "execute">, ownerId: st
     const unblock = record(row.unblock_descriptor);
     const passive = row.status === "backlog"
       || (row.status === "todo" && !row.assignee_agent_id)
+      || (row.status === "todo" && row.assignee_agent_id && row.agent_status === "idle" && row.untouched_onboarding === true)
       || (row.status === "blocked" && (row.unblock_descriptor === null || unblock?.owner === "board"))
       || Boolean(row.assignee_user_id && !row.assignee_agent_id);
     if (!passive) return { blocked: true };

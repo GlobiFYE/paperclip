@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { PROVIDER_QUOTA_MONITOR_SERVICE_NAME } from "@paperclipai/shared";
-import { agents, agentApiKeys, companies, createDb, heartbeatRuns, issues, issueRelations, routines, routineTriggers } from "@paperclipai/db";
+import { ONBOARDING_FIRST_TASK_ORIGIN_KIND, PROVIDER_QUOTA_MONITOR_SERVICE_NAME } from "@paperclipai/shared";
+import { agents, agentApiKeys, companies, createDb, heartbeatRuns, issues, issueComments, issueRelations, issueThreadInteractions, routines, routineTriggers } from "@paperclipai/db";
 import { beginIdleTrackedWork, idleWorkSnapshot } from "../services/task-admission.js";
 import { readIdleSleepSafety, type IdleSleepDrainStatus } from "../services/idle-sleep-safety.js";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
@@ -74,6 +74,30 @@ if (!support.supported) console.warn(`Skipping issue schedule Postgres tests: ${
     await db.insert(issues).values({ companyId: f.companyId, title: "Unfinished automated task", status, assigneeAgentId: f.agentId });
     expect(await readIssueSchedules()).toEqual(present);
   });
+
+  it.each(["typed", "legacy-typed", "interaction", "run", "origin", "agent-state"])(
+    "allows an untouched onboarding task, but retains it after %s activity", async activity => {
+      const f = await seed();
+      const [issue] = await db.insert(issues).values({ companyId: f.companyId, title: "First task",
+        status: "todo", assigneeAgentId: f.agentId, originKind: ONBOARDING_FIRST_TASK_ORIGIN_KIND }).returning();
+      await db.insert(issueComments).values({ companyId: f.companyId, issueId: issue!.id,
+        authorType: "agent", authorAgentId: f.agentId, body: "Seeded greeting" });
+      const [card] = await db.insert(issueThreadInteractions).values({ companyId: f.companyId,
+        issueId: issue!.id, kind: "request_confirmation", payload: { version: 1, prompt: "Start?" } }).returning();
+      expect(await readScheduled()).toEqual(present);
+      expect(await readIssueSchedules()).toEqual(none);
+      if (activity === "typed" || activity === "legacy-typed") {
+        await db.insert(issueComments).values({ companyId: f.companyId, issueId: issue!.id,
+          authorType: activity === "typed" ? "user" : null, authorUserId: "fixture-user", body: "Start work" });
+      }
+      if (activity === "interaction") await db.update(issueThreadInteractions).set({ status: "resolved",
+        resolvedByUserId: "fixture-user", resolvedAt: new Date(now) }).where(eq(issueThreadInteractions.id, card!.id));
+      if (activity === "run") await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: issue!.id } }).where(eq(heartbeatRuns.id, f.runId));
+      if (activity === "origin") await db.update(issues).set({ originKind: "manual" }).where(eq(issues.id, issue!.id));
+      if (activity === "agent-state") await db.update(agents).set({ status: "paused" }).where(eq(agents.id, f.agentId));
+      expect(await readIssueSchedules()).toEqual(present);
+    },
+  );
 
   it("keeps resolved dependency repair awake while allowing an unresolved blocked task", async () => {
     const f = await seed();

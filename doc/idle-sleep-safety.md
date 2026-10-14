@@ -83,7 +83,11 @@ Browser administrators and tenant credentials cannot request either extension.
 
 With the second capability, backlog tasks, unassigned todo tasks, explicit
 blocked tasks and human-owned tasks may be passive records. Their presence
-alone does not require compute. Execution locks, automated pending review,
+alone does not require compute. An assigned onboarding first task is also
+passive with an idle assignee before its first run, user-authored comment or user-resolved opening
+card. This uses the same awaiting-user predicate as recovery; a seeded greeting
+does not start work. User input still enters through the host wake path.
+Execution locks, automated pending review,
 conversation state, unknown state and dependency repair remain blockers. A
 blocked task whose blockers have all finished stays awake for reconciliation.
 Enabled task watchdogs and unsupported recovery keep their existing checks.
