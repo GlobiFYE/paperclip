@@ -4,6 +4,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { recordChatWebhookReceipt } from "../../chat-webhook-diagnostics.js";
 import type { Db } from "@paperclipai/db";
+import type { CredentialMutationLeaseGuard } from "../../chat-credential-mutation-lease.js";
 import { chatEndpoints } from "@paperclipai/db";
 import { logger } from "../../../middleware/logger.js";
 import { logActivity } from "../../activity-log.js";
@@ -34,6 +35,24 @@ export function retryableGitHubWebhookResponse(): Response {
 }
 export function createGitHubWebhookAuthentication(db: Db, options: AuthenticationOptions) {
   const { endpointRecord, runtimeContextForRecord, withCredentialMutationLease, resolveCredentials, reconcileGitHubWebhookRepository, stageGitHubWebhookIngress, processGitHubWebhookIngress, githubIngressAcceptedResponse, scheduleMessageProcessing, backgroundMessageTasks, redactError } = options;
+  async function recordVerifiedWebhook(endpoint: EndpointRow, credentialLease: CredentialMutationLeaseGuard, providerDeliveryId: string | null) {
+    const verifiedAt = new Date();
+    await db.transaction(async tx => {
+      // Verification belongs to the same credential lease and ingress epoch
+      // that authenticated the original provider bytes.
+      await credentialLease.assertOwned(tx);
+      await tx.update(chatEndpoints).set({
+        setup: { ...endpoint.setup, webhookVerifiedAt: verifiedAt.toISOString() },
+        healthMessage: "GitHub webhook verified", updatedAt: verifiedAt,
+      }).where(eq(chatEndpoints.id, endpoint.id));
+      await logActivity(tx as unknown as Db, {
+        companyId: endpoint.companyId, actorType: "system", actorId: "github-webhook",
+        action: "chat_endpoint.webhook_verified", entityType: "tool_connection", entityId: endpoint.connectionId,
+        details: { endpointId: endpoint.id, provider: "github", providerDeliveryId },
+      });
+      await credentialLease.assertOwned(tx);
+    });
+  }
   async function authenticateGitHubWebhook(endpoint: EndpointRow, request: Request, scope: GitHubWebhookScope): Promise<Response | null> {
     const { replayingDurableGitHubIngress, matchesGitHubIngressFence, completeGitHubPreflightBeforeDeadline } = scope;
     if (!replayingDurableGitHubIngress) {
@@ -107,39 +126,7 @@ export function createGitHubWebhookAuthentication(db: Db, options: Authenticatio
             valid = false;
           }
           if (!valid) return false;
-          const verifiedAt = new Date();
-          await db.transaction(async (tx) => {
-            // Bind the verified receipt to the same lease and secret that
-            // authenticated it. A reclaimed lease cannot commit a stale
-            // webhook verification after secret rotation or reconnect.
-            await credentialLease.assertOwned(tx);
-            await tx
-              .update(chatEndpoints)
-              .set({
-                setup: {
-                  ...current.endpoint.setup,
-                  webhookVerifiedAt: verifiedAt.toISOString(),
-                },
-                healthMessage: "GitHub webhook verified",
-                updatedAt: verifiedAt,
-              })
-              .where(eq(chatEndpoints.id, endpoint.id));
-            await logActivity(tx as unknown as Db, {
-              companyId: current.endpoint.companyId,
-              actorType: "system",
-              actorId: "github-webhook",
-              action: "chat_endpoint.webhook_verified",
-              entityType: "tool_connection",
-              entityId: current.endpoint.connectionId,
-              details: {
-                endpointId: current.endpoint.id,
-                provider: "github",
-                providerDeliveryId:
-                  inspection.headers.get("x-github-delivery") ?? null,
-              },
-            });
-            await credentialLease.assertOwned(tx);
-          });
+          await recordVerifiedWebhook(current.endpoint, credentialLease, inspection.headers.get("x-github-delivery"));
           return true;
         },
       );
@@ -232,6 +219,16 @@ export function createGitHubWebhookAuthentication(db: Db, options: Authenticatio
             // replacement or a second active installation that quarantines
             // the endpoint.
             return "ignored";
+          }
+          // A fresh signed event for the bound installation proves delivery
+          // after repair even when Cloud has already deduplicated the old ping.
+          // Foreign/lifecycle traffic cannot qualify a changed installation.
+          if (!current.endpoint.setup.webhookVerifiedAt &&
+              ["active", "verifying"].includes(current.endpoint.status) &&
+              incomingInstallationId !== undefined &&
+              String(incomingInstallationId) === credentials.installationId &&
+              eventType !== "installation") {
+            await recordVerifiedWebhook(current.endpoint, credentialLease, inspection.headers.get("x-github-delivery"));
           }
           await reconcileGitHubWebhookRepository(
             current.endpoint,

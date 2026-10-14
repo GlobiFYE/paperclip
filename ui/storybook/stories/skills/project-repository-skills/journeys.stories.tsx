@@ -42,6 +42,8 @@ export default meta;
 type Story = StoryObj<typeof meta>;
 export const CreateProject: Story = { name: '01 · Create a project', args: { scenario: 'new-project' } };
 export const LegacyAdoption: Story = { name: '02 · Import from an older project', args: { scenario: 'legacy' } };
+export const DuplicateProjects: Story = { name: 'Shared repository import across projects', args: { scenario: 'duplicate' } };
+export const MissingBranch: Story = { name: 'Repair an unavailable branch', args: { scenario: 'missing-branch' } };
 export const Synced: Story = { name: '03 · Automatically imported skills' };
 export const AutomaticUpdate: Story = { name: '04 · Background update and a new skill', args: { scenario: 'automatic' } };
 export const Refreshing: Story = { name: '05 · Refresh in progress', args: { scenario: 'refreshing' } };

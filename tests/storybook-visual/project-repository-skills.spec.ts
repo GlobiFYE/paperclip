@@ -2,6 +2,26 @@ import { expect, test } from '@playwright/test';
 
 const story = (name: string) => `/iframe.html?id=skills-project-repository-skills-02-journeys--${name}&viewMode=story&globals=theme:dark`;
 
+test('groups matching project repositories and keeps progress visible through adoption', async ({ page }) => {
+  await page.goto(story('duplicate-projects'));
+  await expect(page.getByRole('button', { name: 'Import skills', exact: true })).toHaveCount(1);
+  await expect(page.getByText('Acme platform, Sentry · main', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Import skills', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Starting import');
+  await expect(page.getByRole('region', { name: 'acme/team-skills', exact: true }).getByText('Code review', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Import skills', exact: true })).toHaveCount(0);
+});
+
+test('repairs a missing branch without prompting for another connection', async ({ page }) => {
+  await page.goto(story('missing-branch'));
+  await expect(page.getByRole('button', { name: 'Choose connection', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Use default branch', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByText(/Default branch · Updated/)).toBeVisible();
+  await expect(page.getByRole('region', { name: 'acme/team-skills', exact: true }).getByText('Code review', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'More actions for acme/team-skills', exact: true })).toBeFocused();
+});
+
 test('creating a project imports repository skills without another setup flow', async ({ page }) => {
   await page.goto(story('create-project'));
   await page.getByRole('button', { name: 'Add Project', exact: true }).first().click();
@@ -141,7 +161,8 @@ test('connection repair keeps the installed skills and selections', async ({ pag
   const source = page.getByRole('region', { name: 'acme/team-skills', exact: true });
   await source.getByRole('button', { name: 'Choose connection', exact: true }).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByRole('button', { name: 'Save connection', exact: true })).toBeDisabled();
+  await expect(dialog.getByRole('radio', { name: 'My GitHub account', exact: true })).toBeChecked();
+  await expect(dialog.getByRole('button', { name: 'Save connection', exact: true })).toBeEnabled();
   await dialog.getByRole('radio', { name: 'My GitHub account', exact: true }).click();
   await dialog.getByRole('button', { name: 'Save connection', exact: true }).click();
   await expect(dialog).toHaveCount(0);

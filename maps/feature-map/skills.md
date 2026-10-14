@@ -70,6 +70,7 @@ Manual: Enable the skill for one test agent and leave another without access. Ru
 
 New GitHub project repositories import skills automatically. Skills → Sources lists
 accessible legacy repositories with Import skills, shows source/project provenance,
+groups matching repository/ref workspaces into one row, and shows queued/importing feedback,
 and provides Refresh and Automatic updates in its source menu. Verify future additions,
 retained exclusions, error recovery and reload persistence. Private-only sources must
 be absent for unrelated people/agents; access through either originating project is sufficient.
@@ -78,6 +79,11 @@ Storybook/browser coverage uses scoped fixtures. Live GitHub-to-routine executio
 must be verified separately; inspect resolved version IDs across an upstream update.
 
 ### Connection repair during an update
+
+A missing tracked branch is a branch repair, not a credential failure. On an independent
+source, choose Use default branch explicitly; installed identities, selections and version
+pins remain. Project-tracked branches are changed in project settings. A saved connection
+is validated against both the repository and tracked revision before repair succeeds.
 
 Open Choose connection while a source is being refreshed. Select an authorized account and save. If the source changes, the dialog must retain that selection, load the current revision, and allow a second save without reopening. The [project repository browser suite](../../tests/storybook-visual/project-repository-skills.spec.ts) covers this recovery with simulated upstream data.
 

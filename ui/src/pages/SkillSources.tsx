@@ -26,6 +26,7 @@ import { SkillImportWarnings, skillImportWarnings } from './skills/SkillImportWa
 import { timeAgo } from '@/lib/timeAgo';
 import { skillRoute } from '@/lib/company-skill-routes';
 import { consumeSkillSourceReturn, rememberSkillSourceReturn } from '@/lib/skill-source-connect-return';
+import { groupProjectSkillRepositories } from '@/lib/project-skill-repositories';
 
 const sourceKey = (companyId: string) => queryKeys.skillSources.all(companyId);
 export function SkillSources() {
@@ -49,11 +50,18 @@ export function SkillSources() {
   const refresh = useMutation({ mutationFn: (id: string) => skillSourcesApi.refresh(companyId, id), onSuccess: async result => {
     setResults(prev => ({ ...prev, [result.source.id]: null })); await invalidate();
   }, onError: (error, id) => { setResults(prev => ({ ...prev, [id]: { message: error.message, failedAt: Date.now(), operation: 'refresh' } })); void invalidate(); } });
-  const adopt = useMutation({ mutationFn: (workspaceId: string) => skillSourcesApi.adoptProject(companyId, workspaceId), onSuccess: invalidate });
+  const adopt = useMutation({ mutationFn: async (group: ReturnType<typeof groupProjectSkillRepositories>[number]) => {
+    for (const workspace of group.importableWorkspaces) await skillSourcesApi.adoptProject(companyId, workspace.workspaceId);
+  }, onSuccess: invalidate, onError: () => { void invalidate(); } });
   const settings = useMutation({ mutationFn: ({ source, enabled }: { source: SkillSource; enabled: boolean }) => skillSourcesApi.settings(companyId, source.id, { revision: source.revision, automaticUpdates: enabled }),
     onSuccess: async (_result, variables) => { setResults(prev => ({ ...prev, [variables.source.id]: null })); await invalidate(); },
     onError: (error, variables) => setResults(prev => ({ ...prev, [variables.source.id]: { message: error.message, failedAt: Date.now(), operation: 'settings' } })) });
-  const availableProjects = Array.isArray(projectRepositories.data) ? projectRepositories.data.filter(repo => !repo.sourceId) : [];
+  const repairBranch = useMutation({ mutationFn: (source: SkillSource) => skillSourcesApi.settings(companyId, source.id, { revision: source.revision, trackingRef: 'HEAD' }),
+    onSuccess: async (_result, source) => { setResults(prev => ({ ...prev, [source.id]: null })); await invalidate(); sourceActionButtons.current[source.id]?.focus(); },
+    onError: (error, source) => { setResults(prev => ({ ...prev, [source.id]: { message: error.message, failedAt: Date.now(), operation: 'settings' } })); void invalidate(); } });
+  const availableProjects = groupProjectSkillRepositories(Array.isArray(projectRepositories.data) ? projectRepositories.data.filter(repo => !repo.sourceId) : []);
+  const groupSource = (group: typeof availableProjects[number]) => query.data?.find(source => source.repositoryUrl.toLowerCase() === group.repository.repositoryUrl.toLowerCase() && source.trackingRef === group.repository.trackingRef);
+  const uninstalledProjects = availableProjects.filter(group => !groupSource(group));
   const disconnect = useMutation({
     mutationFn: ({ source, skills }: { source: SkillSource; skills: SkillSourceDisconnectRequest['skills'] }) =>
       skillSourcesApi.disconnect(companyId, source.id, { revision: source.revision, skills }),
@@ -85,15 +93,16 @@ export function SkillSources() {
     {query.data?.length === 0 && availableProjects.length === 0 && <div className="flex flex-col items-start gap-3 py-8"><p className="text-sm text-muted-foreground">No repositories added yet. Import your skills to make them available in {selectedCompany?.name ?? 'this company'}.</p><Button variant="outline" onClick={() => navigate('/skills/sources/new')}>Import from GitHub</Button></div>}
     {projectRepositories.error && <p role="alert" className="text-sm text-destructive">{projectRepositories.error.message} <Button variant="ghost" size="sm" onClick={() => void projectRepositories.refetch()}>Try again</Button></p>}
     {adopt.error && <p role="alert" className="text-sm text-destructive">{adopt.error.message}</p>}
-    {availableProjects.length > 0 && <div className="divide-y divide-border" aria-label="Project repositories">
-      {availableProjects.map(repository => <ProjectSkillRepositoryRow key={repository.workspaceId} repository={repository}
-        pending={adopt.isPending && adopt.variables === repository.workspaceId} onImport={() => adopt.mutate(repository.workspaceId)} />)}
+    {uninstalledProjects.length > 0 && <div className="divide-y divide-border" aria-label="Project repositories">
+      {uninstalledProjects.map(group => <ProjectSkillRepositoryRow key={group.key} repository={group.repository} backgroundPending={group.hasPending} disabled={adopt.isPending}
+        pending={adopt.isPending && adopt.variables?.key === group.key} onImport={() => adopt.mutate(group)} />)}
     </div>}
     <div className="divide-y divide-border">
       {query.data?.map(source => {
         const installed = source.entries.filter(entry => entry.skillId);
         const newCount = source.entries.filter(entry => entry.selection === 'new' && entry.present).length;
         const result = results[source.id];
+        const projectGroup = availableProjects.find(group => groupSource(group)?.id === source.id);
         const localError = result && result.message !== source.lastError
           && (result.operation === 'settings' || !source.lastSuccessAt || new Date(source.lastSuccessAt).getTime() < result.failedAt)
           ? result.message : null;
@@ -126,6 +135,8 @@ export function SkillSources() {
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
+          {projectGroup && <ProjectSkillRepositoryRow repository={projectGroup.repository} backgroundPending={projectGroup.hasPending} showRepository={false} disabled={adopt.isPending}
+            pending={adopt.isPending && adopt.variables?.key === projectGroup.key} onImport={() => adopt.mutate(projectGroup)} />}
           {installed.length > 0 && <ul className="ml-8 min-w-0" aria-label={`Installed skills from ${source.fullName}`}>
             {installed.map(entry => <li key={entry.id}>
               <Link to={skillRoute(entry.skillId!)} title={entry.path} className="group flex min-w-0 items-center gap-2 rounded-sm py-1 text-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -143,7 +154,11 @@ export function SkillSources() {
           <SkillImportWarnings warnings={skillImportWarnings(source.entries.filter(entry => entry.selection === 'selected'), source.repositoryPackage)} />
           {source.lastError && source.lastAttemptAt && <p className="text-xs text-muted-foreground">Last attempt {timeAgo(source.lastAttemptAt)}</p>}
           {source.lastError && <p role="alert" className="text-sm text-destructive">{source.lastError} <Link to={`/skills/sources/${source.id}`} className="underline">Review source</Link></p>}
-          {source.lastError && <Button variant="outline" size="sm" className="self-start" onClick={() => setRepairSourceId(source.id)}>Choose connection</Button>}
+          {source.lastError && (source.repairAction === 'connection' || (!source.repairAction && !source.connectionId)) && <Button variant="outline" size="sm" className="self-start" onClick={() => setRepairSourceId(source.id)}>Choose connection</Button>}
+          {source.lastError && source.repairAction === 'branch' && (source.accessScope === 'projects' || source.projects?.some(project => project.active)
+            ? <div className="flex flex-wrap gap-3">{source.projects?.filter(project => project.active).map(project => <Link key={project.id} to={`/projects/${project.id}`} className="text-sm underline">Update {project.name} repository</Link>)}</div>
+            : <Button variant="outline" size="sm" className="self-start" disabled={repairBranch.isPending} onClick={() => repairBranch.mutate(source)}>
+              {repairBranch.isPending && repairBranch.variables.id === source.id ? 'Updating branch…' : 'Use default branch'}</Button>)}
           {source.connectionId && <Link to={`/apps/${source.connectionId}/permissions`} className="text-xs text-muted-foreground hover:text-foreground">Manage GitHub connection</Link>}
         </section>;
       })}

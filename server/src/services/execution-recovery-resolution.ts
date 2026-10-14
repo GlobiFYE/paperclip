@@ -65,13 +65,15 @@ export async function validateExecutionReconciliation(input: {
     review.currentParticipant.agentId === run?.agentId;
   const retainedWorkspace = hasRequiredWorkspaceRecovery(run?.resultJson);
   const repairOnly = input.workspaceRepairOnly === true && retainedWorkspace;
+  const terminalRepairSource = ["failed", "interrupted", "timed_out", "cancelled"].includes(run?.status ?? "") ||
+    (repairOnly && run?.runtimeMode === "legacy" && run.status === "succeeded");
   if (
     (input.workspaceRepairOnly && !retainedWorkspace) ||
     !run ||
     !task ||
     (!repairOnly && (task.assigneeAgentId !== agentId || (run.agentId !== agentId && !isCurrentReviewer))) ||
     (run.nativeIssueId ?? run.contextSnapshot?.issueId) !== issueId ||
-    !["failed", "interrupted", "timed_out", "cancelled"].includes(run.status)
+    !terminalRepairSource
   ) {
     throw conflict(
       "The recovery source or task owner changed. Inspect the current execution before continuing.",

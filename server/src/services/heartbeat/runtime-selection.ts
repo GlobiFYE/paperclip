@@ -696,8 +696,8 @@ export async function selectHeartbeatRuntime(db: Db, input: HeartbeatRuntimeSele
             })
           : null;
       const pinnedPlanMarkdown = pinnedPlan?.body ?? "";
-      const dotBinding = nativeRuntimeResolution.profile.backend === "openai_dot_mcp"
-        ? await dotRunnerBroker(db).snapshot(agent.companyId, agent.id, String(parseObject(agent.adapterConfig).dotBindingId ?? "")) : undefined;
+      const dotBinding = ["openai_dot_mcp", "grok_bot_mcp"].includes(nativeRuntimeResolution.profile.backend)
+        ? await dotRunnerBroker(db).snapshot(agent.companyId, agent.id, String(parseObject(agent.adapterConfig)[nativeRuntimeResolution.profile.backend === "grok_bot_mcp" ? "externalBindingId" : "dotBindingId"] ?? "")) : undefined;
       const nativeRuntimeContext = await buildNativeRuntimeContext({
         db,
         agent,

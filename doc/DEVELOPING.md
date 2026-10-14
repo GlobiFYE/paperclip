@@ -933,6 +933,11 @@ No Docker or external database is required for this mode.
 - `off`: skip the predicate and shadow logging
 
 Grant checks read current database state; there is no positive privacy cache.
+
+A run-history list is one read operation. It checks each distinct company,
+run scope, and task binding once, then applies that decision to the related
+rows in the same response. Every new list operation reads permissions again.
+
 Sharing a task grants access to that task and its private descendants. Parents
 and siblings need separate grants. An agent's access is intersected with its
 run's responsible user's current access.

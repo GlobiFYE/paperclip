@@ -43,6 +43,40 @@ describe.skipIf(!support.supported)('automatic project skill sources', () => {
     process.env.PAPERCLIP_HOME = home;
     await db.insert(companies).values({ id: companyId, name: 'Project skills', issuePrefix: 'PSK' });
   }, 30000);
+  it('rechecks the locked source ref when branch repair races with project attachment', async () => {
+    const companyId = randomUUID();
+    await db.insert(companies).values({ id: companyId, name: 'Branch repair race', issuePrefix: 'RCE' });
+    const content = { 'race/SKILL.md': md('race') };
+    const sourceContext = { ...context, read: () => githubFixture(content) };
+    const service = skillSourceService(db);
+    const created = await service.create(companyId, { repositoryUrl: 'https://github.com/acme/skills', trackingRef: 'configured-branch',
+      commitSha: 'a'.repeat(40), selectedPaths: ['race/SKILL.md'] }, sourceContext);
+    const [project] = await db.insert(projects).values({ companyId, name: 'Configured branch' }).returning();
+    const [row] = await db.insert(projectWorkspaces).values({ companyId, projectId: project!.id, name: 'Repository',
+      repoUrl: created.source.repositoryUrl, defaultRef: 'configured-branch' }).returning();
+    await enqueueProjectSkillSource(db, row!, { refreshUserId: null, refreshAgentId: null, refreshLocalTrusted: true, connectionId: null, refreshGrantId: null });
+    let importChecks = 0;
+    const worker = skillSourceSyncService(db, { context: async () => ({ ...sourceContext, authorize: async action => {
+      // The second authorization occurs after matching the existing source,
+      // before the worker locks it for attachment.
+      if (action === 'skills.import' && ++importChecks === 2) await service.settings(companyId, created.source.id,
+        { revision: created.source.revision, trackingRef: 'HEAD' }, sourceContext);
+    } }) });
+    try {
+      await worker.tick();
+      const [blocked] = await db.select().from(projectSkillSources).where(eq(projectSkillSources.workspaceId, row!.id));
+      expect(blocked!.sourceId).toBeNull();
+      expect(blocked!.status).toBe('error');
+      expect(blocked!.lastError).toContain('branch changed');
+      await worker.tick(new Date(Date.now() + 6 * 60_000));
+      const [attached] = await db.select().from(projectSkillSources).where(eq(projectSkillSources.workspaceId, row!.id));
+      expect(attached!.sourceId).not.toBe(created.source.id);
+      expect((await service.detail(companyId, attached!.sourceId!)).trackingRef).toBe('configured-branch');
+    } finally {
+      await worker.stop();
+      await db.update(companies).set({ status: 'archived' }).where(eq(companies.id, companyId));
+    }
+  });
   it('requires explicit repair before an agent-created repository can search a person’s GitHub grants', async () => {
     const row = await workspace('agent-repair', 'open');
     const binding = await enqueueProjectSkillSource(db, row);

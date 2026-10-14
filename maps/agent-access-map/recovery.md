@@ -141,12 +141,17 @@ API: `present` — representative operation IDs:
 
 - `POST /api/issues/{id}/recovery-actions/retry-workspace-export`.
 - `POST /api/issues/{id}/recovery-actions/resume-workspace-finalization`.
+- `POST /api/issues/{id}/recovery-actions/resolve` for retained-source file repair.
 - `POST /api/execution-workspaces/{id}/reconcile-branch`.
 
 Agent access: `restricted` — Board/runtime management APIs; agent reads diagnosis and
 performs permitted workspace work.
 
 Policy: Export retry and branch reconciliation require board runtime management.
+Retained legacy file-only repair requires the board, exact stopped-source receipts,
+and recovered-file evidence. It can record repair for a successful legacy turn
+without changing its result or authorizing replay. Queued and running sources
+remain denied. Source-only reconciliation regressions cover this boundary.
 Physical-owner stop confirmation uses the separate `runtime:confirm_owner_stop`
 action. It requires active company owner/admin membership, trusted local board
 access, or instance administration. Agents and ordinary runtime managers are denied.

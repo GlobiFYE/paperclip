@@ -30,6 +30,7 @@ export const skillSourceSettingsSchema = z.object({
   automaticUpdates: z.boolean().optional(),
   importNewSkills: z.boolean().optional(),
   connectionId: z.string().uuid().nullable().optional(),
+  trackingRef: z.literal('HEAD').optional(),
 });
 export const projectSkillSourceAdoptSchema = z.object({
   workspaceId: z.string().uuid(),
