@@ -115,7 +115,9 @@ queued runs start at once. Other adapters are not paced.
 
 Pacing fails open. When quota data is missing, or older than three poll
 intervals, the provider runs at `full` and the server logs a warning. A
-failed poll keeps the last good result and backs off.
+failed poll keeps the last good result. The provider that failed backs off:
+its next poll is two poll intervals later, and three after more failures in a
+row. The other provider keeps its normal interval.
 
 Pacing sends at most one quota request per provider at a time. The server
 reuses a result for 60 seconds (a failed result for 10 seconds), so

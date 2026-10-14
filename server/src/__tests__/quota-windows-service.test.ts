@@ -173,6 +173,47 @@ describe("fetchAllQuotaWindows", () => {
     controller.stop();
   });
 
+  it("reads only the adapters of the requested providers", async () => {
+    const claudeQuota = vi.fn(async (): Promise<ProviderQuotaResult> => ({ provider: "anthropic", ok: true, windows: [] }));
+    const codexQuota = vi.fn(async () => codexResult);
+    registerAdapters(
+      { type: "claude_local", getQuotaWindows: claudeQuota },
+      { type: "codex_local", getQuotaWindows: codexQuota },
+    );
+
+    expect(await fetchAllQuotaWindows({ providers: ["openai"] })).toEqual([
+      expect.objectContaining({ provider: "openai", ok: true }),
+    ]);
+    expect(claudeQuota).not.toHaveBeenCalled();
+    expect(codexQuota).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not read the adapter of a provider that backs off during a pacing poll", async () => {
+    const claudeQuota = vi.fn(async (): Promise<ProviderQuotaResult> => ({
+      provider: "anthropic",
+      ok: false,
+      error: "HTTP 429",
+      windows: [],
+    }));
+    const codexQuota = vi.fn(async () => codexResult);
+    registerAdapters(
+      { type: "claude_local", getQuotaWindows: claudeQuota },
+      { type: "codex_local", getQuotaWindows: codexQuota },
+    );
+    const controller = createQuotaPacingController({
+      loadSettings: async () => ({ ...DEFAULT_QUOTA_PACING_SETTINGS, enabled: true }),
+    });
+    await controller.ready;
+
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(claudeQuota).toHaveBeenCalledTimes(1);
+    expect(codexQuota).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(claudeQuota).toHaveBeenCalledTimes(2);
+    expect(codexQuota).toHaveBeenCalledTimes(3);
+    controller.stop();
+  });
+
   it("keeps command diagnostics out of API responses and redacts them in server logs", async () => {
     const diagnostic = 'Command failed: sh -c probe --token fixture-private-token';
     vi.mocked(listServerAdapters).mockReturnValue([

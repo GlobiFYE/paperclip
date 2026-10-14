@@ -296,16 +296,30 @@ interface ProviderQuotaCache {
   windows: QuotaPacingWindows | null;
   polledAt: Date | null;
   lastError: string | null;
+  /** Polls in a row that got no quota data for this provider. */
+  consecutiveFailures: number;
+  /** Poll ticks that this provider sits out before its next poll. */
+  ticksToSkip: number;
+}
+
+/**
+ * Poll ticks a provider sits out after a failed poll. The delay doubles with
+ * each failure in a row, but the provider is polled again before its cached
+ * data goes stale enough to matter a second time.
+ */
+function backoffTicks(consecutiveFailures: number): number {
+  return Math.min(2 ** consecutiveFailures, QUOTA_PACING_STALE_AFTER_POLL_INTERVALS) - 1;
 }
 
 export interface QuotaPacingControllerOptions {
   /** Reads the stored pacing settings. */
   loadSettings: () => Promise<QuotaPacingSettings>;
   /**
-   * Reads the quota windows. Defaults to the shared, cached read of the local
-   * adapters' quota, so overlapping polls send one provider request.
+   * Reads the quota windows of the given providers. Defaults to the shared,
+   * cached read of the local adapters' quota, so overlapping polls send one
+   * provider request.
    */
-  fetchQuotaWindows?: () => Promise<ProviderQuotaResult[]>;
+  fetchQuotaWindows?: (providers: readonly QuotaPacingProvider[]) => Promise<ProviderQuotaResult[]>;
   /** Called when a provider's mode relaxes, so queued runs can start at once. */
   onModeRelaxed?: (providers: QuotaPacingProvider[]) => void | Promise<void>;
   now?: () => Date;
@@ -317,7 +331,10 @@ export interface QuotaPacingController {
   applySettings(settings: QuotaPacingSettings): void;
   effectiveMaxConcurrentRuns(adapterType: string, configuredMax: number): number;
   getState(): QuotaPacingState;
-  /** Polls now unless a poll is already in flight. For tests and manual refresh. */
+  /**
+   * Runs a poll tick now unless one is already in flight: polls each provider
+   * that is not backing off. For tests and manual refresh.
+   */
   pollNow(): Promise<void>;
   /** Stops polling and relax notifications. The last computed limits stay in effect. */
   stop(): void;
@@ -325,7 +342,8 @@ export interface QuotaPacingController {
 
 export function createQuotaPacingController(options: QuotaPacingControllerOptions): QuotaPacingController {
   const now = options.now ?? (() => new Date());
-  const fetchQuotaWindows = options.fetchQuotaWindows ?? fetchAllQuotaWindows;
+  const fetchQuotaWindows =
+    options.fetchQuotaWindows ?? ((providers: readonly QuotaPacingProvider[]) => fetchAllQuotaWindows({ providers }));
   let settings: QuotaPacingSettings = DEFAULT_QUOTA_PACING_SETTINGS;
   // Bumped by applySettings, so a settings read that started earlier cannot
   // overwrite a newer write that arrived through the settings route.
@@ -337,9 +355,11 @@ export function createQuotaPacingController(options: QuotaPacingControllerOption
   let lastPollStartedAt: Date | null = null;
   let lastPolledAt: Date | null = null;
   let lastError: string | null = null;
-  let consecutiveFailures = 0;
   const cache = new Map<QuotaPacingProvider, ProviderQuotaCache>(
-    QUOTA_PACING_PROVIDERS.map((provider) => [provider, { windows: null, polledAt: null, lastError: null }]),
+    QUOTA_PACING_PROVIDERS.map((provider) => [
+      provider,
+      { windows: null, polledAt: null, lastError: null, consecutiveFailures: 0, ticksToSkip: 0 },
+    ]),
   );
   // Before pacing has evaluated anything, every provider runs at full.
   const lastDecisions = new Map<QuotaPacingProvider, Pick<QuotaPacingDecision, "mode" | "reason">>(
@@ -355,13 +375,6 @@ export function createQuotaPacingController(options: QuotaPacingControllerOption
     return pollIntervalMs() * QUOTA_PACING_STALE_AFTER_POLL_INTERVALS;
   }
 
-  function nextDelayMs() {
-    if (consecutiveFailures === 0) return pollIntervalMs();
-    // Back off on failures, but poll again before the cached data goes
-    // stale enough to matter a second time.
-    return Math.min(pollIntervalMs() * 2 ** consecutiveFailures, staleAfterMs());
-  }
-
   function clearTimer() {
     if (timer) clearTimeout(timer);
     timer = null;
@@ -371,11 +384,15 @@ export function createQuotaPacingController(options: QuotaPacingControllerOption
   function scheduleNextPoll() {
     clearTimer();
     if (stopped || !settings.enabled || pollInFlight) return;
-    // Measure from the last poll start, so a settings change or a quick
-    // off/on toggle never polls faster than the configured interval.
-    const dueAtMs = lastPollStartedAt ? lastPollStartedAt.getTime() + nextDelayMs() : now().getTime();
+    // Poll ticks run once per interval. Measure from the last tick start, so
+    // a settings change or a quick off/on toggle never polls faster than the
+    // configured interval.
+    const dueAtMs = lastPollStartedAt ? lastPollStartedAt.getTime() + pollIntervalMs() : now().getTime();
     const delayMs = Math.max(0, dueAtMs - now().getTime());
-    nextPollAt = new Date(now().getTime() + delayMs);
+    // The next tick that polls a provider: ticks where every provider backs
+    // off only reload the settings.
+    const ticksToSkip = Math.min(...QUOTA_PACING_PROVIDERS.map((provider) => cache.get(provider)!.ticksToSkip));
+    nextPollAt = new Date(now().getTime() + delayMs + ticksToSkip * pollIntervalMs());
     timer = setTimeout(() => {
       timer = null;
       void pollNow();
@@ -473,9 +490,28 @@ export function createQuotaPacingController(options: QuotaPacingControllerOption
     }
   }
 
-  function recordResults(results: ProviderQuotaResult[], polledAt: Date): boolean {
-    let anyOk = false;
-    for (const provider of QUOTA_PACING_PROVIDERS) {
+  function recordFailure(provider: QuotaPacingProvider, error: string | null) {
+    const entry = cache.get(provider)!;
+    entry.consecutiveFailures += 1;
+    entry.ticksToSkip = backoffTicks(entry.consecutiveFailures);
+    const fields = {
+      provider,
+      consecutiveFailures: entry.consecutiveFailures,
+      error: error ? truncateError(error) : null,
+      nextPollInSec: Math.round(((entry.ticksToSkip + 1) * pollIntervalMs()) / 1000),
+    };
+    // Warn when a run of failures starts; the fail-open warning and the
+    // state route cover the rest of it.
+    if (entry.consecutiveFailures === 1) {
+      logger.warn(fields, "quota pacing poll returned no quota data for a provider; backing off");
+    } else {
+      logger.debug(fields, "quota pacing poll returned no quota data for a provider; backing off");
+    }
+  }
+
+  /** Records the poll of the given providers. A provider without an ok result failed. */
+  function recordResults(providers: readonly QuotaPacingProvider[], results: ProviderQuotaResult[], polledAt: Date) {
+    for (const provider of providers) {
       const entry = cache.get(provider)!;
       const providerResults = results.filter((result) => result.provider === provider);
       const ok = providerResults.find((result) => result.ok);
@@ -488,7 +524,8 @@ export function createQuotaPacingController(options: QuotaPacingControllerOption
         // a moment ago; its age counts toward staleness.
         entry.polledAt = resultFetchedAt(ok, polledAt);
         entry.lastError = null;
-        anyOk = true;
+        entry.consecutiveFailures = 0;
+        entry.ticksToSkip = 0;
         continue;
       }
       // Keep the last good windows: they stay usable until they go stale.
@@ -500,39 +537,32 @@ export function createQuotaPacingController(options: QuotaPacingControllerOption
         || (providerResults.length === 0
           ? "No quota source reported this provider."
           : "The provider returned no quota data.");
+      recordFailure(provider, entry.lastError);
     }
-    return anyOk;
   }
 
   async function runPoll() {
     await reloadSettings();
     if (stopped || !settings.enabled) return;
     lastPollStartedAt = now();
+    // Each provider backs off on its own, so a provider that keeps failing
+    // (a 429, for example) does not slow the polls of a healthy one.
+    const due = QUOTA_PACING_PROVIDERS.filter((provider) => {
+      const entry = cache.get(provider)!;
+      if (entry.ticksToSkip === 0) return true;
+      entry.ticksToSkip -= 1;
+      return false;
+    });
+    if (due.length === 0) return;
     try {
-      const anyOk = recordResults(await fetchQuotaWindows(), now());
+      const results = await fetchQuotaWindows(due);
       lastError = null;
-      consecutiveFailures = anyOk ? 0 : consecutiveFailures + 1;
+      recordResults(due, results, now());
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err);
-      consecutiveFailures += 1;
+      for (const provider of due) recordFailure(provider, lastError);
     }
     lastPolledAt = now();
-    if (consecutiveFailures > 0) {
-      logger.warn(
-        {
-          consecutiveFailures,
-          error: lastError ? truncateError(lastError) : null,
-          providerErrors: Object.fromEntries(
-            QUOTA_PACING_PROVIDERS.map((provider) => {
-              const error = cache.get(provider)!.lastError;
-              return [provider, error ? truncateError(error) : null];
-            }),
-          ),
-          nextPollInSec: Math.round(nextDelayMs() / 1000),
-        },
-        "quota pacing poll returned no quota data; backing off",
-      );
-    }
   }
 
   function pollNow(): Promise<void> {

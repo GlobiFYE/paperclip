@@ -184,10 +184,16 @@ export function providerSlugForAdapterType(type: string): string {
  * (QUOTA_WINDOWS_ERROR_CACHE_TTL_MS for a failure) is served from the cache.
  * Each result carries `fetchedAt`, the time its provider answered.
  * A failing or slow adapter yields an error result rather than blocking the
- * other providers.
+ * other providers. With `providers`, only the adapters of those provider
+ * slugs are read.
  */
-export async function fetchAllQuotaWindows(): Promise<ProviderQuotaResult[]> {
-  const adapters = listServerAdapters().filter((adapter) => adapter.getQuotaWindows != null);
+export async function fetchAllQuotaWindows(
+  options: { providers?: readonly string[] } = {},
+): Promise<ProviderQuotaResult[]> {
+  const { providers } = options;
+  const adapters = listServerAdapters().filter((adapter) =>
+    adapter.getQuotaWindows != null
+    && (!providers || providers.includes(providerSlugForAdapterType(adapter.type))));
   const entries = await Promise.all(adapters.map((adapter) => sharedAdapterQuota(adapter)));
   return entries.map((entry) => entry.result);
 }

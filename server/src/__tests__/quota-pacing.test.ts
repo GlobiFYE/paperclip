@@ -212,6 +212,23 @@ function anthropicResult(sessionUsed: number, weeklyUsed: number, at = new Date(
   };
 }
 
+function openaiResult(weeklyUsed: number, at = new Date()): ProviderQuotaResult {
+  return {
+    provider: "openai",
+    ok: true,
+    windows: [
+      {
+        label: "Weekly limit",
+        usedPercent: weeklyUsed,
+        resetsAt: new Date(at.getTime() + (WEEK_SECONDS / 2) * 1000).toISOString(),
+        valueLabel: null,
+        kind: "weekly",
+        windowSeconds: WEEK_SECONDS,
+      },
+    ],
+  };
+}
+
 const openaiMissing: ProviderQuotaResult = { provider: "openai", ok: false, error: "no local codex auth token", windows: [] };
 
 describe("quota pacing controller", () => {
@@ -316,7 +333,7 @@ describe("quota pacing controller", () => {
   it("keeps the last good result and backs off when a poll fails", async () => {
     const fetchQuotaWindows = vi
       .fn<() => Promise<ProviderQuotaResult[]>>()
-      .mockResolvedValueOnce([anthropicResult(60, 40)])
+      .mockResolvedValueOnce([anthropicResult(60, 40), openaiResult(10)])
       .mockRejectedValue(new Error("network down"));
     const controller = createQuotaPacingController({ loadSettings: async () => enabled, fetchQuotaWindows });
     await controller.ready;
@@ -329,6 +346,62 @@ describe("quota pacing controller", () => {
     expect(controller.effectiveMaxConcurrentRuns("claude_local", 4)).toBe(1);
     // One failure doubles the delay: the next poll is 10 minutes after the last one.
     expect(state.nextPollAt).toBe(new Date(NOW.getTime() + 300_000 + 600_000).toISOString());
+    controller.stop();
+  });
+
+  it("backs off only the provider whose polls fail", async () => {
+    const warn = vi.spyOn(logger, "warn").mockImplementation(() => undefined as never);
+    const rateLimited: ProviderQuotaResult = { provider: "openai", ok: false, error: "HTTP 429", windows: [] };
+    const fetchQuotaWindows = vi.fn(async (providers: readonly string[]) =>
+      providers.map((provider) => (provider === "anthropic" ? anthropicResult(10, 10) : rateLimited)),
+    );
+    const controller = createQuotaPacingController({ loadSettings: async () => enabled, fetchQuotaWindows });
+    await controller.ready;
+    // The next poll is the one of anthropic in 5 minutes; openai sits out that tick.
+    expect(controller.getState().nextPollAt).toBe(new Date(NOW.getTime() + 300_000).toISOString());
+
+    await vi.advanceTimersByTimeAsync(5 * 300_000);
+    // Ticks at 0, 5, 10, 15, 20 and 25 minutes. Anthropic keeps the 5-minute
+    // interval; openai waits 10 minutes after one failure and 15 after two.
+    expect(fetchQuotaWindows.mock.calls.map(([providers]) => providers)).toEqual([
+      ["anthropic", "openai"],
+      ["anthropic"],
+      ["anthropic", "openai"],
+      ["anthropic"],
+      ["anthropic"],
+      ["anthropic", "openai"],
+    ]);
+    expect(controller.getState().providers[1]).toMatchObject({ provider: "openai", lastError: "HTTP 429" });
+    // A run of failures warns once.
+    const backoffWarnings = warn.mock.calls.filter(
+      ([, message]) => message === "quota pacing poll returned no quota data for a provider; backing off",
+    );
+    expect(backoffWarnings).toHaveLength(1);
+    expect(backoffWarnings[0]![0]).toMatchObject({ provider: "openai", consecutiveFailures: 1, nextPollInSec: 600 });
+    controller.stop();
+    warn.mockRestore();
+  });
+
+  it("polls a provider on the normal interval again after it recovers", async () => {
+    let openaiFails = true;
+    const fetchQuotaWindows = vi.fn(async (providers: readonly string[]) =>
+      providers.map((provider) => {
+        if (provider === "anthropic") return anthropicResult(10, 10);
+        return openaiFails ? openaiMissing : openaiResult(10);
+      }),
+    );
+    const controller = createQuotaPacingController({ loadSettings: async () => enabled, fetchQuotaWindows });
+    await controller.ready;
+    openaiFails = false;
+
+    await vi.advanceTimersByTimeAsync(3 * 300_000);
+    expect(fetchQuotaWindows.mock.calls.map(([providers]) => providers)).toEqual([
+      ["anthropic", "openai"],
+      ["anthropic"],
+      ["anthropic", "openai"],
+      ["anthropic", "openai"],
+    ]);
+    expect(controller.getState().providers[1]).toMatchObject({ provider: "openai", reason: "on_pace", lastError: null });
     controller.stop();
   });
 
