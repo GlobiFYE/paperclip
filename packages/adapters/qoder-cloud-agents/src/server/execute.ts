@@ -1,22 +1,11 @@
-import { createHash } from "node:crypto";
-import fs from "node:fs/promises";
-import path from "node:path";
-import type {
-  AdapterExecutionContext,
-  AdapterExecutionResult,
-  AdapterInvocationMeta,
-  AdapterRuntimeToolAccess,
-} from "@paperclipai/adapter-utils";
+import type { AdapterExecutionContext, AdapterExecutionResult, AdapterInvocationMeta } from "@paperclipai/adapter-utils";
 import {
   DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
   DEFAULT_PAPERCLIP_CONVERSATION_PROMPT_TEMPLATE,
   asNumber,
   asString,
-  buildPaperclipEnv,
-  isForbiddenConfigEnvKey,
   joinPromptSections,
   parseObject,
-  readPaperclipIssueWorkModeFromContext,
   hydrateFreshSessionHandoff,
   selectPaperclipPromptSections,
   selectInitialCommunicationGuidance,
@@ -33,402 +22,43 @@ import {
   type QoderFetch,
   type QoderRecord,
 } from "./client.js";
+import { buildInstructionsPrefix } from "./instructions.js";
+import { buildRunContextNote, buildRuntimeToolsNote, isLoopbackUrl, readRuntimeTools } from "./prompt-notes.js";
 import { parseHttpRepoUrl } from "./repo-url.js";
+import { buildSessionEnv, fingerprintEnv, fingerprintSecret } from "./session-env.js";
+import { readSession, sessionMatches, type QoderCloudAgentsSession } from "./session-state.js";
+import {
+  BUSY_SESSION_STATUSES,
+  REDACTED,
+  asRecord,
+  asStringEnvMap,
+  defaultSleep,
+  emitStatus,
+  eventLine,
+  firstNonEmptyLine,
+  formatRunError,
+  trimNullable,
+  type QoderRepo,
+  type QoderSleep,
+} from "./shared.js";
+import { probeSession, streamTurn, waitForIdle } from "./turn-stream.js";
+
+export { buildSessionEnv } from "./session-env.js";
 
 export type QoderCloudAgentsExecuteDeps = {
   fetchImpl?: QoderFetch;
-  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
-};
-
-type QoderCloudAgentsSession = {
-  qoderSessionId: string;
-  qoderAgentId: string;
-  managedAgent: boolean;
-  environmentId: string;
-  /** True when Paperclip picked the environment because none was configured. */
-  environmentAutoSelected: boolean;
-  apiBaseUrl: string;
-  model?: string;
-  repoUrl?: string;
-  repoRef?: string;
-  repoMountPath?: string;
-  envFingerprint: string;
-  /** Digest only. Qoder takes the repository token at session creation, so a new token needs a new session. */
-  repoTokenFingerprint?: string;
-};
-
-type QoderRepo = { url: string; ref: string | null; mountPath: string };
-
-type TurnOutcome = {
-  kind: "idle" | "terminated";
-  stopReason: string | null;
-  lastMessage: string | null;
-  lastError: string | null;
-  /** True when the pending action is a tool call Qoder already allowed, so only a worker can answer it. */
-  awaitingToolWorker: boolean;
+  sleep?: QoderSleep;
 };
 
 const ADAPTER_TYPE = "qoder_cloud_agents";
+
 const MANAGED_AGENT_TOOLS = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch", "WebSearch"];
-const RESERVED_SESSION_ENV_NAMES = new Set(["SERVER_ENDPOINT", "USER_ID", "WORK_DIR"]);
-const RESERVED_SESSION_ENV_PREFIXES = ["CAW_", "QODER_"];
-const SESSION_ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-const SESSION_ENV_MAX_ENTRIES = 64;
-const SESSION_ENV_MAX_VALUE_BYTES = 8 * 1024;
-const SESSION_ENV_MAX_TOTAL_BYTES = 64 * 1024;
-const BUSY_SESSION_STATUSES = new Set(["running", "rescheduling"]);
-const IDLE_POLL_INTERVAL_MS = 3_000;
-const MAX_STREAM_RECONNECTS = 5;
-const STREAM_RECONNECT_BASE_DELAY_MS = 1_000;
+
 const CANCEL_CONFIRM_TIMEOUT_MS = 30_000;
+
 const CANCEL_CONFIRM_POLL_INTERVAL_MS = 1_000;
+
 const CANCEL_CONFIRM_MAX_POLLS = CANCEL_CONFIRM_TIMEOUT_MS / CANCEL_CONFIRM_POLL_INTERVAL_MS;
-const INSTRUCTION_BUNDLE_EXTENSIONS = new Set([".md", ".mdx", ".txt", ".json", ".yaml", ".yml", ".toml"]);
-const INSTRUCTION_BUNDLE_MAX_FILES = 50;
-const INSTRUCTION_BUNDLE_MAX_CHARS = 120_000;
-const REDACTED = "[redacted]";
-
-function asRecord(value: unknown): Record<string, unknown> | null {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
-  return value as Record<string, unknown>;
-}
-
-function asStringEnvMap(value: unknown): Record<string, string> {
-  const parsed = parseObject(value);
-  const env: Record<string, string> = {};
-  for (const [key, entry] of Object.entries(parsed)) {
-    if (isForbiddenConfigEnvKey(key)) continue;
-    if (typeof entry === "string") {
-      env[key] = entry;
-    } else if (typeof entry === "object" && entry !== null && !Array.isArray(entry)) {
-      const rec = entry as Record<string, unknown>;
-      if (rec.type === "plain" && typeof rec.value === "string") env[key] = rec.value;
-    }
-  }
-  return env;
-}
-
-function trimNullable(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value.trim() : null;
-}
-
-function firstNonEmptyLine(text: string): string {
-  return (
-    text
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .find(Boolean) ?? ""
-  );
-}
-
-function formatRunError(err: unknown): string {
-  if (err instanceof Error && err.message.trim().length > 0) return err.message.trim();
-  return String(err);
-}
-
-function contentText(value: unknown): string {
-  if (!Array.isArray(value)) return "";
-  return value
-    .map((entry) => asRecord(entry))
-    .filter((entry): entry is Record<string, unknown> => Boolean(entry) && entry?.type === "text")
-    .map((entry) => asString(entry.text, ""))
-    .join("\n")
-    .trim();
-}
-
-function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(signal.reason);
-      return;
-    }
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(signal.reason);
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    signal.addEventListener("abort", onAbort, { once: true });
-  });
-}
-
-/**
- * Qoder fixes session env vars at creation, so only values that stay stable
- * across heartbeats belong here; run-scoped values travel in the prompt.
- *
- * The resolved config env also carries variables Paperclip injects for a local
- * child process (TMPDIR, scratch dirs, SSH_AUTH_SOCK, host paths). Those are
- * meaningless in a remote container and change every run, so only the keys the
- * operator saved on the agent are forwarded.
- */
-export function buildSessionEnv(
-  ctx: AdapterExecutionContext,
-  configEnv: Record<string, string>,
-): { env: Record<string, string>; dropped: string[] } {
-  const operatorKeys = new Set(Object.keys(parseObject(parseObject(ctx.agent.adapterConfig).env)));
-  const candidate: Record<string, string> = {
-    ...Object.fromEntries(Object.entries(configEnv).filter(([key]) => operatorKeys.has(key))),
-    ...buildPaperclipEnv(ctx.agent),
-  };
-  // No Paperclip run token reaches Qoder (registry: supportsLocalAgentJwt=false),
-  // so drop the callback wiring instead of pointing the agent at an API it
-  // cannot authenticate against.
-  delete candidate.PAPERCLIP_API_KEY;
-  delete candidate.PAPERCLIP_API_URL;
-  delete candidate.PAPERCLIP_API_BRIDGE_MODE;
-  delete candidate.PAPERCLIP_WAKE_PAYLOAD_JSON;
-
-  const env: Record<string, string> = {};
-  const dropped: string[] = [];
-  let totalBytes = 0;
-  for (const key of Object.keys(candidate).sort()) {
-    const value = candidate[key];
-    // Qoder credentials are adapter inputs, not session env.
-    if (RESERVED_SESSION_ENV_PREFIXES.some((prefix) => key.toUpperCase().startsWith(prefix))) continue;
-    if (value.length === 0) continue;
-    const valueBytes = Buffer.byteLength(value, "utf8");
-    const entryBytes = Buffer.byteLength(key, "utf8") + valueBytes;
-    if (
-      !SESSION_ENV_NAME_PATTERN.test(key) ||
-      RESERVED_SESSION_ENV_NAMES.has(key) ||
-      valueBytes > SESSION_ENV_MAX_VALUE_BYTES ||
-      Object.keys(env).length >= SESSION_ENV_MAX_ENTRIES ||
-      totalBytes + entryBytes > SESSION_ENV_MAX_TOTAL_BYTES
-    ) {
-      dropped.push(key);
-      continue;
-    }
-    env[key] = value;
-    totalBytes += entryBytes;
-  }
-  return { env, dropped };
-}
-
-function fingerprintSecret(value: string | null): string | null {
-  return value ? createHash("sha256").update(value).digest("hex").slice(0, 32) : null;
-}
-
-function fingerprintEnv(env: Record<string, string>): string {
-  const entries = Object.keys(env).sort().map((key) => [key, env[key]]);
-  return createHash("sha256").update(JSON.stringify(entries)).digest("hex");
-}
-
-function buildRunContextNote(ctx: AdapterExecutionContext, sessionEnv: Record<string, string>, repo: QoderRepo | null): string {
-  const { runId, context } = ctx;
-  const linkedIssueIds = Array.isArray(context.issueIds)
-    ? context.issueIds.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
-    : [];
-  const runValues: Array<[string, string | null]> = [
-    ["PAPERCLIP_RUN_ID", runId],
-    ["PAPERCLIP_TASK_ID", trimNullable(context.taskId) ?? trimNullable(context.issueId)],
-    ["PAPERCLIP_WAKE_REASON", trimNullable(context.wakeReason)],
-    ["PAPERCLIP_WAKE_COMMENT_ID", trimNullable(context.wakeCommentId) ?? trimNullable(context.commentId)],
-    ["PAPERCLIP_APPROVAL_ID", trimNullable(context.approvalId)],
-    ["PAPERCLIP_APPROVAL_STATUS", trimNullable(context.approvalStatus)],
-    ["PAPERCLIP_LINKED_ISSUE_IDS", linkedIssueIds.length > 0 ? linkedIssueIds.join(",") : null],
-    ["PAPERCLIP_ISSUE_WORK_MODE", readPaperclipIssueWorkModeFromContext(context)],
-  ];
-  const lines = [
-    "Paperclip runtime note:",
-    "Values for this run (not set in the shell, because Qoder fixes session env vars at session creation):",
-    ...runValues.filter(([, value]) => value).map(([key, value]) => `- ${key}=${value}`),
-  ];
-  const envKeys = Object.keys(sessionEnv).filter((key) => key.startsWith("PAPERCLIP_")).sort();
-  if (envKeys.length > 0) {
-    lines.push(`These PAPERCLIP_* environment variables are set in the session shell: ${envKeys.join(", ")}`);
-  }
-  if (repo) {
-    lines.push(
-      `Repository ${repo.url} is cloned at ${repo.mountPath}. Run git commands there.`,
-      "Container storage is temporary: commit and push any work that must survive this session.",
-    );
-  }
-  return lines.join("\n");
-}
-
-async function readInstructionBundleFiles(
-  entryPath: string,
-): Promise<{ files: Array<{ relativePath: string; text: string }>; omitted: string[] }> {
-  const dir = path.dirname(entryPath);
-  const entries = await fs.readdir(dir, { recursive: true, withFileTypes: true }).catch(() => []);
-  const candidates = entries
-    .filter((entry) => entry.isFile() && INSTRUCTION_BUNDLE_EXTENSIONS.has(path.extname(entry.name).toLowerCase()))
-    .map((entry) => path.join(entry.parentPath, entry.name))
-    .filter((filePath) => path.resolve(filePath) !== path.resolve(entryPath))
-    .map((filePath) => ({ filePath, relativePath: path.relative(dir, filePath).split(path.sep).join("/") }))
-    .filter((file) => !file.relativePath.split("/").some((part) => part.startsWith(".") || part === "node_modules"))
-    .sort((left, right) => left.relativePath.localeCompare(right.relativePath));
-
-  const files: Array<{ relativePath: string; text: string }> = [];
-  const omitted: string[] = [];
-  let chars = 0;
-  for (const candidate of candidates) {
-    const text = await fs.readFile(candidate.filePath, "utf8").catch(() => null);
-    if (text === null) continue;
-    if (files.length >= INSTRUCTION_BUNDLE_MAX_FILES || chars + text.length > INSTRUCTION_BUNDLE_MAX_CHARS) {
-      omitted.push(candidate.relativePath);
-      continue;
-    }
-    files.push({ relativePath: candidate.relativePath, text });
-    chars += text.length;
-  }
-  return { files, omitted };
-}
-
-function isLoopbackUrl(raw: string): boolean {
-  try {
-    const host = new URL(raw).hostname.toLowerCase().replace(/^\[|\]$/g, "");
-    return host === "localhost" || host.endsWith(".localhost") || host === "::1" || host === "0.0.0.0" || /^127\./.test(host);
-  } catch {
-    return true;
-  }
-}
-
-function readRuntimeTools(ctx: AdapterExecutionContext): AdapterRuntimeToolAccess | null {
-  const tools = asRecord(ctx.runtimeTools ?? ctx.context.paperclipRuntimeTools);
-  const rest = asRecord(tools?.rest);
-  if (!tools || !rest) return null;
-  if (!trimNullable(tools.bearerToken) || !trimNullable(rest.connectionsSearch) || !trimNullable(rest.connectionRequest)) {
-    return null;
-  }
-  return tools as unknown as AdapterRuntimeToolAccess;
-}
-
-/**
- * Run-scoped connection tools cannot live in the session env, which Qoder
- * fixes at creation, so each turn carries them in its prompt.
- */
-function buildRuntimeToolsNote(tools: AdapterRuntimeToolAccess): string {
-  return [
-    "Paperclip connection tools for this run:",
-    `- connections_search: POST ${tools.rest.connectionsSearch}`,
-    `- connection_request: POST ${tools.rest.connectionRequest}`,
-    ...(trimNullable(tools.mcpEndpoint) ? [`- MCP endpoint: ${tools.mcpEndpoint}`] : []),
-    `Send the header "Authorization: Bearer ${tools.bearerToken}" with each request.`,
-    `The token is valid for this run only${trimNullable(tools.expiresAt) ? ` and expires at ${tools.expiresAt}` : ""}. Do not write it to files or output.`,
-  ].join("\n");
-}
-
-async function buildInstructionsPrefix(
-  config: Record<string, unknown>,
-  onLog: AdapterExecutionContext["onLog"],
-): Promise<{ prefix: string; notes: string[]; chars: number }> {
-  const instructionsFilePath = asString(config.instructionsFilePath, "").trim();
-  if (!instructionsFilePath) {
-    return { prefix: "", notes: [], chars: 0 };
-  }
-
-  try {
-    const contents = await fs.readFile(instructionsFilePath, "utf8");
-    const entryName = path.basename(instructionsFilePath);
-    // The remote container cannot read the Paperclip host, so the rest of the
-    // bundle travels in the prompt instead of as a host path to resolve.
-    const bundle = await readInstructionBundleFiles(instructionsFilePath);
-    const sections = [
-      contents.trim(),
-      `The above agent instructions were loaded from ${entryName}. This session runs in a remote container that cannot read the Paperclip host filesystem.`,
-    ];
-    if (bundle.files.length > 0) {
-      sections.push(
-        "The other files of the instructions bundle follow. Resolve relative file references against them.",
-        ...bundle.files.map((file) => `<file path="${file.relativePath}">\n${file.text.trim()}\n</file>`),
-      );
-    }
-    if (bundle.omitted.length > 0) {
-      sections.push(`These bundle files were too large to include: ${bundle.omitted.join(", ")}.`);
-    }
-    const prefix = `${sections.join("\n\n")}\n`;
-    return {
-      prefix,
-      chars: prefix.length,
-      notes: [
-        `Loaded agent instructions from ${instructionsFilePath}`,
-        bundle.files.length > 0
-          ? `Inlined ${bundle.files.length} more instructions bundle file(s): ${bundle.files.map((file) => file.relativePath).join(", ")}`
-          : "Prepended instructions to prompt.",
-        ...(bundle.omitted.length > 0 ? [`Instructions bundle files not inlined (size limit): ${bundle.omitted.join(", ")}`] : []),
-      ],
-    };
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err);
-    await onLog(
-      "stderr",
-      `[paperclip] Warning: could not read agent instructions file "${instructionsFilePath}": ${reason}\n`,
-    );
-    return {
-      prefix: "",
-      chars: 0,
-      notes: [
-        `Configured instructionsFilePath ${instructionsFilePath}, but file could not be read; continuing without injected instructions.`,
-      ],
-    };
-  }
-}
-
-function readSession(params: Record<string, unknown> | null): QoderCloudAgentsSession | null {
-  const record = asRecord(params);
-  if (!record) return null;
-  const qoderSessionId = trimNullable(record.qoderSessionId) ?? trimNullable(record.sessionId);
-  const qoderAgentId = trimNullable(record.qoderAgentId);
-  const environmentId = trimNullable(record.environmentId);
-  const apiBaseUrl = trimNullable(record.apiBaseUrl);
-  const envFingerprint = trimNullable(record.envFingerprint);
-  if (!qoderSessionId || !qoderAgentId || !environmentId || !apiBaseUrl || !envFingerprint) return null;
-  const model = trimNullable(record.model);
-  const repoUrl = trimNullable(record.repoUrl);
-  const repoRef = trimNullable(record.repoRef);
-  const repoMountPath = trimNullable(record.repoMountPath);
-  const repoTokenFingerprint = trimNullable(record.repoTokenFingerprint);
-  return {
-    qoderSessionId,
-    qoderAgentId,
-    managedAgent: record.managedAgent === true,
-    environmentId,
-    environmentAutoSelected: record.environmentAutoSelected === true,
-    apiBaseUrl,
-    ...(model ? { model } : {}),
-    ...(repoUrl ? { repoUrl } : {}),
-    ...(repoRef ? { repoRef } : {}),
-    ...(repoMountPath ? { repoMountPath } : {}),
-    envFingerprint,
-    ...(repoTokenFingerprint ? { repoTokenFingerprint } : {}),
-  };
-}
-
-function sessionMatches(
-  session: QoderCloudAgentsSession | null,
-  expected: {
-    apiBaseUrl: string;
-    configuredAgentId: string | null;
-    configuredEnvironmentId: string | null;
-    model: string;
-    repo: QoderRepo | null;
-    envFingerprint: string;
-    repoTokenFingerprint: string | null;
-  },
-): boolean {
-  if (!session) return false;
-  if (session.apiBaseUrl !== expected.apiBaseUrl) return false;
-  if (session.envFingerprint !== expected.envFingerprint) return false;
-  if ((session.repoTokenFingerprint ?? null) !== (expected.repo ? expected.repoTokenFingerprint : null)) return false;
-  if (expected.configuredAgentId) {
-    if (session.qoderAgentId !== expected.configuredAgentId) return false;
-  } else {
-    // A Qoder session pins its agent snapshot, so a model change needs a new session.
-    if (!session.managedAgent || session.model !== expected.model) return false;
-  }
-  if (expected.configuredEnvironmentId) {
-    if (session.environmentId !== expected.configuredEnvironmentId) return false;
-  } else if (!session.environmentAutoSelected) {
-    // Clearing environmentId must leave a session that was pinned to an explicit environment.
-    return false;
-  }
-  return (session.repoUrl ?? null) === (expected.repo?.url ?? null)
-    && (session.repoRef ?? null) === (expected.repo?.ref ?? null)
-    && (session.repoMountPath ?? null) === (expected.repo?.mountPath ?? null);
-}
 
 function defaultMountPath(url: URL): string {
   const name = url.pathname.split("/").filter(Boolean).pop()?.replace(/\.git$/i, "") || "repo";
@@ -502,167 +132,6 @@ async function resolveManagedAgentId(
   })).id);
   if (!created) throw new Error("Qoder did not return an agent ID.");
   return created;
-}
-
-function eventLine(event: Record<string, unknown>): string {
-  return `${JSON.stringify(event)}\n`;
-}
-
-async function emitStatus(onLog: AdapterExecutionContext["onLog"], status: string, message?: string) {
-  await onLog("stdout", eventLine({ type: "qoder_cloud_agents.status", status, ...(message ? { message } : {}) }));
-}
-
-/** Null means the stored session can no longer be used and a fresh one is needed. */
-async function probeSession(client: QoderClient, sessionId: string): Promise<string | null> {
-  try {
-    const session = await client.getSession(sessionId);
-    const status = trimNullable(session.status);
-    if (!status || status === "terminated" || session.archived_at) return null;
-    return status;
-  } catch (err) {
-    if (err instanceof QoderApiError && err.status === 404) return null;
-    throw err;
-  }
-}
-
-async function waitForIdle(
-  client: QoderClient,
-  sessionId: string,
-  sleep: NonNullable<QoderCloudAgentsExecuteDeps["sleep"]>,
-  signal: AbortSignal,
-): Promise<void> {
-  for (;;) {
-    const status = trimNullable((await client.getSession(sessionId)).status);
-    if (!status || !BUSY_SESSION_STATUSES.has(status)) return;
-    await sleep(IDLE_POLL_INTERVAL_MS, signal);
-  }
-}
-
-function pendingEventIds(event: QoderRecord): string[] {
-  const ids = asRecord(event.stop_reason)?.event_ids;
-  return Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : [];
-}
-
-function readTerminalEvent(event: QoderRecord): Pick<TurnOutcome, "kind" | "stopReason"> | null {
-  const type = asString(event.type, "");
-  if (type === "session.status_idle") {
-    return { kind: "idle", stopReason: trimNullable(asRecord(event.stop_reason)?.type) };
-  }
-  if (type === "session.status_terminated" || type === "session.deleted") {
-    return { kind: "terminated", stopReason: type };
-  }
-  return null;
-}
-
-async function streamTurn(input: {
-  client: QoderClient;
-  sessionId: string;
-  /** The user.message event that started this turn; also the first stream cursor. */
-  turnEventId: string | null;
-  onLog: AdapterExecutionContext["onLog"];
-  sleep: NonNullable<QoderCloudAgentsExecuteDeps["sleep"]>;
-  signal: AbortSignal;
-}): Promise<TurnOutcome> {
-  const { client, sessionId, onLog, sleep, signal } = input;
-  let cursor = input.turnEventId;
-  let lastMessage: string | null = null;
-  let lastError: string | null = null;
-  let reconnects = 0;
-  const allowedToolUseIds = new Set<string>();
-  const outcome = (terminal: Pick<TurnOutcome, "kind" | "stopReason">, event: QoderRecord): TurnOutcome => {
-    const pending = pendingEventIds(event);
-    return {
-      ...terminal,
-      lastMessage,
-      lastError,
-      awaitingToolWorker: terminal.stopReason === "requires_action"
-        && pending.length > 0
-        && pending.every((id) => allowedToolUseIds.has(id)),
-    };
-  };
-
-  for (;;) {
-    let streamFailure: string | null = null;
-    try {
-      for await (const frame of client.streamEvents(sessionId, cursor)) {
-        if (frame.id) cursor = frame.id;
-        if (!frame.data) continue;
-        let event: QoderRecord | null = null;
-        try {
-          event = asRecord(JSON.parse(frame.data));
-        } catch {
-          event = null;
-        }
-        const type = asString(event?.type, "");
-        // Delta frames are stream-only previews of a buffered event that follows.
-        if (!event || !type || type === "event_start" || type === "event_delta") continue;
-        reconnects = 0;
-        // The prompt is already in the invocation metadata, with run-scoped credentials redacted.
-        if (type === "user.message") continue;
-        await onLog("stdout", eventLine({ type: "qoder_cloud_agents.event", event }));
-        if (type === "agent.message") {
-          lastMessage = contentText(event.content) || lastMessage;
-        } else if ((type === "agent.tool_use" || type === "agent.mcp_tool_use") && event.evaluated_permission === "allow") {
-          const id = trimNullable(event.id);
-          if (id) allowedToolUseIds.add(id);
-        } else if (type === "session.error") {
-          const error = asRecord(event.error);
-          if (asRecord(error?.retry_status)?.type !== "retrying") {
-            lastError = trimNullable(error?.message) ?? trimNullable(error?.type) ?? "Qoder session error";
-          }
-        }
-        const terminal = readTerminalEvent(event);
-        if (terminal) return outcome(terminal, event);
-      }
-    } catch (err) {
-      if (signal.aborted) throw err;
-      // A stale token will not recover by reconnecting.
-      if (err instanceof QoderApiError && (err.status === 401 || err.status === 403 || err.status === 404)) throw err;
-      streamFailure = formatRunError(err);
-    }
-
-    signal.throwIfAborted();
-    reconnects += 1;
-    if (reconnects > MAX_STREAM_RECONNECTS) {
-      // The stream is gone; recover the turn's outcome from event history when it already ended.
-      const session = await client.getSession(sessionId);
-      if (!BUSY_SESSION_STATUSES.has(asString(session.status, ""))) {
-        const history = await client.listRecentEvents(sessionId);
-        const terminalIndex = history.findIndex((event) => readTerminalEvent(event));
-        if (terminalIndex !== -1) {
-          // History is newest first: walk back from the terminal event to this
-          // turn's user.message so the answer and errors the stream never
-          // delivered are not lost, and an older turn's reply is not reused.
-          let recoveredMessage: string | null = null;
-          let recoveredError: string | null = null;
-          for (const event of history.slice(terminalIndex + 1)) {
-            const type = asString(event.type, "");
-            if (type === "user.message" || (input.turnEventId && event.id === input.turnEventId)) break;
-            if (type === "agent.message") {
-              recoveredMessage ??= contentText(event.content) || null;
-            } else if (type === "session.error") {
-              const error = asRecord(event.error);
-              if (asRecord(error?.retry_status)?.type !== "retrying") {
-                recoveredError ??= trimNullable(error?.message) ?? trimNullable(error?.type) ?? "Qoder session error";
-              }
-            } else if ((type === "agent.tool_use" || type === "agent.mcp_tool_use") && event.evaluated_permission === "allow") {
-              const id = trimNullable(event.id);
-              if (id) allowedToolUseIds.add(id);
-            }
-          }
-          lastMessage = recoveredMessage ?? lastMessage;
-          lastError = recoveredError ?? lastError;
-          const terminalEvent = history[terminalIndex];
-          return outcome(readTerminalEvent(terminalEvent)!, terminalEvent);
-        }
-      }
-      throw new Error(
-        `Lost the Qoder event stream for session ${sessionId} before the turn finished${streamFailure ? `: ${streamFailure}` : "."}`,
-      );
-    }
-    await emitStatus(onLog, "running", `Qoder event stream closed; reconnecting (attempt ${reconnects}).`);
-    await sleep(STREAM_RECONNECT_BASE_DELAY_MS * 2 ** (reconnects - 1), signal);
-  }
 }
 
 function readUsage(session: QoderRecord | null): Record<string, number> | null {
