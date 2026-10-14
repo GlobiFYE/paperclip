@@ -20,7 +20,7 @@ import { createTaskFromPromptThroughUi } from "./plan-task-ui.js";
 import { waitForTaskChatRendered, waitForTaskIdentity } from "./continuation-screenshot.js";
 import { hasPersistedSource, isSavedSourceCheckpoint } from "./everyday-interruption.js";
 import { collectRunEvents } from "./run-observations.js";
-import { gradeRemoteRestart, observeRemoteRestartBoundary, projectRemoteRestartEvents, projectRemoteRestartRun, type RemoteRestartEvidence } from "./everyday-remote-restart.js";
+import { gradeRemoteRestart, observeRemoteRestartBoundary, projectRemoteRestartEvents, projectRemoteRestartRun, waitForRemoteRestartBoundary, type RemoteRestartEvidence } from "./everyday-remote-restart.js";
 import { setupAggregatorFixture } from "./aggregator-fixture.js";
 import { gradeProviderChoice, gradeProviderOutcome, requireProviderAccessCard } from "./connection-routing-evidence.js";
 import { setupConnectionReview } from "./connection-reviews.js";
@@ -937,15 +937,15 @@ export async function runEverydayFlow(input: Input) {
         await reply(LATE_REQUIREMENT);
         note("followup-submitted-before-interruption");
         if (requireRemoteRestart) {
-          const before = await pollUntil({ label: "active remote native turn with completed tool receipt",
+          const before = await waitForRemoteRestartBoundary({
             deadlineAt: input.deadlineAt, load: async () => {
               await refresh();
               const original = ev.runs.find(run => run.id === active.id);
-              if (!original || original.status !== "running") throw new Error("Remote restart boundary unexercised: original run ended before fault injection");
+              if (!original || original.status !== "running") return { run: original };
               const rows = await collectRunEvents<Row>((afterSeq, limit) => api.get(`/api/heartbeat-runs/${active.id}/events?afterSeq=${afterSeq}&limit=${limit}`));
-              if (!rows.some(row => row.payload?.prpEvent?.eventType === "tool.execution.completed" && row.payload.prpEvent.payload?.status === "completed")) return undefined;
-              return remoteRestartBoundary(active.id);
-            }, accept: value => value !== undefined });
+              if (!rows.some(row => row.payload?.prpEvent?.eventType === "tool.execution.completed" && row.payload.prpEvent.payload?.status === "completed")) return { run: original };
+              return { run: original, boundary: await remoteRestartBoundary(active.id) };
+            } });
           ev.remoteRestart = { before };
           await input.evidence("remote-restart-before.json", before);
         } else ev.allowedInterruptedRuns.push(active.id);

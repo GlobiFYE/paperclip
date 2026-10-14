@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { storyLifecycleChecks, type StoryRun } from "./everyday-observations.js";
-import { gradeRemoteRestart, observeRemoteRestartBoundary, projectRemoteRestartEvents, projectRemoteRestartRun } from "./everyday-remote-restart.js";
+import { gradeRemoteRestart, observeRemoteRestartBoundary, projectRemoteRestartEvents, projectRemoteRestartRun, waitForRemoteRestartBoundary } from "./everyday-remote-restart.js";
 
 const run: StoryRun = {
   id: "run", companyId: "company", agentId: "lead", nativeIssueId: "task",
@@ -36,6 +36,34 @@ function fixture() {
       phase: "workspace_finalize", status: "succeeded" }], scheduledRetry: null as unknown, recoveryActions: [] as Record<string, unknown>[] };
   return { active, scope, leases, event, rows, afterRows, finalRows, evidence: { before, after, final } };
 }
+
+describe("remote restart boundary polling", () => {
+  afterEach(() => vi.useRealTimers());
+
+  it.each([undefined, "succeeded", "failed", "cancelled", "timed_out"] as const)("stops immediately when the original run is %s", async status => {
+    vi.useFakeTimers();
+    const now = Date.now();
+    const load = vi.fn(async () => ({ run: status === undefined ? undefined : { ...run, status } }));
+    const outcome = waitForRemoteRestartBoundary({ deadlineAt: now + 60_000, load }).then(
+      () => undefined, error => error as Error,
+    );
+    await vi.runAllTimersAsync();
+    expect((await outcome)?.message).toBe("Stopped waiting for active remote native turn with completed tool receipt: Remote restart boundary unexercised: original run ended before fault injection");
+    expect(load).toHaveBeenCalledTimes(1);
+    expect(Date.now()).toBe(now);
+  });
+
+  it("waits for useful work while the original run remains active", async () => {
+    vi.useFakeTimers();
+    const { active, evidence } = fixture();
+    const load = vi.fn().mockResolvedValueOnce({ run: active })
+      .mockResolvedValueOnce({ run: active, boundary: evidence.before });
+    const waiting = waitForRemoteRestartBoundary({ deadlineAt: Date.now() + 60_000, load });
+    await vi.runAllTimersAsync();
+    expect(await waiting).toEqual(evidence.before);
+    expect(load).toHaveBeenCalledTimes(2);
+  });
+});
 
 describe("remote restart lifecycle evidence", () => {
   it("does not accept a successful replacement as proof that the original remote runner recovered", () => {

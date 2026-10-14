@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { canonicalJson } from "../../packages/shared/src/portability-hash.js";
 import { isValidNativePrpEnvelope } from "./native-event-envelope.js";
 import type { StoryCheck, StoryRun } from "./everyday-observations.js";
+import { pollUntil } from "./api.js";
 
 type Row = Record<string, unknown>;
 const record = (value: unknown): Row => value !== null && typeof value === "object" && !Array.isArray(value) ? value as Row : {};
@@ -24,6 +25,21 @@ export interface RemoteRestartEvidence {
   after?: RemoteRestartBoundary;
   final?: { run: StoryRun; events: RemoteRestartEvent[]; operations: Row[];
     scheduledRetry: unknown; recoveryActions: Row[] };
+}
+
+export async function waitForRemoteRestartBoundary(input: {
+  deadlineAt: number;
+  load: () => Promise<{ run: StoryRun | undefined; boundary?: RemoteRestartBoundary }>;
+}): Promise<RemoteRestartBoundary> {
+  const observed = await pollUntil({
+    label: "active remote native turn with completed tool receipt",
+    deadlineAt: input.deadlineAt,
+    load: input.load,
+    accept: state => state.run?.status === "running" && state.boundary !== undefined,
+    reject: state => !state.run || state.run.status !== "running"
+      ? "Remote restart boundary unexercised: original run ended before fault injection" : undefined,
+  });
+  return observed.boundary!;
 }
 
 export function projectRemoteRestartRun(run: StoryRun): StoryRun {
