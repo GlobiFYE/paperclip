@@ -29,6 +29,17 @@ An issue has at most one assignee.
 
 This is a hard invariant. Paperclip is single-assignee by design.
 
+A legacy agent run can hand its own task to a human without cancelling itself.
+The REST request must use the run's signed token and match the current agent,
+company, task, and active run. The assignment and requested status persist while
+the current turn finishes normally. This avoids losing the handoff when workspace
+restoration takes longer than the stop timeout. The former agent no longer owns
+the task. Its later task mutations are rejected, including under the update
+transaction's task and run locks. Read and comment access follows normal policy.
+
+Board-initiated reassignments, agent API keys, native executions, and handoffs to
+another agent still require the outgoing execution to stop before ownership changes.
+
 ## 3. Status Semantics
 
 Paperclip issue statuses are not just UI labels. They imply different expectations about ownership and execution.
@@ -830,6 +841,15 @@ On startup and on the periodic recovery loop, Paperclip performs the following r
 
 The stranded-work pass closes the gap where issue state survives a crash but the wake/run path does not. The silent-run scan covers the separate case where a live process exists but has stopped producing observable output.
 
+Startup health (`/api/health`) reports `starting` until these recovery passes and
+the other startup steps that serving requests depends on finish. Housekeeping
+that every scheduler tick repeats does not delay it: the custom-image setup
+cleanup, tool connection health, decision expiry, adapter and setup-token login
+reapers, environment lease cleanup, and the retention sweep run after readiness.
+A failed housekeeping step is logged as `startup housekeeping step failed` and
+the next step still runs. The heartbeat scheduler interval starts after
+housekeeping, so the reapers still finish before the first timer tick.
+
 The stale-lock sweep leaves native runs with their finalization coordinator while
 same-session recovery or accepted-result finalization is pending. A provider can
 exit before workspace copy-back, assessment, or arbitration completes. An expired
@@ -1013,6 +1033,14 @@ Do not fold a run only because it is quiet. Keep the informational signal visibl
 In the normal non-terminal case, critical silence remains a UI signal and does not block the source issue. In the source-resolved case, a completed source issue does not acquire a new review or blocker merely because an old run handle stayed active. Only real unresolved work should block work.
 
 Source-resolved watchdog folding concerns stale active-run bookkeeping after a valid terminal disposition. It does not infer productivity from run counts, comment frequency, or elapsed task time.
+
+Terminal task activity does not prove that the execution runtime has finished.
+The scan leaves native runs with their native lifecycle owner. An active managed
+environment lease, running or failed workspace finalization, or recorded
+copy-back failure also prevents folding. These obligations are checked before
+local process cleanup and again when the run is committed. The owning runtime
+or its bounded recovery saves the files and settles the run; the watchdog does
+not replace that work with a successful result or release its execution locks.
 
 Detached process cleanup is operational hygiene, not source issue liveness. Cleanup should be best-effort and auditable. If cleanup fails but the source issue is already terminal with same-run durable evidence, Paperclip should preserve the cleanup failure on the run/watchdog audit trail and route only the cleanup concern to bounded recovery when a real owner/action remains.
 
@@ -1608,6 +1636,13 @@ its scoped access binding. The qualified ACPX sidecar receives the gateway name,
 URL, and token together through the launch allowlist; unrelated environment
 secrets remain excluded. This does not restrict arbitrary network access to a
 public service outside the gateway.
+
+Tool discovery collapses identical descriptors with the same gateway name for
+every provider. Native assigned-tool projection applies the same rule at startup
+and during fresh discovery. A name with conflicting schemas, risk, or source
+bindings remains an error; distinct names retain separate tools. Discovery does
+not grant execution authority: calls still use the existing gateway policy,
+approval, revocation, and audit paths.
 
 
 ### Use real connection requests (2026-09-14)
