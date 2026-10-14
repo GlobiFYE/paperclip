@@ -6,6 +6,7 @@ import {
   agentTaskSessions,
   agentSessionGoalActions,
   agents,
+  agentWakeupRequests,
 } from "@paperclipai/db";
 import {
   type IssueExecutionMonitorPolicy,
@@ -31,6 +32,8 @@ import {
 } from "drizzle-orm";
 import { RECOVERY_ORIGIN_KINDS } from "../recovery/index.js";
 import { visibleIssueCondition } from "../issue-visibility.js";
+import { nonIdleSlackIssueCondition } from "../slack-conversation-state.js";
+import { TIMER_ACTIONABLE_ISSUE_STATUSES } from "./task-timer-policy.js";
 import { REVIEW_PATH_RECOVERY_INSTRUCTION } from "../recovery/review-path-recovery.js";
 import { withRecoveryContext } from "../recovery/status-only-context.js";
 import { logActivity } from "../activity-log.js";
@@ -1213,21 +1216,71 @@ export function createHeartbeatScheduling(
         );
         if (!timerClaim) continue;
 
-        const run = await enqueueWakeup(agent.id, {
-          source: "timer",
-          triggerDetail: "system",
-          reason: "heartbeat_timer",
-          requestedByActorType: "system",
-          requestedByActorId: "heartbeat_scheduler",
-          contextSnapshot: {
-            source: "scheduler",
-            reason: "interval_elapsed",
-            now: now.toISOString(),
-            timerClaimWasFirstHeartbeat: timerClaim.wasFirstHeartbeat,
-          },
-        });
-        if (run) enqueued += 1;
-        else skipped += 1;
+        const candidates = policy.skipTimerWhenNoActionableWork
+          ? await db.select({ id: issues.id, statusVersion: issues.statusVersion }).from(issues)
+            .where(and(
+              eq(issues.companyId, agent.companyId), eq(issues.assigneeAgentId, agent.id),
+              isNull(issues.assigneeUserId), visibleIssueCondition(), isNull(issues.conversationAgentId),
+              inArray(issues.status, [...TIMER_ACTIONABLE_ISSUE_STATUSES]), nonIdleSlackIssueCondition(),
+              cutoff ? gte(issues.createdAt, cutoff) : undefined,
+            ))
+            .orderBy(sql`case ${issues.priority} when 'critical' then 0 when 'high' then 1 when 'medium' then 2 else 3 end`, asc(issues.createdAt), asc(issues.id))
+          : [null];
+        if (candidates.length === 0) {
+          await db.insert(agentWakeupRequests).values({
+            companyId: agent.companyId,
+            agentId: agent.id,
+            source: "timer",
+            triggerDetail: "system",
+            reason: "heartbeat.timer.no_actionable_work",
+            status: "skipped",
+            requestedByActorType: "system",
+            requestedByActorId: "heartbeat_scheduler",
+            finishedAt: now,
+          });
+        }
+        let admitted = false;
+        for (const candidate of candidates) {
+          try {
+            const run = await enqueueWakeup(agent.id, {
+              source: "timer",
+              triggerDetail: "system",
+              reason: "heartbeat_timer",
+              requestedByActorType: "system",
+              requestedByActorId: "heartbeat_scheduler",
+              ...(candidate ? {
+                payload: { issueId: candidate.id },
+                issueStateGuard: {
+                  statuses: [...TIMER_ACTIONABLE_ISSUE_STATUSES],
+                  assigneeAgentId: agent.id,
+                  statusVersion: candidate.statusVersion,
+                },
+              } : {}),
+              contextSnapshot: {
+                source: "scheduler",
+                reason: "interval_elapsed",
+                now: now.toISOString(),
+                timerClaimWasFirstHeartbeat: timerClaim.wasFirstHeartbeat,
+                ...(candidate ? { issueId: candidate.id, taskId: candidate.id } : {}),
+              },
+            });
+            if (run) {
+              enqueued += 1;
+              admitted = true;
+              break;
+            }
+          } catch (err) {
+            if (!(err instanceof HttpError && err.status >= 400 && err.status < 500)) throw err;
+            logger.warn({
+              agentId: agent.id,
+              issueId: candidate?.id ?? null,
+              status: err.status,
+              code: readNonEmptyString(parseObject(err.details).code),
+              reason: err.message,
+            }, "heartbeat timer admission denied");
+          }
+        }
+        if (!admitted) skipped += 1;
       }
 
       const issueMonitors = await tickDueIssueMonitors(now);
