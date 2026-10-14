@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { companySecrets, connectionGrants, type Db } from "@paperclipai/db";
 
 export type GitHubTokenAccount = {
@@ -109,25 +109,40 @@ export async function loadGitHubTokenAccount(
 }
 
 /**
- * Store the token's account on its grant, bound to the token version it was read with,
- * keeping every other provider-tenant field. A stale write (an older lookup finishing
- * after a rotation) is harmless: its binding no longer matches, so the next use reads
- * the account again. `null` clears a recorded account (a replaced token may belong to someone else); the
- * account is then learned again on the token's next use. `updatedAt` is left alone:
- * setup uses it for optimistic concurrency and this is derived metadata.
+ * Store the token's account on its grant, bound to the token version it was read with.
+ * The write is atomic and conditional: it applies only while that version is still the
+ * secret's current one, so a stale lookup (an older token's lookup finishing after a
+ * rotation) is rejected instead of overwriting the newer account. Only `githubAccount` is
+ * merged, never a stale copy of the other provider-tenant fields. `null` clears a recorded
+ * account (a replaced token may belong to someone else); it is learned again on next use.
+ * `updatedAt` is left alone: setup uses it for optimistic concurrency and this is derived.
+ * Returns the updated grant, or null when the write was rejected as stale.
  */
 export async function recordGitHubTokenAccount(
   db: Pick<Db, "update">,
-  grant: Pick<typeof connectionGrants.$inferSelect, "id" | "companyId" | "providerTenant">,
+  grant: Pick<typeof connectionGrants.$inferSelect, "id" | "companyId">,
   account: GitHubTokenAccount | null,
   binding: GitHubTokenBinding | null,
 ) {
-  const { githubAccount: _previous, ...providerTenant } = grant.providerTenant ?? {};
-  const recorded = account && binding ? { ...account, ...binding } : null;
+  const sameGrant = and(eq(connectionGrants.id, grant.id), eq(connectionGrants.companyId, grant.companyId));
+  if (!account || !binding) {
+    const [cleared] = await db
+      .update(connectionGrants)
+      .set({ providerTenant: sql`coalesce(${connectionGrants.providerTenant}, '{}'::jsonb) - 'githubAccount'` })
+      .where(sameGrant)
+      .returning();
+    return cleared ?? null;
+  }
+  const recorded = JSON.stringify({ ...account, ...binding });
   const [updated] = await db
     .update(connectionGrants)
-    .set({ providerTenant: recorded ? { ...providerTenant, githubAccount: recorded } : providerTenant })
-    .where(and(eq(connectionGrants.id, grant.id), eq(connectionGrants.companyId, grant.companyId)))
+    .set({
+      providerTenant: sql`coalesce(${connectionGrants.providerTenant}, '{}'::jsonb) || jsonb_build_object('githubAccount', ${recorded}::jsonb)`,
+    })
+    .where(and(
+      sameGrant,
+      sql`exists (select 1 from ${companySecrets} where ${companySecrets.id} = ${binding.secretId} and ${companySecrets.companyId} = ${grant.companyId} and ${companySecrets.latestVersion} = ${binding.secretVersion})`,
+    ))
     .returning();
   return updated ?? null;
 }

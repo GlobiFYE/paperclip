@@ -36,6 +36,7 @@ import {
   acceptSteeredIdentity,
 } from "../services/run-identity.js";
 import { resolveGitHubOperationCredentials } from "../services/github-operation-credentials.js";
+import { recordGitHubTokenAccount } from "../services/github-token-account.js";
 import {
   filterResolvedGitHubConnectionsForRun,
   resolveManagedGitHubIdentitySelection,
@@ -805,6 +806,37 @@ const support = await getEmbeddedPostgresTestSupport();
       } finally {
         fetchSpy.mockRestore();
       }
+    });
+    it("rejects a stale token-account write that finishes after a rotation", async () => {
+      const input = await seed();
+      const pat = await grant(input, "A", false, { pat: true });
+      await db
+        .update(companySecrets)
+        .set({ latestVersion: 2 })
+        .where(eq(companySecrets.id, pat.secretId));
+      const account = (login: string, userId: string) => ({
+        userId,
+        login,
+        verifiedAt: new Date().toISOString(),
+      });
+      // A new account recorded for the rotated token (version 2)...
+      expect(
+        await recordGitHubTokenAccount(db, { id: pat.id, companyId: input.companyId },
+          account("new-a", "202"), { secretId: pat.secretId, secretVersion: 2 }),
+      ).not.toBeNull();
+      // ...is not overwritten by an older lookup for version 1 finishing last.
+      expect(
+        await recordGitHubTokenAccount(db, { id: pat.id, companyId: input.companyId },
+          account("old-a", "101"), { secretId: pat.secretId, secretVersion: 1 }),
+      ).toBeNull();
+      const [stored] = await db
+        .select()
+        .from(connectionGrants)
+        .where(eq(connectionGrants.id, pat.id));
+      expect(stored!.providerTenant?.githubAccount).toMatchObject({
+        login: "new-a",
+        secretVersion: 2,
+      });
     });
     it("gives shared company GitHub only to people in its audience", async () => {
       const input = await seed();
