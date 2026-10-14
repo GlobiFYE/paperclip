@@ -322,6 +322,23 @@ describeEmbeddedPostgres("terminal workspace compaction", () => {
     expect(await exists(trashEntry)).toBe(false);
   }, 30_000);
 
+  it("purges skipped trash after a startup sweep archives the last workspace beside it", async () => {
+    const seeded = await seedWorkspace({ populate: false });
+    const trashEntry = path.join(path.dirname(seeded.worktreePath), WORKSPACE_COMPACTION_TRASH_DIR, "interrupted");
+    await writeFile(path.join(trashEntry, "0/left-pad/index.js"), "module.exports = 1;\n");
+    const twoHoursAgo = new Date(Date.now() - 2 * HOUR_MS);
+    await fs.utimes(trashEntry, twoHoursAgo, twoHoursAgo);
+    const svc = service();
+
+    // No cooldown: the startup sweep archives the only workspace in this
+    // directory, so no later sweep has a candidate there.
+    expect(await svc.sweepTerminalWorkspaces(50, undefined, { compact: false })).toMatchObject({ archived: 1 });
+    expect(await exists(trashEntry)).toBe(true);
+
+    expect(await svc.sweepTerminalWorkspaces()).toMatchObject({ checked: 0 });
+    expect(await exists(trashEntry)).toBe(false);
+  }, 30_000);
+
   it("waits for the compaction delay after the issue tree becomes terminal", async () => {
     const seeded = await seedWorkspace({ terminalAgoMs: 10 * 60 * 1000 });
     const svc = service({ workspaceReaperCooldownDays: 7, workspaceCompactionDelayMs: HOUR_MS });
