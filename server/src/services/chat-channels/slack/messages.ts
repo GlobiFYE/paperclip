@@ -87,3 +87,12 @@ export function slackThreadChannelId(threadId: string): string | null {
     separator === -1 ? channelAndThread : channelAndThread.slice(0, separator);
   return channelId || null;
 }
+
+export function slackOrphanFollowUp(threadId: string, messageId: string): boolean {
+  const rootMessageId = /^slack:[^:]+:(.+)$/.exec(threadId)?.[1];
+  return Boolean(rootMessageId) && rootMessageId !== messageId;
+}
+
+export function stripSlackTitleMentions(text: string): string {
+  return text.replace(/<@[A-Z0-9]+>/gi, "");
+}

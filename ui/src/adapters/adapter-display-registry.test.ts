@@ -3,6 +3,13 @@ import { describe, expect, it } from "vitest";
 import { agentDisplayAdapterType, getAdapterDisplay, getAdapterLabel, getAdapterLabels } from "./adapter-display-registry";
 
 describe("adapter display registry", () => {
+  it.each([
+    ["openai_dot", "OpenAI Dot"],
+    ["grok_bot", "Grok Bot"],
+  ])("keeps saved %s external runners branded by provider", (provider, label) => {
+    const type = agentDisplayAdapterType({ adapterType: "paperclip_runner", adapterConfig: { provider } });
+    expect(getAdapterDisplay(type).label).toBe(label);
+  });
   it("brands saved Codex runners as Codex without guessing managed or unknown providers", () => {
     expect(agentDisplayAdapterType({ adapterType: "paperclip_runner", adapterConfig: { provider: "codex" } })).toBe("codex_local");
     expect(agentDisplayAdapterType({ adapterType: "paperclip_runner", adapterConfig: {} })).toBe("codex_local");

@@ -226,6 +226,11 @@ describe("Paperclip Runner Codex configuration", () => {
     expect(dot).toContain("Dot connection");
     expect(dot).toContain("Allow externally billed provider");
   });
+  it("keeps the general harness picker hidden for an existing Grok Bot", async () => {
+    const html = await renderRunner({ provider: "grok_bot" });
+    expect(html).not.toContain('aria-label="Harness"');
+    expect(html).toContain("Save the Grok Bot agent before connecting it.");
+  });
   it.each([
     [undefined, "Full auto (approve all)"],
     ["approve-paperclip", "Automatic Paperclip actions"],

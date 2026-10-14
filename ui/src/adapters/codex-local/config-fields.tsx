@@ -1,5 +1,6 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue, SelectPopover } from "../../components/ui/select";
 import { AdapterMark } from "../../components/AdapterMark";
+import { GrokBotConnection } from "../../components/GrokBotConnection";
 import { DotRunnerConnection } from "../../components/DotRunnerConnection";
 import { configFieldsForSection } from "../config-sections";
 import type { AdapterConfigFieldsProps } from "../types";
@@ -223,7 +224,7 @@ export function CodexLocalConfigFields({
           />
         </Field>
       )}
-      {runnerManaged && !hideRunnerHarness && runnerProvider !== "openai_dot" && (
+      {runnerManaged && !hideRunnerHarness && runnerProvider !== "openai_dot" && runnerProvider !== "grok_bot" && (
         <Field configSection="adapter"
           label="Harness"
           hint="Choose the agent harness that runs your tasks."
@@ -286,6 +287,7 @@ export function CodexLocalConfigFields({
           </Select>
         </Field>
       )}
+      {runnerManaged && runnerProvider === "grok_bot" && <GrokBotConnection companyId={companyId} agentId={agentId} />}
       {runnerManaged && runnerProvider === "openai_dot" && <>
         <Field configSection="adapter" label="Dot connection" hint="A verified event round trip is required before assigning work.">
           <DotRunnerConnection companyId={companyId} agentId={agentId} bindingId={String(runnerSchemaValue("dotBindingId", ""))} onBinding={id => updateRunnerSchemaValue("dotBindingId", id)} />
@@ -539,7 +541,7 @@ export function CodexLocalConfigFields({
           )}
         </Field>
       )}
-      {runnerManaged && runnerProvider !== "openai_dot" && (
+      {runnerManaged && runnerProvider !== "openai_dot" && runnerProvider !== "grok_bot" && (
         <Field configSection="runPolicy"
           label="Runner lifecycle"
           hint="Turn by turn suspends after each run. Warm keeps the same provider process available between governed runs."
@@ -560,7 +562,7 @@ export function CodexLocalConfigFields({
           />
         </Field>
       )}
-      {runnerManaged && runnerProvider !== "openai_dot" && runnerLifecycleMode === "warm" && (
+      {runnerManaged && runnerProvider !== "openai_dot" && runnerProvider !== "grok_bot" && runnerLifecycleMode === "warm" && (
         <Field configSection="runPolicy"
           label="Warm idle timeout (ms)"
           hint="After this much inactivity, runnerd checkpoints and suspends the provider session. The maximum is 24 hours."
@@ -822,7 +824,7 @@ export function CodexLocalConfigFields({
           )}
         </>
       )}
-      {runnerProvider !== "openai_dot" && <LocalWorkspaceRuntimeFields
+      {runnerProvider !== "openai_dot" && runnerProvider !== "grok_bot" && <LocalWorkspaceRuntimeFields
         isCreate={isCreate}
         values={values}
         set={set}

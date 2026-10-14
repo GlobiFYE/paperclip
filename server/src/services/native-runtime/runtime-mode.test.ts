@@ -50,6 +50,35 @@ describe("resolveNativeRuntimeMode", () => {
     })).toMatchObject({ kind: "native", profile: { backend: "codex_app_server" } });
   });
 
+  it.each([
+    [false, false],
+    [false, true],
+    [true, false],
+  ])("retains the Grok Bot gate with runner enabled=%s and Grok enabled=%s", (enabled, grokEnabled) => {
+    expect(() => resolveNativeRuntimeMode({
+      ...eligible,
+      enabled,
+      grokEnabled,
+      adapterConfig: {
+        provider: "grok_bot",
+        externalBindingId: "00000000-0000-4000-8000-000000000001",
+        allowUnmeteredProvider: true,
+      },
+    })).toThrow(expect.objectContaining({ code: "paperclip_runner_grok_disabled" }));
+  });
+
+  it("admits a bound Grok Bot when its existing experimental gates are enabled", () => {
+    expect(resolveNativeRuntimeMode({
+      ...eligible,
+      grokEnabled: true,
+      adapterConfig: {
+        provider: "grok_bot",
+        externalBindingId: "00000000-0000-4000-8000-000000000001",
+        allowUnmeteredProvider: true,
+      },
+    })).toMatchObject({ kind: "native", profile: { backend: "grok_bot_mcp" } });
+  });
+
   it("still rejects experimental providers while the rollout flag is disabled", () => {
     expect(() => resolveNativeRuntimeMode({
       ...eligible,

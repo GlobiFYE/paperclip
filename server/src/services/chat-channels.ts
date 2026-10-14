@@ -1,3 +1,9 @@
+import { initializeGitHubWebhookRuntime } from "./chat-channels/github/webhook-runtime.js";
+import { githubInboundTaskTitle, githubInboundCommentText, githubAssignedAgentRequiresLowTrust, retainGitHubDeliveryAuthority, retainGitHubReviewReceipt } from "./chat-channels/github/task-preparation.js";
+import { applyChatTaskReviewContainment } from "./chat-channels/inbound/task-trust.js";
+import { photonControlTargetsConversation, photonReplyMetadata, recordPhotonInboundActivity } from "./chat-channels/imessage-photon/messages.js";
+import { deferTeamsSetupReply } from "./chat-channels/microsoft-teams/setup-replies.js";
+import { slackOrphanFollowUp, stripSlackTitleMentions } from "./chat-channels/slack/messages.js";
 import { createChatPublicationResolution } from "./chat-channels/publications/resolution.js";
 import { createChatPublicationRequests } from "./chat-channels/publications/requests.js";
 import { createTeamsBoardSendPreparation } from "./chat-channels/microsoft-teams/board-send-preparation.js";
@@ -18,7 +24,7 @@ import { createMessageResourceAdmission } from "./chat-channels/inbound/resource
 import type { DiscordGatewayOwnership } from "./chat-channels/runtime-types.js";
 import { createInboundAdmission } from "./chat-channels/inbound/admission.js";
 import { createInboundEnvelope } from "./chat-channels/inbound/envelope.js";
-import { sameTeamsThreadIdentity, durableExternalThreadIdentity, teamsThreadRootMessageId, canonicalProviderResourceId, nonDirectDestinationAllowed, linearControlCommand, actionThreadMatchesConversation } from "./chat-channels/inbound/surfaces.js";
+import { sameTeamsThreadIdentity, durableExternalThreadIdentity, canonicalProviderResourceId, nonDirectDestinationAllowed, linearControlCommand, actionThreadMatchesConversation } from "./chat-channels/inbound/surfaces.js";
 import { createChatInboundAuthority } from "./chat-channels/inbound/authorization.js";
 import { createTeamsRoutes } from "./chat-channels/microsoft-teams/routes.js";
 import type { LiveInboundMessage } from "./chat-channels/runtime-types.js";
@@ -49,7 +55,7 @@ import { createSlackTaskAuthorityRegistration } from "./chat-channels/slack/task
 import { createGitHubPublicationPolicy } from "./chat-channels/github/publication-policy.js";
 import { createTelegramAttachmentFailure } from "./chat-channels/telegram/attachment-failure.js";
 import { createSlackCommands } from "./chat-channels/slack/commands.js";
-import { createTelegramCommands, telegramGuidanceCommand } from "./chat-channels/telegram/commands.js";
+import { createTelegramCommands, telegramGuidanceCommand, telegramGuidanceResponse, telegramForumControlResponse } from "./chat-channels/telegram/commands.js";
 import { createTeamsFileDelivery } from "./chat-channels/microsoft-teams/file-delivery.js";
 import { createGitHubSetupSecret } from "./chat-channels/github/setup-secret.js";
 import { createSlackInventory } from "./chat-channels/slack/inventory.js";
@@ -91,20 +97,19 @@ import { createChatPublicationReplacement } from "./chat-channels/publication-re
 import { createChatIdentityLinks } from "./chat-channels/identity-links.js";
 import { createChatResourceReconciliation } from "./chat-channels/resource-reconciliation.js";
 
-import { slackResourceLabelIsFallback } from "./chat-channels/slack/resources.js";
+import { scheduleSlackLifecycleResourceHydration } from "./chat-channels/slack/resources.js";
 
 import {
   MAX_INBOUND_TEXT,
   stableExternalPrincipalId,
 } from "./chat-channels/message-lifecycle.js";
-import { telegramLifecycleEventFromPayload, isTelegramEditedMessageRaw, isTelegramMigrationRaw, telegramZeroMessageId } from "./chat-channels/telegram/messages.js";
+import { telegramLifecycleEventFromPayload, telegramIgnoresInboundMessage } from "./chat-channels/telegram/messages.js";
 
 import {
-  microsoftTeamsLifecycleEventFromPayload,
+  microsoftTeamsLifecycleEventFromPayload, teamsOrphanFollowUp, teamsAttachmentReferenceText,
 } from "./chat-channels/microsoft-teams/messages.js";
 import {
-  type GitHubLifecycleEvent,
-  githubLifecycleEventFromRequest,
+  githubSupplementalLifecycleFromRequest,
 } from "./chat-channels/github/messages.js";
 import { nextChatActionAt } from "./chat-action-work.js";
 import type { ScheduledChatAction } from "./chat-work-notifications.js";
@@ -126,12 +131,9 @@ import { canPublishIssueToChatAudience } from "./authorization.js";
 
 import { buildChatCommunicationGuidance } from "./chat-communication-guidance.js";
 import { assertChatTaskCreationAccess, resolveChatExecutionDefaults } from "./chat-execution-defaults.js";
-function githubPolicyRecord(value: unknown): Record<string, unknown> { return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}; }
 
 import { githubReviewCheckService } from "./chat-github-checks.js";
 import { githubAutomaticAdmission } from "./chat-github-events.js";
-import { githubManualMessagePrompt } from "./chat-github-review-policy.js";
-import { chatGitHubReviews } from "@paperclipai/db";
 import type { GitHubReviewEventContext, GitHubIssueEventContext, GitHubReviewPolicy } from "@paperclipai/shared";
 import { githubChatReviewService } from "./chat-github-reviews.js";
 import { githubResponseCommentService } from "./chat-github-response-comments.js";
@@ -173,8 +175,6 @@ import type { ChatEventKind, ChatEndpointSetupState, ChatProvider, ExternalChann
 import {
   isUuidLike,
   LOW_TRUST_REVIEW_PRESET,
-  LOW_TRUST_REVIEW_PRESET_VERSION,
-  LOW_TRUST_REVIEW_RAW_OUTPUT_DISPOSITION,
 } from "@paperclipai/shared";
 
 import {
@@ -217,9 +217,6 @@ import {
   readRegisteredDiscordCommandRegistration,
 } from "./chat-discord-command-registration-store.js";
 
-import {
-  parseSlackSessionStop,
-} from "./chat-slack-sessions.js";
 
 import {
   parseChatProviderLifecycle,
@@ -461,8 +458,7 @@ export interface ChatChannelServiceOptions {
 }
 
 function safeTitle(text: string, fallback: string): string {
-  const line = text
-    .replace(/<@[A-Z0-9]+>/gi, "")
+  const line = stripSlackTitleMentions(text)
     .replace(/@[\w.-]+(?:\[bot\])?/gi, "")
     .trim()
     .split(/\r?\n/)[0];
@@ -890,7 +886,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
   });
   const { handleTelegramSlashCommand } = createTelegramCommands({ runtime, runtimeFor, handleSdkMessage });
   const { stageGitHubWebhookIngress, githubIngressAcceptedResponse, processGitHubWebhookIngress, processFailedGitHubWebhookDeliveries, processPendingGitHubWebhookIngress } = createGitHubWebhookIngress(db, { endpointRecord, runtimeContextForRecord, resolveCredentialRefs, runtimeGeneration, credentialFingerprint, getWebhookPublicBaseUrl, redactError, handleWebhook, runtimeCallbackEndpoint, fetchImpl, persistence, withCredentialMutationLease, isShuttingDown: () => shuttingDown, get githubWebhookReplayBarrier() { return options.githubWebhookReplayBarrier; }, supportedWebhookEvents: SUPPORTED_GITHUB_WEBHOOK_EVENTS });
-  const { stageSlackSessionStop, processSlackSessionStop, processPendingSlackSessionStops } = createSlackSessionStop(db, { runtimeCallbackEndpoint, lockCurrentPrincipalAuthorization, nonDirectDestinationAllowed, stageAuthorizedTaskControlPublication, getPublicBaseUrl, get heartbeat() { return options.heartbeat; }, redactError });
+  const { stageSlackSessionStop, processSlackSessionStop, processPendingSlackSessionStops, handleSlackSessionStopPayload } = createSlackSessionStop(db, { scheduleMessageProcessing, get deferWebhookProcessing() { return options.deferWebhookProcessing; }, runtimeCallbackEndpoint, lockCurrentPrincipalAuthorization, nonDirectDestinationAllowed, stageAuthorizedTaskControlPublication, getPublicBaseUrl, get heartbeat() { return options.heartbeat; }, redactError });
   const { stageTelegramMaintenance, processTelegramMaintenance, processPendingTelegramMaintenance, processPendingTelegramActions, processTelegramSubscriptionDiscovery, scheduleTelegramSubscriptionDiscovery, hasPendingTelegramSubscriptionDiscovery, hasTelegramStopSubscription, recordTelegramStopSubscription } = createTelegramMaintenance(db, { endpointRecord, runtimeContextForRecord, withCredentialMutationLease, resolveCredentials, clearCredentials, runtimeCallbackEndpoint, getWebhookPublicBaseUrl, fetchImpl, runtimeGeneration, credentialFingerprint, redactError, credentialCheckTimeoutMs: PROVIDER_CREDENTIAL_CHECK_TIMEOUT_MS });
   const { reconcileGitHubWebhookRepository, reconcileProviderResourceRows, listResources, listGitHubRepositories, replaceResources, toggleAllGitHubRepositories, hasNewerProcessedProviderLifecycleEffect, applyProviderAvailability } = createChatResourceReconciliation(db, { endpointRecord, withCredentialMutationLease, runtimeGeneration, maxErrorText: MAX_ERROR_TEXT });
   const { applyGitHubInstallationLifecycle } = createGitHubInstallationLifecycle(db, {
@@ -1432,25 +1428,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     suppressSetupDestinationActivation = false,
     slackSlashControl = false,
   ) {
-    if (
-      endpoint.provider === "telegram" &&
-      (telegramZeroMessageId(message.id) ||
-        (message.raw !== null &&
-          typeof message.raw === "object" &&
-          (message.raw as { message_id?: unknown }).message_id === 0))
-    )
-      return;
-    // The Telegram adapter currently emits edited_message through the normal
-    // message callback with the original message id. Paperclip records that
-    // verified payload through its supplemental message_updated lifecycle
-    // ledger instead; letting it reach normal dedupe would falsely report the
-    // edit as a duplicate provider delivery.
-    if (
-      endpoint.provider === "telegram" &&
-      (isTelegramEditedMessageRaw(message.raw) ||
-        isTelegramMigrationRaw(message.raw))
-    )
-      return;
+    if (endpoint.provider === "telegram" && telegramIgnoresInboundMessage(message)) return;
     if (
       message.author.isMe ||
       message.author.isBot === true ||
@@ -1619,35 +1597,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
 
     try {
       if (admission.provisionalTeamsSetupReply) {
-        const resolutionAt = new Date();
-        const waitForSetupRoot =
-          activeDelivery.attempts <= ORPHAN_FOLLOW_UP_MAX_ATTEMPTS;
-        await db.transaction(async (tx) => {
-          await notifyChatDeliveryWork(tx);
-          return tx
-            .update(chatDeliveries)
-            .set(
-              waitForSetupRoot
-                ? {
-                    state: "retry",
-                    nextAttemptAt: new Date(
-                      resolutionAt.getTime() + ORPHAN_FOLLOW_UP_GRACE_MS,
-                    ),
-                    redactedError: "Waiting briefly for an earlier root mention",
-                    updatedAt: resolutionAt,
-                  }
-                : {
-                    state: "filtered",
-                    normalizedEvent: redactedDestinationNormalized,
-                    principalId: null,
-                    nextAttemptAt: null,
-                    processedAt: resolutionAt,
-                    redactedError: "Destination is not enabled in Paperclip",
-                    updatedAt: resolutionAt,
-                  },
-            )
-            .where(eq(chatDeliveries.id, activeDelivery.id));
-        });
+        await deferTeamsSetupReply(db, activeDelivery, redactedDestinationNormalized, ORPHAN_FOLLOW_UP_MAX_ATTEMPTS, ORPHAN_FOLLOW_UP_GRACE_MS);
         return;
       }
       // A committed inbound message link proves that a prior attempt completed
@@ -1890,23 +1840,10 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         destinationAllowed &&
         principalAllowed &&
         activationAllowed;
-      const slackRootMessageId =
-        endpoint.provider === "slack"
-          ? /^slack:[^:]+:(.+)$/.exec(thread.id)?.[1]
-          : null;
-      const teamsRootMessageId =
-        endpoint.provider === "microsoft-teams"
-          ? teamsThreadRootMessageId(thread.id)
-          : null;
       const isPlausibleOrphanFollowUp =
-        endpoint.provider === "github" ||
-        endpoint.provider === "discord" ||
-        (endpoint.provider === "slack" &&
-          Boolean(slackRootMessageId) &&
-          slackRootMessageId !== message.id) ||
-        (endpoint.provider === "microsoft-teams" &&
-          Boolean(teamsRootMessageId) &&
-          teamsRootMessageId !== message.id);
+        endpoint.provider === "github" || endpoint.provider === "discord" ||
+        (endpoint.provider === "slack" && slackOrphanFollowUp(thread.id, message.id)) ||
+        (endpoint.provider === "microsoft-teams" && teamsOrphanFollowUp(thread.id, message.id));
       const setupDestinationCanBeEnabledByEarlierMention =
         (endpoint.provider === "github" ||
           endpoint.provider === "discord" ||
@@ -2022,19 +1959,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           ? photonReplyReference(message.raw)
           : null;
       if (controlCommand && photonQuote) {
-        const source = await db
-          .select({ conversationId: chatMessageLinks.conversationId })
-          .from(chatMessageLinks)
-          .where(
-            and(
-              eq(chatMessageLinks.companyId, endpoint.companyId),
-              eq(chatMessageLinks.endpointId, endpoint.id),
-              eq(chatMessageLinks.providerMessageId, photonQuote.guid),
-            ),
-          )
-          .limit(1)
-          .then((rows) => rows[0]);
-        if (!source || source.conversationId !== existingConversation?.id) {
+        if (!(await photonControlTargetsConversation(db, endpoint, photonQuote.guid, existingConversation?.id))) {
           await db.transaction(async (tx) => {
             await notifyChatDeliveryWork(tx);
             return tx
@@ -2067,12 +1992,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
                 )
                 .then((rows) => rows[0]?.name ?? "this agent")
             : null;
-        const responseText =
-          guidanceCommand === "start"
-            ? `Send a direct message to start work with ${assignedAgentName}. In a group, use /task@${endpoint.botUsername ?? "your_bot"} followed by your request. Use /status, /new, or /close to manage the active task in this chat.`
-            : guidanceCommand === "task"
-              ? `Please include a request after /task@${endpoint.botUsername ?? "your_bot"}.`
-              : `Available commands: /task@${endpoint.botUsername ?? "your_bot"} followed by your request, /status, /new, and /close.`;
+        const responseText = telegramGuidanceResponse(guidanceCommand, endpoint.botUsername, assignedAgentName);
         const publicationBinding =
           existingConversation && existingIssue
             ? { conversation: existingConversation, issue: existingIssue }
@@ -2169,13 +2089,11 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
               : taskLabel
             : controlCommand === "new"
               ? isTelegramForumTopic
-                ? existingIssue
-                  ? `${taskLabel} stays bound to this forum topic. Open a new Telegram forum topic to start a new Paperclip task.`
-                  : "Open a new Telegram forum topic to start a new Paperclip task."
+                ? telegramForumControlResponse("new", taskLabel, Boolean(existingIssue), Boolean(existingConversation))
                 : "Send your request to start a new Paperclip task."
               : existingConversation
                 ? isTelegramForumTopic
-                  ? "This chat conversation is closed. A later message here will continue the same Paperclip task."
+                  ? telegramForumControlResponse("close", taskLabel, Boolean(existingIssue), true)
                   : "This chat conversation is closed. Send another message to start a new task."
                 : "No task is active. Send a message to start one.";
         const publicationBinding =
@@ -2296,9 +2214,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
             taskEndpoint.companyId,
             {
               title: safeTitle(
-                githubAutomatic
-                  ? `PR #${githubAutomatic.context.pullNumber}: ${githubAutomatic.context.title}`
-                  : githubIssue ? `GitHub issue #${githubIssue.context.issueNumber}: ${githubIssue.context.title}` : message.text,
+                githubInboundTaskTitle(message.text, githubAutomatic, githubIssue),
                 `${PROVIDER_LABELS[taskEndpoint.provider]} conversation`,
               ),
               description: `Started from ${PROVIDER_LABELS[taskEndpoint.provider]}: ${resource.label}`,
@@ -2364,54 +2280,9 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
                 .where(eq(issues.id, conversation.issueId))
                 .then((rows) => rows[0] ?? null);
         if (!issue) throw notFound("Bound task not found");
-          const [assignedAgentTrust] = taskEndpoint.provider === "github" ? await taskTx.select({ permissions: agents.permissions }).from(agents).where(and(eq(agents.companyId, taskEndpoint.companyId), eq(agents.id, taskEndpoint.assignedAgentId))) : [];
-        if (!taskUserId || ((githubAutomatic || githubIssue) && !principalResolution.userId) || assignedAgentTrust?.permissions?.trustPreset === LOW_TRUST_REVIEW_PRESET) {
-            const reviewPreset = {
-              id: LOW_TRUST_REVIEW_PRESET,
-              version: LOW_TRUST_REVIEW_PRESET_VERSION,
-              rawOutputDisposition: LOW_TRUST_REVIEW_RAW_OUTPUT_DISPOSITION,
-            } as const;
-            await taskTx
-              .update(issues)
-              .set({
-                sourceTrust: {
-                  preset: LOW_TRUST_REVIEW_PRESET,
-                  disposition: "quarantined",
-                  sourceIssueId: issue.id,
-                },
-                executionPolicy: {
-                  mode: "normal",
-                  commentRequired: true,
-                  stages: [],
-                  ...issue.executionPolicy,
-                  reviewPreset,
-                  authorizationPolicy: {
-                    ...githubPolicyRecord(issue.executionPolicy?.authorizationPolicy),
-                    trustPreset: LOW_TRUST_REVIEW_PRESET,
-                    reviewPreset,
-                    trustBoundary: {
-                      mode: LOW_TRUST_REVIEW_PRESET,
-                      companyId: endpoint.companyId,
-                      rootIssueId: issue.id,
-                      issueIds: [issue.id],
-                      allowedAgentIds: [endpoint.assignedAgentId],
-                      allowedToolClasses: [
-                        "git.read",
-                        "github.pr.read",
-                        "tests.local",
-                      ],
-                      ...githubPolicyRecord(githubPolicyRecord(issue.executionPolicy?.authorizationPolicy)?.trustBoundary),
-                    },
-                  },
-                },
-                updatedAt: new Date(),
-              })
-              .where(
-                and(
-                  eq(issues.id, issue.id),
-                  eq(issues.companyId, endpoint.companyId),
-                ),
-              );
+        const githubAgentRequiresLowTrust = taskEndpoint.provider === "github" && await githubAssignedAgentRequiresLowTrust(taskTx, taskEndpoint);
+        if (!taskUserId || ((githubAutomatic || githubIssue) && !principalResolution.userId) || githubAgentRequiresLowTrust) {
+          await applyChatTaskReviewContainment(taskTx, endpoint, issue);
           }
 
         if (issue.status === "done" || issue.status === "cancelled") {
@@ -2425,19 +2296,12 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           );
         }
         const body =
-          (githubManual ? githubManualMessagePrompt({
-            event: githubManual.event,
-            policy: githubManual.policy,
-            repository: resource.providerResourceId,
-            thread: thread.id,
-            sender: { id: principalResolution.principal.externalId, login: principalResolution.principal.handle },
-            message: message.text,
-          }) : message.text.trim()) ||
+          githubInboundCommentText({ manual: githubManual, repository: resource.providerResourceId, thread: thread.id, sender: { id: principalResolution.principal.externalId, login: principalResolution.principal.handle }, message: message.text }) ||
           (message.attachments.length > 0
             ? taskEndpoint.provider === "microsoft-teams" &&
               !thread.isDM &&
               nativeInboundAttachments.length === 0
-              ? `Shared ${message.attachments.length} Microsoft Teams file reference${message.attachments.length === 1 ? "" : "s"}.${providerUrl ? ` Open in Microsoft Teams: ${providerUrl}` : ""}`
+              ? teamsAttachmentReferenceText(message.attachments.length, providerUrl)
               : `Shared ${message.attachments.length} file${message.attachments.length === 1 ? "" : "s"}.`
             : taskEndpoint.provider === "slack" && (trigger === "mention" || message.isMention === true)
               ? "Started a conversation by mentioning the agent."
@@ -2475,26 +2339,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
                 {
                   title: `${PROVIDER_LABELS[endpoint.provider]} sender`,
                   rows: [
-                    ...(endpoint.provider === "imessage-photon" &&
-                    photonReplyReference(message.raw)
-                      ? [
-                          {
-                            type: "key_value" as const,
-                            label: "Reply to message",
-                            value: photonReplyReference(message.raw)!.guid,
-                          },
-                          ...(photonReplyReference(message.raw)!.part
-                            ? [
-                                {
-                                  type: "key_value" as const,
-                                  label: "Reply part",
-                                  value: photonReplyReference(message.raw)!
-                                    .part!,
-                                },
-                              ]
-                            : []),
-                        ]
-                      : []),
+                    ...(endpoint.provider === "imessage-photon" ? photonReplyMetadata(message.raw) : []),
                     {
                       type: "key_value",
                       label: "Name",
@@ -2573,17 +2418,10 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           })
           .where(eq(toolConnections.id, taskEndpoint.connectionId));
         if (endpoint.provider === "github") {
-          const guest = !principalResolution.userId;
-          await taskTx.update(chatDeliveries).set({ normalizedEvent: sql`${chatDeliveries.normalizedEvent} || ${JSON.stringify({ githubAuthority: { guest, responsibleUserId: taskUserId, sponsorUserId: guest ? taskEndpoint.sponsorUserId : null } })}::jsonb` }).where(eq(chatDeliveries.id, activeDelivery.id));
+          await retainGitHubDeliveryAuthority(taskTx, taskEndpoint, activeDelivery.id, principalResolution.userId, taskUserId);
         }
         if (githubAutomatic) {
-          await taskTx.insert(chatGitHubReviews).values({
-            companyId: endpoint.companyId, endpointId: endpoint.id, issueId: issue.id,
-            repositoryId: githubAutomatic.context.repositoryId, repository: githubAutomatic.context.repository,
-            pullNumber: githubAutomatic.context.pullNumber, headSha: githubAutomatic.context.headSha,
-            deliveryId: activeDelivery.id, configurationRevision: githubAutomatic.revision,
-            policySnapshot: githubAutomatic.policy, event: githubAutomatic.context, state: "queued",
-          }).onConflictDoNothing();
+          await retainGitHubReviewReceipt(taskTx, endpoint, issue.id, activeDelivery.id, githubAutomatic);
         }
         await stageInboundWakeup(taskTx, {
           endpoint: taskEndpoint,
@@ -2594,24 +2432,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           actorUserId: taskUserId,
         });
         if (taskEndpoint.provider === "imessage-photon") {
-          await logActivity(
-            taskTx as Db,
-            {
-              companyId: taskEndpoint.companyId,
-              actorType: taskUserId ? "user" : "system",
-              actorId: taskUserId ?? "chat:imessage-photon",
-              action: "issue.comment_added",
-              entityType: "issue",
-              entityId: issue.id,
-              details: {
-                commentId: comment.id,
-                issueIdentifier: issue.identifier,
-                source: "chat:imessage-photon",
-                endpointId: taskEndpoint.id,
-              },
-            },
-            inboundActivityPublications,
-          );
+          await recordPhotonInboundActivity(taskTx, taskEndpoint, issue, comment.id, taskUserId, inboundActivityPublications);
         }
         return { actorUserId: taskUserId, comment, conversation, issue };
       };
@@ -3155,46 +2976,8 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         effect,
         runtimeContext,
       );
-      if (
-        applied &&
-        endpoint.provider === "slack" &&
-        effect.kind === "resource" &&
-        effect.availability === "available" &&
-        slackResourceLabelIsFallback(effect.providerResourceId, effect.label)
-      ) {
-        const stillAvailable = await db
-          .select({ id: chatEndpointResources.id })
-          .from(chatEndpointResources)
-          .where(
-            and(
-              eq(chatEndpointResources.endpointId, endpoint.id),
-              eq(chatEndpointResources.type, "channel"),
-              eq(
-                chatEndpointResources.providerResourceId,
-                effect.providerResourceId,
-              ),
-              eq(chatEndpointResources.availability, "available"),
-            ),
-          )
-          .limit(1)
-          .then((rows) => rows.length > 0);
-        if (stillAvailable) {
-          scheduleMessageProcessing(async () => {
-            await hydrateSlackResourceLabel(
-              endpoint.id,
-              effect.providerResourceId,
-            ).catch((error) => {
-              logger.warn(
-                {
-                  endpointId: endpoint.id,
-                  providerResourceId: effect.providerResourceId,
-                  error: redactError(error),
-                },
-                "could not hydrate a newly available Slack channel label",
-              );
-            });
-          });
-        }
+      if (applied && endpoint.provider === "slack") {
+        await scheduleSlackLifecycleResourceHydration(db, endpoint, effect, { scheduleMessageProcessing, hydrateSlackResourceLabel, redactError });
       }
     }
   }
@@ -3261,36 +3044,9 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     const githubInspection = provider === "github" ? request.clone() : null;
     recordChatWebhookStage("runtime_requested");
     const runtimePromise = runtimeFor(endpoint);
-    let endpointRuntime: ChatEndpointRuntime;
-    if (githubResponseDeadlineAt !== null) {
-      let timeout: ReturnType<typeof setTimeout> | null = null;
-      try {
-        const outcome = await Promise.race([
-          runtimePromise.then((value) => ({ completed: true as const, value })),
-          new Promise<{ completed: false; value?: never }>((resolve) => {
-            timeout = setTimeout(
-              () => resolve({ completed: false }),
-              Math.max(0, githubResponseDeadlineAt - Date.now()),
-            );
-            timeout.unref?.();
-          }),
-        ]);
-        if (!outcome.completed) {
-          return retryableGitHubWebhookResponse();
-        }
-        endpointRuntime = outcome.value;
-      } catch (error) {
-        logger.warn(
-          { endpointId: endpoint.id, error: redactError(error) },
-          "GitHub runtime initialization failed before durable webhook receipt",
-        );
-        return retryableGitHubWebhookResponse();
-      } finally {
-        if (timeout) clearTimeout(timeout);
-      }
-    } else {
-      endpointRuntime = await runtimePromise;
-    }
+    const initialized = await initializeGitHubWebhookRuntime(endpoint, runtimePromise, githubResponseDeadlineAt, redactError);
+    if (initialized.response) return initialized.response;
+    const endpointRuntime = initialized.runtime;
     recordChatWebhookStage("runtime_ready");
     const runtimeContext = runtimeContexts.get(endpointRuntime as object);
     if (!runtimeContext) {
@@ -3331,26 +3087,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       endpointRuntime.acceptsProviderScope(lifecyclePayload)
     ) {
       if (endpoint.provider === "slack") {
-        const stop = parseSlackSessionStop(
-          lifecyclePayload,
-          endpoint.providerAccountId,
-        );
-        if (stop) {
-          const actionId = await stageSlackSessionStop(
-            endpoint,
-            stop,
-            runtimeContext,
-          );
-          if (actionId) {
-            if (options.deferWebhookProcessing === true) {
-              scheduleMessageProcessing(() =>
-                processSlackSessionStop(actionId),
-              );
-            } else {
-              await processSlackSessionStop(actionId);
-            }
-          }
-        }
+        await handleSlackSessionStopPayload(endpoint, lifecyclePayload, runtimeContext);
       }
       const effects = parseChatProviderLifecycle({
         provider: endpoint.provider,
@@ -3367,13 +3104,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       await recordSlackWebhookCallback(endpoint, request, slackCallbackInspection, runtimeContext);
     }
     if (githubInspection && response.ok) {
-      let lifecycle: GitHubLifecycleEvent | null = null;
-      try {
-        lifecycle = await githubLifecycleEventFromRequest(githubInspection);
-      } catch {
-        // Ignore only malformed or unsupported supplemental payloads. Once an
-        // event is recognized, its durable persistence failure must escape.
-      }
+      const lifecycle = await githubSupplementalLifecycleFromRequest(githubInspection);
       if (lifecycle) {
         await recordLifecycleDelivery(
           {
