@@ -3,6 +3,7 @@ import {
   heartbeatRuns,
   companyMemberships,
   connectionGrantDelegations,
+  connectionGrantMembers,
   connectionGrants,
   toolConnectionInstalls,
   toolConnections,
@@ -11,9 +12,15 @@ import {
 } from "@paperclipai/db";
 import { and, eq, inArray, or } from "drizzle-orm";
 import { isGitHubDotCom } from "./github-fetch.js";
-import { loadGitHubTokenAccount, recordGitHubTokenAccount } from "./github-token-account.js";
+import {
+  currentGitHubTokenBinding,
+  isGitHubAccountCurrent,
+  loadGitHubTokenAccount,
+  recordGitHubTokenAccount,
+} from "./github-token-account.js";
 import { secretService } from "./secrets.js";
 import { toolAccessService } from "./tool-access.js";
+import { isConnectionGrantAudienceAllowed } from "./tool-gateway.js";
 
 /**
  * Server-side git credentials for managed project checkouts and execution-workspace base
@@ -337,6 +344,42 @@ export function githubIdentitySourceForGrant(grant: Pick<ConnectionGrantRow, "ki
   return grant.kind === "agent" ? "dedicated" : grant.kind === "organization" ? "shared" : "personal";
 }
 
+/** Organization grants whose audience admits the run's responsible person. */
+async function sharedGitHubGrantsForRun(
+  db: Db,
+  companyId: string,
+  organizationGrants: ConnectionGrantRow[],
+  responsibleUserId: string | null,
+): Promise<ConnectionGrantRow[]> {
+  if (organizationGrants.length === 0) return [];
+  const members = await db
+    .select({ grantId: connectionGrantMembers.grantId, subjectId: connectionGrantMembers.subjectId })
+    .from(connectionGrantMembers)
+    .where(and(
+      eq(connectionGrantMembers.companyId, companyId),
+      inArray(connectionGrantMembers.grantId, organizationGrants.map((grant) => grant.id)),
+      eq(connectionGrantMembers.subjectType, "user"),
+    ));
+  const responsibleIsActiveMember = responsibleUserId
+    ? Boolean(await db
+        .select({ id: companyMemberships.id })
+        .from(companyMemberships)
+        .where(and(
+          eq(companyMemberships.companyId, companyId),
+          eq(companyMemberships.principalType, "user"),
+          eq(companyMemberships.principalId, responsibleUserId),
+          eq(companyMemberships.status, "active"),
+        ))
+        .limit(1)
+        .then((rows) => rows[0]))
+    : false;
+  return organizationGrants.filter((grant) => isConnectionGrantAudienceAllowed(
+    members.filter((member) => member.grantId === grant.id).map((member) => member.subjectId),
+    responsibleUserId,
+    responsibleIsActiveMember,
+  ));
+}
+
 export async function resolveManagedGitHubIdentitySelection(
   db: Db,
   companyId: string,
@@ -392,11 +435,16 @@ export async function resolveManagedGitHubIdentitySelection(
   const dedicated = context.agentId
     ? grants.filter((grant) => grant.kind === "agent" && grant.subjectAgentId === context.agentId)
     : [];
-  // A shared company identity is installed for the company or for this agent
-  // (the connection filter above), so every eligible organization grant was
-  // deliberately offered to this run. It is the last resort, after any person
-  // or agent identity.
-  const shared = grants.filter((grant) => grant.kind === "organization");
+  // A shared company identity is the last resort, after any person or agent
+  // identity. Installing its connection is not enough: like every other
+  // organization-grant consumer, the run's responsible person must be in the
+  // grant's audience (an empty audience means everyone) and an active member.
+  const shared = await sharedGitHubGrantsForRun(
+    db,
+    companyId,
+    grants.filter((grant) => grant.kind === "organization" && grant.isDefault),
+    context.responsibleUserId ?? null,
+  );
   // Connections are already restricted above to the owner-selected install
   // targets. Within that consent boundary the server-resolved responsible user
   // is authoritative; standing delegation is only an ownerless-run fallback.
@@ -593,6 +641,9 @@ export async function resolveManagedGitHubCredential(
       heartbeatRunId: context.heartbeatRunId ?? null,
       responsibleUserId: context.responsibleUserId ?? null,
     };
+    // Read a personal access token's version before its value, so the account
+    // recorded below is bound to a version no newer than the token it came from.
+    const tokenBinding = oauthRef ? null : await currentGitHubTokenBinding(db, companyId, accessRef.secretId);
     let token: string;
     if (grant.kind === "user") {
       if (!grant.subjectUserId || !secrets.resolveUserSecretValue) {
@@ -620,11 +671,18 @@ export async function resolveManagedGitHubCredential(
     // A personal access token connected before its account was recorded learns it
     // now, once, so managed commits are authored as that account. Best effort: a
     // GitHub outage must not block the clone or push the token itself can perform.
-    let account = githubAccountForGrant(grant);
+    // A recorded token account is trusted only for the exact token version it
+    // was read with; after a rotation it is read again.
+    const recordedTokenAccount = grant.providerTenant?.githubAccount;
+    let account = oauthRef
+      ? githubAccountForGrant(grant)
+      : isGitHubAccountCurrent(recordedTokenAccount, tokenBinding)
+        ? { userId: recordedTokenAccount.userId, login: recordedTokenAccount.login }
+        : null;
     if (!account && !oauthRef) {
       try {
         const loaded = await loadGitHubTokenAccount(token);
-        await recordGitHubTokenAccount(db, grant, loaded);
+        await recordGitHubTokenAccount(db, grant, loaded, tokenBinding);
         account = { userId: loaded.userId, login: loaded.login };
       } catch {
         // Keep the credential; commits then need a configured repository identity.

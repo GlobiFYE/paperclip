@@ -19,7 +19,7 @@ import { COGNEE_STDIO_TEMPLATE, cogneeCloudUrl } from "./cognee-connection.js";
 import { isMemoryConnectorId, isRemoteMcpConnectorMethod, connectionPurposeTransportSchema } from "@paperclipai/shared";
 import { instanceSettingsService } from "./instance-settings.js";
 import { githubBotRequest } from "./chat-github-client.js";
-import { loadGitHubTokenAccount, recordGitHubTokenAccount } from "./github-token-account.js";
+import { currentGitHubTokenBinding, loadGitHubTokenAccount, recordGitHubTokenAccount } from "./github-token-account.js";
 import { syncConnectionCredentialBindings } from "./connection-credential-bindings.js";
 import {
   emitConnectionCreated,
@@ -12978,6 +12978,7 @@ export function toolAccessService(
       current: typeof connectionGrants.$inferSelect;
     } | null = null;
     let personalPublicSetupEstablished = false;
+    let replacedGrantSecretRefs: CreateToolConnection["credentialSecretRefs"] = [];
 
     try {
       const credentialFields =
@@ -13409,14 +13410,10 @@ export function toolAccessService(
           if (revivedConnectionPrevious) {
             revivedGrantMutation = { previous: existingGrant ?? null, current: changedGrant };
           }
-          // A new credential replaced the agent's previous one. Delete the old
-          // secret unless something else (another grant, connection, or
-          // consumer) still resolves it, so replaced tokens don't linger.
-          await removeReplacedGrantSecrets(
-            connectionRow,
-            existingGrant?.credentialSecretRefs ?? [],
-            credentialSecretRefs,
-          );
+          // A new credential replaced the agent's previous one. Its old
+          // secret is deleted only after setup succeeds (below): a failed
+          // setup rolls the grant back to it.
+          replacedGrantSecretRefs = existingGrant?.credentialSecretRefs ?? [];
           await db.insert(toolAccessAuditEvents).values({
             companyId,
             connectionId: connectionRow.id,
@@ -13661,6 +13658,14 @@ export function toolAccessService(
         credentialSecretRefs,
         credentialValues,
       );
+      // Setup is verified, so a credential the agent's grant no longer uses can
+      // go, unless something else (another grant, connection, or consumer)
+      // still resolves it.
+      await removeReplacedGrantSecrets(
+        connectionRow,
+        replacedGrantSecretRefs,
+        credentialSecretRefs,
+      ).catch(() => undefined);
       const [application] = await db
         .select()
         .from(toolApplications)
@@ -14453,9 +14458,11 @@ export function toolAccessService(
       grant.credentialSecretRefs.some((ref) => ref.secretId === tokenRef.secretId),
     );
     if (holders.length === 0) return;
+    // The token was just written, so its current version is this token's.
+    const binding = await currentGitHubTokenBinding(db, connection.companyId, tokenRef.secretId);
     const account = await loadGitHubTokenAccount(token).catch(() => null);
     for (const grant of holders) {
-      await recordGitHubTokenAccount(db, grant, account).catch(() => null);
+      await recordGitHubTokenAccount(db, grant, account, binding).catch(() => null);
     }
   }
 

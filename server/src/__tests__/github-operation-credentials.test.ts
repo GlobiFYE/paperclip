@@ -12,6 +12,7 @@ import {
   companies,
   companyMemberships,
   companySecrets,
+  connectionGrantMembers,
   connectionGrants,
   createDb,
   heartbeatRuns,
@@ -191,6 +192,8 @@ const support = await getEmbeddedPostgresTestSupport();
                   userId: user,
                   login: user,
                   verifiedAt: new Date().toISOString(),
+                  secretId,
+                  secretVersion: 1,
                 },
               }
           : {
@@ -266,6 +269,8 @@ const support = await getEmbeddedPostgresTestSupport();
             userId: login,
             login,
             verifiedAt: new Date().toISOString(),
+            secretId,
+            secretVersion: 1,
           },
         },
       });
@@ -769,6 +774,70 @@ const support = await getEmbeddedPostgresTestSupport();
         source: "personal",
         login: "A",
       });
+    });
+    it("re-reads a token's account after the token is rotated, so an old account never authors commits", async () => {
+      const input = await seed();
+      const pat = await grant(input, "A", false, { pat: true });
+      // Reconnect rotated the secret in place; the recorded account is for v1.
+      await db
+        .update(companySecrets)
+        .set({ latestVersion: 2 })
+        .where(eq(companySecrets.id, pat.secretId));
+      const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+        Response.json({ id: 777, login: "rotated-a" }),
+      );
+      try {
+        const result = await resolveGitHubOperationCredentials(db, input);
+        expect(result).toMatchObject({ status: "available", login: "rotated-a" });
+        expect(result.env.GIT_AUTHOR_EMAIL).toBe(
+          "777+rotated-a@users.noreply.github.com",
+        );
+        expect(fetchSpy).toHaveBeenCalledTimes(1);
+        const [stored] = await db
+          .select()
+          .from(connectionGrants)
+          .where(eq(connectionGrants.id, pat.id));
+        expect(stored!.providerTenant?.githubAccount).toMatchObject({
+          userId: "777",
+          secretId: pat.secretId,
+          secretVersion: 2,
+        });
+      } finally {
+        fetchSpy.mockRestore();
+      }
+    });
+    it("gives shared company GitHub only to people in its audience", async () => {
+      const input = await seed();
+      const shared = await sharedGrant(input, "company-bot");
+      await db.insert(connectionGrantMembers).values({
+        companyId: input.companyId,
+        grantId: shared.id,
+        subjectType: "user",
+        subjectId: "B",
+      });
+      // The responsible person (A) is not in the audience: no credential.
+      const denied = await resolveGitHubOperationCredentials(db, input);
+      expect(denied.env).toEqual({});
+      expect(denied.status).not.toBe("available");
+
+      await db.insert(connectionGrantMembers).values({
+        companyId: input.companyId,
+        grantId: shared.id,
+        subjectType: "user",
+        subjectId: "A",
+      });
+      expect(await resolveGitHubOperationCredentials(db, input)).toMatchObject({
+        status: "available",
+        source: "shared",
+        login: "company-bot",
+      });
+
+      // A run with no responsible person never gets a restricted grant.
+      await db
+        .update(runIdentityContexts)
+        .set({ cause: "company_default" })
+        .where(eq(runIdentityContexts.runId, input.runId));
+      expect((await resolveGitHubOperationCredentials(db, input)).env).toEqual({});
     });
     it("gives a company-default run the shared company GitHub, never the default person's", async () => {
       const input = await seed();

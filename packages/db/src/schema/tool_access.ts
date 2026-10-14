@@ -241,6 +241,9 @@ export const connectionGrants = pgTable(
         login: string;
         avatarUrl?: string;
         verifiedAt: string;
+        /** The token secret and version this account was read with; a rotation invalidates it. */
+        secretId?: string;
+        secretVersion?: number;
       };
     }>(),
     credentialSecretRefs: jsonb("credential_secret_refs").$type<ToolCredentialSecretRef[]>().notNull().default([]),

@@ -1,5 +1,5 @@
 import { and, eq } from "drizzle-orm";
-import { connectionGrants, type Db } from "@paperclipai/db";
+import { companySecrets, connectionGrants, type Db } from "@paperclipai/db";
 
 export type GitHubTokenAccount = {
   userId: string;
@@ -7,6 +7,44 @@ export type GitHubTokenAccount = {
   avatarUrl?: string;
   verifiedAt: string;
 };
+
+/** The exact token an account was read with: its secret and that secret's version. */
+export type GitHubTokenBinding = { secretId: string; secretVersion: number };
+
+type StoredGitHubAccount = NonNullable<
+  NonNullable<typeof connectionGrants.$inferSelect["providerTenant"]>["githubAccount"]
+>;
+
+/**
+ * The current version of a token's secret. Read it *before* resolving the token value,
+ * so a rotation in between can only make a recorded account look stale (and be read
+ * again), never make an old account look current.
+ */
+export async function currentGitHubTokenBinding(
+  db: Pick<Db, "select">,
+  companyId: string,
+  secretId: string,
+): Promise<GitHubTokenBinding | null> {
+  const [secret] = await db
+    .select({ latestVersion: companySecrets.latestVersion })
+    .from(companySecrets)
+    .where(and(eq(companySecrets.companyId, companyId), eq(companySecrets.id, secretId)))
+    .limit(1);
+  return secret ? { secretId, secretVersion: secret.latestVersion } : null;
+}
+
+/** Whether a recorded account belongs to exactly this token version. */
+export function isGitHubAccountCurrent(
+  account: StoredGitHubAccount | undefined,
+  binding: GitHubTokenBinding | null,
+): account is StoredGitHubAccount {
+  return Boolean(
+    account
+      && binding
+      && account.secretId === binding.secretId
+      && account.secretVersion === binding.secretVersion,
+  );
+}
 
 const GITHUB_LOGIN_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9-]{0,38}$/;
 /** Short on purpose: this runs while a run waits for its git credential. */
@@ -71,8 +109,10 @@ export async function loadGitHubTokenAccount(
 }
 
 /**
- * Store the token's account on its grant, keeping every other provider-tenant field.
- * `null` clears a recorded account (a replaced token may belong to someone else); the
+ * Store the token's account on its grant, bound to the token version it was read with,
+ * keeping every other provider-tenant field. A stale write (an older lookup finishing
+ * after a rotation) is harmless: its binding no longer matches, so the next use reads
+ * the account again. `null` clears a recorded account (a replaced token may belong to someone else); the
  * account is then learned again on the token's next use. `updatedAt` is left alone:
  * setup uses it for optimistic concurrency and this is derived metadata.
  */
@@ -80,11 +120,13 @@ export async function recordGitHubTokenAccount(
   db: Pick<Db, "update">,
   grant: Pick<typeof connectionGrants.$inferSelect, "id" | "companyId" | "providerTenant">,
   account: GitHubTokenAccount | null,
+  binding: GitHubTokenBinding | null,
 ) {
   const { githubAccount: _previous, ...providerTenant } = grant.providerTenant ?? {};
+  const recorded = account && binding ? { ...account, ...binding } : null;
   const [updated] = await db
     .update(connectionGrants)
-    .set({ providerTenant: account ? { ...providerTenant, githubAccount: account } : providerTenant })
+    .set({ providerTenant: recorded ? { ...providerTenant, githubAccount: recorded } : providerTenant })
     .where(and(eq(connectionGrants.id, grant.id), eq(connectionGrants.companyId, grant.companyId)))
     .returning();
   return updated ?? null;

@@ -248,6 +248,8 @@ export const connectionGrantSchema = z.object({
       login: z.string().trim().min(1).max(100),
       avatarUrl: z.string().url().max(2000).optional(),
       verifiedAt: z.string().datetime(),
+      secretId: z.string().guid().optional(),
+      secretVersion: z.number().int().positive().optional(),
     }).optional(),
   }).nullable(),
   credentialSecretRefs: z.array(toolCredentialSecretRefSchema),

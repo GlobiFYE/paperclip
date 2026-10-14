@@ -272,6 +272,9 @@ export interface ConnectionGrant {
       login: string;
       avatarUrl?: string;
       verifiedAt: string;
+      /** The token secret and version this account was read with; a rotation invalidates it. */
+      secretId?: string;
+      secretVersion?: number;
     };
   } | null;
   credentialSecretRefs: ToolCredentialSecretRef[];
