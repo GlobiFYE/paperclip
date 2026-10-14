@@ -635,6 +635,36 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
     expect(await service.nextTerminalWorkspaceSweepAt()).toBeNull();
   });
 
+  it("retries unread rows from a failed full page before it can park recovery", async () => {
+    const seed = await seedTerminalWorkspace({ mergedPr: true });
+    await seedTerminalWorkspace({ childStatus: "todo" });
+    await db.update(executionWorkspaces).set({ updatedAt: new Date("2019-01-01") })
+      .where(eq(executionWorkspaces.id, seed.executionWorkspaceId));
+    const service = executionWorkspaceService(db, {
+      workspaceReaperCooldownDays: 0,
+      resolvePullRequestDetails: async () => ({ state: "merged", headRef: "PAP-16015-delivery", headSha: seed.headSha }),
+    });
+    const original = db.select.bind(db);
+    let fail = true;
+    const select = vi.spyOn(db, "select").mockImplementation(((fields: any) => {
+      if (fail && fields?.completedAt && fields?.cancelledAt) {
+        fail = false;
+        throw new Error("task tree read failed");
+      }
+      return original(fields);
+    }) as typeof db.select);
+    try {
+      await expect(service.sweepTerminalWorkspaces(1)).rejects.toThrow("task tree read failed");
+      expect(service.hasTerminalWorkspaceSweepContinuation()).toBe(true);
+      expect(await service.sweepTerminalWorkspaces(1)).toMatchObject({ checked: 1, archived: 1 });
+      expect(await service.sweepTerminalWorkspaces(1)).toMatchObject({ checked: 1, skippedNonTerminalTree: 1 });
+      expect(await service.sweepTerminalWorkspaces(1)).toMatchObject({ checked: 0 });
+      expect(service.hasTerminalWorkspaceSweepContinuation()).toBe(false);
+      expect(await service.nextTerminalWorkspaceSweepAt()).toBeNull();
+      await expect(fs.access(seed.worktreePath)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally { select.mockRestore(); }
+  });
+
   it("signals real issue producers before writes and waits for the outer transaction", async () => {
     const seed = await seedTerminalWorkspace();
     const events: string[] = [];

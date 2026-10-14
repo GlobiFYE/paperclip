@@ -2885,6 +2885,8 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           clearedStaleReopenPending: 0,
         };
       }
+      const previousCursor = terminalSweepCursor;
+      const previousBoundary = terminalSweepBoundary;
       terminalSweepInProgress = true;
       try {
       const baseCandidateFilter = and(
@@ -3261,6 +3263,11 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         }
       }
       return result;
+      } catch (error) {
+        terminalSweepCursor = previousCursor;
+        terminalSweepBoundary = previousBoundary;
+        terminalSweepRescanRequested = true;
+        throw error;
       } finally {
         terminalSweepInProgress = false;
       }
