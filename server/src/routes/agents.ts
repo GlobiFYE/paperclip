@@ -1846,6 +1846,8 @@ export function agentRoutes(
           "OpenAI Dot is experimental and disabled on this instance.",
           { code: "paperclip_runner_dot_disabled" },
         );
+      } else if (asRecord(config)?.provider === "muse") {
+        if (experimental.enableMuse !== true || experimental.enableNativeRunner !== true) throw unprocessable("Muse is experimental and disabled on this instance.", { code: "paperclip_runner_muse_disabled" });
       } else if (experimental.enableNativeRunner !== true) {
         throw unprocessable(
           "Paperclip Runner is experimental and disabled on this instance.",
@@ -1910,7 +1912,7 @@ export function agentRoutes(
     ) {
       return input.nextAdapterConfig;
     }
-    if (input.nextAdapterConfig.provider === "openai_dot") return input.nextAdapterConfig;
+    if (["openai_dot", "muse"].includes(String(input.nextAdapterConfig.provider))) return input.nextAdapterConfig;
     const defaults = paperclipRunnerTransitionConfig(input.previousAdapterType, input.previousAdapterConfig.model, input.nextAdapterConfig.provider);
     if (!["claude_local", "codex_local", "opencode_local"].includes(input.previousAdapterType)
       && !isPaperclipRunnerProvider(input.nextAdapterConfig.provider)) {
@@ -2560,8 +2562,8 @@ export function agentRoutes(
     adapterConfig: Record<string, unknown>,
     path = "adapterConfig",
   ) {
-    if (req.actor.type === "agent" && ["dotAttachmentAccess", "dotWorkspaceAccess", "dotBindingId"].some(key => hasOwn(adapterConfig, key)))
-      throw forbidden("Only an operator can configure Dot attachment access, workspace access, or pairing.");
+    if (req.actor.type === "agent" && ["dotAttachmentAccess", "dotWorkspaceAccess", "dotBindingId", "museBindingId", "museGeneration", "museConnection"].some(key => hasOwn(adapterConfig, key)))
+      throw forbidden("Only an operator can configure external-agent access or pairing.");
     assertNoAgentInstructionsConfigMutation(req, adapterConfig, path);
     assertNoAgentHostWorkspaceCommandMutation(
       req,
@@ -4072,7 +4074,7 @@ export function agentRoutes(
     const existingRollbackProvider = asRecord(existing.adapterConfig)?.provider;
     if (rollbackAdapterType !== existing.adapterType || (rollbackAdapterType === "paperclip_runner"
       && rollbackAdapterConfig.provider !== existingRollbackProvider
-      && (rollbackAdapterConfig.provider === "openai_dot" || existingRollbackProvider === "openai_dot"))) {
+      && (["openai_dot", "muse"].includes(String(rollbackAdapterConfig.provider)) || ["openai_dot", "muse"].includes(String(existingRollbackProvider))))) {
       await assertSelectableAdapterType(rollbackAdapterType, rollbackAdapterConfig);
     }
     assertNoAgentAdapterConfigMutation(req, rollbackAdapterConfig);
@@ -5278,7 +5280,7 @@ export function agentRoutes(
       // selection. Preserve historical edits within the general Runner rollout.
       if (!changingAdapterType && requestedAdapterType === "paperclip_runner"
         && rawEffectiveAdapterConfig.provider !== existingRunnerProvider
-        && (rawEffectiveAdapterConfig.provider === "openai_dot" || existingRunnerProvider === "openai_dot")) {
+        && (["openai_dot", "muse"].includes(String(rawEffectiveAdapterConfig.provider)) || ["openai_dot", "muse"].includes(String(existingRunnerProvider)))) {
         await assertSelectableAdapterType(requestedAdapterType, rawEffectiveAdapterConfig);
       }
       if (
