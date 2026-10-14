@@ -209,10 +209,6 @@ export function isConnectionGrantAudienceAllowed(
 // `tool_timeout` even though the approval succeeded. Give approved executions
 // the full permitted headroom instead.
 const APPROVED_EXECUTION_TIMEOUT_MS = 60_000;
-// GitHub bot tools perform multiple provider requests (each allows 25s),
-// including durable review publication. The 10s generic default can report
-// failure while the review is still being published. Native assigned tools
-// cannot supply a timeout override, so give this provider the bounded headroom.
 const GITHUB_BOT_TOOL_TIMEOUT_MS = 60_000;
 const ACTION_REQUEST_EXECUTION_POLL_MS = 25;
 // Approval execution performs live target, signature, managed-argument, and

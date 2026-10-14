@@ -2573,13 +2573,12 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
           return Response.json({ id: 419, html_url: "https://github.com/checks/419" });
         }
         if (url.includes("/issues/comments/") && init?.method === "PATCH") {
-          // GitHub's own request deadline is 25s. A valid slower response
-          // must not leave the agent with an error while publication succeeds.
           await new Promise(resolve => setTimeout(resolve, delayMs));
         }
         return undefined;
       });
       vi.stubGlobal("fetch", f.providerFetch);
+      onTestFinished(() => { vi.unstubAllGlobals(); });
       const { createToolGatewayService } = await import("../services/tool-gateway.js");
       const gateway = createToolGatewayService(db);
       const session = await gateway.createSession({ companyId: f.companyId, agentId: f.assignedAgentId, runId: f.run.id });
@@ -2590,8 +2589,6 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         coverage: { reviewedPaths: ["src/math.ts"], omittedPaths: [], limitations: [] }, findings: [] };
       const result = await gateway.executeTool({ sessionToken: session.token, tool: tool.name, parameters: assessment, timeoutMs })
         .then(value => ({ value }), error => ({ error }));
-      // Await the durable write even on the broken implementation, both to
-      // demonstrate the contradiction and to leave no work after DB teardown.
       await expect.poll(async () => {
         const [action] = await db.select().from(chatActions).where(and(eq(chatActions.endpointId, f.endpoint.id), eq(chatActions.kind, "github_review_publication")));
         return action?.status;
