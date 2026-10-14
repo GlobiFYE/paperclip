@@ -1,13 +1,3 @@
-/**
- * Integration test: drives the real `executeInSandbox` against a real
- * `cloudflare/sandbox` container-server over its HTTP API.
- *
- * Gated by BRIDGE_IT_BASE_URL (e.g. http://127.0.0.1:38070), pointing at
- * `docker run -p 127.0.0.1:38070:3000 docker.io/cloudflare/sandbox:<version>`. The sandbox
- * double below maps the SDK surface the bridge uses (session exec, readFile,
- * writeFile, deleteFile) onto the container's /api routes, so the shell
- * wrapper, capture files and base64 read-back are exercised for real.
- */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -66,7 +56,6 @@ describe.skipIf(!BASE)("bridge exec against a real cloudflare/sandbox container"
   });
   afterAll(async () => {
     const listing = await run({ command: "sh", args: ["-c", "ls -1 /tmp | grep -c paperclip-bridge || true"] });
-    // Every capture/stdin temp file must have been removed.
     expect(listing.stdout.trim()).toBe("0");
   });
 
@@ -96,7 +85,6 @@ describe.skipIf(!BASE)("bridge exec against a real cloudflare/sandbox container"
         onOutput,
       });
       expect(result.exitCode).toBe(0);
-      // Exactly what packages/adapter-utils/src/execution-target.ts does:
       const payload = result.stdout.split("\0PAPERCLIP_GIT_CONTEXT_V1\0")[1]?.split("\0PAPERCLIP_GIT_CONTEXT_END\0")[0];
       expect(payload).toBeDefined();
       const records = payload!.split("\0");
@@ -145,12 +133,9 @@ describe.skipIf(!BASE)("bridge exec against a real cloudflare/sandbox container"
     });
 
     it(`${mode}: wrapper failure before redirect still reports an error`, async () => {
-      // A cwd that cannot be created (parent is a regular file).
       const result = await run({ command: "pwd", cwd: "/etc/hostname/definitely/missing", onOutput });
       expect(result.exitCode).not.toBe(0);
       expect(`${result.stdout}${result.stderr}`).toMatch(/missing|No such file|Not a directory|File exists/i);
-      // The capture group must short-circuit on a failed `cd`; no attempt to
-      // read exit-code/stderr files that were never written.
       expect(`${result.stdout}${result.stderr}`).not.toMatch(/Illegal number|paperclip-bridge-(rc|err)-/);
     });
   }

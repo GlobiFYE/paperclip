@@ -10,7 +10,6 @@ function b64(value: string): string {
   return Buffer.from(value, "utf8").toString("base64");
 }
 
-/** Minimal sandbox double: readFile serves whatever the test seeds per path. */
 function fakeSandbox(options: {
   exec: ReturnType<typeof vi.fn>;
   files?: Record<string, string>;
@@ -72,15 +71,12 @@ describe("bridge exec", () => {
     expect(commandArg).toContain("PAPERCLIP_TEST_FLAG");
     expect(commandArg).toContain("claude");
     expect(commandArg).toContain("--version");
-    // Non-streaming: plain file redirects, no tee pipeline.
     expect(commandArg).toContain("/tmp/.paperclip-bridge-out-");
     expect(commandArg).toContain("/tmp/.paperclip-bridge-err-");
     expect(commandArg).not.toContain("tee ");
   });
 
   it("returns byte-exact stdout/stderr from the captured files (NUL bytes preserved)", async () => {
-    // What Paperclip's Git-context probe emits, and what the exec pipe
-    // delivers after bash `read` has stripped every NUL.
     const framed = "\0PAPERCLIP_GIT_CONTEXT_V1\0K\0V\0\0PAPERCLIP_GIT_CONTEXT_END\0";
     const lossy = framed.replaceAll("\0", "");
     const files: Record<string, string> = {};
@@ -112,8 +108,6 @@ describe("bridge exec", () => {
     expect(result.stdout).toBe(framed);
     expect(result.stdout.split("\0PAPERCLIP_GIT_CONTEXT_V1\0")[1]?.split("\0PAPERCLIP_GIT_CONTEXT_END\0")[0]).toBe("K\0V\0");
     expect(result.stderr).toBe("warn: héllo ✓\n");
-    // Capture files are cleaned up with the session binding. Non-streaming
-    // mode has no exit-code file in the command, but cleanup still covers it.
     const { out, err } = capturePaths(exec.mock.calls[0]?.[0] as string);
     expect(out).toBeTruthy();
     expect(err).toBeTruthy();
@@ -172,7 +166,6 @@ describe("bridge exec", () => {
       onOutput: expect.any(Function),
     });
     expect(onOutput).toHaveBeenCalledWith("stdout", "hello\n");
-    // Streaming mode tees stdout live but still returns the captured file.
     const commandArg = exec.mock.calls[0]?.[0] as string;
     expect(commandArg).toContain("| tee ");
     expect(commandArg).toContain("/tmp/.paperclip-bridge-rc-");
@@ -204,7 +197,6 @@ describe("bridge exec", () => {
     expect(commandArg).toContain(stdinPath);
     expect(commandArg).toMatch(/<\s*['"]/);
 
-    // Default strategy: file ops are not pinned to a named session.
     expect(deleteFile).toHaveBeenCalledWith(stdinPath, undefined);
   });
 
@@ -243,9 +235,113 @@ describe("bridge exec", () => {
       cwd: "/missing",
       capture: { stdoutFile: "/tmp/o", stderrFile: "/tmp/e", exitCodeFile: "/tmp/r", teeStdout: true },
     });
-    // `mkdir -p … && cd '/missing' && { ... ; }` — the group is the last `&&` operand.
     expect(script).toContain("mkdir -p '/missing' && cd '/missing' && {");
     expect(script).toMatch(/cd '\/missing' && \{ \( \( exec 'pwd' \) 2>'\/tmp\/e'; echo \$\? >'\/tmp\/r' \) \| tee '\/tmp\/o'; cat '\/tmp\/e' >&2; exit "\$\(cat '\/tmp\/r'\)"; \}$/);
+  });
+
+  it("preserves a leading UTF-8 BOM in both captured streams", async () => {
+    const files: Record<string, string> = {};
+    const exec = vi.fn().mockImplementation(async (commandArg: string) => {
+      const { out, err } = capturePaths(commandArg);
+      files[out!] = "\uFEFFout\n";
+      files[err!] = "\uFEFFerr\n";
+      return { exitCode: 0, stdout: "", stderr: "" };
+    });
+    const readFile = vi.fn(async (path: string) => ({ success: true, path, content: b64(files[path] ?? ""), encoding: "base64", timestamp: "" }));
+    const sandbox = { getSession: vi.fn().mockResolvedValue({ exec }), readFile, writeFile: vi.fn(), deleteFile: vi.fn() };
+
+    const result = await executeInSandbox({
+      sandbox: sandbox as never,
+      command: "cat",
+      args: ["bom.txt"],
+      sessionStrategy: "named",
+      sessionId: "paperclip",
+      timeoutMs: 5_000,
+    });
+
+    expect(result.stdout).toBe("\uFEFFout\n");
+    expect(result.stderr).toBe("\uFEFFerr\n");
+  });
+
+  describe("timeout", () => {
+    function timeoutError() {
+      return Object.assign(new Error("Command timed out after 5000ms"), { stdout: "pipe-partial" });
+    }
+
+    it("returns partial captured output and deletes the named session and capture files", async () => {
+      const files: Record<string, string> = {};
+      const exec = vi.fn().mockImplementation(async (commandArg: string) => {
+        const { out, err } = capturePaths(commandArg);
+        files[out!] = "partial\0out";
+        files[err!] = "partial err\n";
+        throw timeoutError();
+      });
+      const readFile = vi.fn(async (path: string) => {
+        if (!(path in files)) throw new Error(`ENOENT: ${path}`);
+        return { success: true, path, content: b64(files[path]!), encoding: "base64", timestamp: "" };
+      });
+      const deleteFile = vi.fn().mockResolvedValue(undefined);
+      const deleteSession = vi.fn().mockResolvedValue(undefined);
+      const destroy = vi.fn().mockResolvedValue(undefined);
+      const sandbox = { getSession: vi.fn().mockResolvedValue({ exec }), readFile, writeFile: vi.fn(), deleteFile, deleteSession, destroy };
+
+      const result = await executeInSandbox({
+        sandbox: sandbox as never,
+        command: "sleep",
+        args: ["60"],
+        sessionStrategy: "named",
+        sessionId: "paperclip",
+        timeoutMs: 5_000,
+      });
+
+      expect(result.timedOut).toBe(true);
+      expect(result.exitCode).toBeNull();
+      expect(result.stdout).toBe("partial\0out");
+      expect(result.stderr).toBe("partial err\nCommand timed out after 5000ms\n");
+      expect(deleteSession).toHaveBeenCalledWith("paperclip");
+      expect(destroy).not.toHaveBeenCalled();
+      const deleted = deleteFile.mock.calls.map((call) => String(call[0]));
+      expect(deleted.filter((path) => /^\/tmp\/\.paperclip-bridge-(out|err|rc)-/.test(path))).toHaveLength(3);
+      expect(deleteFile.mock.calls.every((call) => call[1] === "paperclip")).toBe(true);
+    });
+
+    it("falls back to the pipe output and destroys the sandbox for the default strategy", async () => {
+      const exec = vi.fn().mockRejectedValue(timeoutError());
+      const { sandbox, deleteFile } = fakeSandbox({ exec, files: {}, onSandbox: true });
+      const destroy = vi.fn().mockResolvedValue(undefined);
+      const deleteSession = vi.fn().mockResolvedValue(undefined);
+      Object.assign(sandbox, { destroy, deleteSession });
+
+      const result = await executeInSandbox({
+        sandbox: sandbox as never,
+        command: "sleep",
+        args: ["60"],
+        sessionStrategy: "default",
+        timeoutMs: 5_000,
+      });
+
+      expect(result.timedOut).toBe(true);
+      expect(result.stdout).toBe("pipe-partial");
+      expect(result.stderr).toBe("Command timed out after 5000ms\n");
+      expect(destroy).toHaveBeenCalledTimes(1);
+      expect(deleteSession).not.toHaveBeenCalled();
+      expect(deleteFile).toHaveBeenCalledTimes(3);
+      expect(deleteFile.mock.calls.every((call) => call[1] === undefined)).toBe(true);
+    });
+
+    it("rethrows non-timeout errors after cleaning up the capture files", async () => {
+      const exec = vi.fn().mockRejectedValue(new Error("sandbox destroyed"));
+      const { sandbox, deleteFile } = fakeSandbox({ exec });
+
+      await expect(executeInSandbox({
+        sandbox: sandbox as never,
+        command: "pwd",
+        sessionStrategy: "named",
+        sessionId: "paperclip",
+        timeoutMs: 5_000,
+      })).rejects.toThrow("sandbox destroyed");
+      expect(deleteFile).toHaveBeenCalledTimes(3);
+    });
   });
 
   it("keeps the plain exec line when no capture is requested", () => {

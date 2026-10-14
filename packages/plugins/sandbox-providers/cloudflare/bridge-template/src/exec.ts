@@ -16,28 +16,10 @@ export interface BridgeExecuteParams {
   onOutput?: (stream: "stdout" | "stderr", data: string) => void | Promise<void>;
 }
 
-/**
- * Where the wrapped command's output is captured inside the sandbox.
- *
- * The Cloudflare sandbox container-server labels exec stdout/stderr through a
- * bash `read` loop, and bash strings are C strings: every NUL byte is silently
- * dropped before the output reaches the Worker. Paperclip frames several
- * machine-consumed probes with NUL delimiters (the execution-target Git
- * context probe, the managed-launcher PATH probe), so a lossy stdout makes
- * every sandbox run fail during setup with
- * "Could not read execution-target Git context".
- *
- * The bridge therefore redirects the command's stdout/stderr into temp files
- * and reads them back through the file API with base64 encoding, which is a
- * byte-exact path. Live streaming (when requested) still forwards stdout
- * through the labeled pipe for log purposes only; the returned result always
- * comes from the captured files.
- */
 export interface OutputCapture {
   stdoutFile: string;
   stderrFile: string;
   exitCodeFile: string;
-  /** Also forward stdout live through the exec pipe (streaming mode). */
   teeStdout: boolean;
 }
 
@@ -81,12 +63,6 @@ export function buildLoginShellScript(input: {
     'if [ -f "$HOME/.zprofile" ]; then . "$HOME/.zprofile" >/dev/null 2>&1 || true; fi',
   ];
   if (input.cwd) {
-    // A container restart (sleep, crash, redeploy) wipes the sandbox disk but
-    // keeps the Durable Object, so a later command can target a lease whose
-    // workspace directory no longer exists. Paperclip's cleanup sweeps then
-    // retry `rm -rf` forever, keeping the container awake. Recreate the cwd so
-    // such commands complete; lost-lease detection uses the sentinel file, not
-    // the directory's existence.
     lines.push(`mkdir -p ${shellQuote(input.cwd)}`);
     lines.push(`cd ${shellQuote(input.cwd)}`);
   }
@@ -104,13 +80,6 @@ export function buildLoginShellScript(input: {
   const err = shellQuote(capture.stderrFile);
   const rc = shellQuote(capture.exitCodeFile);
   if (capture.teeStdout) {
-    // POSIX-sh pipeline: the subshell's exit status is persisted to a file
-    // (a pipeline's status would otherwise be tee's), stdout is tee'd so the
-    // live stream still sees it, and stderr is replayed after completion so
-    // log forwarding keeps it too. The returned result comes from the files.
-    // The whole thing is one `{ ...; }` group so an earlier `&&` failure
-    // (for example `cd` into a missing workspace) short-circuits it entirely
-    // instead of running `cat`/`exit` against files that were never written.
     lines.push(
       `{ ( ( ${execLine} ) 2>${err}; echo $? >${rc} ) | tee ${out}; ` +
         `cat ${err} >&2; exit "$(cat ${rc})"; }`,
@@ -145,14 +114,9 @@ function decodeBase64Utf8(value: string): string {
   const binary = atob(value);
   const bytes = new Uint8Array(binary.length);
   for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
-  return new TextDecoder("utf-8").decode(bytes);
+  return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
 }
 
-/**
- * Read a captured output file byte-exactly. Returns `null` when the file is
- * unavailable (for example the wrapper failed before the redirect was set up),
- * so the caller can fall back to the exec pipe's (lossy) output.
- */
 async function readCapturedOutput(
   sandbox: CloudflareSandbox,
   path: string,
@@ -235,7 +199,6 @@ export async function executeInSandbox(params: BridgeExecuteParams) {
     };
   } catch (error) {
     if (isTimeoutError(error)) {
-      // Best-effort: the capture files may hold partial output.
       const [stdout, stderr] = await Promise.all([
         readCapturedOutput(params.sandbox, capture.stdoutFile, fileSessionId),
         readCapturedOutput(params.sandbox, capture.stderrFile, fileSessionId),

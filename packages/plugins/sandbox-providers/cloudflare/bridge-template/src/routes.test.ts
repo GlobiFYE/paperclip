@@ -98,9 +98,6 @@ describe("bridge routes", () => {
     );
 
     expect(response.status).toBe(200);
-    // The sentinel check itself must go through the session exec (not a
-    // sandbox-level readFile race). The only readFile calls are the exec
-    // wrapper's byte-exact output capture, and those are pinned to the session.
     for (const call of sandbox.readFile.mock.calls) {
       expect(String(call[0])).toMatch(/^\/tmp\/\.paperclip-bridge-(out|err)-/);
       expect(call[1]).toMatchObject({ encoding: "base64", sessionId: "paperclip" });
@@ -145,9 +142,6 @@ describe("bridge routes", () => {
     const body = await response.text();
     expect(body).toContain("event: stdout");
     expect(body).toContain("event: complete");
-    // Exec must not re-apply keepAlive/sleepAfter: `getSandbox()` would
-    // overwrite the lease's stored config and the container could be reaped
-    // mid-run (sleepAfter) or flip a keepAlive lease to false.
     expect(vi.mocked(resolveSandbox)).toHaveBeenCalledWith(expect.anything(), "pc-run-1-abcd1234", { normalizeId: true });
   });
 

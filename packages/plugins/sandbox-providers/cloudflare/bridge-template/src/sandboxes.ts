@@ -8,13 +8,6 @@ export interface BridgeEnv {
 }
 
 export interface BridgeLeaseConfig {
-  /**
-   * Lease-management routes (probe/acquire/resume) own these two values.
-   * Exec/release/destroy must leave them undefined: `getSandbox()` re-applies
-   * any value it is given, so passing a default here would silently replace
-   * the lease's configured `sleepAfter`/`keepAlive` on every command and let
-   * the container be reaped mid-run.
-   */
   keepAlive?: boolean;
   sleepAfter?: string;
   normalizeId: boolean;

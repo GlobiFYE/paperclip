@@ -406,8 +406,6 @@ export async function handleBridgeRequest(request: Request, env: BridgeEnv): Pro
     }
     const sessionStrategy = readSessionStrategy(body.sessionStrategy);
     const sessionId = readString(body.sessionId, DEFAULT_SESSION_ID);
-    // Never pass keepAlive/sleepAfter here: the lease routes configured them
-    // and `getSandbox()` would overwrite the stored values on every command.
     const sandbox = await resolveSandbox(env, body.providerLeaseId, { normalizeId: true });
     if (body.streamOutput === true) {
       const encoder = new TextEncoder();

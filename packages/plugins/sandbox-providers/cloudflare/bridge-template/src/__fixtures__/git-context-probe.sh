@@ -1,5 +1,3 @@
-# Copy of the remote Git-context probe in packages/adapter-utils/src/execution-target.ts
-# (the String.raw `probe` used for remote targets). Keep in sync when that probe changes.
 printf '\0PAPERCLIP_GIT_CONTEXT_V1\0'
 if [ "$1" = host ]; then
   for key in GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN PAPERCLIP_GIT_TOKEN GH_CONFIG_DIR GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_CONFIG_NOSYSTEM GIT_CONFIG_COUNT GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL GIT_COMMITTER_NAME GIT_COMMITTER_EMAIL GIT_ASKPASS SSH_ASKPASS SSH_AUTH_SOCK GIT_SSH_COMMAND GIT_SSH; do
