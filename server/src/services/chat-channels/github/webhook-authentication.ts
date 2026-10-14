@@ -202,6 +202,7 @@ export function createGitHubWebhookAuthentication(db: Db, options: Authenticatio
         } catch {
           // Let the native adapter return its normal invalid-JSON response.
         }
+        const lifecycleEvent = ["github_app_authorization", "installation", "installation_repositories"].includes(eventType ?? "");
         if (payload) {
           const incomingInstallationId = payload.installation?.id;
           if (
@@ -224,12 +225,15 @@ export function createGitHubWebhookAuthentication(db: Db, options: Authenticatio
           // after repair even when Cloud has already deduplicated the old ping.
           // Foreign/lifecycle traffic cannot qualify a changed installation.
           if (!current.endpoint.setup.webhookVerifiedAt &&
-              ["active", "verifying"].includes(current.endpoint.status) &&
+              ["active", "verifying", "attention"].includes(current.endpoint.status) &&
               incomingInstallationId !== undefined &&
               String(incomingInstallationId) === credentials.installationId &&
-              eventType !== "installation") {
+              !lifecycleEvent) {
             await recordVerifiedWebhook(current.endpoint, credentialLease, inspection.headers.get("x-github-delivery"));
           }
+        }
+        if (current.endpoint.status === "attention" && !lifecycleEvent) return "ignored";
+        if (payload) {
           await reconcileGitHubWebhookRepository(
             current.endpoint,
             payload,

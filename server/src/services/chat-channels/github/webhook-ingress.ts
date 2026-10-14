@@ -227,18 +227,8 @@ export function createGitHubWebhookIngress(db: Db, options: GitHubWebhookIngress
     status: EndpointRow["status"],
     eventType: string,
   ): boolean {
-    if (status === "verifying" || status === "active") return true;
-    if (eventType === "ping" && (status === "draft" || status === "attention"))
-      return true;
-    if (
-      status === "attention" &&
-      [
-        "github_app_authorization",
-        "installation",
-        "installation_repositories",
-      ].includes(eventType)
-    )
-      return true;
+    if (["verifying", "active", "attention"].includes(status)) return true;
+    if (eventType === "ping" && status === "draft") return true;
     return status === "revoked" && eventType === "installation";
   }
 

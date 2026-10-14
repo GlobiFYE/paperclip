@@ -220,6 +220,9 @@ callback recovery scanner and its callback-mismatch warning; the Cloud inbox own
 relay delivery retries. Only that local check can verify a connection or
 admit work. After a repair, a fresh authenticated event for the bound installation
 can verify webhook delivery even when the relay deduplicates a redelivered old ping.
+This also applies while the connection needs attention: the signed event verifies
+delivery without admitting work or changing repository access. The manager must
+still complete reconnect and activation before new review requests can run.
 Shared-App account connectors keep the behavior described above.
 
 Unverified gateway traffic has request, byte, pending-queue, retention and wake
