@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { heartbeatRuns, type Db } from "@paperclipai/db";
 
-/** Lock the real Runner before task mutation, after upload body verification.
+/** Lock the real Runner after the task lock and upload body verification.
  * Publication runs only after the stored attachment matches those bytes. The
  * caller holds the transfer's current work-session/grant transaction throughout. */
 export async function prepareExternalDeliverablePublication(db: Db, input: {

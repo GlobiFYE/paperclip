@@ -25,6 +25,7 @@ import { createPublicMcpEvents, type EventFetch } from "../services/public-mcp/e
 import { instanceSettingsService } from "../services/instance-settings.js";
 import { canonicalNativeRuntimeContextDigest, type StrictCompletionContractInput } from "../vendor/paperclip-runner/index.js";
 import { createDotRunnerMcpTools, dotRunnerBroker } from "../services/dot-runner-broker.js";
+import { PaperclipRunnerToolAuthority } from "../services/native-runtime/paperclip-runner-tool-authority.js";
 import { prepareNativeHeartbeatRun } from "../services/native-runtime/prepare-native-run.js";
 import { buildNativeExecutionInput } from "../services/native-runtime/native-execution-input.js";
 import { nativeRuntimeContextFixture } from "../services/native-runtime/runtime-context.test-fixture.js";
@@ -851,8 +852,42 @@ describe("durable Dot Runner integration", () => {
           const args = { companyId: f.company.id, taskId: issue!.id, requestId: uploadId, filename: "report.txt", contentType: "text/plain", byteSize: body.length, sha256: createHash("sha256").update(body).digest("hex") };
           const grant = await transfers.getUploadUrl(f.principal, args, assignment!.id);
           const url = new URL(String(grant.url));
-          const uploaded = await request(api).put(url.pathname + url.search).set("Content-Type", "text/plain").send(body);
+          // Hold the document transaction at its task lock, then start the real
+          // HTTP upload. The native document write must still acquire its run
+          // lock and commit; a run-before-task upload deadlocks this overlap.
+          let concurrentUpload: Promise<request.Response> | undefined;
+          let earlyUpload: request.Response | undefined;
+          await db.transaction(async tx => {
+            await tx.select({ id: issues.id }).from(issues).where(eq(issues.id, issue!.id)).for("update");
+            const [backend] = await tx.execute(sql`select pg_backend_pid() as pid`) as unknown as Array<{ pid: number }>;
+            concurrentUpload = request(api).put(url.pathname + url.search).set("Content-Type", "text/plain").send(body)
+              .then(response => { earlyUpload = response; return response; });
+            await vi.waitFor(async () => {
+              expect(earlyUpload?.status, JSON.stringify(earlyUpload?.body)).toBeUndefined();
+              const [state] = await db.execute(sql`select exists (
+                select 1 from pg_stat_activity where ${backend!.pid} = any(pg_blocking_pids(pid))
+              ) as waiting`) as unknown as Array<{ waiting: boolean }>;
+              expect(state!.waiting).toBe(true);
+            }, { timeout: 10000, interval: 20 });
+            // Use the same native authority inside this already-open document
+            // transaction, retaining every real identity and mutation check.
+            const documentDb = Object.assign(Object.create(tx), {
+              transaction: async (effect: (database: typeof db) => Promise<unknown>) => effect(tx as unknown as typeof db),
+            }) as typeof db;
+            const authority = new PaperclipRunnerToolAuthority(documentDb, {
+              companyId: f.company.id, issueId: issue!.id, agentId: f.agent.id, runId: run!.id, firstPartyOnly: true,
+            });
+            try {
+              expect(await authority.execute({ tool: "write_document", callId: randomUUID(), arguments: {
+                key: "upload-overlap", title: "Concurrent document", body: "Saved while the file is uploading.",
+                baseRevisionId: null, idempotencyKey: "upload-overlap",
+              } })).toMatchObject({ disposition: "applied" });
+            } finally { authority.close(); }
+          });
+          const uploaded = await concurrentUpload!;
           expect(uploaded.status).toBe(200);
+          expect((await documentService(db).getIssueDocumentByKey(issue!.id, "upload-overlap"))?.body)
+            .toBe("Saved while the file is uploading.");
           uploadedDeliverableId = uploaded.body.attachment.id;
           expect(uploaded.body.publication).toMatchObject({ evidenceRef: `deliverable:${uploadedDeliverableId}`,
             commandId: `deliverable-uploaded:${uploadedDeliverableId}`, source: "authenticated_upload" });
@@ -868,7 +903,10 @@ describe("durable Dot Runner integration", () => {
           });
           const [publishedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run!.id));
           expect(Object.values(publishedRun!.resultJson!.semanticToolReceipts as Record<string, unknown>))
-            .toEqual(expect.arrayContaining([expect.objectContaining({ operationId: "publish_external_deliverable" })]));
+            .toEqual(expect.arrayContaining([
+              expect.objectContaining({ operationId: "publish_external_deliverable" }),
+              expect.objectContaining({ operationId: "write_document", input: expect.objectContaining({ key: "upload-overlap" }) }),
+            ]));
           expect(Object.keys(publishedRun!.resultJson!.semanticToolReceipts as Record<string, unknown>)
             .filter(key => key.startsWith("external-upload:"))).toHaveLength(1);
           expect(await issueService(db).getAttachmentById(uploaded.body.attachment.id)).toMatchObject({ createdByAgentId: f.agent.id, originatingRunId: run!.id, createdByUserId: null });

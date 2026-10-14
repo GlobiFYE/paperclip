@@ -134,16 +134,15 @@ export function createPublicMcpTransfers(db: Db, oauth: PublicMcpOAuth, api: Api
       if (current.grant.purpose !== "agent") requireWrite(current);
       await taskAccess(current, upload.taskId, true, tx as unknown as Db, row.workSessionId ?? undefined);
       const session = await workSession(current, row.workSessionId ?? undefined, upload.taskId, true, tx as unknown as Db);
-      // Native mutations lock the run before the task. Preserve that order when
-      // the external upload joins the same durable publication receipt path.
+      // Match native mutations: lock the task before the run, then recheck
+      // assignment and governance against the locked current task.
+      const [issue] = await tx.select().from(issues).where(and(eq(issues.id, upload.taskId), eq(issues.companyId, upload.companyId))).for("update");
+      if (!issue || (current.grant.purpose !== "agent" && issue.conversationAgentId && issue.conversationUserId !== current.grant.userId)) throw unavailable();
+      await workSession(current, row.workSessionId ?? undefined, upload.taskId, true, tx as unknown as Db);
       const publish = session ? await prepareExternalDeliverablePublication(tx as unknown as Db, {
         companyId: upload.companyId, issueId: upload.taskId, ...session, uploadId: upload.id,
         workSessionId: row.workSessionId!, filename: upload.originalFilename, byteSize: bytes.length, sha256: digest,
       }) : undefined;
-      const [issue] = await tx.select().from(issues).where(and(eq(issues.id, upload.taskId), eq(issues.companyId, upload.companyId))).for("update");
-      if (!issue || (current.grant.purpose !== "agent" && issue.conversationAgentId && issue.conversationUserId !== current.grant.userId)) throw unavailable();
-      // Recheck assignment and governance against the locked current task.
-      await workSession(current, row.workSessionId ?? undefined, upload.taskId, true, tx as unknown as Db);
       const result = upload.attachmentId
         ? await attachmentAccess(current, upload.attachmentId, tx as unknown as Db, row.workSessionId ?? undefined)
         : await issueService(tx as unknown as Db).createAttachment({ issueId: upload.taskId, ...stored!, createdByUserId: session ? null : current.grant.userId, createdByAgentId: session?.agentId, createdByRunId: session?.runId });

@@ -206,3 +206,10 @@ Runner lease/reconnect failures retain a closed diagnostic code; raw stderr and
 transport credentials stay out of that error. Qualification access was revoked
 while the correction is reviewed. No successful active-session Stop or restart
 qualification is inferred from this cleanup.
+
+The upload/document overlap regression uses the real admitted Rust Grok work
+session, native document authority, and authenticated HTTP upload. With the
+original run-before-task upload order, the upload returned 503. With the shared
+task-before-run order, both writes and their durable receipts committed, and
+normal file completion passed. This is protocol evidence; it does not replace
+the remaining real-client acceptance gates.
