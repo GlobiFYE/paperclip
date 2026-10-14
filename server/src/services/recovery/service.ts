@@ -5930,6 +5930,10 @@ export function recoveryService(
       // fallback below. Without it, a terminal issue named in the run context
       // snapshot would still terminalize the shared run and defeat the guard.
       runReferencedByActiveIssue?: boolean;
+      // When set, process-death teardown is queued here instead of awaited, so
+      // the sweep can clear issue locks first and then run the teardowns with
+      // bounded concurrency.
+      deferredTeardowns?: Array<() => Promise<void>>;
     },
   ): Promise<{ terminalized: boolean; status: string }> {
     // Act only on a run in "running" status. A "queued" run has no process yet,
@@ -6100,7 +6104,7 @@ export function recoveryService(
     // must not hide the committed terminal outcome or block clearing the lock.
     // Bound each wait: a timed-out operation can still settle in the background,
     // while the existing lease backstop remains responsible for stranded leases.
-    if (processGone) {
+    const runTeardown = async () => {
       try {
         await waitForOrphanedRunCleanup(async () => deps.releaseEnvironmentLeasesForRun?.({
           runId: updated.id,
@@ -6123,6 +6127,10 @@ export function recoveryService(
           "orphaned run agent finalization failed; operator recovery required",
         );
       }
+    };
+    if (processGone) {
+      if (options?.deferredTeardowns) options.deferredTeardowns.push(runTeardown);
+      else await runTeardown();
     }
 
     // Telemetry is best-effort background work; it must not delay clearing
@@ -6257,8 +6265,10 @@ export function recoveryService(
     // can no longer reach a terminal status on its own. This lets the sweep
     // clear the lock in the same pass instead of waiting for the run to reach a
     // terminal status by another route.
+    const deferredTeardowns: Array<() => Promise<void>> = [];
     for (const row of runRows) {
       const outcome = await terminalizeOrphanedRunningRun(row, {
+        deferredTeardowns,
         referencingIssueTerminalStatus:
           issueTerminalStatusByRunId.get(row.id) ?? null,
         runReferencedByActiveIssue: runIdsReferencedByActiveIssue.has(row.id),
@@ -6339,6 +6349,18 @@ export function recoveryService(
         },
       });
     }
+
+    // Locks are clear; now tear down crashed runs' leases and agent status with
+    // bounded concurrency so one stalled provider cannot serialize startup.
+    const TEARDOWN_CONCURRENCY = 8;
+    let nextTeardown = 0;
+    await Promise.all(
+      Array.from({ length: Math.min(TEARDOWN_CONCURRENCY, deferredTeardowns.length) }, async () => {
+        while (nextTeardown < deferredTeardowns.length) {
+          await deferredTeardowns[nextTeardown++]!();
+        }
+      }),
+    );
 
     if (result.cleared > 0 || result.terminalizedRunIds.length > 0) {
       logger.warn(
