@@ -1,16 +1,40 @@
 import { paperclipRunnerSupportsPlatform } from "@paperclipai/shared";
 
-export function localAgentRunnerTarget(): { driver: "local"; platform: NodeJS.Platform; architecture: string; libc?: "glibc" | "unknown"; glibcVersion?: string } {
-  if (process.platform !== "linux") return { driver: "local", platform: process.platform, architecture: process.arch };
-  let libc: "glibc" | "unknown" = "unknown";
-  let glibcVersion: string | undefined;
+type LinuxLibc = { libc: "glibc" | "unknown"; glibcVersion?: string };
+
+let cachedLinuxLibc: LinuxLibc | undefined;
+
+// The C library cannot change while the process runs, so detect it once.
+// `process.report.getReport()` blocks the event loop. Unless `excludeNetwork`
+// is set, it also resolves the endpoints of every open socket with synchronous
+// reverse DNS. A slow resolver then stalls the server for seconds per socket,
+// on every caller, so the report always excludes network data.
+function detectLinuxLibc(): LinuxLibc {
+  if (cachedLinuxLibc) return cachedLinuxLibc;
+  let detected: LinuxLibc = { libc: "unknown" };
+  const previousExcludeNetwork = process.report.excludeNetwork;
   try {
+    process.report.excludeNetwork = true;
     const { header } = process.report.getReport() as { header?: { glibcVersionRuntime?: unknown } };
     if (typeof header?.glibcVersionRuntime === "string" && header.glibcVersionRuntime.trim()) {
-      libc = "glibc";
-      glibcVersion = header.glibcVersionRuntime.trim();
+      detected = { libc: "glibc", glibcVersion: header.glibcVersionRuntime.trim() };
     }
-  } catch { /* An unidentified libc must not select a GNU/Linux binary. */ }
+  } catch {
+    /* An unidentified libc must not select a GNU/Linux binary. */
+  } finally {
+    process.report.excludeNetwork = previousExcludeNetwork;
+  }
+  cachedLinuxLibc = detected;
+  return detected;
+}
+
+export function resetLocalAgentRunnerTargetCacheForTests(): void {
+  cachedLinuxLibc = undefined;
+}
+
+export function localAgentRunnerTarget(): { driver: "local"; platform: NodeJS.Platform; architecture: string; libc?: "glibc" | "unknown"; glibcVersion?: string } {
+  if (process.platform !== "linux") return { driver: "local", platform: process.platform, architecture: process.arch };
+  const { libc, glibcVersion } = detectLinuxLibc();
   return { driver: "local", platform: process.platform, architecture: process.arch, libc, ...(glibcVersion === undefined ? {} : { glibcVersion }) };
 }
 
