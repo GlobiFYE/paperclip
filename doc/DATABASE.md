@@ -28,6 +28,21 @@ benchmark loads that revision's chat query, uses synthetic data only, compares
 complete returned rows, and prints timings and `EXPLAIN (ANALYZE, BUFFERS)` plans.
 Local results measure query execution, not staging request latency.
 
+Run history defaults to 200 rows and permits at most 1,000 rows, including
+direct service calls. The UI client requests 200 rows when its caller omits a
+limit. Context summaries expand the stored JSON once per returned row, retaining
+legacy text conversion and the first-class issue binding. Authorization and
+secret redaction still run on the bounded result set.
+
+To compare the real summary and full history queries with an earlier revision:
+
+```sh
+pnpm --filter @paperclipai/server exec tsx ../scripts/benchmark-run-history.ts --baseline-ref=1e731520bb
+```
+
+The fixture has 1,400 synthetic runs with 192 KiB contexts. Both queries return
+the same 200 complete rows. This benchmark excludes HTTP and redaction latency.
+
 ## 1. Embedded PostgreSQL — zero config
 
 If you don't set `DATABASE_URL`, the server automatically starts an embedded PostgreSQL instance and manages a local data directory.
