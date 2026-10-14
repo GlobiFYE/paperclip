@@ -12,6 +12,15 @@ Open **Agents and reusable capabilities → Skills and Skill Studio → Project 
   Connection repair chooses an existing authorized account without changing skill
   selections. Also inspect removed skills, invalid upstream content, two private
   projects and the large-list story.
+- **03 Branch selection components** and **04 Branch selection journeys**: proposed
+  replacement for “Use default branch.” Choose a new branch, search the fetched
+  list, or type an unlisted branch name and select **Use “name”**. The repository's
+  default branch is marked. Loading or a failed list request does not prevent
+  entering a name. Try retry, an empty list, many branches, and mobile/light views.
+  In **Validation failure**, enter `feature/missing`, save, then choose `master`.
+  The selected value stays visible after an error; existing installed skills remain.
+  Branch discovery, validation and saving are simulated. These proposed stories
+  do not change the shipped repair operation or implement project ref changes.
 
 All GitHub, import, scheduled update and routine execution responses are scoped
 in-memory fixtures, reset between stories. They do not prove live synchronization,
@@ -19,3 +28,4 @@ credential refresh or model execution. Production acceptance evidence is recorde
 in `doc/plans/2026-10-12-project-repository-skills.md`.
 
 Browser checks: `tests/storybook-visual/project-repository-skills.spec.ts`.
+Branch selection checks: `tests/storybook-visual/skill-source-branch-selection.spec.ts`.

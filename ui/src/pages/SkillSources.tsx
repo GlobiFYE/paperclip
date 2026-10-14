@@ -29,7 +29,7 @@ import { consumeSkillSourceReturn, rememberSkillSourceReturn } from '@/lib/skill
 import { groupProjectSkillRepositories } from '@/lib/project-skill-repositories';
 
 const sourceKey = (companyId: string) => queryKeys.skillSources.all(companyId);
-export function SkillSources() {
+export function SkillSources({ onChooseBranch }: { onChooseBranch?: (source: SkillSource) => void } = {}) {
   const sourceActionButtons = useRef<Record<string, HTMLButtonElement | null>>({});
   const { selectedCompanyId, selectedCompany } = useCompany();
   const { sourceId } = useParams<{ sourceId: string }>();
@@ -157,8 +157,8 @@ export function SkillSources() {
           {source.lastError && (source.repairAction === 'connection' || (!source.repairAction && !source.connectionId)) && <Button variant="outline" size="sm" className="self-start" onClick={() => setRepairSourceId(source.id)}>Choose connection</Button>}
           {source.lastError && source.repairAction === 'branch' && (source.accessScope === 'projects' || source.projects?.some(project => project.active)
             ? <div className="flex flex-wrap gap-3">{source.projects?.filter(project => project.active).map(project => <Link key={project.id} to={`/projects/${project.id}`} className="text-sm underline">Update {project.name} repository</Link>)}</div>
-            : <Button variant="outline" size="sm" className="self-start" disabled={repairBranch.isPending} onClick={() => repairBranch.mutate(source)}>
-              {repairBranch.isPending && repairBranch.variables.id === source.id ? 'Updating branch…' : 'Use default branch'}</Button>)}
+            : <Button variant="outline" size="sm" className="self-start" disabled={repairBranch.isPending} onClick={() => onChooseBranch ? onChooseBranch(source) : repairBranch.mutate(source)}>
+              {onChooseBranch ? 'Choose a new branch' : repairBranch.isPending && repairBranch.variables.id === source.id ? 'Updating branch…' : 'Use default branch'}</Button>)}
           {source.connectionId && <Link to={`/apps/${source.connectionId}/permissions`} className="text-xs text-muted-foreground hover:text-foreground">Manage GitHub connection</Link>}
         </section>;
       })}
