@@ -8,6 +8,7 @@ import {
   companyLogos,
   assets,
   agentApiKeys,
+  agentJwtRevocations,
   agentRuntimeState,
   agentTaskSessions,
   agentWakeupRequests,
@@ -80,6 +81,7 @@ export async function deleteCompany(db: Db, id: string) {
         await tx.delete(heartbeatRuns).where(eq(heartbeatRuns.companyId, id));
         await tx.delete(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, id));
         await tx.delete(agentApiKeys).where(eq(agentApiKeys.companyId, id));
+        await tx.delete(agentJwtRevocations).where(eq(agentJwtRevocations.companyId, id));
         await tx.delete(agentRuntimeState).where(eq(agentRuntimeState.companyId, id));
         await tx.delete(issueComments).where(eq(issueComments.companyId, id));
         await tx.delete(approvalComments).where(eq(approvalComments.companyId, id));
