@@ -85,10 +85,12 @@ export function buildLoginShellScript(input: {
     const limit = LIVE_OUTPUT_LIMIT_BYTES;
     const note = (stream: string) =>
       `printf '\\n[paperclip-bridge] live ${stream} truncated after ${limit} bytes (%s more); full output is in the result\\n' "$n" >&2`;
+    const cap = (stream: string) =>
+      `{ $_pc_cap ${limit}; n=$(wc -c); [ "$n" -eq 0 ] || ${note(stream)}; }`;
     lines.push(
-      `{ ( ( ${execLine} ) 2>${err}; echo $? >${rc} ) | tee ${out} | ` +
-        `{ head -c ${limit}; n=$(wc -c); [ "$n" -eq 0 ] || ${note("stdout")}; }; ` +
-        `head -c ${limit} ${err} >&2; n=$(( $(wc -c <${err}) - ${limit} )); [ "$n" -le 0 ] || ${note("stderr")}; ` +
+      `{ _pc_cap="head -c"; if command -v stdbuf >/dev/null 2>&1; then _pc_cap="stdbuf -o0 head -c"; fi; ` +
+        `{ { ( ${execLine} ) 2>&1 1>&3 3>&-; echo $? >${rc}; } | tee ${err} | ${cap("stderr")} >&2; } 3>&1 | ` +
+        `tee ${out} | ${cap("stdout")}; ` +
         `exit "$(cat ${rc})"; }`,
     );
   } else {

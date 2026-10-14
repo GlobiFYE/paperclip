@@ -236,7 +236,12 @@ describe("bridge exec", () => {
       capture: { stdoutFile: "/tmp/o", stderrFile: "/tmp/e", exitCodeFile: "/tmp/r", teeStdout: true },
     });
     expect(script).toContain("mkdir -p '/missing' && cd '/missing' && {");
-    expect(script).toMatch(/cd '\/missing' && \{ \( \( exec 'pwd' \) 2>'\/tmp\/e'; echo \$\? >'\/tmp\/r' \) \| tee '\/tmp\/o' \| /);
+    expect(script).toContain("cd '/missing' && { _pc_cap=");
+    expect(script).toContain("{ { ( exec 'pwd' ) 2>&1 1>&3 3>&-; echo $? >'/tmp/r'; } | tee '/tmp/e' | ");
+    const opens = (script.match(/\{ /g) ?? []).length;
+    const closes = (script.match(/(?:^|[ ;])\}/g) ?? []).length;
+    expect(opens).toBe(closes);
+    expect(script).toContain("3>&1 | tee '/tmp/o' | ");
     expect(script.endsWith(`exit "$(cat '/tmp/r')"; }`)).toBe(true);
   });
 
@@ -246,8 +251,9 @@ describe("bridge exec", () => {
       args: ["big"],
       capture: { stdoutFile: "/tmp/o", stderrFile: "/tmp/e", exitCodeFile: "/tmp/r", teeStdout: true },
     });
-    expect(script).toContain(`| tee '/tmp/o' | { head -c ${LIVE_OUTPUT_LIMIT_BYTES}; n=$(wc -c);`);
-    expect(script).toContain(`head -c ${LIVE_OUTPUT_LIMIT_BYTES} '/tmp/e' >&2;`);
+    expect(script).toContain(`| tee '/tmp/o' | { $_pc_cap ${LIVE_OUTPUT_LIMIT_BYTES}; n=$(wc -c);`);
+    expect(script).toContain(`| tee '/tmp/e' | { $_pc_cap ${LIVE_OUTPUT_LIMIT_BYTES}; n=$(wc -c);`);
+    expect(script).toContain('_pc_cap="stdbuf -o0 head -c"');
     expect(script).not.toContain("cat '/tmp/e' >&2");
   });
 
