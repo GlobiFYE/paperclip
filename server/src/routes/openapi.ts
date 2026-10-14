@@ -5988,7 +5988,14 @@ registry.registerPath({
   path: "/api/issues/{id}/activity",
   tags: ["activity"],
   summary: "List activity for an issue",
-  request: { params: z.object({ id: z.string() }) },
+  request: {
+    params: z.object({ id: z.string() }),
+    query: z.object({
+      limit: z.coerce.number().int().optional().describe("Page size; defaults to 50 and is clamped to 1–100."),
+      before: z.string().uuid().optional().describe("Last activity ID from the previous page; loads older entries."),
+      assignmentToUserId: z.string().min(1).max(256).optional().describe("Filter to agent events that actually assigned this task to the given user, before pagination."),
+    }),
+  },
   responses: { 200: r.ok(), 401: r.unauthorized },
 });
 
@@ -5997,7 +6004,13 @@ registry.registerPath({
   path: "/api/issues/{id}/runs",
   tags: ["activity"],
   summary: "List runs for an issue",
-  request: { params: z.object({ id: z.string() }) },
+  request: {
+    params: z.object({ id: z.string() }),
+    query: z.object({
+      limit: z.coerce.number().int().optional().describe("Page size; defaults to 50 and is clamped to 1–100."),
+      before: z.string().uuid().optional().describe("Last run ID from the previous page; loads older entries."),
+    }),
+  },
   responses: { 200: r.ok(), 401: r.unauthorized },
 });
 

@@ -112,7 +112,21 @@ Review: `baseline`.
 API: `present` — representative operation IDs:
 
 - `POST /api/issues/{id}/comments`.
+- `GET /api/issues/{id}/activity?limit=50&before={eventId}`.
+- `GET /api/issues/{id}/runs?limit=50&before={runId}`.
 - `POST /api/companies/{companyId}/issues/{issueId}/attachments`.
+
+History reads return arrays with a default page size of 50 and a maximum of 100.
+For older entries, pass the last ID as `before`; pages sort by creation time and
+ID descending. A short page ends the history. Issue visibility and company scope
+apply to the cursor as well as the returned rows; run credential redactions remain
+viewer-specific. [Activity tests](../../server/src/__tests__/activity-service.test.ts)
+cover paging and foreign cursors; the [route tests](../../server/src/__tests__/activity-routes.test.ts)
+cover the bounded array contract.
+
+The activity read also accepts `assignmentToUserId` to filter actual agent-to-user
+assignments before pagination. The reply composer uses `limit=1` with this filter,
+independently of the visible history page. The normal task read permissions apply.
 
 Agent access: `available` — Native report_progress/comment_on_task/register_deliverable;
 REST / CLI / MCP.

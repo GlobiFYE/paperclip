@@ -30,7 +30,7 @@ const issueDocument: IssueDocument = {
 
 const issue = { id: "issue-1", identifier: "PAP-522", workMode: "standard" } as Issue;
 
-vi.mock("@tanstack/react-query", () => ({ useQuery: () => ({ data: [] }) }));
+vi.mock("@tanstack/react-query", () => ({ useQuery: () => ({ data: [] }), useQueries: () => [] }));
 vi.mock("@/hooks/useIssuePlanDocument", () => ({
   useIssuePlanDocument: () => ({ data: { ...issueDocument, key: "plan" }, isLoading: false }),
 }));

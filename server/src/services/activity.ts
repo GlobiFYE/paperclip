@@ -35,6 +35,27 @@ export interface ActivityFilters {
 const DEFAULT_ACTIVITY_LIMIT = 100;
 const MAX_ACTIVITY_LIMIT = 500;
 
+export interface IssueHistoryOptions {
+  limit?: number;
+  before?: string;
+}
+
+export interface IssueActivityOptions extends IssueHistoryOptions {
+  assignmentToUserId?: string;
+}
+
+const DEFAULT_ISSUE_HISTORY_LIMIT = 50;
+const MAX_ISSUE_HISTORY_LIMIT = 100;
+
+export function normalizeIssueHistoryLimit(limit: number | undefined) {
+  if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_ISSUE_HISTORY_LIMIT;
+  return Math.max(1, Math.min(MAX_ISSUE_HISTORY_LIMIT, Math.floor(limit)));
+}
+
+function isUuid(value: string) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+}
+
 export function normalizeActivityLimit(limit: number | undefined) {
   if (!Number.isFinite(limit)) return DEFAULT_ACTIVITY_LIMIT;
   return Math.max(1, Math.min(MAX_ACTIVITY_LIMIT, Math.floor(limit ?? DEFAULT_ACTIVITY_LIMIT)));
@@ -393,21 +414,104 @@ export function activityService(db: Db) {
         .then((rows) => rows.map((r) => r.activityLog));
     },
 
-    forIssue: (issueId: string) =>
-      db
+    forIssue: (issueId: string, options?: IssueActivityOptions) => {
+      if (options?.before && !isUuid(options.before)) return Promise.resolve([]);
+      const limit = normalizeIssueHistoryLimit(options?.limit);
+      const baseCondition = and(
+        sql`${activityLog.companyId} = (select company_id from issues where id = ${issueId})`,
+        or(
+          and(eq(activityLog.entityType, "issue"), eq(activityLog.entityId, issueId)),
+          and(or(eq(activityLog.action, "project.created"), eq(activityLog.action, "company.skill_created")), sql`${activityLog.details}->>'sourceIssueId' = ${issueId}`),
+        ),
+      );
+      const beforeCondition = options?.before
+        ? sql`(${activityLog.createdAt}, ${activityLog.id}) < (
+            select cursor_row.created_at, cursor_row.id from ${activityLog} cursor_row
+            where cursor_row.id = ${options.before}
+              and cursor_row.company_id = (select company_id from issues where id = ${issueId})
+              and (
+                (cursor_row.entity_type = 'issue' and cursor_row.entity_id = ${issueId})
+                or (cursor_row.action in ('project.created', 'company.skill_created')
+                  and cursor_row.details->>'sourceIssueId' = ${issueId})
+              )
+          )`
+        : undefined;
+      return db
         .select()
         .from(activityLog)
-        .where(
+        .where(and(baseCondition, beforeCondition, options?.assignmentToUserId ? and(
+          eq(activityLog.actorType, "agent"),
+          sql`${activityLog.actorId} <> ''`,
+          sql`${activityLog.details}->'assigneeUserId' = to_jsonb(${options.assignmentToUserId}::text)`,
           or(
-            and(eq(activityLog.entityType, "issue"), eq(activityLog.entityId, issueId)),
-            and(or(eq(activityLog.action, "project.created"), eq(activityLog.action, "company.skill_created")), sql`${activityLog.details}->>'sourceIssueId' = ${issueId}`,
-              sql`${activityLog.companyId} = (select company_id from issues where id = ${issueId})`),
+            eq(activityLog.action, "issue.created"),
+            eq(activityLog.action, "issue.child_created"),
+            and(
+              eq(activityLog.action, "issue.reassigned"),
+              sql`${activityLog.details}->'changed' = 'true'::jsonb`,
+              sql`${activityLog.details} ? 'previousAssigneeUserId'`,
+              sql`${activityLog.details}->'previousAssigneeUserId' is distinct from to_jsonb(${options.assignmentToUserId}::text)`,
+            ),
+            and(
+              eq(activityLog.action, "issue.updated"),
+              sql`jsonb_typeof(${activityLog.details}->'_previous') = 'object'`,
+              sql`(${activityLog.details}->'_previous') ? 'assigneeUserId'`,
+              sql`${activityLog.details}->'_previous'->'assigneeUserId' is distinct from to_jsonb(${options.assignmentToUserId}::text)`,
+            ),
+          ),
+        ) : undefined))
+        .orderBy(desc(activityLog.createdAt), desc(activityLog.id))
+        .limit(limit);
+    },
+
+    runsForIssue: async (companyId: string, issueId: string, viewerUserId: string | null = null, options?: IssueHistoryOptions) => {
+      if (options?.before && !isUuid(options.before)) return [];
+      const limit = normalizeIssueHistoryLimit(options?.limit);
+      if (!options?.before) scheduleRunLivenessBackfill(companyId, issueId);
+      const issueRunCondition = or(
+        eq(heartbeatRuns.issueId, issueId),
+        sql`exists (
+          select 1
+          from ${activityLog}
+          where ${activityLog.companyId} = ${companyId}
+            and ${activityLog.entityType} = 'issue'
+            and ${activityLog.entityId} = ${issueId}
+            and ${activityLog.runId} = ${heartbeatRuns.id}
+        )`,
+      );
+      const pageRows = await db
+        .select({ runId: heartbeatRuns.id })
+        .from(heartbeatRuns)
+        .innerJoin(
+          agents,
+          and(
+            eq(agents.id, heartbeatRuns.agentId),
+            eq(agents.companyId, heartbeatRuns.companyId),
           ),
         )
-        .orderBy(desc(activityLog.createdAt)),
-
-    runsForIssue: async (companyId: string, issueId: string, viewerUserId: string | null = null) => {
-      scheduleRunLivenessBackfill(companyId, issueId);
+        .where(and(
+          eq(heartbeatRuns.companyId, companyId),
+          issueRunCondition,
+          options?.before ? sql`(${heartbeatRuns.createdAt}, ${heartbeatRuns.id}) < (
+            select cursor_row.created_at, cursor_row.id from ${heartbeatRuns} cursor_row
+            where cursor_row.id = ${options.before}
+              and cursor_row.company_id = ${companyId}
+              and (
+                cursor_row.issue_id = ${issueId}
+                or exists (
+                  select 1 from ${activityLog} cursor_activity
+                  where cursor_activity.company_id = ${companyId}
+                    and cursor_activity.entity_type = 'issue'
+                    and cursor_activity.entity_id = ${issueId}
+                    and cursor_activity.run_id = cursor_row.id
+                )
+              )
+          )` : undefined,
+        ))
+        .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id))
+        .limit(limit);
+      if (pageRows.length === 0) return [];
+      const pageRunIds = pageRows.map((row) => row.runId);
       const runs = await db
         .select({
           runId: heartbeatRuns.id,
@@ -455,20 +559,10 @@ export function activityService(db: Db) {
         .where(
           and(
             eq(heartbeatRuns.companyId, companyId),
-            or(
-              eq(heartbeatRuns.issueId, issueId),
-              sql`exists (
-                select 1
-                from ${activityLog}
-                where ${activityLog.companyId} = ${companyId}
-                  and ${activityLog.entityType} = 'issue'
-                  and ${activityLog.entityId} = ${issueId}
-                  and ${activityLog.runId} = ${heartbeatRuns.id}
-              )`,
-            ),
+            inArray(heartbeatRuns.id, pageRunIds),
           ),
         )
-        .orderBy(desc(heartbeatRuns.createdAt));
+        .orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id));
 
       if (runs.length === 0) return runs;
       const runIds = runs.map((run) => run.runId);

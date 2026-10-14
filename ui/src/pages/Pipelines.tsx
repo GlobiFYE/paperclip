@@ -11,6 +11,7 @@ import type {
   Issue,
   IssueThreadInteraction,
   IssueWorkMode,
+  ActivityEvent,
   PipelineAutomationRetryCleanupOptions,
   PipelineAutomationRetryPlan,
   PipelineAutomationRetryScope,
@@ -118,6 +119,7 @@ import { getPipelineStageColumnTone, pipelineStageAutomationSettingsHref } from 
 import { queryKeys } from "../lib/queryKeys";
 import { keepPreviousDataForSameQueryTail } from "../lib/query-placeholder-data";
 import { useProjectOrder } from "../hooks/useProjectOrder";
+import { useIssueHistory } from "../hooks/useIssueHistory";
 import { shouldDisableRerunForPermission, type LivenessRetryKind } from "../lib/pipeline-liveness";
 import { cn, formatNumber, relativeTime } from "../lib/utils";
 import { issueStatusText, issueStatusTextDefault } from "../lib/status-colors";
@@ -2040,14 +2042,16 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
     () => normalizePipelineConversationComments(comments.data),
     [comments.data],
   );
-  const { data: conversationActivity } = useQuery({
+  const conversationActivityHistory = useIssueHistory<ActivityEvent>({
     queryKey: conversationIssueId ? queryKeys.issues.activity(conversationIssueId) : ["pipeline-item", caseId, "missing-conversation-activity"],
-    queryFn: () => activityApi.forIssue(conversationIssueId!),
+    fetchPage: (before) => before
+      ? activityApi.forIssue(conversationIssueId!, { before })
+      : activityApi.forIssue(conversationIssueId!),
+    getId: (event) => event.id,
+    getCreatedAt: (event) => event.createdAt,
     enabled: Boolean(conversationIssueId),
-    placeholderData: conversationIssueId
-      ? keepPreviousDataForSameQueryTail(conversationIssueId)
-      : undefined,
   });
+  const conversationActivity = conversationActivityHistory.data;
   const { data: conversationLiveRuns } = useQuery({
     queryKey: conversationIssueId ? queryKeys.issues.liveRuns(conversationIssueId) : ["pipeline-item", caseId, "missing-conversation-live-runs"],
     queryFn: () => heartbeatsApi.liveRunsForIssue(conversationIssueId!),
@@ -2073,15 +2077,16 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
     [activeConversationIssue, rawConversationActiveRun],
   );
   const conversationHasLiveRuns = conversationLiveRunCount > 0 || Boolean(resolvedConversationActiveRun);
-  const { data: conversationLinkedRuns } = useQuery({
+  const conversationRunHistory = useIssueHistory<RunForIssue>({
     queryKey: conversationIssueId ? queryKeys.issues.runs(conversationIssueId) : ["pipeline-item", caseId, "missing-conversation-runs"],
-    queryFn: () => activityApi.runsForIssue(conversationIssueId!),
+    fetchPage: (before) => before
+      ? activityApi.runsForIssue(conversationIssueId!, { before })
+      : activityApi.runsForIssue(conversationIssueId!),
+    getId: (run) => run.runId,
+    getCreatedAt: (run) => run.createdAt,
     enabled: Boolean(conversationIssueId),
-    refetchInterval: conversationHasLiveRuns ? 5000 : false,
-    placeholderData: conversationIssueId
-      ? keepPreviousDataForSameQueryTail<RunForIssue[]>(conversationIssueId)
-      : undefined,
   });
+  const conversationLinkedRuns = conversationRunHistory.data;
   const interactions = useQuery({
     queryKey: conversationIssueId ? queryKeys.issues.interactions(conversationIssueId) : ["pipeline-item", caseId, "missing-conversation-interactions"],
     queryFn: () => issuesApi.listInteractions(conversationIssueId!),
@@ -3344,6 +3349,26 @@ export function PipelineItemDetailView({ pipelineId, caseId }: { pipelineId: str
                   onCancelInteraction={handleCancelConversationInteraction}
                   assigneeUserId={activeConversationIssue.assigneeUserId ?? null}
                 />
+                {conversationActivityHistory.hasMore || conversationRunHistory.hasMore ? (
+                  <div className="mt-3 flex flex-col items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={conversationActivityHistory.isLoadingOlder || conversationRunHistory.isLoadingOlder}
+                      onClick={() => {
+                        void conversationActivityHistory.loadOlder();
+                        void conversationRunHistory.loadOlder();
+                      }}
+                    >
+                      {conversationActivityHistory.isLoadingOlder || conversationRunHistory.isLoadingOlder
+                        ? "Loading earlier history..." : "Load earlier history"}
+                    </Button>
+                    {conversationActivityHistory.olderError || conversationRunHistory.olderError ? (
+                      <p role="alert" className="text-sm text-destructive">Earlier history could not be loaded. Try again.</p>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div className="flex flex-col items-start gap-3 py-3 text-sm text-muted-foreground">

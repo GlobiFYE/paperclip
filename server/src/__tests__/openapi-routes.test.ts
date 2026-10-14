@@ -11,6 +11,20 @@ import { buildOpenApiSpec, openApiRoutes } from "../routes/openapi.js";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROUTES_DIR = path.resolve(__dirname, "../routes");
 
+it("documents bounded task history cursors for activity and runs", () => {
+  const spec = buildOpenApiSpec();
+  for (const kind of ["activity", "runs"]) {
+    const parameters = spec.paths[`/api/issues/{id}/${kind}`]?.get?.parameters ?? [];
+    const queries = parameters.filter((parameter) => "in" in parameter && parameter.in === "query");
+    expect(queries.map((parameter) => "name" in parameter && parameter.name)).toEqual(
+      expect.arrayContaining(["limit", "before"]),
+    );
+    expect(queries.find((parameter) => "name" in parameter && parameter.name === "before")).toMatchObject({
+      required: false, schema: { type: "string", format: "uuid" },
+    });
+  }
+});
+
 const apiPrefixes: Record<string, string> = {
   "pipelines.ts": "/api",
   "cases.ts": "/api",

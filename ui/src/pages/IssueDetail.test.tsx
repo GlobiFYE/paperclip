@@ -1939,6 +1939,30 @@ describe("IssueDetail", () => {
     ).toBe(true);
   });
 
+  it("chooses the handing-off agent even when its assignment is outside the visible history page", async () => {
+    mockIssuesApi.get.mockResolvedValue(createIssue({ assigneeUserId: "user-1" }));
+    mockAuthApi.getSession.mockResolvedValue({ session: { userId: "user-1" }, user: { id: "user-1" } });
+    mockIssuesApi.listComments.mockResolvedValue([createIssueComment({ authorAgentId: "agent-2", authorUserId: null })]);
+    const head = Array.from({ length: 50 }, (_, index) => ({
+      id: `head-${index}`, companyId: "company-1", actorType: "system", actorId: "system",
+      action: "issue.updated", entityType: "issue", entityId: "issue-1", details: { status: "todo" },
+      createdAt: new Date("2026-04-21T12:00:00Z").toISOString(),
+    }));
+    const assignment = { ...head[0], id: "older-assignment", actorType: "agent", actorId: "agent-1",
+      action: "issue.reassigned", details: { assigneeUserId: "user-1", changed: true, previousAssigneeUserId: null },
+      createdAt: new Date("2026-04-21T11:00:00Z").toISOString() };
+    mockActivityApi.forIssue.mockImplementation(async (_id, options) => options?.assignmentToUserId ? [assignment] : head);
+    await act(async () => renderIssueView());
+    await waitForAssertion(() => {
+      expect(mockIssueChatThreadRender.mock.calls.at(-1)?.[0].suggestedAssigneeValue).toBe("agent:agent-1");
+      expect(mockActivityApi.forIssue).toHaveBeenCalledWith("PAP-1", { limit: 1, assignmentToUserId: "user-1" });
+    });
+    expect(queryClient.getQueryData(queryKeys.issues.activity("PAP-1"))).toHaveLength(50);
+    const priorCalls = mockActivityApi.forIssue.mock.calls.filter(([, options]) => options?.assignmentToUserId).length;
+    await act(async () => { await queryClient.invalidateQueries({ queryKey: queryKeys.issues.activity("PAP-1") }); });
+    expect(mockActivityApi.forIssue.mock.calls.filter(([, options]) => options?.assignmentToUserId).length).toBeGreaterThan(priorCalls);
+  });
+
   it("retains the production breadcrumb side-panel toggle when Streamlined UI is off", async () => {
     mockIssuesApi.get.mockResolvedValue(createIssue());
     mockPanelState.panelVisible = false;
