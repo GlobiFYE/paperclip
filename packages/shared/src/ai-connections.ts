@@ -228,6 +228,7 @@ export const localAiConnectionSchema = aiConnectionLoginIntentSchema.extend({
 });
 export const localAiLoginStartSchema = aiConnectionLoginIntentSchema.extend({ restart: z.boolean().optional() });
 export interface LocalAiLoginStatus {
+  error?: string;
   status: "ready" | "sign_in_required" | "expired";
 }
 export interface LocalAiLoginAttempt {

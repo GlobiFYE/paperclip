@@ -7,7 +7,7 @@ import type { AiConnectionLoginIntent, LocalAiLoginAttempt, LocalAiLoginStatus }
 import { resolvePaperclipInstanceRoot } from "../home-paths.js";
 import { notFound, unprocessable } from "../errors.js";
 import { aiConnectionService } from "./ai-connections.js";
-import { readVerifiedLocalAiCredential } from "./local-ai-credentials.js";
+import { LocalAiVerificationError, readVerifiedLocalAiCredential } from "./local-ai-credentials.js";
 import { logActivity } from "./activity-log.js";
 
 const LOCAL_LOGIN_METHOD = "local_subscription";
@@ -142,8 +142,9 @@ export function localAiLoginService(db: Db) {
     try {
       await readVerifiedLocalAiCredential(intent.provider, directory);
       return { status: "ready" };
-    } catch {
-      return { status: "sign_in_required" };
+    } catch (error) {
+      return { status: "sign_in_required",
+        ...(error instanceof LocalAiVerificationError ? { error: error.message } : {}) };
     }
   }
 
