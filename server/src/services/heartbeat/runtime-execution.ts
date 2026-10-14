@@ -3,6 +3,7 @@ import { isHeartbeatRunTerminalStatus } from "./run-lifecycle.js";
 import {
   PAPERCLIP_WAKE_PAYLOAD_KEY,
   configuredPaperclipApiBaseUrl,
+  ConfigurationIncompleteFailure,
   buildPaperclipRuntimeMcpServers,
   createAdapterRuntimeToolAccess,
   paperclipApiBaseUrl,
@@ -248,21 +249,7 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
           localAgentJwtScope,
         )
       : null;
-  if (
-    nativeRuntimeResolution.kind === "legacy" &&
-    adapter.supportsLocalAgentJwt &&
-    !authToken
-  ) {
-    logger.warn(
-      {
-        companyId: agent.companyId,
-        agentId: agent.id,
-        runId: run.id,
-        adapterType: agent.adapterType,
-      },
-      "local agent jwt secret missing or invalid; running without injected PAPERCLIP_API_KEY",
-    );
-  }
+  const missingAgentJwt = nativeRuntimeResolution.kind === "legacy" && adapter.supportsLocalAgentJwt && !authToken;
   let adapterFinalizeOutcome: "succeeded" | "failed" | null = null;
   const inspectFinalizeWorkspaceBranch = async () => {
     const workspaceRecord = persistedExecutionWorkspace?.id
@@ -485,6 +472,12 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
     context.goalControlRequestId,
   );
   try {
+    if (missingAgentJwt) {
+      throw new ConfigurationIncompleteFailure(
+        "Agent run credentials are unavailable. Configure PAPERCLIP_AGENT_JWT_SECRET or BETTER_AUTH_SECRET on the Paperclip server and restart it before retrying this task.",
+        { configurationIncomplete: { reason: "agent_jwt_secret_missing", companyId: agent.companyId, agentId: agent.id } },
+      );
+    }
     if (nativeRuntimeResolution.kind === "native") {
       if (!nativeExecution || !nativeRunnerInstanceId)
         throw new Error("native_runtime_selection_not_persisted");
@@ -971,6 +964,9 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
       await completeWorkspace();
     }
   } catch (adapterErr) {
+    // No provider entered and no workspace finalization was attempted. The
+    // normal configuration-failure settlement owns this pre-dispatch result.
+    if (missingAgentJwt) throw adapterErr;
     if (adapterErr instanceof NativeCancellationPendingRecoveryError) {
       // Durable cancellation is settled by the outer recovery handler;
       // it does not imply a failed workspace or a persisted run result.
