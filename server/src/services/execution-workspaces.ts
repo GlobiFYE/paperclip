@@ -2084,8 +2084,11 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
     deferredCompactionTrashParents.add(path.dirname(path.resolve(worktreePath)));
   }
 
-  async function purgeDeferredCompactionTrash() {
+  // Checks the abort signal before each directory. A stopping server leaves the
+  // unprocessed directories queued for the next sweep.
+  async function purgeDeferredCompactionTrash(signal?: AbortSignal) {
     for (const parentDir of [...deferredCompactionTrashParents]) {
+      signal?.throwIfAborted();
       deferredCompactionTrashParents.delete(parentDir);
       compactionTrashPurgedAt.set(parentDir, now().getTime());
       await purgeStaleWorkspaceCompactionTrash(parentDir, WORKSPACE_COMPACTION_TRASH_STALE_MS).catch((error) => {
@@ -3125,7 +3128,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       const previousBoundary = terminalSweepBoundary;
       terminalSweepInProgress = true;
       try {
-      if (options.compact !== false) await purgeDeferredCompactionTrash();
+      if (options.compact !== false) await purgeDeferredCompactionTrash(signal);
       const baseCandidateFilter = and(
         inArray(executionWorkspaces.status, ["active", "idle", "in_review"]),
         isNull(executionWorkspaces.closedAt),
