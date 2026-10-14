@@ -35,7 +35,7 @@ export async function readIdleIssueSchedule(tx: Pick<Db, "execute">, ownerId: st
           OR b.id IS NULL OR r.type <> 'blocks' OR b.status NOT IN ('backlog', 'todo', 'in_progress', 'in_review', 'blocked', 'done', 'cancelled'))) AS unsafe_dependencies,
       (EXISTS (SELECT 1 FROM issue_relations r WHERE r.related_issue_id = i.id AND r.type = 'blocks')
         AND NOT EXISTS (SELECT 1 FROM issue_relations r JOIN issues b ON b.id = r.issue_id
-          WHERE r.related_issue_id = i.id AND r.type = 'blocks' AND b.status NOT IN ('done', 'cancelled'))) AS dependency_ready
+          WHERE r.related_issue_id = i.id AND r.type = 'blocks' AND b.status <> 'done')) AS dependency_ready
     FROM issues i JOIN companies c ON c.id = i.company_id
     LEFT JOIN agents a ON a.id = i.assignee_agent_id AND a.company_id = i.company_id
     WHERE i.status NOT IN ('done', 'cancelled') ORDER BY i.id LIMIT ${limit + 1}`);
