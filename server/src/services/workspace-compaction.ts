@@ -74,7 +74,9 @@ function splitNul(output: string) {
 async function filterRemovableCandidates(worktreePath: string, candidates: string[], signal?: AbortSignal) {
   // With --verbose --non-matching -z, each path yields four fields: source,
   // line number, pattern, and path. The source is empty for a path that no
-  // pattern ignores.
+  // pattern matches. Verbose output also reports a negating pattern such as
+  // `!build/`, which means Git does NOT ignore the path, so only a match by a
+  // non-negated pattern counts.
   const fields = splitNul(await runGitRead(
     worktreePath,
     ["check-ignore", "--stdin", "-z", "--verbose", "--non-matching"],
@@ -82,12 +84,18 @@ async function filterRemovableCandidates(worktreePath: string, candidates: strin
   ));
   const ignored = new Set<string>();
   for (let index = 0; index + 3 < fields.length; index += 4) {
-    if (fields[index]) ignored.add(fields[index + 3]!);
+    const [source, , pattern, candidate] = fields.slice(index, index + 4);
+    if (source && pattern && !pattern.startsWith("!")) ignored.add(candidate!);
   }
   const ignoredCandidates = candidates.filter((candidate) => ignored.has(candidate));
   if (ignoredCandidates.length === 0) return [];
   // A directory that holds a tracked file is source, even when Git ignores it.
-  const tracked = splitNul(await runGitRead(worktreePath, ["ls-files", "-z", "--", ...ignoredCandidates], { signal }))
+  // Literal pathspecs: a candidate is a path, never a pattern.
+  const tracked = splitNul(await runGitRead(
+    worktreePath,
+    ["--literal-pathspecs", "ls-files", "-z", "--", ...ignoredCandidates],
+    { signal },
+  ))
     .filter((entry) => entry.length > 0);
   return ignoredCandidates.filter((candidate) =>
     !tracked.some((trackedPath) => trackedPath === candidate || trackedPath.startsWith(`${candidate}/`)));

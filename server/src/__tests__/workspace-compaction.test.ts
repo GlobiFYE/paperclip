@@ -113,6 +113,25 @@ describe("findRegenerableWorkspaceDirs", () => {
       .toEqual(["node_modules", "vendor/tool/node_modules"]);
   });
 
+  it("keeps a directory that a negated pattern unignores", async () => {
+    const { worktreePath } = await createRepoWithWorktree(["build/", "!build/", "dist/", "node_modules/"]);
+    // Untracked work in an explicitly unignored directory is not regenerable.
+    await write(path.join(worktreePath, "build/release-notes.md"));
+    await write(path.join(worktreePath, "dist/bundle.js"));
+
+    expect(await findRegenerableWorkspaceDirs(worktreePath)).toEqual(["dist"]);
+    await expect(fs.access(path.join(worktreePath, "build/release-notes.md"))).resolves.toBeUndefined();
+  });
+
+  it("handles directory names with glob characters in the tracked-file check", async () => {
+    const { worktreePath } = await createRepoWithWorktree(["node_modules/"]);
+    await write(path.join(worktreePath, "pkg[1]/node_modules/vendored/index.js"));
+    await git(worktreePath, ["add", "-f", "pkg[1]/node_modules/vendored/index.js"]);
+    await write(path.join(worktreePath, "pkg1/node_modules/dep/index.js"));
+
+    expect(await findRegenerableWorkspaceDirs(worktreePath)).toEqual(["pkg1/node_modules"]);
+  });
+
   it("stops when the sweep is aborted", async () => {
     const { worktreePath } = await createRepoWithWorktree(["node_modules/"]);
     await write(path.join(worktreePath, "node_modules/a/index.js"));
