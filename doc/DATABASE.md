@@ -33,6 +33,8 @@ direct service calls. The UI client requests 200 rows when its caller omits a
 limit. Context summaries expand the stored JSON once per returned row, retaining
 legacy text conversion and the first-class issue binding. Authorization and
 secret redaction still run on the bounded result set.
+Agent detail links fetch an older selected run by ID when it is outside the
+history page, and verify that it belongs to the current company and agent.
 
 To compare the real summary and full history queries with an earlier revision:
 
