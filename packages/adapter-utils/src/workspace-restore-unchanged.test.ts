@@ -72,7 +72,7 @@ it.each(["before", "after"])("propagates %s-hook denial for an unchanged checkpo
   } finally { await disposeDirectorySnapshot(f.incoming); await disposeDirectorySnapshot(f.baseline); }
 });
 
-it.each(["hash", "mode", "kind", "rename", "add", "delete"])("does not skip an incoming %s change", async change => {
+async function assertIncomingChange(change: string) {
   const f = await fixture(true);
   await disposeDirectorySnapshot(f.incoming);
   if (change === "hash") await fs.writeFile(path.join(f.source, "file"), "changed");
@@ -94,7 +94,10 @@ it.each(["hash", "mode", "kind", "rename", "add", "delete"])("does not skip an i
     if (change === "add") expect(await fs.readFile(path.join(f.target, "added"), "utf8")).toBe("new");
     if (change === "delete") await expect(fs.stat(path.join(f.target, "file"))).rejects.toMatchObject({ code: "ENOENT" });
   } finally { await disposeDirectorySnapshot(incoming); await disposeDirectorySnapshot(f.baseline); }
-});
+}
+
+it.each(["hash", "kind", "rename", "add", "delete"])("does not skip an incoming %s change", assertIncomingChange);
+it.skipIf(process.platform === "win32")("does not skip an incoming mode change", () => assertIncomingChange("mode"));
 
 it.skipIf(process.platform === "win32")("does not skip a changed symlink target", async () => {
   const f = await fixture(false);
