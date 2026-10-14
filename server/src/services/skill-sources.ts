@@ -343,7 +343,7 @@ export function skillSourceService(db: Db) {
         ...(input.trackingRef !== undefined ? { trackingRef: input.trackingRef, lastError: null, failureCount: 0 } : {}),
         revision: sql`${sources.revision} + 1`, nextSyncAt: new Date(),
       }).where(and(scope(companyId, id), eq(sources.revision, input.revision), or(isNull(sources.leaseToken), lt(sources.leaseExpiresAt, new Date())))).returning();
-      if (!updated) throw conflict('This source is refreshing or changed. Reload before saving.');
+      if (!updated) throw conflict('This source is refreshing or changed. Reload before saving.', { code: 'skill_source_settings_changed' });
       await context.audit(tx, id, 'company.skill_source_settings_updated', { automaticUpdates: updated.automaticUpdates, importNewSkills: updated.importNewSkills, connectionChanged: input.connectionId !== undefined,
         ...(input.trackingRef !== undefined ? { previousRef: source.trackingRef, trackingRef: updated.trackingRef } : {}) });
       return detail(companyId, id, tx);

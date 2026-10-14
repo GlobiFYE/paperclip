@@ -102,6 +102,23 @@ describe('GitHub skill source import', () => {
     expect(skillSourcesApi.settings).toHaveBeenCalledWith('company-1', source.id, { revision: source.revision, trackingRef: 'master' });
   });
 
+  it.each([
+    'This repository and branch are already in Sources. Use that source; installed skills were kept.',
+    'The repository at this URL has changed identity. Add it as a new source.',
+  ])('preserves actionable branch conflict advice: %s', async message => {
+    context.sourceId = '';
+    const source = { ...sourceFixture(), trackingRef: 'main', lastError: 'Unavailable branch.', repairAction: 'branch' as const };
+    vi.mocked(skillSourcesApi.list).mockResolvedValue([source]);
+    vi.mocked(skillSourcesApi.settings).mockRejectedValue(new ApiError(message, 409, {}));
+    await mount();
+    await act(async () => button('Choose a new branch').click()); await flush();
+    await act(async () => document.querySelector<HTMLButtonElement>('button[aria-label="Branch"]')!.click()); await flush();
+    await act(async () => (document.querySelector('[cmdk-item][data-value="master"]') as HTMLElement).click()); await flush();
+    await act(async () => button('Change branch').click()); await flush();
+    expect(document.querySelector('[role="dialog"] [role="alert"]')?.textContent).toBe(message);
+    expect(document.querySelector('button[aria-label="Branch"]')?.textContent).toContain('master');
+  });
+
   it('keeps pending project links inside the installed source instead of duplicating its repository', async () => {
     context.sourceId = '';
     vi.mocked(skillSourcesApi.list).mockResolvedValue([{ ...sourceFixture(), trackingRef: 'HEAD' }]);

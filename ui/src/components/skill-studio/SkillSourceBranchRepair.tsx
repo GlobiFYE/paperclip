@@ -19,7 +19,7 @@ export function SkillSourceBranchRepair({ companyId, source, connectionId, onSav
     try {
       await skillSourcesApi.settings(companyId, source.id, { revision: source.revision, trackingRef: branch, ...(connectionId ? { connectionId } : {}) });
     } catch (error) {
-      if (error instanceof ApiError && error.status === 409) {
+      if (error instanceof ApiError && error.status === 409 && (error.body as { code?: string } | null)?.code === 'skill_source_settings_changed') {
         await client.invalidateQueries({ queryKey: queryKeys.skillSources.all(companyId) });
         throw new Error('This source is refreshing or changed. Your branch is still selected. Try saving again.');
       }

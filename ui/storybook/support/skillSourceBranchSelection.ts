@@ -44,7 +44,9 @@ export function installBranchSelectionFixtures(scenario: BranchSelectionScenario
       }
       await delay(900);
       if (scenario === 'save-error' && input.trackingRef === 'feature/missing') throw new ApiError('The branch is unavailable.', 422, { code: 'skill_source_ref_unavailable' });
-      if (conflict) { conflict = false; revision++; throw new ApiError('The source changed.', 409, null); }
+      const current = (await skillSourcesApi.list(companyId)).find(source => source.id === sourceId)!;
+      if (input.revision !== current.revision) throw new ApiError('The source changed.', 409, { code: 'skill_source_settings_changed' });
+      if (conflict) { conflict = false; revision++; throw new ApiError('The source changed.', 409, { code: 'skill_source_settings_changed' }); }
       await originalSettings(companyId, sourceId, input);
       selections.set(sourceId, { branch: input.trackingRef, connectionId: input.connectionId }); revision++;
       return (await skillSourcesApi.list(companyId)).find(source => source.id === sourceId)!;

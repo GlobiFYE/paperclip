@@ -20,7 +20,7 @@ export function SkillSourceConnectionRepair({ companyId, source, onClose, onSave
   const query = useQuery({ queryKey: queryKeys.skillSources.repositories(companyId), queryFn: () => skillSourcesApi.repositories(companyId), refetchOnMount: 'always', retry: false });
   const save = useMutation({ mutationFn: () => skillSourcesApi.settings(companyId, source.id, { revision: source.revision, connectionId }),
     onError: async error => {
-      if (error instanceof ApiError && error.status === 409) {
+      if (error instanceof ApiError && error.status === 409 && (error.body as { code?: string } | null)?.code === 'skill_source_settings_changed') {
         await client.invalidateQueries({ queryKey: queryKeys.skillSources.all(companyId) });
       }
     },
@@ -44,7 +44,7 @@ export function SkillSourceConnectionRepair({ companyId, source, onClose, onSave
         options={connections.map(connection => ({ value: connection.id, title: connection.name }))} />
       {query.isSuccess && connections.length === 0 && <p className="text-sm text-muted-foreground">Connect GitHub to continue.</p>}
       <Button asChild variant="link" className="justify-start p-0"><Link to="/apps">Manage GitHub connections</Link></Button>
-      {save.error && <p role="alert" className="text-sm text-destructive">{save.error instanceof ApiError && save.error.status === 409
+      {save.error && <p role="alert" className="text-sm text-destructive">{save.error instanceof ApiError && save.error.status === 409 && (save.error.body as { code?: string } | null)?.code === 'skill_source_settings_changed'
         ? 'This source was updated. Your connection is still selected. Save again to apply it.' : save.error.message}</p>}
       {branchMissing && source.accessScope !== 'projects' && !source.projects?.some(project => project.active) && <Button variant="outline" disabled={!canSave || save.isPending} onClick={() => setChooseBranch(true)}>Choose a new branch</Button>}
       </div>

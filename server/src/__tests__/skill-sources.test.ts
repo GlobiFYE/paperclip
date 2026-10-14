@@ -74,6 +74,8 @@ describe.skipIf(!support.supported)('skill source persistence', () => {
     expect(repaired.entries).toEqual(created.source.entries);
     expect(repaired.excludedFolders).toEqual(['elsewhere']);
     expect(repaired.lastScanCommit).toBe(created.source.lastScanCommit);
+    await expect(service.settings(isolatedCompany, created.source.id, { revision: created.source.revision, automaticUpdates: false }, context))
+      .rejects.toMatchObject({ status: 409, details: { code: 'skill_source_settings_changed' } });
     expect(await db.select().from(companySkillVersions).where(eq(companySkillVersions.companyId, isolatedCompany))).toEqual(versions);
     const changed = githubFixture({ 'deep/one/SKILL.md': md('new branch version') }, {}, 'f'.repeat(40));
     await service.refresh(isolatedCompany, repaired.id, { ...context, read: () => changed });

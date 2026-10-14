@@ -107,10 +107,10 @@ export function installProjectSkillFixtures(scenario: Scenario, client: QueryCli
   skillSourcesApi.settings = async (_companyId, id, input) => {
     if (input.connectionId !== undefined && repairConflict) {
       repairConflict = false; sourceRevision++;
-      throw new ApiError('The source was updated while choosing a connection.', 409, null);
+      throw new ApiError('The source was updated while choosing a connection.', 409, { code: 'skill_source_settings_changed' });
     }
     if (input.revision !== undefined && input.revision < sourceRevision) {
-      throw new ApiError('The source revision changed.', 409, null);
+      throw new ApiError('The source revision changed.', 409, { code: 'skill_source_settings_changed' });
     }
     sourcePreferences.set(id, { ...sourcePreferences.get(id),
       ...(input.automaticUpdates === undefined ? {} : { automaticUpdates: input.automaticUpdates }),
