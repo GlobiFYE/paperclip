@@ -43,8 +43,14 @@ describe("voice caller authentication", () => {
     expect(service.start).toHaveBeenCalledWith(expect.objectContaining({ companyId, endpointId, caller: { id: actor.userId, authority: "member" } }));
   });
 
-  it("preserves authenticated Cloud instance-admin authority", async () => {
+  it("keeps Cloud owners company-scoped without a persisted local admin role", async () => {
     await request(app({ ...actor, source: "cloud_tenant", isInstanceAdmin: true }))
+      .get(`/api/companies/${companyId}/voice-history/${endpointId}`).expect(200);
+    expect(service.history).toHaveBeenCalledWith(companyId, endpointId, { id: actor.userId, authority: "member" });
+  });
+
+  it("preserves local authenticated administrator authority", async () => {
+    await request(app({ ...actor, isInstanceAdmin: true }))
       .get(`/api/companies/${companyId}/voice-history/${endpointId}`).expect(200);
     expect(service.history).toHaveBeenCalledWith(companyId, endpointId, { id: actor.userId, authority: "instance_admin" });
   });

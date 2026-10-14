@@ -14,7 +14,7 @@ function caller(req: Request): VoiceCaller {
   assertBoard(req);
   if (req.actor.source === "local_implicit") return { id: "local-board", authority: "local_board" };
   if (!req.actor.userId || !["session", "cloud_tenant"].includes(req.actor.source ?? "")) throw forbidden("Sign in to start a private voice conversation");
-  return { id: req.actor.userId, authority: req.actor.isInstanceAdmin ? "instance_admin" : "member" };
+  return { id: req.actor.userId, authority: req.actor.source === "session" && req.actor.isInstanceAdmin ? "instance_admin" : "member" };
 }
 function company(req: Request, requireAccess = true) {
   const id = req.params.companyId as string;

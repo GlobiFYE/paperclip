@@ -21,7 +21,9 @@ PSTN/interruption qualification.
 
 Private voice routes accept both local authenticated sessions and trusted Cloud
 user sessions. Cloud callers keep their authenticated user ID and current
-company scope. Board API keys, MCP OAuth callers, Cloud control credentials,
+company scope. Cloud owners use current company membership even when temporary
+Cloud administrator access is enabled; they do not need a persisted local
+instance-admin role. Board API keys, MCP OAuth callers, Cloud control credentials,
 and raw Cloud user headers do not create private caller authority.
 
 On a Cloud workspace, verify that the signed-in operator can load call history
