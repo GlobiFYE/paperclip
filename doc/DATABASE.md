@@ -20,7 +20,7 @@ wakeup-history index.
 To compare all three queries on the same disposable local PostgreSQL fixture:
 
 ```sh
-pnpm --filter @paperclipai/server exec tsx scripts/benchmark-slow-queries.ts --baseline-ref=origin/master
+pnpm --filter @paperclipai/server exec tsx ../scripts/benchmark-slow-queries.ts --baseline-ref=origin/master
 ```
 
 Use a revision before these fixes for `--baseline-ref` after they merge. The

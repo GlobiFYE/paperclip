@@ -1,26 +1,32 @@
-/** Disposable PostgreSQL repro. Run: pnpm --filter @paperclipai/server exec tsx scripts/benchmark-slow-queries.ts */
+/** Disposable PostgreSQL repro. Run: pnpm --filter @paperclipai/server exec tsx ../scripts/benchmark-slow-queries.ts */
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { and, eq, or, sql } from "drizzle-orm";
+import { createRequire } from "node:module";
+const { and, eq, or, sql } = createRequire(new URL("../server/package.json", import.meta.url))("drizzle-orm");
 import {
   agents, agentWakeupRequests, chatActions, chatConversations, chatEndpoints,
   companies, createDb, heartbeatRuns, issues, startEmbeddedPostgresTestDatabase,
   toolApplications, toolConnections, type Db,
-} from "../../packages/db/src/index.js";
-import { issueService } from "../src/services/issues.js";
-import { issueReadSqlCondition } from "../src/services/authorization.js";
-import { createHeartbeatRunState } from "../src/services/heartbeat/run-state.js";
-import { createInboundWakeNotices } from "../src/services/chat-channels/inbound/wakeup-notices.js";
+} from "../packages/db/src/index.js";
+import { issueService } from "../server/src/services/issues.js";
+import { issueReadSqlCondition } from "../server/src/services/authorization.js";
+import { createInboundWakeNotices } from "../server/src/services/chat-channels/inbound/wakeup-notices.js";
 
-const migration = await fs.readFile(new URL("../../packages/db/src/migrations/0345_luxuriant_carmella_unuscione.sql", import.meta.url), "utf8");
+console.error("[benchmark] imports complete");
+
+const migration = await fs.readFile(new URL("../packages/db/src/migrations/0345_luxuriant_carmella_unuscione.sql", import.meta.url), "utf8");
 const indexes = migration.split("--> statement-breakpoint").map((statement) => statement.trim()).filter(Boolean);
 const baselineRef = process.argv.find((arg) => arg.startsWith("--baseline-ref="))?.slice("--baseline-ref=".length) ?? "origin/master";
 const baselineRevision = execFileSync("git", ["rev-parse", "--verify", `${baselineRef}^{commit}`], { encoding: "utf8" }).trim();
+// The database helper uses unreferenced retry/cleanup timers. A standalone
+// benchmark must stay alive until startup succeeds or reports its real error.
+const keepAlive = setInterval(() => {}, 1000);
 const database = await startEmbeddedPostgresTestDatabase("slow-query-benchmark-");
+console.error("[benchmark] database ready");
 const db = createDb(database.connectionString);
 let baselineModuleDir: string | undefined;
 type Query = { sql: string; params: unknown[] };
@@ -66,14 +72,15 @@ try {
   // Load only the old query module against current dependencies. Keep it in a
   // temporary server folder so bare package imports resolve within the worktree.
   const noticeModulePath = "server/src/services/chat-channels/inbound/wakeup-notices.ts";
-  const noticeModuleUrl = new URL(`../../${noticeModulePath}`, import.meta.url);
+  const noticeModuleUrl = new URL(`../${noticeModulePath}`, import.meta.url);
   const oldModule = execFileSync("git", ["show", `${baselineRevision}:${noticeModulePath}`], { encoding: "utf8" });
   const rewritten = oldModule.replace(/from "(\.{1,2}\/[^\"]+)"/g,
     (_match, specifier: string) => `from ${JSON.stringify(fileURLToPath(new URL(specifier, noticeModuleUrl)))}`);
-  baselineModuleDir = await fs.mkdtemp(path.join(fileURLToPath(new URL(".", import.meta.url)), ".slow-query-baseline-"));
+  baselineModuleDir = await fs.mkdtemp(path.join(fileURLToPath(new URL("../server/scripts/", import.meta.url)), ".slow-query-baseline-"));
   const baselineModuleFile = path.join(baselineModuleDir, "wakeup-notices.ts");
   await fs.writeFile(baselineModuleFile, rewritten);
-  const { createInboundWakeNotices: baselineNotices } = await import(pathToFileURL(baselineModuleFile).href) as typeof import("../src/services/chat-channels/inbound/wakeup-notices.js");
+  const { createInboundWakeNotices: baselineNotices } = await import(pathToFileURL(baselineModuleFile).href) as typeof import("../server/src/services/chat-channels/inbound/wakeup-notices.js");
+  console.error("[benchmark] baseline module ready");
   const companyId = randomUUID();
   const agentId = randomUUID();
   const sourceId = randomUUID();
@@ -136,7 +143,13 @@ try {
       sql`${heartbeatRuns.contextSnapshot}->'paperclipIssue'->>'id' = ${sourceId}`,
     ))).toSQL();
 
-  const runHistory = await captureQuery(async (captureDb) => createHeartbeatRunState(captureDb).listRuns(companyId, undefined, 200, { summary: true }));
+  // The summary history query projects these eight context fields. Keep its
+  // projection as a control: these indexes do not remove per-row JSON work.
+  const runHistory = db.select({ id: heartbeatRuns.id,
+    contextIssueId: sql`coalesce(${heartbeatRuns.issueId}::text, ${heartbeatRuns.contextSnapshot}->>'issueId')`,
+    ...Object.fromEntries(["taskId", "taskKey", "commentId", "wakeCommentId", "wakeReason", "wakeSource", "wakeTriggerDetail"]
+      .map((key) => [key, sql`${heartbeatRuns.contextSnapshot}->>${key}`])),
+  }).from(heartbeatRuns).where(eq(heartbeatRuns.companyId, companyId)).orderBy(sql`${heartbeatRuns.createdAt} desc`).limit(200).toSQL();
   const queries = { chatNotice: notice, createdFromIssueList: list, issueRedactions: redactions, runHistory };
   // Remove only these candidate indexes from this disposable fixture. This
   // also permits repeatable comparisons after the migration is installed.
@@ -159,6 +172,7 @@ try {
   console.log(JSON.stringify({ baselineRevision, postgres: (await db.$client`SELECT version()`)[0].version,
     fixture: { issues: 335, runs: 1400, wakes: 13000, actions: 377, promptBytes: Buffer.byteLength(prompt) }, results }, null, 2));
 } finally {
+  clearInterval(keepAlive);
   await db.$client.end({ timeout: 0 });
   await database.cleanup();
   if (baselineModuleDir) await fs.rm(baselineModuleDir, { recursive: true, force: true });
