@@ -4109,13 +4109,19 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       expect(await management.configuration(context.endpoint.id, "owner-user")).toMatchObject({ revision: 1, configuration: { toolsEnabled: false } });
     });
     it.each([
-      ["active", "current"], ["active", "foreign"], ["active", "invalid_signature"], ["active", "missing_installation"],
-      ["attention", "current"], ["attention", "foreign"], ["attention", "invalid_signature"], ["attention", "missing_installation"],
-    ] as const)("verifies a repaired GitHub webhook in %s only from a %s installation delivery", async (status, kind) => {
+      ["active", "current", "enabled"], ["active", "foreign", "enabled"], ["active", "invalid_signature", "enabled"], ["active", "missing_installation", "enabled"],
+      ["attention", "current", "enabled"], ["attention", "foreign", "enabled"], ["attention", "invalid_signature", "enabled"], ["attention", "missing_installation", "enabled"],
+      ["attention", "current", "disabled"], ["attention", "current", "unavailable"],
+    ] as const)("verifies a repaired GitHub webhook in %s only from a %s installation delivery with %s repository", async (status, kind, resourceState) => {
       const f = await reviewBotFixture();
       const [endpoint] = await readChatEndpointsById(f.endpoint.id);
+      if (resourceState !== "enabled") {
+        await db.update(chatEndpointResources).set(resourceState === "disabled" ? { enabled: false } : { availability: "unavailable" }).where(eq(chatEndpointResources.endpointId, endpoint.id));
+      }
+      if (status === "attention") await db.update(toolConnections).set({ status: "disabled", enabled: false }).where(eq(toolConnections.id, endpoint.connectionId));
       const resourcesBefore = await f.service.listResources(endpoint.id);
       const conversationsBefore = await readChatConversationsByEndpointId(endpoint.id);
+      const actionsBefore = await db.select().from(chatActions).where(eq(chatActions.endpointId, endpoint.id));
       f.wakeup.mockClear();
       await db.update(chatEndpoints).set({ status, setup: { ...endpoint.setup, webhookVerifiedAt: null } }).where(eq(chatEndpoints.id, endpoint.id));
       const response = await f.service.handleWebhook(endpoint.publicId, "github", signedGitHubWebhookRequest({
@@ -4133,8 +4139,17 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         expect(current.status).toBe("attention");
         expect(await f.service.listResources(endpoint.id)).toEqual(resourcesBefore);
         expect(await readChatConversationsByEndpointId(endpoint.id)).toEqual(conversationsBefore);
+        expect(await db.select().from(chatActions).where(eq(chatActions.endpointId, endpoint.id))).toEqual(actionsBefore);
         expect(f.wakeup).not.toHaveBeenCalled();
         if (kind === "current") {
+          expect(current.setup.step).toBe("provider_setup");
+          await f.service.handleWebhook(endpoint.publicId, "github", signedGitHubWebhookRequest({
+            event: "installation_repositories", delivery: randomUUID(), webhookSecret: f.webhookSecret,
+            payload: { action: "added", installation: { id: 2468 }, repositories_added: [], repositories_removed: [] },
+          }));
+          expect((await f.service.get(endpoint.id)).status).toBe("attention");
+          expect((await readToolConnectionsById(endpoint.connectionId))[0]).toMatchObject({ status: "disabled", enabled: false });
+          expect(f.wakeup).not.toHaveBeenCalled();
           const configured = await f.service.configure(endpoint.id, { action: "reconnect" }, "owner-user");
           expect(configured.status).toBe("verifying");
         }
