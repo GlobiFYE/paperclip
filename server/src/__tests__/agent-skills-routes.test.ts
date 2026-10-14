@@ -66,6 +66,16 @@ const mockSyncInstructionsBundleConfigFromFilePath = vi.hoisted(() => vi.fn());
 const mockChangeConsentGate = vi.hoisted(() => ({
   assertConsented: vi.fn(),
 }));
+const mockTransactionDb = vi.hoisted(() => ({
+  select: vi.fn(() => ({
+    from: vi.fn(() => ({
+      where: vi.fn(() => ({
+        for: vi.fn(async () => [{ id: "company-1" }]),
+      })),
+    })),
+  })),
+}));
+const mockUpdateAgentConfigurationInTransaction = vi.hoisted(() => vi.fn());
 
 const mockAdapter = vi.hoisted(() => ({
   listSkills: vi.fn(),
@@ -129,6 +139,11 @@ vi.mock("../services/change-consent-gate.js", async (importOriginal) => ({
   changeConsentGateService: () => mockChangeConsentGate,
 }));
 
+vi.mock("../services/agent-configuration-transaction.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../services/agent-configuration-transaction.js")>()),
+  updateAgentConfigurationInTransaction: mockUpdateAgentConfigurationInTransaction,
+}));
+
 function registerModuleMocks() {
   vi.doMock("@paperclipai/shared/telemetry", () => ({
     trackAgentCreated: mockTrackAgentCreated,
@@ -178,10 +193,16 @@ function registerModuleMocks() {
     ...(await importOriginal<typeof import("../services/change-consent-gate.js")>()),
     changeConsentGateService: () => mockChangeConsentGate,
   }));
+
+  vi.doMock("../services/agent-configuration-transaction.js", async (importOriginal) => ({
+    ...(await importOriginal<typeof import("../services/agent-configuration-transaction.js")>()),
+    updateAgentConfigurationInTransaction: mockUpdateAgentConfigurationInTransaction,
+  }));
 }
 
 function createDb(requireBoardApprovalForNewAgents = false) {
   return {
+    transaction: vi.fn(async (work) => work(mockTransactionDb)),
     select: vi.fn(() => ({
       from: vi.fn(() => ({
         where: vi.fn(async () => [
@@ -294,6 +315,7 @@ describe("agent skill routes", () => {
     mockGetTelemetryClient.mockReset();
     mockSyncInstructionsBundleConfigFromFilePath.mockReset();
     mockChangeConsentGate.assertConsented.mockReset();
+    mockUpdateAgentConfigurationInTransaction.mockReset();
     mockAdapter.listSkills.mockReset();
     mockAdapter.syncSkills.mockReset();
     mockSyncInstructionsBundleConfigFromFilePath.mockImplementation((_agent, config) => config);
@@ -613,6 +635,64 @@ describe("agent skill routes", () => {
 
   it("applies an exact accepted additive skill assignment for a suggest-only agent", async () => {
     const target = makeAgent("claude_local");
+    const db = createDb();
+    mockAgentService.getById.mockResolvedValue(target);
+    mockUpdateAgentConfigurationInTransaction.mockImplementation(
+      async (_tx, _id, patch) => ({ ...target, ...patch }),
+    );
+    mockAccessService.decide
+      .mockResolvedValueOnce({
+        allowed: false,
+        reason: "deny_missing_consent",
+        explanation: "Accepted consent is required.",
+      })
+      .mockResolvedValueOnce({
+        allowed: true,
+        reason: "allow_consented_change",
+        explanation: "Allowed after accepted consent.",
+      });
+
+    const res = await requestApp(
+      await createApp(db, {
+        type: "agent",
+        agentId: "reflection-coach",
+        companyId: "company-1",
+        source: "agent_key",
+        runId: "apply-run",
+      }),
+      (baseUrl) => request(baseUrl)
+        .post(`/api/agents/${target.id}/skills/sync?companyId=company-1`)
+        .send({ desiredSkills: ["paperclip"], mode: "add" }),
+    );
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const consentInput = {
+      companyId: "company-1",
+      actorAgentId: "reflection-coach",
+      actorRunId: "apply-run",
+      targets: [{
+        key: `agent:${target.id}:skills`,
+        revisionId: "add:sha256:1cf2787a24321bdb04b1a0b686220206e66bc7aa14d1cf49ec8d634a8fbb8d3f",
+      }],
+    };
+    expect(mockChangeConsentGate.assertConsented).toHaveBeenNthCalledWith(1, {
+      ...consentInput,
+      consume: false,
+    });
+    expect(mockChangeConsentGate.assertConsented).toHaveBeenNthCalledWith(2, consentInput);
+    expect(db.transaction).toHaveBeenCalledOnce();
+    expect(mockUpdateAgentConfigurationInTransaction).toHaveBeenCalledWith(
+      mockTransactionDb,
+      target.id,
+      expect.objectContaining({ adapterConfig: expect.any(Object) }),
+      expect.any(Object),
+    );
+    expect(mockAgentService.update).not.toHaveBeenCalled();
+  });
+
+  it("does not consume additive consent when assignment validation fails", async () => {
+    const target = makeAgent("claude_local");
+    const db = createDb();
     mockAgentService.getById.mockResolvedValue(target);
     mockAccessService.decide
       .mockResolvedValueOnce({
@@ -627,7 +707,7 @@ describe("agent skill routes", () => {
       });
 
     const res = await requestApp(
-      await createApp(createDb(), {
+      await createApp(db, {
         type: "agent",
         agentId: "reflection-coach",
         companyId: "company-1",
@@ -636,20 +716,23 @@ describe("agent skill routes", () => {
       }),
       (baseUrl) => request(baseUrl)
         .post(`/api/agents/${target.id}/skills/sync?companyId=company-1`)
-        .send({ desiredSkills: ["paperclip"], mode: "add" }),
+        .send({
+          desiredSkills: [{
+            key: "paperclip",
+            versionId: "22222222-2222-4222-8222-222222222222",
+          }],
+          mode: "add",
+        }),
     );
 
-    expect(res.status, JSON.stringify(res.body)).toBe(200);
-    expect(mockChangeConsentGate.assertConsented).toHaveBeenCalledWith({
-      companyId: "company-1",
-      actorAgentId: "reflection-coach",
-      actorRunId: "apply-run",
-      targets: [{
-        key: `agent:${target.id}:skills`,
-        revisionId: "add:sha256:1cf2787a24321bdb04b1a0b686220206e66bc7aa14d1cf49ec8d634a8fbb8d3f",
-      }],
-    });
-    expect(mockAgentService.update).toHaveBeenCalled();
+    expect(res.status, JSON.stringify(res.body)).toBe(400);
+    expect(res.body.error).toContain("Beta skill version pins");
+    expect(mockChangeConsentGate.assertConsented).toHaveBeenCalledWith(
+      expect.objectContaining({ consume: false }),
+    );
+    expect(mockChangeConsentGate.assertConsented).toHaveBeenCalledOnce();
+    expect(db.transaction).not.toHaveBeenCalled();
+    expect(mockAgentService.update).not.toHaveBeenCalled();
   });
 
   it.each(["remove", "replace"])("does not use additive consent for %s skill sync", async (mode) => {

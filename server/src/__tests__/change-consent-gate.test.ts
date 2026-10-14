@@ -235,6 +235,87 @@ describeEmbeddedPostgres("changeConsentGateService", () => {
     })).resolves.toBe(true);
   });
 
+  it("checks exact consent availability without consuming it", async () => {
+    const { companyId, coachId, sourceRunId, proposalIssueId } = await seedGateFixture();
+    await db.insert(issueThreadInteractions).values({
+      id: randomUUID(),
+      companyId,
+      issueId: proposalIssueId,
+      kind: "request_confirmation",
+      status: "accepted",
+      continuationPolicy: "wake_assignee_on_accept",
+      sourceRunId,
+      createdByAgentId: coachId,
+      payload: {
+        version: 1,
+        prompt: "Assign the approved skill?",
+        detailsMarkdown: "```diff\n+Assign wetstone-engineering.\n```",
+        target: {
+          type: "custom",
+          key: "agent:target-agent:skills",
+          revisionId: "add:sha256:approved",
+        },
+      },
+      result: { version: 1, outcome: "accepted" },
+      resolvedByUserId: "board-user",
+      resolvedAt: new Date(),
+    });
+    const input = {
+      companyId,
+      actorAgentId: coachId,
+      actorRunId: randomUUID(),
+      targets: [{ key: "agent:target-agent:skills", revisionId: "add:sha256:approved" }],
+    };
+
+    await expect(changeConsentGateService(db).assertConsented({
+      ...input,
+      consume: false,
+    })).resolves.toBe(true);
+    await expect(changeConsentGateService(db).assertConsented(input)).resolves.toBe(true);
+  });
+
+  it("rolls back consent consumption when the enclosing assignment write fails", async () => {
+    const { companyId, coachId, sourceRunId, proposalIssueId } = await seedGateFixture();
+    await db.insert(issueThreadInteractions).values({
+      id: randomUUID(),
+      companyId,
+      issueId: proposalIssueId,
+      kind: "request_confirmation",
+      status: "accepted",
+      continuationPolicy: "wake_assignee_on_accept",
+      sourceRunId,
+      createdByAgentId: coachId,
+      payload: {
+        version: 1,
+        prompt: "Assign the approved skill?",
+        detailsMarkdown: "```diff\n+Assign wetstone-engineering.\n```",
+        target: {
+          type: "custom",
+          key: "agent:target-agent:skills",
+          revisionId: "add:sha256:approved",
+        },
+      },
+      result: { version: 1, outcome: "accepted" },
+      resolvedByUserId: "board-user",
+      resolvedAt: new Date(),
+    });
+    const consentInput = (actorRunId: string) => ({
+      companyId,
+      actorAgentId: coachId,
+      actorRunId,
+      targets: [{ key: "agent:target-agent:skills", revisionId: "add:sha256:approved" }],
+    });
+
+    await expect(db.transaction(async (tx) => {
+      await changeConsentGateService(tx).assertConsented(consentInput(randomUUID()));
+      throw new Error("assignment write failed");
+    })).rejects.toThrow("assignment write failed");
+
+    await expect(changeConsentGateService(db).assertConsented(
+      consentInput(randomUUID()),
+    )).resolves.toBe(true);
+  });
+
   it("rejects an exact agent skill assignment interaction that is not accepted", async () => {
     const { companyId, coachId, sourceRunId, proposalIssueId } = await seedGateFixture();
     await db.insert(issueThreadInteractions).values({

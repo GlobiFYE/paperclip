@@ -166,6 +166,7 @@ export function changeConsentGateService(db: Db | Parameters<Parameters<Db["tran
       actorRunId: string | null | undefined;
       targetKeys?: string[];
       targets?: ChangeConsentTarget[];
+      consume?: boolean;
     }): Promise<boolean> => {
       const actorAgentId = readNonEmptyString(input.actorAgentId);
       if (!actorAgentId) return false;
@@ -247,6 +248,8 @@ export function changeConsentGateService(db: Db | Parameters<Parameters<Db["tran
           },
         );
       }
+
+      if (input.consume === false) return true;
 
       const now = new Date();
       const [consumed] = await db

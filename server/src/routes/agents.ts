@@ -1,6 +1,8 @@
 import { cancellationRequestId } from "../services/native-runtime/native-cancellation-request.js";
 import { agentEnvironmentTestService } from "../services/agent-environment-test.js";
-import { createAgentLifecycle } from "../services/agent-lifecycle.js";
+import { createAgentLifecycle, scheduleAgentLifecycle } from "../services/agent-lifecycle.js";
+import { withAccountingTransaction } from "../services/accounting-transaction.js";
+import { updateAgentConfigurationInTransaction } from "../services/agent-configuration-transaction.js";
 
 import { agentIdentityService } from "../services/agent-identity.js";
 import { aiConnectionRouterService, poolMemberRuntimeConfig } from "../services/ai-connection-router.js";
@@ -273,6 +275,7 @@ import {
   agentSkillAssignmentChangeTargetKey,
   changeConsentGateService,
   touchesAgentProfileChangeConsentFields,
+  type ChangeConsentTarget,
 } from "../services/change-consent-gate.js";
 import {
   canActorReadHeartbeatRun,
@@ -290,6 +293,13 @@ import { managedAgentProfileService } from "../services/managed-agent-profiles.j
 import { remoteAgentProfileService } from "../services/remote-agent-profiles.js";
 
 const AGENT_SKILL_ASSIGNMENT_MODES = ["add", "remove", "replace"] as const;
+
+type AgentSkillAssignmentConsentContext = {
+  companyId: string;
+  actorAgentId: string;
+  actorRunId: string | null;
+  target: ChangeConsentTarget;
+};
 
 function requireAgentSkillAssignmentMode(req: Request, _res: Response, next: NextFunction) {
   if (!AGENT_SKILL_ASSIGNMENT_MODES.includes(req.body?.mode)) {
@@ -1798,18 +1808,25 @@ export function agentRoutes(
       action: "agent_config:update",
       resource: { type: "agent", companyId: targetAgent.companyId, agentId: targetAgent.id },
     });
-    if (decision.allowed) return;
+    if (decision.allowed) return null;
 
-    if (decision.reason === "deny_missing_consent" && req.actor.type === "agent" && mode === "add") {
+    if (
+      decision.reason === "deny_missing_consent"
+      && req.actor.type === "agent"
+      && req.actor.agentId
+      && mode === "add"
+    ) {
+      const target = {
+        key: agentSkillAssignmentChangeTargetKey(targetAgent.id),
+        revisionId: agentSkillAssignmentChangeRevisionId(requestedSkills),
+      };
       try {
         await changeConsentGateService(db).assertConsented({
           companyId: targetAgent.companyId,
           actorAgentId: req.actor.agentId,
           actorRunId: req.actor.runId ?? null,
-          targets: [{
-            key: agentSkillAssignmentChangeTargetKey(targetAgent.id),
-            revisionId: agentSkillAssignmentChangeRevisionId(requestedSkills),
-          }],
+          targets: [target],
+          consume: false,
         });
       } catch (err) {
         if (err instanceof HttpError && err.status === 403) {
@@ -1824,7 +1841,14 @@ export function agentRoutes(
         resource: { type: "agent", companyId: targetAgent.companyId, agentId: targetAgent.id },
         scope: { consentedChange: true },
       });
-      if (consentedDecision.allowed) return;
+      if (consentedDecision.allowed) {
+        return {
+          companyId: targetAgent.companyId,
+          actorAgentId: req.actor.agentId,
+          actorRunId: req.actor.runId ?? null,
+          target,
+        } satisfies AgentSkillAssignmentConsentContext;
+      }
       throw forbidden(consentedDecision.explanation, authorizationDeniedDetails(consentedDecision));
     }
 
@@ -3708,7 +3732,7 @@ export function agentRoutes(
       if (!requestedSkills) {
         throw unprocessable("Skill sync requires desiredSkills.");
       }
-      await assertCanApplyAgentSkillAssignment(req, agent, requestedSkills, req.body.mode);
+      const consentContext = await assertCanApplyAgentSkillAssignment(req, agent, requestedSkills, req.body.mode);
       const {
         adapterConfig: nextAdapterConfig,
         desiredSkills,
@@ -3729,15 +3753,31 @@ export function agentRoutes(
         throw unprocessable("Skill sync requires desiredSkills.");
       }
       const actor = getActorInfo(req);
-      const updated = await svc.update(agent.id, {
-        adapterConfig: nextAdapterConfig,
-      }, {
+      const updateOptions = {
         recordRevision: {
           createdByAgentId: actor.agentId,
           createdByUserId: actor.actorType === "user" ? actor.actorId : null,
           source: "skill-sync",
         },
-      });
+      } as const;
+      const updated = consentContext
+        ? await withAccountingTransaction(db, agent.companyId, async (tx) => {
+            await changeConsentGateService(tx).assertConsented({
+              companyId: consentContext.companyId,
+              actorAgentId: consentContext.actorAgentId,
+              actorRunId: consentContext.actorRunId,
+              targets: [consentContext.target],
+            });
+            const result = await updateAgentConfigurationInTransaction(tx, agent.id, {
+              adapterConfig: nextAdapterConfig,
+            }, updateOptions);
+            if (!result) throw notFound("Agent not found");
+            return result;
+          })
+        : await svc.update(agent.id, {
+            adapterConfig: nextAdapterConfig,
+          }, updateOptions);
+      if (consentContext) scheduleAgentLifecycle(db, agent.id);
       if (!updated) {
         res.status(404).json({ error: "Agent not found" });
         return;
