@@ -60,7 +60,12 @@ async function runGitRead(
         reject(error);
       },
     );
-    child.stdin?.end(options.input ?? "");
+    // Git can exit before it reads stdin (or never reads it). A write to the
+    // closed pipe then fails with EPIPE; the exit status above already reports
+    // any real failure, so the stream error is not a second outcome.
+    child.stdin?.on("error", () => {});
+    if (options.input === undefined) child.stdin?.end();
+    else child.stdin?.end(options.input);
   });
 }
 
