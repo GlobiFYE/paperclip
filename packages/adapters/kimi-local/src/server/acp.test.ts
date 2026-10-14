@@ -3,6 +3,7 @@ import {
   buildKimiAcpConfig,
   nodeVersionMeetsKimiAcpMinimum,
   resolveKimiExecutionEngine,
+  testKimiAcpEnvironment,
 } from "./acp.js";
 
 describe("resolveKimiExecutionEngine", () => {
@@ -72,5 +73,21 @@ describe("nodeVersionMeetsKimiAcpMinimum", () => {
   });
   it("rejects Node < 20", () => {
     expect(nodeVersionMeetsKimiAcpMinimum("v18.19.0")).toBe(false);
+  });
+});
+
+describe("testKimiAcpEnvironment", () => {
+  it("reports Kimi's effective disabled warm-handle timeout", async () => {
+    const result = await testKimiAcpEnvironment({
+      adapterType: "kimi_local",
+      config: {
+        agentCommand: process.execPath,
+        warmHandleIdleMs: 60_000,
+        env: {},
+      },
+    } as never);
+
+    expect(result.checks.find((check) => check.code === "kimi_acp_runtime_scaffold")?.detail)
+      .toBe("mode=persistent; warmHandleIdleMs=0");
   });
 });

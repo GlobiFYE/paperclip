@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomUUID } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 
 function writeMessage(message) {
@@ -8,6 +8,15 @@ function writeMessage(message) {
 }
 
 let supportsTypedSessionFailure = false;
+let resumedSession = false;
+let nextClientRequestId = 1;
+const pendingClientRequests = new Map();
+
+function requestClient(method, params) {
+  const id = `fixture-${nextClientRequestId++}`;
+  writeMessage({ jsonrpc: "2.0", id, method, params });
+  return new Promise((resolve, reject) => pendingClientRequests.set(id, { resolve, reject }));
+}
 
 async function handleRequest(request) {
   if (request.method === "initialize") {
@@ -24,14 +33,46 @@ async function handleRequest(request) {
     return {
       protocolVersion: 1,
       agentCapabilities: {
-        loadSession: false,
+        loadSession: Boolean(process.env.PAPERCLIP_ACPX_SESSION_FILE),
         sessionCapabilities: { close: {} },
       },
       agentInfo: { name: "paperclip-acp-echo-agent", version: "1.0.0" },
     };
   }
-  if (request.method === "session/new") return { sessionId: randomUUID() };
+  if (request.method === "session/new") {
+    const sessionId = randomUUID();
+    if (process.env.PAPERCLIP_ACPX_SESSION_FILE) {
+      await writeFile(process.env.PAPERCLIP_ACPX_SESSION_FILE, sessionId);
+    }
+    return { sessionId };
+  }
+  if (request.method === "session/load") {
+    const sessionId = await readFile(process.env.PAPERCLIP_ACPX_SESSION_FILE, "utf8");
+    if (sessionId !== request.params.sessionId) throw new Error("Unknown session");
+    resumedSession = true;
+    return {};
+  }
   if (request.method === "session/prompt") {
+    if (process.env.PAPERCLIP_ACPX_TERMINAL_ENV_SMOKE) {
+      const created = await requestClient("terminal/create", {
+        sessionId: request.params.sessionId,
+        command: process.execPath,
+        args: ["-e", `process.stdout.write(JSON.stringify({key:process.env.PAPERCLIP_API_KEY,run:process.env.PAPERCLIP_RUN_ID,secret:process.env.PAPERCLIP_AGENT_JWT_SECRET??null,providerPid:${process.pid},terminalPid:process.pid,resumed:${resumedSession}}))`],
+      });
+      const exited = await requestClient("terminal/wait_for_exit", { sessionId: request.params.sessionId, terminalId: created.terminalId });
+      const output = await requestClient("terminal/output", { sessionId: request.params.sessionId, terminalId: created.terminalId });
+      await requestClient("terminal/release", { sessionId: request.params.sessionId, terminalId: created.terminalId });
+      if (exited.exitCode !== 0) throw new Error(`terminal failed: ${exited.exitCode}`);
+      writeMessage({
+        jsonrpc: "2.0",
+        method: "session/update",
+        params: {
+          sessionId: request.params.sessionId,
+          update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: output.output } },
+        },
+      });
+      return { stopReason: "end_turn" };
+    }
     const typedFailure = process.env.PAPERCLIP_ACPX_TYPED_FAILURE_FILE
       ? JSON.parse(await readFile(process.env.PAPERCLIP_ACPX_TYPED_FAILURE_FILE, "utf8"))
       : {};
@@ -129,6 +170,15 @@ lines.on("line", async (line) => {
   let request;
   try {
     request = JSON.parse(line);
+    if (request.id !== undefined && request.method === undefined) {
+      const pending = pendingClientRequests.get(request.id);
+      if (pending) {
+        pendingClientRequests.delete(request.id);
+        if (request.error) pending.reject(new Error(request.error.message));
+        else pending.resolve(request.result);
+      }
+      return;
+    }
     const result = await handleRequest(request);
     if (request.id !== undefined && result !== null)
       writeMessage({ jsonrpc: "2.0", id: request.id, result });

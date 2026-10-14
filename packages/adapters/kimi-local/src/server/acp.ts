@@ -17,7 +17,6 @@ import {
   DEFAULT_ACP_ENGINE_MODE,
   DEFAULT_ACP_ENGINE_NON_INTERACTIVE_PERMISSIONS,
   DEFAULT_ACP_ENGINE_PERMISSION_MODE,
-  DEFAULT_ACP_ENGINE_WARM_HANDLE_IDLE_MS,
 } from "@paperclipai/adapter-utils/acpx-engine/constants";
 import type { AcpxEngineExecutorOptions } from "@paperclipai/adapter-utils/acpx-engine/execute";
 import {
@@ -375,10 +374,7 @@ export async function testKimiAcpEnvironment(
   }
 
   const mode = firstNonEmptyString(config.mode, config.acpMode) ?? DEFAULT_ACP_ENGINE_MODE;
-  const warmHandleIdleMs = asNumber(
-    config.warmHandleIdleMs ?? config.acpWarmHandleIdleMs,
-    DEFAULT_ACP_ENGINE_WARM_HANDLE_IDLE_MS,
-  );
+  const { warmHandleIdleMs } = buildKimiAcpConfig(config);
   checks.push({
     code: "kimi_acp_runtime_scaffold",
     level: "info",

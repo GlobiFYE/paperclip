@@ -12,4 +12,12 @@ describe("sanitizeInheritedPaperclipEnv", () => {
       PATH: "/usr/bin",
     });
   });
+
+  it("drops the server JWT secret with the rest of the inherited Paperclip environment", () => {
+    expect(sanitizeInheritedPaperclipEnv({
+      PAPERCLIP_AGENT_JWT_SECRET: "server-secret",
+      PAPERCLIP_API_KEY: "stale-run-key",
+      PATH: "/usr/bin",
+    })).toEqual({ PATH: "/usr/bin" });
+  });
 });
