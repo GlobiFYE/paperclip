@@ -74,7 +74,9 @@ match the signed run. Missing runs and unknown statuses fail closed.
   earlier than run creation, and not in the future. Missing timestamps fail closed.
 - Requests never update the grace timestamp. Revocation and JWT expiry override
   grace. Existing cancellation rules still deny writes immediately, including
-  during the authentication grace window.
+  during the authentication grace window. A terminal row without a trustworthy
+  timestamp returns `401` before write authorization; a cancelled run with a
+  valid timestamp still returns the existing `403` cancellation denial for writes.
 - Invalid bearer credentials return an authentication error in `local_trusted`
   mode too. Only requests without bearer credentials receive implicit board access.
 
@@ -168,8 +170,12 @@ and the native runner's `paperclip-runner-tool-authority.ts` API bridge. Both us
 an existing heartbeat run; the native bridge mints credentials from server-owned
 run bindings. Each newly minted credential has its own revocation handle.
 The commentary verification script and JWT integration fixtures also create run
-rows. The pipeline tutorial browser fixture now invokes a real no-op run instead
-of inventing a run ID, and finishes within terminal grace. Agent-chat browser
+rows. The pipeline tutorial browser fixture invokes a real bounded process run
+instead of inventing a run ID, keeps it active for the scenario, and cancels it
+in cleanup. It explicitly grants pipeline writes to both the agent and the
+responsible user, and verifies denial without the user grant. Requiring a real
+run preserves the existing responsible-user permission checks: synthetic run
+IDs no longer bypass that binding. Agent-chat browser
 coverage uses an existing cancelled run and still expects write denial.
 Pure cryptographic unit tests need no database; middleware fixtures do.
 

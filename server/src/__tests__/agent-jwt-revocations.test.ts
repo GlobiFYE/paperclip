@@ -32,6 +32,7 @@ describe("persistent run JWT authorization", () => {
     server.use(express.json());
     server.use(actorMiddleware(connection, { deploymentMode }));
     server.get("/actor", (req, res) => res.json(req.actor));
+    server.post("/actor", (req, res) => res.json(req.actor));
     server.use("/api", agentJwtRevocationRoutes(connection));
     server.use(errorHandler);
     return server;
@@ -131,6 +132,11 @@ describe("persistent run JWT authorization", () => {
     clock.mockReturnValue(finishedAt.getTime());
     await db.update(heartbeatRuns).set({ finishedAt: null }).where(eq(heartbeatRuns.id, runId));
     expect((await actor(token)).status).toBe(401);
+    // Even conversation cancellation cannot grant authentication grace without
+    // a terminal timestamp; the local board fallback must remain unavailable.
+    await db.update(heartbeatRuns).set({ contextSnapshot: { conversationMode: true } }).where(eq(heartbeatRuns.id, runId));
+    const write = await request(app(db2, "local_trusted")).post("/actor").set("Authorization", `Bearer ${token}`);
+    expect(write.status).toBe(401);
   });
 
   it("revocation overrides grace and expired rows remain denied until safe cleanup", async () => {
