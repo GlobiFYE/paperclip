@@ -31,6 +31,19 @@ export interface RunnerdDotDriverOptions {
   adoptExistingRunner?: CapabilityRunnerdCodexTransportOptions["adoptExistingRunner"];
 }
 
+/** Keep the remote monitor's closed failure code without logging its stderr,
+ * which can contain private transport details. */
+export function externalRunnerExitMessage(result: Awaited<RunnerProcessHandle["completion"]>): string {
+  const diagnostics = result.stderr ?? "";
+  const reasons = [
+    ["transport_reconnect_grace_exceeded", "transport reconnect grace exceeded"],
+    ["transport_reconnect_deadline_exceeded", "transport reconnect deadline elapsed"],
+    ["lease_expired_requires_bootstrap", "connection lease expired"],
+  ] as const;
+  const reason = reasons.find(([code, message]) => diagnostics.includes(code) || diagnostics.includes(message))?.[0];
+  return `dot_runner_process_exited_recovery_required: code=${result.code} signal=${result.signal}${reason ? ` reason=${reason}` : ""}`;
+}
+
 const capabilities = {
   resume: false, typedEvents: true, steering: false, interruption: false,
   structuredResult: true, read: true, reconciliation: true, usage: false,
@@ -168,7 +181,7 @@ class RunnerdDotSession implements HarnessSession {
         // Remote monitors do not report an exit code. The authenticated,
         // persisted receipt is the evidence of shutdown, for either launcher.
         if (core.getCommand("dot_shutdown")?.status === "completed") return;
-        this.#failure ??= new Error(`dot_runner_process_exited_recovery_required: code=${result.code} signal=${result.signal}`);
+        this.#failure ??= new Error(externalRunnerExitMessage(result));
         this.#wake();
       }, () => {
         if (this.#closed || core.getCommand("dot_shutdown")?.status === "completed") return;

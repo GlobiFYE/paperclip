@@ -451,6 +451,21 @@ describe("durable Dot Runner integration", () => {
       } finally { await f.events.stop(); }
     }, 30000);
 
+  it("fences a failed Grok run's remaining external assignment without stopping a successor", async () => {
+    const f = await fixture({ provider: "grok_bot" });
+    const old = await offeredWork(f);
+    await db.update(heartbeatRuns).set({ status: "failed" }).where(eq(heartbeatRuns.id, old.run.id));
+    expect(await f.broker.stopGrokWork(f.company.id, f.agent.id, f.userId, old.run.id))
+      .toMatchObject({ stopped: true, remoteTerminationConfirmed: false });
+    expect((await db.select().from(dotRunnerAssignments).where(eq(dotRunnerAssignments.runId, old.run.id)))[0]?.status).toBe("fenced");
+    expect(await grokRoutineService(db).recoveryNeeded(f.company.id, f.agent.id)).toBe(true);
+    await expect(f.broker.read(f.principal, old.assignment.id)).rejects.toThrow();
+    const current = await offeredWork(f);
+    await expect(f.broker.stopGrokWork(f.company.id, f.agent.id, f.userId, old.run.id)).rejects.toThrow("changed");
+    expect((await db.select().from(dotRunnerAssignments).where(eq(dotRunnerAssignments.id, current.assignment.id)))[0]?.status).toBe("offered");
+    await f.events.stop();
+  });
+
   it.each(["queued", "running"] as const)("stops a %s Grok run before an external assignment exists", async status => {
     const f = await fixture({ provider: "grok_bot" });
     const [run] = await db.insert(heartbeatRuns).values({ companyId: f.company.id, agentId: f.agent.id, status, invocationSource: "assignment", triggerDetail: "system" }).returning();
@@ -759,11 +774,12 @@ describe("durable Dot Runner integration", () => {
     const remote = managed ? await (await import("./helpers/dot-daytona.js")).startDotDaytona(root) : null;
     try {
       const f = await fixture({ provider });
-      const [issue] = await db.insert(issues).values({ companyId: f.company.id, title: "Save the arithmetic report", description: "Save 17 + 25 = 42 as a task document.",
+      const [issue] = await db.insert(issues).values({ companyId: f.company.id, title: "Save the arithmetic report", description: provider === "grok_bot" ? "Save 17 + 25 = 42 as a task document and attach report.txt." : "Save 17 + 25 = 42 as a task document.",
         status: "in_progress", workMode: "standard", assigneeAgentId: f.agent.id }).returning();
       const [run] = await db.insert(heartbeatRuns).values({ companyId: f.company.id, agentId: f.agent.id, status: "running", invocationSource: "assignment", triggerDetail: "system", contextSnapshot: { issueId: issue!.id } }).returning();
       await db.update(issues).set({ executionRunId: run!.id, checkoutRunId: run!.id }).where(eq(issues.id, issue!.id));
       const prepared = await prepareNativeHeartbeatRun({ db, run: run!, issue: issue!, environmentLeaseId: randomUUID() });
+      await db.update(heartbeatRuns).set({ driverKind: provider === "grok_bot" ? "grok_bot_mcp" : "openai_dot_mcp" }).where(eq(heartbeatRuns.id, run!.id));
       await db.insert(nativeRunFinalizations).values({ runId: run!.id, companyId: f.company.id, issueId: issue!.id, phase: "observed" });
       const [boundRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run!.id));
       const [contract] = await db.select().from(completionContracts).where(eq(completionContracts.id, boundRun!.completionContractId!));
@@ -818,6 +834,7 @@ describe("durable Dot Runner integration", () => {
         expect(await f.broker.operation(f.principal, assignment!.id, randomUUID(), "tool", { name: "write_document", arguments: {} })).toMatchObject({ status: "rejected" });
         await f.broker.operation(f.principal, assignment!.id, randomUUID(), "accept", {});
         expect(JSON.stringify(work)).not.toContain("fixture-gateway-secret");
+        let uploadedDeliverableId: string | undefined;
         if (provider === "grok_bot") {
           const files = new Map<string, Buffer>();
           const transfers = createPublicMcpTransfers(db, f.oauth, async () => { throw new Error("Personal API dispatch forbidden"); }, {
@@ -836,8 +853,24 @@ describe("durable Dot Runner integration", () => {
           const url = new URL(String(grant.url));
           const uploaded = await request(api).put(url.pathname + url.search).set("Content-Type", "text/plain").send(body);
           expect(uploaded.status).toBe(200);
-          const duplicate = await request(api).put(url.pathname + url.search).set("Content-Type", "text/plain").send(body);
+          uploadedDeliverableId = uploaded.body.attachment.id;
+          expect(uploaded.body.publication).toMatchObject({ evidenceRef: `deliverable:${uploadedDeliverableId}`,
+            commandId: `deliverable-uploaded:${uploadedDeliverableId}`, source: "authenticated_upload" });
+          const duplicates = await Promise.all([0, 1].map(() => request(api).put(url.pathname + url.search)
+            .set("Content-Type", "text/plain").send(body)));
+          expect(duplicates.every(response => response.status === 200)).toBe(true);
+          expect(duplicates[0]!.body).toEqual(duplicates[1]!.body);
+          const duplicate = duplicates[0]!;
           expect(duplicate.body.attachment.id).toBe(uploaded.body.attachment.id);
+          expect(duplicate.body.publication).toEqual(uploaded.body.publication);
+          expect(await transfers.getUploadUrl(f.principal, args, assignment!.id)).toMatchObject({
+            status: "completed", publication: uploaded.body.publication, attachment: { id: uploadedDeliverableId },
+          });
+          const [publishedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run!.id));
+          expect(Object.values(publishedRun!.resultJson!.semanticToolReceipts as Record<string, unknown>))
+            .toEqual(expect.arrayContaining([expect.objectContaining({ operationId: "publish_external_deliverable" })]));
+          expect(Object.keys(publishedRun!.resultJson!.semanticToolReceipts as Record<string, unknown>)
+            .filter(key => key.startsWith("external-upload:"))).toHaveLength(1);
           expect(await issueService(db).getAttachmentById(uploaded.body.attachment.id)).toMatchObject({ createdByAgentId: f.agent.id, originatingRunId: run!.id, createdByUserId: null });
           await expect(transfers.getUploadUrl(f.principal, { ...args, taskId: randomUUID() }, assignment!.id)).rejects.toThrow();
           const download = new URL(String((await transfers.getDownloadUrl(f.principal, uploaded.body.attachment.id, assignment!.id)).url));
@@ -894,7 +927,15 @@ describe("durable Dot Runner integration", () => {
         const result = { reportedWorkDisposition: "completed", summary: "Saved the arithmetic report.",
           completionClaim: { contractRevision: execution.completionContract.contract.revision, objectiveSatisfied: true,
             criteria: execution.completionContract.contract.criteria.map(c => ({ criterionId: c.id, status: "passed", evidenceRefs: [] })), remainingWork: [] },
-          evidence: [], verification: [{ commandOrCheck: "17 + 25", status: "pass" }] };
+          evidence: uploadedDeliverableId ? [{ ref: `deliverable:${uploadedDeliverableId}` }] : [], verification: [{ commandOrCheck: "17 + 25", status: "pass" }] };
+        if (uploadedDeliverableId) {
+          const missingEvidenceId = randomUUID();
+          await f.broker.operation(f.principal, assignment!.id, missingEvidenceId, "tool", {
+            name: "paperclip_finish", arguments: { ...result, evidence: [] },
+          });
+          await vi.waitFor(async () => expect(await f.broker.operationStatus(f.principal, assignment!.id, missingEvidenceId))
+            .toMatchObject({ status: "completed", isError: true, result: { error: expect.stringContaining("requested file") } }), { timeout: 10000 });
+        }
         const completionId = randomUUID();
         await f.broker.operation(f.principal, assignment!.id, completionId, "tool", { name: "paperclip_finish", arguments: result });
         await vi.waitFor(async () => expect(await f.broker.operationStatus(f.principal, assignment!.id, completionId)).toMatchObject({ status: "completed", isError: false }), { timeout: 10000 });
