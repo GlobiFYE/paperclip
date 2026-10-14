@@ -65,6 +65,19 @@ describe("describePluginSqlError", () => {
     );
   });
 
+  it("keeps only the SQLSTATE of a data exception, because its message can carry a parameter value", () => {
+    const error = new DrizzleQueryError(
+      statement,
+      [secretParam],
+      postgresError("22P02", `invalid input syntax for type uuid: "${secretParam}"`),
+    );
+
+    const described = describePluginSqlError(error, statement) as Error;
+
+    expect(described.message).toBe(`Failed query: ${statement}\nSQLSTATE 22P02: data exception`);
+    expect(described.message).not.toContain(secretParam);
+  });
+
   it("strips the parameters from a failed query that has no Postgres cause", () => {
     const error = new DrizzleQueryError(statement, [secretParam], new Error("write EPIPE"));
 
@@ -162,6 +175,17 @@ describeEmbeddedPostgres("plugin ctx.db errors", () => {
     expect(failure?.message).toBe(
       `Failed query: ${insert}\nSQLSTATE 23505: duplicate key value violates unique constraint "rows_slug_key"`,
     );
+    expect(failure?.message).not.toContain(secretParam);
+  });
+
+  it("keeps only the SQLSTATE when ctx.db.query fails on an invalid input value", async () => {
+    const { pluginId, pluginDb } = await installPlugin();
+    const select = `SELECT slug FROM ${namespace}.rows WHERE id = $1`;
+
+    const failure = await pluginDb.query(pluginId, select, [secretParam])
+      .then(() => null, (error: unknown) => error as Error);
+
+    expect(failure?.message).toBe(`Failed query: ${select}\nSQLSTATE 22P02: data exception`);
     expect(failure?.message).not.toContain(secretParam);
   });
 

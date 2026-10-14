@@ -325,13 +325,8 @@ function bindSql(statement: string, params: readonly unknown[] = []): SQL {
   return sql.join(chunks, sql.raw(""));
 }
 
-/**
- * Drizzle reports a failed statement as `Failed query: <sql>\nparams: <values>`
- * and keeps the Postgres error in `cause`, so a plugin saw the SQL but never the
- * reason. Rebuild the message from the statement plus the Postgres SQLSTATE and
- * message. Bound parameters never leave the host: neither the Drizzle message
- * nor the Postgres `detail` (which can echo row values) is carried over.
- */
+const POSTGRES_DATA_EXCEPTION_CLASS = "22";
+
 export function describePluginSqlError(error: unknown, statement: string): unknown {
   const seen = new Set<unknown>();
   let current: unknown = error;
@@ -344,7 +339,8 @@ export function describePluginSqlError(error: unknown, statement: string): unkno
       && typeof candidate.severity === "string"
       && typeof candidate.message === "string"
     ) {
-      return new Error(`Failed query: ${statement}\nSQLSTATE ${candidate.code}: ${candidate.message}`);
+      const reason = candidate.code.startsWith(POSTGRES_DATA_EXCEPTION_CLASS) ? "data exception" : candidate.message;
+      return new Error(`Failed query: ${statement}\nSQLSTATE ${candidate.code}: ${reason}`);
     }
     current = candidate.cause;
   }
