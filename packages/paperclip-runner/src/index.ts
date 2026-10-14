@@ -78,3 +78,5 @@ export * from "./generated/capability-contract.js";
 export * from "./semantic-tools/index.js";
 export * as acceptedCapabilitySemanticTools from "./semantic-tools/index.js";
 export * from "./compatibility.js";
+
+export { resolveCodexCommand } from "./drivers/codex/codex-command.js";

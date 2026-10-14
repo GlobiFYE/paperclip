@@ -7,12 +7,16 @@ import { testEnvironment } from "@paperclipai/adapter-codex-local/server";
 const itWindows = process.platform === "win32" ? it : it.skip;
 const itPosix = process.platform === "win32" ? it.skip : it;
 
-async function runProbeFixture(options: { failCleanup?: boolean; error?: string } = {}) {
+async function runProbeFixture(options: { failCleanup?: boolean; error?: string; commandName?: string; model?: string; version?: string } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-probe-result-"));
   const capture = path.join(root, "capture.json");
-  const command = path.join(root, "codex");
+  const command = path.join(root, options.commandName ?? "codex");
   await fs.writeFile(command, `#!${process.execPath}
 const fs = require('node:fs');
+if (process.argv.includes('--version')) {
+  fs.writeFileSync(process.env.PROBE_CAPTURE, JSON.stringify({ args: process.argv.slice(2) }));
+  console.log('codex-cli ${options.version ?? "0.160.0"}'); process.exit(0);
+}
 fs.writeFileSync(process.env.PROBE_CAPTURE, JSON.stringify({ args: process.argv.slice(2), home: process.env.CODEX_HOME }));
 console.error('WARN codex_core_plugins::manager: remote installed plugin bundle sync failed error=chatgpt authentication required for remote plugin catalog');
 const error = process.env.PROBE_ERROR;
@@ -27,7 +31,7 @@ console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,output_t
   try {
     const result = await testEnvironment({
       companyId: "company-1", adapterType: "codex_local",
-      config: { engine: "cli", command, cwd: root, env: {
+      config: { engine: "cli", command, cwd: root, model: options.model, env: {
         OPENAI_API_KEY: "fixture-key", PROBE_CAPTURE: capture,
         PROBE_ERROR: options.error ?? "", PATH: `${root}${path.delimiter}${process.env.PATH ?? ""}`,
       } },
@@ -41,6 +45,12 @@ console.log(JSON.stringify({type:'turn.completed',usage:{input_tokens:1,output_t
 }
 
 describe("codex_local environment diagnostics", () => {
+  itPosix("runs the hello probe for a packaged codex.js executable", async () => {
+    const { result, capture } = await runProbeFixture({ commandName: "codex.js", model: "gpt-6.1-sol" });
+    expect(result.checks.some(check => check.code === "codex_hello_probe_passed")).toBe(true);
+    expect(capture.args).toContain("exec");
+  });
+
   beforeEach(() => {
     vi.stubEnv("OPENAI_API_KEY", "");
   });

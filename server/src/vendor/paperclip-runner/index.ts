@@ -131,3 +131,5 @@ export const NativeProviderTerminalFailure = runner.NativeProviderTerminalFailur
 
 export const completeTerminatedRemoteNativeSessionCleanup = runner.completeTerminatedRemoteNativeSessionCleanup;
 export const completeTerminatedLocalNativeSessionCleanup = runner.completeTerminatedLocalNativeSessionCleanup;
+
+export const resolveCodexCommand = runner.resolveCodexCommand;
