@@ -1,10 +1,11 @@
+import { enableRunFailureReporting } from "./helpers/run-failure-reporting.js";
 import { captureEnvironmentAcquisitionDiagnostic } from "../services/environment-acquisition-diagnostics.js";
 import { createRequire } from "node:module";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { buildHeartbeatRunStopMetadata, mergeHeartbeatRunStopMetadata } from "../services/heartbeat-stop-metadata.js";
-import { beforeEach, afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { collectRunFailureDiagnostics, sanitizeRunFailureDiagnostics } from "../services/run-failure-diagnostics.js";
 import type { heartbeatRuns } from "@paperclipai/db";
 import {
@@ -614,5 +615,5 @@ describe.skipIf(!sentryPackage)("run failure context with the real Sentry SDK", 
 
 });
 
-beforeEach(() => { vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", "unexpected"); });
-afterEach(() => { vi.unstubAllEnvs(); });
+
+enableRunFailureReporting();

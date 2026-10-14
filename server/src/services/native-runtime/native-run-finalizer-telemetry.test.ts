@@ -1,6 +1,7 @@
+import { enableRunFailureReporting } from "../../__tests__/helpers/run-failure-reporting.js";
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { afterEach, beforeEach, afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   agents,
   companies,
@@ -918,5 +919,5 @@ describeEmbeddedPostgres("native run finalizer / status decision committer — a
   });
 });
 
-beforeEach(() => { vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", "unexpected"); });
-afterEach(() => { vi.unstubAllEnvs(); });
+
+enableRunFailureReporting();

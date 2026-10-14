@@ -1,9 +1,10 @@
+import { enableRunFailureReporting } from "./helpers/run-failure-reporting.js";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
-import { beforeEach, afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   costEvents,
   agents,
@@ -1078,5 +1079,5 @@ describeEmbeddedPostgres("shared-workspace run serialization", () => {
   });
 });
 
-beforeEach(() => { vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", "unexpected"); });
-afterEach(() => { vi.unstubAllEnvs(); });
+
+enableRunFailureReporting();

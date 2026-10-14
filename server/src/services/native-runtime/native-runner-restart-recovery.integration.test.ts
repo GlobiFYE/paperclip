@@ -1,3 +1,4 @@
+import { enableRunFailureReporting } from "../../__tests__/helpers/run-failure-reporting.js";
 import { hasNativeLocalProcessStop } from "../native-local-process-stop.js";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
@@ -18,7 +19,7 @@ import {
   nativeRunFinalizations,
   nativeRunResults,
 } from "@paperclipai/db";
-import { afterEach, beforeEach, afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
   canonicalNativeRuntimeContextDigest,
@@ -1152,5 +1153,5 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
   }, 30_000);
 });
 
-beforeEach(() => { vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", "unexpected"); });
-afterEach(() => { vi.unstubAllEnvs(); });
+
+enableRunFailureReporting();

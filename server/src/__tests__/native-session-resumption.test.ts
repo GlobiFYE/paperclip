@@ -1,9 +1,10 @@
+import { enableRunFailureReporting } from "./helpers/run-failure-reporting.js";
 import { EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeEach, afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq, inArray } from "drizzle-orm";
 import {
   activityLog,
@@ -1458,5 +1459,5 @@ describe.each(["unchanged", "newer_active", "stale_idle"] as const)(
   },
 );
 
-beforeEach(() => { vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", "unexpected"); });
-afterEach(() => { vi.unstubAllEnvs(); });
+
+enableRunFailureReporting();
