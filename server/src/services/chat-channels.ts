@@ -19,7 +19,7 @@ import { createInboundWakeNotices } from "./chat-channels/inbound/wakeup-notices
 import { createDiscordRuntimeReconciliation } from "./chat-channels/discord/runtime-reconciliation.js";
 import { createPhotonRuntimeCallbacks } from "./chat-channels/imessage-photon/runtime-callbacks.js";
 import { createChatReceiverOwnership } from "./chat-channels/runtime/ownership.js";
-import { createGitHubWebhookScope } from "./chat-channels/github/webhook-scope.js";
+import { createGitHubWebhookScope, githubWebhookCanRecoverRevokedInstallation } from "./chat-channels/github/webhook-scope.js";
 import { createGitHubWebhookAuthentication, retryableGitHubWebhookResponse } from "./chat-channels/github/webhook-authentication.js";
 import { createSlackWebhookCallbacks } from "./chat-channels/slack/webhook-callbacks.js";
 import { createGitHubWebhookEvents } from "./chat-channels/github/webhook-events.js";
@@ -110,7 +110,7 @@ import {
 import { telegramLifecycleEventFromPayload, telegramIgnoresInboundMessage } from "./chat-channels/telegram/messages.js";
 
 import {
-  microsoftTeamsLifecycleEventFromPayload, teamsOrphanFollowUp, teamsAttachmentReferenceText,
+  teamsWebhookLifecycleEventFromPayload, teamsOrphanFollowUp, teamsAttachmentReferenceText,
 } from "./chat-channels/microsoft-teams/messages.js";
 import {
   githubSupplementalLifecycleFromRequest,
@@ -2888,9 +2888,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       )
       .then((rows) => rows[0] ?? null);
     const recoveringRevokedGitHubInstallation =
-      endpoint?.status === "revoked" &&
-      provider === "github" &&
-      request.headers.get("x-github-event") === "installation";
+      githubWebhookCanRecoverRevokedInstallation(endpoint?.status, provider, request);
     if (
       !endpoint ||
       endpoint.status === "archived" ||
@@ -2985,40 +2983,14 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
     if (slackCallbackInspection && response.ok) {
       await recordSlackWebhookCallback(endpoint, request, slackCallbackInspection, runtimeContext);
     }
-    if (githubInspection && response.ok) {
-      const lifecycle = await githubSupplementalLifecycleFromRequest(githubInspection);
-      if (lifecycle) {
-        await recordLifecycleDelivery(
-          {
-            endpointId: endpoint.id,
-            ...lifecycle,
-          },
-          runtimeContext,
-        );
-      }
-    }
-    if (provider === "telegram" && response.ok && lifecyclePayload) {
-      const lifecycle = telegramLifecycleEventFromPayload(lifecyclePayload);
-      if (lifecycle) {
-        await recordLifecycleDelivery(
-          {
-            endpointId: endpoint.id,
-            ...lifecycle,
-          },
-          runtimeContext,
-        );
-      }
-    }
-    if (
-      provider === "microsoft-teams" &&
-      response.ok &&
-      lifecyclePayload &&
-      endpointRuntime.acceptsProviderScope(lifecyclePayload)
-    ) {
-      const lifecycle = microsoftTeamsLifecycleEventFromPayload(
-        lifecyclePayload,
-        endpointRuntime,
-      );
+    if (response.ok) {
+      const lifecycle = githubInspection
+        ? await githubSupplementalLifecycleFromRequest(githubInspection)
+        : provider === "telegram" && lifecyclePayload
+          ? telegramLifecycleEventFromPayload(lifecyclePayload)
+          : provider === "microsoft-teams"
+            ? teamsWebhookLifecycleEventFromPayload(lifecyclePayload, endpointRuntime)
+            : null;
       if (lifecycle) {
         await recordLifecycleDelivery(
           {
