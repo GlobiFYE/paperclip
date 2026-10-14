@@ -2,12 +2,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { localAgentRunnerTarget, resetLocalAgentRunnerTargetCacheForTests } from "../lib/agent-runner-platform.js";
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform")!;
+const report = process.report as NodeJS.ProcessReport & { excludeNetwork: boolean };
 
 describe("localAgentRunnerTarget", () => {
   beforeEach(() => {
     Object.defineProperty(process, "platform", { ...originalPlatform, value: "linux" });
     resetLocalAgentRunnerTargetCacheForTests();
-    process.report.excludeNetwork = false;
+    report.excludeNetwork = false;
   });
 
   afterEach(() => {
@@ -19,7 +20,7 @@ describe("localAgentRunnerTarget", () => {
   it("reads glibc from a report that excludes network data, then restores the setting", () => {
     const excludeNetworkDuringReport: boolean[] = [];
     vi.spyOn(process.report, "getReport").mockImplementation(() => {
-      excludeNetworkDuringReport.push(process.report.excludeNetwork);
+      excludeNetworkDuringReport.push(report.excludeNetwork);
       return { header: { glibcVersionRuntime: "2.36" } } as never;
     });
 
@@ -27,7 +28,7 @@ describe("localAgentRunnerTarget", () => {
     // Network data makes the report reverse-resolve every open socket with
     // synchronous DNS, which can stall the server.
     expect(excludeNetworkDuringReport).toEqual([true]);
-    expect(process.report.excludeNetwork).toBe(false);
+    expect(report.excludeNetwork).toBe(false);
   });
 
   it("generates the report once per process", () => {
@@ -47,7 +48,7 @@ describe("localAgentRunnerTarget", () => {
     expect(localAgentRunnerTarget()).toMatchObject({ libc: "unknown" });
     expect(localAgentRunnerTarget()).toMatchObject({ libc: "unknown" });
     expect(getReport).toHaveBeenCalledTimes(1);
-    expect(process.report.excludeNetwork).toBe(false);
+    expect(report.excludeNetwork).toBe(false);
   });
 
   it("does not generate a report off Linux", () => {
