@@ -667,6 +667,23 @@ at detection; it does not claim that a retry was queued or succeeded. This data
 contains no process IDs, task text, paths, or credentials and changes no recovery
 or ownership decisions.
 
+When a native session fails because close could not prove durable runner
+suspension (`provider_transport_failed: runner did not durably suspend before
+checkpoint`), `run_execution` records which barrier was unproven:
+`closeRunnerSuspended`, `closeProviderDrained`, `closeSuspendCommandStatus`
+(a runner command status, or `not_queued`), `closeRunnerLifecycle` (`ready`,
+`suspended`, `closed`, `recoverable_failure`, or `unobserved`),
+`closeRunnerIdentityMatches`, `closeProviderState` (`settled`, `unsettled`,
+`unreadable`, or `not_local`), `closeProviderPendingEventCount`,
+`closeProviderTurnActive`, `closeSemanticResultPersistenceFailed`, and the counts
+`closeSemanticToolsPending`, `closeSemanticToolDeliveriesOpen`, and
+`closeSemanticResultFailures`. Fields absent from the runner's settlement are
+omitted. Tool call, operation, command and event identities, input digests and
+provider turn IDs stay in the instance run log. The report reads the caught error
+only for these labels; its text and stack are not copied, because they bypass the
+executor's identity redaction. These observations do not change close, quarantine
+or recovery behavior.
+
 ACP turns record `acpLastEventAgeMs`, `acpObservedEventCount`,
 `acpPendingToolCount`, and `acpToolInventoryComplete` at finalization, before
 usage reads, error logging, and cleanup. The age measures time since the last
