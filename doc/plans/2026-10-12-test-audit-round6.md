@@ -2,7 +2,7 @@
 
 Round 6 removes **2,831 net test lines and 12 redundant executions**, repairs two false proofs, and changes **zero production lines**. Complete owner/sibling baselines passed **2,060/2,060**; candidates passed **2,048/2,048** across the same **39 complete files**, with no failures or skips. These counts establish preserved selected-suite coverage, not a wall-time speed improvement.
 
-Audit baseline: `a090035cafb29c06f6fca2dbe43561ad866b7c1b` includes the prior cleanup and current master. Audit code commit: `d8de9422f0703d4508a9dc880b67a07f13e0f110`. Delivery replays only this round's identical test changes on stacked base `58c5c4aa241c85f4665a3159c192888bbb2a5cfa`. This report records preservation evidence; workspace checks and current delivery/CI status belong in the PR.
+Audit baseline: `a090035cafb29c06f6fca2dbe43561ad866b7c1b` includes the prior cleanup and current master. Audit code commit: `d8de9422f0703d4508a9dc880b67a07f13e0f110`. The initial delivery replayed only this round's identical test changes on stacked base `58c5c4aa241c85f4665a3159c192888bbb2a5cfa`. After the parent squash merge, the same round's changes were replayed onto merged master `dabb8c5daf430a1987af611e2e7ca4c7b23ef7d4`. This report records preservation evidence; workspace checks and current delivery/CI status belong in the PR.
 
 The audit followed OpenClaw's [test-audit skill](https://github.com/openclaw/openclaw/blob/main/.agents/skills/test-audit/SKILL.md) and [campaign process](https://github.com/openclaw/openclaw/blob/main/.agents/skills/test-audit/CAMPAIGN.md): baseline complete files, read owners/callers/siblings, classify each declaration, nominate exact keepers, independently review, then run candidates and deliberate production regressions.
 

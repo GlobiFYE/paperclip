@@ -1,203 +1,92 @@
+import { useEffect, useMemo, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import {
-  BookOpen,
-  Bot,
-  CheckCircle2,
-  FlaskConical,
-  FolderKanban,
-  FormInput,
-  Layers3,
-  LayoutDashboard,
-  ListTodo,
-  MessageSquare,
-  PanelLeft,
-  Route,
-  ShieldCheck,
-  Wallet,
-} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import catalog from "../../../maps/storybook-map/catalog.json";
 
-const storyGroups = [
-  {
-    title: "Foundations",
-    icon: Layers3,
-    stories: "Buttons, badges, form controls, tabs, cards, dialogs, overlays",
-    why: "Baseline tokens and primitives before product components add state.",
-  },
-  {
-    title: "Control Plane Surfaces",
-    icon: ShieldCheck,
-    stories: "Issue rows, approvals, budget cards, activity rows, metrics",
-    why: "The V1 board UI depends on these dense operational patterns staying legible.",
-  },
-  {
-    title: "UX Labs",
-    icon: FlaskConical,
-    stories: "Issue chat, run transcripts, invite/access flows",
-    why: "The old `/tests/ux/*` pages are fixture-backed Storybook stories now.",
-  },
-  {
-    title: "Navigation & Layout",
-    icon: PanelLeft,
-    stories: "Sidebar, breadcrumbs, command palette, company rail, mobile nav",
-    why: "Navigation chrome frames every board interaction and needs mobile parity.",
-  },
-  {
-    title: "Agent Management",
-    icon: Bot,
-    stories: "Agent properties, config forms, icon picker, action buttons",
-    why: "Agent lifecycle is the primary governance surface for operators.",
-  },
-  {
-    title: "Issue Management",
-    icon: ListTodo,
-    stories: "Issue lists, filters, properties, documents, run ledger, workspace cards",
-    why: "Issues are the core work unit — every view state matters for scan speed.",
-  },
-  {
-    title: "Forms & Editors",
-    icon: FormInput,
-    stories: "Markdown editor, JSON schema forms, env vars, schedule editor, pickers",
-    why: "Rich editors need isolated review for empty, filled, and validation states.",
-  },
-  {
-    title: "Budget & Finance",
-    icon: Wallet,
-    stories: "Incident cards, provider quotas, biller spend, subscription panels",
-    why: "Financial controls are safety-critical and need threshold state coverage.",
-  },
-  {
-    title: "Dialogs & Modals",
-    icon: LayoutDashboard,
-    stories: "New issue/agent/goal/project dialogs, diff modal, image gallery",
-    why: "Dialogs interrupt flow — they must be scannable and self-explanatory.",
-  },
-  {
-    title: "Projects & Goals",
-    icon: FolderKanban,
-    stories: "Project properties, workspace cards, goal trees, runtime controls",
-    why: "Hierarchical views (goals, projects, workspaces) need expand/collapse coverage.",
-  },
-  {
-    title: "Chat & Comments",
-    icon: MessageSquare,
-    stories: "Comment threads, run chat, issue chat with timeline events",
-    why: "Threaded conversations mix agent/user/system authors and need density review.",
-  },
-];
-
-const coverageRows = [
-  ["System primitives", "Covered", "State matrix across size, variant, disabled, icon, and overlay behavior"],
-  ["Status language", "Covered", "Issue/agent lifecycle badges, priorities, quota thresholds, and empty states"],
-  ["Task surfaces", "Covered", "Inbox-style rows with unread, selected, archive, and trailing metadata states"],
-  ["Governance", "Covered", "Pending, revision-requested, approved, and budget-specific approval payloads"],
-  ["Budget controls", "Covered", "Healthy, warning, hard-stop, compact, plain, and editable card variants"],
-  ["Execution UX", "Covered", "Run transcript detail, live widget, dashboard card, streaming and settled views"],
-  ["Invite UX", "Covered", "Fixture-backed access roles, invite landing, pending, accepted, expired, and error states"],
-  ["Navigation & layout", "Planned", "Sidebar, breadcrumbs, command palette, company rail, mobile nav"],
-  ["Agent management", "Planned", "Agent properties, config forms, icon picker, action buttons, active panel"],
-  ["Issue management", "Planned", "Issue lists, filters, properties, documents, run ledger, workspace cards"],
-  ["Forms & editors", "Planned", "Markdown editor, JSON schema, env vars, schedule editor, pickers"],
-  ["Budget & finance", "Planned", "Incident cards, provider quotas, biller spend, subscription panels"],
-  ["Dialogs & modals", "Planned", "New issue/agent/goal/project dialogs, diff modal, image gallery"],
-  ["Projects & goals", "Planned", "Project properties, workspace cards, goal trees, runtime controls"],
-  ["Chat & comments", "Covered", "Comment threads, run chat, issue chat with timeline events"],
-  ["Data viz & misc", "Planned", "Activity charts, kanban, filter bar, live widget, onboarding, skeletons"],
-  ["Full app pages", "Deferred", "API-driven route stories after page data loaders can be fixture-injected"],
-];
+type IndexEntry = { id: string; type: string; importPath: string };
 
 function StorybookGuide() {
+  const [query, setQuery] = useState("");
+  const [storyLinks, setStoryLinks] = useState<Record<string, string>>({});
+  const [indexError, setIndexError] = useState(false);
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch(new URL("index.json", window.location.href), { signal: controller.signal })
+      .then(response => {
+        if (!response.ok) throw new Error("Story index unavailable");
+        return response.json() as Promise<{ entries: Record<string, IndexEntry> }>;
+      })
+      .then(index => {
+        const links: Record<string, string> = {};
+        for (const entry of Object.values(index.entries)) {
+          if (entry.type !== "story") continue;
+          const file = `ui/${entry.importPath.replace(/^\.\//, "")}`;
+          links[file] ??= `./?path=/story/${entry.id}`;
+        }
+        setStoryLinks(links);
+      })
+      .catch(() => { if (!controller.signal.aborted) setIndexError(true); });
+    return () => controller.abort();
+  }, []);
+  const groups = useMemo(() => {
+    const result = new Map<string, typeof catalog.entries>();
+    const search = query.trim().toLowerCase();
+    for (const entry of catalog.entries) {
+      if (search && ![entry.purpose, entry.file, entry.status, entry.implementation, ...entry.capabilities].join(" ").toLowerCase().includes(search)) continue;
+      const area = entry.capabilities[0]?.split("/")[0] ?? "foundations-and-guides";
+      const entries = result.get(area) ?? [];
+      entries.push(entry);
+      result.set(area, entries);
+    }
+    return [...result].sort(([a], [b]) => a.localeCompare(b));
+  }, [query]);
   return (
-    <div className="paperclip-story">
-      <main className="paperclip-story__inner space-y-8">
-        <section className="paperclip-story__frame overflow-hidden p-6 sm:p-8">
-          <div className="flex flex-wrap items-start justify-between gap-6">
-            <div className="max-w-3xl">
-              <div className="paperclip-story__label flex items-center gap-2">
-                <BookOpen className="h-4 w-4" />
-                Paperclip Storybook
-              </div>
-              <h1 className="mt-3 text-3xl font-semibold tracking-tight sm:text-4xl">
-                Board UI stories for real control-plane states
-              </h1>
-              <p className="mt-4 text-sm leading-6 text-muted-foreground sm:text-base">
-                This Storybook is organized as a review workspace for Paperclip's operator UI: primitives first,
-                product surfaces second, and the former UX test routes as isolated fixture-backed stories.
-              </p>
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <Badge variant="outline">React 19</Badge>
-              <Badge variant="outline">Vite</Badge>
-              <Badge variant="outline">Tailwind 4</Badge>
-              <Badge variant="outline">Fixture backed</Badge>
-            </div>
-          </div>
-        </section>
-
-        <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-          {storyGroups.map((group) => {
-            const Icon = group.icon;
-            return (
-              <Card key={group.title} className="paperclip-story__frame shadow-none">
-                <CardHeader>
-                  <div className="flex h-10 w-10 items-center justify-center border border-border bg-background">
-                    <Icon className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                  <CardTitle>{group.title}</CardTitle>
-                  <CardDescription>{group.stories}</CardDescription>
-                </CardHeader>
-                <CardContent className="text-sm leading-6 text-muted-foreground">
-                  {group.why}
-                </CardContent>
-              </Card>
-            );
-          })}
-        </section>
-
-        <section className="paperclip-story__frame overflow-hidden">
-          <div className="border-b border-border px-5 py-4">
-            <div className="paperclip-story__label flex items-center gap-2">
-              <Route className="h-4 w-4" />
-              Coverage Map
-            </div>
-          </div>
-          <div className="divide-y divide-border">
-            {coverageRows.map(([area, status, detail]) => (
-              <div key={area} className="grid gap-3 px-5 py-4 text-sm sm:grid-cols-[180px_120px_minmax(0,1fr)]">
-                <div className="font-medium">{area}</div>
-                <div>
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
-                    {status === "Covered" ? <CheckCircle2 className="h-3 w-3 text-emerald-500" /> : null}
-                    {status === "Planned" ? <Route className="h-3 w-3 text-cyan-500" /> : null}
-                    {status}
-                  </span>
+    <main className="paperclip-story__inner space-y-6 p-6">
+      <header className="space-y-3">
+        <h1 className="text-2xl font-semibold">Storybook by feature</h1>
+        <p className="text-sm text-muted-foreground">
+          {catalog.entries.length} story suites organized by the feature map. Current means source-reviewed;
+          it does not mean every interaction or production journey passed. Production components can use simulated data.
+        </p>
+        <p className="text-sm text-muted-foreground">
+          Historical designs and proposals stay available. Unreviewed entries need deeper comparison with the current product.
+          The maintained contract and full source references are in maps/storybook-map/.
+        </p>
+        <Input aria-label="Find stories by feature, title, or status" placeholder="Find a feature, story, or status…" value={query} onChange={event => setQuery(event.target.value)} />
+        {indexError ? <p role="alert" className="text-sm text-destructive">Story links could not load. Reload this guide to try again.</p> : null}
+      </header>
+      {groups.length === 0 ? <p className="text-sm text-muted-foreground">No matching stories.</p> : null}
+      {groups.map(([area, entries]) => (
+        <section key={area} className="space-y-3">
+          <h2 className="text-lg font-semibold">{area}</h2>
+          <ul className="divide-y divide-border">
+            {entries.map(entry => (
+              <li key={entry.file} className="space-y-2 py-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  {storyLinks[entry.file]
+                    ? <a className="font-medium underline underline-offset-4" href={storyLinks[entry.file]} target="_top">{entry.purpose}</a>
+                    : <span className="font-medium">{entry.purpose}</span>}
+                  <Badge variant="outline">{entry.status}</Badge>
+                  <Badge variant="outline">{entry.implementation}</Badge>
+                  <Badge variant="outline">{entry.boundary}</Badge>
                 </div>
-                <div className="text-muted-foreground">{detail}</div>
-              </div>
+                <p className="text-sm text-muted-foreground">{entry.notes}</p>
+                <p className="font-mono text-xs text-muted-foreground">{entry.capabilities.join(" · ") || "Shared foundations and contributor guidance"}</p>
+              </li>
             ))}
-          </div>
+          </ul>
         </section>
-      </main>
-    </div>
+      ))}
+    </main>
   );
 }
 
 const meta = {
   title: "Overview/Storybook Guide",
   component: StorybookGuide,
-  parameters: {
-    docs: {
-      description: {
-        component:
-          "The overview story explains the local organization and the coverage contract for Paperclip's Storybook.",
-      },
-    },
-  },
+  parameters: { docs: { description: { component: "Feature-based navigation from the downstream catalog, with separate product, component, and fixture classifications. Story links come from this build's index." } } },
 } satisfies Meta<typeof StorybookGuide>;
-
 export default meta;
-
 type Story = StoryObj<typeof meta>;
-
 export const CoverageGuide: Story = {};
