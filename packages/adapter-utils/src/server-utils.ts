@@ -4343,6 +4343,26 @@ export function writePaperclipSkillSyncPreference(
   return next;
 }
 
+// The skill's path inside the @paperclipai package that ships it, e.g.
+// "@paperclipai/server/skills/paperclip", or null outside node_modules.
+function paperclipPackageSkillPath(candidate: string): string | null {
+  const segments = path.resolve(candidate).split(/[\\/]+/);
+  const nodeModules = segments.lastIndexOf("node_modules");
+  if (nodeModules < 0 || segments[nodeModules + 1] !== "@paperclipai") {
+    return null;
+  }
+  const packagePath = segments.slice(nodeModules + 1);
+  return packagePath.length > 2 ? packagePath.join("/") : null;
+}
+
+// An npm-managed upgrade keeps the previous install directory, so a link the
+// adapter made there still resolves. Treat the same packaged skill in another
+// install as stale rather than as another installation's skill.
+function isSamePaperclipPackageSkill(source: string, linkedPath: string): boolean {
+  const sourceSkill = paperclipPackageSkillPath(source);
+  return sourceSkill !== null && sourceSkill === paperclipPackageSkillPath(linkedPath);
+}
+
 export async function ensurePaperclipSkillSymlink(
   source: string,
   target: string,
@@ -4373,7 +4393,10 @@ export async function ensurePaperclipSkillSymlink(
     .stat(resolvedLinkedPath)
     .then(() => true)
     .catch(() => false);
-  if (linkedPathExists) {
+  if (
+    linkedPathExists &&
+    !isSamePaperclipPackageSkill(source, resolvedLinkedPath)
+  ) {
     return "skipped";
   }
 
