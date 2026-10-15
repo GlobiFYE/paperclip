@@ -8,6 +8,8 @@ including native status decisions attributed to the assignee's bound run.
 Title, monitor, and other unrelated edits do not change this wait. A later
 assignment, status, or blocker-set update permits reconciliation again. A blocker
 that completes or finishes workspace export after the wait also permits a wake.
+The export must name the blocker issue. An export from the waiting task or an
+unattributed operation in the same shared workspace does not remove its wait.
 Normal readiness, duplicate-wake, interaction, pause, and execution gates still
 apply. A board transition into blocked keeps the existing recovery behavior.
 

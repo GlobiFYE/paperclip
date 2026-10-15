@@ -1275,6 +1275,21 @@ describeEmbeddedPostgres("heartbeat resolved dependency wake reconciliation", ()
     expect(result.selfBlockedSkipped).toBe(0);
   });
 
+  it.each(["dependent", "blocker", "unattributed"] as const)("attributes shared-workspace export to its %s issue", async (exporter) => {
+    const { companyId, agentId, blockedIssueId, blockerIssueId, executionWorkspaceId } =
+      await seedResolvedDependencyBackstopFixture({ workspaceState: "finalized" });
+    const blockedTransitionAt = new Date(Date.now() - 30_000);
+    await db.update(issues).set({ blockedTransitionAt, executionWorkspaceId }).where(eq(issues.id, blockedIssueId));
+    await db.insert(activityLog).values({ companyId, actorType: "agent", actorId: agentId, agentId,
+      action: "issue.updated", entityType: "issue", entityId: blockedIssueId, details: { status: "blocked" }, createdAt: blockedTransitionAt });
+    await db.insert(workspaceOperations).values({ companyId, executionWorkspaceId,
+      issueId: exporter === "dependent" ? blockedIssueId : exporter === "blocker" ? blockerIssueId : null, phase: "workspace_finalize",
+      status: "succeeded", startedAt: new Date(), finishedAt: new Date() });
+    const result = await heartbeatService(db).reconcileResolvedDependencyWakes();
+    expect(result.healed).toBe(exporter === "blocker" ? 1 : 0);
+    expect(result.selfBlockedSkipped).toBe(exporter === "blocker" ? 0 : 1);
+  });
+
   it("still heals when someone other than the assignee opened the blocked cycle", async () => {
     const { companyId, agentId, blockedIssueId } =
       await seedResolvedDependencyBackstopFixture({ workspaceState: "none" });
