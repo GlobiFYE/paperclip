@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { agents, authUsers, companies, companyMemberships, createDb, executionWorkspaces, executionWorkspaceRepositoryAccess, heartbeatRuns, issueAccessGrants,
-  issues, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
+  issues, projects, projectAccessMembers, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
 import { authorizationService, executionWorkspaceReadSqlCondition, type AuthorizationActor } from "../services/authorization.js";
 import { executionWorkspaceRepositoryService, assertExecutionWorkspaceRootReadAccess } from "../services/execution-workspace-repositories.js";
 import { assertTaskWorkspaceAccess } from "../services/task-workspace-source-access.js";
@@ -198,6 +198,42 @@ const support = await getEmbeddedPostgresTestSupport();
         expect(await service.decideReads(candidate, resources)).toEqual(individual);
       }
     } finally { vi.stubEnv("PAPERCLIP_ISSUE_PRIVACY_MODE", "enforce"); }
+  });
+
+  it("matches private project decisions as each principal gains and loses access", async () => {
+    const [project] = await db.insert(projects).values({ companyId, name: "Private batch source", visibility: "private" }).returning();
+    const resource = { type: "project" as const, companyId, projectId: project.id };
+    const service = authorizationService(db);
+    const candidates: AuthorizationActor[] = [actor, { ...actor, onBehalfOfUserId: undefined }, { type: "board", source: "session", userId }];
+    async function check(expected: boolean[]) {
+      const batched = await service.decideReadsForActors(candidates, [resource]);
+      for (let i = 0; i < candidates.length; i++) {
+        expect(batched[i][0]).toEqual(await service.decide({ actor: { ...candidates[i] }, action: "project:read", resource }));
+        expect(batched[i][0].allowed).toBe(expected[i]);
+      }
+    }
+    try {
+      await check([false, false, false]);
+      await db.insert(projectAccessMembers).values({ companyId, projectId: project.id, subjectType: "agent", subjectId: agentId });
+      await check([false, true, false]);
+      const [grant] = await db.insert(projectAccessMembers).values({ companyId, projectId: project.id, subjectType: "user", subjectId: userId }).returning();
+      await check([true, true, true]);
+      await db.delete(projectAccessMembers).where(eq(projectAccessMembers.id, grant.id));
+      await check([false, true, false]);
+    } finally { await db.delete(projects).where(eq(projects.id, project.id)); }
+  });
+
+  it("supports more than 100 distinct reader principals for issue and project batches", async () => {
+    const [project] = await db.insert(projects).values({ companyId, name: "Many readers" }).returning();
+    const candidates: AuthorizationActor[] = Array.from({ length: 101 }, () => ({ type: "board", source: "session", userId: randomUUID() }));
+    const service = authorizationService(db);
+    try {
+      for (const resource of [{ type: "issue" as const, companyId, issueId: sourceId }, { type: "project" as const, companyId, projectId: project.id }]) {
+        const decisions = await service.decideReadsForActors(candidates, [resource]);
+        expect(decisions).toHaveLength(101);
+        expect(decisions.every(batch => batch.length === 1 && !batch[0].allowed)).toBe(true);
+      }
+    } finally { await db.delete(projects).where(eq(projects.id, project.id)); }
   });
 
   it("reloads run trust and responsible-user membership between read batches", async () => {

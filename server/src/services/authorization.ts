@@ -775,7 +775,7 @@ function createAuthorizationService(db: Db | DbTransaction, readSnapshot?: ReadA
         status: issues.status, executionPolicy: issues.executionPolicy, originKind: issues.originKind, originId: issues.originId,
         visibility: issues.visibility, privacyRootIssueId: issues.privacyRootIssueId,
         responsibleUserId: issues.responsibleUserId, createdByUserId: issues.createdByUserId,
-        readable: sql<boolean[]>`jsonb_build_array(${sql.join(privacyActors.map(actor => issuePrivacyCondition(actor)), sql`, `)})`,
+        readable: sql<boolean[]>`ARRAY[${sql.join(privacyActors.map(actor => issuePrivacyCondition(actor)), sql`, `)}]`,
       }).from(issues).where(inArray(issues.id, issueIds.slice(offset, offset + 500)));
       for (const row of rows) {
         for (let index = 0; index < snapshots.length; index++) snapshots[index].issues.set(row.id, { ...row, readable: row.readable[privacyIndexes[index]] });
@@ -786,7 +786,7 @@ function createAuthorizationService(db: Db | DbTransaction, readSnapshot?: ReadA
     for (let offset = 0; offset < ids.length; offset += 500) {
       const rows = await db.select({ id: projects.id, companyId: projects.companyId,
         executionWorkspacePolicy: projects.executionWorkspacePolicy, visibility: projects.visibility,
-        readable: sql<boolean[]>`jsonb_build_array(${sql.join(privacyActors.map(actor => projectPrivacyCondition(actor)), sql`, `)})`,
+        readable: sql<boolean[]>`ARRAY[${sql.join(privacyActors.map(actor => projectPrivacyCondition(actor)), sql`, `)}]`,
       }).from(projects).where(inArray(projects.id, ids.slice(offset, offset + 500)));
       for (const row of rows) for (let index = 0; index < snapshots.length; index++) {
         snapshots[index].projects.set(row.id, { ...row, readable: row.readable[privacyIndexes[index]] });
