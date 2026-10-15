@@ -10,6 +10,7 @@ export async function skillRepositoryDependencies(
   initial: GitSkillTreeEntry[],
   skillDirectories: ReadonlySet<string>,
   readBlob: (entry: GitSkillTreeEntry) => Promise<Buffer | null>,
+  prefetch?: (entries: GitSkillTreeEntry[]) => Promise<void>,
 ): Promise<GitSkillTreeEntry[]> {
   const paths = indexSkillPackagePaths(entries.map(entry => entry.path));
   const byPath = new Map(entries.map(entry => [entry.path, entry]));
@@ -25,22 +26,29 @@ export async function skillRepositoryDependencies(
   for (const entry of initial) add(entry);
   const manifest = byPath.get('paperclip.skills.json');
   if (manifest) add(manifest);
-  for (const entry of selected.values()) {
-    if (entry.type !== 'blob' || !['100644', '100755'].includes(entry.mode) || !/\.md$/i.test(entry.path)) continue;
-    const content = await readBlob(entry);
-    if (!content) continue;
-    let root = path.posix.dirname(entry.path);
-    while (root !== '.' && !skillDirectories.has(root)) root = path.posix.dirname(root);
-    const file = snapshotFile(path.posix.relative(root, entry.path), 'reference', content);
-    const inspection = inspectSkillPackage(path.posix.join(root, 'SKILL.md'), [file], paths, {}, [], new Set([entry.path]));
-    for (const reference of inspection.references) {
-      const target = reference.resolvedPath;
-      if (target === '..' || target.startsWith('../') || path.posix.isAbsolute(target)) continue;
-      const exact = byPath.get(target);
-      if (exact && exact.type !== 'tree') add(exact);
-      else if (paths.has(target)) {
-        const prefix = target === '.' ? '' : `${target}/`;
-        for (const child of entries) if (child.path.startsWith(prefix)) add(child);
+  const inspected = new Set<string>();
+  for (;;) {
+    const pending = [...selected.values()].filter(entry => !inspected.has(entry.path)
+      && entry.type === 'blob' && ['100644', '100755'].includes(entry.mode) && /\.md$/i.test(entry.path));
+    if (!pending.length) break;
+    await prefetch?.(pending);
+    for (const entry of pending) {
+      inspected.add(entry.path);
+      const content = await readBlob(entry);
+      if (!content) continue;
+      let root = path.posix.dirname(entry.path);
+      while (root !== '.' && !skillDirectories.has(root)) root = path.posix.dirname(root);
+      const file = snapshotFile(path.posix.relative(root, entry.path), 'reference', content);
+      const inspection = inspectSkillPackage(path.posix.join(root, 'SKILL.md'), [file], paths, {}, [], new Set([entry.path]));
+      for (const reference of inspection.references) {
+        const target = reference.resolvedPath;
+        if (target === '..' || target.startsWith('../') || path.posix.isAbsolute(target)) continue;
+        const exact = byPath.get(target);
+        if (exact && exact.type !== 'tree') add(exact);
+        else if (paths.has(target)) {
+          const prefix = target === '.' ? '' : `${target}/`;
+          for (const child of entries) if (child.path.startsWith(prefix)) add(child);
+        }
       }
     }
   }
