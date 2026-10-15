@@ -32,6 +32,7 @@ import { reconcileAbandonedExecutionControl } from "./services/execution-control
 import { EXECUTION_RECONCILIATION_INTERVAL_MS } from "./services/execution-control-deadline.js";
 import { connectionIntentDeliveryService } from "./services/connection-intent-delivery.js";
 import { existsSync, readFileSync, rmSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import type { Server, RequestListener } from "node:http";
 import { createPaperclipHttpServer } from "./http/server.js";
 import { resolve } from "node:path";
@@ -43,6 +44,8 @@ import { warnIfUnsupportedNodeVersion } from "@paperclipai/shared/node-version";
 import { and, eq } from "drizzle-orm";
 import {
   createDb,
+  reloadDatabaseCredential,
+  type CredentialSource,
   ensurePostgresDatabase,
   formatEmbeddedPostgresError,
   getPostgresDataDirectory,
@@ -426,6 +429,7 @@ async function startServerWithDatabaseTeardown(
   
   let db;
   let pluginMigrationDb;
+  let databaseCredentialSource: CredentialSource | undefined;
   let embeddedPostgres: EmbeddedPostgresInstance | null = null;
   let embeddedPostgresSupervisor: EmbeddedPostgresSupervisor | null = null;
   let embeddedPostgresStartedByThisProcess = false;
@@ -440,7 +444,10 @@ async function startServerWithDatabaseTeardown(
     const migrationUrl = config.databaseMigrationUrl ?? config.databaseUrl;
     migrationSummary = await ensureMigrations(migrationUrl, "PostgreSQL");
   
-    db = createDb(config.databaseUrl);
+    databaseCredentialSource = config.databaseUrlFile
+      ? async () => (await readFile(resolve(config.databaseUrlFile!), "utf8")).trim()
+      : undefined;
+    db = createDb(config.databaseUrl, { credentialSource: databaseCredentialSource });
     pluginMigrationDb = config.databaseMigrationUrl ? createDb(config.databaseMigrationUrl) : db;
     logger.info("Using external PostgreSQL via DATABASE_URL/config");
     activeDatabaseConnectionString = config.databaseUrl;
@@ -2134,6 +2141,19 @@ async function startServerWithDatabaseTeardown(
   process.once("SIGTERM", () => {
     void shutdown("SIGTERM", true);
   });
+
+  if (databaseCredentialSource) {
+    process.on("SIGHUP", () => {
+      void (async () => {
+        try {
+          await reloadDatabaseCredential(db);
+          logger.info(`SIGHUP: reloaded database credential from ${config.databaseUrlFile}`);
+        } catch (error) {
+          logger.warn({ err: error }, "SIGHUP: database credential reload failed; keeping the existing pool");
+        }
+      })();
+    });
+  }
 
   return {
     server,
