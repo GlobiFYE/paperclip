@@ -45,7 +45,18 @@ const CODEX_ERROR_INFO_KINDS: ReadonlySet<string> = new Set([
   "threadRollbackFailed", "sandboxError", "responseStreamDisconnected",
   "responseTooManyFailedAttempts", "other",
 ]);
-const NATIVE_TURN_FAILURE_RUNNER_CODE = /^[a-z][a-z0-9_]{1,63}$/;
+/**
+ * `error.code` values the runner itself writes on a failed Codex turn: the
+ * Codex driver's `failProtocol` callers and runnerd's Codex backend. A provider
+ * error object can also carry `code`, so any other value is `unrecognized`.
+ */
+const NATIVE_TURN_FAILURE_RUNNER_CODES: ReadonlySet<string> = new Set([
+  "thread_binding_mismatch", "turn_binding_mismatch", "turn_start_mismatch", "tool_binding_mismatch",
+  "runtime_request_binding_mismatch", "runtime_request_duplicate", "runtime_request_recovery_failed",
+  "notification_transport_failed", "provider_event_type_invalid", "invalid_semantic_result",
+  "conflicting_semantic_result", "conflicting_turn_terminal", "invalid_spawn_lineage",
+  "provider_descendant_capacity_exhausted", "provider_terminal_error_missing", "provider_turn_lost_on_restore",
+]);
 
 /**
  * Closed vocabulary for a failed Codex turn that no classifier above claims.
@@ -57,7 +68,7 @@ export interface NativeTurnFailureDiagnostic {
   /** A known `CodexErrorInfo` kind, `unrecognized`, or `absent`. */
   codexErrorInfo: string;
   httpStatus?: number;
-  /** A runner-issued protocol failure code, when the runner failed the turn. */
+  /** A known runner-issued failure code, or `unrecognized` for any other code. */
   runnerFailureCode?: string;
 }
 
@@ -67,8 +78,8 @@ function httpStatusField(value: unknown) {
 }
 
 function runnerFailureCodeField(value: unknown) {
-  return typeof value === "string" && NATIVE_TURN_FAILURE_RUNNER_CODE.test(value)
-    ? { runnerFailureCode: value } : {};
+  if (typeof value !== "string") return {};
+  return { runnerFailureCode: NATIVE_TURN_FAILURE_RUNNER_CODES.has(value) ? value : "unrecognized" };
 }
 
 function codexErrorInfoFields(value: unknown): Pick<NativeTurnFailureDiagnostic, "codexErrorInfo" | "httpStatus"> {

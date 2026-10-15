@@ -85,7 +85,9 @@ describe("native provider failure observation", () => {
     [{ codexErrorInfo: { privateUnknownKind: {} } }, { codexErrorInfo: "unrecognized" }],
     [{ codexErrorInfo: { other: {}, badRequest: {} } }, { codexErrorInfo: "unrecognized" }],
     [{ code: "provider_event_type_invalid", message: "Unknown canonical provider event type.", recoverable: false }, { codexErrorInfo: "absent", runnerFailureCode: "provider_event_type_invalid" }],
-    [{ code: "Private Code With Spaces", message: "Private" }, { codexErrorInfo: "absent" }],
+    [{ code: "Private Code With Spaces", message: "Private" }, { codexErrorInfo: "absent", runnerFailureCode: "unrecognized" }],
+    [{ code: "private_prompt_slug", message: "Private" }, { codexErrorInfo: "absent", runnerFailureCode: "unrecognized" }],
+    [{ code: 42, message: "Private" }, { codexErrorInfo: "absent" }],
     [{ message: NATIVE_PROVIDER_OVERLOADED_MESSAGE }, { codexErrorInfo: "absent" }],
   ])("describes an unclassified failed turn with closed vocabulary only %#", (error, expected) => {
     const observed = observation();
@@ -127,8 +129,8 @@ describe("native provider failure observation", () => {
   it("drops unbounded fields from a persisted turn-failure diagnostic", () => {
     expect(readNativeTurnFailureDiagnostic({
       provider: "codex", category: "turn_failed", codexErrorInfo: "badRequest", httpStatus: 1.5,
-      runnerFailureCode: "Private text", message: "private provider response",
-    })).toEqual({ provider: "codex", category: "turn_failed", codexErrorInfo: "badRequest" });
+      runnerFailureCode: "private_prompt_slug", message: "private provider response",
+    })).toEqual({ provider: "codex", category: "turn_failed", codexErrorInfo: "badRequest", runnerFailureCode: "unrecognized" });
   });
 
   it.each([{ kind: "claude", model }, { kind: "codex" }, { kind: "codex", model: "other" }])(
