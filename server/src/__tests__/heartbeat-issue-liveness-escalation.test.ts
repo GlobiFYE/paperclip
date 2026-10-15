@@ -1262,8 +1262,8 @@ describeEmbeddedPostgres("heartbeat resolved dependency wake reconciliation", ()
   it.each(["completion", "finalize"] as const)("heals a self-block after later blocker %s", async (event) => {
     const { companyId, agentId, blockedIssueId, blockerIssueId, executionWorkspaceId } =
       await seedResolvedDependencyBackstopFixture({ workspaceState: event === "finalize" ? "not_finalized" : "none" });
-    const blockedTransitionAt = new Date("2026-08-01T12:00:00.000Z");
-    const completedAt = new Date("2026-08-01T12:05:00.000Z");
+    const blockedTransitionAt = new Date(Date.now() - 120_000);
+    const completedAt = new Date();
     await db.update(issues).set({ blockedTransitionAt }).where(eq(issues.id, blockedIssueId));
     await db.insert(activityLog).values({ companyId, actorType: "agent", actorId: agentId, agentId,
       action: "issue.updated", entityType: "issue", entityId: blockedIssueId, details: { status: "blocked" }, createdAt: blockedTransitionAt });
