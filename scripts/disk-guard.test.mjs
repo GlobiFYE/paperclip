@@ -768,6 +768,110 @@ test("allowlist: prune only removes rotated logs (mtime>1d) from the log dir", (
   }
 });
 
+test("delete journal: each pruned path is recorded with bytes, inodes, reason and actor", () => {
+  const sandbox = makeSandbox();
+  try {
+    installDfStub(sandbox, { size: 100 * 1024 * MIB, used: 5 * 1024 * MIB, avail: 95 * 1024 * MIB });
+    const cacheBlob = seed(sandbox, ".cache/node/blob", 3 * MIB);
+    const oldLog = seed(sandbox, ".local/share/opencode/log/old.log", 2 * MIB);
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    utimesSync(oldLog, threeDaysAgo, threeDaysAgo);
+
+    const result = run(sandbox, ["--prune"], {
+      DISK_GUARD_CRIT_PCT: "1",
+      PAPERCLIP_AGENT_ID: "agent-under-test",
+      PAPERCLIP_RUN_ID: "run-under-test",
+      PAPERCLIP_COMPANY_ID: "company-under-test",
+    });
+    assert.equal(result.status, RC_CRITICAL);
+
+    // Default location: the journal sits beside the status file.
+    const journal = path.join(sandbox.root, "run", "disk-guard-journal.ndjson");
+    assert.ok(existsSync(journal), "the delete journal must be written next to the status file");
+    const rows = readFileSync(journal, "utf8")
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+
+    const cache = rows.find((row) => row.path === path.dirname(cacheBlob));
+    assert.ok(cache, "the pruned cache dir must have a record");
+    assert.equal(cache.reason, "safe_cache");
+    assert.equal(cache.actor, "agent-under-test");
+    assert.equal(cache.run_id, "run-under-test");
+    assert.equal(cache.company_id, "company-under-test");
+    assert.equal(cache.bytes, 3 * MIB);
+    assert.equal(cache.inodes, 1);
+    assert.equal(cache.rm_exit, 0);
+    assert.match(cache.ts, /^\d{4}-\d\d-\d\dT/);
+
+    const logRow = rows.find((row) => row.reason === "rotated_log");
+    assert.ok(logRow, "the rotated-log deletion must have a record");
+    assert.equal(logRow.path, path.join(sandbox.mount, ".local/share/opencode/log"));
+    assert.equal(logRow.bytes, 2 * MIB);
+    assert.equal(logRow.inodes, 1);
+  } finally {
+    sandbox.cleanup();
+  }
+});
+
+test("delete journal: a path the guard refuses to delete leaves no record", () => {
+  const sandbox = makeSandbox();
+  try {
+    installDfStub(sandbox, { size: 100 * 1024 * MIB, used: 5 * 1024 * MIB, avail: 95 * 1024 * MIB });
+    // The nlink gate skips this cache, so nothing is removed and nothing may be
+    // journalled as removed: a journal that records intent rather than outcome
+    // would be worse than none.
+    const liveBlob = seed(sandbox, "live/node_modules/dep/blob", 5 * MIB);
+    const cacheBlob = path.join(sandbox.mount, ".cache/pnpm/store/blob");
+    mkdirSync(path.dirname(cacheBlob), { recursive: true });
+    linkSync(liveBlob, cacheBlob);
+
+    const result = run(sandbox, ["--prune"], { DISK_GUARD_CRIT_PCT: "1" });
+    assert.equal(result.status, RC_CRITICAL);
+    assert.ok(existsSync(cacheBlob), "the hardlinked cache must survive");
+
+    const journal = path.join(sandbox.root, "run", "disk-guard-journal.ndjson");
+    if (existsSync(journal)) {
+      const rows = readFileSync(journal, "utf8")
+        .trim()
+        .split("\n")
+        .filter(Boolean)
+        .map((line) => JSON.parse(line));
+      assert.ok(
+        !rows.some((row) => row.path === path.dirname(cacheBlob)),
+        "a skipped path must not appear as a delete record",
+      );
+    }
+  } finally {
+    sandbox.cleanup();
+  }
+});
+
+test("delete journal: a dry run records nothing, and an unwritable journal never blocks a reclaim", () => {
+  const sandbox = makeSandbox();
+  try {
+    installDfStub(sandbox, { size: 100 * 1024 * MIB, used: 5 * 1024 * MIB, avail: 95 * 1024 * MIB });
+    const journal = path.join(sandbox.root, "run", "disk-guard-journal.ndjson");
+
+    // Dry run: remove_path returns before it deletes or measures.
+    seed(sandbox, ".cache/node/blob", 3 * MIB);
+    run(sandbox, ["--prune"], { DISK_GUARD_CRIT_PCT: "1", DISK_GUARD_DRY_RUN: "1" });
+    assert.ok(!existsSync(journal), "a dry run must not write a delete record");
+
+    // Unwritable journal: the reclaim the gates authorized must still happen,
+    // and the failure must be loud. An audit sink must not become an outage.
+    const blocker = seed(sandbox, "not-a-dir", 1);
+    const badJournal = path.join(blocker, "journal.ndjson");
+    const result = run(sandbox, ["--prune"], { DISK_GUARD_CRIT_PCT: "1", DISK_GUARD_JOURNAL_FILE: badJournal });
+    assert.equal(result.status, RC_CRITICAL);
+    assert.ok(!exists(sandbox, ".cache/node"), "the reclaim must proceed despite the journal failure");
+    assert.match(result.stderr, /journal: could not record delete/);
+  } finally {
+    sandbox.cleanup();
+  }
+});
+
 test("nlink gate: a cache hardlinked into a live node_modules is skipped, not deleted", () => {
   const sandbox = makeSandbox();
   try {
@@ -2636,7 +2740,7 @@ test("trend: --check needs no company id, so the signal cannot be lost to a tena
 // that is PRESENT but reports a different version, or differs by a byte, is
 // always a bug and is checked. Set the env var only for a deliberate
 // uninstall, never to quiet a real mismatch.
-const EXPECTED_GUARD_VERSION = 9;
+const EXPECTED_GUARD_VERSION = 10;
 const RUNTIME_COPIES = ["/paperclip/bin/disk-guard.sh", "/paperclip/disk-guard.sh"];
 
 test("the committed script declares the guard_version the repo expects", () => {

@@ -147,6 +147,15 @@ CRIT_PCT="${DISK_GUARD_CRIT_PCT:-94}"
 MIN_FREE_MB="${DISK_GUARD_MIN_FREE_MB:-1500}"
 MIN_FREE_INODES="${DISK_GUARD_MIN_FREE_INODES:-200000}"
 STATUS_FILE="${DISK_GUARD_STATUS_FILE:-/paperclip/run/disk-guard.status}"
+# Append-only delete journal. This guard is the only thing on the volume that
+# deletes reclaimable build output, and until now it kept no record of what it
+# removed. A 17.6 GiB deletion of /paperclip/cargo-target-shared (CON-391) left
+# no actor, no path and no byte count in any Paperclip surface; a guard that
+# only reports used_bytes cannot answer "who deleted this". Every path this
+# guard removes is recorded here, one NDJSON object per line, with the actor and
+# run that removed it. It sits beside the status file so a caller that relocates
+# the status file relocates the journal with it. Set to empty to disable.
+JOURNAL_FILE="${DISK_GUARD_JOURNAL_FILE:-$(dirname "$STATUS_FILE")/disk-guard-journal.ndjson}"
 API_URL="${PAPERCLIP_API_URL:-http://127.0.0.1:3100}"
 WORKSPACES_DIR="${DISK_GUARD_WORKSPACES_DIR:-$MOUNT/instances/default/workspaces}"
 WORKSPACE_RECLAIM_MIN_AGE_HOURS="${DISK_GUARD_WORKSPACE_RECLAIM_MIN_AGE_HOURS:-24}"
@@ -236,13 +245,53 @@ require_company_id() {
   fi
 }
 
+# Append one delete record to the journal: ts, actor, run_id, company_id, pid,
+# path, bytes, inodes, reason, rm_exit. Written as NDJSON so a reader can tail
+# it and a truncated final line is the only possible corruption.
+#
+# The journal is an audit sink, not an authorization gate. A write failure is
+# logged loudly but must never block a reclaim the guard's own gates already
+# authorized: refusing to delete on an unwritable journal would turn an audit
+# gap into a full volume, which is the failure the guard exists to prevent. The
+# record is written after rm so it reports what actually happened, not intent.
+journal_delete() {
+  local p="$1" bytes="$2" inodes="$3" reason="$4" rc="$5"
+  [ -n "$JOURNAL_FILE" ] || return 0
+  mkdir -p -- "$(dirname "$JOURNAL_FILE")" 2>/dev/null
+  node -e '
+    const fs = require("fs");
+    const [file, path, bytes, inodes, reason, rc] = process.argv.slice(1);
+    const row = {
+      ts: new Date().toISOString(),
+      actor: process.env.PAPERCLIP_AGENT_ID || process.env.DISK_GUARD_ACTOR || "unknown",
+      run_id: process.env.PAPERCLIP_RUN_ID || null,
+      company_id: process.env.PAPERCLIP_COMPANY_ID || process.env.DISK_GUARD_COMPANY_ID || null,
+      pid: process.pid,
+      path,
+      bytes: Number(bytes),
+      inodes: Number(inodes),
+      reason,
+      rm_exit: Number(rc),
+    };
+    fs.appendFileSync(file, JSON.stringify(row) + "\n");
+  ' "$JOURNAL_FILE" "$p" "$bytes" "$inodes" "$reason" "$rc" 2>/dev/null \
+    || log "journal: could not record delete of $p (reason=$reason)"
+}
+
 remove_path() {
-  local p="$1"
+  local p="$1" reason="${2:-unspecified}" bytes inodes rc
   if [ "${DISK_GUARD_DRY_RUN:-0}" = "1" ]; then
     log "dry-run rm -rf $p"
     return 0
   fi
+  # Measure before deleting: these are the figures the journal exists to keep,
+  # and a path that no longer exists cannot be measured.
+  bytes="$(unlinked_bytes "$p")"
+  inodes="$(find "$p" -xdev -type f -links 1 -printf 'x\n' 2>/dev/null | wc -l | tr -d ' ')"
   rm -rf -- "$p" 2>/dev/null
+  rc=$?
+  journal_delete "$p" "$bytes" "$inodes" "$reason" "$rc"
+  return "$rc"
 }
 
 api_get() {
@@ -640,7 +689,7 @@ reclaim_nix_orphans() {
       log "skip  $candidate (only $(( ${size:-0} / 1024 ))KiB unlinked-reclaimable)"
       continue
     fi
-    remove_path "$candidate"
+    remove_path "$candidate" "nix_orphan_temp_pack"
     log "reclaim $candidate (~$(( size / 1024 / 1024 ))MiB orphaned nix temp pack/idx)"
     total=$(( total + size ))
   done <<<"$(nix_orphan_temp_pack_candidates)"
@@ -1398,7 +1447,7 @@ report() {
       "${prev_avail_mb:-}" "${delta_mb:-}" "${elapsed_min:-}" "${rate_mb_hour:-}"
     printf 'level=%s\nlevel_snapshot=%s\nlevel_prev=%s\nwarn_pct=%s\ncrit_pct=%s\nmin_free_mb=%s\nmin_free_inodes=%s\nfall_rate_threshold_mb_per_hour=%s\n' \
       "$level" "${level_snapshot:-}" "${level_prev:-}" "$WARN_PCT" "$CRIT_PCT" "$MIN_FREE_MB" "$MIN_FREE_INODES" "$FALL_RATE_MB_PER_HOUR"
-    printf 'guard_version=9\n'
+    printf 'guard_version=10\n'
   } >"$STATUS_FILE" 2>/dev/null
 
   return "$rc"
@@ -1475,7 +1524,7 @@ prune() {
       log "skip  $p (only $((freed/1024))KiB unlinked-reclaimable)"
       continue
     fi
-    remove_path "$p"
+    remove_path "$p" "safe_cache"
     log "prune $p (~$((freed/1024/1024))MiB reclaimable)"
     total=$(( total + freed ))
   done
@@ -1497,7 +1546,7 @@ prune() {
       log "skip  $p (only $((freed/1024))KiB unlinked-reclaimable)"
       continue
     fi
-    remove_path "$p"
+    remove_path "$p" "workspace_build_output"
     log "prune $p (~$((freed/1024/1024))MiB reclaimable workspace build output)"
     total=$(( total + freed ))
   done
@@ -1512,7 +1561,7 @@ prune() {
       log "skip  $p (only $((freed/1024))KiB unlinked-reclaimable)"
       continue
     fi
-    remove_path "$p"
+    remove_path "$p" "worktree_build_output"
     log "prune $p (~$((freed/1024/1024))MiB reclaimable worktree build output)"
     total=$(( total + freed ))
   done
@@ -1527,14 +1576,21 @@ prune() {
       log "skip  $p (only $((freed/1024))KiB unlinked-reclaimable)"
       continue
     fi
-    remove_path "$p"
+    remove_path "$p" "cargo_target"
     log "prune $p (~$((freed/1024/1024))MiB reclaimable cargo target)"
     total=$(( total + freed ))
   done
 
   for p in "${log_dirs[@]}"; do
     [ -d "$p" ] || continue
+    # This one deletes per-file rather than the whole tree, so measure the
+    # rotated set the same way before it goes and journal the aggregate under
+    # the directory path. Same record shape as remove_path, same actor.
+    local log_bytes log_inodes
+    log_bytes="$(find "$p" -xdev -type f -mtime +1 -printf '%s\n' 2>/dev/null | awk '{s+=$1} END{print s+0}')"
+    log_inodes="$(find "$p" -xdev -type f -mtime +1 -printf 'x\n' 2>/dev/null | wc -l | tr -d ' ')"
     find "$p" -xdev -type f -mtime +1 -delete 2>/dev/null
+    journal_delete "$p" "$log_bytes" "$log_inodes" "rotated_log" "0"
     log "prune $p (rotated logs, mtime>1d)"
   done
 
