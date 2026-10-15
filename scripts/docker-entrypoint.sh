@@ -27,16 +27,40 @@ if [ "$(id -u)" -ne 0 ]; then
     exec "$@"
 fi
 
-# Adjust the node user's UID/GID if they differ from the runtime request
-if [ "$(id -u node)" -ne "$PUID" ]; then
+# Adjust the node user's UID/GID if they differ from the runtime request.
+#
+# `usermod -u` and `usermod -g` also re-own every file under the user's home
+# directory, and the node user's home is the app home (the data volume). On a
+# large home that walk takes minutes, and the app cannot start until it ends.
+# During the remap, point the home at a path that does not exist, so usermod
+# changes only the account. The ownership probe below still repairs the tree
+# when the IDs really changed: the home directory itself then has the old
+# owner, which the shallow probe detects on the same boot.
+remap_uid=0
+remap_gid=0
+[ "$(id -u node)" -ne "$PUID" ] && remap_uid=1
+[ "$(id -g node)" -ne "$PGID" ] && remap_gid=1
+node_home=""
+if [ "$remap_uid" -eq 1 ] || [ "$remap_gid" -eq 1 ]; then
+    node_home="$(getent passwd node 2>/dev/null | cut -d: -f6 || true)"
+    if [ -n "$node_home" ]; then
+        usermod -d /nonexistent/paperclip-uid-remap node
+    fi
+fi
+
+if [ "$remap_uid" -eq 1 ]; then
     echo "Updating node UID to $PUID"
     usermod -o -u "$PUID" node
 fi
 
-if [ "$(id -g node)" -ne "$PGID" ]; then
+if [ "$remap_gid" -eq 1 ]; then
     echo "Updating node GID to $PGID"
     groupmod -o -g "$PGID" node
     usermod -g "$PGID" node
+fi
+
+if [ -n "$node_home" ]; then
+    usermod -d "$node_home" node
 fi
 
 # Ensure the app home is owned by the runtime user BEFORE dropping
