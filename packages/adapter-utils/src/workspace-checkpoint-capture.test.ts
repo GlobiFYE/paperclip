@@ -44,6 +44,7 @@ const originalClose = DatabaseSync.prototype.close;
 const originalExec = DatabaseSync.prototype.exec;
 const originalPrepare = DatabaseSync.prototype.prepare;
 const originalLstat = fs.promises.lstat;
+let heldPath;
 const stats = { opened: 0, closed: 0, active: 0, peak: 0, sqliteFull: 0, databaseCloseActive: [] };
 DatabaseSync.prototype.close = function() { stats.databaseCloseActive.push(stats.active); return originalClose.call(this); };
 DatabaseSync.prototype.exec = function(sql) {
@@ -61,7 +62,7 @@ DatabaseSync.prototype.prepare = function(sql) {
   return statement;
 };
 fs.promises.lstat = async function(file, ...args) {
-  if (process.env.CHECKPOINT_FIXTURE_FAILURE === 'walk' && path.basename(String(file)) === 'file-01') throw new Error('fixture-checkpoint-walk-failure');
+  if (process.env.CHECKPOINT_FIXTURE_FAILURE === 'walk' && stats.opened > 0 && String(file) !== heldPath) throw new Error('fixture-checkpoint-walk-failure');
   return originalLstat.call(this, file, ...args);
 };
 fs.createReadStream = function(file, options) {
@@ -70,7 +71,9 @@ fs.createReadStream = function(file, options) {
   let stream = process.env.CHECKPOINT_FIXTURE_FAILURE === 'read' && victim
     ? new Readable({ read() { if (!waiting) { waiting = true; setTimeout(() => this.destroy(new Error('fixture-checkpoint-read-failure')), 20); } } })
     : original.call(this, file, options);
-  if ((process.env.CHECKPOINT_FIXTURE_FAILURE === 'walk' && victim) || (process.env.CHECKPOINT_FIXTURE_FAILURE === 'full_db' && String(file).endsWith('file-15'))) {
+  const holdForWalk = process.env.CHECKPOINT_FIXTURE_FAILURE === 'walk' && stats.opened === 0;
+  if (holdForWalk) heldPath = String(file);
+  if (holdForWalk || (process.env.CHECKPOINT_FIXTURE_FAILURE === 'full_db' && String(file).endsWith('file-15'))) {
     const source = stream;
     stream = Readable.from((async function*() { await new Promise(resolve => setTimeout(resolve, 50)); yield* source; })());
   }
