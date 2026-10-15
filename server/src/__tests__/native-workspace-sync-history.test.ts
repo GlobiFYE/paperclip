@@ -1,12 +1,13 @@
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { heartbeatRuns, type Db } from "@paperclipai/db";
 import type { EnvironmentLease } from "@paperclipai/shared";
 import type { AdapterSandboxExecutionTarget } from "@paperclipai/adapter-utils/execution-target";
 import type { CommandManagedRuntimeRunner } from "@paperclipai/adapter-utils/command-managed-runtime";
+import * as gitWorkspaceSync from "@paperclipai/adapter-utils/git-workspace-sync";
 import { runLocalGit } from "@paperclipai/adapter-utils/git-workspace-sync";
 import { prepareNativeWorkspaceSync, nativeWorkspaceSyncInternals } from "../services/native-runtime/native-workspace-sync.js";
 
@@ -37,6 +38,7 @@ describe("native warm workspace Git history", () => {
   const oldInstance = process.env.PAPERCLIP_INSTANCE_ID;
   const roots: string[] = [];
   afterEach(async () => {
+    vi.restoreAllMocks();
     if (oldHome === undefined) delete process.env.PAPERCLIP_HOME;
     else process.env.PAPERCLIP_HOME = oldHome;
     if (oldInstance === undefined) delete process.env.PAPERCLIP_INSTANCE_ID;
@@ -44,8 +46,9 @@ describe("native warm workspace Git history", () => {
     await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true })));
   });
 
-  it.each(["unchanged", "host_commit", "host_branch", "host_origin", "remote_commit", "nested_commit", "plain_nested_commit"] as const)(
+  it.each(["unchanged", "host_commit", "host_branch", "host_origin", "remote_commit", "remote_commit_corrupt_seed", "remote_commit_missing_seed", "nested_commit", "plain_nested_commit"] as const)(
     "checks Git identity before reusing a warm sandbox: %s", async (change) => {
+      const packClone = vi.spyOn(gitWorkspaceSync, "withShallowGitWorkspaceClone");
       const root = await mkdtemp(path.join(os.tmpdir(), "paperclip-warm-history-"));
       roots.push(root);
       process.env.PAPERCLIP_HOME = path.join(root, "home");
@@ -110,8 +113,16 @@ describe("native warm workspace Git history", () => {
         await git(host, "checkout", "-b", "other");
       } else if (change === "host_origin") {
         await git(host, "remote", "add", "origin", "https://github.com/paperclipai/new-source.git");
-      } else if (change === "remote_commit") {
+      } else if (change === "remote_commit" || change === "remote_commit_corrupt_seed" || change === "remote_commit_missing_seed") {
         await git(remote, "-c", "user.name=Test", "-c", "user.email=test@paperclip.dev", "commit", "--allow-empty", "-m", "remote only");
+      }
+      if (change === "remote_commit_corrupt_seed" || change === "remote_commit_missing_seed") {
+        const cache = path.join(process.env.PAPERCLIP_HOME!, "instances", "test", "native-workspace-sync", "generations", "company", "workspace");
+        const [generation] = (await readdir(cache)).filter(name => /^[a-f0-9]{64}$/.test(name));
+        expect(generation).toBeDefined();
+        const archive = path.join(cache, generation!, "workspace.tar");
+        await rm(archive);
+        if (change === "remote_commit_corrupt_seed") await writeFile(archive, "invalid cached archive");
       }
       const hostRepo = change === "plain_nested_commit" ? path.join(host, nestedPath) : host;
       const remoteRepo = change === "plain_nested_commit" ? path.join(remote, nestedPath) : remote;
@@ -119,10 +130,13 @@ describe("native warm workspace Git history", () => {
       const expectedBranch = await git(hostRepo, "symbolic-ref", "--short", "HEAD");
       const nestedHead = change === "nested_commit" || change === "plain_nested_commit" ? await git(path.join(host, nestedPath), "rev-parse", "HEAD") : null;
       runnerProfileJson = {};
+      packClone.mockClear();
       const second = (await prepareNativeWorkspaceSync({ ...input, runId: "second", target: {
         ...target, sandboxLeaseAcquisition: { outcome: "resumed", providerLeaseId: "sandbox" },
       } }))!;
       try {
+        if (change === "remote_commit") expect(packClone).not.toHaveBeenCalled();
+        if (change === "remote_commit_corrupt_seed" || change === "remote_commit_missing_seed") expect(packClone).toHaveBeenCalled();
         expect(second.mode).toBe(change === "unchanged" ? "adopt_remote" : "host_current");
         expect(await git(remoteRepo, "rev-parse", "HEAD")).toBe(expectedHead);
         expect(await git(remoteRepo, "symbolic-ref", "--short", "HEAD")).toBe(expectedBranch);

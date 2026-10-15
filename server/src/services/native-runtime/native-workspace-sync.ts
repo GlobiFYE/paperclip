@@ -971,6 +971,8 @@ export async function prepareNativeWorkspaceSync(input: {
       acquisition,
       hasPriorStamp: priorStamp !== null,
     });
+    const seedCacheCompanyDirectory = path.join(resolvePaperclipInstanceRoot(), STATE_ROOT_NAME, "generations", requireSafeSegment(input.companyId, "company_id"));
+    const seedCacheDirectory = path.join(seedCacheCompanyDirectory, requireSafeSegment(input.workspaceId, "workspace_id"));
     runtime = await prepareRuntime({
       runId: input.runId,
       target,
@@ -978,8 +980,8 @@ export async function prepareNativeWorkspaceSync(input: {
       onCheckpoint: input.onCheckpoint,
       workspaceLocalDir: input.workspaceLocalDir,
       mode,
-      seedCacheCompanyDirectory: path.join(resolvePaperclipInstanceRoot(), STATE_ROOT_NAME, "generations", requireSafeSegment(input.companyId, "company_id")),
-      seedCacheDirectory: path.join(resolvePaperclipInstanceRoot(), STATE_ROOT_NAME, "generations", requireSafeSegment(input.companyId, "company_id"), requireSafeSegment(input.workspaceId, "workspace_id")),
+      seedCacheCompanyDirectory,
+      seedCacheDirectory,
       durableSeed: {
         workspaceArchivePath: seedPaths.workspaceArchivePath,
         gitArchivePath: seedPaths.gitArchivePath,
@@ -1005,6 +1007,8 @@ export async function prepareNativeWorkspaceSync(input: {
           target,
           workspaceLocalDir: input.workspaceLocalDir,
           mode,
+          seedCacheCompanyDirectory,
+          seedCacheDirectory,
           baseline: currentSnapshot.baseline,
           gitSnapshot: currentSnapshot.gitSnapshot,
           repositories: currentSnapshot.repositories,
