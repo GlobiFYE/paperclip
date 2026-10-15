@@ -8,6 +8,7 @@ import { prepareHeartbeatTaskContext } from "./heartbeat/task-context.js";
 import { selectHeartbeatEnvironment } from "./heartbeat/environment-selection.js";
 import { prepareHeartbeatWorkspace } from "./heartbeat/workspace-preparation.js";
 import { executeHeartbeatRuntime, NativeSessionResumeScheduledError, NativeWorkspaceFinalizeScheduledError } from "./heartbeat/runtime-execution.js";
+import { preserveNativeFailedWorkspace } from "./native-runtime/native-failed-workspace-recovery.js";
 import { selectHeartbeatRuntime } from "./heartbeat/runtime-selection.js";
 import { createHeartbeatRunCompletion } from "./heartbeat/run-completion.js";
 export {
@@ -3638,7 +3639,18 @@ export function heartbeatService(
           },
         );
       } else {
-        await runCompletion.failRunSetup({
+        const failureRun = await getRun(run.id);
+        if (failureRun?.runtimeMode === "native"
+          && parseObject(failureRun.runnerProfileJson?.nativeWorkspaceSync).state === "prepared") {
+          providerResourceDispositionForRun = "stop_and_retain";
+          try {
+            await preserveNativeFailedWorkspace(db, failureRun, { allowPreterminal: true });
+          } catch (recoveryError) {
+            if (recoveryError instanceof NativeWorkspaceFinalizationBusyError) nativeOwnershipHeld = true;
+            else logger.error({ err: recoveryError, runId: run.id }, "failed to record retained native workspace recovery");
+          }
+        }
+        if (!nativeOwnershipHeld) await runCompletion.failRunSetup({
           run, runId, outerErr, signal: executionControl.controller.signal,
           providerDispatchStarted: legacyAdapterEntered || nativeDispatchStarted,
           identityRedactor, readFailureReportSecrets,

@@ -994,6 +994,9 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
       input.effects.onNativeOwnershipHeld();
       throw adapterErr;
     }
+    if (nativeRuntimeResolution.kind === "native" && nativeWorkspaceSync?.reference.state === "prepared") {
+      input.effects.onProviderResourceDisposition("stop_and_retain");
+    }
     await db
       .update(heartbeatRuns)
       .set({ executionControlDeadlineAt: new Date(Date.now() + 60_000) })

@@ -37,6 +37,7 @@ import { readNativeLocalProcessStop, PROCESS_START_REQUESTED } from "../native-l
 import { remoteLeaseCleanupScope } from "../remote-execution-termination.js";
 import { resolveConnectorAssignments, isConnectorSkill } from "../connector-runtime.js";
 import { activeNativeExecutionRunIds } from "./native-active-runs.js";
+import { preserveNativeFailedWorkspace } from "./native-failed-workspace-recovery.js";
 import {
   boundedExecutionCleanup,
   EXECUTION_CONTROL_DEADLINE_MS,
@@ -9298,7 +9299,7 @@ async function executePaperclipNativeSessionWithinScope(
               gt(nativeRunFinalizations.leaseExpiresAt, sql`now()`),
             ),
           )
-          .returning({ runId: nativeRunFinalizations.runId })
+          .returning({ runId: nativeRunFinalizations.runId, resultId: nativeRunFinalizations.resultId })
           .then((rows) => rows[0] ?? null);
         if (!updated) throw new Error("native_session_lease_lost");
         const [runBeforeWrite] = await tx
@@ -9306,7 +9307,7 @@ async function executePaperclipNativeSessionWithinScope(
           .from(heartbeatRuns)
           .where(eq(heartbeatRuns.id, input.execution.binding.runId))
           .for("update");
-        const [updatedRun] = await tx
+        let [updatedRun] = await tx
           .update(heartbeatRuns)
           .set({
             // An authentication timeout does not prove the retained runner or
@@ -9329,6 +9330,9 @@ async function executePaperclipNativeSessionWithinScope(
           })
           .where(eq(heartbeatRuns.id, input.execution.binding.runId))
           .returning();
+        if (updatedRun && exhausted && !ownershipUnverified && !updated.resultId) {
+          updatedRun = await preserveNativeFailedWorkspace(tx as unknown as Db, updatedRun) ?? updatedRun;
+        }
         if (
           updatedRun &&
           runBeforeWrite &&
