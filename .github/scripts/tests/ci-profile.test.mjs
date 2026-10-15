@@ -60,6 +60,15 @@ test("file/test hierarchy keeps runner timestamps and rejects unrelated artifact
   assert.match(trace.warnings.join(), /1 invalid/);
 });
 
+test("short files belong to the latest containing step despite second-precision boundaries", () => {
+  const records = [record({ kind: "file", id: "file", name: "short.test.ts", file: "short.test.ts",
+    start: Date.parse(at(3)) + 100, duration: 50, status: "passed" })];
+  const trace = buildTrace(run, jobs, records);
+  const file = trace.events.find((event) => event.data.name === "short.test.ts");
+  const step = trace.events.find((event) => event.data.name === "Tests");
+  assert.equal(file.data["trace.parent_id"], step.data["trace.span_id"]);
+});
+
 test("cancelled reporters and missing shards remain explicit", () => {
   const trace = buildTrace({ ...run, conclusion: "cancelled" }, jobs, [record({ kind: "job" }), record({ kind: "start" })]);
   assert.equal(trace.events[0].data["ci.profile_complete"], false);

@@ -22,6 +22,12 @@ maintainer applies it. Failed identity lookups disable profiling.
 Ordinary PRs do not write timing artifacts or export traces. The exporter job is
 skipped for ordinary run names. Adding another label does not run the CI matrix.
 
+Profiling preserves the existing trusted AWS runner routing. Eligible PR jobs
+use `paperclip-public-pr-x64`; the routing gate uses `paperclip-ci-routing-x64`.
+The existing fail-closed GitHub-hosted fallback still applies if AWS routing
+cannot be authorized. Only the separate post-run Honeycomb exporter uses
+`ubuntu-latest` directly; it is outside the measured PR suite.
+
 ## Read the waterfall
 
 The workflow root measures elapsed time from run creation to the last job's
@@ -31,6 +37,11 @@ its steps and available test details beneath it. All spans use a sample rate of
 one. There is no sampling within the selected attempt. For a compact Gantt view,
 open a job row's menu and choose **Collapse spans at this depth**. Expand an
 individual job to inspect its steps and test files.
+
+The expandable hierarchy is **workflow → job → step → test filename → tests**.
+Vitest, Playwright, and Node file rows use repository-relative filenames, also
+available in `test.file`. Separate files retain their own children even when
+individual test names repeat across files.
 
 - Compare the jobs that finish last (`ci.finishes_last`) with other overlapping
   work. A long job that finishes early is not necessarily delaying CI.

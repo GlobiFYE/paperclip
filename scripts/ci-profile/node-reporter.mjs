@@ -1,3 +1,4 @@
+import path from "node:path";
 import { recorder, relativeFile } from "./record.mjs";
 
 export default async function* reporter(source) {
@@ -21,7 +22,9 @@ export default async function* reporter(source) {
       end: Math.max(previous?.end ?? end, end),
       failed: previous?.failed || (!data.skip && !data.details.passed),
     });
-    if (data.name === data.file || data.details.type === "suite") continue;
+    // File completion events may use the CLI's relative argument as their
+    // name while data.file is absolute. They are containers, not test cases.
+    if (path.resolve(data.name) === path.resolve(data.file) || data.details.type === "suite") continue;
     record({
       kind: "test", parent: file,
       id: String(index++), name: data.name, file, start, duration,

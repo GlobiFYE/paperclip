@@ -10,7 +10,7 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 const scripts = path.join(root, "scripts/ci-profile");
 
 for (const framework of ["vitest", "playwright", "node"]) {
-  test(`${framework} reports real file/test timestamps and preserves failing exit codes`, () => {
+  test(`${framework} reports every file with its own child tests and preserves failing exit codes`, () => {
     const directory = realpathSync(mkdtempSync(path.join(tmpdir(), "ci-profile-smoke-")));
     try {
       symlinkSync(path.join(root, "node_modules"), path.join(directory, "node_modules"), "dir");
@@ -18,17 +18,18 @@ for (const framework of ["vitest", "playwright", "node"]) {
       const fixture = framework === "node"
         ? 'import { test } from "node:test";'
         : framework === "vitest" ? 'import { test } from "vitest";' : 'import { test } from "@playwright/test";';
-      writeFileSync(path.join(directory, "probe.test.mjs"), `${fixture}
+      const filenames = ["probe.test.mjs", "second.test.mjs"];
+      for (const filename of filenames) writeFileSync(path.join(directory, filename), `${fixture}
 test("passing", async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
 test("failing", async () => { throw new Error("expected probe failure"); });
 `);
       let args;
       if (framework === "node") {
-        args = [path.join(scripts, "node-test.mjs"), path.join(directory, "probe.test.mjs")];
+        args = [path.join(scripts, "node-test.mjs"), ...filenames];
       } else {
         const config = framework === "vitest"
-          ? { test: { include: ["probe.test.mjs"], reporters: [path.join(scripts, "vitest-reporter.mjs")] } }
-          : { testDir: directory, testMatch: "probe.test.mjs", workers: 1, retries: 0, reporter: [[path.join(scripts, "playwright-reporter.mjs")]] };
+          ? { test: { include: ["*.test.mjs"], reporters: [path.join(scripts, "vitest-reporter.mjs")] } }
+          : { testDir: directory, testMatch: "*.test.mjs", workers: 2, retries: 0, reporter: [[path.join(scripts, "playwright-reporter.mjs")]] };
         const configFile = path.join(directory, `${framework}.config.mjs`);
         writeFileSync(configFile, `export default ${JSON.stringify(config)};`);
         args = framework === "vitest"
@@ -48,21 +49,25 @@ test("failing", async () => { throw new Error("expected probe failure"); });
       assert.equal(result.status, 1, result.stdout + result.stderr);
       const records = readdirSync(output).flatMap((file) => readFileSync(path.join(output, file), "utf8").trim().split("\n").map(JSON.parse));
       const cases = records.filter((record) => record.kind === "test");
-      assert.equal(cases.length, 2, JSON.stringify(records));
+      assert.equal(cases.length, 4, JSON.stringify(records));
       assert.ok(cases.some((record) => record.status === "passed"));
       assert.ok(cases.some((record) => record.status === "failed"));
       for (const record of cases) {
         assert.ok(record.start >= start && record.start <= end, JSON.stringify(record));
         assert.ok(record.duration >= 0 && record.start + record.duration <= end + 10);
-        assert.equal(record.file, "probe.test.mjs");
+        assert.ok(filenames.includes(record.file));
       }
       assert.ok(records.some((record) => record.kind === "end"));
       const expected = records.filter((record) => record.kind === "expected");
       assert.equal(expected.length, 1);
       assert.ok(records.every((record) => record.invocation === expected[0].invocation));
-      const file = records.find((record) => record.kind === "file");
-      assert.ok(file, JSON.stringify(records));
-      for (const record of cases) assert.equal(record.parent, file.id);
+      const files = records.filter((record) => record.kind === "file");
+      assert.deepEqual(files.map((record) => record.name).sort(), filenames);
+      for (const file of files) {
+        const children = cases.filter((record) => record.parent === file.id);
+        assert.equal(children.length, 2);
+        assert.ok(children.every((record) => record.file === file.file));
+      }
     } finally { rmSync(directory, { recursive: true, force: true }); }
   });
 }

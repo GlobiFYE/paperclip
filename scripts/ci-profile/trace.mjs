@@ -120,9 +120,10 @@ export function buildTrace(run, jobs, records = []) {
   for (const entry of valid) {
     const { record, job, invocation } = entry;
     const jobId = roots.get(job.id);
-    // GitHub step timestamps have second precision. Select the containing
-    // step, allowing that rounding, without changing the test's own clock.
-    const step = job.steps?.find((candidate) => record.start >= millis(candidate.started_at)
+    // GitHub steps are ordered and have second-precision timestamps. Prefer
+    // the latest containing step: rounding may also make a preceding step fit
+    // a short file/test. Preserve the runner's own clock.
+    const step = job.steps?.findLast((candidate) => record.start >= millis(candidate.started_at)
       && record.start + record.duration <= millis(candidate.completed_at) + 1000
       && candidate.conclusion !== "skipped");
     const parent = files.get(`${invocation}:${record.parent}`)
