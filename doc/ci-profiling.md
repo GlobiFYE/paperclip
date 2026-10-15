@@ -75,7 +75,9 @@ command can prevent later tests or steps from running.
 Each attempt gets a different trace ID. Rerunning failed jobs alone produces an
 attempt trace for those jobs; it does not replay completed jobs. Reruns are marked
 `ci.partial_rerun=true` conservatively. Use a fresh label-triggered run for an
-unambiguous full-suite baseline.
+unambiguous full-suite baseline. GitHub may carry earlier successful jobs into
+the new attempt's job inventory. Jobs completed before the new attempt started
+are excluded and counted in `ci.carried_job_count`.
 
 If export fails, inspect **CI profile** and rerun that exporter after fixing the
 cause. A partial HTTP export may already have sent some spans; retries use the

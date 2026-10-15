@@ -16,10 +16,16 @@ export function buildTrace(run, jobs, records = []) {
   const traceId = id(key, 32);
   const rootId = id(`${key}:root`);
   const start = millis(run.run_attempt === 1 ? run.created_at : run.run_started_at);
+  // The attempt jobs API can relabel carried-over successful jobs with the
+  // new attempt number. Their completion clocks still precede this attempt.
+  const carriedJobs = run.run_attempt > 1 ? jobs.filter((job) => millis(job.completed_at) < start) : [];
+  jobs = jobs.filter((job) => !carriedJobs.includes(job));
+  if (!jobs.length) throw new Error("No jobs executed in this workflow attempt");
   const end = Math.max(...jobs.map((job) => millis(job.completed_at)).filter(Number.isFinite));
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) throw new Error("Invalid run timing");
   const events = [];
   const warnings = [];
+  if (carriedJobs.length) warnings.push(`${carriedJobs.length} completed jobs carried over from earlier attempts were excluded`);
   const shared = {
     "service.name": "paperclip-ci",
     "trace.trace_id": traceId,
@@ -41,6 +47,7 @@ export function buildTrace(run, jobs, records = []) {
   span(rootId, null, `PR CI #${run.run_number || run.id} · attempt ${run.run_attempt}`, start, end, {
     "ci.kind": "workflow", "ci.status": run.conclusion, error: failed(run.conclusion),
     "ci.job_count": jobs.length,
+    "ci.carried_job_count": carriedJobs.length,
     "ci.wall_ms": end - start,
     // A partial rerun intentionally does not re-execute successful jobs.
     "ci.partial_rerun": run.run_attempt > 1,

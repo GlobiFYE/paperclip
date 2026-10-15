@@ -35,10 +35,13 @@ No sampling inside a selected run.
   verified 731 spans and 7m 59s in the [live Honeycomb waterfall](https://ui.honeycomb.io/paperclip/environments/test/datasets/paperclip-ci/trace/oaPMzw8zGwG).
 - Implemented label selection, full-suite override, test timing reporters, trusted
   post-run exporter, direct waterfall link, and missing-data diagnostics.
-- Verified: 48-job / 731-span historical reconstruction; 460 workflow/reporter
+- Verified: 48-job / 731-span historical reconstruction; 508 workflow/reporter/shard
   checks; real root-config probe with 13 tests and one file span; full Node 24
-  typecheck and build. Repository-wide Vitest is being rerun after the final
-  reporter-default correction and base update.
+  typecheck and build. The local full Vitest run was stopped after a setup-token
+  timeout and a distribution-plugin-catalog fixture failure. The setup-token
+  suite passed on focused rerun; the directory-symlink removal failure reproduces
+  with the unchanged base configuration and test/service files on this macOS
+  Node 24.11.0 host. The PR body records the latest remote CI and review results.
 - Created and verified the repository `profile-ci` label. Dedicated Honeycomb
   ingest key `paperclip-ci-profile` has no dataset-creation permission. It is
   stored only as `HONEYCOMB_CI_API_KEY` in the `ci-profiling` GitHub environment,
@@ -50,6 +53,9 @@ No sampling inside a selected run.
   invocations outside reporters to detect wholly missing reporters. The shard
   inventory now writes synchronously before exit after reproducing truncation
   on both the unchanged baseline and working branch.
+- Real partial-rerun evidence showed GitHub carrying old successful jobs into
+  the new attempt's inventory with the new attempt number. Exclude jobs whose
+  completion precedes the attempt start, and record their count explicitly.
 - Delivery: reviewable PR and live Honeycomb evidence. Activation of new trusted
   workflow definitions requires merge to master; do not claim pre-merge evidence
   proves the post-merge label-triggered journey.

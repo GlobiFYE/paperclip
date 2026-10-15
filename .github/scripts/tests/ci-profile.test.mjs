@@ -129,6 +129,22 @@ test("reruns use separate IDs and clocks and cannot mix job attempts", () => {
   assert.throws(() => buildTrace({ ...run, status: "in_progress" }, jobs), /complete/);
 });
 
+test("partial reruns exclude old jobs that GitHub relabels with the new attempt number", () => {
+  const rerun = { ...run, run_attempt: 2, run_started_at: at(30) };
+  const inventory = [
+    { ...job(1, "carried build", 2, 12), run_attempt: 2 },
+    { ...job(3, "retried tests", 32, 50), run_attempt: 2, created_at: at(31) },
+  ];
+  const trace = buildTrace(rerun, inventory);
+  assert.equal(trace.wallMs, 20000);
+  assert.equal(trace.jobCount, 1);
+  assert.equal(trace.events[0].data["ci.carried_job_count"], 1);
+  assert.equal(trace.events.some((event) => event.data.name === "ci / carried build"), false);
+  assert.equal(trace.events[0].data["ci.profile_complete"], false);
+  assert.match(trace.warnings.join(), /1 completed jobs carried over/);
+  assert.throws(() => buildTrace(rerun, inventory.slice(0, 1)), /No jobs executed/);
+});
+
 test("label alone cannot authorize outsiders, bots, stale revisions or outsider reruns", () => {
   const pr = { user: { id: 123, type: "User" }, base: { repo: run.repository }, head: { repo: { id: 99 }, sha: "abc" }, labels: [{ name: "profile-ci" }] };
   assert.equal(associatedProfilePr(run, [pr], [123]), pr);
