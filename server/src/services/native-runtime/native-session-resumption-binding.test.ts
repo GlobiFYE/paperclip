@@ -125,6 +125,26 @@ describe("native recovery execution binding", () => {
     expect(await claimNativeSessionResumptions({ db, runnerInstanceId: "stale", runIds: [f.runId] })).toEqual([]);
   });
 
+  it.each(["pause", "dependency"])("keeps a %s wait from starving the next bounded claim", async kind => {
+    const held = await fixture();
+    const eligible = await fixture();
+    if (kind === "pause") {
+      await db.update(agents).set({ status: "paused" }).where(eq(agents.id, held.agentId));
+    } else {
+      const blocker = randomUUID();
+      await db.insert(issues).values({ id: blocker, companyId: held.companyId, title: "Waiting prerequisite", status: "todo" });
+      await db.insert(issueRelations).values({ companyId: held.companyId, issueId: blocker, relatedIssueId: held.issueId, type: "blocks" });
+    }
+    const now = new Date();
+    await db.update(nativeRunFinalizations).set({ nextAttemptAt: new Date(1) })
+      .where(eq(nativeRunFinalizations.runId, eligible.runId));
+    const input = { db, runnerInstanceId: "owner", runIds: [held.runId, eligible.runId], limit: 1, now };
+    const first = await claimNativeSessionResumptions(input);
+    const second = await claimNativeSessionResumptions(input);
+    expect([...first, ...second].map(claim => claim.runId)).toEqual([eligible.runId]);
+    expect((await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, held.runId)))[0].status).toBe("failed");
+  });
+
   it("admits only one recovering run for a task", async () => {
     const f = await fixture();
     const second = randomUUID();

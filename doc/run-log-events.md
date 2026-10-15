@@ -12,7 +12,9 @@ that restores a released task execution binding. The claim locks the task,
 coordinator, and original run in that order. It preserves the assignee and checks
 current execution/checkout owners, other live work, dependencies, pause holds,
 and stop/successor records before restoring the binding. Attachment authorization
-keeps its existing requirement for that exact binding. This is local run-log data.
+keeps its existing requirement for that exact binding. Skipped retry candidates
+wait 30 seconds before recheck so they cannot fill every bounded claim batch.
+This is local run-log data.
 
 Fresh remote Codex model substitution emits `runner.model_fallback` on the
 system stream with `warn` severity. Its payload contains `requestedModel`,

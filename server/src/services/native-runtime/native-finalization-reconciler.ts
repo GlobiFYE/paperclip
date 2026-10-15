@@ -378,6 +378,7 @@ export async function claimNativeSessionResumptions(input: {
           : []),
       ),
     )
+    .orderBy(asc(nativeRunFinalizations.nextAttemptAt), asc(nativeRunFinalizations.runId))
     .limit(input.limit ?? 25);
 
   const claims: NativeSessionResumeClaim[] = [];
@@ -593,6 +594,18 @@ export async function claimNativeSessionResumptions(input: {
       void reportRunFailure(input.db, terminalRunToEmit);
     }
     if (claimed) claims.push({ runId: candidate.runId, leaseOwner });
+    else await input.db.update(nativeRunFinalizations).set({
+      nextAttemptAt: new Date(now.getTime() + 30_000),
+      updatedAt: now,
+    }).where(and(
+      eq(nativeRunFinalizations.companyId, candidate.companyId),
+      eq(nativeRunFinalizations.issueId, candidate.issueId),
+      eq(nativeRunFinalizations.runId, candidate.runId),
+      eq(nativeRunFinalizations.phase, "retryable_failure"),
+      isNull(nativeRunFinalizations.resultId),
+      or(isNull(nativeRunFinalizations.nextAttemptAt), lte(nativeRunFinalizations.nextAttemptAt, now)),
+      or(isNull(nativeRunFinalizations.leaseOwner), isNull(nativeRunFinalizations.leaseExpiresAt), lte(nativeRunFinalizations.leaseExpiresAt, now)),
+    ));
   }
   return claims;
 }
