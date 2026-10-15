@@ -991,6 +991,10 @@ export async function prepareNativeWorkspaceSync(input: {
     if (!currentSnapshot) {
       throw new Error("native_workspace_sync_snapshot_missing");
     }
+    let workspaceArchiveSha256 = await sha256File(seedPaths.workspaceArchivePath);
+    let gitArchiveSha256 = currentSnapshot.gitSnapshot || currentSnapshot.repositories?.length
+      ? await sha256File(seedPaths.gitArchivePath)
+      : null;
     if (acquisition === "resumed" && priorStamp) {
       const currentHostSha256 = directorySnapshotSha256(
         currentSnapshot.baseline,
@@ -1002,11 +1006,19 @@ export async function prepareNativeWorkspaceSync(input: {
         mode = "adopt_remote";
       } else {
         mode = "host_current";
+        let preparedSeed: WorkspaceDurableSeedPaths | undefined;
+        try {
+          preparedSeed = await verifiedDurableSeed({ runId: input.runId,
+            seed: { workspaceArchiveSha256, gitArchiveSha256 },
+            gitSnapshot: currentSnapshot.gitSnapshot, repositories: currentSnapshot.repositories });
+        } catch (error) {
+          if (!(error instanceof Error) || error.message !== "workspace_sync_out_unrecoverable") throw error;
+        }
         runtime = await prepareRuntime({
           runId: input.runId,
           target,
           workspaceLocalDir: input.workspaceLocalDir,
-          mode,
+          mode: preparedSeed ? "durable_seed" : mode,
           seedCacheCompanyDirectory,
           seedCacheDirectory,
           baseline: currentSnapshot.baseline,
@@ -1014,23 +1026,19 @@ export async function prepareNativeWorkspaceSync(input: {
           repositories: currentSnapshot.repositories,
           onPhase: input.onPhase,
           onCheckpoint: input.onCheckpoint,
-          durableSeed: {
-            workspaceArchivePath: seedPaths.workspaceArchivePath,
-            gitArchivePath: seedPaths.gitArchivePath,
-          },
+          durableSeed: preparedSeed ?? seedPaths,
         });
+        if (!preparedSeed) {
+          workspaceArchiveSha256 = await sha256File(seedPaths.workspaceArchivePath);
+          gitArchiveSha256 = currentSnapshot.gitSnapshot || currentSnapshot.repositories?.length
+            ? await sha256File(seedPaths.gitArchivePath) : null;
+        }
       }
     }
     const snapshot = runtime.workspaceSyncSnapshot;
     if (!snapshot) throw new Error("native_workspace_sync_snapshot_missing");
     await persistSnapshotManifests(input.runId, snapshot);
     const now = new Date().toISOString();
-    const workspaceArchiveSha256 = await sha256File(
-      seedPaths.workspaceArchivePath,
-    );
-    const gitArchiveSha256 = snapshot.gitSnapshot || snapshot.repositories?.length
-      ? await sha256File(seedPaths.gitArchivePath)
-      : null;
     descriptor = {
       schema: DESCRIPTOR_SCHEMA,
       binding: {
