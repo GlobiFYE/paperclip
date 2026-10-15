@@ -128,6 +128,25 @@ pnpm dev:stop --data-dir ./tmp/paperclip-dev
 
 Issue execution may also use project execution workspace policies and workspace runtime services for per-project worktrees, preview servers, and managed dev commands. Configure those through the project workspace/runtime surfaces rather than starting long-running unmanaged processes when a task needs a reusable service.
 
+### Chat query compilation reuse
+
+Set `PAPERCLIP_CHAT_IDLE_OPTIMIZATIONS=true` to reuse the compiled runtime
+inventory, receipt-reaction, and Telegram maintenance candidate queries. Only
+`true` enables it; the default is `false`. Restart after changing it. The startup
+log reports the selected mode.
+
+Each execution reads the database with fresh clock, limit, and action-ID
+parameters. The cache holds compiled query objects, never rows, credentials, or
+authorization decisions. GitHub maintenance also retains its stateless service
+objects. Operations still resolve current credentials and permissions.
+
+This optional reuse works with the current commit/deadline-driven chat queues.
+It does not change their wakeups, retry deadlines, recovery scans, publication
+ordering, or the `DATABASE_PREPARED_STATEMENTS` driver setting. The old polling
+and presence-probe optimization was not carried across the queue migration.
+Measure the current build separately before making allocation or RSS/PSS claims;
+the original PR's polling-era measurements do not describe this architecture.
+
 ### Mobile-friendly preview (`pnpm dev:mobile`)
 
 The vite dev server serves an unbundled module graph. This is fast to reload on a local machine but too heavy for phones and tablets on slow links (airplane wifi, mobile data, distant tailnet peers). `pnpm dev:mobile` builds the UI once and serves the small production bundle on port `3101` via `vite preview`, proxying `/api` requests to the dev API on `3100`.

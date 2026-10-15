@@ -3,9 +3,15 @@ import { githubResponseCommentService } from "../../chat-github-response-comment
 import { githubReviewCheckService } from "../../chat-github-checks.js";
 
 export function createGitHubMaintenance(db: Db, fetchImpl: typeof globalThis.fetch, options: {
+  idleOptimizations?: boolean;
   scheduleMessageProcessing: (task: () => Promise<void>) => void;
   isShuttingDown: () => boolean;
 }) {
+  const createServices = () => ({
+    responses: githubResponseCommentService(db, fetchImpl),
+    checks: githubReviewCheckService(db, fetchImpl),
+  });
+  const retainedServices = options.idleOptimizations ? createServices() : null;
   let githubMaintenancePending = false;
   function scheduleGitHubMaintenance() {
     if (githubMaintenancePending || options.isShuttingDown()) return;
@@ -13,8 +19,9 @@ export function createGitHubMaintenance(db: Db, fetchImpl: typeof globalThis.fet
     options.scheduleMessageProcessing(async () => {
       try {
         // Provider I/O must not block Slack, Teams, or ordinary message receipts.
-        await githubResponseCommentService(db, fetchImpl).processPending();
-        await githubReviewCheckService(db, fetchImpl).processPending();
+        const services = retainedServices ?? createServices();
+        await services.responses.processPending();
+        await services.checks.processPending();
       } finally {
         githubMaintenancePending = false;
       }

@@ -520,6 +520,7 @@ export async function createApp(
     bindHost: string;
     authPublicBaseUrl?: string;
     chatWebhookPublicBaseUrl?: string;
+    chatIdleOptimizations?: boolean;
     authReady: boolean;
     companyDeletionEnabled: boolean;
     announcements?: { enabled: boolean; feedUrl: string };
@@ -632,6 +633,7 @@ export async function createApp(
     pluginWorkerManager: workerManager,
   });
   const chatChannels = chatChannelService(db, {
+    idleOptimizations: opts.chatIdleOptimizations === true,
     allowLocalVoiceBoard: opts.deploymentMode === "local_trusted",
     deferWebhookProcessing: true,
     heartbeat: connectionIntentHeartbeat,
