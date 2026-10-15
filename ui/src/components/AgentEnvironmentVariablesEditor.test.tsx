@@ -9,6 +9,7 @@ import {
   AgentEnvironmentVariablesEditor,
   mergeAgentConfigurationEnv,
   replaceAgentCompanySecretEnv,
+  replaceAgentUserSecretEnv,
   selectAgentConfigurationEnv,
 } from "./AgentEnvironmentVariablesEditor";
 import type { EnvironmentVariablesEditorHandle } from "./environment-variables-editor";
@@ -105,5 +106,18 @@ describe("AgentEnvironmentVariablesEditor", () => {
       PLAIN: { type: "plain", value: "changed" },
     });
     expect(onChange).toHaveBeenLastCalledWith(flushed);
+  });
+
+  it("replaces user-secret bindings and keeps plain and company-secret values", () => {
+    const current = {
+      PLAIN: { type: "plain", value: "x" },
+      GH_TOKEN: { type: "secret_ref", secretId: "s1" },
+      OLD_USER: { type: "user_secret_ref", key: "OLD_USER" },
+    } as const;
+    expect(replaceAgentUserSecretEnv(current, { NEW_USER: { type: "user_secret_ref", key: "NEW_USER", required: false } })).toEqual({
+      PLAIN: { type: "plain", value: "x" },
+      GH_TOKEN: { type: "secret_ref", secretId: "s1" },
+      NEW_USER: { type: "user_secret_ref", key: "NEW_USER", required: false },
+    });
   });
 });

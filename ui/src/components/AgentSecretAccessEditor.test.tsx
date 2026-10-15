@@ -223,6 +223,55 @@ describe("AgentSecretAccessEditor component", () => {
     expect(emitted.at(-1)).toEqual({});
   });
 
+  it("keeps the environment key when the secret behind it changes", () => {
+    const emitted: Array<Record<string, EnvSecretRefBinding>> = [];
+    render(
+      <AgentSecretAccessEditor
+        config={{ env: { GH_TOKEN: { type: "secret_ref", secretId: "s0", version: 1 } } }}
+        secrets={secrets}
+        onEnvChange={(next) => emitted.push(next)}
+        onChange={() => {}}
+      />,
+    );
+    flushSync(() => container.querySelector<HTMLButtonElement>('[data-testid="pick-secret"]')!.click());
+    expect(emitted.at(-1)).toEqual({ GH_TOKEN: { type: "secret_ref", secretId: "s1", version: "latest" } });
+
+    const nameInput = container.querySelector<HTMLInputElement>('input[aria-label="Environment variable name"]')!;
+    expect(nameInput.value).toBe("GH_TOKEN");
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    setter.call(nameInput, "GITHUB_TOKEN");
+    flushSync(() => nameInput.dispatchEvent(new Event("input", { bubbles: true })));
+    expect(emitted.at(-1)).toEqual({ GITHUB_TOKEN: { type: "secret_ref", secretId: "s1", version: "latest" } });
+  });
+
+  it("shows user-secret environment bindings and edits their requirement", () => {
+    const emitted: Array<Record<string, unknown>> = [];
+    render(
+      <AgentSecretAccessEditor
+        config={{ env: {
+          OPENAI_API_KEY: { type: "user_secret_ref", key: "OPENAI_API_KEY", version: "latest", required: true },
+          GH_TOKEN: { type: "secret_ref", secretId: "s1" },
+          PLAIN: { type: "plain", value: "hi" },
+        } }}
+        secrets={secrets}
+        onChange={() => {}}
+        onUserSecretEnvChange={(next) => emitted.push(next)}
+      />,
+    );
+    expect(container.textContent).toContain("User secrets");
+    expect(container.textContent).toContain("env.OPENAI_API_KEY");
+    const requirement = container.querySelector<HTMLSelectElement>('select[aria-label="Requirement for OPENAI_API_KEY"]')!;
+    expect(requirement.value).toBe("required");
+    const selectSetter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, "value")!.set!;
+    selectSetter.call(requirement, "optional");
+    flushSync(() => requirement.dispatchEvent(new Event("change", { bubbles: true })));
+    expect(emitted.at(-1)).toEqual({
+      OPENAI_API_KEY: { type: "user_secret_ref", key: "OPENAI_API_KEY", version: "latest", required: false },
+    });
+    flushSync(() => container.querySelector<HTMLButtonElement>('[aria-label="Remove user secret OPENAI_API_KEY"]')!.click());
+    expect(emitted.at(-1)).toEqual({});
+  });
+
   it("only assigns existing secrets and never asks for a value again", () => {
     render(
       <AgentSecretAccessEditor

@@ -46,6 +46,19 @@ export function replaceAgentCompanySecretEnv(
   return { ...retained, ...(secretBindings ?? {}) };
 }
 
+/** Replace user-secret env refs while preserving plain and company-secret bindings. */
+export function replaceAgentUserSecretEnv(
+  current: Record<string, EnvBinding> | null | undefined,
+  userSecretBindings: Record<string, EnvBinding> | null | undefined,
+): Record<string, EnvBinding> {
+  const retained = Object.fromEntries(
+    Object.entries(current ?? {}).filter(([, binding]) => {
+      return !(typeof binding === "object" && binding !== null && binding.type === "user_secret_ref");
+    }),
+  );
+  return { ...retained, ...(userSecretBindings ?? {}) };
+}
+
 interface AgentEnvironmentVariablesEditorProps {
   value: Record<string, EnvBinding>;
   onChange: (next: Record<string, EnvBinding> | undefined) => void;

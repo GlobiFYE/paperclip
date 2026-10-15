@@ -3,6 +3,7 @@ import { KeyRound, Plus, Trash2 } from "lucide-react";
 import type {
   CompanySecret,
   EnvSecretRefBinding,
+  EnvUserSecretRefBinding,
   SecretProposalView,
 } from "@paperclipai/shared";
 import { cn } from "../lib/utils";
@@ -15,6 +16,7 @@ import {
 } from "../lib/secret-delivery";
 import { envKeyFromSecretName } from "./environment-variables-editor/model";
 import { AgentEnvironmentSecretAccessEditor } from "./AgentEnvironmentSecretAccessEditor";
+import { AgentEnvironmentUserSecretEditor, parseEnvUserSecretRefs } from "./AgentEnvironmentUserSecretEditor";
 import {
   entriesToAccessRows,
   nextAccessRowId,
@@ -56,6 +58,8 @@ export interface AgentSecretAccessEditorProps {
   onChange: (next: Record<string, EnvSecretRefBinding>) => void;
   /** Replace environment-delivered company-secret bindings (`env.<KEY>`). */
   onEnvChange?: (next: Record<string, EnvSecretRefBinding>) => void;
+  /** Replace environment-delivered user-secret bindings (`env.<KEY>` = `user_secret_ref`). */
+  onUserSecretEnvChange?: (next: Record<string, EnvUserSecretRefBinding>) => void;
   disabled?: boolean;
   /** Pending binding proposals targeting this agent (PAP-14731). */
   proposals?: readonly SecretProposalView[];
@@ -70,6 +74,7 @@ export function AgentSecretAccessEditor({
   secrets,
   onChange,
   onEnvChange,
+  onUserSecretEnvChange,
   disabled,
   proposals,
   onApproveProposal,
@@ -80,6 +85,7 @@ export function AgentSecretAccessEditor({
     [proposals],
   );
   const envBindings = useMemo(() => parseEnvSecretRefs(config), [config]);
+  const userSecretBindings = useMemo(() => parseEnvUserSecretRefs(config), [config]);
   const apiBindings = useMemo(() => parseAccessGrants(config), [config]);
 
   const incomingMap = useMemo(() => rowsToAccessMap(entriesToAccessRows(apiBindings)), [apiBindings]);
@@ -137,6 +143,12 @@ export function AgentSecretAccessEditor({
         secrets={secrets}
         onChange={onEnvChange ?? (() => {})}
         disabled={disabled || !onEnvChange}
+      />
+
+      <AgentEnvironmentUserSecretEditor
+        bindings={userSecretBindings}
+        onChange={onUserSecretEnvChange ?? (() => {})}
+        disabled={disabled || !onUserSecretEnvChange}
       />
 
       {/* Pending binding proposals targeting this agent (PAP-14731). */}

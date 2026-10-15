@@ -87,6 +87,7 @@ import {
 import {
   AgentEnvironmentVariablesEditor,
   replaceAgentCompanySecretEnv,
+  replaceAgentUserSecretEnv,
 } from "./AgentEnvironmentVariablesEditor";
 import { buildFixedClaudeOAuthBinding, CLAUDE_OAUTH_TOKEN_ENV_KEY } from "./environment-variables-editor/model";
 import { AgentSecretAccessEditor } from "./AgentSecretAccessEditor";
@@ -578,6 +579,22 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
         adapterConfig: {
           ...prev.adapterConfig,
           env: replaceAgentCompanySecretEnv(currentEnv, next),
+        },
+      };
+    });
+  }, [isCreate, !isCreate ? props.agent : undefined]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /** Replace env-delivered user secrets while retaining plain and company-secret bindings. */
+  const applyUserSecretEnvBindings = useCallback((next: Record<string, EnvBinding>) => {
+    if (isCreate) return;
+    setOverlay((prev) => {
+      const effective = { ...(props.agent.adapterConfig ?? {}), ...prev.adapterConfig } as Record<string, unknown>;
+      const currentEnv = (effective.env ?? {}) as Record<string, EnvBinding>;
+      return {
+        ...prev,
+        adapterConfig: {
+          ...prev.adapterConfig,
+          env: replaceAgentUserSecretEnv(currentEnv, next),
         },
       };
     });
@@ -1484,6 +1501,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
               config={{ ...config, ...overlay.adapterConfig }}
               secrets={availableSecrets}
               onEnvChange={applyEnvironmentSecretBindings}
+              onUserSecretEnvChange={applyUserSecretEnvBindings}
               onChange={applyAccessGrants}
               proposals={agentBindingProposals}
               onApproveProposal={proposalReview.requestApprove}

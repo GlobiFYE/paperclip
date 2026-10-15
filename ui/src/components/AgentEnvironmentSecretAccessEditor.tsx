@@ -74,9 +74,12 @@ export function AgentEnvironmentSecretAccessEditor({
                     secrets={secrets}
                     onSelect={(secretId) => {
                       const secret = secrets.find((candidate) => candidate.id === secretId);
+                      // The key is the contract with the agent: changing the secret
+                      // behind GH_TOKEN must keep GH_TOKEN. Derive a key only for a
+                      // new row that has none yet.
                       patchRow(row.id, {
                         secretId,
-                        name: secret
+                        name: secret && !row.name.trim()
                           ? nextAvailableEnvKey(
                               secret.name,
                               rows
@@ -90,14 +93,21 @@ export function AgentEnvironmentSecretAccessEditor({
                     disabled={disabled}
                     triggerClassName="h-9 min-h-9"
                   />
-                  {row.name ? (
-                    <div className="mt-1 flex items-center gap-1.5 text-(length:--text-micro) text-muted-foreground">
-                      <Badge variant="outline" className="h-5 gap-1 px-1.5 font-normal">
-                        <Variable className="size-3" /> Env var
-                      </Badge>
-                      <code>env.{row.name}</code>
-                    </div>
-                  ) : null}
+                  <div className="mt-1 flex items-center gap-1.5 text-(length:--text-micro) text-muted-foreground">
+                    <Badge variant="outline" className="h-5 gap-1 px-1.5 font-normal">
+                      <Variable className="size-3" /> Env var
+                    </Badge>
+                    <input
+                      className="h-6 min-w-0 flex-1 rounded border border-border bg-background px-1.5 font-mono text-(length:--text-micro) outline-none disabled:cursor-not-allowed disabled:opacity-60"
+                      value={row.name}
+                      placeholder="ENV_NAME"
+                      onChange={(event) => patchRow(row.id, { name: event.target.value })}
+                      disabled={disabled}
+                      aria-label="Environment variable name"
+                      spellCheck={false}
+                    />
+                    {row.name ? <code>env.{row.name}</code> : null}
+                  </div>
                 </div>
                 <select
                   className="h-9 shrink-0 rounded-md border border-border bg-background px-2 text-xs outline-none disabled:cursor-not-allowed disabled:opacity-60"
