@@ -1,5 +1,5 @@
 import { uploadSchema, type PublicMcpTransfers } from "./public-mcp/file-transfers.js";
-import { grokRoutineService, grokWakeAcknowledgementSchema } from "./grok-bot/routine.js";
+import { grokRoutineService, grokWakeAcknowledgementSchema, lockGrokRoutineAcceptance } from "./grok-bot/routine.js";
 import { authorizeExternalBotBinding, authorizeExternalBotOperator, externalBotEnabled } from "./external-bot-authority.js";
 import { updateAgentConfigurationInTransaction } from "./agent-configuration-transaction.js";
 import type { heartbeatService } from "./heartbeat.js";
@@ -220,6 +220,13 @@ function createBroker(db: Db) {
         acceptByUnixMs: Date.now() + 10 * 60_000, expiresAtUnixMs: Date.now() + 2 * 60 * 60_000 };
     },
     async authorizeFileSession(principal: McpPrincipal, assignmentId: string, taskId: string, write: boolean) {
+      if (write && principal.grant.purpose === "agent" && principal.grant.agentId) {
+        // A transfer transaction retains this lock through publication. Stop
+        // and terminal reconciliation cannot fence the assignment midway through
+        // an authorized effect; authority is rechecked after acquiring the lock.
+        await db.select({ id: assignments.id }).from(assignments).where(and(eq(assignments.id, assignmentId),
+          eq(assignments.companyId, principal.grant.companyId), eq(assignments.agentId, principal.grant.agentId))).for("share");
+      }
       const { binding, assignment } = await authorizeAssignment(principal, assignmentId);
       if (binding.providerKind !== "grok_bot" || assignment.status !== "accepted") throw fail("Files require a current accepted Grok work session.");
       const [run] = await db.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.id, assignment.runId), eq(heartbeatRuns.companyId, binding.companyId)));
@@ -234,11 +241,15 @@ function createBroker(db: Db) {
       }
       return { agentId: binding.agentId, runId: assignment.runId };
     },
-    async assertWakeAuthority(companyId: string, agentId: string, bindingId: string, assignmentId: string) {
+    async assertWakeAuthority(companyId: string, agentId: string, bindingId: string, assignmentId: string, options: { requireOffered?: boolean } = {}) {
       const [binding] = await db.select().from(bindings).where(and(eq(bindings.id, bindingId), eq(bindings.companyId, companyId), eq(bindings.agentId, agentId), isNull(bindings.revokedAt)));
       const [grant] = binding?.grantId ? await db.select().from(mcpOauthGrants).where(eq(mcpOauthGrants.id, binding.grantId)) : [];
       if (!grant) throw fail("Wake connection authority is unavailable.");
-      return authorizeAssignment({ grant, actor: { type: "agent", companyId, agentId }, company: { id: companyId, name: "", issuePrefix: "", status: "active" } }, assignmentId);
+      const authority = await authorizeAssignment({ grant, actor: { type: "agent", companyId, agentId }, company: { id: companyId, name: "", issuePrefix: "", status: "active" } }, assignmentId);
+      if (options.requireOffered && authority.assignment.status !== "offered") {
+        throw fail("This work was already accepted. Read its feedback and operation receipts without another routine wake.");
+      }
+      return authority;
     },
     async authorizeBinding(principal: McpPrincipal, companyId: string, bindingId: string) {
       const b = await principalBinding(principal, false, true);
@@ -264,10 +275,12 @@ function createBroker(db: Db) {
       });
     },
     async read(principal: McpPrincipal, assignmentId: string) {
-      const { assignment } = await authorizeAssignment(principal, assignmentId);
+      const { binding, assignment } = await authorizeAssignment(principal, assignmentId);
       return { assignmentId, revision: assignment.revision, status: assignment.status,
         leaseInstructions: "Renew before expiry using the renewal tool for this provider (paperclip_grok_renew or paperclip_dot_renew) and a stable requestId. Renewal is bounded to 24 hours from admission and cannot revive an expired or fenced run.",
-        expiresAt: assignment.expiresAt, ...assignment.projection, accounting: { usage: null, cost: null } };
+        expiresAt: assignment.expiresAt, ...assignment.projection,
+        ...(binding.providerKind === "grok_bot" ? { toolUsageInstructions: GROK_BOT_AGENT_TOOL_GUIDANCE } : {}),
+        accounting: { usage: null, cost: null } };
     },
     async operation(principal: McpPrincipal, assignmentId: string, requestId: string, action: ExternalProviderOperation["action"], input: Record<string, unknown>) {
       const { binding, assignment: a } = await authorizeAssignment(principal, assignmentId);
@@ -302,7 +315,7 @@ function createBroker(db: Db) {
         await new Promise(r => setTimeout(r, 50));
       }
       if (binding.providerKind === "grok_bot") await db.update(operations).set({ pendingReturnedAt: new Date() }).where(eq(operations.id, row.id));
-      return { status: "pending", assignmentId, requestId, message: binding.providerKind === "grok_bot" ? "Use paperclip_grok_operation_status or retry with the same requestId. Do not create a new request ID." : "Use paperclip_dot_operation_status or retry with the same requestId. Do not create a new request ID." };
+      return { status: "pending", assignmentId, requestId, message: binding.providerKind === "grok_bot" ? "Poll paperclip_grok_operation_status with this assignmentId and requestId until its receipt is terminal. Keep handling this routine; Paperclip will not start another routine for a tool result. Do not repeat the operation with a new request ID or perform dependent work before its receipt completes." : "Use paperclip_dot_operation_status or retry with the same requestId. Do not create a new request ID." };
     },
     async tasks(principal: McpPrincipal, after: string | null = null) {
       const b = await principalBinding(principal);
@@ -505,12 +518,17 @@ function createBroker(db: Db) {
         const rows = await tx.select().from(assignments).where(and(eq(assignments.bindingId, binding.id), inArray(assignments.status, ["offered", "accepted"])));
         const [requestedRun] = expectedRunId ? await tx.select({ id: heartbeatRuns.id, status: heartbeatRuns.status }).from(heartbeatRuns)
           .where(and(eq(heartbeatRuns.id, expectedRunId), eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.agentId, agentId))) : [];
-        if (expectedRunId && (!requestedRun || !["queued", "running"].includes(requestedRun.status))) throw fail("The work session changed. Reload before stopping it.");
+        // A failed Runner can still leave its external assignment active.
+        // Fence that exact assignment too; an old terminal run with no current
+        // assignment must never stop a successor's work.
+        const targeted = expectedRunId ? rows.filter(row => row.runId === expectedRunId) : rows;
+        if (expectedRunId && (!requestedRun || !["queued", "running"].includes(requestedRun.status) && !targeted.length)) {
+          throw fail("The work session changed. Reload before stopping it.");
+        }
         const [previousAssignment] = expectedRunId ? await tx.select({ status: assignments.status }).from(assignments)
           .where(and(eq(assignments.bindingId, binding.id), eq(assignments.runId, expectedRunId))) : [];
         const otherWork = expectedRunId && rows.some(row => row.runId !== expectedRunId);
         if (otherWork && previousAssignment && !["offered", "accepted"].includes(previousAssignment.status)) throw fail("The work session changed. Reload before stopping it.");
-        const targeted = expectedRunId ? rows.filter(row => row.runId === expectedRunId) : rows;
         const runIds = [...new Set([...targeted.map(row => row.runId), ...(requestedRun ? [requestedRun.id] : [])])];
         if (targeted.length) await tx.update(assignments).set({ status: "fenced" }).where(inArray(assignments.id, targeted.map(row => row.id)));
         // A queued run has no external authority. Preparing work with no other
@@ -648,7 +666,17 @@ function createBroker(db: Db) {
         settle: async event => {
           const p = z.object({ requestId: z.uuid(), binding: z.object({ runId: z.literal(runId), bindingId: z.literal(execution.provider.binding.bindingId),
             bindingGeneration: z.literal(execution.provider.binding.bindingGeneration) }).passthrough(), outcome: z.record(z.string(), z.unknown()) }).parse(event.payload);
+          // Identify an immutable reserved accept command before taking any row
+          // locks. A webhook may hold this advisory lock while awaiting HTTP;
+          // Stop and acknowledgements must remain free to lock the binding.
+          const [grokAccept] = await db.select({ id: operations.id }).from(operations)
+            .innerJoin(assignments, eq(assignments.id, operations.assignmentId))
+            .innerJoin(bindings, eq(bindings.id, assignments.bindingId))
+            .where(and(eq(assignments.runId, runId), eq(bindings.id, p.binding.bindingId),
+              eq(bindings.providerKind, "grok_bot"), eq(operations.requestId, p.requestId),
+              sql`${operations.command}->>'action' = 'accept'`));
           await db.transaction(async tx => {
+            if (grokAccept) await lockGrokRoutineAcceptance(tx as unknown as Db, p.binding.bindingId);
             // Binding precedes assignment everywhere: serialize mailbox IDs
             // with dispatch, readiness and reconnect without reversing locks.
             await tx.select({ id: bindings.id }).from(bindings).where(eq(bindings.id, p.binding.bindingId)).for("update");
@@ -709,7 +737,7 @@ export function createDotRunnerMcpTools(db: Db, heartbeat?: DotHeartbeat, transf
   }));
   grokDefinitions.push({ name: "paperclip_grok_ack_wake", description: "Acknowledge an exact routine wake through this fixed agent connection. Echo its correlationId, bindingId and generation; for verification also echo its challenge. This records authenticated contact, never work acceptance, completion or remote termination.", schema: grokWakeAcknowledgementSchema });
   if (transfers) grokDefinitions.push(
-    { name: "paperclip_grok_get_upload_url", description: "Get a bounded ten-minute grant to attach exact file bytes to this accepted work session's task. Use your own HTTP/file tools, not a Paperclip filesystem. Compute SHA-256 and size, PUT those bytes, and keep requestId stable after a lost response. Revocation, pause, expiry and reassignment invalidate the grant.", schema: uploadSchema.omit({ companyId: true }).extend({ assignmentId: z.uuid() }) },
+    { name: "paperclip_grok_get_upload_url", description: "Get a bounded ten-minute grant to attach exact file bytes to this accepted work session's task. Use your own HTTP/file tools, not a Paperclip filesystem. Compute SHA-256 and size, PUT those bytes, and cite the returned publication.evidenceRef in your completion report. Keep requestId stable after a lost response. Revocation, pause, expiry and reassignment invalidate the grant.", schema: uploadSchema.omit({ companyId: true }).extend({ assignmentId: z.uuid() }) },
     { name: "paperclip_grok_get_download_url", description: "Get a ten-minute download grant for one attachment of this accepted work session's task. Current session authority is rechecked on download; the grant is not a general file credential.", schema: z.object({ assignmentId: z.uuid(), attachmentId: z.uuid() }).strict() },
   );
   return {

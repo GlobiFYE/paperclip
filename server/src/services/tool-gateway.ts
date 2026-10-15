@@ -362,7 +362,9 @@ export function deduplicateToolDescriptors(tools: readonly ToolGatewayDescriptor
     const previous = unique.get(tool.name);
     if (previous) {
       if (!isDeepStrictEqual(previous, tool)) {
-        throw new ToolGatewayHttpError(409, "Conflicting tool definitions share the same name.", "tool_name_collision");
+        throw new ToolGatewayHttpError(409,
+          `Conflicting tool definitions share the name ${JSON.stringify(tool.name)} (connections ${JSON.stringify([previous.connectionId ?? null, tool.connectionId ?? null])}).`,
+          "tool_name_collision");
       }
       continue;
     }
@@ -9126,6 +9128,12 @@ export function createToolGatewayService(
 
     async browserUseResources(binding: { companyId: string; agentId: string; runId?: string; issueId?: string }) {
       if (!binding.runId || !binding.issueId) return [];
+      const [connection] = await db.select({ id: toolConnections.id }).from(toolConnections).where(and(
+        eq(toolConnections.companyId, binding.companyId), eq(toolConnections.transport, "rest_api"),
+        eq(toolConnections.enabled, true), eq(toolConnections.status, "active"),
+        sql`${toolConnections.config}->>'sourceTemplateKey' = 'browser-use-cloud'`,
+      )).limit(1);
+      if (!connection) return [];
       const session: ToolGatewaySession = { ...binding, runId: binding.runId, issueId: binding.issueId, id: randomUUID(), token: "", projectId: null, createdAt: new Date(), expiresAt: new Date(Date.now() + 60000) };
       const tools = (await listToolsForContext(session)).filter(t => t.providerType === "provider_rest");
       const resources: Array<{ id: string; label: string; connectionId: string }> = [];

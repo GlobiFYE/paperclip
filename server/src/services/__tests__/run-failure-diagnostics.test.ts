@@ -8,6 +8,20 @@ const run = (overrides: Partial<Run> = {}) => ({ resultJson: null, ...overrides 
 const collect = (error: unknown) => collectRunFailureDiagnostics(run(), { error });
 
 describe("run failure diagnostics", () => {
+  it("selects the saved provider configuration and gateway error code without reading credentials or tool schemas", () => {
+    const failure = Object.assign(new Error('Tool collision: "calendar.search"'), {
+      reasonCode: "tool_name_collision", details: { token: "private-token" },
+    });
+    const diagnostic = collectRunFailureDiagnostics(run({
+      startedAt: new Date("2026-10-14T00:00:00Z"), finishedAt: new Date("2026-10-14T00:00:01Z"),
+      runnerProfileJson: { nativeExecutionInput: { provider: { kind: "codex", model: "saved-model", env: { TOKEN: "private-token" } } } },
+      resultJson: { originalFailureCode: "tool_name_collision" },
+    }), { error: failure });
+    expect(diagnostic.execution).toMatchObject({ providerKind: "codex", model: "saved-model", durationMs: 1000,
+      originalFailureCode: "tool_name_collision", startedAt: "2026-10-14T00:00:00.000Z", finishedAt: "2026-10-14T00:00:01.000Z" });
+    expect(diagnostic.exceptions[0]).toMatchObject({ code: "tool_name_collision" });
+    expect(JSON.stringify(diagnostic)).not.toContain("private-token");
+  });
   it("reports only private acquisition observations for the exact failed setup run", () => {
     const scope = { companyId: "company-fixture", environmentId: "environment-fixture", runId: "run-fixture" };
     const diagnostic = { phase: "workspace", elapsedMs: 100, budgetMs: 2_000 } as const;
@@ -174,6 +188,38 @@ describe("run failure diagnostics", () => {
       Object.defineProperty({}, "provider", { get() { throw new Error("private"); } })]) {
       expect(collectRunFailureDiagnostics(run({ resultJson: { nativeProviderFailure: value } }), {}).provider).toEqual({});
     }
+  });
+
+  it("exports only the closed vocabulary of an unclassified native turn failure", () => {
+    const diagnostic = { provider: "codex", category: "turn_failed", codexErrorInfo: "responseStreamDisconnected", httpStatus: 502 };
+    const result = sanitizeRunFailureDiagnostics(collectRunFailureDiagnostics(run({ resultJson: {
+      nativeTurnFailure: { ...diagnostic, runnerFailureCode: "private_prompt_slug", message: "private-provider-response" },
+    } }), {}));
+    expect(result.provider).toEqual({ ...diagnostic, runnerFailureCode: "unrecognized" });
+    expect(JSON.stringify(result)).not.toContain("rivate");
+    for (const value of [null, [], { ...diagnostic, codexErrorInfo: "private-kind" },
+      Object.defineProperty({}, "provider", { get() { throw new Error("private"); } })]) {
+      expect(collectRunFailureDiagnostics(run({ resultJson: { nativeTurnFailure: value } }), {}).provider).toEqual({});
+    }
+  });
+
+  it("exports only the saved remote recovery stage and reason", () => {
+    const result = sanitizeRunFailureDiagnostics(collectRunFailureDiagnostics(run({
+      errorCode: "runner_remote_process_identity_unavailable", resultJson: {
+        remoteRunnerRecovery: { stage: "identity_marker", reason: "fingerprint_missing",
+          path: "private-path", pid: 123, nonce: "private-nonce", stderr: "private-stderr" },
+      },
+    }), {}));
+    expect(result.execution).toEqual({ remoteRunnerRecoveryStage: "identity_marker", remoteRunnerRecoveryReason: "fingerprint_missing" });
+    expect(result.exceptions).toEqual([]);
+    expect(JSON.stringify(result)).not.toContain("private");
+    for (const value of [null, { stage: "private-stage", reason: "marker_missing" },
+      { stage: "identity_marker", reason: "private-reason" },
+      Object.defineProperty({}, "stage", { get() { throw new Error("private"); } })]) {
+      expect(collectRunFailureDiagnostics(run({ errorCode: "runner_remote_process_identity_unavailable",
+        resultJson: { remoteRunnerRecovery: value } }), {}).execution).toEqual({});
+    }
+    expect(collectRunFailureDiagnostics(run({ errorCode: "adapter_failed" }), {}).execution).toEqual({});
   });
 
   it("exports which native close barrier failed without tool identities or provider text", () => {

@@ -573,6 +573,36 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
     expect(await fs.readFile(path.join(seed.worktreePath, "unsaved.txt"), "utf8")).toBe("keep this work\n");
   });
 
+  it("shares compatible Git inspections within a batch while keeping branch and company decisions separate", async () => {
+    const first = await seedTerminalWorkspace();
+    const otherCompany = await seedTerminalWorkspace();
+    const [original] = await db.select().from(executionWorkspaces)
+      .where(eq(executionWorkspaces.id, first.executionWorkspaceId));
+    await db.insert(executionWorkspaces).values([
+      { ...original!, id: randomUUID(), name: "Same directory", updatedAt: new Date("2020-01-01") },
+      { ...original!, id: randomUUID(), name: "Different base", baseRef: "other-base", updatedAt: new Date("2020-01-01") },
+    ]);
+    await db.update(executionWorkspaces).set({
+      cwd: first.worktreePath,
+      providerRef: first.worktreePath,
+      branchName: original!.branchName,
+      baseRef: original!.baseRef,
+    }).where(eq(executionWorkspaces.id, otherCompany.executionWorkspaceId));
+    const service = executionWorkspaceService(db, { workspaceReaperCooldownDays: 0 });
+    const scan = vi.spyOn(workspaceGitOperationScheduler, "run");
+    const select = vi.spyOn(db, "select");
+    try {
+      expect(await service.sweepTerminalWorkspaces()).toMatchObject({ checked: 4, archived: 0 });
+      expect(scan.mock.calls.filter(([input]) => input.operation === "execution_workspaces.close_readiness_status"))
+        .toHaveLength(3);
+      expect(select.mock.calls.filter(([fields]) => fields && "completedAt" in fields && "cancelledAt" in fields))
+        .toHaveLength(4);
+    } finally {
+      scan.mockRestore();
+      select.mockRestore();
+    }
+  });
+
   it("backs off unchanged terminal candidates while unrelated commits wake the worker", async () => {
     await seedTerminalWorkspace();
     let clock = Date.now();
@@ -689,25 +719,10 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
   });
 
   it("reports a squash cross-branch delivery as merged_via_pr and suppresses the ancestry warning", async () => {
-    const repoRoot = await createTempRepo();
-    tempDirs.add(repoRoot);
-    const worktreePath = path.join(path.dirname(repoRoot), `paperclip-delivery-${randomUUID()}`);
-    tempDirs.add(worktreePath);
-    await runGit(repoRoot, ["branch", "PAP-16015-delivery"]);
-    await runGit(repoRoot, ["worktree", "add", worktreePath, "PAP-16015-delivery"]);
-    await fs.writeFile(path.join(worktreePath, "delivered.txt"), "delivered\n", "utf8");
-    await runGit(worktreePath, ["add", "delivered.txt"]);
-    await runGit(worktreePath, ["commit", "-m", "Delivered change"]);
-
     const seeded = await seedTerminalWorkspace();
-    pullRequestDetailsByKey.set(`${seeded.companyId}:10623`, {
-      state: "merged",
-      headRef: "PAP-16015-delivery",
-      headSha: await readGit(worktreePath, ["rev-parse", "HEAD"]),
-    });
     await db.update(executionWorkspaces).set({
-      cwd: worktreePath,
-      providerRef: worktreePath,
+      cwd: seeded.worktreePath,
+      providerRef: seeded.worktreePath,
       providerType: "git_worktree",
       baseRef: "main",
       repoUrl: "https://github.com/paperclipai/paperclip.git",
@@ -824,6 +839,58 @@ describeEmbeddedPostgres("executionWorkspaceService.getCloseReadiness", () => {
     expect(sweep).toMatchObject({ archived: 1, cleanupFailed: 0 });
     expect(workspace).toMatchObject({ status: "archived", cleanupReason: "issue_terminal" });
   }, 20_000);
+
+  it("reads company-scoped execution configuration without live Git inspection", async () => {
+    const seed = await seedAncestryTerminalWorkspace();
+    const service = executionWorkspaceService(db, {
+      inspectGitCloseReadiness: async () => { throw new Error("Git inspection unavailable"); },
+    });
+    const config = { provisionCommand: "echo prepare", environmentId: randomUUID() };
+    await db.update(executionWorkspaces).set({ metadata: { config } })
+      .where(eq(executionWorkspaces.id, seed.executionWorkspaceId));
+
+    expect(await service.getStoredById(seed.companyId, seed.executionWorkspaceId)).toMatchObject({
+      id: seed.executionWorkspaceId, companyId: seed.companyId,
+      cwd: seed.worktreePath, baseRef: "main", config,
+      deliveryState: "unknown", runtimeServices: [],
+    });
+    await expect(service.getStoredById(randomUUID(), seed.executionWorkspaceId))
+      .rejects.toThrow("Task workspace access is no longer available");
+    expect(await service.getStoredById(seed.companyId, randomUUID())).toBeNull();
+    await expect(service.getById(seed.executionWorkspaceId)).rejects.toThrow("Git inspection unavailable");
+  });
+
+  it("derives ancestry from the existing comparison and stays unknown for an invalid base", async () => {
+    const seed = await seedAncestryTerminalWorkspace();
+    const traceDir = await fs.mkdtemp(path.join(os.tmpdir(), "workspace-git-trace-"));
+    tempDirs.add(traceDir);
+    const tracePath = path.join(traceDir, "git.trace");
+    const previousTrace = process.env.GIT_TRACE;
+    process.env.GIT_TRACE = tracePath;
+    try {
+      const merged = await svc.getCloseReadiness(seed.executionWorkspaceId);
+      expect(merged?.git).toMatchObject({ aheadCount: 0, behindCount: 0, isMergedIntoBase: true });
+      expect(await fs.readFile(tracePath, "utf8")).not.toContain("merge-base");
+
+      await fs.writeFile(path.join(seed.worktreePath, "new.txt"), "Undelivered work\n");
+      await runGit(seed.worktreePath, ["add", "new.txt"]);
+      await runGit(seed.worktreePath, ["commit", "-m", "Undelivered work"]);
+      const ahead = await svc.getCloseReadiness(seed.executionWorkspaceId);
+      expect(ahead?.git).toMatchObject({ aheadCount: 1, behindCount: 0, isMergedIntoBase: false });
+      expect(ahead?.deliveryState).toBe("unmerged");
+
+      await db.update(executionWorkspaces).set({ baseRef: "missing-base" })
+        .where(eq(executionWorkspaces.id, seed.executionWorkspaceId));
+      const unknown = await svc.getCloseReadiness(seed.executionWorkspaceId);
+      expect(unknown?.git).toMatchObject({ aheadCount: null, behindCount: null, isMergedIntoBase: null });
+      expect(unknown?.deliveryState).toBe("unknown");
+      expect(await svc.sweepTerminalWorkspaces()).toMatchObject({ archived: 0, skippedUndelivered: 1 });
+      await expect(fs.access(seed.worktreePath)).resolves.toBeUndefined();
+    } finally {
+      if (previousTrace === undefined) delete process.env.GIT_TRACE;
+      else process.env.GIT_TRACE = previousTrace;
+    }
+  });
 
   it("fails closed before archive when git status inspection is unavailable", async () => {
     const seeded = await seedAncestryTerminalWorkspace();
