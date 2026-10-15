@@ -1,32 +1,4 @@
 // @vitest-environment jsdom
-//
-// Regression coverage for three Greptile P2 findings on PR #15267 against
-// the default-execution-policy editor in CompanySettings.tsx:
-//
-//   1. Typing in the policy textarea must not discard unsaved
-//      name/description edits (the general-fields sync effect must not
-//      depend on defaultExecutionPolicyDirty).
-//   2. Typing in the policy textarea after clicking Save, while the save
-//      request is still in flight, must not be clobbered by that request's
-//      onSuccess handler when it later resolves with the (now-stale)
-//      submitted text.
-//   3. Typing a newer, unsaved edit while an earlier save is still in
-//      flight must not be labeled "Saved" once that earlier save resolves --
-//      `mutation.isSuccess` reflects the request settling, not whether the
-//      *visible* draft is what got persisted.
-//   4. An untouched name/description field must refresh when
-//      selectedCompany's own value changes externally (e.g. another tab
-//      saved first), instead of reading that refetch as a local edit and
-//      offering to write the stale local value back over it.
-//
-// There is no existing render-test harness for CompanySettings.tsx itself
-// (the file named CompanySettings.test.tsx actually renders
-// CompanyEnvironments, a different component on the same settings page --
-// noted in this PR's own review comments). This file builds a minimal one,
-// stubbing out the unrelated heavy subtrees (InstanceGeneralSettings,
-// InteractionGovernancePanel, CompanyPatternIcon) so the test stays focused
-// on the two state-sync bugs above.
-
 import { flushSync } from "react-dom";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -99,14 +71,12 @@ vi.mock("./InstanceGeneralSettings", () => ({
   InstanceGeneralSettings: () => null,
 }));
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 class ResizeObserverStub {
   observe() {}
   unobserve() {}
   disconnect() {}
 }
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 (globalThis as any).ResizeObserver = (globalThis as any).ResizeObserver ?? ResizeObserverStub;
 
 async function act(callback: () => void | Promise<void>) {
@@ -214,17 +184,10 @@ describe("CompanySettings default execution policy draft", () => {
     setInputValue(policyTextarea, "{");
     await flushReact();
 
-    // The policy keystroke must not have reset the still-unsaved name edit.
     expect(getNameInput(container).value).toBe("Renamed Co");
   });
 
   it("does not discard an unsaved organization name edit when an unrelated refetch replaces selectedCompany with a new, unchanged-looking object", async () => {
-    // Saving the policy draft calls invalidateQueries on queryKeys.companies.all,
-    // which refetches the company list and hands CompanyContext a brand new
-    // selectedCompany object -- same name/description values, but a new
-    // reference -- even though only defaultExecutionPolicy changed. The
-    // general-fields sync effect must not treat that reference change alone
-    // as a reason to re-copy name/description over an unsaved edit.
     const nameInput = getNameInput(container);
     setInputValue(nameInput, "Renamed Co");
     await flushReact();
@@ -259,18 +222,15 @@ describe("CompanySettings default execution policy draft", () => {
     });
     await flushReact();
 
-    // User keeps typing while the save for '{"stages":[]}' is still in flight.
     setInputValue(getPolicyTextarea(container), '{"stages":[],"maxReviewRounds":2}');
     await flushReact();
 
-    // The in-flight save now resolves with the (now-stale) submitted policy.
     await act(async () => {
       resolveSave({ defaultExecutionPolicy: { stages: [] } as unknown as Company["defaultExecutionPolicy"] });
     });
     await flushReact();
     await flushReact();
 
-    // The newer, unsaved edit must still be in the textarea.
     expect(getPolicyTextarea(container).value).toBe('{"stages":[],"maxReviewRounds":2}');
   });
 
@@ -294,7 +254,6 @@ describe("CompanySettings default execution policy draft", () => {
     });
     await flushReact();
 
-    // User keeps typing while the save for '{"stages":[]}' is still in flight.
     setInputValue(getPolicyTextarea(container), '{"stages":[],"maxReviewRounds":2}');
     await flushReact();
 
@@ -304,19 +263,11 @@ describe("CompanySettings default execution policy draft", () => {
     await flushReact();
     await flushReact();
 
-    // The mutation did settle (isSuccess is true), but the visible draft is
-    // the newer, still-unsaved edit -- "Saved" must not appear next to it.
     expect(container.textContent).not.toContain("Saved");
-    // The save button must still read as actionable, not mid-flight.
     expect(saveButton!.textContent).toBe("Save changes");
   });
 
   it("still clears the dirty flag after a successful save when the companies-stats cache holds a non-list shape", async () => {
-    // queryKeys.companies.all is the prefix ["companies"], which also
-    // matches the stats cache entry (shape: CompanyStats, no `companies`
-    // array). The post-save cache patch must skip it rather than crash --
-    // a crash here would abort onSuccess before the dirty flag clears,
-    // leaving a successful save looking permanently unsaved.
     const { queryKeys } = await import("../lib/queryKeys");
     queryClient.setQueryData(queryKeys.companies.stats, { totalCompanies: 1 });
 
@@ -338,22 +289,12 @@ describe("CompanySettings default execution policy draft", () => {
     await flushReact();
     await flushReact();
 
-    // The save succeeded and the draft matches it, so the dirty flag must
-    // have cleared -- the whole save-button block unmounts once it does.
     expect(
       container.querySelector("[data-testid='company-settings-default-execution-policy-save']"),
     ).toBeNull();
   });
 
   it("refreshes an untouched organization name instead of treating an external rename as a local edit", async () => {
-    // No local edit happened in this tab. Simulate a background refetch
-    // (e.g. triggered by the policy save's invalidateQueries, or a plain
-    // poll) landing after another tab renamed the company. Before the
-    // fix, generalDirty was derived by diffing the still-unchanged local
-    // companyName against the new selectedCompany.name, so this refetch
-    // alone made it read as dirty: the field kept the old name, a "Save
-    // changes" button appeared, and clicking it would have written the old
-    // name back over the other tab's rename.
     selectedCompany = { ...baseCompany, name: "Renamed By Other Tab" };
     await renderApp();
 
@@ -375,9 +316,6 @@ describe("CompanySettings default execution policy draft", () => {
     await flushReact();
     expect(getNameInput(container).value).toBe("Mid-edit Name");
 
-    // Switching companies must still discard the outgoing draft, even
-    // though it's "dirty" -- this must keep working now that dirty is
-    // tracked explicitly instead of derived.
     selectedCompany = { ...baseCompany, id: "company-2", name: "Second Co" };
     await renderApp();
 

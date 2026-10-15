@@ -322,9 +322,6 @@ describeEmbeddedPostgres("company/project default execution policy", () => {
       })
       .where(eq(companies.id, company.id));
 
-    // The creator is the assignee, so the inherited monitor is squarely
-    // within what assertCanManageIssueMonitor already allows an assignee to
-    // hold for its own task -- it must come through, and must not 403.
     const res = await request(app(agentActor(creator.id, company.id)))
       .post(`/api/companies/${company.id}/issues`)
       .send({
@@ -353,11 +350,6 @@ describeEmbeddedPostgres("company/project default execution policy", () => {
       })
       .where(eq(companies.id, company.id));
 
-    // Omitting status defaults a self-assigned create to "todo", which
-    // buildInitialIssueMonitorFields rejects with a 422 for any monitor
-    // (inherited or explicit) regardless of who is authorized to manage it.
-    // The inherited monitor must be dropped before it reaches that check,
-    // not 422 an otherwise-ordinary, fully-authorized create.
     const res = await request(app(agentActor(creator.id, company.id)))
       .post(`/api/companies/${company.id}/issues`)
       .send({
@@ -386,13 +378,6 @@ describeEmbeddedPostgres("company/project default execution policy", () => {
       })
       .where(eq(companies.id, company.id));
 
-    // A direct service caller (e.g. inbound email creating a "todo" issue)
-    // never goes through withAuthorizedInheritedMonitor the way the HTTP
-    // routes do. Without the same drop applied inside create() itself, the
-    // inherited monitor would reach buildInitialIssueMonitorFields and throw
-    // a 422 that this caller has no HTTP response to surface -- for email,
-    // that meant the delivery just retried forever. Status defaults to
-    // "backlog" here (no assignee), which cannot hold a monitor either way.
     const created = await issueService(db).create(company.id, {
       title: "Created directly through the service, picks up company default",
       actorResponsibleUserId: null,
@@ -421,13 +406,6 @@ describeEmbeddedPostgres("company/project default execution policy", () => {
       })
       .where(eq(companies.id, company.id));
 
-    // The creator is neither the assignee nor privileged to manage monitors
-    // on the assignee's behalf. Creating and handing off the task is still
-    // allowed (the original P1 this guards against), but the inherited
-    // monitor must not be silently attached -- that would let any
-    // same-company agent force monitor scheduling onto another agent's task
-    // purely by omitting executionPolicy, with no authorization check ever
-    // running.
     const res = await request(app(agentActor(creator.id, company.id)))
       .post(`/api/companies/${company.id}/issues`)
       .send({
@@ -456,12 +434,6 @@ describeEmbeddedPostgres("company/project default execution policy", () => {
       })
       .where(eq(companies.id, company.id));
 
-    // A watchdog-parent issue with an already-running child forces any new
-    // child to "blocked" (one lane at a time), regardless of what status the
-    // create request asked for. The inherited-monitor check must see that
-    // final "blocked" status, not the "in_progress" the request named --
-    // otherwise it authorizes a monitor for a status buildInitialIssueMonitorFields
-    // then 422s.
     const watchdogParent = await db
       .insert(issues)
       .values({
@@ -556,8 +528,6 @@ describeEmbeddedPostgres("company/project default execution policy", () => {
       })
       .expect(200);
 
-    // Any caller with company access can read the default (see the route's
-    // own comment), not only the board actor who just wrote it.
     const agent = await seedAgentRow(company.id);
     const get = await request(app(agentActor(agent.id, company.id)))
       .get(`/api/companies/${company.id}/default-execution-policy`)
@@ -608,8 +578,6 @@ describeEmbeddedPostgres("company/project default execution policy", () => {
       .get(`/api/companies/${company.id}`)
       .expect(200);
     expect(get.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
-    // The stage/participant content the dedicated endpoint also returns must
-    // still come through untouched -- this is a redaction, not a wipe.
     expect(get.body.defaultExecutionPolicy.stages[0].participants[0]).toMatchObject({
       type: "user",
       userId: "company-reviewer",
@@ -687,8 +655,6 @@ describeEmbeddedPostgres("company/project default execution policy", () => {
       .get(`/api/projects/${project.id}`)
       .expect(200);
     expect(get.body.defaultExecutionPolicy.monitor.externalRef).toBe("[redacted]");
-    // The stage/participant content the dedicated endpoint also returns must
-    // still come through untouched -- this is a redaction, not a wipe.
     expect(get.body.defaultExecutionPolicy.stages[0].participants[0]).toMatchObject({
       type: "user",
       userId: "project-reviewer",
@@ -740,9 +706,6 @@ describeEmbeddedPostgres("company/project default execution policy", () => {
       })
       .expect(200);
 
-    // Simulate an editor that loaded the redacted GET response and PUT it
-    // straight back, including the literal "[redacted]" marker, while
-    // changing an unrelated field.
     const put = await request(app(boardActor))
       .put(`/api/companies/${company.id}/default-execution-policy`)
       .send({

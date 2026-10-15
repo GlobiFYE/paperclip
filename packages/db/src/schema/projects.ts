@@ -25,9 +25,6 @@ export const projects = pgTable(
     pauseReason: text("pause_reason"),
     pausedAt: timestamp("paused_at", { withTimezone: true }),
     executionWorkspacePolicy: jsonb("execution_workspace_policy").$type<Record<string, unknown>>(),
-    // Project-level override of the company's defaultExecutionPolicy (see
-    // packages/db/src/schema/companies.ts). Null means "no project default —
-    // fall back to the company default, if any."
     defaultExecutionPolicy: jsonb("default_execution_policy").$type<IssueExecutionPolicy>(),
     archivedAt: timestamp("archived_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

@@ -2208,20 +2208,6 @@ async function canManageIssueMonitor(
   );
 }
 
-// A monitor that only arrived via an inherited company/project default never
-// goes through assertCanManageIssueMonitor (it gates on monitorFromRequest,
-// not on the effective policy, so a default-inherited monitor doesn't 403 a
-// creator who didn't ask for one). That means an unprivileged creator could
-// otherwise get a monitor silently scheduled on an issue it has no standing
-// to manage. Drop the inherited monitor rather than 403ing the create or
-// scheduling a monitor the creator isn't authorized for.
-//
-// Separately, buildInitialIssueMonitorFields() rejects a monitor outright
-// (422) unless the new issue already has an agent assignee and starts in
-// in_progress/in_review. Most creates start in backlog/todo, so an inherited
-// monitor would 422 ordinary, fully-authorized creates too. Drop it there as
-// well — the default's approval stages still apply, only the monitor is
-// skipped for an issue that can't carry one yet.
 async function withAuthorizedInheritedMonitor(
   accessSvc: ReturnType<typeof accessService>,
   req: Request,
@@ -2236,11 +2222,6 @@ async function withAuthorizedInheritedMonitor(
   if (!issueAllowsMonitor(status, assigneeAgentId, assigneeUserId)) {
     return normalizeIssueExecutionPolicy({ ...policy, monitor: undefined });
   }
-  // A default monitor's timeoutAt is a fixed point in time baked into the
-  // template, not relative to when an issue actually picks it up. Once that
-  // date has passed, buildInitialIssueMonitorFields() 422s the create — drop
-  // the already-expired inherited monitor instead, same as an unauthorized
-  // or not-yet-eligible one; the default's approval stages still apply.
   if (
     policy.monitor.timeoutAt &&
     new Date(policy.monitor.timeoutAt).getTime() <= Date.now()
@@ -4048,17 +4029,7 @@ export function issueRoutes(
     requestedPolicy: unknown,
   ) {
     let policy = normalizeIssueExecutionPolicy(requestedPolicy);
-    // Monitor-management authorization must key off what the caller actually
-    // asked for, not off a monitor that only arrived via the company/project
-    // default below — otherwise a default policy with a monitor makes every
-    // non-assignee agent's issue create 403.
     const monitorFromRequest = Boolean(policy?.monitor);
-    // Only an omitted executionPolicy (not an explicit null/empty one) falls
-    // back to the project's, then the company's, defaultExecutionPolicy.
-    // These two HTTP create routes never produce routine-generated or
-    // conversation-thread issues, so no exclusion check is needed here —
-    // see resolveDefaultIssueExecutionPolicy's own callers in
-    // services/issues.ts for the paths that do.
     if (requestedPolicy === undefined && policy === null) {
       policy = await resolveDefaultIssueExecutionPolicy(db, {
         companyId,
@@ -12487,11 +12458,6 @@ export function issueRoutes(
         createBody.executionWorkspaceSettings?.environmentId,
       );
 
-      // A private top-level issue with no explicit project lands in the
-      // responsible user's personal project (see the matching branch in
-      // services/issues.ts). Resolve that project here too, before picking
-      // a default executionPolicy below, so the personal project's own
-      // default isn't skipped in favor of only the company's.
       if (
         createBody.visibility === "private" &&
         !createAssignmentScope.projectId &&
@@ -12905,11 +12871,6 @@ export function issueRoutes(
           childAssignmentScope.projectId,
           createBody.executionPolicy,
         );
-      // Serialized watchdog follow-ups get forced to "blocked" below
-      // (svc.createChild's currentSerializedChild spread), after this
-      // monitor check already ran on the originally requested status.
-      // Use the status the issue will actually end up with so the
-      // monitor isn't authorized for a status it can no longer hold.
       const authorizedExecutionPolicy = await withAuthorizedInheritedMonitor(
         access,
         req,
@@ -13146,10 +13107,6 @@ export function issueRoutes(
       }
 
       const actor = getActorInfo(req);
-      // Computed before the loop below (not just for the post-loop
-      // status-override pass) so the per-child monitor check can see
-      // whether watchdog serialization will force this child to
-      // "blocked" before it ever reaches buildInitialIssueMonitorFields.
       const serializationContext =
         await resolveWatchdogFollowUpSerializationContext(req, sourceIssue);
       const existingSerializedChild = serializationContext
@@ -13158,9 +13115,6 @@ export function issueRoutes(
       const normalizedChildren = [];
       for (const child of requestedChildren) {
         const index = normalizedChildren.length;
-        // Mirrors the status-override pass below: index 0 is only forced
-        // to "blocked" if a watchdog child is already serialized; every
-        // later child always chains onto the previous one.
         const willBeSerializedBlocked = serializationContext
           ? index === 0
             ? Boolean(existingSerializedChild)
@@ -13169,15 +13123,7 @@ export function issueRoutes(
         let resolvedExecutionPolicy = normalizeIssueExecutionPolicy(
           child.executionPolicy,
         );
-        // Monitor-management authorization keys off what the caller actually
-        // requested, not off a monitor that only arrived via the
-        // company/project default below — mirrors
-        // resolveCreatedIssueExecutionPolicy above.
         const monitorFromRequest = Boolean(resolvedExecutionPolicy?.monitor);
-        // Only an omitted executionPolicy (not an explicit null/empty one)
-        // falls back to the project's, then the company's,
-        // defaultExecutionPolicy — mirrors resolveCreatedIssueExecutionPolicy
-        // above, which the two top-level create routes use.
         if (child.executionPolicy === undefined && resolvedExecutionPolicy === null) {
           resolvedExecutionPolicy = await resolveDefaultIssueExecutionPolicy(
             db,
@@ -13255,11 +13201,6 @@ export function issueRoutes(
       const result = await svc.decomposeAcceptedPlan(sourceIssue.id, {
         acceptedPlanRevisionId: req.body.acceptedPlanRevisionId,
         children: normalizedChildren,
-        // Fingerprint the request as the caller submitted it, before a
-        // company/project default was resolved onto each child above --
-        // otherwise an identical retry 409s whenever the default's content
-        // (not just the ids normalizeIssueExecutionPolicy mints) changed
-        // between the original call and the retry.
         fingerprintChildren: requestedChildren,
         actorAgentId: actor.agentId,
         actorUserId: actor.actorType === "user" ? actor.actorId : null,

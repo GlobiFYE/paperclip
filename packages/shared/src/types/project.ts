@@ -127,13 +127,6 @@ export interface Project {
   pauseReason: PauseReason | null;
   pausedAt: Date | null;
   executionWorkspacePolicy: ProjectExecutionWorkspacePolicy | null;
-  /**
-   * Overrides the company's defaultExecutionPolicy for issues created in
-   * this project when set (see packages/shared/src/types/company.ts).
-   * Optional (rather than required like most Project fields) so the many
-   * existing Project test/storybook fixtures do not all need updating for
-   * this project-level stretch addition; omitted is equivalent to null.
-   */
   defaultExecutionPolicy?: IssueExecutionPolicy | null;
   codebase: ProjectCodebase;
   workspaces: ProjectWorkspace[];

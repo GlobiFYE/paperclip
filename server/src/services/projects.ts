@@ -310,12 +310,6 @@ function pickPrimaryWorkspace(
   return toWorkspace(primary, runtimeServicesByWorkspaceId?.get(primary.id) ?? []);
 }
 
-// Every row this touches carries the real stored defaultExecutionPolicy,
-// monitor.externalRef included. attachWorkspaces is the one step every
-// get/list/create/update path runs through last, so redact here too --
-// same defensive, never-throws-on-a-malformed-stored-value shape as
-// companies.ts's redactCompanyDefaultExecutionPolicy, so a generic project
-// read can't leak a token embedded in a saved default monitor's externalRef.
 function redactProjectDefaultExecutionPolicy(
   policy: ProjectRow["defaultExecutionPolicy"],
 ): ProjectRow["defaultExecutionPolicy"] {

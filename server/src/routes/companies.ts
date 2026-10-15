@@ -504,16 +504,6 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
     res.json(company);
   });
 
-  // The flat, unconditional execution policy template applied to a new issue
-  // when its create call omits one (see resolveDefaultIssueExecutionPolicy in
-  // ../services/issues.ts). Readable by anyone with company access; writable
-  // only by board actors, matching the write-gating idiom used throughout
-  // this file and server/src/routes/access.ts. Run through
-  // normalizeIssueExecutionPolicy so monitor.externalRef comes back
-  // redacted, same as every other execution-policy read path -- the stored
-  // value is the real one (resolveDefaultIssueExecutionPolicy needs it to
-  // authorize a resolved monitor), so returning it as-is to any
-  // company-access caller would leak it.
   router.get("/:companyId/default-execution-policy", async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
@@ -545,13 +535,6 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
         res.status(404).json({ error: "Company not found" });
         return;
       }
-      // The GET above returns monitor.externalRef redacted, so a client that
-      // round-trips that response back into this PUT submits the "[redacted]"
-      // marker literally. Preserve the real stored value in that case instead
-      // of overwriting it with the marker string. svc.getById() already runs
-      // every row through the same redaction (enrichCompany), so the real
-      // value has to come from a raw column read, not existingCompany -- only
-      // pay for that extra read when the marker is actually present.
       let rawStoredDefaultExecutionPolicy = null;
       if (req.body.defaultExecutionPolicy?.monitor?.externalRef === REDACTED_ISSUE_MONITOR_EXTERNAL_REF) {
         const [rawCompanyRow] = await db
@@ -573,10 +556,6 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
         res.status(404).json({ error: "Company not found" });
         return;
       }
-      // Redact monitor.externalRef before this leaves the write path too --
-      // the stored value is the real one, so echoing it back unredacted in
-      // the response or activity-log details would leak it to the same
-      // same-company audience the GET route above already protects against.
       const redactedDefaultExecutionPolicy = normalizeIssueExecutionPolicy(
         company.defaultExecutionPolicy ?? null,
       );

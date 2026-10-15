@@ -92,13 +92,6 @@ export function redactIssueMonitorExternalRef(value: string | null | undefined) 
   return normalizeMonitorText(value) ? REDACTED_ISSUE_MONITOR_EXTERNAL_REF : null;
 }
 
-// A saved default-execution-policy template is read back with its
-// monitor.externalRef redacted (see redactIssueMonitorExternalRef call
-// sites in companies.ts/projects.ts). An editor that round-trips that GET
-// response into a PUT submits the "[redacted]" marker literally, which
-// would otherwise overwrite the real stored value. When the submitted
-// externalRef is exactly the marker, keep whatever was already stored
-// instead of persisting the marker string.
 export function preserveRedactedDefaultExecutionPolicyMonitorExternalRef(
   submitted: IssueExecutionPolicy | null,
   stored: IssueExecutionPolicy | null,

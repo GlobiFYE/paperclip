@@ -66,9 +66,6 @@ export const updateCompanyBrandingSchema = z
 
 export type UpdateCompanyBranding = z.infer<typeof updateCompanyBrandingSchema>;
 
-// The flat, unconditional execution policy template applied to a new issue
-// when its create call omits one (see resolveDefaultIssueExecutionPolicy in
-// server/src/services/issues.ts). Null clears the company default.
 export const putCompanyDefaultExecutionPolicySchema = z
   .object({
     defaultExecutionPolicy: issueExecutionPolicyTemplateSchema,

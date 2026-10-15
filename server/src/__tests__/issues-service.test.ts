@@ -5887,11 +5887,6 @@ describeEmbeddedPostgres("accepted plan decomposition", () => {
   it("tolerates a retry whose children carry a freshly re-minted executionPolicy (e.g. resolved from a company/project default on each call)", async () => {
     const { sourceIssueId, acceptedPlanRevisionId, assigneeAgentId } = await seedAcceptedPlanIssue();
 
-    // resolveDefaultIssueExecutionPolicy -> normalizeIssueExecutionPolicy mints
-    // a fresh stage/participant id on every call when none is supplied, which
-    // is exactly what happens each time a company/project default is resolved
-    // for a retry. The fingerprint must ignore those ids, or an identical
-    // retry looks like a different child set and 409s.
     function buildChildren() {
       return [
         {
@@ -5945,14 +5940,6 @@ describeEmbeddedPostgres("accepted plan decomposition", () => {
   it("tolerates a retry whose resolved executionPolicy content changed (e.g. a board actor edited the company/project default in between), by fingerprinting fingerprintChildren instead of the resolved children", async () => {
     const { sourceIssueId, acceptedPlanRevisionId, assigneeAgentId } = await seedAcceptedPlanIssue();
 
-    // The route resolves a company/project default onto any child that
-    // omitted an explicit executionPolicy before calling in here, so the
-    // resolved `children` content can legitimately differ between the
-    // original call and a retry if the default was edited in between (not
-    // just the ids normalizeIssueExecutionPolicy mints, which the previous
-    // test covers). fingerprintChildren captures what the caller actually
-    // requested (no explicit policy, both times) so the fingerprint stays
-    // stable even though `children` doesn't.
     const requestedChild = {
       title: "Implement the claim table",
       status: "todo" as const,
@@ -5995,8 +5982,6 @@ describeEmbeddedPostgres("accepted plan decomposition", () => {
     expect(first.decomposition.status).toBe("completed");
     expect(first.childIssueIds).toHaveLength(1);
 
-    // Simulate the default's content (not just its minted ids) having
-    // changed between the original call and this retry.
     const second = await svc.decomposeAcceptedPlan(sourceIssueId, {
       acceptedPlanRevisionId,
       children: [resolvedChildWithPolicyContent("default-reviewer-v2-edited")],

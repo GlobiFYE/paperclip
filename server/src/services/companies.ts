@@ -131,11 +131,6 @@ export function companyService(db: Db, budgetHooks: BudgetServiceHooks = {}) {
     updatedAt: companies.updatedAt,
   };
 
-  // Every row this touches carries the real stored defaultExecutionPolicy,
-  // monitor.externalRef included. This runs on every list/get/create/update,
-  // not just the dedicated default-execution-policy endpoints that already
-  // redact it -- so it must redact here too, and must never throw on a
-  // stored value that doesn't parse, unlike normalizeIssueExecutionPolicy.
   function redactCompanyDefaultExecutionPolicy(policy: unknown) {
     if (!policy || typeof policy !== "object") return (policy ?? null) as typeof policy;
     const monitor = (policy as { monitor?: unknown }).monitor;

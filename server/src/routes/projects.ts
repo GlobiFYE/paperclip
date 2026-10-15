@@ -516,13 +516,6 @@ export function projectRoutes(db: Db) {
     res.json(project);
   });
 
-  // Project-level override of the company's defaultExecutionPolicy (see
-  // GET/PUT /companies/:companyId/default-execution-policy in
-  // ../routes/companies.ts). Readable by anyone with project access;
-  // writable only by board actors. Run through normalizeIssueExecutionPolicy
-  // so monitor.externalRef comes back redacted, same as every other
-  // execution-policy read path -- the stored value is the real one, so
-  // returning it as-is to any project-access caller would leak it.
   router.get("/projects/:id/default-execution-policy", async (req, res) => {
     const id = req.params.id as string;
     const project = await getAccessibleResource(req, res, svc.getById(id), "Project not found");
@@ -547,13 +540,6 @@ export function projectRoutes(db: Db) {
         res.status(403).json({ error: "Only board users can set the project default execution policy" });
         return;
       }
-      // The GET above returns monitor.externalRef redacted, so a client that
-      // round-trips that response back into this PUT submits the "[redacted]"
-      // marker literally. Preserve the real stored value in that case instead
-      // of overwriting it with the marker string. svc.getById() already runs
-      // every row through the same redaction (attachWorkspaces), so the real
-      // value has to come from a raw column read, not existing -- only pay for
-      // that extra read when the marker is actually present.
       let rawStoredDefaultExecutionPolicy = null;
       if (req.body.defaultExecutionPolicy?.monitor?.externalRef === REDACTED_ISSUE_MONITOR_EXTERNAL_REF) {
         const [rawProjectRow] = await db
@@ -572,10 +558,6 @@ export function projectRoutes(db: Db) {
         return;
       }
       const actor = getActorInfo(req);
-      // Redact monitor.externalRef before this leaves the write path too --
-      // the stored value is the real one, so echoing it back unredacted in
-      // the response or activity-log details would leak it to the same
-      // audience the GET route above already protects against.
       const redactedDefaultExecutionPolicy = normalizeIssueExecutionPolicy(
         project.defaultExecutionPolicy ?? null,
       );

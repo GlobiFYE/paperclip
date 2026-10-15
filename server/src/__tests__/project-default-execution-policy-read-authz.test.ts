@@ -72,11 +72,6 @@ describe("GET /projects/:id/default-execution-policy authorization", () => {
 
     const res = await request(app).get(`/api/projects/${PROJECT_ID}/default-execution-policy`);
 
-    // assertProjectReadAllowed (shared by every project-read route in this
-    // file, e.g. GET /projects/:id) 404s rather than 403s on denial, so a
-    // caller can't distinguish "doesn't exist" from "exists but I can't read
-    // it" — this route must not leak project existence any differently than
-    // its siblings do.
     expect(res.status).toBe(404);
     expect(res.body.error).toBe("Project not found");
   });
@@ -117,11 +112,6 @@ describe("GET /projects/:id/default-execution-policy authorization", () => {
     });
   });
 
-  // The route now runs the stored policy through normalizeIssueExecutionPolicy
-  // before responding (see the route's own comment) so monitor.externalRef
-  // comes back redacted -- previously it echoed company.defaultExecutionPolicy
-  // verbatim, leaking a real monitor token/URL to any caller whose
-  // project:read is allowed, not just the board actor who set it.
   it("redacts the monitor externalRef on the stored policy", async () => {
     mockProjectService.getById.mockResolvedValue(
       buildProject({
@@ -160,9 +150,6 @@ describe("PUT /projects/:id/default-execution-policy authorization", () => {
   });
 
   it("denies a board actor with company access but no project:read on a private project, before the board-actor write check runs", async () => {
-    // A board user has unconditional company-level access; without this
-    // check, that was enough to write (and read back) a private project's
-    // defaultExecutionPolicy with no project membership at all.
     mockAccessService.decide.mockResolvedValue({
       allowed: false,
       action: "project:read",
@@ -204,10 +191,6 @@ describe("PUT /projects/:id/default-execution-policy authorization", () => {
       reason: "allow_company_agent",
       explanation: "Allowed by default same-company agent visibility.",
     });
-    // A stage with a participant, not an empty-stages policy: the route now
-    // runs the response through normalizeIssueExecutionPolicy (see the GET
-    // tests above), which collapses a stages-less, monitor-less policy to
-    // null -- this fixture needs real content to round-trip.
     const policyWithStage = {
       mode: "normal" as const,
       commentRequired: true,
@@ -239,14 +222,6 @@ describe("PUT /projects/:id/default-execution-policy authorization", () => {
     expect(mockProjectService.update).toHaveBeenCalledTimes(1);
   });
 
-  // The route now runs the response through normalizeIssueExecutionPolicy
-  // too (not just the GET route), so a monitor.externalRef set by this exact
-  // PUT call comes back redacted in the PUT's own response, not just on a
-  // later GET -- previously it echoed project.defaultExecutionPolicy
-  // verbatim here, leaking the token/URL to the very board actor who
-  // supplied it (visible in logs, proxies, etc. even though they already
-  // know the plaintext) and establishing the shape every other caller's
-  // subsequent GET would also see before the GET-side fix landed.
   it("redacts the monitor externalRef in its own write response", async () => {
     mockAccessService.decide.mockResolvedValue({
       allowed: true,

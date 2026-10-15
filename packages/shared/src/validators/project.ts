@@ -139,10 +139,6 @@ export const updateProjectSchema = objectWithoutDefaults(
 
 export type UpdateProject = z.infer<typeof updateProjectSchema>;
 
-// Overrides the company's defaultExecutionPolicy (see
-// packages/shared/src/validators/company.ts) for issues created in this
-// project when set. Null clears the project override, falling back to the
-// company default.
 export const putProjectDefaultExecutionPolicySchema = z
   .object({
     defaultExecutionPolicy: issueExecutionPolicyTemplateSchema,

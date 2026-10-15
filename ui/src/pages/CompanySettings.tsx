@@ -59,58 +59,19 @@ export function CompanySettings() {
   const [defaultExecutionPolicyText, setDefaultExecutionPolicyText] = useState("");
   const [defaultExecutionPolicyError, setDefaultExecutionPolicyError] = useState<string | null>(null);
 
-  // Whether the draft has unsaved edits since it was last synced from the
-  // server. Set on every textarea keystroke, cleared whenever the draft is
-  // freshly synced from selectedCompany.defaultExecutionPolicy or right
-  // after a successful save. This (not the companyId check below) is what
-  // protects an in-progress edit from being clobbered by an unrelated
-  // background refetch (e.g. after toggling requireBoardApprovalForNewAgents).
   const [defaultExecutionPolicyDirty, setDefaultExecutionPolicyDirty] = useState(false);
 
-  // The text of the most recent save that actually completed for the
-  // selected company, regardless of what the draft looks like now. Backs the
-  // "Saved" label below: `mutation.isSuccess` alone only means a request
-  // once settled, not that the visible draft is what it saved -- the user
-  // may have kept typing (or the company may have changed) after clicking
-  // Save but before the response landed, in which case the draft holds a
-  // newer, still-unsaved edit and must not be labeled "Saved".
   const lastSavedDefaultExecutionPolicyTextRef = useRef<string | null>(null);
 
-  // Tracks which company's defaultExecutionPolicy is currently loaded into
-  // the draft textarea. A company switch always re-syncs (and discards any
-  // unsaved draft for the company being left) regardless of dirty state --
-  // otherwise an edited-but-unsaved draft for the previous company would
-  // keep showing under the newly-selected company.
   const [defaultExecutionPolicySyncedCompanyId, setDefaultExecutionPolicySyncedCompanyId] =
     useState<string | null>(null);
 
-  // Which company's name/description/logo/governance are currently loaded
-  // into local state. selectedCompany's object identity changes on every
-  // refetch of the company list -- including one triggered by saving the
-  // unrelated defaultExecutionPolicy draft below (its onSuccess calls
-  // invalidateQueries) -- not just when the user switches companies. Without
-  // this, any such refetch would re-run the sync effect and stomp an
-  // unsaved name/description edit even though nothing the user typed here
-  // caused it.
   const [generalSyncedCompanyId, setGeneralSyncedCompanyId] = useState<
     string | null
   >(null);
 
-  // Whether the user has edited name/description since the last sync from
-  // selectedCompany or a successful save. Tracked explicitly (not derived
-  // by diffing companyName/description against selectedCompany) so an
-  // unrelated refetch that changes selectedCompany's own name/description
-  // (e.g. another tab saved first) isn't misread as a local edit -- that
-  // would both block the resync below and offer to write our stale draft
-  // back over the other tab's change. Mirrors defaultExecutionPolicyDirty
-  // above.
   const [generalDirty, setGeneralDirty] = useState(false);
 
-  // Sync general (name/description/logo/governance) local state from the
-  // selected company. Refresh on a company switch (even if the outgoing
-  // draft was dirty), or whenever the draft is clean -- so an external
-  // update (e.g. the policy save's refetch above) is reflected. Never
-  // overwrite a dirty, same-company draft.
   useEffect(() => {
     if (!selectedCompany) return;
     const companyChanged = selectedCompany.id !== generalSyncedCompanyId;
@@ -124,14 +85,9 @@ export function CompanySettings() {
     }
   }, [selectedCompany, generalSyncedCompanyId, generalDirty]);
 
-  // Sync the default execution policy draft from the selected company.
   useEffect(() => {
     if (!selectedCompany) return;
     const companyChanged = selectedCompany.id !== defaultExecutionPolicySyncedCompanyId;
-    // Refresh the draft on a company switch (even if the outgoing draft was
-    // dirty), or whenever the draft is clean -- so an external update to the
-    // same company's policy (e.g. a background refetch after another tab
-    // changed it) is reflected. Never overwrite a dirty, same-company draft.
     if (companyChanged || !defaultExecutionPolicyDirty) {
       setDefaultExecutionPolicyText(
         selectedCompany.defaultExecutionPolicy
@@ -151,13 +107,6 @@ export function CompanySettings() {
       description: string | null;
     }) => companiesApi.update(data.companyId, { name: data.name, description: data.description }),
     onSuccess: (result, variables) => {
-      // Patch the company-list cache synchronously, same as the
-      // default-execution-policy save below: the sync effect above treats
-      // "clean" as license to re-copy selectedCompany.name/description into
-      // local state, and invalidateQueries only schedules a refetch rather
-      // than resolving one in this tick. Clearing generalDirty without first
-      // updating the cache would let that effect fire against the still-
-      // stale pre-save entry and revert the just-saved text back to it.
       queryClient.setQueriesData<CompanyListResult>(
         { queryKey: queryKeys.companies.all },
         (current) =>
@@ -173,13 +122,6 @@ export function CompanySettings() {
             : current
       );
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
-      // The user may have switched to a different company while this save
-      // was in flight, or kept typing after clicking Save -- in either case
-      // the live draft no longer represents what this response confirms was
-      // saved, so clearing dirty here would make an unsaved (or
-      // already-superseded) edit look saved. Only clear it when the draft
-      // still matches exactly what was submitted, mirroring the same guard
-      // on the default-execution-policy save above.
       if (variables.companyId !== selectedCompanyId) return;
       if (
         companyName.trim() !== variables.name ||
@@ -220,13 +162,6 @@ export function CompanySettings() {
     governanceMutation.mutate(next);
   }
 
-  // Minimal editor for now: a raw-JSON textarea validated against
-  // issueExecutionPolicySchema server-side on save. The per-issue
-  // executionPolicy editor (IssueProperties.tsx) is tightly coupled to a
-  // single Issue (participant pickers keyed off issue.companyId,
-  // issue.createdByUserId, etc.) and adapting it to a company-wide template
-  // with no issue in scope would be a much larger change; this ships the
-  // setting without blocking on that rework.
   const defaultExecutionPolicyMutation = useMutation({
     mutationFn: ({
       companyId,
@@ -237,23 +172,6 @@ export function CompanySettings() {
       submittedText: string;
     }) => companiesApi.putDefaultExecutionPolicy(companyId, policy),
     onSuccess: (result, variables) => {
-      // Patch the company-list cache with the save result *synchronously*,
-      // in the same tick as the dirty-flag clear below. The draft-sync
-      // effect further down treats "clean" as license to re-copy
-      // selectedCompany.defaultExecutionPolicy into the draft (so background
-      // refetches of this company get picked up); clearing dirty without
-      // also updating the cache would let that effect re-run against the
-      // still-stale pre-save cache entry (invalidateQueries only schedules a
-      // refetch, it does not resolve one) and stomp the just-saved text back
-      // to what it replaced. Writing the result in directly removes the lag
-      // instead of racing it. invalidateQueries still runs after, so any
-      // server-side normalization beyond what `result` reports is picked up
-      // too.
-      // queryKeys.companies.all is a prefix ["companies"], so this also
-      // matches the stats/directory/detail cache entries, which don't carry
-      // a `companies` array -- skip those rather than crash this callback
-      // (a crash here would abort before the dirty flag clears below, so a
-      // save that actually succeeded on the server would read as failed).
       queryClient.setQueriesData<CompanyListResult>(
         { queryKey: queryKeys.companies.all },
         (current) =>
@@ -269,21 +187,8 @@ export function CompanySettings() {
             : current
       );
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
-      // The user may have switched to a different company while this save
-      // was in flight; only the still-selected company's draft should be
-      // overwritten with the save result, or it clobbers the other
-      // company's unsaved (or already-saved) text.
       if (variables.companyId !== selectedCompanyId) return;
-      // Recorded even if a newer draft has since superseded it (checked
-      // below): the "Saved" label compares the *live* draft against this at
-      // render time, so it still correctly reads "not saved" once a later
-      // edit moves the draft away from what this save persisted.
       lastSavedDefaultExecutionPolicyTextRef.current = variables.submittedText;
-      // The user may have kept typing in the textarea after clicking Save,
-      // while this request was in flight. If the draft no longer matches
-      // what was actually submitted, it holds a newer, unsaved edit --
-      // overwriting it with the (now-stale) save result would silently
-      // discard that edit, and clearing dirty would make it look saved.
       if (defaultExecutionPolicyText !== variables.submittedText) return;
       setDefaultExecutionPolicyText(
         result.defaultExecutionPolicy
