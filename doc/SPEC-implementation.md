@@ -1721,6 +1721,7 @@ is required.
 - state transition guards (agent, issue, approval)
 - budget enforcement rules
 - adapter invocation/cancel semantics
+- PR workflow secret guards reject GitHub Actions `secrets` expressions (including dot, bracket, and whole-context access) and Honeycomb key references while permitting ordinary secret-related test filenames.
 
 ## 17.2 Integration Tests
 
