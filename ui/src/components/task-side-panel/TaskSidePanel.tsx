@@ -770,7 +770,15 @@ export function TaskSidePanel({
     }}><IssuePropertiesArtifactsTab issue={issue} onOpenDocument={openDocument} uploadState={artifactUploads} /></TextAttachmentContext.Provider>;
   } else if (activeTab.payload.kind === "issue-document") {
     content = activeTab.payload.documentKey === "plan" ? (
-      <IssuePropertiesPlansTab issue={issue} inline={inline} />
+      <IssuePropertiesPlansTab
+        issue={issue}
+        inline={inline}
+        canDeleteDocuments={canDeleteDocuments}
+        onDeleted={(deletedDocumentKey) => {
+          markInteracted();
+          controller.closeTab(`document:${deletedDocumentKey}`);
+        }}
+      />
     ) : (
       <TaskDocumentPanel
         key={activeTab.payload.documentKey}

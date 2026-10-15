@@ -83,6 +83,7 @@ describe("TaskDocumentPanel", () => {
         <QueryClientProvider client={queryClient}>
           <TooltipProvider>
             <TaskDocumentPanel
+              key={documentKey}
               issueId="task-1"
               documentKey={documentKey}
               initialDocument={document}

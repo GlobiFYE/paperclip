@@ -36,6 +36,10 @@ const documentPanelFixture = vi.hoisted(() => ({
   canDeleteDocuments: false,
   onDeleted: undefined as undefined | (() => void),
 }));
+const planPanelFixture = vi.hoisted(() => ({
+  canDeleteDocuments: false,
+  onDeleted: undefined as undefined | (() => void),
+}));
 
 const routeFixture = vi.hoisted(() => ({
   location: {
@@ -69,7 +73,17 @@ vi.mock("@/components/issue-properties/IssuePropertiesArtifactsTab", () => ({
 }));
 
 vi.mock("@/components/issue-properties/IssuePropertiesPlansTab", () => ({
-  IssuePropertiesPlansTab: () => <div>Plan content</div>,
+  IssuePropertiesPlansTab: ({
+    canDeleteDocuments,
+    onDeleted,
+  }: {
+    canDeleteDocuments?: boolean;
+    onDeleted?: (documentKey: string) => void;
+  }) => {
+    planPanelFixture.canDeleteDocuments = canDeleteDocuments ?? false;
+    planPanelFixture.onDeleted = () => onDeleted?.("plan");
+    return <button data-testid="mock-plan-panel" onClick={planPanelFixture.onDeleted}>Plan content</button>;
+  },
 }));
 
 vi.mock("@/components/task-detail/TaskDetailRelationsPanel", () => ({
@@ -152,6 +166,8 @@ describe("TaskSidePanel", () => {
     fixture.plan = null;
     documentPanelFixture.canDeleteDocuments = false;
     documentPanelFixture.onDeleted = undefined;
+    planPanelFixture.canDeleteDocuments = false;
+    planPanelFixture.onDeleted = undefined;
     routeFixture.location.search = "";
     window.history.replaceState(null, "", routeFixture.location.pathname);
     routeFixture.navigate.mockReset();
@@ -647,6 +663,18 @@ describe("TaskSidePanel", () => {
     await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="mock-document-panel"]')?.click());
 
     expect(container.querySelector('[data-side-panel-tab-target="document:brief"]')).toBeNull();
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("Properties");
+  });
+
+  it("passes deletion through the plan viewer and closes the deleted plan tab", async () => {
+    fixture.plan = issueDocument("plan", "Plan");
+    fixture.documents = [fixture.plan];
+    await render(panel({ canDeleteDocuments: true }));
+
+    expect(planPanelFixture.canDeleteDocuments).toBe(true);
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="mock-plan-panel"]')?.click());
+
+    expect(container.querySelector('[data-side-panel-tab-target="document:plan"]')).toBeNull();
     expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("Properties");
   });
 
