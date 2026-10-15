@@ -89,6 +89,12 @@ to the `.env` beside the active instance config with owner-only permissions.
 This also covers direct server starts that do not run CLI onboarding. Back up
 the instance `.env`; the signing secret must stay stable across restarts.
 
+`local_trusted` trusts the local OS account and its processes. Owner-only file
+permissions protect the secret from other OS users, not same-user provider
+processes. Local requests without bearer credentials already have implicit Board
+access in this mode. Isolating agents from the control plane requires separate
+OS identities or sandboxed runtimes; this bootstrap does not create that boundary.
+
 If the generated secret cannot be saved, startup stops with a configuration
 error instead of using a temporary secret. Check the instance directory's
 permissions, or provide `PAPERCLIP_AGENT_JWT_SECRET` through the server environment.
