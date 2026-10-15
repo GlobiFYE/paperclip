@@ -173,6 +173,11 @@ export interface SharedWorkspaceHolder {
   issueIdentifier: string | null;
 }
 
+export interface ExecutionWorkspaceHolder extends SharedWorkspaceHolder {
+  // Silent past WORKSPACE_BUSY_HOLDER_STALE_AFTER_MS but still running.
+  stale: boolean;
+}
+
 // Pre-dispatch gate outcome: another running run currently holds the issue's
 // shared project workspace, or the shared execution workspace it reuses. Not a
 // failure — the run is parked as a bounded scheduled retry and re-attempted
@@ -1369,26 +1374,31 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
       .then((rows) => rows[0] ?? null);
   }
 
-  // Finds a live running run (other than the caller's) on an issue bound to
-  // the same reused execution workspace, typically a parent run that is still
-  // active after delegating a child that inherited its workspace. Uses the
-  // same staleness cutoff as findSharedWorkspaceHolder.
+  // Finds a running run (other than the caller's) on an issue bound to the
+  // same reused execution workspace, typically a parent run that is still
+  // active after delegating a child that inherited its workspace. Unlike
+  // findSharedWorkspaceHolder, a holder silent past
+  // WORKSPACE_BUSY_HOLDER_STALE_AFTER_MS is still returned (flagged stale):
+  // silence does not prove the holder stopped, so the caller must not treat
+  // the folder as free. A live holder is preferred over a stale one.
   async function findExecutionWorkspaceHolder(input: {
     companyId: string;
     executionWorkspaceId: string;
     excludeRunId: string;
     now?: Date;
-  }): Promise<SharedWorkspaceHolder | null> {
+  }): Promise<ExecutionWorkspaceHolder | null> {
     const staleCutoff = new Date(
       (input.now ?? new Date()).getTime() -
         WORKSPACE_BUSY_HOLDER_STALE_AFTER_MS,
     );
+    const lastActivityBefore = sql<boolean>`coalesce(${heartbeatRuns.lastOutputAt}, ${heartbeatRuns.startedAt}, ${heartbeatRuns.createdAt}) < ${staleCutoff.toISOString()}::timestamptz`;
     return await db
       .select({
         runId: heartbeatRuns.id,
         agentId: heartbeatRuns.agentId,
         issueId: sql<string>`${issues.id}::text`,
         issueIdentifier: issues.identifier,
+        stale: lastActivityBefore,
       })
       .from(heartbeatRuns)
       .innerJoin(
@@ -1407,10 +1417,9 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
           eq(heartbeatRuns.companyId, input.companyId),
           eq(heartbeatRuns.status, "running"),
           ne(heartbeatRuns.id, input.excludeRunId),
-          sql`coalesce(${heartbeatRuns.lastOutputAt}, ${heartbeatRuns.startedAt}, ${heartbeatRuns.createdAt}) >= ${staleCutoff.toISOString()}::timestamptz`,
         ),
       )
-      .orderBy(asc(heartbeatRuns.createdAt), asc(heartbeatRuns.id))
+      .orderBy(asc(lastActivityBefore), asc(heartbeatRuns.createdAt), asc(heartbeatRuns.id))
       .limit(1)
       .then((rows) => rows[0] ?? null);
   }

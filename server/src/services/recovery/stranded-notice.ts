@@ -122,6 +122,14 @@ export function buildConfigurationIncompleteRecoveryNoticeSeed(
     };
   }
   if (readNonEmptyStringField(configurationIncomplete, "reason") === "shared_realization_unsupported") {
+    if (configurationIncomplete?.holderStale === true) {
+      return {
+        title: "Shared workspace still held",
+        body: "Paperclip stopped before the agent started because another run still holds this task's shared workspace but has produced no output for more than an hour, and this execution environment cannot place concurrent agents in one physical shared folder.",
+        nextAction: "Check whether the other run is still working and stop it if it is stuck, or select an isolated task workspace, then retry the task.",
+        tone: "danger",
+      };
+    }
     return {
       title: "Shared workspace unavailable",
       body: "Paperclip stopped before the agent started because this task allows concurrent agents in a shared workspace that another live run is using, and this execution environment cannot place concurrent agents in one physical shared folder.",

@@ -68,6 +68,14 @@ describe("stranded recovery notice seeds", () => {
     expect(seed.nextAction).toContain("isolated task workspace");
   });
 
+  it("explains a quiet holder that still owns the shared workspace", () => {
+    const seed = buildConfigurationIncompleteRecoveryNoticeSeed({ reason: "shared_realization_unsupported", holderStale: true });
+    expect(seed.title).toBe("Shared workspace still held");
+    expect(seed.body).toContain("no output for more than an hour");
+    expect(seed.body).not.toContain("secret/env bindings");
+    expect(seed.nextAction).toContain("stop it if it is stuck");
+  });
+
   it("keeps the secret-binding copy for other configuration gaps", () => {
     expect(buildConfigurationIncompleteRecoveryNoticeSeed({ reason: "secret_binding_missing" }).body).toContain(
       "secret/env bindings",

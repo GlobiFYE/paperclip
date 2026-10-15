@@ -314,6 +314,8 @@ export async function selectHeartbeatEnvironment(db: Db, input: HeartbeatEnviron
   // A reused shared execution workspace (for example one a child task inherited from a
   // parent whose run is still live) follows the same policy as a shared project workspace:
   // only an explicit "allow" is unsupported outside local/SSH; otherwise wait for the holder.
+  // A holder silent past the staleness cutoff is still running, so its folder is not free:
+  // fail rather than overlap it or wait on it forever.
   if (!nativeRecoveryExecutionWorkspaceId && reusableExistingExecutionWorkspace &&
       effectiveExecutionWorkspaceMode === "shared_workspace" &&
       selectedEnvironmentForConfig?.driver !== "local" && selectedEnvironmentForConfig?.driver !== "ssh") {
@@ -323,6 +325,11 @@ export async function selectHeartbeatEnvironment(db: Db, input: HeartbeatEnviron
       excludeRunId: run.id,
     });
     if (executionWorkspaceHolder) {
+      if (executionWorkspaceHolder.stale) {
+        throw new ConfigurationIncompleteFailure(`This environment cannot place concurrent agents in one physical shared folder, and run ${executionWorkspaceHolder.runId} still holds this shared execution workspace after more than an hour without output. Use local/SSH sharing or isolated task workspaces.`, {
+          configurationIncomplete: { reason: "shared_realization_unsupported", issueId, holderRunId: executionWorkspaceHolder.runId, holderStale: true },
+        });
+      }
       if (sharedWorkspaceConcurrency === "allow") {
         throw new ConfigurationIncompleteFailure("This environment cannot place concurrent agents in one physical shared folder. Use local/SSH sharing or isolated task workspaces.", {
           configurationIncomplete: { reason: "shared_realization_unsupported", issueId },
