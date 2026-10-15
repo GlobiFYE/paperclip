@@ -112,9 +112,11 @@ export function AgentBasicsDialog({
     }
     if (adapterTouchedRef.current) return;
     if (!agents.data) return;
-    if (!choices.some((adapter) => adapter.type === defaultAdapterType)) return;
+    const defaultAvailable = choices.some((adapter) => adapter.type === defaultAdapterType)
+      || (experimentalRunnerAvailable && defaultAdapterType === "paperclip_runner");
+    if (!defaultAvailable) return;
     setAdapterType((current) => (current === defaultAdapterType ? current : defaultAdapterType));
-  }, [open, initialAdapter, agents.data, defaultAdapterType, choices]);
+  }, [open, initialAdapter, agents.data, defaultAdapterType, choices, experimentalRunnerAvailable]);
   return (
     <Dialog
       open={open}
