@@ -14,7 +14,7 @@ const scratch = async body => {
   try { await body(root); } finally { rmSync(root, { recursive: true, force: true }); }
 };
 const environment = root => ({ ...process.env, HOME: root, npm_config_cache: join(root, 'cache'),
-  npm_config_userconfig: join(root, 'no-npmrc'), npm_config_audit: 'false', npm_config_fund: 'false', npm_config_update_notifier: 'false', npm_config_fetch_retries: '0' });
+  npm_config_userconfig: join(root, 'no-npmrc'), npm_config_audit: 'false', npm_config_fund: 'false', npm_config_update_notifier: 'false', npm_config_fetch_retries: '0', npm_config_fetch_timeout: '10000' });
 const run = (command, args, cwd) => new Promise((resolve, reject) => {
   const child = spawn(command, args, { cwd, env: environment(cwd), stdio: ['ignore', 'pipe', 'pipe'] });
   let output = '';
@@ -22,12 +22,12 @@ const run = (command, args, cwd) => new Promise((resolve, reject) => {
   child.once('error', reject);
   child.once('exit', (code, signal) => code === 0 ? resolve(output) : reject(new Error(`${command} exited ${signal ?? code}: ${output}`)));
 });
-const fixture = root => {
+const fixture = (root, { publicDependency = false } = {}) => {
   const assets = join(root, 'assets'); mkdirSync(assets);
   const packs = [
     { name: '@ci/leaf', version: '1.0.0', main: 'index.js' },
     { name: '@ci/optional', version: '1.0.0' },
-    { name: '@ci/root', version: '1.0.0', dependencies: { '@ci/leaf': '1.0.0', 'bundled-leaf': '1.0.0' },
+    { name: '@ci/root', version: '1.0.0', dependencies: { '@ci/leaf': '1.0.0', 'bundled-leaf': '1.0.0', ...(publicDependency ? { 'is-number': '7.0.0' } : {}) },
       optionalDependencies: { '@ci/optional': '1.0.0' }, bundleDependencies: ['bundled-leaf'], bin: { 'ci-root': 'index.js' },
       scripts: { postinstall: "node -e \"require('node:fs').writeFileSync('lifecycle-ran', 'ok')\"" } },
   ];
@@ -60,7 +60,7 @@ const installedFiles = directory => {
 };
 
 test('real npm installs identical packed bytes, bundles, optional dependencies and bins without running scripts early', { timeout: 90_000 }, async () => scratch(async root => {
-  const assets = fixture(root), catalog = await writePackedRegistryCatalog(assets);
+  const assets = fixture(root, { publicDependency: true }), catalog = await writePackedRegistryCatalog(assets);
   assert.ok(catalog.every(entry => entry.manifest.version === '1.0.0'), 'metadata must come from packed bytes, not changed source');
   const before = join(root, 'file-consumer'), after = join(root, 'registry-consumer');
   for (const cwd of [before, after]) { mkdirSync(cwd); writeFileSync(join(cwd, 'package.json'), '{"private":true}'); }
@@ -71,6 +71,9 @@ test('real npm installs identical packed bytes, bundles, optional dependencies a
     const marker = join(cwd, 'node_modules/@ci/root/lifecycle-ran');
     assert.equal(existsSync(marker), false);
     const lock = readFileSync(join(cwd, 'package-lock.json'), 'utf8');
+    const publicPackage = JSON.parse(lock).packages['node_modules/is-number'];
+    assert.equal(publicPackage.version, '7.0.0');
+    assert.equal(publicPackage.resolved, 'https://registry.npmjs.org/is-number/-/is-number-7.0.0.tgz');
     await run('npm', ['rebuild', '--offline', '--ignore-scripts=false', '--foreground-scripts'], cwd);
     assert.equal(readFileSync(marker, 'utf8'), 'ok');
     assert.equal(readFileSync(join(cwd, 'package-lock.json'), 'utf8'), lock);
