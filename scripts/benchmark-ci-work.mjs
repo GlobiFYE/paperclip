@@ -23,7 +23,7 @@ for (const [variant, cwd] of [['baseline', baseline], ['candidate', candidate]])
     const started = performance.now();
     const result = spawnSync(command, args, {
       cwd, encoding: 'utf8', timeout: 15 * 60_000, maxBuffer: 64 * 1024 * 1024,
-      env: { ...process.env, NODE_ENV: 'test', PAPERCLIP_CI_PROFILE: 'true',
+      env: { ...process.env, GITHUB_WORKSPACE: cwd, NODE_ENV: 'test', PAPERCLIP_CI_PROFILE: 'true',
         PAPERCLIP_CI_PROFILE_DIR: profile, PAPERCLIP_CI_PROFILE_JOB: `benchmark-${variant}-${name}` },
     });
     const wallMs = performance.now() - started;
