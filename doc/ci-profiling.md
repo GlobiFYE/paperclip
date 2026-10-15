@@ -65,6 +65,10 @@ artifacts. It includes failed and cancelled jobs and uploads available test
 timings with `always()`. A force-cancelled or failed setup job may leave no
 artifact. Coverage warnings and `ci.profile_complete=false` make missing
 artifacts, interrupted reporters, rejected data, and absent test details visible.
+Test launchers write an expected-invocation record before starting each Vitest,
+Playwright, or Node process. Each reporter must write matching start/end records,
+so a missing reporter cannot hide behind another successful invocation in the
+same job. Compare `ci.expected_invocations` with `ci.reported_invocations`.
 
 Each attempt gets a different trace ID. Rerunning failed jobs alone produces an
 attempt trace for those jobs; it does not replay completed jobs. Reruns are marked
@@ -86,7 +90,8 @@ allow only the branch `master`, with no PR-ref or tag patterns. Store environmen
 secret `HONEYCOMB_CI_API_KEY` with a dedicated ingest-only key for the Honeycomb
 `test` environment. Do not create a repository- or organization-level secret of
 that name: the environment restriction prevents in-repository PR workflows from
-requesting the key. It needs event
+requesting the key. Tests still execute the PR branch; only the separate exporter
+runs from `master`. It needs event
 ingest permission; dataset creation permission is needed only if the dataset
 has not been created yet. Do not store the environment configuration key in CI.
 Create the repository label `profile-ci` if it does not exist.

@@ -92,7 +92,7 @@ export function buildTrace(run, jobs, records = []) {
     }
     if (record.kind === "job") { receipts.add(job.id); continue; }
     const invocation = `${job.id}:${record.invocation}`;
-    if (record.kind === "start" || record.kind === "end") {
+    if (["expected", "start", "end"].includes(record.kind)) {
       const state = invocations.get(invocation) || {};
       state[record.kind] = true;
       invocations.set(invocation, state);
@@ -132,7 +132,7 @@ export function buildTrace(run, jobs, records = []) {
   const expectedReceipts = jobs.filter((job) => job.steps?.some((step) => step.name === "Initialize CI profile"));
   const missing = expectedReceipts.filter((job) => !receipts.has(job.id));
   if (missing.length) warnings.push(`Missing timing artifacts for ${missing.length} jobs`);
-  const incomplete = [...invocations.values()].filter((value) => !value.start || !value.end).length;
+  const incomplete = [...invocations.values()].filter((value) => !value.expected || !value.start || !value.end).length;
   if (incomplete) warnings.push(`${incomplete} test invocations did not finish reporting`);
   if (rejected) warnings.push(`${rejected} invalid timing records ignored`);
   if (!expectedReceipts.length) warnings.push("Job/step timings only; no test reporter collection steps were present");
@@ -150,6 +150,8 @@ export function buildTrace(run, jobs, records = []) {
   if (expectedReceipts.length && missingTests.length) warnings.push(`Missing test detail for ${missingTests.length} test jobs (including jobs that failed before testing)`);
   root["ci.test_count"] = valid.filter(({ record }) => record.kind === "test").length;
   root["ci.file_count"] = valid.filter(({ record }) => record.kind === "file").length;
+  root["ci.expected_invocations"] = [...invocations.values()].filter((value) => value.expected).length;
+  root["ci.reported_invocations"] = [...invocations.values()].filter((value) => value.expected && value.start && value.end).length;
   root["ci.profile_complete"] = warnings.length === 0 && run.run_attempt === 1;
   root["ci.coverage_warnings"] = warnings.join("; ");
   return { traceId, events, warnings, wallMs: end - start, jobCount: jobs.length };

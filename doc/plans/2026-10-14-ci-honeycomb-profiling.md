@@ -27,6 +27,7 @@ No sampling inside a selected run.
 ## State
 
 - Branch: `codex/ci-honeycomb-profiling` in the existing `76aa` worktree.
+- PR: https://github.com/paperclipai/paperclip/pull/16378
 - Baseline: GitHub run `38671274294`, 48 jobs, 479 seconds from creation to last
   job completion. Raw GitHub evidence is in `/tmp/paperclip-ci-profile-evidence`.
 - Honeycomb: existing `paperclip` team / `test` environment; dedicated `paperclip-ci`
@@ -45,6 +46,10 @@ No sampling inside a selected run.
   scanned absent from repository files and branch history.
 - Added CODEOWNER author/actor authorization and rejection tests, plus CODEOWNERS
   coverage of the privileged exporter.
+- Review fixes: retain `node --test` for older checked-out revisions; record expected
+  invocations outside reporters to detect wholly missing reporters. The shard
+  inventory now writes synchronously before exit after reproducing truncation
+  on both the unchanged baseline and working branch.
 - Delivery: reviewable PR and live Honeycomb evidence. Activation of new trusted
   workflow definitions requires merge to master; do not claim pre-merge evidence
   proves the post-merge label-triggered journey.

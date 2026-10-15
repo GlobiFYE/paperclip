@@ -34,6 +34,7 @@ test("failing", async () => { throw new Error("expected probe failure"); });
         args = framework === "vitest"
           ? [path.join(root, "node_modules/vitest/vitest.mjs"), "run", "--config", configFile, "--root", directory]
           : [path.join(root, "node_modules/@playwright/test/cli.js"), "test", "--config", configFile];
+        args = [path.join(scripts, "run.mjs"), framework, process.execPath, ...args];
       }
       const start = Date.now();
       const env = { ...process.env };
@@ -56,6 +57,9 @@ test("failing", async () => { throw new Error("expected probe failure"); });
         assert.equal(record.file, "probe.test.mjs");
       }
       assert.ok(records.some((record) => record.kind === "end"));
+      const expected = records.filter((record) => record.kind === "expected");
+      assert.equal(expected.length, 1);
+      assert.ok(records.every((record) => record.invocation === expected[0].invocation));
       const file = records.find((record) => record.kind === "file");
       assert.ok(file, JSON.stringify(records));
       for (const record of cases) assert.equal(record.parent, file.id);

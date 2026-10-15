@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, existsSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -65,6 +65,43 @@ test("cancelled reporters and missing shards remain explicit", () => {
   assert.equal(trace.events[0].data["ci.profile_complete"], false);
   assert.match(trace.warnings.join(), /Missing timing artifacts for 1 jobs/);
   assert.match(trace.warnings.join(), /1 test invocations/);
+});
+
+test("a completely absent reporter invocation cannot hide behind a successful sibling", () => {
+  const records = [
+    record({ kind: "job" }), record({ kind: "job", job: "second" }),
+    record({ kind: "expected" }), record({ kind: "start" }), record({ kind: "end" }),
+    record({ kind: "file", id: "file", name: "a.test.ts", file: "a.test.ts", start: Date.parse(at(4)), duration: 100, status: "passed" }),
+    record({ kind: "expected", invocation: "reporter-never-loaded" }),
+  ];
+  const trace = buildTrace(run, jobs, records);
+  assert.equal(trace.events[0].data["ci.profile_complete"], false);
+  assert.equal(trace.events[0].data["ci.expected_invocations"], 2);
+  assert.equal(trace.events[0].data["ci.reported_invocations"], 1);
+  assert.match(trace.warnings.join(), /1 test invocations/);
+});
+
+test("trusted policy commands work with both current and pre-profile checkouts", () => {
+  const source = readFileSync(new URL("../../workflows/pr-trusted.yml", import.meta.url), "utf8");
+  const block = source.split("      - name: Select compatible Node test command\n")[1].split("\n      - name:")[0];
+  const script = block.split("        run: |\n")[1].split("\n").map((line) => line.replace(/^ {10}/, "")).join("\n");
+  const directory = mkdtempSync(path.join(tmpdir(), "ci-profile-legacy-"));
+  try {
+    writeFileSync(path.join(directory, "probe.test.cjs"), 'require("node:test")("old checkout works", () => {});');
+    for (const current of [false, true]) {
+      if (current) {
+        mkdirSync(path.join(directory, "scripts"));
+        symlinkSync(fileURLToPath(new URL("../../../scripts/ci-profile", import.meta.url)), path.join(directory, "scripts/ci-profile"));
+      }
+      const env = { ...process.env, GITHUB_ENV: path.join(directory, "env"), PAPERCLIP_CI_PROFILE: "false" };
+      delete env.NODE_TEST_CONTEXT;
+      const result = spawnSync("bash", ["-c", `${script}\nsource "$GITHUB_ENV"\nnode "$CI_NODE_TEST" probe.test.cjs`], {
+        cwd: directory, env, encoding: "utf8",
+      });
+      assert.equal(result.status, 0, result.stdout + result.stderr);
+      assert.match(readFileSync(env.GITHUB_ENV, "utf8"), current ? /CI_NODE_TEST=scripts\/ci-profile\/node-test.mjs/ : /CI_NODE_TEST=--test/);
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });
 
 test("reruns use separate IDs and clocks and cannot mix job attempts", () => {

@@ -45,6 +45,15 @@ jobs:
         if: env.PAPERCLIP_CI_PROFILE == 'true'
         run: node scripts/ci-profile/initialize.mjs
 
+      - name: Select compatible Node test command
+        run: |
+          # A rerun can use this trusted workflow with a pre-feature checkout.
+          if [[ -f scripts/ci-profile/node-test.mjs ]]; then
+            echo 'CI_NODE_TEST=scripts/ci-profile/node-test.mjs' >> "$GITHUB_ENV"
+          else
+            echo 'CI_NODE_TEST=--test' >> "$GITHUB_ENV"
+          fi
+
       - name: Block manual lockfile edits
         if: >-
           github.head_ref != 'chore/refresh-lockfile' &&
@@ -90,28 +99,28 @@ jobs:
         run: node ./scripts/check-no-git-push.mjs
 
       - name: Test no-git-push check
-        run: node scripts/ci-profile/node-test.mjs ./scripts/check-no-git-push.test.mjs
+        run: node "$CI_NODE_TEST" ./scripts/check-no-git-push.test.mjs
 
       - name: Validate feature module boundaries
         run: pnpm check:module-boundaries
 
       - name: Test feature module boundary check
-        run: node scripts/ci-profile/node-test.mjs ./scripts/check-module-boundaries.test.mjs
+        run: node "$CI_NODE_TEST" ./scripts/check-module-boundaries.test.mjs
 
       - name: Test PR quality-gate scripts
-        run: node scripts/ci-profile/node-test.mjs '.github/scripts/tests/*.test.mjs'
+        run: node "$CI_NODE_TEST" '.github/scripts/tests/*.test.mjs'
 
       - name: Test general-server shard partition
-        run: node scripts/ci-profile/node-test.mjs ./scripts/__tests__/run-vitest-stable-shard.test.mjs
+        run: node "$CI_NODE_TEST" ./scripts/__tests__/run-vitest-stable-shard.test.mjs
 
       - name: Test e2e shard partition
-        run: node scripts/ci-profile/node-test.mjs ./scripts/__tests__/e2e-shard.test.mjs
+        run: node "$CI_NODE_TEST" ./scripts/__tests__/e2e-shard.test.mjs
 
       - name: Test release verify workflow wiring
-        run: node scripts/ci-profile/node-test.mjs ./scripts/__tests__/release-verify-workflow.test.mjs ./scripts/cloud-source-verification.test.mjs ./scripts/standard-image-contract.test.mjs
+        run: node "$CI_NODE_TEST" ./scripts/__tests__/release-verify-workflow.test.mjs ./scripts/cloud-source-verification.test.mjs ./scripts/standard-image-contract.test.mjs
 
       - name: Test standalone package build concurrency
-        run: node scripts/ci-profile/node-test.mjs ./scripts/__tests__/build-standalone-concurrency.test.mjs
+        run: node "$CI_NODE_TEST" ./scripts/__tests__/build-standalone-concurrency.test.mjs
 
       - name: Validate release package manifest
         run: node ./scripts/release-package-map.mjs check
