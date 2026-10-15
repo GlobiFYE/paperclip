@@ -136,8 +136,6 @@ export async function assertReproducibleBaseGitStorage(cwd: string, signal?: Abo
   const root = path.join(cwd, ".git");
   const allowed = new Set(["HEAD", "ORIG_HEAD", "FETCH_HEAD", "index", "config", "description", "hooks", "info", "refs", "objects", "logs", "packed-refs", "worktrees", "branches"]);
   if ((await fs.readdir(root)).some(name => !allowed.has(name))) throw new Error("unknown_base_git_files");
-  // Some Git templates include an empty directory for legacy remote definitions.
-  // A populated directory or symlink may hold unique state and must be retained.
   const branches = path.join(root, "branches");
   const branchesStat = await fs.lstat(branches).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return null;

@@ -288,7 +288,6 @@ describeEmbeddedPostgres("reconstructable Git expiration", () => {
 
   it("expires an isolated base whose worktree was nested inside it", async () => {
     const f = await fixture(false, true);
-    // Linux Git templates include this legacy directory; macOS templates may not.
     await fs.mkdir(path.join(f.baseCwd, ".git", "branches"), { recursive: true });
     expect(await f.expire()).toMatchObject({ expired: true, baseExpired: true });
     expect(await exists(f.baseCwd)).toBe(false);
@@ -303,7 +302,6 @@ describeEmbeddedPostgres("reconstructable Git expiration", () => {
     const note = path.join(branches, "saved-remote");
     await fs.writeFile(note, "unique legacy remote\n");
     if (kind === "symlink") {
-      // Put the target outside .git so the branches entry itself is checked.
       const target = path.join(root, `legacy-branches-${randomUUID()}`);
       await fs.rename(branches, target);
       await fs.symlink(target, branches);
