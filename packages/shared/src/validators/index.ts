@@ -445,6 +445,7 @@ export {
   resolveIssueRecoveryActionSchema,
   isValidExistingBranchName,
   retryWorkspaceExportSchema,
+  resumeWorkspaceFinalizationSchema,
   issueReviewRequestSchema,
   issueExecutionWorkspaceSettingsSchema,
   checkoutIssueSchema,

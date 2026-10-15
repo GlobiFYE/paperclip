@@ -377,7 +377,7 @@ jobs:
 
   release_runner_binaries:
     needs: release_runner_source
-    if: needs.release_runner_source.outputs.required == 'true'
+    if: ${{ !cancelled() && needs.release_runner_source.result == 'success' && needs.release_runner_source.outputs.required == 'true' }}
     uses: ./.github/workflows/release-verify.yml
     with:
       ref: ${{ needs.release_runner_source.outputs.sha }}
@@ -525,7 +525,7 @@ jobs:
   # anyone mistakes an installable package for an onboardable one.
   smoke_canary_onboarding:
     needs: publish_canary
-    if: needs.publish_canary.result == 'success'
+    if: ${{ !cancelled() && needs.publish_canary.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:

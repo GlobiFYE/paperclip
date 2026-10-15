@@ -34,6 +34,7 @@ import {
 } from "./git-workspace-sync.js";
 import {
   captureDirectorySnapshot,
+  captureDirectorySnapshotOffThread,
   directorySnapshotSha256,
   classifyWorkspaceRestoreFailure,
   disposeDirectorySnapshot,
@@ -1173,6 +1174,7 @@ export async function prepareSandboxManagedRuntime(input: {
   syncWorkspace?: boolean;
   /** Selects authoritative host staging, exact durable-seed replay, or no-overwrite adoption. */
   workspaceInboundMode?: WorkspaceInboundMode;
+  workspaceSnapshotIsolation?: "worker";
   workspaceDurableSeed?: WorkspaceDurableSeedPaths;
   workspaceCheckpoint?: boolean;
   onWorkspaceCheckpoint?: (metrics: WorkspaceCheckpointMetrics) => Promise<void>;
@@ -1205,6 +1207,9 @@ export async function prepareSandboxManagedRuntime(input: {
   /** Backoff before each automatic workspace copy-back retry. Tests shorten it. */
   workspaceRestoreRetryDelaysMs?: readonly number[];
 }): Promise<PreparedSandboxManagedRuntime> {
+  const captureWorkspaceSnapshot = input.workspaceSnapshotIsolation === "worker"
+    ? captureDirectorySnapshotOffThread
+    : captureDirectorySnapshot;
   const workspaceRemoteDir = input.workspaceRemoteDir ?? input.spec.remoteCwd;
   const runtimeRootDir = input.runtimeRootDir ?? path.posix.join(workspaceRemoteDir, ".paperclip-runtime", input.adapterKey);
   if (input.runtimeRootDir !== undefined) {
@@ -1335,13 +1340,10 @@ export async function prepareSandboxManagedRuntime(input: {
   );
   const workspaceRestoreExclude = mergeExcludes(restoreExclude, repositories.map((repo) => repo.path));
   // The baseline "before" snapshot: a recursive walk of the whole workspace that
-  // `lstat`s every entry and SHA-256-hashes every file's bytes. This is the
-  // dominant cost in the pre-`pack` window — it reads the content of every
-  // non-excluded file, serially — so it earns its own span.
   baselineSnapshot = syncWorkspace
     ? (input.workspaceBaseline ??
       (await runStepSpan("snapshot.baseline", () =>
-        captureDirectorySnapshot(input.workspaceLocalDir, {
+        captureWorkspaceSnapshot(input.workspaceLocalDir, {
           exclude: restoreExclude,
           ignoredPaths,
           diskBacked: true,
@@ -1655,7 +1657,7 @@ export async function prepareSandboxManagedRuntime(input: {
                       }
                       await fs.rm(path.join(verifiedRoot, relative), { recursive: true, force: true });
                     }
-                    const verified = await captureDirectorySnapshot(verifiedRoot, { exclude: baselineSnapshot!.exclude, ignoredPaths: baselineSnapshot!.ignoredPaths, diskBacked: true });
+                    const verified = await captureWorkspaceSnapshot(verifiedRoot, { exclude: baselineSnapshot!.exclude, ignoredPaths: baselineSnapshot!.ignoredPaths, diskBacked: true });
                     try { return directorySnapshotSha256(verified) === directorySnapshotSha256(baselineSnapshot!); }
                     finally { await disposeDirectorySnapshot(verified); }
                   } finally { await fs.rm(verifiedRoot, { recursive: true, force: true }); }
@@ -1908,6 +1910,7 @@ export async function prepareSandboxManagedRuntime(input: {
                 adapterKey: input.adapterKey,
                 workspaceLocalDir: localDir,
                 workspaceInboundMode: "adopt_remote",
+                workspaceSnapshotIsolation: input.workspaceSnapshotIsolation,
                 workspaceCheckpoint: input.workspaceCheckpoint,
                 onWorkspaceCheckpoint: input.onWorkspaceCheckpoint,
                 workspaceGitSnapshot: repository.snapshot,
@@ -2144,6 +2147,7 @@ export async function prepareSandboxManagedRuntime(input: {
                   });
                   try {
                     await mergeDirectoryWithBaseline({
+                      workspaceSnapshotIsolation: input.workspaceSnapshotIsolation,
                       baseline: mergeBaseline,
                       sourceDir: extractedDir,
                       ...(checkpointSnapshot ? { snapshots: { source: checkpointSnapshot } } : {}),

@@ -7,6 +7,7 @@ import path from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { runInNewContext } from "node:vm";
 import { createServer } from "node:http";
 import { canaryStartup } from "./canary-startup-fixture.mjs";
 import { canRetryPublishedTarball404, TARBALL_METADATA_TIMEOUT_MS } from "../../tests/canary-onboarding/start-published-canary.mjs";
@@ -307,8 +308,20 @@ test("published canaries are gated by the exact-version onboarding browser smoke
   );
   assert.match(
     releaseWorkflow,
-    /smoke_canary_onboarding:\n\s+needs: publish_canary\n\s+if: needs\.publish_canary\.result == 'success'/,
+    /smoke_canary_onboarding:\n\s+needs: publish_canary\n\s+if: \$\{\{ !cancelled\(\) && needs\.publish_canary\.result == 'success' \}\}/,
   );
+  const smoke = releaseWorkflow.split("  smoke_canary_onboarding:\n")[1].split(/\n  [a-z_]+:\n/)[0];
+  const condition = smoke.match(/^    if: \$\{\{ (.+) \}\}$/m)?.[1];
+  assert.match(condition, /^!cancelled\(\) && needs\.publish_canary\.result == 'success'$/);
+  for (const [result, cancelled, expected] of [
+    ["success", false, true], ["failure", false, false],
+    ["cancelled", false, false], ["skipped", false, false], ["success", true, false],
+  ]) {
+    const needs = { publish_canary: { result }, release_runner_source: { result: "success" },
+      select_nightly: { result: "skipped" }, select_beta: { result: "skipped" }, preflight_stable: { result: "skipped" } };
+    assert.equal(runInNewContext(condition, { cancelled: () => cancelled, needs }), expected,
+      `Canary smoke: publisher=${result}, cancelled=${cancelled}`);
+  }
   assert.match(
     releaseWorkflow,
     /PAPERCLIPAI_VERSION: \$\{\{ needs\.publish_canary\.outputs\.canary_version \}\}/,
@@ -772,6 +785,31 @@ test("release daemon production uses exact-source native hosts and no publisher 
     assert.ok(workflow.includes(`${job}:\n    if: \${{ !inputs.runner_binaries_only }}`));
   }
   const release = readWorkflow("release.yml");
+  const source = release.split("  release_runner_source:\n")[1].split(/\n  [a-z_]+:\n/)[0];
+  const binaries = release.split("  release_runner_binaries:\n")[1].split(/\n  [a-z_]+:\n/)[0];
+  assert.match(source, /needs: \[verify_canary, select_nightly, select_beta, preflight_stable\]/);
+  assert.match(source, /!cancelled\(\)/);
+  assert.match(binaries, /needs: release_runner_source/);
+  assert.match(binaries, /ref: \$\{\{ needs\.release_runner_source\.outputs\.sha \}\}/);
+  assert.match(binaries, /runner_binaries_only: true/);
+  const condition = binaries.match(/^    if: (.+)$/m)?.[1].replace(/^\$\{\{\s*|\s*\}\}$/g, "");
+  assert.match(condition, /^!cancelled\(\) && needs\.release_runner_source\.result == 'success' && needs\.release_runner_source\.outputs\.required == 'true'$/,
+    "Native compilation must bypass deliberately skipped channel ancestors and require successful exact-source selection");
+  const laneJobs = ["verify_canary", "select_nightly", "select_beta", "preflight_stable"];
+  for (const activeLane of laneJobs) {
+    for (const [result, required, cancelled, expected] of [
+      ["success", "true", false, true], ["failure", "true", false, false],
+      ["cancelled", "true", false, false], ["skipped", "true", false, false],
+      ["success", "false", false, false], ["success", undefined, false, false],
+      ["success", "true", true, false],
+    ]) {
+      const needs = Object.fromEntries(laneJobs.map(job => [job, { result: job === activeLane ? "success" : "skipped" }]));
+      needs.release_runner_source = { result, outputs: { required } };
+      assert.equal(Object.values(needs).filter(job => job.result === "skipped").length, result === "skipped" ? 4 : 3);
+      assert.equal(runInNewContext(condition, { cancelled: () => cancelled, needs }), expected,
+        `${activeLane}: source=${result}, required=${required}, cancelled=${cancelled}`);
+    }
+  }
   for (const job of ["publish_canary", "publish_nightly", "publish_beta", "preview_stable", "publish_stable"]) {
     const block = release.split(`  ${job}:\n`)[1].split(/\n  [a-z_]+:\n/)[0];
     assert.match(block, /needs: .*release_runner_binaries/);
