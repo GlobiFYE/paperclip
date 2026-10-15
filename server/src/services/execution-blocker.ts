@@ -65,7 +65,7 @@ export async function getExecutionBlocker(db: Db, companyId: string, issueId: st
   const [run] = runId ? await db.select().from(heartbeatRuns).where(and(
     eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.id, runId),
   )).limit(1) : [];
-  const withoutWorkspace = Boolean(run && nativeRunHasNoWorkspaceAccess(run));
+  const withoutWorkspace = Boolean(run?.driverKind === "grok_bot_mcp" && nativeRunHasNoWorkspaceAccess(run));
   const workspaceRepairRequired = Boolean(restoreHold && !withoutWorkspace);
   const queue = await db.select({ payload: agentWakeupRequests.payload }).from(agentWakeupRequests).where(and(
     eq(agentWakeupRequests.companyId, companyId), eq(agentWakeupRequests.status, "deferred_issue_execution"),
@@ -120,10 +120,14 @@ export async function getExecutionBlocker(db: Db, companyId: string, issueId: st
     nextAction += " Inspect the run before sending a new message to request continuation.";
   }
 
-  if (withoutWorkspace && (restoreHold || run?.status === "cancelled")) {
+  if (withoutWorkspace && (restoreHold || run?.status === "cancelled") && !run?.resultJson?.externalWorkspaceInspection) {
     nextAction = run?.driverKind === "grok_bot_mcp"
       ? "Inspect this Bot in Grok Bot, then clear the recovery hold and verify the connection in the agent's Runtime settings before assigning more work."
       : "Inspect the stopped work in the external agent and its connection before requesting continuation.";
+  }
+
+  if (run?.resultJson?.externalWorkspaceInspection && !restoreHold) {
+    nextAction = "Verify the Grok connection, then send a new message to continue. The stopped work will not be replayed.";
   }
 
   return {

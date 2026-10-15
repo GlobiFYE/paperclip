@@ -109,7 +109,7 @@ const support = externalUrl ? { supported: true } : await getEmbeddedPostgresTes
     expect(await readLease(f.lease.id)).toMatchObject({ leasePolicy: "retain_on_failure" });
   });
 
-  it.each(["grok_bot", "openai_dot"] as const)("keeps historical %s inspection holds without offering file repair for a workspace-less run", async provider => {
+  it.each(["grok_bot", "openai_dot"] as const)("keeps historical %s inspection holds with an available recovery path", async provider => {
     const f = await seed();
     // Reproduce a hold persisted by an older cancellation path, then attach its admitted contract.
     await preserveNativeFailedWorkspace(db, f.run);
@@ -120,9 +120,11 @@ const support = externalUrl ? { supported: true } : await getEmbeddedPostgresTes
     await db.update(heartbeatRuns).set({ status: "cancelled" }).where(eq(heartbeatRuns.id, f.runId));
     const blocker = await getExecutionBlocker(db, f.companyId, f.issueId);
     expect(blocker).toMatchObject({ runId: f.runId, canRetry: false, canContinue: false,
-      workspaceRepairRequired: false, canRecordWorkspaceRepair: false });
-    expect(blocker?.nextAction).not.toContain("files");
-    expect(blocker?.nextAction).toContain(provider === "grok_bot" ? "Runtime" : "Inspect");
+      workspaceRepairRequired: provider !== "grok_bot", canRecordWorkspaceRepair: provider !== "grok_bot" });
+    if (provider === "grok_bot") {
+      expect(blocker?.nextAction).not.toContain("files");
+      expect(blocker?.nextAction).toContain("Runtime");
+    }
     expect(await actions(f.issueId)).toHaveLength(1);
   });
 

@@ -82,3 +82,14 @@ to inspect it. Paperclip shows reported activity, not a complete remote transcri
 or computer recording.
 
 The admitted Grok execution contract has no access to the Runner's workspace files. Its managed Runner still keeps durable recovery state, but stopping that session does not require workspace file repair. Inspect the Bot in Grok, clear the connection's recovery hold in the agent's Runtime settings, and verify the routine again before assigning new work. This records inspection without asserting global Grok termination.
+
+Historical stopped Grok runs can have an incorrect workspace-file hold from an
+earlier release. Runtime shows Recovery needed for these runs even when the
+routine is healthy. After inspecting Grok, use Clear recovery hold and verify
+the connection again. Paperclip retires the false file obligation only when the
+original admission denied workspace access, the assignment is fenced, the
+coordinator has settled, and the exact managed Runner leases have stop receipts.
+The inspection preserves the old result, action uncertainty, and no-replay hold.
+Send a new task message to request fresh work. Inspection does not certify global
+Grok termination or delete any previously retained allocation. Such allocations
+still use the existing environment cleanup controls.

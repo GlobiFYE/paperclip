@@ -8,7 +8,7 @@ import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
 import { beforeAll, afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { agents, authUsers, companies, companyMemberships, createDb, dotAgentBindings, grokBotDispatches,
-  grokBotRoutines, mcpOauthGrants, activityLog, issues, heartbeatRuns, dotRunnerAssignments, dotRunnerOperations, dotMailboxItems, nativeRunFinalizations } from "@paperclipai/db";
+  grokBotRoutines, mcpOauthGrants, activityLog, issues, heartbeatRuns, dotRunnerAssignments, dotRunnerOperations, dotMailboxItems, nativeRunFinalizations, environmentLeases, environments, issueRecoveryActions, issueComments } from "@paperclipai/db";
 import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { accessService } from "../services/access.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
@@ -19,6 +19,10 @@ import { grokRoutineService } from "../services/grok-bot/routine.js";
 import * as secretModule from "../services/secrets.js";
 import * as externalAuthority from "../services/external-bot-authority.js";
 import { type GrokRoutineWake } from "../services/grok-bot/webhook.js";
+
+import { remoteTerminationReceipt } from "../services/remote-execution-termination.js";
+import { admitExplicitNativeContinuation } from "../services/explicit-native-continuation.js";
+import { hasRequiredWorkspaceRecovery } from "../services/workspace-restore-recovery-state.js";
 
 let temporary: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
 let db: ReturnType<typeof createDb>;
@@ -478,4 +482,105 @@ describe("durable Grok routine qualification", () => {
     expect(await f.service.recoveryNeeded(f.company.id, f.agent.id)).toBe(false);
   });
 
+});
+
+// Exercise the public recovery service and the actual native admission boundary,
+// including a stale file obligation persisted before this fix.
+describe("Grok inspection of historical workspace-less Stop", () => {
+  async function historicalHold() {
+    const f = await fixture();
+    const { run, task, work } = await admittedWork(f, "accepted");
+    const finishedAt = new Date(Date.now() - 1000);
+    const fileHold = { workspaceRestoreFailure: "restore_failed", workspaceRestoreRecovery: {
+      schema: "paperclip.workspace-restore-recovery.v1", runId: run.id, leaseIds: [] as string[],
+    } };
+    const [environment] = await db.insert(environments).values({ name: `Grok ${run.id}`, driver: "sandbox" }).returning();
+    const [lease] = await db.insert(environmentLeases).values({ companyId: f.company.id, issueId: task.id,
+      heartbeatRunId: run.id, environmentId: environment!.id, provider: "daytona", providerLeaseId: randomUUID(),
+      status: "released", releasedAt: new Date(), cleanupStatus: "success" }).returning();
+    await db.update(environmentLeases).set({ metadata: { remoteExecutionTermination:
+      remoteTerminationReceipt(lease!, { providerLeaseId: lease!.providerLeaseId, state: "destroyed" }) } }).where(eq(environmentLeases.id, lease!.id));
+    fileHold.workspaceRestoreRecovery.leaseIds.push(lease!.id);
+    await db.update(heartbeatRuns).set({ status: "cancelled", driverKind: "grok_bot_mcp", finishedAt,
+      nativeIssueId: task.id, issueId: task.id, contextSnapshot: { issueId: task.id },
+      runnerProfileJson: { nativeExecutionInput: { schema: "paperclip.native-execution-input.v6",
+        binding: { runId: run.id, companyId: f.company.id, agentId: f.agent.id, issueId: task.id },
+        provider: { kind: "grok_bot" }, workspace: { access: "none", cwd: null } } },
+      resultJson: { ...fileHold, cancellation: { source: "user", reason: "Paperclip work stopped" } },
+    }).where(eq(heartbeatRuns.id, run.id));
+    await db.update(issues).set({ status: "blocked", executionRunId: null, checkoutRunId: null }).where(eq(issues.id, task.id));
+    await db.update(nativeRunFinalizations).set({ phase: "terminal_failure", leaseOwner: null,
+      leaseExpiresAt: null, recoveryState: "blocked" }).where(eq(nativeRunFinalizations.runId, run.id));
+    await db.update(dotRunnerAssignments).set({ status: "fenced" }).where(eq(dotRunnerAssignments.id, work.id));
+    const [action] = await db.insert(issueRecoveryActions).values({ companyId: f.company.id, sourceIssueId: task.id,
+      kind: "active_run_watchdog", cause: "native_continuation_requires_reconciliation", fingerprint: run.id,
+      status: "resolved", outcome: "blocked", nextAction: "Recover files.",
+      evidence: { ...fileHold, runId: run.id, automaticRecovery: { replay: "blocked", actionOutcome: "unknown" } },
+    }).returning();
+    const [comment] = await db.insert(issueComments).values({ companyId: f.company.id, issueId: task.id,
+      authorType: "user", authorUserId: f.principal.grant.userId, body: "Start a fresh task turn after inspection." }).returning();
+    const continueWork = (dryRun = true) => db.transaction(async tx => {
+      await tx.select().from(issues).where(eq(issues.id, task.id)).for("update");
+      return admitExplicitNativeContinuation({ db: tx as unknown as typeof db, companyId: f.company.id,
+        issueId: task.id, agentId: f.agent.id, actorType: "user", actorId: f.principal.grant.userId,
+        reason: "issue_commented", commentId: comment!.id, successorRunId: randomUUID(), dryRun });
+    });
+    return { ...f, run, task, work, lease: lease!, action: action!, continueWork };
+  }
+
+  it("offers inspection for an old task hold and admits only new explicit input after inspection and Runner cleanup", async () => {
+    const f = await historicalHold();
+    f.delivery.mockClear();
+    expect(await f.service.recoveryNeeded(f.company.id, f.agent.id)).toBe(true);
+    expect(await f.continueWork()).toBeNull();
+    expect(await f.service.recover(f.company.id, f.agent.id, f.principal.grant.userId)).toMatchObject({
+      requiresVerification: true, remoteTerminationConfirmed: false,
+    });
+    expect(await f.service.state(f.company.id, f.agent.id, f.pairing.bindingId)).toMatchObject({ verified: false, recoveryNeeded: false });
+    const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.run.id));
+    expect(hasRequiredWorkspaceRecovery(run!.resultJson)).toBe(false);
+    expect(run).toMatchObject({ status: "cancelled", resultJson: { externalWorkspaceInspection: {
+      inspectedBy: f.principal.grant.userId, remoteTerminationConfirmed: false,
+      previousWorkspaceRestoreFailure: "restore_failed", runnerLeaseIds: [f.lease.id],
+    } } });
+    const [action] = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, f.action.id));
+    expect(action).toMatchObject({ status: "resolved", outcome: "blocked", evidence: {
+      automaticRecovery: { replay: "blocked", actionOutcome: "unknown" }, externalWorkspaceInspection: { workspaceAccess: "none" },
+    } });
+    expect(action!.evidence).not.toHaveProperty("workspaceRestoreRecovery");
+    expect(f.delivery).not.toHaveBeenCalled();
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.companyId, f.company.id))).toHaveLength(1);
+    await expect(dotRunnerBroker(db).operation(f.principal, f.work.id, randomUUID(), "progress", { text: "late effect" })).rejects.toThrow("wake verification");
+    // Connection recovery still requires a real authenticated challenge exchange.
+    const row = await verification(f); await f.service.send(f.company.id, f.agent.id, row.id);
+    await f.service.acknowledge(f.principal, acknowledgement(row));
+    await expect(dotRunnerBroker(db).operation(f.principal, f.work.id, randomUUID(), "progress", { text: "late effect" })).rejects.toThrow("revoked");
+    expect(await f.continueWork(false)).toMatchObject({ previousRunId: f.run.id });
+    const [settled] = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, f.action.id));
+    expect(settled!.evidence.automaticRecovery).toMatchObject({ replay: "explicit_user_continuation", actionOutcome: "unknown" });
+    expect((await db.select().from(dotRunnerAssignments).where(eq(dotRunnerAssignments.id, f.work.id)))[0]!.status).toBe("fenced");
+    await f.service.recover(f.company.id, f.agent.id, f.principal.grant.userId);
+    expect(await db.select().from(activityLog).where(and(eq(activityLog.companyId, f.company.id), eq(activityLog.action, "grok.workspace_obligation_inspected")))).toHaveLength(1);
+  });
+
+  it.each(["cleanup_pending", "receipt_mismatch", "controller_owned", "assignment_active", "running", "operator_revoked", "foreign_company"])("does not retire an old obligation when %s", async condition => {
+    const f = await historicalHold();
+    if (condition === "cleanup_pending") await db.update(environmentLeases).set({ cleanupStatus: "failed" }).where(eq(environmentLeases.id, f.lease.id));
+    if (condition === "receipt_mismatch") await db.update(environmentLeases).set({ metadata: { remoteExecutionTermination: { schema: "paperclip.remote-termination.v1", runId: randomUUID() } } }).where(eq(environmentLeases.id, f.lease.id));
+    if (condition === "controller_owned") await db.update(nativeRunFinalizations).set({ leaseOwner: "other-owner" }).where(eq(nativeRunFinalizations.runId, f.run.id));
+    if (condition === "assignment_active") await db.update(dotRunnerAssignments).set({ status: "accepted" }).where(eq(dotRunnerAssignments.id, f.work.id));
+    if (condition === "running") await db.update(heartbeatRuns).set({ status: "running" }).where(eq(heartbeatRuns.id, f.run.id));
+    if (condition === "operator_revoked") await accessService(db).setPrincipalPermission(f.company.id, "user", f.principal.grant.userId, "agents:create", false, f.principal.grant.userId);
+    if (condition === "foreign_company") {
+      const foreign = await fixture();
+      await f.service.recover(foreign.company.id, foreign.agent.id, foreign.principal.grant.userId);
+    } else if (condition === "running") {
+      // Not an eligible historical source. Its active assignment is fenced in
+      // this deliberately malformed fixture, but no file state may be removed.
+      await f.service.recover(f.company.id, f.agent.id, f.principal.grant.userId);
+    } else await expect(f.service.recover(f.company.id, f.agent.id, f.principal.grant.userId)).rejects.toThrow();
+    const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.run.id));
+    expect(hasRequiredWorkspaceRecovery(run!.resultJson)).toBe(true);
+    expect(await f.continueWork()).toBeNull();
+  });
 });

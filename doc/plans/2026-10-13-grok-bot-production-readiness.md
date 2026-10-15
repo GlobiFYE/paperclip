@@ -261,3 +261,22 @@ assignment authority. Disconnect completes while storage is pending, and the
 late upload returns 403 with no attachment or publication receipt. Person write
 checks remain in place. The full repository command was interrupted when this
 new review finding arrived; its partial output is not a passing test result.
+
+## October 15 — Stop review follow-up
+
+Review found that hiding the historical file-repair card alone left the stored
+file obligation blocking fresh task input. Runtime inspection now finds these
+holds even after routine recovery. It retires only the false file fields after
+exact run, assignment, coordinator and managed-lease cleanup checks, archives
+the previous evidence, and preserves no-replay. A real authenticated readiness
+exchange and new user input are still required. No global provider-stop claim is
+created. Dot historical recovery controls remain available.
+
+The later dispatch-failure owner also now honors the validated no-workspace
+contract before asking for sandbox retention. Both external providers and the
+writable native path pass the runtime boundary regression. The review follow-up
+passes 128 focused protocol, recovery, cancellation and runtime checks. An initial
+negative assertion saw the earlier readiness gate instead of the revoked-session
+gate; the corrected test checks both before and after re-verification. Server
+typecheck passes after narrowing the native workspace union. Final current-head
+CI, review, deployed historical recovery and fresh Stop are still release gates.
