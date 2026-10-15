@@ -4,7 +4,7 @@ The opt-in case in
 `server/src/services/native-runtime/native-runner-restart-recovery.integration.test.ts`
 runs the real executor, PostgreSQL, TLS ingress, Rust runner, remote file transfer,
 and backup validation against a deterministic fake Codex process in Linux. It
-checks the same runner process identity and one provider process across two warm
+checks the same runner process identity and one provider process across three warm
 turns, provider history reuse, and verified suspension at idle close. Separate
 cases kill the actual controller process and recover the next turn. They reject
 a still-live controller and a replacement sandbox before reconnecting. Legacy
@@ -12,6 +12,8 @@ checkpoints and changed process configuration require verified suspension and
 replacement, while preserving the conversation and starting each turn once.
 Recovery can restart a provider to refresh its tool contract; process reuse is
 required for ordinary healthy follow-ups.
+Each recovery case includes another healthy turn after the recovered turn and
+asserts that it does not start another runner or provider process.
 It does not qualify a live model or a sandbox provider API.
 
 Use a disposable Linux container with Node.js, `sh`, `tar`, `base64`, `ps`, and
