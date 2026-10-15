@@ -29,6 +29,7 @@ export type GitCacheRestoration = {
   worktreePath: string;
   gitBranchOwnershipVersion: 1;
   verifiedAt: string;
+  restoredAt?: string;
 };
 export type GitCacheExpiration = {
   schema: "paperclip.git-cache-expiration.v1"; generation: number; workspaceRemoved: boolean;
@@ -83,7 +84,8 @@ export function readGitCacheRestoration(workspace: Workspace): GitCacheRestorati
     || recipe.projectId !== workspace.projectId
     || (recipe.sourceKind === "isolated_remote" ? recipe.sourcePath !== recordedIsolatedRemoteSource(workspace)
       : recipe.sourceKind !== "managed_project" || recordedIsolatedRemoteSource(workspace) !== null || !managedSourcePaths(workspace).includes(recipe.sourcePath))
-    || !shaPattern.test(recipe.commit) || !Number.isFinite(Date.parse(recipe.verifiedAt))) {
+    || !shaPattern.test(recipe.commit) || !Number.isFinite(Date.parse(recipe.verifiedAt))
+    || (recipe.restoredAt !== undefined && !Number.isFinite(Date.parse(recipe.restoredAt)))) {
     throw new GitCacheRestorationFailure();
   }
   return recipe;
@@ -329,7 +331,7 @@ export async function ensureSavedGitCommit(cwd: string, repoUrl: string, commit:
 }
 
 /** Runtime callers must bind the recipe to the selected workspace and base. */
-export function savedGitWorkspaceCommit(input: { metadata?: Record<string, unknown> | null; companyId: string;
+export function savedGitWorkspaceRestoration(input: { metadata?: Record<string, unknown> | null; companyId: string;
   workspaceId?: string | null; cwd: string; baseCwd: string; repoUrl: string | null; branchName: string | null }) {
   const raw = input.metadata?.[GIT_CACHE_RESTORATION_KEY];
   if (raw === undefined) return null;
@@ -338,6 +340,7 @@ export function savedGitWorkspaceCommit(input: { metadata?: Record<string, unkno
     || value.companyId !== input.companyId || value.workspaceId !== input.workspaceId
     || value.worktreePath !== input.cwd || value.sourcePath !== input.baseCwd
     || value.repoUrl !== input.repoUrl || value.branchName !== input.branchName
-    || !isRuntimeOwnedGitBranch(input.metadata)) throw new GitCacheRestorationFailure();
-  return value.commit;
+    || !isRuntimeOwnedGitBranch(input.metadata)
+    || (value.restoredAt !== undefined && !Number.isFinite(Date.parse(value.restoredAt)))) throw new GitCacheRestorationFailure();
+  return { commit: value.commit, restored: value.restoredAt !== undefined };
 }

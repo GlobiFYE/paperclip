@@ -3963,9 +3963,10 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         // the issue out of the terminal state only after this reopen returns. The
         // flag stops the terminal reaper and the archive route from archiving and
         // destroying the rebuilt worktree in that window.
-        // This recipe described the expired files. New work owns its current branch
-        // again; a later expiration records and verifies a fresh recipe.
-        delete nextMetadata.gitCacheRestoration;
+        // Keep the refresh guard after reopening so normal preparation cannot
+        // advance the saved checkout to upstream HEAD. Its intact branch may now
+        // receive newer task commits; the next expiration records a fresh recipe.
+        if (recipe) nextMetadata.gitCacheRestoration = { ...recipe, restoredAt: now().toISOString() };
         const activeMetadata = setMetadataReopenPendingConsumption(nextMetadata, now());
         await measureRunPhase("workspace.notification", () => notifyTerminalWorkspaceWork(tx, `workspace:${row.id}`));
         const activeRow = await tx

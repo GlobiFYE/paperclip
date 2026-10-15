@@ -92,12 +92,19 @@ product acceptance. Rollback disables deletion and retains restoration support.
   registered under explicit user approval. Revoke it and remove both local copies
   when access is no longer needed; private paths are in retained task evidence.
 - Git review found two second-cycle bugs. The worker now clears the consumed
-  reopen fence before expiration dispatch; successful reopening retires the old
-  recipe so a later missing worktree can reattach its newer branch. Eighteen
+  reopen fence before expiration dispatch; successful reopening marks the
+  recipe restored so a later missing worktree can reattach its newer branch. Eighteen
   cases passed; an added symlink fixture initially broke its own relative Git
   commondir. After retaining a valid absolute commondir, that safety case passed
   in 10.63s. The new guard rejects symlinked administration storage before deletion.
-  Server typecheck passed. A CI policy test also mistook a script filename for a
+  A second review caught the normal preparation refresh moving A to B after
+  recipe retirement. Keeping a restored recipe preserves the refresh guard while
+  accepting subsequent branch commits. Both joined lifecycle tests now pass in
+  35.99s, including normal runtime preparation after reopening and another
+  missing-worktree rebuild after new work. The premature partial-edit test run
+  is excluded; `/tmp/paperclip-git-resumed-preparation2.log` is the completed run.
+  Full typecheck/build at `465e57ad52` passed; the guard change has its own server
+  typecheck. A CI policy test also mistook a script filename for a
   GitHub secret expression; scope its check to expressions and retain explicit
   dot/bracket/multiline secret controls.
 - Remaining: address Git review, merge after all gates pass, verify exact serving

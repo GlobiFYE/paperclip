@@ -11,7 +11,7 @@ import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } fro
 import { resolveManagedProjectWorkspaceDir } from "../home-paths.js";
 import { materializeManagedProjectWorkspace } from "../services/managed-repository-checkout.js";
 import { materializeIsolatedRemoteWorkspaceSource } from "../services/isolated-remote-workspace-source.js";
-import { realizeExecutionWorkspace } from "../services/workspace-runtime.js";
+import { realizeExecutionWorkspace, ensurePersistedExecutionWorkspaceAvailable } from "../services/workspace-runtime.js";
 import { executionWorkspaceService } from "../services/execution-workspaces.js";
 import { expireReconstructableGitWorkspace } from "../services/git-workspace-expiration.js";
 
@@ -78,7 +78,7 @@ describeEmbeddedPostgres("reconstructable Git expiration", () => {
       await fs.writeFile(path.join(source, "marker.txt"), "commit B\n"); git(source, "add", "."); git(source, "commit", "-m", "B"); git(source, "push", "origin", "main");
       return git(source, "rev-parse", "HEAD");
     };
-    return { companyId, issueId, workspaceId, cwd: workspace.cwd, baseCwd, remote, source, commitA, row, expire, reopen, advance };
+    return { companyId, issueId, workspaceId, cwd: workspace.cwd, baseCwd, base, remote, source, commitA, row, expire, reopen, advance };
   }
 
   it("expires through the lifecycle worker and restores the recorded commit after upstream advances", async () => {
@@ -95,11 +95,17 @@ describeEmbeddedPostgres("reconstructable Git expiration", () => {
     expect(await f.reopen()).toMatchObject({ ok: true, reopened: true });
     expect(git(f.cwd, "rev-parse", "HEAD")).toBe(f.commitA);
     expect(await fs.readFile(path.join(f.cwd, "marker.txt"), "utf8")).toBe("commit A\n");
+    // The next heartbeat uses this runtime path before handing files to the agent.
+    await ensurePersistedExecutionWorkspaceAvailable({ db, base: f.base,
+      workspace: (await executionWorkspaceService(db).getStoredById(f.companyId, f.workspaceId))!,
+      issue: { id: f.issueId, identifier: "GC-1", title: "Resumed task" },
+      agent: { id: null, name: "Fixture", companyId: f.companyId }, skipHostProvision: true });
+    expect(git(f.cwd, "rev-parse", "HEAD")).toBe(f.commitA);
     await fs.writeFile(path.join(f.cwd, "continued.txt"), "continued\n"); git(f.cwd, "add", "."); git(f.cwd, "commit", "-m", "Continued");
     const continued = git(f.cwd, "rev-parse", "HEAD");
     expect(await f.reopen()).toMatchObject({ ok: true, reopened: false });
     expect(git(f.cwd, "rev-parse", "HEAD")).toBe(continued);
-    expect((await f.row()).metadata?.gitCacheRestoration).toBeUndefined();
+    expect((await f.row()).metadata?.gitCacheRestoration).toMatchObject({ commit: f.commitA, restoredAt: expect.any(String) });
     git(f.baseCwd, "worktree", "remove", f.cwd);
     await db.update(executionWorkspaces).set({ status: "archived" }).where(eq(executionWorkspaces.id, f.workspaceId));
     expect(await f.reopen()).toMatchObject({ ok: true, reopened: true });
