@@ -19,11 +19,18 @@ effect must remain safe and actionable. This is not a promise that infrastructur
 can never fail; it is a checkable promise that the specified failures do not lose
 work or require users to diagnose runner internals.
 
+Warm process reuse is a firm requirement. The user superseded the earlier
+save-and-suspend choice: healthy follow-up turns must keep the existing provider
+process. Durable ownership and recovery must coexist with that behavior. The
+suspend-every-turn candidate is withdrawn from delivery; PR #16451 is draft and
+has not been merged or deployed.
+
 ## Acceptance matrix
 
 | Journey or fault | Required result | Evidence |
 | --- | --- | --- |
 | Completed turn followed immediately by another user message | Next turn starts once with the saved history, workspace, and message | Real assembled-service regression and staging journey |
+| Healthy remote warm follow-up | Same runner and provider process, with a verified handoff to the new run | Process-start identity and call-log assertions across real turns |
 | Controller restart while a session is idle, including immediately after completion | Durable evidence suffices to resume or safely replace the runner; no process-local ownership dependency strands the task | Hard and graceful restart fault tests |
 | Restart during startup or an active turn | Adopt the exact live execution or fence it before one bounded successor; preserve accepted results and pending messages | Real process/transport boundary fault tests |
 | Remote process exits or identity cannot initially be read | Distinguish a transient probe failure, a dead execution, and a conflicting owner; reconcile automatically when evidence permits | Linux remote-process tests and persisted recovery timeline |
@@ -65,38 +72,38 @@ starting harnesses; past passing evidence does not qualify this change.
 ## Current state
 
 - Branch: `codex/native-runner-recovery`, based on `afe5b3418d`.
-- Canonical workspace: this branch's isolated checkout.
-- Existing local Codex quiescent-state recovery deliberately excludes remote
-  targets. Remote prior-run validation currently requires a verified suspended
-  state or the exact in-memory warm owner.
-- Implemented remote turn suspension before completion and bounded retries for
-  unavailable remote identity probes. The new suspension wiring test failed
-  before the change and passes after it. Four transient timeout/transport cases
-  also failed before the change. The expanded recovery group passes 35 checks,
-  including saved-state read retries, deadline and signalling controls, and
-  wrong-owner/replaced-sandbox rejection.
-- The real Rust runner/local WebSocket/PostgreSQL active-run restart test passes.
-  The assembled Linux container/TLS/PostgreSQL save-and-resume test also passes:
-  first turn suspended and backed up, zero idle owners at restart sweep, second
-  turn resumes the same history, one thread creation and two turn starts. It uses
-  the current runner source and a deterministic fake Codex provider, not Daytona
-  or a live model. Initial fixture failures (database bindings, TLS/port setup,
-  and missing lease/coordinator records) were repaired before this result.
-- Full workspace typecheck and build passed before the rebase. The first complete
-  test run was interrupted to incorporate two newly merged ownership fixes;
-  validation is restarting on the combined candidate. Review, staging
-  qualification, old-state recovery, and live task recovery remain outstanding.
+- PR: https://github.com/paperclipai/paperclip/pull/16451 (draft, unmerged).
+- Normal warm turns retain their processes. The previous suspend-every-turn
+  implementation is withdrawn. Earlier suspension tests are historical only.
 - The base includes #16432 (idle expiry serialized with admission) and #16441
-  (exact warm-owner run identity independent of configuration changes). These
-  fix live-controller handoffs. Remote suspension remains necessary for the
-  selected release because a lost controller has no in-memory owner. Each
-  remote follow-up starts a provider process with saved conversation history;
-  this costs startup latency and does not preserve same-process warm reuse.
-- The GLM run recorded a hard restart and `reattach_remote_runner`, followed by
-  a generic identity-unavailable error. Its inspector does not retain the failed
-  probe reason. This does not prove process death or a conflicting owner.
-- No live task or deployment has been mutated. Next: finish checks and review,
-  then qualify the release and recover the retained tasks on staging.
+  (exact warm-owner identity independent of configuration changes).
+- The revised executor can recover a completed remote session after its
+  controller dies. It checks the committed prior result, frozen scope, saved
+  checkpoint, exact remote identity, and current task/coordinator lease. It
+  reconnects through the prior route before authenticated run attachment.
+- A saved process-configuration digest controls reuse after controller loss.
+  Legacy metadata or changed configuration uses verified close and checkpoint
+  followed by saved-history resume. Healthy warm follow-ups stay open.
+- Four Linux container/TLS/PostgreSQL cases pass: ordinary warm reuse, actual
+  controller SIGKILL, older checkpoint metadata, and changed environment.
+  They assert one thread creation and exactly two turn starts. The hard-restart
+  cases also reject a still-live prior controller and a replacement sandbox.
+  Normal follow-ups use one provider process; recovery may refresh the provider.
+  These are real runner/process tests with a deterministic fake Codex, not live
+  Daytona or live model evidence. A follow-up adjusts the prior lease fixture to
+  the expired status observed on staging and must be rerun before handoff.
+- Full workspace typecheck and production build pass on the warm candidate.
+  The full required test suite is running. The earlier focused run had 752 passes
+  and two error-label assertions; the original failure classification is restored.
+- Greptile reviewed the withdrawn head at 4/5. Its saved-state diagnostic finding
+  is fixed with failed-read and malformed-JSON controls. Fresh review is pending.
+- Fresh read-only staging records confirm both original tasks remain blocked.
+  The Codex failure preceded its coordinator claim. The OpenCode failure followed
+  controller takeover, with an active turn in the saved checkpoint. Its original
+  log lacks the failed probe reason; process death is not established.
+- No live task or deployment has been changed. Remaining: full tests and review,
+  current Linux fixture check, staging qualification, retained-state recovery,
+  and useful disposition of both tasks.
 
 Deferred: unrelated skill-import setup failures, database query optimization,
 general UI redesign, and broad provider qualification unrelated to the changed

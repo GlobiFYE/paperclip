@@ -6,6 +6,7 @@ const reasons = [
   "fingerprint_missing", "process_not_running", "process_identity_changed",
   "fingerprint_unavailable", "process_generation_changed", "probe_timeout",
   "probe_transport_failed", "probe_failed",
+  "state_read_failed", "state_invalid",
 ] as const;
 
 export interface RemoteRunnerRecoveryDiagnostic {

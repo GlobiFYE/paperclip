@@ -170,7 +170,8 @@ when remote identity verification fails, including admission failures before the
 execution coordinator opens. Unavailable probes are retried within a shared
 30-second deadline; identity conflicts are not retried. The event distinguishes
 an unreadable identity from a confirmed missing process and contains no command
-output or credentials. It does not itself authorize replacement or cleanup.
+output or credentials. Saved-state read failures use `state_read_failed`; malformed
+saved JSON uses `state_invalid`. It does not itself authorize replacement or cleanup.
 
 For a prepared remote workspace interrupted before its first executor claim,
 that ledger records `remote_execution_never_claimed` with a

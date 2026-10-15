@@ -4,8 +4,14 @@ The opt-in case in
 `server/src/services/native-runtime/native-runner-restart-recovery.integration.test.ts`
 runs the real executor, PostgreSQL, TLS ingress, Rust runner, remote file transfer,
 and backup validation against a deterministic fake Codex process in Linux. It
-checks suspension before completion, absence of an idle in-memory owner, provider
-history reuse, and exactly one initial session creation across two turns.
+checks the same runner process identity and one provider process across two warm
+turns, provider history reuse, and verified suspension at idle close. Separate
+cases kill the actual controller process and recover the next turn. They reject
+a still-live controller and a replacement sandbox before reconnecting. Legacy
+checkpoints and changed process configuration require verified suspension and
+replacement, while preserving the conversation and starting each turn once.
+Recovery can restart a provider to refresh its tool contract; process reuse is
+required for ordinary healthy follow-ups.
 It does not qualify a live model or a sandbox provider API.
 
 Use a disposable Linux container with Node.js, `sh`, `tar`, `base64`, `ps`, and
@@ -51,7 +57,7 @@ PAPERCLIP_TEST_LINUX_RUNNER_BINARY=/path/to/linux/paperclip-runnerd \
 PAPERCLIP_TEST_FAKE_CODEX_WRAPPER=/tmp/continuity-fake-codex \
 pnpm exec vitest run \
   server/src/services/native-runtime/native-runner-restart-recovery.integration.test.ts \
-  -t 'saves a completed remote warm turn' --maxWorkers=1
+  -t 'preserves remote warm continuity' --maxWorkers=1
 ```
 
 The caller owns the disposable container. Remove it after the run, including

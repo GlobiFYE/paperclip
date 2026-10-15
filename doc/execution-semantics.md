@@ -1521,12 +1521,17 @@ size. Remote checkpoint archive and expanded-size limits remain 64 MiB.
 
 ### Warm sandbox continuity
 
-Remote native turns suspend their runner and persist a verified harness backup
-before returning completion, including in warm mode. The sandbox and provider
-history remain reusable; the next turn resumes that history under fresh run
-authority. Completed remote turns do not rely on an in-memory idle owner
-surviving a controller restart. A failed suspension or backup retains its recovery
-obligation rather than certifying the state as safely reusable.
+Healthy native warm turns retain their runner and provider processes. After a
+controller crash, continuation can recover a completed remote session from its
+saved checkpoint and exact sandbox process identity. The prior controller must
+be stopped, its result committed, and the successor must hold current task and
+coordinator authority. Recovery reconnects through the prior run's route before
+the authenticated run attachment changes authority. Unavailable identity probes
+have a shared 30-second retry budget; an identity conflict never permits replay.
+Saved process configuration must match before reuse. Old checkpoints, changed
+configuration, and controller-owned credential or instruction resources use
+verified suspension and saved-history resume. This recovery can restart a
+provider; it does not suspend every healthy warm turn.
 
 For the native runner, warm mode requests a reusable sandbox lease **before**
 lease acquisition. The environment's explicit runner lifecycle overrides the

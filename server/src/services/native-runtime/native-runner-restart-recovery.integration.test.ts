@@ -1,9 +1,10 @@
 import { enableRunFailureReporting } from "../../__tests__/helpers/run-failure-reporting.js";
 import { hasNativeLocalProcessStop } from "../native-local-process-stop.js";
 import { randomUUID } from "node:crypto";
+import { createRequire } from "node:module";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -41,6 +42,7 @@ import {
   setupRunnerPrpWebSocketServer,
 } from "../../realtime/runner-prp-ws.js";
 import { readProcessStartedAt } from "../hot-restart.js";
+import { resolvePaperclipInstanceRoot } from "../../home-paths.js";
 import { prepareNativeHeartbeatRun } from "./prepare-native-run.js";
 import { buildNativeExecutionInput } from "./native-execution-input.js";
 import { nativeRuntimeContextFixture } from "./runtime-context.test-fixture.js";
@@ -300,12 +302,13 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
     };
   }
 
-  it.skipIf(!process.env.PAPERCLIP_TEST_RUNNER_CONTAINER)("saves a completed remote warm turn and resumes with no in-memory owner", async () => {
+  it.skipIf(!process.env.PAPERCLIP_TEST_RUNNER_CONTAINER).each(["warm", "hard", "legacy", "changed"])("preserves remote warm continuity across completed turns: %s", async (scenario) => {
+    const hardRestart = scenario !== "warm";
     const container = process.env.PAPERCLIP_TEST_RUNNER_CONTAINER!;
     const tunnel = await createRunnerTestTlsTunnel({ port: Number(process.env.PAPERCLIP_TEST_RUNNER_PORT),
       key: process.env.PAPERCLIP_TEST_RUNNER_TLS_KEY!, cert: process.env.NODE_EXTRA_CA_CERTS! });
     const runner = dockerCommandRunner(container);
-    const fixture = await seedRun("REMOTE-WARM-CONTINUITY");
+    const fixture = await seedRun(`REMOTE-WARM-CONTINUITY-${scenario}`);
     const boundContract = async (runId: string) => {
       const [row] = await fixture.db.select({ contract: completionContracts }).from(heartbeatRuns)
         .innerJoin(completionContracts, eq(completionContracts.id, heartbeatRuns.completionContractId))
@@ -359,18 +362,36 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
       useRunnerd: true, runnerIngressAuthorized: true,
       runnerRemoteBinaryPath: process.env.PAPERCLIP_TEST_LINUX_RUNNER_BINARY!,
       runnerRemoteCodexPath: process.env.PAPERCLIP_TEST_FAKE_CODEX_WRAPPER!,
-      runnerEnvironment: { PATH: "/usr/local/bin:/usr/bin:/bin" },
+      runnerEnvironment: { PATH: "/usr/local/bin:/usr/bin:/bin", PAPERCLIP_CONFIGURED_ENV_KEYS: '["CONTINUITY_TEST_CONFIG"]', CONTINUITY_TEST_CONFIG: "first" },
       onLog: async (_stream: "stdout" | "stderr", text: string) => { logs.push(text); },
     };
+    let controller: ReturnType<typeof spawn> | undefined;
     try {
-      const first = await executePaperclipNativeSession({ ...options, execution, runnerExecutionTarget: target });
+      const firstOptions = { ...options, execution, runnerExecutionTarget: target };
+      const first = hardRestart ? await new Promise<{ exitCode: number | null }>((resolveResult, reject) => {
+        controller = spawn(process.execPath, ["--import", createRequire(import.meta.url).resolve("tsx"), resolve("server/src/__tests__/helpers/remote-warm-controller.test-worker.ts")],
+          { stdio: ["ignore", "pipe", "pipe", "ipc"], env: process.env });
+        const timer = setTimeout(() => { controller?.kill("SIGKILL"); reject(new Error("Warm controller startup exceeded 60 seconds")); }, 60_000);
+        controller.stdout?.on("data", data => logs.push(String(data)));
+        controller.stderr?.on("data", data => logs.push(String(data)));
+        controller.on("error", error => { clearTimeout(timer); reject(error); });
+        controller.on("exit", (code, signal) => { clearTimeout(timer); reject(new Error(`Warm controller exited: ${code}/${signal}: ${logs.join("").slice(-3_000)}`)); });
+        controller.on("message", (message: { log?: { text: string }; result?: { exitCode: number | null }; error?: string }) => {
+          if (message.log) logs.push(message.log.text);
+          if (message.error) { clearTimeout(timer); reject(new Error(message.error)); }
+          if (message.result) { clearTimeout(timer); resolveResult(message.result); }
+        });
+        controller.send?.({ connectionString: temporary.connectionString, container, ingressUrl: `wss://127.0.0.1:${tunnel.port}`,
+          options: { ...firstOptions, db: undefined, onLog: undefined, runnerExecutionTarget: { ...target, runner: undefined } } });
+      }) : await executePaperclipNativeSession(firstOptions);
       expect(first.exitCode).toBe(0);
-      expect(await closeIdleWarmNativeSessionsForRestart()).toEqual({ closed: 0, busy: 0, failed: 0 });
       await finalizeNativeRun({ db: fixture.db, runId: fixture.runId, workspaceFinalizeStatus: "succeeded", projectRunStatus: true });
       const snapshot = await runner.execute({ command: "sh", args: ["-c", `cat '${remoteCwd}'/.paperclip-runtime/paperclip-runner/sessions/*/runner/runner-state.json`] });
       expect(snapshot.exitCode).toBe(0);
       const saved = JSON.parse(snapshot.stdout);
-      expect(saved.lifecycle).toBe("suspended");
+      expect(saved.lifecycle).toBe("ready");
+      const processBefore = await runner.execute({ command: "sh", args: ["-c", `cat '${remoteCwd}'/.paperclip-runtime/paperclip-runner/sessions/*/runner/runner-process.identity`] });
+      expect(processBefore.exitCode).toBe(0);
       const historyBefore = await runner.execute({ command: "sh", args: ["-c", `cat '${remoteCwd}'/.paperclip-runtime/paperclip-runner/sessions/*/filesystem/codex-home/fake-codex-state.json`] });
       const providerBefore = JSON.parse(historyBefore.stdout);
       const nextRunId = randomUUID();
@@ -381,7 +402,7 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
         nativeSessionId: fixture.native.normalizedSessionId,
       }).returning();
       await fixture.db.update(issues).set({ executionRunId: nextRunId, status: "in_progress" }).where(eq(issues.id, fixture.issueId));
-      await fixture.db.update(environmentLeases).set({ status: "released", releasedAt: new Date() }).where(eq(environmentLeases.id, target.leaseId));
+      await fixture.db.update(environmentLeases).set({ status: "expired", releasedAt: new Date() }).where(eq(environmentLeases.id, target.leaseId));
       await fixture.db.insert(environmentLeases).values({ id: nextLeaseId, companyId, environmentId: target.environmentId,
         heartbeatRunId: nextRunId, issueId: fixture.issueId, provider: target.providerKey,
         providerLeaseId: container, leasePolicy: "reuse_by_environment", metadata: { remoteCwd } });
@@ -389,10 +410,37 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
         issue: { id: fixture.issueId, title: "Continue the same conversation", description: null, reviewPolicy: null },
         environmentLeaseId: nextLeaseId });
       await fixture.db.insert(nativeRunFinalizations).values({ runId: nextRunId, companyId, issueId: fixture.issueId, phase: "observed" });
-      const second = await executePaperclipNativeSession({ ...options, runnerInstanceId: next.runnerInstanceId,
+      const nextOptions = { ...options, runnerInstanceId: next.runnerInstanceId,
+        runnerEnvironment: scenario === "changed" ? { ...options.runnerEnvironment, CONTINUITY_TEST_CONFIG: "second" } : options.runnerEnvironment,
         execution: { ...execution, completionContract: await boundContract(nextRunId), binding: { ...execution.binding, runId: nextRunId }, task: { ...execution.task, prompt: "Complete the second conversation turn." } },
-        runnerExecutionTarget: { ...target, leaseId: nextLeaseId, sandboxLeaseAcquisition: { outcome: "resumed", providerLeaseId: container } },
-      });
+        runnerExecutionTarget: { ...target, leaseId: nextLeaseId, sandboxLeaseAcquisition: { outcome: "resumed" as const, providerLeaseId: container } },
+      };
+      if (controller) {
+        await expect(executePaperclipNativeSession(nextOptions)).rejects.toThrow("prior_owner_terminal_state_indeterminate");
+        const exited = new Promise<void>(resolveExit => controller!.once("exit", () => resolveExit()));
+        controller.kill("SIGKILL");
+        await exited;
+        controller = undefined;
+        await expect(executePaperclipNativeSession({ ...nextOptions,
+          runnerExecutionTarget: { ...nextOptions.runnerExecutionTarget,
+            sandboxLeaseAcquisition: { outcome: "replacement", providerLeaseId: "unrelated-sandbox" } },
+        })).rejects.toThrow("prior_owner_terminal_state_indeterminate");
+      }
+      if (scenario === "legacy") {
+        const checkpoints = resolve(resolvePaperclipInstanceRoot(), "runtime", "paperclip-runner", "sessions");
+        let changed = 0;
+        for (const name of await readdir(checkpoints)) {
+          if (!name.endsWith(".json")) continue;
+          const path = resolve(checkpoints, name);
+          const envelope = JSON.parse(await readFile(path, "utf8"));
+          if (envelope.snapshot?.identity?.runId !== fixture.runId) continue;
+          delete envelope.processConfigDigest;
+          await writeFile(path, JSON.stringify(envelope), { mode: 0o600 });
+          changed++;
+        }
+        expect(changed).toBe(1);
+      }
+      const second = await executePaperclipNativeSession(nextOptions);
       expect(second.exitCode).toBe(0);
       const historyAfter = await runner.execute({ command: "sh", args: ["-c", `cat '${remoteCwd}'/.paperclip-runtime/paperclip-runner/sessions/*/filesystem/codex-home/fake-codex-state.json`] });
       const providerAfter = JSON.parse(historyAfter.stdout);
@@ -401,11 +449,23 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
       const calls = await runner.execute({ command: "cat", args: [`${remoteCwd}/provider-calls.log`] });
       expect(calls.stdout.split("\n").filter(line => line === "turn/start")).toHaveLength(2);
       expect(calls.stdout.split("\n").filter(line => line === "thread/start")).toHaveLength(1);
-      expect(calls.stdout).toContain("thread/resume");
+      const providerStarts = calls.stdout.split("\n").filter(line => line === "process-start").length;
+      expect(providerStarts).toBeGreaterThanOrEqual(1);
+      expect(providerStarts).toBeLessThanOrEqual(["legacy", "changed"].includes(scenario) ? 3 : hardRestart ? 2 : 1);
+      const processAfter = await runner.execute({ command: "sh", args: ["-c", `cat '${remoteCwd}'/.paperclip-runtime/paperclip-runner/sessions/*/runner/runner-process.identity`] });
+      expect(processAfter.exitCode).toBe(0);
+      if (["legacy", "changed"].includes(scenario)) expect(processAfter.stdout).not.toBe(processBefore.stdout);
+      else expect(processAfter.stdout).toBe(processBefore.stdout);
+      expect(await closeIdleWarmNativeSessionsForRestart()).toEqual({ closed: 1, busy: 0, failed: 0 });
+      const suspended = await runner.execute({ command: "sh", args: ["-c", `cat '${remoteCwd}'/.paperclip-runtime/paperclip-runner/sessions/*/runner/runner-state.json`] });
+      expect(suspended.exitCode).toBe(0);
+      expect(JSON.parse(suspended.stdout).lifecycle).toBe("suspended");
     } catch (error) {
       await writeFile(resolve(runtimeRoot, "remote-continuity-failure.log"), logs.join(""));
       throw new Error(`Remote continuity regression failed: ${logs.filter(line => line.startsWith("[paperclip-runner]")).join("").slice(-4_000)}`, { cause: error });
     } finally {
+      controller?.kill("SIGKILL");
+      await closeIdleWarmNativeSessionsForRestart();
       await tunnel.close();
     }
   }, 180_000);

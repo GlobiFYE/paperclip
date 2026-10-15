@@ -626,6 +626,16 @@ describe("remote controller restart adoption", () => {
         remoteRunnerRecovery: { stage: "identity_marker", reason: "fingerprint_missing" },
       });
   });
+  it.each(["failed read", "invalid JSON"])("records a closed recovery diagnostic for saved-state %s", async failure => {
+    const { target, execute } = fixture();
+    execute.mockResolvedValueOnce({ stdout: Buffer.from("invalid JSON").toString("base64"), stderr: "",
+      exitCode: failure === "failed read" ? 1 : 0, timedOut: false });
+    const error = await verifyRemoteRunnerReattachment({ claim, target: target as never, identity,
+      runId: "run", normalizedSessionId: "session" }).catch(error => error);
+    expect(readRemoteRunnerRecoveryError(error)).toEqual({ stage: "runner_state",
+      reason: failure === "failed read" ? "state_read_failed" : "state_invalid" });
+    expect(execute).toHaveBeenCalledOnce();
+  });
   it.each([
     [31, "marker_missing"], [32, "marker_unsafe"], [33, "marker_read_failed"],
   ] as const)("records the closed reason for marker read exit %s", async (exitCode, reason) => {
@@ -9744,7 +9754,7 @@ describe("native process ownership", () => {
 });
 
 describe("runnerd provider runtime wiring", () => {
-  it("requires a remote warm turn to suspend before returning its result", async () => {
+  it("keeps remote warm turns open while retaining verified close semantics", async () => {
     const current = scopedNativeExecution("remote-warm-settlement");
     current.session = {
       ...current.session,
@@ -9775,7 +9785,7 @@ describe("runnerd provider runtime wiring", () => {
     });
 
     expect(state.execute).toHaveBeenLastCalledWith(expect.objectContaining({
-      keepSessionOpen: false,
+      keepSessionOpen: true,
       requireSessionCloseBeforeReturn: true,
     }));
   });
