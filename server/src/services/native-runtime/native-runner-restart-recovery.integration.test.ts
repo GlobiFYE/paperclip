@@ -440,6 +440,9 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
         }
         expect(changed).toBe(1);
       }
+      const [nextPrepared] = await fixture.db.select({ profile: heartbeatRuns.runnerProfileJson }).from(heartbeatRuns).where(eq(heartbeatRuns.id, nextRunId));
+      await fixture.db.update(heartbeatRuns).set({ runnerProfileJson: { ...nextPrepared.profile,
+        nativeExecutionInput: nextOptions.execution } }).where(eq(heartbeatRuns.id, nextRunId));
       const second = await executePaperclipNativeSession(nextOptions);
       expect(second.exitCode).toBe(0);
       const historyAfter = await runner.execute({ command: "sh", args: ["-c", `cat '${remoteCwd}'/.paperclip-runtime/paperclip-runner/sessions/*/filesystem/codex-home/fake-codex-state.json`] });
@@ -456,6 +459,37 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
       expect(processAfter.exitCode).toBe(0);
       if (["legacy", "changed"].includes(scenario)) expect(processAfter.stdout).not.toBe(processBefore.stdout);
       else expect(processAfter.stdout).toBe(processBefore.stdout);
+      await finalizeNativeRun({ db: fixture.db, runId: nextRunId, workspaceFinalizeStatus: "succeeded", projectRunStatus: true });
+      const thirdRunId = randomUUID();
+      const thirdLeaseId = randomUUID();
+      const [thirdRun] = await fixture.db.insert(heartbeatRuns).values({
+        id: thirdRunId, companyId, agentId, status: "running", runtimeMode: "native", nativeIssueId: fixture.issueId,
+        invocationSource: "assignment", triggerDetail: "system", contextSnapshot: { issueId: fixture.issueId },
+        nativeSessionId: fixture.native.normalizedSessionId,
+      }).returning();
+      await fixture.db.update(issues).set({ executionRunId: thirdRunId, status: "in_progress" }).where(eq(issues.id, fixture.issueId));
+      await fixture.db.update(environmentLeases).set({ status: "expired", releasedAt: new Date() }).where(eq(environmentLeases.id, nextLeaseId));
+      await fixture.db.insert(environmentLeases).values({ id: thirdLeaseId, companyId, environmentId: target.environmentId,
+        heartbeatRunId: thirdRunId, issueId: fixture.issueId, provider: target.providerKey,
+        providerLeaseId: container, leasePolicy: "reuse_by_environment", metadata: { remoteCwd } });
+      const thirdNative = await prepareNativeHeartbeatRun({ db: fixture.db, run: thirdRun,
+        issue: { id: fixture.issueId, title: "Continue the same conversation", description: null, reviewPolicy: null },
+        environmentLeaseId: thirdLeaseId });
+      await fixture.db.insert(nativeRunFinalizations).values({ runId: thirdRunId, companyId, issueId: fixture.issueId, phase: "observed" });
+      const third = await executePaperclipNativeSession({ ...nextOptions, runnerInstanceId: thirdNative.runnerInstanceId,
+        execution: { ...nextOptions.execution, completionContract: await boundContract(thirdRunId),
+          binding: { ...execution.binding, runId: thirdRunId }, task: { ...execution.task, prompt: "Complete the third conversation turn." } },
+        runnerExecutionTarget: { ...nextOptions.runnerExecutionTarget, leaseId: thirdLeaseId },
+      });
+      expect(third.exitCode).toBe(0);
+      const finalHistory = await runner.execute({ command: "sh", args: ["-c", `cat '${remoteCwd}'/.paperclip-runtime/paperclip-runner/sessions/*/filesystem/codex-home/fake-codex-state.json`] });
+      expect(JSON.parse(finalHistory.stdout)).toMatchObject({ threadId: providerBefore.threadId, nextTurn: 3 });
+      const finalCalls = await runner.execute({ command: "cat", args: [`${remoteCwd}/provider-calls.log`] });
+      expect(finalCalls.stdout.split("\n").filter(line => line === "turn/start")).toHaveLength(3);
+      expect(finalCalls.stdout.split("\n").filter(line => line === "thread/start")).toHaveLength(1);
+      expect(finalCalls.stdout.split("\n").filter(line => line === "process-start")).toHaveLength(providerStarts);
+      const finalProcess = await runner.execute({ command: "sh", args: ["-c", `cat '${remoteCwd}'/.paperclip-runtime/paperclip-runner/sessions/*/runner/runner-process.identity`] });
+      expect(finalProcess.stdout).toBe(processAfter.stdout);
       expect(await closeIdleWarmNativeSessionsForRestart()).toEqual({ closed: 1, busy: 0, failed: 0 });
       const suspended = await runner.execute({ command: "sh", args: ["-c", `cat '${remoteCwd}'/.paperclip-runtime/paperclip-runner/sessions/*/runner/runner-state.json`] });
       expect(suspended.exitCode).toBe(0);

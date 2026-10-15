@@ -86,23 +86,26 @@ starting harnesses; past passing evidence does not qualify this change.
   followed by saved-history resume. Healthy warm follow-ups stay open.
 - Four Linux container/TLS/PostgreSQL cases pass: ordinary warm reuse, actual
   controller SIGKILL, older checkpoint metadata, and changed environment.
-  They assert one thread creation and exactly two turn starts. The hard-restart
+  They assert one thread creation and exactly three turn starts, including a
+  healthy follow-up after recovery. The hard-restart
   cases also reject a still-live prior controller and a replacement sandbox.
   Normal follow-ups use one provider process; recovery may refresh the provider.
   These are real runner/process tests with a deterministic fake Codex, not live
-  Daytona or live model evidence. A follow-up adjusts the prior lease fixture to
-  the expired status observed on staging and must be rerun before handoff.
+  Daytona or live model evidence. The prior lease fixture uses the expired status
+  observed on staging. The third turn retains the runner and provider processes.
 - Full workspace typecheck and production build pass on the warm candidate.
   The full required test suite is running. The earlier focused run had 752 passes
   and two error-label assertions; the original failure classification is restored.
-- Greptile reviewed the withdrawn head at 4/5. Its saved-state diagnostic finding
-  is fixed with failed-read and malformed-JSON controls. Fresh review is pending.
+- Greptile found a stale recovery ownership check retained across later warm
+  turns. Recovery admission now retires after verified attachment; the three-turn
+  regression passes. The earlier saved-state diagnostic finding is also fixed.
+  Fresh review is pending.
 - Fresh read-only staging records confirm both original tasks remain blocked.
   The Codex failure preceded its coordinator claim. The OpenCode failure followed
   controller takeover, with an active turn in the saved checkpoint. Its original
   log lacks the failed probe reason; process death is not established.
 - No live task or deployment has been changed. Remaining: full tests and review,
-  current Linux fixture check, staging qualification, retained-state recovery,
+  staging qualification, retained-state recovery,
   and useful disposition of both tasks.
 
 Deferred: unrelated skill-import setup failures, database query optimization,

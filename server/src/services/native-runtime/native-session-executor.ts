@@ -8689,6 +8689,7 @@ async function executePaperclipNativeSessionWithinScope(
       input.db,
       input.execution.binding,
     ));
+    let remoteWarmRecoveryPending = remoteWarmRecovery !== undefined;
     let runnerdBackend =
       input.useRunnerd && input.backend === undefined
         ? await timeController("backend_setup", () => createRunnerdBackend({
@@ -8701,7 +8702,9 @@ async function executePaperclipNativeSessionWithinScope(
             durableEnvironmentLeaseId: durableRunnerBinding?.environmentLeaseId,
             remoteWarmRecovery: remoteWarmRecovery ? {
               ...remoteWarmRecovery,
-              revalidate: () => remoteWarmRecovery.revalidate(leaseOwner),
+              revalidate: async () => {
+                if (remoteWarmRecoveryPending) await remoteWarmRecovery.revalidate(leaseOwner);
+              },
             } : undefined,
             trace,
             toolTrace,
@@ -8891,6 +8894,7 @@ async function executePaperclipNativeSessionWithinScope(
               );
             },
             onSession: async (session) => {
+              if (session && session === existingWarmSession) remoteWarmRecoveryPending = false;
               if (session && input.managedAiCredentialHome) {
                 managedCredentialSession = runnerdBackend?.bindManagedSession(session) ?? session;
               }
