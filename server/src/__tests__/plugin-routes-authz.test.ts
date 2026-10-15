@@ -1,6 +1,8 @@
 import express from "express";
 import request from "supertest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { pluginRoutes } from "../routes/plugins.js";
+import { errorHandler } from "../middleware/index.js";
 
 const mockRegistry = vi.hoisted(() => ({
   getById: vi.fn(),
@@ -54,11 +56,6 @@ async function createApp(
     captureJsonContext?: (context: unknown, body: unknown) => void;
   } = {},
 ) {
-  const [{ pluginRoutes }, { errorHandler }] = await Promise.all([
-    import("../routes/plugins.js"),
-    import("../middleware/index.js"),
-  ]);
-
   const loader = {
     installPlugin: vi.fn(),
     ...loaderOverrides,
