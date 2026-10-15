@@ -217,4 +217,30 @@ describe("stopped task recovery notice", () => {
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("History unavailable");
     expect(container.textContent).toContain("Inspect the current run.");
   });
+  it("refreshes a decision while the same stopped run remains open", async () => {
+    vi.useFakeTimers();
+    try {
+      const action = { id: "recovery", status: "active", resolutionNote: "Inspection pending", evidence: { runId: "cancelled-run" } };
+      vi.mocked(issuesApi.recoveryActions).mockResolvedValue({ active: null, actions: [action] } as never);
+      await act(async () => root.render(<QueryClientProvider client={client}>
+        <ExecutionBlockerNotice companyId="company" issueId="task" issueStatus="blocked" canManage onRetried={onRetried} blocker={{
+          recoveryActionId: "recovery", runId: "cancelled-run", agentId: "agent",
+          cause: "legacy_execution_requires_reconciliation", nextAction: "Inspect the current run.",
+        }} />
+      </QueryClientProvider>));
+      await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+      expect(container.textContent).toContain("Inspection pending");
+      vi.mocked(issuesApi.recoveryActions).mockResolvedValue({ active: null, actions: [{ ...action,
+        status: "resolved", resolutionNote: "Preserved work; automatic replay stopped", evidence: {
+          runId: "cancelled-run", automaticRecovery: { replay: "blocked" },
+        },
+      }] } as never);
+      await act(async () => { await vi.advanceTimersByTimeAsync(5_001); });
+      expect(issuesApi.recoveryActions).toHaveBeenCalledTimes(2);
+      expect(container.textContent).toContain("Preserved work; automatic replay stopped");
+      expect(container.textContent).not.toContain("Inspection pending");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

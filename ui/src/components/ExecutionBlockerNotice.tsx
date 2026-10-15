@@ -20,9 +20,10 @@ export function ExecutionBlockerNotice({ companyId, issueId, issueStatus, canMan
 }) {
   const queryClient = useQueryClient();
   const { data: recovery, error: recoveryError } = useQuery({
-    queryKey: queryKeys.issues.recoveryActions(issueId),
+    queryKey: queryKeys.issues.recoveryActions(issueId, blocker.recoveryActionId ?? null, blocker.runId ?? null),
     queryFn: () => issuesApi.recoveryActions(issueId),
     enabled: canManage && Boolean(blocker.recoveryActionId) && !["done", "cancelled"].includes(issueStatus ?? ""),
+    refetchInterval: 5_000,
   });
   const hold = recovery?.actions.find(action => action.id === blocker.recoveryActionId &&
     (action.evidence.runId ?? action.evidence.sourceRunId) === blocker.runId);
@@ -84,7 +85,7 @@ export function ExecutionBlockerNotice({ companyId, issueId, issueStatus, canMan
         <p role="alert" className="w-full text-destructive">{retry.error.message}</p>
       )}
       {runsError && <p role="alert" className="w-full text-destructive">{runsError.message}</p>}
-      {hold && <details className="w-full">
+      {canManage && hold && <details className="w-full">
         <summary className="cursor-pointer">Recovery details</summary>
         {replayBlocked &&
           <p>Paperclip stopped automatic retries to avoid repeating work with an unknown outcome. Inspect the run before requesting continuation.</p>}
