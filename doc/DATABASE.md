@@ -36,6 +36,13 @@ secret redaction still run on the bounded result set.
 Agent detail links fetch an older selected run by ID when it is outside the
 history page, and verify that it belongs to the current company and agent.
 
+Saved-run policy and parent-report lookups read only the `executionPolicy`
+value or the legacy `issueId` and `taskId` values from a run context. PostgreSQL projects
+those JSON values before it sends the row to the controller. Unused prompt and
+launch context does not travel with each policy or parent-report check. JSON
+types, task-key precedence, and company and agent identity checks are preserved.
+Each decision still reads current data; this is not an authorization cache.
+
 To compare the real summary and full history queries with an earlier revision:
 
 ```sh
@@ -52,6 +59,12 @@ across company history for each workspace. Repository admission repeats these
 reads while holding its company provenance lock, so that plan can delay other
 agent launches. Missing, malformed, noncanonical, and foreign-company source
 IDs still deny access.
+
+The subsequent source-task enumeration also keeps `issues.id` as a UUID. Its
+OR predicate combines the workspace binding index with the task primary key.
+Casting that ID to text forces another scan of company history even after the
+workspace privacy query has passed. The workspace authorization regression
+suite checks both plans and verifies the attached and retained source results.
 
 To compare this query on a disposable fixture with 13,429 tasks:
 
