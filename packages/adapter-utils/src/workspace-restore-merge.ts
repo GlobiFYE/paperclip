@@ -15,6 +15,32 @@ export interface DirectorySnapshot {
   entries: Map<string, SnapshotEntry>;
 }
 
+/**
+ * Typed cancellation for the SSH workspace restore path. The restore's
+ * transfer phase emits throttled progress ending in a terminal 100% line, but
+ * that line only covers the remote tarball stream: the silent local apply
+ * (clear + multi-GB copy/merge into the shared checkout) runs afterwards with
+ * no preemption. A run cancelled in that window used to stay `running` until
+ * the copy finished (observed 20-65 min), with the terminal write and
+ * `workspace_finalize` barrier landing late or never. Throwing this code on
+ * an aborted signal lets the adapter yield promptly so the existing heartbeat
+ * cancellation machinery terminalizes the run; live (non-aborted) restores
+ * are untouched and keep their full grace.
+ */
+export const WORKSPACE_RESTORE_CANCELLED = "workspace_restore_cancelled";
+
+export function workspaceRestoreCancelledError(): Error {
+  return new Error(WORKSPACE_RESTORE_CANCELLED);
+}
+
+export function isWorkspaceRestoreCancelled(error: unknown): boolean {
+  return error instanceof Error && error.message === WORKSPACE_RESTORE_CANCELLED;
+}
+
+export function throwIfWorkspaceRestoreAborted(signal: AbortSignal | null | undefined): void {
+  if (signal?.aborted) throw workspaceRestoreCancelledError();
+}
+
 export interface SerializedDirectorySnapshot {
   version: 1;
   exclude: string[];
@@ -459,10 +485,20 @@ export async function mergeDirectoryWithBaseline(input: {
   targetDir: string;
   beforeApply?: () => Promise<void>;
   afterApply?: () => Promise<void>;
+  /**
+   * Run-scoped operator cancellation. Checked before the apply and between
+   * copied entries so a cancelled SSH restore stops merging instead of
+   * holding the run `running` through a silent multi-GB apply. The merge
+   * lock itself is untouched.
+   */
+  signal?: AbortSignal | null;
 }): Promise<void> {
+  throwIfWorkspaceRestoreAborted(input.signal);
   const source = await captureDirectorySnapshot(input.sourceDir, { exclude: input.baseline.exclude });
+  throwIfWorkspaceRestoreAborted(input.signal);
   await withDirectoryMergeLock(input.targetDir, async (canonicalTargetDir) => {
     await input.beforeApply?.();
+    throwIfWorkspaceRestoreAborted(input.signal);
     const current = await captureDirectorySnapshot(canonicalTargetDir, { exclude: input.baseline.exclude });
     const deletedLeafEntries = [...input.baseline.entries.entries()]
       .filter(([relative, entry]) => entry.kind !== "dir" && !source.entries.has(relative))
@@ -486,6 +522,7 @@ export async function mergeDirectoryWithBaseline(input: {
       .sort(([left], [right]) => left.localeCompare(right));
 
     for (const [relative, entry] of changedSourceEntries) {
+      throwIfWorkspaceRestoreAborted(input.signal);
       await copySnapshotEntry(input.sourceDir, canonicalTargetDir, relative, entry);
     }
 
