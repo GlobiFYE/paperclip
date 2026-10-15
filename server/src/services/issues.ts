@@ -1953,6 +1953,7 @@ async function assertExecutionTaskParent(db: Db, companyId: string, parentId?: s
 
 type DbTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 type IssueCreateInput = Omit<typeof issues.$inferInsert, "companyId" | "title" | "titleNeedsGeneration" | "workspaceSelection"> & {
+  hostWatcherScope?: HostWatcherAgentKeyScope;
   workspaceSelection?: TaskWorkspaceSelection;
   workspaceSelectionSource?: "explicit" | "channel";
   workspaceSelectionActor?: AuthorizationActor;
@@ -9881,6 +9882,7 @@ export function issueService(db: Db) {
         allowDuplicate,
         assertCanReuseIssue,
         onDeduplicated,
+        hostWatcherScope,
         ...issueData
       } = data;
       const explicitTitle = issueData.title?.trim();
@@ -9921,6 +9923,21 @@ export function issueService(db: Db) {
       }
       const persist = async (tx: DbTransaction) => {
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`issue-privacy-tree:${companyId}`}, 0))`);
+        if (hostWatcherScope) {
+          // The HTTP guard reads the parent before this transaction. Lock it
+          // here so a board close or project move cannot race the child insert.
+          const [parent] = await tx.select({
+            id: issues.id, projectId: issues.projectId, status: issues.status,
+          }).from(issues).where(and(
+            eq(issues.id, hostWatcherScope.issueId), eq(issues.companyId, companyId),
+          )).for("update");
+          if (hostWatcherScope.service !== "fleet_hourly"
+            || !parent || parent.projectId !== hostWatcherScope.projectId
+            || parent.status === "done" || parent.status === "cancelled"
+            || issueData.parentId !== parent.id) {
+            throw conflict("Fleet watcher parent changed before issue creation");
+          }
+        }
         await assertExecutionTaskParent(tx as unknown as Db, companyId, issueData.parentId);
         if (issueData.conversationAgentId && issueData.conversationUserId) {
           const identity = `conversation:${companyId}:${issueData.conversationAgentId}:${issueData.conversationUserId}`;

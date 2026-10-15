@@ -67,7 +67,7 @@ for account in pc-disk-guard pc-watch-12320 pc-watch-12340 pc-watch-12359 pc-fle
   install -d -o "$account" -g "$account" -m 0700 "/var/lib/$account/.secrets"
 done
 install -d -o root -g root -m 0755 /opt/paperclip-cron /etc/paperclip-cron
-for asset in service_http.py github_api.py pr923.py pr1198.py pr1042.py fleet.py \
+for asset in service_http.py github_api.py verify_boundary.py pr923.py pr1198.py pr1042.py fleet.py \
     disk_reporter.py disk_client.py disk_guard_agent.py; do
   install -o root -g root -m 0755 "$source_dir/$asset" "/opt/paperclip-cron/$asset"
 done

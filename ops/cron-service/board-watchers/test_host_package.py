@@ -4,9 +4,11 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
+import ast
 import datetime
 import json
 import os
+import runpy
 import socket
 import tempfile
 import threading
@@ -16,6 +18,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import disk_reporter
+import fleet
 import github_api
 import pr1042
 import pr1198
@@ -47,6 +50,64 @@ class HostPackageTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(dir=os.environ.get("PAPERCLIP_RUN_SCRATCH_DIR"))
         self.addCleanup(self.tmp.cleanup)
+
+    def test_fleet_uses_libpq_service_connection(self):
+        with patch.object(fleet.subprocess, "run", return_value=SimpleNamespace(
+                returncode=0, stdout="1\n")) as run:
+            self.assertEqual(fleet.sql("select 1"), [["1"]])
+        command = run.call_args.args[0]
+        self.assertEqual(command[command.index("-d") + 1], "service=pc_fleet_watch")
+
+    def test_sanitized_watchdog_and_quota_select_libpq_services(self):
+        stage = Path(self.tmp.name)
+        (stage / "agent-watchdog.py").write_text(
+            "import os\nimport subprocess\nDSN = os.environ['WATCHDOG_PG']\n"
+            "def psql(sql):\n"
+            "    return subprocess.run(['/usr/bin/psql', DSN, '-tAc', sql], capture_output=True, text=True).stdout.strip()\n"
+        )
+        (stage / "quota_rewake.py").write_text(
+            "CONN = os.environ['QR_PG']\nOPS_ENV = 'fixture'\nMAX_RESTORES = 1\n"
+            "def read_env_file(path, key):\n    return None\n"
+            "def agent_token():\n    return None\n"
+            "def board_token():\n    return None\n"
+            "def api():\n    return None\n"
+            "def restore_direct(card, reason, token):\n    return None\n"
+            "NUDGE_TITLE_PREFIX = 'fixture'\n"
+            "def read_db():\n    return ['psql', CONN, '-c', 'select 1']\n"
+            "def run(args, c, actions):\n"
+            "    mode = 'direct' if board_token() else ('nudge' if args.nudge else 'direct')\n"
+            "    board = board_token()\n    done = 0\n"
+            "    if board:\n        pass\n"
+            "    if not args.nudge:\n        pass\n"
+            "        if not c['ownerAgentId']:\n            pass\n"
+            "        # HELA-12213:\n"
+            "            log('quota-rewake: нет board-токена и --nudge не задан -> только отчёт (%d карт ждут)' % len(actions))\n"
+        )
+        sanitizer = runpy.run_path(str(Path(__file__).parent.parent / "sanitize-staged.py"))
+        sanitizer["main"](stage)
+        watchdog = (stage / "agent-watchdog.py").read_text()
+        quota = (stage / "quota_rewake.py").read_text()
+        self.assertIn("DSN = 'service=pc_watchdog'", watchdog)
+        self.assertIn("'-d', DSN", watchdog)
+        self.assertIn("CONN = 'service=pc_quota'", quota)
+        self.assertIn("'-d', CONN", quota)
+
+    def test_installer_copies_local_watcher_imports(self):
+        source = Path(__file__).parent
+        installer = (source / "prepare-host.sh").read_text()
+        asset_clause = installer.split("for asset in ", 1)[1].split("; do", 1)[0]
+        assets = set(asset_clause.replace("\\\n", " ").split())
+        for asset in assets:
+            if not asset.endswith(".py"):
+                continue
+            tree = ast.parse((source / asset).read_text())
+            local_imports = {
+                f"{node.module.split('.')[0]}.py"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.ImportFrom) and node.module
+                and (source / f"{node.module.split('.')[0]}.py").exists()
+            }
+            self.assertFalse(local_imports - assets, f"{asset} lacks {local_imports - assets}")
 
     def test_paperclip_transport_uses_private_fixture_and_refuses_redirect(self):
         token_file = Path(self.tmp.name) / "fixture.token"

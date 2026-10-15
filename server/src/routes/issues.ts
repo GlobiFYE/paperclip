@@ -12467,6 +12467,9 @@ export function issueRoutes(
         projectId: createAssignmentScope.projectId,
         ...(taskBridgeOriginForActor(req) ?? {}),
         ...(hostWatcherOriginForActor(req) ?? {}),
+        ...(isHostWatcherKeyActor(req) && req.actor.keyScope?.kind === "host_watcher"
+          ? { hostWatcherScope: req.actor.keyScope }
+          : {}),
         id: issueId,
         originRunId: createBody.originRunId ?? actor.runId,
         originIdentityContextId: req.actor.identityContextId ?? null,

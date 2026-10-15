@@ -20,7 +20,7 @@ def change(text, pattern, replacement, label, *, flags=0):
 def main(stage):
     watchdog = stage / "agent-watchdog.py"
     text = watchdog.read_text()
-    text = change(text, r"^DSN = os\.environ\['WATCHDOG_PG'\]$", "DSN = 'pc_watchdog'",
+    text = change(text, r"^DSN = os\.environ\['WATCHDOG_PG'\]$", "DSN = 'service=pc_watchdog'",
                   "watchdog DB service", flags=re.M)
     text = change(
         text,
@@ -36,7 +36,7 @@ def main(stage):
 
     quota = stage / "quota_rewake.py"
     text = quota.read_text()
-    text = change(text, r"^CONN = os\.environ\['QR_PG'\]$", "CONN = 'pc_quota'",
+    text = change(text, r"^CONN = os\.environ\['QR_PG'\]$", "CONN = 'service=pc_quota'",
                   "quota DB service", flags=re.M)
     text = change(text, r"\['psql', CONN,", "['/usr/bin/psql', '-X', '-d', CONN,",
                   "quota psql")

@@ -12,7 +12,7 @@ from service_http import request as service_request
 COMPANY = 'ac917a45-e6ea-4696-a85c-991147084939'
 ASSIGNEE = '4da0f0c7-471f-4ca6-9f13-3998fab8473e'  # Bravo-2
 ISSUE_6783 = '3018b33b-1cf0-4255-9820-617915f8099e'
-PG_SERVICE = 'pc_fleet_watch'
+PG_SERVICE = 'service=pc_fleet_watch'
 STATE = os.path.expanduser('~/fleet-hourly-watch.state.json')
 LOG = os.path.expanduser('~/fleet-hourly-watch.log')
 REWAKE_HOURS = 6

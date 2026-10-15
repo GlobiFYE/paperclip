@@ -578,6 +578,38 @@ describeDb("seven host service keys on real issue routes and test DB", () => {
     }
   });
 
+  it("rechecks a fleet parent inside the create transaction", async () => {
+    const parentId = targets.fleet.issueId;
+    const otherProjectId = randomUUID();
+    await db.insert(projects).values({ id: otherProjectId, companyId, name: "Moved fleet fixture" });
+    try {
+      for (const [change, patch] of [
+        ["closed", { status: "done" }],
+        ["moved", { projectId: otherProjectId }],
+      ] as const) {
+        const title = `[watch][hourly] fleet parent ${change} after guard`;
+        try {
+          await db.update(issues).set(patch).where(eq(issues.id, parentId));
+          // Model the parent change that landed after the HTTP scope read.
+          // The service must reject it under the row lock before inserting.
+          await expect(issueService(db).create(companyId, {
+            title, description: "One fixed fleet finding", status: "todo", priority: "high",
+            assigneeAgentId: targets.fleet.assigneeAgentId, parentId,
+            projectId: fleetProjectId, originKind: "host_watcher", originId: serviceAgents.fleet,
+            hostWatcherScope: scopes.fleet,
+          })).rejects.toThrow("Fleet watcher parent changed before issue creation");
+          const rows = await db.select({ id: issues.id }).from(issues).where(eq(issues.title, title));
+          expect(rows).toHaveLength(0);
+        } finally {
+          await db.update(issues).set({ status: "backlog", projectId: fleetProjectId })
+            .where(eq(issues.id, parentId));
+        }
+      }
+    } finally {
+      await db.delete(projects).where(eq(projects.id, otherProjectId));
+    }
+  });
+
   it("fleet can comment on its parent and create one bounded work order", async () => {
     const parentUrl = `/api/issues/${targets.fleet.issueId}`;
     expect((await request(app).post(`${parentUrl}/comments`).set("Authorization", auth("fleet"))
