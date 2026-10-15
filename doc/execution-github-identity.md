@@ -22,7 +22,10 @@ The native GitHub callback bridge uses HTTP/2 only when the server-selected
 `enableSandboxDuplexBridge` flag and the sandbox's verified duplex capability
 permit it. Missing settings, unsupported providers and failed channel startup
 keep the authenticated file bridge. Changing the server flag retires a retained
-warm bridge at the next normal run boundary. An unchanged flag permits reuse.
+warm bridge at the next normal run boundary, before a retained instruction copy
+is claimed. A lost HTTP/2 channel also makes the broker unavailable and retires
+that warm session at its next admission. An unchanged flag and a healthy broker
+permit reuse. Normal session cleanup closes the channel as an orderly completion.
 This selection changes transport only; operation-time credential checks remain
 the same. Local and SSH execution retain their existing transport.
 

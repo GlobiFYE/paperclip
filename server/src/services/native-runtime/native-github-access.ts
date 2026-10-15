@@ -78,6 +78,7 @@ export async function createNativeGitHubAccess(input: {
   const stop = () => stopping ??= (async () => {
     stopped = true;
     active = null;
+    bridge?.markOrderlyCompletion?.();
     server.closeAllConnections();
     const results = await Promise.allSettled([
       bridge?.stop(),
@@ -131,7 +132,7 @@ export async function createNativeGitHubAccess(input: {
     });
     return {
       env,
-      ready,
+      get ready() { return ready && !stopped && bridge?.readRunDisposition?.().failed !== true; },
       duplexRequested,
       activate(binding: Binding) {
         if (stopped || active) throw new Error("GitHub session is closed or busy");

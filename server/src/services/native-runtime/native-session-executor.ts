@@ -518,7 +518,7 @@ export async function claimWarmNativeInstructionCopy(input: {
     } finally { entry.busy = false; }
   };
   try {
-    const preparationChanged = input.forceRetirement === true || entry.instructionWorkingCopy.preparationKey !== input.preparationKey;
+    const preparationChanged = input.forceRetirement === true || entry.githubAccess?.ready === false || entry.instructionWorkingCopy.preparationKey !== input.preparationKey;
     // The prior capability may close over an expired remote lease. Rebind
     // collection authority first; adoption itself grants no reuse permission.
     const adopted = await input.adopt(entry.instructionWorkingCopy.runId);

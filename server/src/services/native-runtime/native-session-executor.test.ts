@@ -8273,6 +8273,15 @@ describe("native warm session supervision", () => {
         firstBroker: true, secondBroker: true, projectless: false, local: false, brokerReady: true,
         firstMode: "managed", secondMode: "managed", managedGitHub: true, firstDuplex, secondDuplex,
       })),
+      ...([[false, true], [true, false], [true, true]] as const).map(([firstDuplex, secondDuplex]) => ({
+        firstBroker: true, secondBroker: true, projectless: false, local: false, brokerReady: true,
+        firstMode: "managed", secondMode: "managed", managedGitHub: true, firstDuplex, secondDuplex, instructionFiles: true,
+      })),
+      ...[false, true].map(instructionFiles => ({
+        firstBroker: true, secondBroker: true, projectless: false, local: false, brokerReady: true,
+        firstMode: "managed", secondMode: "managed", managedGitHub: true, firstDuplex: true, secondDuplex: true,
+        instructionFiles, loseBridge: true,
+      })),
       ...[false, true].flatMap((local) => [true, false].map(brokerReady => ({
         firstBroker: true, secondBroker: true, projectless: false, local, brokerReady,
         firstMode: "managed", secondMode: "managed", managedGitHub: true,
@@ -8344,10 +8353,12 @@ describe("native warm session supervision", () => {
       brokerReady: true,
       firstDuplex: false,
       secondDuplex: false,
+      instructionFiles: false,
+      loseBridge: false,
       ...scenario,
     })),
   )(
-    "verifies a live warm owner before refreshing run authority (broker: $firstBroker -> $secondBroker, projectless: $projectless, local: $local, auth: $firstMode -> $secondMode, network: $firstNetwork -> $secondNetwork, checkpoint: $checkpointContract, managed access: $managedGitHub, broker ready: $brokerReady, duplex: $firstDuplex -> $secondDuplex)",
+    "verifies a live warm owner before refreshing run authority (broker: $firstBroker -> $secondBroker, projectless: $projectless, local: $local, auth: $firstMode -> $secondMode, network: $firstNetwork -> $secondNetwork, checkpoint: $checkpointContract, managed access: $managedGitHub, broker ready: $brokerReady, duplex: $firstDuplex -> $secondDuplex, files: $instructionFiles, loss: $loseBridge)",
     async ({
       firstBroker,
       secondBroker,
@@ -8362,22 +8373,28 @@ describe("native warm session supervision", () => {
       brokerReady,
       firstDuplex,
       secondDuplex,
+      instructionFiles,
+      loseBridge,
     }) => {
+      let brokerLost = false;
       const activate = githubAccess.activate.mockReset().mockImplementation(() => vi.fn());
       const stop = githubAccess.stop.mockReset().mockResolvedValue(undefined);
-      githubAccess.create.mockReset().mockImplementation(async () => ({
-        env: { PAPERCLIP_GITHUB_BROKER_TOKEN: "stable-session-capability" },
-        ready: brokerReady,
-        duplexRequested: githubAccess.create.mock.calls.length === 1 ? firstDuplex : secondDuplex,
-        activate,
-        stop,
-      }));
+      githubAccess.create.mockReset().mockImplementation(async () => {
+        const creation = githubAccess.create.mock.calls.length;
+        return {
+          env: { PAPERCLIP_GITHUB_BROKER_TOKEN: "stable-session-capability" },
+          get ready() { return brokerReady && (creation !== 1 || !brokerLost); },
+          duplexRequested: creation === 1 ? firstDuplex : secondDuplex,
+          activate,
+          stop,
+        };
+      });
       const replacesProvider =
         !brokerReady ||
         (!managedGitHub && (firstBroker || secondBroker)) ||
         firstMode !== secondMode ||
         firstNetwork !== secondNetwork ||
-        firstDuplex !== secondDuplex;
+        firstDuplex !== secondDuplex || loseBridge;
       const stateBase = await mkdtemp(
         join(tmpdir(), "paperclip-runnerd-warm-authority-"),
       );
@@ -8385,7 +8402,13 @@ describe("native warm session supervision", () => {
       const previousPaperclipHome = process.env.PAPERCLIP_HOME;
       process.env.PAPERCLIP_RUNNER_STATE_DIR = stateBase;
       process.env.PAPERCLIP_HOME = stateBase;
-      const firstClose = vi.fn(async () => undefined);
+      let checkpointFirstRunner: (() => Promise<void>) | undefined;
+      const firstClose = vi.fn(async () => {
+        if (instructionFiles) {
+          if (!checkpointFirstRunner) throw new Error("fixture runner checkpoint unavailable");
+          await checkpointFirstRunner();
+        }
+      });
       const firstSession = { close: firstClose };
       const first = {
         ...execution,
@@ -8434,6 +8457,9 @@ describe("native warm session supervision", () => {
               runner: { execute: vi.fn() },
             }
       ) as never;
+      const firstCopy = { runId: first.binding.runId, root: first.workspace.cwd!, preparationKey: JSON.stringify({ duplex: firstDuplex }),
+        hasChanges: vi.fn(async () => false), collectStopped: vi.fn(async () => undefined) };
+      const secondCopy = { ...firstCopy, runId: second.binding.runId, preparationKey: JSON.stringify({ duplex: secondDuplex }) };
       const result = {
         result: { summary: "completed" },
         terminal: { runTerminalState: "succeeded" },
@@ -8505,6 +8531,7 @@ describe("native warm session supervision", () => {
           useRunnerd: true,
           managedGitHub,
           runnerExecutionTarget: remoteTarget(firstDuplex),
+          instructionWorkingCopy: instructionFiles ? firstCopy : undefined,
         });
         if (projectless && replacesProvider) {
           // Also prove an upgrade can resume the old per-run workspace digest
@@ -8570,6 +8597,8 @@ describe("native warm session supervision", () => {
           join(durableRoot, "runner", "runner-state.json"),
           JSON.stringify(durableRunnerState(durableIdentity, "ready")),
         );
+        checkpointFirstRunner = () => writeFile(join(durableRoot, "runner", "runner-state.json"),
+          JSON.stringify(durableRunnerState(durableIdentity, "suspended")));
         const continuationDb = {
           ...leaseDb(second),
           select: () => ({
@@ -8586,6 +8615,14 @@ describe("native warm session supervision", () => {
             }),
           }),
         } as unknown as Db;
+        brokerLost = loseBridge;
+        const releasePreparation = instructionFiles ? await claimWarmNativeInstructionCopy({
+          priorExecution: first, companyId: first.binding.companyId, agentId: first.binding.agentId,
+          executionWorkspaceId: second.binding.executionWorkspaceId, workspace: second.workspace,
+          environmentId: "environment-runnerd-warm-authority", runId: second.binding.runId,
+          preparationKey: secondCopy.preparationKey, adopt: async () => secondCopy,
+        }) : null;
+        if (instructionFiles) expect(releasePreparation === null).toBe(replacesProvider);
         await executePaperclipNativeSession({
           db: continuationDb,
           execution: second,
@@ -8600,7 +8637,9 @@ describe("native warm session supervision", () => {
           useRunnerd: true,
           managedGitHub,
           runnerExecutionTarget: remoteTarget(secondDuplex),
+          instructionWorkingCopy: instructionFiles ? secondCopy : undefined,
         });
+        await releasePreparation?.();
         if (managedGitHub) {
           expect(state.execute.mock.calls[1]?.[0].existingSession).toBe(replacesProvider ? undefined : firstSession);
           expect(githubAccess.create).toHaveBeenCalledTimes(replacesProvider ? 2 : 1);
@@ -8616,7 +8655,7 @@ describe("native warm session supervision", () => {
         if (replacesProvider) {
           expect(firstClose).toHaveBeenCalledOnce();
           expect(firstClose).toHaveBeenCalledWith({
-            reason: "warm native session configuration changed",
+            reason: instructionFiles ? "warm instruction materialization changed before preparation" : "warm native session configuration changed",
           });
         } else {
           expect(firstClose).not.toHaveBeenCalled();

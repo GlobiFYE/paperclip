@@ -73,7 +73,7 @@ duplex?: { enabled?: boolean; capability: boolean; unavailable?: boolean }) {
       return bridge;
     });
   cleanups.push(result.stop);
-  return { ...result, root, resolveCredentials, execute, openDuplexChannel, bridgeModes };
+  return Object.assign(result, { root, resolveCredentials, execute, openDuplexChannel, bridgeModes });
 }
 function request(broker: NativeGitHubAccess, extra: RequestInit = {}, endpoint = "/runtime-tools/github/credentials") {
   return fetch(broker.env.PAPERCLIP_GITHUB_BROKER_URL + endpoint, {
@@ -98,6 +98,26 @@ it("uses the selected duplex transport across credential rotation without file p
   releaseB();
   await b.stop();
   expect(() => b.activate(run("c"))).toThrow("closed");
+});
+it("marks a lost HTTP/2 bridge unavailable before the next warm admission", async () => {
+  const b = await broker(undefined, true, false, undefined, { enabled: true, capability: true });
+  const release = b.activate(run("a"));
+  expect((await request(b)).status).toBe(200);
+  release();
+  expect(b.ready).toBe(true);
+  const channel = await b.openDuplexChannel.mock.results[0]!.value;
+  channel.stop();
+  await vi.waitFor(() => expect(b.ready).toBe(false), { timeout: 2000 });
+});
+it("closes a healthy HTTP/2 bridge without reporting a lost active run", async () => {
+  const onLog = vi.fn(async (_stream: "stdout" | "stderr", _chunk: string) => undefined);
+  const b = await broker(undefined, true, false, onLog, { enabled: true, capability: true });
+  const release = b.activate(run("a"));
+  expect((await request(b)).status).toBe(200);
+  release();
+  await b.stop();
+  expect(b.ready).toBe(false);
+  expect(onLog.mock.calls.filter(([, chunk]) => chunk.includes("channel lost"))).toEqual([]);
 });
 it.each([
   { enabled: false, capability: true, unavailable: false, opens: 0 },
