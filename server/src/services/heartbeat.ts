@@ -1,4 +1,5 @@
-import { withRunExecutionTiming, measureRunPhase, measureWorkspaceSyncPhase } from "./execution-preparation-timing.js";
+import { dotRunnerBroker } from "./dot-runner-broker.js";
+import { withRunExecutionTiming, measureRunPhase, measureWorkspaceSyncPhase, isWorkspaceSyncDetailPhase } from "./execution-preparation-timing.js";
 import { createHeartbeatPreparationTiming } from "./heartbeat/preparation-timing.js";
 import { createHeartbeatInstructionCopyRelease, createHeartbeatInstructionWorkingCopy } from "./heartbeat/instruction-working-copy.js";
 import { prepareHeartbeatRuntimeServiceIntents, startHeartbeatRuntimeServices, recordHeartbeatAdapterRuntimeServices } from "./heartbeat/runtime-services.js";
@@ -1203,6 +1204,13 @@ export function heartbeatService(
   });
 
   const heartbeatQueue = createHeartbeatQueue(db, {
+    canStartNewExternalBotWork: async agent => {
+      if (agent.adapterType !== "paperclip_runner" || agent.adapterConfig.provider !== "grok_bot") return true;
+      const aiConnection = aiRuntimeConnectionBindingSchema.safeParse(agent.runtimeConfig?.aiConnection);
+      if (aiConnection.success && aiConnection.data.mode === "router") return true;
+      return dotRunnerBroker(db).canStartNewWork(agent.companyId, agent.id,
+        readNonEmptyString(agent.adapterConfig.externalBindingId) ?? "");
+    },
     applyWakeQueuePostCommitEffects,
     setRunStatus,
     setWakeupStatus,
@@ -3312,10 +3320,11 @@ export function heartbeatService(
                 message: "workspace_checkpoint", payload: { phase: "workspace_checkpoint", ...metrics } });
             },
             onPhase: async (name, work) => {
+              if (isWorkspaceSyncDetailPhase(name)) return measureWorkspaceSyncPhase(name, work);
               const started = Date.now();
               try { return await measureWorkspaceSyncPhase(name, work); }
-              finally { await appendRunEvent(run, { eventType: "lifecycle", stream: "system", level: "info",
-                message: name, payload: { phase: name, durationMs: Date.now() - started } }); }
+              finally { await measureRunPhase("workspace_sync.progress", () => appendRunEvent(run, { eventType: "lifecycle", stream: "system", level: "info",
+                message: name, payload: { phase: name, durationMs: Date.now() - started } })); }
             },
           },
           config: {
