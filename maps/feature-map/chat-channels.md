@@ -44,8 +44,9 @@ Manual: For each supported provider being changed, send a unique message, verify
 
 For GitHub reviewed authors, add a disposable account in **Access → Reviewed
 authors** and open a pull request from it. Expect one review task under the
-responsible member, without low-trust quarantine. A mention or comment from that
-account must be refused. A later run on the task, such as a timer wake, must get
+responsible member, without low-trust quarantine. A mention or reply from that
+account in the pull request must reach the agent under the responsible member; a
+mention in an issue must be refused. A later run on the task, such as a timer wake, must get
 no personal or host GitHub credentials and only the bot's tools. Remove the
 account and confirm that new pull request events, wakeups, and bot tool calls are
 refused. The channel integration suite covers these paths with provider fixtures.

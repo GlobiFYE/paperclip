@@ -913,9 +913,10 @@ export function GitHubAccessEditor({
         </div>
         <p className="text-xs text-muted-foreground">
           Pull requests from these GitHub users get automatic reviews under the
-          responsible member, without guest quarantine or a sandbox. They need
-          no company membership and cannot mention or control the bot. Add only
-          people you trust, because their pull request content drives the run.
+          responsible member, without guest quarantine or a sandbox. They can
+          also mention or reply to the bot in any pull request, but not in
+          issues. They need no company membership. Add only people you trust,
+          because their pull requests and comments drive the run.
           The run never receives a person’s or the host’s GitHub credentials,
           and tools stay limited to this bot’s connection.
         </p>
@@ -1029,7 +1030,7 @@ export function GitHubAccessEditor({
                 ? "Each member confirms their own GitHub identity. Share this link with an existing company member, or link your own account."
                 : dialog === "guest"
                   ? "Allow a GitHub user to mention this bot. A company member must sponsor their restricted access."
-                  : "Review every pull request from a GitHub user automatically. They cannot mention or control the bot."}
+                  : "Review every pull request from a GitHub user automatically, and let them mention or reply to the bot in pull requests. They cannot use the bot in issues."}
             </DialogDescription>
           </DialogHeader>
           {dialog === "member" ? (

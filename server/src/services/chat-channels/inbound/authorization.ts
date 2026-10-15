@@ -7,6 +7,7 @@ import {
 import { voiceSessionStore } from "../../voice/voice-session-store.js";
 
 import { githubChatPrincipalAccess } from "../../chat-github-access.js";
+import { githubReviewedAuthorCommentAdmission } from "../../chat-github-events.js";
 
 import {
   and,
@@ -176,6 +177,8 @@ export function createChatInboundAuthority(db: Db, options: InboundAuthorityOpti
     tx: DbOrTransaction,
     endpoint: EndpointRow,
     principalId: string,
+    // Only conversation turns pass this; governed actions never accept a reviewed author.
+    githubConversationId?: string | null,
   ): Promise<{
     allowed: boolean;
     linkedDenied: boolean;
@@ -193,7 +196,13 @@ export function createChatInboundAuthority(db: Db, options: InboundAuthorityOpti
       }
     }
     const githubAccess = await githubChatPrincipalAccess(tx, endpoint, principalId);
-    if (githubAccess) return githubAccess;
+    if (githubAccess) {
+      if (githubAccess.allowed || !githubConversationId) return githubAccess;
+      const commentAdmission = await githubReviewedAuthorCommentAdmission(tx, endpoint, principalId, githubConversationId);
+      return commentAdmission?.allowed
+        ? { ...githubAccess, allowed: true, linkedDenied: false, userId: commentAdmission.responsibleUserId ?? null }
+        : githubAccess;
+    }
     // Link confirmation already uses this transaction-scoped identity key.
     // Taking it at the final task mutation boundary prevents a newly confirmed
     // identity from racing the authorization snapshot. Row locks below also

@@ -8,7 +8,7 @@ import {
 } from "@paperclipai/db";
 import { conflict, forbidden, HttpError } from "../errors.js";
 import { githubChatPrincipalAccess } from "./chat-github-access.js";
-import { githubAutomaticAdmission } from "./chat-github-events.js";
+import { githubAutomaticAdmission, githubReviewedAuthorCommentAdmission } from "./chat-github-events.js";
 import { githubBotRepositoryToken, githubBotRequest } from "./chat-github-client.js";
 import { withGitHubPublicationLease } from "./chat-github-publication-lease.js";
 import { projectSafeChatPublicationText } from "./chat-publication-projection.js";
@@ -139,8 +139,10 @@ export function githubResponseCommentService(db: Db, fetchImpl = fetch) {
     const automatic = (row.delivery.normalizedEvent.githubAutomatic ?? row.delivery.normalizedEvent.githubIssue) as
       { context: GitHubAutomaticEventContext } | undefined;
     const admission = automatic ? await githubAutomaticAdmission(db, row.endpoint, automatic.context) : null;
-    // A reviewed author is admitted only by the automatic review policy.
-    if (!access?.allowed && !(admission?.allowed && admission.reviewedAuthor))
+    const reviewedAuthorComment = !automatic && !access?.allowed &&
+      (await githubReviewedAuthorCommentAdmission(db, row.endpoint, row.delivery.principalId, row.conversation.externalThreadId))?.allowed === true;
+    // A reviewed author is admitted by the automatic review policy, or in a pull request conversation.
+    if (!access?.allowed && !(admission?.allowed && admission.reviewedAuthor) && !reviewedAuthorComment)
       throw forbidden("The initiating GitHub person is no longer authorized");
     if (automatic && !admission?.allowed) throw forbidden("Automatic GitHub task authority changed");
     const match = /^github:([^:]+):(?:issue:)?([1-9][0-9]*)(?::rc:([1-9][0-9]*))?$/.exec(row.conversation.externalThreadId);
