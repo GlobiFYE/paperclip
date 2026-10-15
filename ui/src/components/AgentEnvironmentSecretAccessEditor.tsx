@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { SecretPicker } from "./environment-variables-editor/SecretPicker";
 import {
   entriesToEnvironmentRows,
+  environmentRowNameIssue,
   nextEnvironmentRowId,
   nextAvailableEnvKey,
   normalizeAccessMapKey,
@@ -17,6 +18,8 @@ interface AgentEnvironmentSecretAccessEditorProps {
   bindings: readonly AgentSecretRefEntry[];
   secrets: readonly CompanySecret[];
   onChange: (next: Record<string, EnvSecretRefBinding>) => void;
+  /** Env keys bound to plain values or user secrets; a rename must not take one. */
+  reservedNames?: readonly string[];
   disabled?: boolean;
 }
 
@@ -24,8 +27,10 @@ export function AgentEnvironmentSecretAccessEditor({
   bindings,
   secrets,
   onChange,
+  reservedNames,
   disabled,
 }: AgentEnvironmentSecretAccessEditorProps) {
+  const reserved = useMemo(() => new Set(reservedNames ?? []), [reservedNames]);
   const incomingMap = useMemo(() => rowsToEnvMap(entriesToEnvironmentRows(bindings)), [bindings]);
   const incomingKey = useMemo(() => normalizeAccessMapKey(incomingMap), [incomingMap]);
   const [rows, setRows] = useState<EnvironmentSecretRow[]>(() => entriesToEnvironmentRows(bindings));
@@ -41,6 +46,9 @@ export function AgentEnvironmentSecretAccessEditor({
 
   function emit(nextRows: EnvironmentSecretRow[]) {
     setRows(nextRows);
+    // Keep the last valid assignment while a name is invalid, duplicated or
+    // taken: emitting would drop or overwrite a binding without a warning.
+    if (nextRows.some((row) => environmentRowNameIssue(row, nextRows, reserved))) return;
     const map = rowsToEnvMap(nextRows);
     lastEmittedKeyRef.current = normalizeAccessMapKey(map);
     onChange(map);
@@ -66,6 +74,7 @@ export function AgentEnvironmentSecretAccessEditor({
         <div className="space-y-2">
           {rows.map((row) => {
             const selectedSecret = secrets.find((secret) => secret.id === row.secretId) ?? null;
+            const nameIssue = environmentRowNameIssue(row, rows, reserved);
             return (
               <div key={row.id} className="grid grid-cols-(--gtc-65) items-start gap-1.5">
                 <div className="min-w-0">
@@ -104,10 +113,16 @@ export function AgentEnvironmentSecretAccessEditor({
                       onChange={(event) => patchRow(row.id, { name: event.target.value })}
                       disabled={disabled}
                       aria-label="Environment variable name"
+                      aria-invalid={nameIssue ? true : undefined}
                       spellCheck={false}
                     />
                     {row.name ? <code>env.{row.name}</code> : null}
                   </div>
+                  {nameIssue ? (
+                    <p role="alert" className="mt-1 text-(length:--text-micro) text-destructive">
+                      {nameIssue}. Not saved yet.
+                    </p>
+                  ) : null}
                 </div>
                 <select
                   className="h-9 shrink-0 rounded-md border border-border bg-background px-2 text-xs outline-none disabled:cursor-not-allowed disabled:opacity-60"

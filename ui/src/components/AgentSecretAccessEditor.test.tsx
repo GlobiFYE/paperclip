@@ -244,6 +244,46 @@ describe("AgentSecretAccessEditor component", () => {
     expect(emitted.at(-1)).toEqual({ GITHUB_TOKEN: { type: "secret_ref", secretId: "s1", version: "latest" } });
   });
 
+  it("keeps the saved assignment while a renamed key is invalid, duplicated or taken", () => {
+    const emitted: Array<Record<string, EnvSecretRefBinding>> = [];
+    render(
+      <AgentSecretAccessEditor
+        config={{
+          env: {
+            GH_TOKEN: { type: "secret_ref", secretId: "s0", version: 1 },
+            STRIPE_KEY: { type: "secret_ref", secretId: "s1", version: "latest" },
+            PLAIN: { type: "plain", value: "x" },
+            USER_TOKEN: { type: "user_secret_ref", key: "personal-token" },
+          },
+        }}
+        secrets={secrets}
+        onEnvChange={(next) => emitted.push(next)}
+        onChange={() => {}}
+      />,
+    );
+    const nameInput = container.querySelector<HTMLInputElement>('input[aria-label="Environment variable name"]')!;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    for (const [name, message] of [
+      ["GH-TOKEN", "Use letters, digits and _"],
+      ["STRIPE_KEY", "Another environment secret uses this name"],
+      ["PLAIN", "Already used by another environment variable"],
+      ["USER_TOKEN", "Already used by another environment variable"],
+    ] as const) {
+      setter.call(nameInput, name);
+      flushSync(() => nameInput.dispatchEvent(new Event("input", { bubbles: true })));
+      expect(container.querySelector("[role=alert]")?.textContent).toContain(message);
+    }
+    expect(emitted).toEqual([]);
+
+    setter.call(nameInput, "GITHUB_TOKEN");
+    flushSync(() => nameInput.dispatchEvent(new Event("input", { bubbles: true })));
+    expect(container.querySelector("[role=alert]")).toBeNull();
+    expect(emitted.at(-1)).toEqual({
+      GITHUB_TOKEN: { type: "secret_ref", secretId: "s0", version: 1 },
+      STRIPE_KEY: { type: "secret_ref", secretId: "s1", version: "latest" },
+    });
+  });
+
   it("shows user-secret environment bindings and edits their requirement", () => {
     const emitted: Array<Record<string, unknown>> = [];
     render(

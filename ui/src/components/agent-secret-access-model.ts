@@ -145,6 +145,25 @@ export function rowsToEnvMap(rows: readonly EnvironmentSecretRow[]): Record<stri
   return map;
 }
 
+/**
+ * Why a row name cannot be saved, or null when it can. `reservedNames` are env
+ * keys owned by plain values or user secrets, which this editor cannot see.
+ */
+export function environmentRowNameIssue(
+  row: EnvironmentSecretRow,
+  rows: readonly EnvironmentSecretRow[],
+  reservedNames: ReadonlySet<string>,
+): string | null {
+  const name = row.name.trim();
+  if (!name) return null;
+  if (!SECRET_ALIAS_RE.test(name)) return "Use letters, digits and _";
+  if (rows.some((other) => other.id !== row.id && other.name.trim() === name)) {
+    return "Another environment secret uses this name";
+  }
+  if (reservedNames.has(name)) return "Already used by another environment variable";
+  return null;
+}
+
 /** Complete, valid API-access grants keyed by alias. */
 export function rowsToAccessMap(rows: readonly AccessRow[]): Record<string, EnvSecretRefBinding> {
   const map: Record<string, EnvSecretRefBinding> = {};

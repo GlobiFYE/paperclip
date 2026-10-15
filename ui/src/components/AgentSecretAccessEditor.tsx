@@ -85,6 +85,14 @@ export function AgentSecretAccessEditor({
     [proposals],
   );
   const envBindings = useMemo(() => parseEnvSecretRefs(config), [config]);
+  const nonCompanySecretEnvNames = useMemo(() => {
+    const env = config?.env;
+    if (typeof env !== "object" || env === null || Array.isArray(env)) return [];
+    return Object.entries(env as Record<string, unknown>)
+      .filter(([, binding]) => !(typeof binding === "object" && binding !== null &&
+        (binding as { type?: unknown }).type === "secret_ref"))
+      .map(([name]) => name);
+  }, [config]);
   const userSecretBindings = useMemo(() => parseEnvUserSecretRefs(config), [config]);
   const apiBindings = useMemo(() => parseAccessGrants(config), [config]);
 
@@ -142,6 +150,7 @@ export function AgentSecretAccessEditor({
         bindings={envBindings}
         secrets={secrets}
         onChange={onEnvChange ?? (() => {})}
+        reservedNames={nonCompanySecretEnvNames}
         disabled={disabled || !onEnvChange}
       />
 

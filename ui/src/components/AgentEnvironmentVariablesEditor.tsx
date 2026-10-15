@@ -73,6 +73,10 @@ export const AgentEnvironmentVariablesEditor = forwardRef<
 >(function AgentEnvironmentVariablesEditor({ value, onChange, disabled, onDirtyChange, hideDraftActions }, ref) {
   const editorRef = useRef<EnvironmentVariablesEditorHandle | null>(null);
   const editableValue = useMemo(() => selectAgentConfigurationEnv(value), [value]);
+  const secretNames = useMemo(
+    () => Object.entries(value ?? {}).filter(([, binding]) => isSecretBinding(binding)).map(([name]) => name),
+    [value],
+  );
 
   function emitEditable(next: Record<string, EnvBinding> | undefined) {
     onChange(mergeAgentConfigurationEnv(value, next));
@@ -98,6 +102,7 @@ export const AgentEnvironmentVariablesEditor = forwardRef<
       onDirtyChange={onDirtyChange}
       hideDraftActions={hideDraftActions}
       plainOnly
+      takenNames={secretNames}
       footerHint="Plain environment values only. Assign secrets on the Secrets tab."
     />
   );

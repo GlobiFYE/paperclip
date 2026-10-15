@@ -108,6 +108,34 @@ describe("AgentEnvironmentVariablesEditor", () => {
     expect(onChange).toHaveBeenLastCalledWith(flushed);
   });
 
+  it("does not save a plain variable renamed to a hidden secret name", () => {
+    const onChange = vi.fn();
+    const ref = createRef<EnvironmentVariablesEditorHandle>();
+    flushSync(() => {
+      root.render(
+        <AgentEnvironmentVariablesEditor
+          ref={ref}
+          value={{
+            FOO: { type: "plain", value: "entered" },
+            TOKEN: { type: "secret_ref", secretId: "company-secret", version: "latest" },
+          }}
+          onChange={onChange}
+        />,
+      );
+    });
+    const nameInput = container.querySelector<HTMLInputElement>('input[aria-label="Variable name"]')!;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    setter.call(nameInput, "TOKEN");
+    flushSync(() => nameInput.dispatchEvent(new Event("input", { bubbles: true })));
+    flushSync(() => nameInput.dispatchEvent(new FocusEvent("focusout", { bubbles: true })));
+
+    expect(ref.current?.flushPendingDraft()).toBeNull();
+    expect(onChange).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Used by a secret on the Secrets tab");
+    const save = [...container.querySelectorAll("button")].find((button) => button.textContent?.includes("Save"));
+    expect(save?.disabled).toBe(true);
+  });
+
   it("replaces user-secret bindings and keeps plain and company-secret values", () => {
     const current = {
       PLAIN: { type: "plain", value: "x" },

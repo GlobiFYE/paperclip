@@ -177,6 +177,7 @@ export function validateName(
   name: string,
   duplicateNames: ReadonlySet<string>,
   reservedPrefixes: readonly string[],
+  takenNames: ReadonlySet<string> = new Set(),
 ): NameIssue | null {
   const trimmed = name.trim();
   if (!trimmed) return null;
@@ -185,6 +186,9 @@ export function validateName(
   }
   if (duplicateNames.has(trimmed)) {
     return { level: "error", message: "Duplicate name" };
+  }
+  if (takenNames.has(trimmed)) {
+    return { level: "error", message: "Used by a secret on the Secrets tab" };
   }
   for (const prefix of reservedPrefixes) {
     if (prefix && trimmed.startsWith(prefix)) {
