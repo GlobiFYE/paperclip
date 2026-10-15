@@ -39,6 +39,7 @@ import { workspaceOperationService, isNativeWorkspaceFinalizationOperationActive
 import { issueRecoveryActionService } from "../services/issue-recovery-actions.js";
 import { recoveryService } from "../services/recovery/service.js";
 import { issueService } from "../services/issues.js";
+import { runningProcesses } from "../adapters/index.js";
 import { withNativeWorkspaceFinalizationOwnership } from "../services/native-runtime/native-workspace-finalization-ownership.js";
 import { noticeMetadataReferencesRecoveryAction } from "../services/recovery/successful-run-handoff.js";
 
@@ -2392,7 +2393,7 @@ describeEmbeddedPostgres("issue recovery actions", () => {
     expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId))).toHaveLength(0);
   });
 
-  it("queues one successor from a running owner repair that holds the issue execution lock", async () => {
+  it.each(["none", "user", "agent"] as const)("keeps one source-run receipt behind a running repair with existing %s input", async (pendingActor) => {
     const { companyId, coderId, sourceIssueId } = await seedCompany();
     const responsibleUserId = randomUUID();
     await db.insert(authUsers).values({
@@ -2403,7 +2404,7 @@ describeEmbeddedPostgres("issue recovery actions", () => {
     await db.update(agents).set({ runtimeConfig: { heartbeat: { maxConcurrentRuns: 1 } } }).where(eq(agents.id, coderId));
     const runId = randomUUID();
     await seedHeartbeatRun({ companyId, agentId: coderId, runId, issueId: sourceIssueId, status: "running" });
-    await db.update(issues).set({ status: "in_progress", executionRunId: runId }).where(eq(issues.id, sourceIssueId));
+    await db.update(issues).set({ status: "todo", executionRunId: runId }).where(eq(issues.id, sourceIssueId));
     await issueRecoveryActionService(db).upsertSourceScoped({
       companyId, sourceIssueId, kind: "deliberate_wait_without_target", ownerType: "agent",
       ownerAgentId: coderId, returnOwnerAgentId: coderId,
@@ -2411,21 +2412,131 @@ describeEmbeddedPostgres("issue recovery actions", () => {
       nextAction: "Continue unfinished work.",
       wakePolicy: { type: "bounded_owner_disposition_repair", retryAgentId: coderId, attempt: 1, maxAttempts: 2 },
     });
+    if (pendingActor !== "none") {
+      await db.insert(agentWakeupRequests).values({
+        companyId, agentId: coderId, source: "assignment", reason: "issue_commented",
+        status: "deferred_issue_execution", requestedByActorType: pendingActor,
+        requestedByActorId: pendingActor === "user" ? responsibleUserId : coderId,
+        payload: { issueId: sourceIssueId },
+      });
+    }
     const app = createApp({ type: "agent", agentId: coderId, companyId, runId, source: "agent_jwt" });
     const resume = () => request(app).patch(`/api/issues/${sourceIssueId}`)
       .send({ status: "todo", resume: true, comment: "This batch succeeded; queue the next one." });
 
+    const expectedCount = pendingActor === "none" ? 1 : 2;
     await resume().expect(200);
     await vi.waitFor(async () => expect((await db.select().from(agentWakeupRequests)
-      .where(eq(agentWakeupRequests.companyId, companyId))).length).toBe(1));
+      .where(eq(agentWakeupRequests.companyId, companyId))).length).toBe(expectedCount));
     await resume().expect(200);
     const wakes = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId));
-    expect(wakes).toHaveLength(1);
-    expect(["queued", "deferred_issue_execution"]).toContain(wakes[0]?.status);
-    expect(wakes[0]?.idempotencyKey).toBe(`issue-owner-resume:${sourceIssueId}:${runId}`);
-    expect(wakes[0]?.runId).not.toBe(runId);
+    expect(wakes).toHaveLength(expectedCount);
+    const [receipt] = wakes.filter(wake => wake.idempotencyKey === `issue-owner-resume:${sourceIssueId}:${runId}`);
+    expect(receipt).toMatchObject({ requestedByActorType: "agent", requestedByActorId: coderId });
+    expect(["queued", "deferred_issue_execution", "coalesced"]).toContain(receipt?.status);
+    expect(receipt?.runId).not.toBe(runId);
+    if (pendingActor !== "none") {
+      // Even after the successor input is consumed, a repeat of this source
+      // run cannot turn the merged receipt into another queued successor.
+      await db.update(agentWakeupRequests).set({ status: "coalesced", finishedAt: new Date() })
+        .where(eq(agentWakeupRequests.companyId, companyId));
+      await resume().expect(200);
+      await vi.waitFor(async () => expect(await db.select().from(agentWakeupRequests)
+        .where(eq(agentWakeupRequests.companyId, companyId))).toHaveLength(expectedCount));
+    }
     expect((await db.select().from(issues).where(eq(issues.id, sourceIssueId)))[0]?.status).toBe("todo");
     expect((await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId)))[0]?.status).toBe("running");
+  });
+
+  it.each(["user", "agent"] as const)("retains an owner receipt when queue admission meets existing %s input", async (pendingActor) => {
+    const { companyId, coderId, sourceIssueId } = await seedCompany();
+    // Process adapters exercise the legacy wake queue; Codex uses native admission.
+    await db.update(agents).set({ adapterType: "process", adapterConfig: { command: "false" },
+      runtimeConfig: { heartbeat: { maxConcurrentRuns: 1 } } }).where(eq(agents.id, coderId));
+    const runId = randomUUID();
+    await seedHeartbeatRun({ companyId, agentId: coderId, runId, issueId: sourceIssueId, status: "running" });
+    await db.update(issues).set({ status: "in_progress", executionRunId: runId }).where(eq(issues.id, sourceIssueId));
+    await db.insert(agentWakeupRequests).values({
+      companyId, agentId: coderId, source: "automation", reason: "issue_commented",
+      status: "deferred_issue_execution", requestedByActorType: pendingActor,
+      requestedByActorId: pendingActor === "user" ? "board" : coderId,
+      payload: { issueId: sourceIssueId },
+    });
+    const [comment] = await db.insert(issueComments).values({
+      companyId, issueId: sourceIssueId, authorType: "agent", authorAgentId: coderId,
+      createdByRunId: runId, body: "Queue the next authorized batch.",
+    }).returning();
+    const heartbeat = heartbeatService(db);
+    const wake = () => heartbeat.wakeup(coderId, {
+      source: "automation", triggerDetail: "system", reason: "issue_commented",
+      requestedByActorType: "agent", requestedByActorId: coderId,
+      idempotencyKey: `issue-owner-resume:${sourceIssueId}:${runId}`,
+      payload: { issueId: sourceIssueId, commentId: comment.id, resumeIntent: true, followUpRequested: true },
+      contextSnapshot: { issueId: sourceIssueId, wakeCommentId: comment.id, wakeReason: "issue_commented" },
+    });
+    runningProcesses.set(runId, { child: {} as never, graceSec: 0, processGroupId: null });
+    try {
+      await wake();
+      const wakes = () => db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId));
+      const rows = await wakes();
+      expect(rows).toHaveLength(2);
+      const [receipt] = rows.filter(row => row.idempotencyKey === `issue-owner-resume:${sourceIssueId}:${runId}`);
+      expect(receipt).toMatchObject({ requestedByActorType: "agent", requestedByActorId: coderId });
+      if (pendingActor === "agent") expect(receipt?.status).toBe("coalesced");
+      else expect(receipt?.status).toBe("deferred_issue_execution");
+      // Once the queued input is consumed, its durable source-run receipt must
+      // still prevent the same repair from creating another successor.
+      await db.update(agentWakeupRequests).set({ status: "coalesced", finishedAt: new Date() })
+        .where(eq(agentWakeupRequests.companyId, companyId));
+      await wake();
+      expect(await wakes()).toHaveLength(2);
+    } finally { runningProcesses.delete(runId); }
+  });
+
+  it("rechecks a pending interaction committed while the owner resume waits for the issue lock", async () => {
+    const { companyId, coderId, sourceIssueId } = await seedCompany();
+    const runId = randomUUID();
+    await seedHeartbeatRun({ companyId, agentId: coderId, runId, issueId: sourceIssueId, status: "succeeded" });
+    await db.update(issues).set({ status: "in_review" }).where(eq(issues.id, sourceIssueId));
+    await issueRecoveryActionService(db).upsertSourceScoped({
+      companyId, sourceIssueId, kind: "deliberate_wait_without_target", ownerType: "agent",
+      ownerAgentId: coderId, returnOwnerAgentId: coderId,
+      cause: "deliberate_wait_without_target", fingerprint: "disposition:concurrent-wait",
+      nextAction: "Continue only if no review is pending.",
+      wakePolicy: { type: "bounded_owner_disposition_repair", retryAgentId: coderId, attempt: 1, maxAttempts: 2 },
+    });
+    let release!: () => void, locked!: () => void;
+    const released = new Promise<void>(resolve => { release = resolve; });
+    const held = new Promise<void>(resolve => { locked = resolve; });
+    const competing = db.transaction(async tx => {
+      await tx.select({ id: issues.id }).from(issues).where(eq(issues.id, sourceIssueId)).for("update");
+      locked();
+      await released;
+      await tx.insert(issueThreadInteractions).values({
+        companyId, issueId: sourceIssueId, kind: "request_confirmation", status: "pending", createdByAgentId: coderId,
+        payload: { version: 1, prompt: "A new decision is required." },
+      });
+    });
+    await held;
+    const app = createApp({ type: "agent", agentId: coderId, companyId, runId, source: "agent_jwt" });
+    let earlyResult: { status: number; body: unknown } | undefined;
+    const response = request(app).patch(`/api/issues/${sourceIssueId}`)
+      .send({ status: "todo", resume: true, comment: "Continue if authorized." }).then(result => { earlyResult = result; return result; });
+    try {
+      await vi.waitFor(async () => {
+        const waiting = await db.execute(sql`select pid from pg_stat_activity where datname = current_database()
+          and cardinality(pg_blocking_pids(pid)) > 0`);
+        expect(waiting.length, JSON.stringify(earlyResult)).toBeGreaterThan(0);
+      }, { timeout: 5_000 });
+    } finally {
+      release();
+      await competing;
+    }
+    const result = await response;
+    expect(result.status, JSON.stringify(result.body)).toBe(409);
+    expect(result.body.error).toContain("pending issue interaction");
+    expect((await db.select().from(issues).where(eq(issues.id, sourceIssueId)))[0]?.status).toBe("in_review");
+    expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, companyId))).toHaveLength(0);
   });
 
   it("keeps an exhausted monitor at its attempt limit when an old repair tries to re-arm it", async () => {

@@ -2219,7 +2219,12 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         opts.idempotencyKey !== dotRequest.idempotencyKey)) {
       throw conflict("Dot work request does not match its admission authority.");
     }
-    const receiptRequest = durableRequest ?? dotRequest;
+    // Keep an immutable source-run receipt when another queued input absorbs
+    // this repair resume. The wake queue preserves its actor and key.
+    const ownerResumeReceipt = opts.idempotencyKey?.startsWith("issue-owner-resume:") &&
+      opts.requestedByActorType === "agent" && opts.requestedByActorId === agentId
+      ? { id: randomUUID(), requestedAt: new Date() } : undefined;
+    const receiptRequest = durableRequest ?? dotRequest ?? ownerResumeReceipt;
     const durableReceiptFields = receiptRequest
       ? { id: receiptRequest.id, requestedAt: receiptRequest.requestedAt }
       : {};
