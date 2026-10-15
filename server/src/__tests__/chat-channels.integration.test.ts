@@ -1,4 +1,5 @@
 import { idleWorkSnapshot } from "../services/task-admission.js";
+import { stageReceiptReactionRemovals } from "../services/chat-receipt-reactions.js";
 import type { Db } from "@paperclipai/db";
 import * as activityLogModule from "../services/activity-log.js";
 import * as connectionCredentialBindings from "../services/connection-credential-bindings.js";
@@ -28654,6 +28655,37 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     ).resolves.toEqual([{ redactedError: null }]);
     expect(endpointRuntime.reactionErrors).toEqual([]);
     await service.shutdown();
+  });
+
+  it.each([false, true])("clears an older multi-line Slack receipt diagnostic on terminal removal with attachment warning %s", async hasAttachmentWarning => {
+    const fixture = await seedCompany();
+    const { callbacks, endpoint, runtime, service } = await configuredSlackEndpoint(fixture);
+    try {
+      const thread = makeThread({ channelId: "COLDWARNING", id: "slack:COLDWARNING:1740000093.1" });
+      await deliverMessage({ callbacks, endpointId: endpoint.id, thread: thread.thread, trigger: "mention",
+        message: makeMessage({ id: "1740000093.1", text: "@maya clear an older receipt diagnostic", mentioned: true }),
+      });
+      const [delivery] = await readChatDeliveriesByEndpointId(endpoint.id);
+      const [receipt] = await readChatActionsByProviderActionId(`receipt_reaction:${delivery.id}`);
+      const diagnostic = "Receipt reaction failed after 1 attempt (endpoint_attention): missing_scope\nsynthetic provider detail";
+      const attachmentWarning = "1 external attachment was omitted";
+      await db.update(chatActions).set({ status: "failed", result: { attempts: 1, retryable: false, redactedError: diagnostic } }).where(eq(chatActions.id, receipt.id));
+      await db.update(chatDeliveries).set({ redactedError: diagnostic + (hasAttachmentWarning ? `\n${attachmentWarning}` : "") }).where(eq(chatDeliveries.id, delivery.id));
+      const [conversation] = await service.listConversations(endpoint.id);
+      const runId = randomUUID();
+      await db.insert(heartbeatRuns).values({ id: runId, companyId: fixture.companyId, agentId: fixture.assignedAgentId, status: "succeeded",
+        contextSnapshot: await chatWakeContext({ endpointId: endpoint.id, issueId: conversation.issueId, provider: "slack", providerMessageId: "1740000093.1" }),
+      });
+      const removalIds = await db.transaction(tx => stageReceiptReactionRemovals(tx as unknown as Db, {
+        endpoint, binding: { companyId: fixture.companyId, endpointId: endpoint.id, conversationId: conversation.id, issueId: conversation.issueId }, runId,
+        runtimeContext: { generation: Number(receipt.payload.runtimeGeneration), credentialFingerprint: String(receipt.payload.credentialFingerprint) },
+      }));
+      expect(removalIds).toHaveLength(1);
+      await service.processPendingReceiptReactions(1, removalIds[0]);
+      expect(runtime.endpoints.get(endpoint.id)!.removedReactions).toEqual([{ threadId: thread.thread.id, messageId: "1740000093.1", emoji: "eyes" }]);
+      expect((await readChatActionsById(removalIds[0]))[0].status).toBe("processed");
+      expect((await readChatDeliveriesByEndpointId(endpoint.id))[0].redactedError).toBe(hasAttachmentWarning ? attachmentWarning : null);
+    } finally { await service.shutdown(); }
   });
 
   it("canonicalizes prefixed Chat SDK channel ids onto provider inventory resources", async () => {
