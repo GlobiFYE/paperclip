@@ -1853,9 +1853,15 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         if (current.status !== "pending") {
           return { interaction: current, applied: false };
         }
+        if (input.action === "answer" && current.kind !== "ask_user_questions") {
+          throw new Error("Only ask_user_questions interactions can be answered");
+        }
         const resolved: IssueThreadInteraction = {
           ...current,
-          status: input.action === "accept" ? "accepted" : "rejected",
+          status: input.action === "accept" ? "accepted" : input.action === "reject" ? "rejected" : "answered",
+          ...(input.action === "answer" ? {
+            result: { version: 1, answers: input.answers, summaryMarkdown: input.summaryMarkdown ?? null },
+          } : {}),
           updatedAt: new Date(),
         } as IssueThreadInteraction;
         const index = list.indexOf(current);

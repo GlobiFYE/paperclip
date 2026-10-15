@@ -78,6 +78,8 @@ import { isIP } from "node:net";
 import { logger } from "../middleware/logger.js";
 import { getTelemetryClient } from "../telemetry.js";
 import { accessService } from "./access.js";
+import { deliverNativeQuestionResponse, validateNativeQuestionResponseInput } from "./native-runtime/native-question-bridge.js";
+import { questionResponseDeliveryService } from "./question-response-delivery.js";
 import {
   authorizationService,
   canActorReadIssuePrivacy,
@@ -2050,9 +2052,11 @@ export function buildHostServices(
         const companyId = ensureCompanyId(params.companyId);
         await ensurePluginAvailableForCompany(companyId);
         assertReadableOriginFilter(params.originKind);
-        // Push the non-member visibility predicate into the list query so private
-        // issues are filtered at the SQL layer before they can reach a plugin.
-        const readCondition = await issueReadSqlCondition(db, pluginIssuePrivacyActor);
+        const actor = params.actorUserId
+          ? (await requireActiveHumanMember(companyId, params.actorUserId, { allowViewer: true }), { type: "board" as const, userId: params.actorUserId })
+          : pluginIssuePrivacyActor;
+        // Push the visibility predicate into SQL before issue data reaches a plugin.
+        const readCondition = await issueReadSqlCondition(db, actor);
         return applyWindow(
           (await issues.list(companyId, { ...(params as any), readCondition })) as Issue[],
           params,
@@ -2698,11 +2702,19 @@ export function buildHostServices(
       async listInteractions(params) {
         const companyId = ensureCompanyId(params.companyId);
         await ensurePluginAvailableForCompany(companyId);
+        if (params.actorUserId) await requireActiveHumanMember(companyId, params.actorUserId, { allowViewer: true });
         const issue = await issues.getById(params.issueId);
         if (!inCompany(issue, companyId)) return [];
-        // Interaction payloads follow the ACL of the issue they belong to; a
-        // private issue yields no interactions to a non-member plugin.
-        if (!(await pluginCanReadIssue(issue))) return [];
+        // Interaction payloads follow the plugin principal by default, or the
+        // explicitly paired human principal when a privileged read is requested.
+        const canRead = params.actorUserId && issue
+          ? issuePrivacyMode() !== "enforce" || await canActorReadIssuePrivacy(
+            db,
+            { type: "board", userId: params.actorUserId },
+            toIssuePrivacyRow(issue),
+          )
+          : await pluginCanReadIssue(issue);
+        if (!canRead) return [];
         return (await interactions.listForIssue(params.issueId)) as any;
       },
       async respondInteraction(params) {
@@ -2717,6 +2729,16 @@ export function buildHostServices(
           throw new Error("actorUserId is required to respond to an interaction on behalf of a board user");
         }
         await requireActiveHumanMember(companyId, params.actorUserId);
+        if (
+          issuePrivacyMode() === "enforce" &&
+          !(await canActorReadIssuePrivacy(
+            db,
+            { type: "board", userId: params.actorUserId },
+            toIssuePrivacyRow(issue),
+          ))
+        ) {
+          throw new Error(`Interaction "${params.interactionId}" not found for this issue`);
+        }
 
         const current = await interactions.getById(params.interactionId);
         if (!current || current.issueId !== issue.id || current.companyId !== companyId) {
@@ -2735,7 +2757,22 @@ export function buildHostServices(
           assigneeAgentId: issue.assigneeAgentId,
           status: issue.status,
         };
-        if (params.action === "accept") {
+        if (params.action === "answer") {
+          if (current.kind !== "ask_user_questions") {
+            throw new Error("Only ask_user_questions interactions can be answered");
+          }
+          const answers = params.answers ?? [];
+          await validateNativeQuestionResponseInput(current as any, {
+            answers,
+            summaryMarkdown: params.summaryMarkdown,
+          });
+          resolved = await interactions.answerQuestions(
+            { id: issue.id, companyId, status: issue.status },
+            params.interactionId,
+            { answers, summaryMarkdown: params.summaryMarkdown },
+            actor,
+          ) as typeof current;
+        } else if (params.action === "accept") {
           const result = await interactions.acceptInteraction(
             {
               id: issue.id,
@@ -2769,7 +2806,9 @@ export function buildHostServices(
           companyId,
           action: params.action === "accept"
             ? "issue.thread_interaction_accepted"
-            : "issue.thread_interaction_rejected",
+            : params.action === "reject"
+              ? "issue.thread_interaction_rejected"
+              : "issue.thread_interaction_answered",
           entityType: "issue",
           entityId: issue.id,
           actor: { actorUserId: params.actorUserId },
@@ -2778,15 +2817,28 @@ export function buildHostServices(
             interactionId: resolved.id,
             interactionKind: resolved.kind,
             interactionStatus: resolved.status,
+            ...(params.action === "answer" ? { answeredQuestionCount: params.answers?.length ?? 0 } : {}),
           },
         });
 
-        queuePluginInteractionContinuationWakeup({
-          issue: continuationTarget,
-          interaction: resolved,
-          actorUserId: params.actorUserId,
-          source: `plugin:${pluginKey}:interaction.${params.action}`,
-        });
+        if (params.action === "answer") {
+          await questionResponseDeliveryService(db, {
+            heartbeat,
+            resolveNativeQuestion: (interaction) => deliverNativeQuestionResponse(db, interaction),
+          }).deliver(resolved.id).catch((err) => {
+            logger.warn({ err, companyId, issueId: issue.id, interactionId: resolved.id },
+              "plugin question response delivery failed; durable outbox will retry");
+          });
+        }
+
+        if (params.action !== "answer") {
+          queuePluginInteractionContinuationWakeup({
+            issue: continuationTarget,
+            interaction: resolved,
+            actorUserId: params.actorUserId,
+            source: `plugin:${pluginKey}:interaction.${params.action}`,
+          });
+        }
 
         return { interaction: resolved as any, applied: true };
       },
