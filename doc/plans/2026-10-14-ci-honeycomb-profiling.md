@@ -38,9 +38,11 @@ No sampling inside a selected run.
   checks; real root-config probe with 13 tests and one file span; full Node 24
   typecheck and build. Repository-wide Vitest is being rerun after the final
   reporter-default correction and base update.
-- Created and verified the repository `profile-ci` label. Dedicated ingest key
-  and master-only GitHub environment configuration remain pending. No credential
-  is present in GitHub or repository source.
+- Created and verified the repository `profile-ci` label. Dedicated Honeycomb
+  ingest key `paperclip-ci-profile` has no dataset-creation permission. It is
+  stored only as `HONEYCOMB_CI_API_KEY` in the `ci-profiling` GitHub environment,
+  restricted to the `master` branch. Temporary key file removed; both credentials
+  scanned absent from repository files and branch history.
 - Added CODEOWNER author/actor authorization and rejection tests, plus CODEOWNERS
   coverage of the privileged exporter.
 - Delivery: reviewable PR and live Honeycomb evidence. Activation of new trusted

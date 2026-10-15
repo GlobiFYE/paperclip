@@ -35,13 +35,18 @@ export function trustedOwnerIds(get = getGithub, trustedSha) {
   });
 }
 
-export function associatedProfilePr(run, pulls, ownerIds) {
+export function authorizedActors(run, ownerIds) {
   const allowed = (user) => user?.type === "User" && ownerIds.includes(user.id);
-  if (run.repository?.id !== repositoryId || run.repository?.full_name !== repository
-    || !allowed(run.actor) || !allowed(run.triggering_actor)) return undefined;
+  return run.repository?.id === repositoryId && run.repository?.full_name === repository
+    && allowed(run.actor) && allowed(run.triggering_actor);
+}
+
+export function associatedProfilePr(run, pulls, ownerIds) {
+  if (!authorizedActors(run, ownerIds)) return undefined;
   return pulls.find((pr) => pr.base.repo.id === repositoryId && pr.base.repo.full_name === repository
     && pr.head.repo?.id === run.head_repository?.id && pr.head.sha === run.head_sha
-    && allowed(pr.user) && pr.labels.some((label) => label.name === "profile-ci"));
+    && pr.user?.type === "User" && ownerIds.includes(pr.user.id)
+    && pr.labels.some((label) => label.name === "profile-ci"));
 }
 
 async function main() {

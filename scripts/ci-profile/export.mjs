@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildTrace, traceUrl } from "./trace.mjs";
-import { associatedProfilePr, trustedOwnerIds } from "./authorize.mjs";
+import { associatedProfilePr, authorizedActors, trustedOwnerIds } from "./authorize.mjs";
 
 const repository = "paperclipai/paperclip";
 const repoPath = `/repos/${repository}`;
@@ -49,7 +49,18 @@ async function main() {
   const pulls = pages(`${repoPath}/commits/${run.head_sha}/pulls?per_page=100`);
   const historical = args.includes("--historical");
   if (historical && process.env.GITHUB_ACTIONS) throw new Error("Historical export is a local-only operation");
-  const pr = historical ? undefined : associatedProfilePr(run, pulls, trustedOwnerIds(get));
+  const ownerIds = historical ? [] : trustedOwnerIds(get);
+  if (process.env.GITHUB_ACTIONS) {
+    const exporterId = process.env.GITHUB_RUN_ID;
+    const exporterAttempt = process.env.GITHUB_RUN_ATTEMPT;
+    if (!/^\d+$/.test(exporterId) || !/^[1-9]\d*$/.test(exporterAttempt)) throw new Error("Invalid exporter run identity");
+    const exporter = get(`${repoPath}/actions/runs/${exporterId}/attempts/${exporterAttempt}`);
+    if (!authorizedActors(exporter, ownerIds)) {
+      console.log("Exporter actor is not a CI CODEOWNER; no data exported.");
+      return;
+    }
+  }
+  const pr = historical ? undefined : associatedProfilePr(run, pulls, ownerIds);
   if (!pr && !historical) {
     console.log("No CODEOWNERS-authorized profile-ci PR at this revision; no data exported.");
     return;
