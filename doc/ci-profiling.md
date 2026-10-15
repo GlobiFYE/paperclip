@@ -17,7 +17,8 @@ The PR author, original workflow actor, and rerun actor must all be individual
 users in the trusted `master` branch's `.github/**` CODEOWNERS rule. GitHub user
 IDs are resolved from that rule; PR edits to CODEOWNERS cannot grant access.
 A label on an outside contributor's PR does not enable profiling, even when a
-maintainer applies it. Failed identity lookups disable profiling.
+maintainer applies it. The PR still runs normal CI and needs no Honeycomb
+access. Failed identity lookups disable profiling.
 
 Ordinary PRs do not write timing artifacts or export traces. The exporter job is
 skipped for ordinary run names. Adding another label does not run the CI matrix.
