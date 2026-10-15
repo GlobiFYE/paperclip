@@ -238,7 +238,8 @@ export function skillVersionRetentionService(db: Db, defaults: SkillVersionPrune
         entries.push({ ...entry, parent: root, skillId: "" });
       }
       for (const skillId of rootEntries.filter(entry => UUID_PATTERN.test(entry.name)).map(entry => entry.name)) {
-        if (options.cursor && skillId < options.cursor.skillId) continue;
+        if (options.cursor && (skillId < options.cursor.skillId
+          || (skillId === options.cursor.skillId && options.cursor.name === "\uffff"))) continue;
         if (!shouldContinue()) { result.truncated = true; break; }
         if (entries.length > maxEntries) break;
         const parent = path.join(root, skillId);

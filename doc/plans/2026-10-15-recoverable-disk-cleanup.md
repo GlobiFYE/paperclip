@@ -36,10 +36,10 @@ product acceptance. Rollback disables deletion and retains restoration support.
 ## Current state
 
 - Checkout: `/Users/dotta/.codex/worktrees/2da2/paperclip`
-- Branch: `codex/skill-cache-retention-safety`, based on Devin Foley's
+- Skill PR branch: `fix/skill-version-dir-retention`, based on Devin Foley's
   [PR #16433](https://github.com/paperclipai/paperclip/pull/16433). User approved
   building on that PR. Added safety commits to its existing branch, preserving
-  Devin’s original commit; latest published revision is `666c60c8596679243de5373180972a4b4d6eb40c`.
+  Devin’s original commit; latest published revision before this fix is `6385a28ce7e0ee24bf0bc5e1dc088e7f4abb9508`.
   User also authorized merging every PR from this effort after checks pass.
 - Earlier proof/implementation preserved at `da754ff744` on
   `codex/recoverable-skill-cache`; do not ship its competing worker.
@@ -87,7 +87,16 @@ product acceptance. Rollback disables deletion and retains restoration support.
   and budget before per-path inspection, including empty-root budget accounting.
   Twenty affected tests passed in 22.05s, including filesystem-call counts across
   continuation pages (`/tmp/paperclip-skill-discovery-budget.log`). Final review
-  and full checks remain. Git source unchanged; draft helper is in `/tmp` only.
+  and full checks remain. Review round five found an exhausted-root continuation
+  edge case; the cursor now skips completed roots before budgeting discovery.
+  Twenty-one affected tests passed in 27.98s, including a page-boundary regression
+  (`/tmp/paperclip-skill-continuation.log`). The server CI shard stopped with
+  "The operation was canceled" and no failing assertion; investigate its timeout.
+- Concurrent Git work is on `codex/recoverable-git-cache` and remains uncommitted.
+  Actual runtime/service reopening now restores A after deleting the worktree,
+  branch, and base while upstream is at B. A subsequent commit survives another
+  reopen. The real repository/DB experiment took 6.831s; evidence is
+  `/tmp/paperclip-git-recovery-candidate.json`. Expiration is not implemented yet.
 - First Git baseline used a real bare remote, runtime workspace creation, a
   database row, and ordinary reopening: missing worktree restores A while its
   branch exists; missing branch restores upstream B; missing base fails. Fixture

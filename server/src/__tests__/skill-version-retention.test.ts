@@ -312,6 +312,26 @@ describeEmbeddedPostgres("skill version snapshot retention", () => {
     expect([...inspected()].sort()).toEqual([...versionIds].sort().slice(2, 4));
   });
 
+  it("continues beyond a page ending at an exhausted skill root", async () => {
+    const companyId = await createCompany();
+    const roots = [1, 2, 3].map(value => `00000000-0000-4000-8000-${String(value).padStart(12, "0")}`);
+    await Promise.all([randomUUID(), randomUUID()].map(id => writeSnapshot(companyId, roots[0]!, id, 0)));
+    await fs.mkdir(path.join(resolveCompanySkillVersionsRoot(companyId), roots[1]!), { recursive: true });
+    const versions = Array.from({ length: 5 }, () => randomUUID()).sort();
+    const paths = await Promise.all(versions.map((id, index) => writeSnapshot(companyId, roots[2]!, id, index === 4 ? 3 * HOUR_MS : 0)));
+    const retention = skillVersionRetentionService(db, { maxEntries: 3 });
+    let reclaimed = 0;
+    for (let page = 0; page < 5; page++) {
+      const result = await retention.tick();
+      expect(result.checked).toBeLessThanOrEqual(3);
+      reclaimed += result.removed;
+      if (!result.truncated) break;
+    }
+    expect(reclaimed).toBe(1);
+    expect(await exists(paths[4]!)).toBe(false);
+    expect(await Promise.all(paths.slice(0, 4).map(exists))).toEqual([true, true, true, true]);
+  });
+
   it("bounds failed attempts and continues beyond them", async () => {
     const companyId = await createCompany();
     const { skillId, versionIds } = await createSkill(companyId, 6);
