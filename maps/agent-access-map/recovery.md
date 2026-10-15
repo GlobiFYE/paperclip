@@ -75,6 +75,13 @@ revised live agent authorization and callback delivery remain `not-run`.
 
 ## `source-action`
 
+The recovery-actions read API includes settled execution reconciliation holds
+with an automatic `replay: blocked` receipt, as well as retained workspace holds.
+The existing company and task-read checks remain in force. The board notice
+reads this history to explain its current hold; this adds no agent mutation
+authority. Route and notice regressions cover the source contract, without
+claiming live agent or provider qualification.
+
 Review: `baseline`.
 
 API: `present` — representative operation IDs:
@@ -118,6 +125,13 @@ and must not create reader participation. No live recovery proof is claimed.
 
 Gaps: Permitted resolutions use native `call_api` under existing eligibility
 and ownership checks. Source/action policy determines whether continuation is allowed.
+
+A recorded operator Stop before legacy runtime selection releases only that
+run's task locks and preserves deferred input for normal later admission. This
+does not grant an agent a new retry or provider-stop authority. Local
+[database regressions](../../server/src/modules/wake-queue/adapters/queued-operator-stop-postgres.test.ts)
+cover the release boundary and a competing active routine cycle; they are not
+live provider-stop proof.
 
 ## `exhaustion`
 

@@ -212,6 +212,13 @@ The active-lock lifecycle is part of the checkout contract:
 
 Stale-lock recovery is crash recovery, not a retry loop. Paperclip must not clear or adopt locks held by non-terminal runs. After stale cleanup, a checkout `409` should mean a real live owner, status/assignee mismatch, unresolved blocker, or active gate still prevents checkout. Agents must treat that `409` as an ownership conflict and stop rather than retrying the same checkout.
 
+Stopping a queued legacy run before runtime selection clears only its own task
+locks. It preserves deferred messages without promoting another run. The stop
+must have a recorded, expected operator cancellation and no runtime selection,
+start timestamp, or process identity. A later eligible instruction can adopt the
+saved messages through normal admission. This rule does not prove a dispatched
+provider has stopped or change native cancellation acknowledgement.
+
 ### Known execution waits at admission
 
 A known execution hold is a waiting condition, not a new execution attempt. Every issue wake must read the current effective reconciliation hold under the issue admission lock before creating a run. Resolved recovery bookkeeping can still carry a no-replay hold; only clearing the effective hold makes admission eligible again. The final dispatch gate remains required for changes after admission.
@@ -1273,6 +1280,13 @@ Examples:
 - a dependency graph has an invalid/uninvokable owner, unassigned blocker, or invalid review participant
 
 The recovery action stays source-scoped by default. Stranded-task escalation is board-owned and records the cause, evidence, next action, source and return owner, `routingPolicy: board_escalation_no_takeover_v1`, and wake or monitor policy in the source thread/detail surface.
+
+The recovery-actions read API also lists settled records whose automatic recovery
+receipt still blocks replay. A resolved recovery record does not by itself prove
+that work resumed. The task's stopped-run notice lets authorized board users
+inspect the matching decision under Recovery details, even when there is no
+active recovery action. Existing run inspection, verified continuation, new
+messages, and required-file repair remain the supported recovery paths.
 
 The board owns the recovery decision, not the source deliverable. Automatic recovery must preserve both source assignee fields. Only an explicit operator decision or applicable serious-failure policy may transfer the deliverable.
 

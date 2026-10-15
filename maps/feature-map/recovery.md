@@ -38,6 +38,13 @@ Open the affected task from Tasks, Inbox/Blocked, search, or a direct task link.
 Inspect the recovery notice/card in its history, expand details if needed, and
 use the currently offered action. Follow any linked repair task and return owner.
 
+An authorized board user can expand Recovery details on a stopped-run notice to
+read the decision that still blocks replay, including a settled recovery record.
+The notice matches the current action and run; it does not show another run's
+historical decision or authorize a retry. Source-reviewed behavior; the
+[notice regressions](../../ui/src/components/ExecutionBlockerNotice.test.tsx)
+cover empty active recovery, a mismatched source, and failed history reads.
+
 ### `run-detail`
 
 Open the agent's run (`/agents/:agentId/runs/:runId`) from activity or the task's
@@ -195,6 +202,12 @@ Automated: [legacy continuation](../../server/src/services/recovery/legacy-conti
 [native restart recovery](../../server/src/services/native-runtime/native-restart-recovery.test.ts)
 cover their respective recovery paths. [Legacy failure continuation](../../tests/e2e/legacy-failure-continuation.spec.ts)
 adds a browser journey; it is not native runtime proof.
+
+[Queued Stop database regressions](../../server/src/modules/wake-queue/adapters/queued-operator-stop-postgres.test.ts)
+verify that an operator cancellation before runtime selection releases its own
+locks, preserves deferred input without launching it, and leaves another active
+cycle of the same routine unchanged. Provider cancellations and already selected
+or dispatched runs retain their existing release behavior.
 
 Manual: stop a disposable run, submit a distinguishable follow-up, and observe
 any cleanup wait. After confirmed stop, verify the follow-up reaches one eligible
