@@ -161,6 +161,29 @@ describePostgres("immutable skill version cache", () => {
     expect(await sweepSkillVersionCache(other, { companyId: f.companyId })).toMatchObject({ evicted: 0, skipped: { protected_version: 1 } });
   });
 
+  it("reads company-wide protection twice per batch regardless of version count", async () => {
+    const f = await fixture();
+    const versionIds = [f.versions[0]!.id];
+    for (let revision = 3; revision < 8; revision++) {
+      const [version] = await db.insert(companySkillVersions).values({ companyId: f.companyId,
+        companySkillId: f.skillId, revisionNumber: revision, repositorySnapshotId: f.versions[0]!.repositorySnapshotId,
+        repositorySkillPath: "skills/example/SKILL.md" }).returning();
+      versionIds.push(version!.id);
+    }
+    for (const id of [...versionIds, f.versions[1]!.id]) {
+      await f.resolve(id);
+      await touchSkillVersionCache(f.companyId, f.skillId, id, Date.now() - 7_200_000);
+    }
+    const statements: string[] = [];
+    const debug = db.$client.options.debug;
+    db.$client.options.debug = (_connection, query) => { statements.push(query); };
+    try {
+      expect(await sweepSkillVersionCache(db, { companyId: f.companyId })).toMatchObject({ evicted: 6 });
+      expect(statements.filter(query => /from "agents"/.test(query))).toHaveLength(2);
+      expect(statements.filter(query => /from "heartbeat_runs"/.test(query))).toHaveLength(2);
+    } finally { db.$client.options.debug = debug; }
+  });
+
   it("lets preparation finish during slow byte inspection and rechecks its new pin", async () => {
     const f = await fixture();
     const old = await f.resolve(f.versions[0]!.id);

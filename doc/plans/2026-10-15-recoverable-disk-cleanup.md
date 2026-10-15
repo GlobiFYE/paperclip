@@ -39,11 +39,21 @@ product acceptance. Rollback disables deletion and retains restoration support.
 - Branch: `codex/skill-cache-retention-safety`, based on Devin Foley's
   [PR #16433](https://github.com/paperclipai/paperclip/pull/16433). User approved
   building on that PR. Added safety commits to its existing branch, preserving
-  Devin’s original commit; current published revision is `5eb505ff5d1b3aabf94e06ece51873ad09d3f696`.
+  Devin’s original commit; latest published revision is `d153929d7033a8d8cfd3c7cdc74390118339053e`.
+  User also authorized merging every PR from this effort after checks pass.
 - Earlier proof/implementation preserved at `da754ff744` on
   `codex/recoverable-skill-cache`; do not ship its competing worker.
 - Staging: `paperclip.staging.paperclip.app`, stack `stack-pool-50531a9d17dd`.
-- Diagnosis complete; staging unchanged; temporary SSH key revoked and removed.
+- Staging read-only recheck at 16:07 UTC: 71% disk used, 103,676,784,640 bytes
+  used, 43,621,777,408 available. Serving `7ec6fd09725fdcd771425e31ce900f8db9aae07d`.
+  This task has not deployed or deleted staging data.
+- A temporary Railway key named `paperclip-cleanup-acceptance-2026-10-15` is
+  registered under the prior explicit approval. Revoke it and remove both local
+  copies at acceptance completion (paths retained in private task evidence).
+- Existing unresolved staging runs have missing skill-version pins. The approved
+  conservative policy skips that company; do not clear recovery or weaken the
+  guard to obtain reclamation. Qualify the skill slice with a disposable pinned
+  fixture and report the legacy-data gap separately.
 - Integrated one worker, cross-process preparation/pin locks, separate last-use
   metadata, legacy observation grace, unresolved-recovery protection, dry run,
   bounded scans/continuations, and deletion outside the preparation lock.
@@ -59,8 +69,16 @@ product acceptance. Rollback disables deletion and retains restoration support.
   18 affected tests passed in 24.94s, including preparation during a paused file
   walk and fresh pin revalidation. Server typecheck passed after those fixes.
 - Full tests were stopped after approximately four minutes to address review
-  findings before final qualification; no full-suite pass claimed. Required
-  tests/build and final review remain. Git source unchanged.
+  findings before final qualification; no full-suite pass claimed. Full build at
+  `d153929d70` passed. CI at that SHA passed all but the empty-runtime suite and
+  Greptile (4/5). The remaining review finding was repeated company-wide pin
+  queries; batching reads twice per sweep phase fixes it and has a query-count
+  regression. The empty-selection fast path now returns before locking.
+- Final affected skill/heartbeat controls: 35 tests passed in 29.17s, log
+  `/tmp/paperclip-skill-final-controls.log`. A prior local attempt could not start
+  Postgres because macOS shared-memory slots were full; retry succeeded after a
+  slot became available, without changing global limits or unrelated services.
+  Final required checks and review remain. Git source unchanged.
 - First Git baseline used a real bare remote, runtime workspace creation, a
   database row, and ordinary reopening: missing worktree restores A while its
   branch exists; missing branch restores upstream B; missing base fails. Fixture

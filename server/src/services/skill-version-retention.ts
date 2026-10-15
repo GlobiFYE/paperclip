@@ -258,6 +258,22 @@ export function skillVersionRetentionService(db: Db, defaults: SkillVersionPrune
       logger.warn({ err: error, companyId }, "skill version retention skipped unsafe company root");
       return result;
     }
+    if (entries.length === 0) return result;
+    const skillIds = [...new Set(entries.filter(entry => !entry.unsafe && entry.skillId).map(entry => entry.skillId))];
+    let initialKeep: Set<string> | null;
+    try { initialKeep = await withSkillVersionCacheLock(db, companyId, () => protectedVersionIds(companyId, skillIds, keepNewest), true); }
+    catch (error) {
+      result.checked = 1;
+      if (error instanceof SkillCacheBusy) skip("cache_busy");
+      else { result.failed++; skip("unavailable_pins"); }
+      return result;
+    }
+    if (!initialKeep) { result.checked = 1; skip("unknown_run_pins"); return result; }
+    const inspected: Array<{
+      entry: Candidate; isStaging: boolean; version: boolean;
+      before: { dev: number; ino: number }; bytes: number;
+      eligible: (keep: Set<string> | null) => Promise<{ dev: number; ino: number } | null>;
+    }> = [];
     for (const entry of entries) {
       if (!after(entry.skillId, entry.name)) continue;
       if (result.checked >= maxEntries || !shouldContinue()) { result.truncated = true; break; }
@@ -273,11 +289,10 @@ export function skillVersionRetentionService(db: Db, defaults: SkillVersionPrune
       if (isTrash) { if (!dryRun) trash.push(target); continue; }
       // Called under the shared lock both before inspection and immediately
       // before rename. A preparation between these calls changes the pins/use.
-      const eligible = async () => {
+      const eligible = async (keep: Set<string> | null) => {
         if (!shouldContinue()) return null;
         await ensureSkillCacheDirectory(target);
         if (versionSnapshotFlights.has(target) || versionSnapshotRemovals.has(target)) { skip("cache_busy"); return null; }
-        const keep = await protectedVersionIds(companyId, [entry.skillId], keepNewest);
         if (!keep) { skip("unknown_run_pins"); return null; }
         if (isVersion && keep.has(entry.name)) { result.kept++; skip("protected_version"); return null; }
         const stat = await fs.lstat(target);
@@ -292,7 +307,7 @@ export function skillVersionRetentionService(db: Db, defaults: SkillVersionPrune
         return stat;
       };
       try {
-        const before = await withSkillVersionCacheLock(db, companyId, eligible, true);
+        const before = await withSkillVersionCacheLock(db, companyId, () => eligible(initialKeep), true);
         if (!before) continue;
         // Inventory transfer/validation and recursive file walks must not hold
         // the lock needed by agent preparation. Immutable snapshots can be
@@ -302,20 +317,7 @@ export function skillVersionRetentionService(db: Db, defaults: SkillVersionPrune
           eq(companySkillVersions.id, entry.name))) : [];
         if (version && !await hasRestorableSnapshot(db, companyId, version.id)) { skip("snapshot_unavailable"); continue; }
         const bytes = await allocatedBytes(target, shouldContinue);
-        await withSkillVersionCacheLock(db, companyId, async () => {
-          const current = await eligible();
-          if (!current) return;
-          if (current.dev !== before.dev || current.ino !== before.ino) { skip("cache_changed"); return; }
-          result.candidates++;
-          result.candidateBytes += bytes;
-          if (dryRun) return;
-          const renamed = await removeVersionDirectory(entry.parent, entry.name);
-          if (!renamed) return;
-          trash.push(renamed);
-          result.removed++;
-          if (isStaging) result.removedStaging++;
-          else if (!version) result.removedOrphans++;
-        }, true);
+        inspected.push({ entry, isStaging, version: Boolean(version), before, bytes, eligible });
       } catch (error) {
         if (!shouldContinue()) { result.truncated = true; break; }
         if (error instanceof SkillCacheBusy) skip("cache_busy");
@@ -325,6 +327,39 @@ export function skillVersionRetentionService(db: Db, defaults: SkillVersionPrune
           skip("unsafe_or_unavailable");
           logger.warn({ err: error, companyId }, "skill version cache candidate skipped");
         }
+      }
+    }
+    if (inspected.length && shouldContinue()) {
+      try {
+        // Read company-wide agent/run pins once per phase, not once per cache.
+        // The lock keeps this final set authoritative through every rename.
+        await withSkillVersionCacheLock(db, companyId, async () => {
+          const keep = await protectedVersionIds(companyId, skillIds, keepNewest);
+          for (const candidate of inspected) {
+            if (!shouldContinue()) { result.truncated = true; break; }
+            try {
+              const current = await candidate.eligible(keep);
+              if (!current) continue;
+              if (current.dev !== candidate.before.dev || current.ino !== candidate.before.ino) { skip("cache_changed"); continue; }
+              result.candidates++;
+              result.candidateBytes += candidate.bytes;
+              if (dryRun) continue;
+              const renamed = await removeVersionDirectory(candidate.entry.parent, candidate.entry.name);
+              if (!renamed) continue;
+              trash.push(renamed);
+              result.removed++;
+              if (candidate.isStaging) result.removedStaging++;
+              else if (!candidate.version) result.removedOrphans++;
+            } catch (error) {
+              if (errorCode(error) === "ENOENT") { skip("not_materialized"); continue; }
+              result.failed++; skip("unsafe_or_unavailable");
+              logger.warn({ err: error, companyId }, "skill version cache rename skipped");
+            }
+          }
+        }, true);
+      } catch (error) {
+        if (error instanceof SkillCacheBusy) skip("cache_busy");
+        else { result.failed++; skip("unavailable_pins"); }
       }
     }
     if (!result.truncated) result.cursor = null;
@@ -361,7 +396,7 @@ export function skillVersionRetentionService(db: Db, defaults: SkillVersionPrune
     const companyRows = await db.select({ id: companies.id }).from(companies).orderBy(asc(companies.id));
     for (const company of companyRows) {
       if (cursor && company.id < cursor.companyId) continue;
-      if (totals.checked >= maxEntries || totals.candidates >= maxRemovals || !shouldContinue()) { totals.truncated = true; break; }
+      if (totals.companies >= 50 || totals.checked >= maxEntries || totals.candidates >= maxRemovals || !shouldContinue()) { totals.truncated = true; break; }
       const result = await pruneCompany(company.id, { ...options, cursor: cursor?.companyId === company.id ? cursor : null,
         maxEntries: maxEntries - totals.checked, maxRemovals: maxRemovals - totals.candidates, shouldContinue });
       totals.companies++;
