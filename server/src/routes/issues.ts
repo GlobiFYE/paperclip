@@ -8702,6 +8702,22 @@ export function issueRoutes(
       return;
     }
 
+    const userFilters: Record<string, string | undefined> = {};
+    for (const name of ["assigneeUserId", "touchedByUserId", "inboxArchivedByUserId", "unreadForUserId"] as const) {
+      const raw = req.query[name] as string | undefined;
+      const value = raw === "me" && req.actor.type === "board" ? req.actor.userId : raw;
+      if (raw === "me" && (!value || req.actor.type !== "board")) {
+        res.status(403).json({ error: `${name}=me requires board authentication` });
+        return;
+      }
+      userFilters[name] = value;
+    }
+    const updatedSince = req.query.updatedSince as string | undefined;
+    if (updatedSince !== undefined && !Number.isFinite(new Date(updatedSince).getTime())) {
+      res.status(400).json({ error: "updatedSince must be a valid ISO 8601 timestamp when provided" });
+      return;
+    }
+
     const countFilters = {
       readCondition: await issueReadSqlCondition(db, req.actor),
       attention: attention as "blocked" | undefined,
@@ -8710,7 +8726,11 @@ export function issueRoutes(
       status: req.query.status as string | string[] | undefined,
       assigneeAgentId: req.query.assigneeAgentId as string | undefined,
       participantAgentId: req.query.participantAgentId as string | undefined,
-      assigneeUserId: req.query.assigneeUserId as string | undefined,
+      assigneeUserId: userFilters.assigneeUserId,
+      touchedByUserId: userFilters.touchedByUserId,
+      inboxArchivedByUserId: userFilters.inboxArchivedByUserId,
+      unreadForUserId: userFilters.unreadForUserId,
+      updatedSince,
       projectId: req.query.projectId as string | undefined,
       workspaceId: req.query.workspaceId as string | undefined,
       executionWorkspaceId: req.query.executionWorkspaceId as

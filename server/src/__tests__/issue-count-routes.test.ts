@@ -32,11 +32,17 @@ describeEmbeddedPostgres("issue totals without card pagination", () => {
       { status: "done", parentId: randomUUID() },
       { status: "done", labelId: randomUUID() },
       { status: "done", includeAgentCreatedTasks: "false" },
+      { status: "done", touchedByUserId: "me" },
+      { status: "done", inboxArchivedByUserId: "me" },
+      { status: "done", unreadForUserId: "me" },
+      { status: "done", assigneeUserId: "me" },
+      { status: "done", updatedSince: "2099-01-01T00:00:00Z" },
     ]) {
       const listed = await request(app).get(path).query(query).expect(200);
       const counted = await request(app).get(`${path}/count`).query(query).expect(200);
       expect(counted.body.count).toBe(listed.body.length);
     }
+    await request(app).get(`${path}/count`).query({ updatedSince: "invalid" }).expect(400);
     await request(app).get(`${path}/count`).query({ status: "done", limit: 200 }).expect(400);
     await request(app).get(`${path}/count`).query({ attention: "invalid" }).expect(400);
   });
