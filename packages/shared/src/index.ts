@@ -1,3 +1,5 @@
+export * from "./slack-app-manifest.js";
+export { composioAppSetupSchema, composioAppsRefreshSchema, composioAppsSyncSchema, composioAppAccountSchema, type ComposioAppSetupInput, type ComposioAppSetupResult, type ComposioAppAccountInput, type ComposioAppAccount, type ComposioAppSnapshot, type ComposioAppSyncState, type ComposioAppsResponse } from "./composio-app-setup.js";
 export { agentAdapterTypeSchema, optionalAgentAdapterTypeSchema } from "./adapter-type.js";
 export {
   RUNNER_GOAL_MAX_OBJECTIVE_CHARS,
@@ -199,6 +201,7 @@ export type {
   AttentionWorkspaceRef,
 } from "./types/attention.js";
 export { ATTENTION_SOURCE_KINDS } from "./types/attention.js";
+export { questionSetToAskUserQuestionsPayload } from "./question-set.js";
 export type {
   DecisionQueue,
   DecisionQueueItem,
@@ -321,6 +324,7 @@ export {
   connectionMethodSupportsCatalogSetup,
   connectionMethodSupportsAutomaticOAuth,
   credentialConfigPath,
+  connectionCredentialConfigPath,
   getAppDefinitionForUrl,
   getAppStoreDefinition,
   getAvailableConnectionMethod,
@@ -332,9 +336,17 @@ export {
   recommendedDefaultsForApp,
   resolveConnectionMethodServerUrl,
 } from "./app-definitions.js";
+export {
+  connectionSetupStateForApp,
+  connectionSetupStateForMethod,
+  connectionSetupVerbForApp,
+  connectionSetupVerbForMethod,
+  type ConnectionSetupState,
+} from "./connection-setup-state.js";
 export { APP_DEFINITIONS } from "./app-definitions.generated.js";
 export * from "./google-workspace-connectors.js";
 export * from "./github-connectors.js";
+export * from "./asana-connectors.js";
 export {
   BLOCKED_MCP_PROVIDERS,
   SELF_SERVE_MCP_CANDIDATES,
@@ -343,6 +355,8 @@ export {
 export * from "./validators/status-card.js";
 export { appDefinitionSchema, appDefinitionsSchema, connectionMethodDefSchema } from "./validators/app-definition.js";
 export * from "./types/chat-channels.js";
+export * from "./types/chat-github.js";
+export * from "./validators/chat-github.js";
 export * from "./validators/chat-channels.js";
 export {
   humanizeConnectionDisplayName,
@@ -570,6 +584,8 @@ export {
   PLUGIN_API_ROUTE_AUTH_MODES,
   PLUGIN_API_ROUTE_CHECKOUT_POLICIES,
   WORKSPACE_OVERVIEW_DEFAULT_LIMIT,
+  HEARTBEAT_RUN_LIST_DEFAULT_LIMIT,
+  HEARTBEAT_RUN_LIST_MAX_LIMIT,
   WORKSPACE_OVERVIEW_MAX_LIMIT,
   WORKSPACE_OVERVIEW_LINKED_ISSUE_LIMIT,
   PIPELINE_AUTOMATION_DEFAULT_TITLE_TEMPLATE,
@@ -920,6 +936,7 @@ export type {
   AgentDetail,
   ClearAgentErrorResponse,
   AgentPermissions,
+  AgentPublicIdentity,
   AgentInstructionsBundleMode,
   AgentInstructionsFileSummary,
   AgentInstructionsFileDetail,
@@ -950,6 +967,10 @@ export type {
   SetupTokenTransportAdvisoryCode,
   AssetImage,
   Project,
+  ProjectAccessMember,
+  ProjectAccessSubjectType,
+  ProjectDiscoverySummary,
+  ProjectDiscoveryPage,
   ProjectBudgetSummary,
   ProjectRepository,
   ProjectRepositoryOptions,
@@ -957,6 +978,7 @@ export type {
   ProjectCodebaseOrigin,
   ProjectGoalRef,
   ProjectManagedByPlugin,
+  ProjectVisibility,
   ProjectWorkspace,
   CompanySearchCountType,
   CompanySearchExtractIssueResult,
@@ -1085,6 +1107,13 @@ export type {
   ExternalObjectSummaryItem,
   CompactIssue,
   Issue,
+  IssueVisibility,
+  IssuePrivacyConstraints,
+  IssueAccessGrant,
+  IssueAccessGrantAgentVisibility,
+  IssueAccessGrantSubjectType,
+  IssueAccessGrantSource,
+  IssueLockedStub,
   IssueChangeReceiptEntry,
   IssueChanges,
   IssueAssigneeAdapterOverrides,
@@ -1218,6 +1247,7 @@ export type {
   DocumentFormat,
   LegacyPlanDocument,
   IssueAttachment,
+  IssueCreationSource,
   IssueLabel,
   IssueTreeControlPreview,
   IssueTreeHold,
@@ -1240,8 +1270,13 @@ export type {
   BudgetIncidentResolutionInput,
   CostEvent,
   CostSummary,
+  CostDataQualityItem,
+  CostDataQualityReport,
+  CostDataQualityReason,
   IssueCostSummary,
   CostByAgent,
+  CostByUser,
+  CostByUserReport,
   CostByProviderModel,
   CostByBiller,
   CostByAgentModel,
@@ -1466,6 +1501,7 @@ export type {
   ToolConnectionTestAgentAccessResponse,
   ToolConnectionTestAgentsResponse,
   ToolConnectionTestCallResult,
+  ToolUpstreamPending,
   ToolConnectionTestCallStatus,
   ToolConnectionTestCallStatusPhase,
   ToolConnectionLifecycleEvent,
@@ -1559,6 +1595,7 @@ export type {
   RoutineRevisionSnapshot,
   RoutineRevision,
   RoutineTrigger,
+  RoutineWebhookDelivery,
   RoutineRun,
   RoutineTriggerSecretMaterial,
   RoutineDetail,
@@ -1904,12 +1941,15 @@ export {
   type ResetAgentSession,
   type TestAdapterEnvironment,
   type UpdateAgentPermissions,
+  projectDiscoverySchema,
   createProjectSchema,
   updateProjectSchema,
+  addProjectAccessMemberSchema,
   createProjectWorkspaceSchema,
   updateProjectWorkspaceSchema,
   type CreateProject,
   type UpdateProject,
+  type AddProjectAccessMember,
   type CreateProjectWorkspace,
   type UpdateProjectWorkspace,
   projectExecutionWorkspacePolicySchema,
@@ -1940,6 +1980,8 @@ export {
   type CompanySearchExtractQuery,
   type CompanySearchQuery,
   createIssueSchema,
+  setIssueTitleSchema,
+  type SetIssueTitle,
   createIssueInputSchema,
   createChildIssueSchema,
   createAcceptedPlanDecompositionSchema,
@@ -1954,8 +1996,12 @@ export {
   updateIssueSchema,
   stalledReviewDecisionSchema,
   issueExecutionPolicySchema,
+  issueExecutionMonitorPolicySchema,
   issueExecutionStateSchema,
   resolveIssueRecoveryActionSchema,
+  isValidExistingBranchName,
+  retryWorkspaceExportSchema,
+  resumeWorkspaceFinalizationSchema,
   issueReviewRequestSchema,
   issueExecutionWorkspaceSettingsSchema,
   checkoutIssueSchema,
@@ -1997,6 +2043,8 @@ export {
   requestItemVerdictsResultSchema,
   createIssueThreadInteractionSchema,
   acceptIssueThreadInteractionSchema,
+  resolveConfirmationFromCommentSchema,
+  type ResolveConfirmationFromComment,
   rejectIssueThreadInteractionSchema,
   cancelIssueThreadInteractionSchema,
   skipIssueThreadInteractionSchema,
@@ -2062,6 +2110,7 @@ export {
   type CheckoutIssue,
   type AddIssueComment,
   type CreateIssueThreadInteraction,
+  type CreateIssueThreadInteractionInput,
   type AcceptIssueThreadInteraction,
   type RejectIssueThreadInteraction,
   type CancelIssueThreadInteraction,
@@ -2308,6 +2357,7 @@ export {
   type RunRoutine,
   type RotateRoutineTriggerSecret,
   createCostEventSchema,
+  createServiceCostEventSchema,
   createFinanceEventSchema,
   updateBudgetSchema,
   ASSET_NAMESPACE_MAX_LENGTH,
@@ -2671,11 +2721,13 @@ export {
   type InstanceFeatureKey,
 } from "./feature-catalog.js";
 export {
+  EXPERIMENTAL_SETTINGS_WILDCARD,
   HIDEABLE_COMPANY_PAGES,
   HIDEABLE_COMPANY_SECTIONS,
   HIDEABLE_GENERAL_SECTIONS,
   HIDEABLE_INSTANCE_PAGES,
   HIDEABLE_SETTING_KEYS,
+  HIDEABLE_WORKSPACE_SECTIONS,
   SETTINGS_OPERATOR_MANAGED_ERROR_CODE,
   UI_ONLY_GENERAL_SECTIONS,
   experimentalSettingKey,
@@ -2691,6 +2743,7 @@ export {
   type HideableGeneralSection,
   type HideableInstancePage,
   type HideableSettingKey,
+  type HideableWorkspaceSection,
   type ParsedHiddenSettings,
 } from "./settings-visibility.js";
 export {
@@ -2759,8 +2812,78 @@ export type { ExecutionContinuationEnvelope } from "./types/execution-continuati
 export type { ExecutionProjection, ExecutionReconciliation, ExecutionBlocker } from "./types/execution-projection.js";
 
 export { EXECUTION_RECONCILIATION_CAUSES, requiresExecutionReconciliation } from "./types/execution-projection.js";
+export * from "./types/voice-sessions.js";
+export * from "./validators/voice-sessions.js";
 
+export * from "./agent-appearance.js";
 export * from "./ai-connections.js";
+export * from "./ai-connection-router.js";
+export * from "./ai-connection-usage.js";
+export * from "./subscriptions.js";
 export * from "./types/email.js";
 export * from "./validators/email.js";
+export { configureRailwaySshSchema, type ConfigureRailwaySsh, type RailwaySshSetup } from "./railway-connection.js";
 export * from "./announcements.js";
+
+export { REMOTE_MCP_CONNECTOR_METHODS, isRemoteMcpConnectorId, isRemoteMcpConnectorMethod, type RemoteMcpConnectorId } from "./remote-mcp-connectors.js";
+
+export { isRetiredComposioConnection, RETIRED_COMPOSIO_MESSAGE } from "./retired-composio.js";
+
+export * from "./slack-tools.js";
+
+export { MEMORY_CONNECTOR_IDS, isMemoryConnectorId, type MemoryConnectorId } from "./memory-connectors.js";
+export * from "./connection-routing.js";
+export * from "./connection-search.js";
+
+export { WORKSPACE_RESTORE_FAILURE_CODES, hasWorkspaceRestoreFailure, safeWorkspaceRestorePath, isNativeWorkspaceExportRepairCause } from "./workspace-restore.js";
+
+
+export type { AgentInstructionErrorCode, AgentInstructionErrorDetails, AgentInstructionSource, AgentInstructionRevision, AgentInstructionSnapshot, AgentInstructionCommitReceipt, AgentInstructionHistory, AgentInstructionDiff } from "./types/agent.js";
+export { restoreAgentInstructionSchema } from "./validators/agent.js";
+
+export type { AgentInstructionCandidate } from "./types/agent.js";
+export { resolveAgentInstructionCandidateSchema, type ResolveAgentInstructionCandidate } from "./validators/agent.js";
+
+export { isHeartbeatRunVisibleInMine } from "./heartbeat-inbox.js";
+export * from "./browser-use.js";
+
+export * from "./types/skill-source.js";
+export * from "./validators/skill-source.js";
+export * from "./validators/agent-commentary.js";
+export * from "./github-skill-repository.js";
+export * from "./public-mcp.js";
+export * from "./mcp-setup.js";
+
+
+export * from "./money.js";
+export * from "./accounting.js";
+export * from "./ai-provider-routing.js";
+export { aiConnectionRouterSlug, aiConnectionRouterAppDefinition, aiConnectionRouterPluginKey } from "./ai-connection-router.js";
+export { isAppAggregator, aggregatorManagementUrl, aggregatorAppsSyncSchema, aggregatorAppsRefreshSchema, arcadeDiscoverySetupSchema, type AggregatorAppSnapshot, type AggregatorAppsResponse, type ArcadeDiscoverySetupInput } from "./aggregator-apps.js";
+
+export * from "./connection-instructions.js";
+export * from "./customer-success.js";
+export type { GitHubAppOwner, GitHubAppRegistrationInput, GitHubAppCloudState, GitHubAppWizardState } from "./types/github-app-setup.js";
+export * from "./decision-models.js";
+export { updatePrimaryAgentSchema, type UpdatePrimaryAgent, type PrimaryAgentPreference } from "./primary-agent.js";
+
+export * from "./agent-avatar-upload.js";
+
+export type { DotBinding, DotInvitation, DotConnection, DotPairing } from "./dot-invitations.js";
+export { agentHarnessType, agentRunner, paperclipRunnerProfileForHarness, paperclipRunnerSupportsPlatform, PAPERCLIP_RUNNER_MINIMUM_GLIBC_VERSION, type AgentRunnerChoice, type AgentRunner, type AgentRunnerAvailability } from "./agent-runner.js";
+export { EXTERNAL_AGENT_TOOL_GUIDANCE, DOT_AGENT_TOOL_GUIDANCE, GROK_BOT_AGENT_TOOL_GUIDANCE } from "./external-agent-guidance.js";
+
+export { AGENT_LIFECYCLE_STATES, type AgentLifecycleState, type AgentLifecycleOperation } from "./types/agent-lifecycle.js";
+
+export type { AgentLifecycleRequest, AgentLifecycleResult } from "./types/agent-lifecycle.js";
+
+export * from "./types/task-workspace.js";
+export * from "./validators/task-workspace.js";
+
+export { prepareWorkspaceRepositorySchema, type PrepareWorkspaceRepository } from "./validators/workspace-repository.js";
+
+export * from "./fast-response.js";
+
+export { HUMAN_TASK_ORIGIN_KINDS, isAgentCreatedIssue, type IssueCreationSourceFields } from "./issue-creation-source.js";
+
+export * from "./grok-bot.js";

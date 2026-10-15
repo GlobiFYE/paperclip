@@ -13,6 +13,41 @@ Tool action approvals require `PAPERCLIP_TOOL_ACTION_SIGNING_SECRET` to be set i
 | `remote_http` | Supported | Supported | Preferred production path. Paperclip proxies calls through the gateway with policy, audit, timeout, and redaction controls. |
 | `local_stdio` | Supported through approved templates and supervised runtime slots | Supported only when an explicitly trusted MCP runtime worker/host is configured | Set `PAPERCLIP_TRUSTED_MCP_RUNTIME_HOST` or `PAPERCLIP_TOOL_RUNTIME_TRUSTED_HOST` only for a worker that is allowed to supervise local processes. Do not enable arbitrary agent-supplied commands. |
 
+## Native runtime gateway ownership
+
+Paperclip Runner creates an immutable MCP assignment for one agent. Its gateway
+stores the owner in `agentId` and the agent context scope. Authentication checks
+that the run belongs to that owner and that the gateway and profile metadata
+refer to the same assignment. Invalid ownership or assignment metadata rejects
+the token with `gateway_token_run_context_invalid`.
+
+The reserved `native:` profile key also identifies a native assignment if its
+gateway metadata is cleared. Clearing metadata cannot turn the assignment into
+a shared gateway. Invalid JSON metadata, including JSON `null`, returns the same
+authentication rejection. Use an ordinary profile for an explicit shared gateway.
+
+Older native gateways can have a null `agentId`. Authentication still checks
+their metadata owner. When the owner reuses the assignment, Paperclip validates
+the gateway and profile before it binds the gateway to that agent. A conflicting
+owner is never overwritten.
+
+Native assignments enter the run configuration once through the runtime MCP
+delivery path. Managed gateway discovery excludes historical native assignments.
+Their stored rows remain available for existing runs. Explicit company gateways
+continue to use their configured scopes.
+
+## Client-side tool-call deadline
+
+The gateway bounds each provider call, but the agent's MCP client also needs a
+bound. Without one, a gateway request that never answers holds the agent turn
+until the adapter execution timeout ends the run. Claude's default MCP tool
+timeout is far longer than a run, and ACP `mcpServers` entries have no
+per-server timeout field. So when an ACP Claude run receives runtime MCP
+servers, the ACPX engine sets `MCP_TOOL_TIMEOUT` to 15 minutes. A call that
+passes this deadline returns an MCP error to the model, and the turn
+continues. An `MCP_TOOL_TIMEOUT` value in the adapter `env` configuration
+takes priority.
+
 ## Metrics
 
 The board runtime health API summarizes one-hour event windows plus current durable slot state:
