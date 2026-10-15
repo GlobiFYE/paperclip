@@ -741,3 +741,7 @@ also applies when a complete large frame arrives inside one network chunk.
 Canonical tool rows mark shortened output, report its original byte count, and
 do not claim a digest for text that was not retained. A structure that cannot
 fit the compacted bound produces a diagnostic; the event stream continues.
+
+Tool output and error fields have reserved retention space and size records,
+so large input values cannot consume their output tails or make excerpts look
+complete. A separator split between reads does not count against the frame limit.

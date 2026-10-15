@@ -168,6 +168,35 @@ describe("parseOpenCodeSseFrames", () => {
     ]);
   });
 
+  it.each([[12, 64 * 1024], [80, 100_000]])("prioritizes output after %i large input values", async (count, inputChars) => {
+    const output = "o".repeat(300_000) + "\nfinal error: command failed\nexit status 1";
+    const event = completedToolPart(output);
+    Object.assign(event.properties.part.state.input, {
+      values: Array.from({ length: count }, () => "i".repeat(inputChars)),
+    });
+    const [frame] = await frames(sse(event));
+    const compacted = JSON.parse(frame!.data);
+    annotateOmittedProviderText(compacted, frame!.compaction!);
+    const [canonical] = canonicalProviderEventsFromOpenCodePart(compacted.properties.part);
+    expect(canonical?.payload).toMatchObject({
+      outputBytes: Buffer.byteLength(output), outputTruncated: true, outputDigest: null,
+    });
+    expect(String(canonical?.payload.output).endsWith("final error: command failed\nexit status 1")).toBe(true);
+    expect(frame!.compaction!.truncations.length).toBeLessThanOrEqual(OPENCODE_SSE_LIMITS.truncations);
+  });
+
+  it.each([["\n", 1], ["\r\n", 1], ["\r\n", 2], ["\r\n", 3]] as const)(
+    "keeps an exact-limit frame with separator %j split after %i bytes", async (newline, split) => {
+      const empty = `data: ${JSON.stringify({ type: "message.part.updated", properties: { text: "" } })}`;
+      const event = { type: "message.part.updated", properties: { text: "x".repeat(OPENCODE_SSE_LIMITS.frameChars - empty.length) } };
+      const raw = `data: ${JSON.stringify(event)}`;
+      expect(raw.length).toBe(OPENCODE_SSE_LIMITS.frameChars);
+      const [frame] = await frames(raw + newline + newline, raw.length + split);
+      expect(frame!.compaction).toBeUndefined();
+      expect(JSON.parse(frame!.data)).toEqual(event);
+    },
+  );
+
   it("does not report a separator blank line before an oversized frame", async () => {
     const small = { type: "server.connected", properties: {} };
     const large = completedToolPart("y".repeat(1_200_000));

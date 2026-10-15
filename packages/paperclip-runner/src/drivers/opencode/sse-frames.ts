@@ -127,7 +127,8 @@ class OpenCodeSseParser {
       }
       // Only the unterminated frame remains. Stream it through the compactor
       // instead of retaining it or abandoning the whole event stream.
-      if (this.#buffer.length > OPENCODE_SSE_LIMITS.frameChars) {
+      const separatorChars = /(?:\r\n\r|\r\n|[\r\n])$/.exec(this.#buffer)?.[0].length ?? 0;
+      if (this.#buffer.length - separatorChars > OPENCODE_SSE_LIMITS.frameChars) {
         this.#oversized = new OversizedSseFrame();
         rest = this.#buffer;
         this.#buffer = "";
@@ -198,6 +199,12 @@ class OversizedSseFrame {
   }
 }
 
+const TOOL_OUTCOME_TEXT_PATHS = new Set([
+  ["properties", "part", "state", "output"],
+  ["properties", "part", "state", "error"],
+  ["properties", "part", "output"],
+].map(path => JSON.stringify(path)));
+
 interface JsonContainer {
   array: boolean;
   key: string | number | null;
@@ -219,7 +226,8 @@ class BoundedJsonCompactor {
   #string: JsonStringReader | null = null;
   #failed = false;
   #inputChars = 0;
-  #budget: number = OPENCODE_SSE_LIMITS.stringBudgetChars;
+  #budget: number = OPENCODE_SSE_LIMITS.stringBudgetChars - TOOL_OUTCOME_TEXT_PATHS.size *
+    (OPENCODE_SSE_LIMITS.stringHeadChars + OPENCODE_SSE_LIMITS.stringTailChars);
   #truncatedStrings = 0;
   #omittedChars = 0;
   #truncations: OpenCodeSseTruncation[] = [];
@@ -303,39 +311,48 @@ class BoundedJsonCompactor {
   #endString(reader: JsonStringReader): void {
     this.#string = null;
     const limits = OPENCODE_SSE_LIMITS;
+    const path = [
+      ...this.#stack.slice(1).map((container) => container.key ?? ""),
+      this.#position() ?? "",
+    ];
+    const pathKey = JSON.stringify(path);
+    const outcomeText = !reader.isKey && TOOL_OUTCOME_TEXT_PATHS.has(pathKey);
+    const budget = outcomeText ? limits.stringHeadChars + limits.stringTailChars : this.#budget;
     let value: string;
     if (
       !reader.split &&
-      (reader.chars <= limits.shortStringChars || reader.chars <= this.#budget)
+      (reader.chars <= limits.shortStringChars || reader.chars <= budget)
     ) {
       value = reader.full;
-      if (reader.chars > limits.shortStringChars) this.#budget -= reader.chars;
+      if (!outcomeText && reader.chars > limits.shortStringChars) this.#budget -= reader.chars;
     } else {
       // The tail carries a command's exit status and final errors, so it has
       // priority over the head when the event budget is nearly spent.
       const head = reader.split ? reader.head : reader.full;
       const tail = reader.split ? reader.tail : reader.full;
-      const tailKeep = Math.min(limits.stringTailChars, this.#budget, reader.chars);
+      const tailKeep = Math.min(limits.stringTailChars, budget, reader.chars);
       const headKeep = Math.min(
         limits.stringHeadChars,
-        this.#budget - tailKeep,
+        budget - tailKeep,
         reader.chars - tailKeep,
       );
       const omittedChars = reader.chars - headKeep - tailKeep;
       value = `${head.slice(0, headKeep)}…[${omittedChars} characters omitted]…${tail.slice(tail.length - tailKeep)}`;
-      this.#budget -= headKeep + tailKeep;
+      if (!outcomeText) this.#budget -= headKeep + tailKeep;
       this.#truncatedStrings += 1;
       this.#omittedChars += omittedChars;
-      if (!reader.isKey && this.#truncations.length < limits.truncations) {
-        this.#truncations.push({
-          path: [
-            ...this.#stack.slice(1).map((container) => container.key ?? ""),
-            this.#position() ?? "",
-          ],
-          chars: reader.chars,
-          bytes: reader.bytes,
-          omittedChars,
-        });
+      if (!reader.isKey) {
+        if (outcomeText) {
+          const existing = this.#truncations.findIndex(entry => JSON.stringify(entry.path) === pathKey);
+          if (existing >= 0) this.#truncations.splice(existing, 1);
+          if (this.#truncations.length >= limits.truncations) {
+            const expendable = this.#truncations.findIndex(entry => !TOOL_OUTCOME_TEXT_PATHS.has(JSON.stringify(entry.path)));
+            if (expendable >= 0) this.#truncations.splice(expendable, 1);
+          }
+        }
+        if (this.#truncations.length < limits.truncations) {
+          this.#truncations.push({ path, chars: reader.chars, bytes: reader.bytes, omittedChars });
+        }
       }
     }
     if (reader.isKey) this.#pendingKey = value;
