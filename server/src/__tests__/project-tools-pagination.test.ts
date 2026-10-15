@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { callProjectTool, projectToolDefinitions } from "../services/project-tools.js";
+import { formatProjectToolResult } from "../routes/project-tools.js";
 
 const input = {
   name: "list_projects", arguments: {}, apiUrl: "http://paperclip.test", token: "test-token",
@@ -9,6 +10,16 @@ const input = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("project discovery result bounds", () => {
+  it("keeps list-valued task results valid for MCP clients", () => {
+    const agents = [{ id: "engineering-lead" }];
+    expect(formatProjectToolResult(agents)).toEqual({
+      content: [{ type: "text", text: JSON.stringify(agents) }],
+    });
+    expect(formatProjectToolResult({ id: "issue" })).toEqual({
+      content: [{ type: "text", text: JSON.stringify({ id: "issue" }) }],
+      structuredContent: { id: "issue" },
+    });
+  });
   it("advertises the common issue tools on every standard run without exposing the generic API tool", () => {
     const names = projectToolDefinitions("standard", true).map((tool) => tool.name);
     expect(names).toEqual(expect.arrayContaining([
