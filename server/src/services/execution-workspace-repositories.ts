@@ -85,7 +85,8 @@ export function assertRepositoryRetryMatches(row: Pick<RepositoryRow, "repositor
   }
 }
 
-export type StagedRepositoryRootResolutions = { workspaceRoots: Map<string, string | null>; inventoryRoots: Map<string, string | null>; configuredRoots: Map<string, string | null> };
+export type StagedConfiguredRoot = { root: string | null; cwd: string | null; repoUrl: string | null };
+export type StagedRepositoryRootResolutions = { workspaceRoots: Map<string, string | null>; inventoryRoots: Map<string, string | null>; configuredRoots: Map<string, StagedConfiguredRoot> };
 
 export async function stageRepositoryRootResolutions(db: Db, companyId: string): Promise<StagedRepositoryRootResolutions> {
   const [workspaces, inventory, configured] = await Promise.all([
@@ -97,9 +98,26 @@ export async function stageRepositoryRootResolutions(db: Db, companyId: string):
   const [workspaceRoots, inventoryRoots, configuredEntries] = await Promise.all([
     resolveRepositoryRoots(workspaces.flatMap(workspace => workspace.cwd ? [workspace.cwd] : [])),
     resolveRepositoryRoots(inventory.flatMap(peer => peer.cwd ? [peer.cwd] : []), true),
-    Promise.all(configured.map(async source => [source.id, await configuredWorkspaceRoot(source, true)] as const)),
+    // Keep the staged input fields: the locked scan re-reads each row and must
+    // re-resolve whenever the row changed between staging and the lock.
+    Promise.all(configured.map(async source => [source.id, {
+      root: await configuredWorkspaceRoot(source, true), cwd: source.cwd ?? null, repoUrl: source.repoUrl ?? null,
+    }] as const)),
   ]);
   return { workspaceRoots, inventoryRoots, configuredRoots: new Map(configuredEntries) };
+}
+
+function stagedConfiguredRootMatches(staged: StagedConfiguredRoot, source: { cwd: string | null; repoUrl: string | null }): boolean {
+  return staged.cwd === (source.cwd ?? null) && staged.repoUrl === (source.repoUrl ?? null);
+}
+
+// Staging touches the filesystem before the company roots lock is held. A failure
+// here (e.g. EIO while scanning a company directory) must not skip the paths that
+// retain captured ownership before denying an operation, so callers that accumulate
+// failures fall back to resolving under the lock, where scan errors are already
+// caught and carried into the post-commit denial.
+async function stageRepositoryRootResolutionsSafely(db: Db, companyId: string): Promise<StagedRepositoryRootResolutions | undefined> {
+  try { return await stageRepositoryRootResolutions(db, companyId); } catch { return undefined; }
 }
 
 async function resolveStagedRepositoryRoots(cwds: string[], staged: Map<string, string | null> | undefined, requireExisting = false): Promise<Map<string, string | null>> {
@@ -224,7 +242,8 @@ async function resolveRepositoryRootSources(tx: Db | DbTransaction, input: {
   await measureRunPhase("workspace.sources.project_scan", async () => {
     for (const source of configured) {
       if (sharedProjectIds.has(source.projectId)) continue;
-      const sourceRoot = input.staged?.configuredRoots.has(source.id) ? input.staged.configuredRoots.get(source.id)! : await configuredWorkspaceRoot(source, true);
+      const stagedEntry = input.staged?.configuredRoots.get(source.id);
+      const sourceRoot = stagedEntry && stagedConfiguredRootMatches(stagedEntry, source) ? stagedEntry.root : await configuredWorkspaceRoot(source, true);
       if (!sourceRoot || !repositoryRootsOverlap(sourceRoot, canonicalCwd)) continue;
       sourceProjectIds.add(source.projectId);
       if (!isCopiedAncestor(source.projectId, sourceRoot)) sharedProjectIds.add(source.projectId);
@@ -370,7 +389,7 @@ export async function retainIsolatedWorkspaceSourceAccess(db: Db, input: {
   catch (error) { sourceFailure = error; }
   const canonicalCwd = await measureRunPhase("workspace.sources.canonicalize", () => canonicalRepositoryRoot(input.targetCwd));
   const rootKey = createHash("sha256").update(canonicalCwd).digest("hex");
-  const staged = await stageRepositoryRootResolutions(db, input.companyId);
+  const staged = await stageRepositoryRootResolutionsSafely(db, input.companyId);
   const denied = await measureRunTransaction(db, "workspace", async tx => {
     await lockExecutionWorkspaceRootProvenance(tx, input.companyId);
     const existing = await measureRunPhase("workspace.sources.inventory", async () => tx.select().from(executionWorkspaceRepositoryAccess).where(and(
@@ -774,7 +793,7 @@ export function executionWorkspaceRepositoryService(db: Db) {
         commonRoot = source.commonRoot;
         for (const cwd of source.roots) roots.add(cwd);
       } catch (error) { sourceFailure = error; }
-      const staged = await stageRepositoryRootResolutions(db, input.companyId);
+      const staged = await stageRepositoryRootResolutionsSafely(db, input.companyId);
       const denied = await measureRunTransaction(db, "workspace", async tx => {
         await lockExecutionWorkspaceRootProvenance(tx, input.companyId);
         const { workspace, actor } = await publicationBinding(tx, input);

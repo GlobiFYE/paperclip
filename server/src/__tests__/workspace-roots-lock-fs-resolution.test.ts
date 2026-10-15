@@ -6,11 +6,12 @@ import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import { authUsers, companies, companyMemberships, createDb, executionWorkspaceRepositoryAccess,
-  executionWorkspaces, projects, projectAccessMembers, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
+  executionWorkspaces, projects, projectAccessMembers, projectWorkspaces, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
 import * as executionWorkspaceRepositories from "../services/execution-workspace-repositories.js";
+import { repositoryRootsOverlap } from "../services/execution-workspace-source-roots.js";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 
-const { lockExecutionWorkspaceRootProvenance, preserveExecutionWorkspaceRootProvenance, assertIsolatedWorkspaceSourceReadAccess } = executionWorkspaceRepositories;
+const { lockExecutionWorkspaceRootProvenance, preserveExecutionWorkspaceRootProvenance, assertIsolatedWorkspaceSourceReadAccess, retainIsolatedWorkspaceSourceAccess } = executionWorkspaceRepositories;
 const stageRepositoryRootResolutions = (executionWorkspaceRepositories as {
   stageRepositoryRootResolutions?: (db: ReturnType<typeof createDb>, companyId: string) => Promise<unknown>;
 }).stageRepositoryRootResolutions?.bind(executionWorkspaceRepositories);
@@ -120,4 +121,62 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(captured.workspaceIds.sort()).toEqual([checkoutWorkspace.id, innerWorkspace.id].sort());
     expect(captured.projectIds).toEqual([project.id]);
   }, 120_000);
+
+  it("re-resolves configured workspaces whose cwd changed between staging and the roots lock", async () => {
+    const companyId = randomUUID();
+    await db.insert(companies).values({ id: companyId, name: "Roots lock staleness", issuePrefix: `S${companyId.slice(0, 6)}` });
+    const [project] = await db.insert(projects).values({ companyId, name: "Stale configured", visibility: "private" }).returning();
+    const targetDir = path.join(root, companyId, "target");
+    const unrelatedDir = path.join(root, companyId, "unrelated");
+    const movedDir = path.join(targetDir, "moved");
+    await mkdir(movedDir, { recursive: true });
+    await mkdir(unrelatedDir, { recursive: true });
+    const target = await seedCompanyWorkspaceRow(companyId, "target", targetDir);
+    const [configured] = await db.insert(projectWorkspaces).values({ companyId, projectId: project.id, name: "configured", cwd: unrelatedDir }).returning();
+    const staged = await stageRepositoryRootResolutions?.(db, companyId);
+    // The configured row moves into the requested source directory after staging
+    // but before the roots lock is acquired: the staged root must be discarded.
+    await db.update(projectWorkspaces).set({ cwd: movedDir }).where(eq(projectWorkspaces.id, configured.id));
+    await db.transaction(async tx => {
+      await lockExecutionWorkspaceRootProvenance(tx, companyId);
+      await preserveExecutionWorkspaceRootProvenance(tx, { companyId, workspaceId: target.id, cwd: targetDir },
+        staged as Parameters<typeof preserveExecutionWorkspaceRootProvenance>[2]);
+    });
+    const retained = await db.select().from(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.companyId, companyId));
+    const projectSources = retained.filter(entry => entry.kind === "project_source" && entry.scopeId === project.id);
+    expect(projectSources).toHaveLength(1);
+    expect(repositoryRootsOverlap(projectSources[0]!.canonicalCwd, await realpath(targetDir))).toBe(true);
+  }, 60_000);
+
+  it("still retains captured ownership when staged resolution fails on a broken directory", async () => {
+    const companyId = randomUUID(), userId = randomUUID();
+    await db.insert(companies).values({ id: companyId, name: "Roots lock fault", issuePrefix: `F${companyId.slice(0, 6)}` });
+    await db.insert(authUsers).values({ id: userId, name: "Reader", email: `${userId}@example.test`, emailVerified: true, createdAt: new Date(), updatedAt: new Date() });
+    const targetDir = path.join(root, companyId, "target");
+    await mkdir(path.join(targetDir, "inner"), { recursive: true });
+    const target = await seedCompanyWorkspaceRow(companyId, "target", targetDir);
+    const peer = await seedCompanyWorkspaceRow(companyId, "peer", path.join(targetDir, "inner"));
+    const poisonDir = path.join(root, companyId, "poison");
+    await mkdir(poisonDir, { recursive: true });
+    const [project] = await db.insert(projects).values({ companyId, name: "Fault configured", visibility: "private" }).returning();
+    await db.insert(projectWorkspaces).values({ companyId, projectId: project.id, name: "poison", cwd: poisonDir });
+    const targetRoot = await realpath(targetDir);
+    const realpathOriginal = fs.realpath;
+    const realpathSpy = vi.spyOn(fs, "realpath").mockImplementation(async (p: Parameters<typeof realpathOriginal>[0]) => {
+      if (p === poisonDir) throw Object.assign(new Error("i/o error"), { code: "EIO" });
+      return realpathOriginal(p);
+    });
+    try {
+      const actor = { type: "board" as const, source: "session" as const, userId, ignoreInstanceAdmin: true };
+      const captured = { companyId, roots: [targetRoot], workspaceIds: [target.id, peer.id], projectIds: [] as string[] };
+      await expect(retainIsolatedWorkspaceSourceAccess(db, {
+        companyId, sourceCwd: targetDir, targetCwd: path.join(root, companyId, "copy-target"), actor, captured, phase: "preparing", copyKind: "repository",
+      })).rejects.toThrow();
+      const retained = await db.select().from(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.companyId, companyId));
+      const isolatedSources = retained.filter(entry => entry.kind === "isolated_source").map(entry => entry.scopeId).sort();
+      expect(isolatedSources).toEqual([target.id, peer.id].sort());
+    } finally {
+      realpathSpy.mockRestore();
+    }
+  }, 60_000);
 });
