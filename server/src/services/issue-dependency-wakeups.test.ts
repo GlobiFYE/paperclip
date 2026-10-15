@@ -5,6 +5,7 @@ import {
   buildIssueBlockersResolvedWakeStateKey,
   buildIssueBlockersResolvedWakeStateKeyWithoutCycle,
   findExistingIssueBlockersResolvedWakeForReadyState,
+  isIssueEchoWake,
 } from "./issue-dependency-wakeups.js";
 
 const dependentIssueId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -227,5 +228,32 @@ describe("findExistingIssueBlockersResolvedWakeForReadyState", () => {
       readyState,
     );
     expect(completed).toBeNull();
+  });
+});
+
+describe("isIssueEchoWake", () => {
+  const base = {
+    actorType: "agent",
+    actorAgentId: "agent-1",
+    actorRunIssueId: "parent-1",
+    recipientAgentId: "agent-1",
+    targetIssueId: "parent-1",
+  };
+
+  it("flags a wake for the same agent and the issue its run is working on", () => {
+    expect(isIssueEchoWake(base)).toBe(true);
+  });
+
+  it("keeps the wake when another agent or a board user closed the issue", () => {
+    expect(isIssueEchoWake({ ...base, actorAgentId: "agent-2" })).toBe(false);
+    expect(isIssueEchoWake({ ...base, actorType: "user", actorAgentId: null })).toBe(false);
+  });
+
+  it("keeps the wake when the actor's run is scoped to a different issue", () => {
+    expect(isIssueEchoWake({ ...base, actorRunIssueId: "child-1" })).toBe(false);
+  });
+
+  it("keeps the wake when the actor's run issue is unknown", () => {
+    expect(isIssueEchoWake({ ...base, actorRunIssueId: null })).toBe(false);
   });
 });

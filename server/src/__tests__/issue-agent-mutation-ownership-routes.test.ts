@@ -1132,6 +1132,70 @@ describe("agent issue mutation checkout ownership", () => {
     );
   });
 
+  describe("echo wakes for the acting agent's own run", () => {
+    const parentIssueId = "88888888-8888-4888-8888-888888888888";
+
+    function closeChildAs(runIssueId: string) {
+      mockIssueService.getById.mockResolvedValue(makeIssue({ parentId: parentIssueId }));
+      mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+        ...makeIssue({ parentId: parentIssueId }),
+        ...patch,
+      }));
+      mockIssueService.getWakeableParentAfterChildCompletion.mockResolvedValue({
+        id: parentIssueId,
+        assigneeAgentId: ownerAgentId,
+        childIssueIds: [issueId],
+        childIssueSummaries: [],
+        childIssueSummaryTruncated: false,
+      });
+      const db = createRunContextDb({ issueId: runIssueId }, ownerAgentId, ownerRunId);
+      return request(createApp(ownerActor(), db)).patch(`/api/issues/${issueId}`).send({ status: "done" });
+    }
+
+    it("does not wake the parent assignee who closed the child from the parent's run", async () => {
+      const res = await closeChildAs(parentIssueId);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      await vi.waitFor(() => expect(mockIssueService.getWakeableParentAfterChildCompletion).toHaveBeenCalled());
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(mockHeartbeatService.wakeup).not.toHaveBeenCalledWith(
+        ownerAgentId,
+        expect.objectContaining({ reason: "issue_children_completed" }),
+      );
+    });
+
+    it("still wakes the parent assignee who closed the child from the child's own run", async () => {
+      const res = await closeChildAs(issueId);
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      await vi.waitFor(() => expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+        ownerAgentId,
+        expect.objectContaining({
+          reason: "issue_children_completed",
+          payload: expect.objectContaining({ issueId: parentIssueId, completedChildIssueId: issueId }),
+        }),
+      ));
+    });
+
+    it("does not wake a dependent's assignee who closed its blocker from the dependent's run", async () => {
+      const dependentIssueId = "99999999-9999-4999-8999-999999999999";
+      mockIssueService.getById.mockResolvedValue(makeIssue());
+      mockIssueService.listWakeableBlockedDependents.mockResolvedValue([
+        { id: dependentIssueId, assigneeAgentId: ownerAgentId, blockerIssueIds: [issueId] },
+        { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", assigneeAgentId: peerAgentId, blockerIssueIds: [issueId] },
+      ]);
+      const db = createRunContextDb({ issueId: dependentIssueId }, ownerAgentId, ownerRunId);
+      const res = await request(createApp(ownerActor(), db)).patch(`/api/issues/${issueId}`).send({ status: "done" });
+      expect(res.status, JSON.stringify(res.body)).toBe(200);
+      await vi.waitFor(() => expect(mockHeartbeatService.wakeup).toHaveBeenCalledWith(
+        peerAgentId,
+        expect.objectContaining({ reason: "issue_blockers_resolved" }),
+      ));
+      expect(mockHeartbeatService.wakeup).not.toHaveBeenCalledWith(
+        ownerAgentId,
+        expect.objectContaining({ reason: "issue_blockers_resolved" }),
+      );
+    });
+  });
+
   it("stores the authenticated agent run id when creating work products", async () => {
     const app = await createApp(ownerActor());
 
