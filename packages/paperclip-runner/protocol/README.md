@@ -68,8 +68,12 @@ plus a one-second polling fallback, so atomic file replacement is handled.
 Grok's initial inline subscription credential is the baseline, allowing a
 refresh during launcher startup to be detected. A first valid credential file
 without a prior baseline establishes the baseline without claiming a refresh.
-Metadata-only changes, partial writes, deletion, and account switches do not
-emit updates. Unsupported harnesses and refreshes retained only in memory need
+Account identity changes also emit updates, even when token values stay the
+same, and establish the baseline for later refreshes on the new account.
+Hosts must evaluate the current credential through their private credential
+channel and account checks; the event does not authorize an account switch.
+Metadata-only changes, partial writes, and deletion do not emit updates.
+Unsupported harnesses and refreshes retained only in memory need
 their own observer or native-hook integration; adding this event does not make
 them observable.
 

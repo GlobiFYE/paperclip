@@ -242,13 +242,6 @@ impl CredentialObserver {
         if state.snapshot.as_ref() == Some(&snapshot) {
             return Ok(());
         }
-        if state
-            .snapshot
-            .as_ref()
-            .is_some_and(|old| old.identity != snapshot.identity)
-        {
-            return Ok(());
-        }
         let mut next = state.clone();
         if next.snapshot.is_some() {
             next.revision = next
@@ -577,7 +570,7 @@ mod tests {
     }
 
     #[test]
-    fn ignores_metadata_partial_writes_deletion_and_account_switches() {
+    fn ignores_metadata_partial_writes_and_deletion() {
         let mut f = Fixture::new("codex", &codex("before"));
         f.write("auth.json", &codex("before"));
         f.observer.activate().unwrap();
@@ -591,14 +584,76 @@ mod tests {
         assert!(f.observer.pending().is_none());
         fs::remove_file(f.root.join("auth.json")).unwrap();
         f.observer.poll(true).unwrap();
-        let mut other = codex("after");
-        other["tokens"]["account_id"] = json!("different-account");
-        f.write("auth.json", &other);
-        f.observer.poll(true).unwrap();
-        assert!(f.observer.pending().is_none());
         f.write("auth.json", &codex("after"));
         f.observer.poll(true).unwrap();
         assert_eq!(f.observer.pending(), Some(update_event("codex", 1)));
+    }
+
+    #[test]
+    fn account_changes_and_later_refreshes_survive_recovery_without_exposing_identity() {
+        for provider in ["codex", "grok"] {
+            let original = if provider == "codex" {
+                codex("before")
+            } else {
+                grok("before")
+            };
+            let mut f = Fixture::new(provider, &original);
+            f.write("auth.json", &original);
+            f.observer.activate().unwrap();
+            let mut changed = original.clone();
+            let account = if provider == "codex" {
+                changed["tokens"]["account_id"] = json!("different-account");
+                "different-account"
+            } else {
+                let auth = changed
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .next()
+                    .unwrap()
+                    .clone();
+                changed =
+                    json!({"https://issuer.example::87654321-4321-4321-4321-cba987654321": auth});
+                "87654321-4321-4321-4321-cba987654321"
+            };
+            f.write("auth.json", &changed);
+            f.observer.poll(true).unwrap();
+            assert_eq!(f.observer.pending(), Some(update_event(provider, 1)));
+            let persisted = fs::read_to_string(f.root.join(STATE_FILE)).unwrap();
+            assert!(!persisted.contains(account));
+            assert!(!f
+                .observer
+                .pending()
+                .unwrap()
+                .payload
+                .to_string()
+                .contains(account));
+            let mut recovered = CredentialObserver::new(&f.root, "session");
+            recovered.restore().unwrap();
+            assert_eq!(recovered.pending(), Some(update_event(provider, 1)));
+            if provider == "codex" {
+                changed["tokens"]["access_token"] = json!("refreshed-access");
+            } else {
+                changed
+                    .as_object_mut()
+                    .unwrap()
+                    .values_mut()
+                    .next()
+                    .unwrap()["key"] = json!("refreshed-access");
+            }
+            f.write("auth.json", &changed);
+            recovered.poll(true).unwrap();
+            assert_eq!(recovered.pending(), Some(update_event(provider, 1)));
+            recovered.acknowledge(1).unwrap();
+            recovered.poll(true).unwrap();
+            assert_eq!(recovered.pending(), Some(update_event(provider, 2)));
+            recovered.acknowledge(1).unwrap();
+            recovered.poll(true).unwrap();
+            assert!(recovered.pending().is_none());
+            f.write("auth.json", &original);
+            recovered.poll(true).unwrap();
+            assert_eq!(recovered.pending(), Some(update_event(provider, 3)));
+        }
     }
 
     #[test]

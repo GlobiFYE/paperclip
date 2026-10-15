@@ -6,12 +6,12 @@ import { CodexAppServerDriver } from "../drivers/codex/codex-app-server-driver.j
 import type { PrpEvent } from "../protocol/replay-contract.js";
 import { createRunnerdCodexTransport, defaultCapabilityRunnerdBinary } from "./runnerd-codex-transport.js";
 
-it.each([false, true])("commits idle and close credential updates outside the turn queue before ACK (retry: %s)", async retry => {
+it.each([false, true])("commits idle account switches and close refreshes before ACK (retry: %s)", async retry => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "runnerd-credential-host-")));
   const sourceHome = join(root, "seed");
   await mkdir(sourceHome, { mode: 0o700 });
-  const credential = (revision: number) => JSON.stringify({ tokens: {
-    account_id: "synthetic-account", access_token: `synthetic-access-${revision}`,
+  const credential = (revision: number, account = "synthetic-account") => JSON.stringify({ tokens: {
+    account_id: account, access_token: `synthetic-access-${revision}`,
     refresh_token: `synthetic-refresh-${revision}`, id_token: "synthetic-identity",
   } });
   await writeFile(join(sourceHome, "auth.json"), credential(0), { mode: 0o600 });
@@ -48,7 +48,7 @@ it.each([false, true])("commits idle and close credential updates outside the tu
       if (["turn.completed", "turn.failed", "turn.interrupted", "turn.cancelled"].includes(event.eventType)) break;
     }
     const auth = join(root, "codex-home", "auth.json");
-    await writeFile(auth, credential(1), { mode: 0o600 });
+    await writeFile(auth, credential(0, "synthetic-next-account"), { mode: 0o600 });
     await vi.waitFor(() => expect(onCredentialsUpdated).toHaveBeenCalled(), { timeout: 5_000 });
     const first = onCredentialsUpdated.mock.calls[0]![0];
     expect((await journal()).ackedSourceSeq).toBeLessThan(first.sourceSeq);
@@ -58,9 +58,10 @@ it.each([false, true])("commits idle and close credential updates outside the tu
     if (retry) expect(onCredentialsUpdated.mock.calls[1]![0]).toEqual(first);
     await session.attachRun!({ runId: "credential-next-run" });
     expect(committed).toHaveLength(1);
-    await writeFile(auth, credential(2), { mode: 0o600 });
+    await writeFile(auth, credential(1, "synthetic-next-account"), { mode: 0o600 });
     await session.close({ reason: "credential-cleanup-test" });
     expect(committed.map(event => event.payload.revision)).toEqual([1, 2]);
+    expect(JSON.stringify(committed)).not.toContain("synthetic-next-account");
     expect(committed[1]!.runId).toBe("credential-next-run");
     expect((await journal()).ackedSourceSeq).toBeGreaterThanOrEqual(committed[1]!.sourceSeq);
   } finally {
