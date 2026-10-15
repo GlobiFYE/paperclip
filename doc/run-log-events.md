@@ -280,6 +280,13 @@ settlement record. The record does not imply exactly-once emission across
 controller recovery, and failure to write it is logged without changing the
 already-settled outcome.
 
+## System notices and final replies
+
+Automatic comments with a stored `system_notice` presentation, including
+workspace-ready notices, remain available as progress information. They do not
+occupy the run's final reply slot. Final response selection still preserves
+ordinary explicit agent comments and excludes receipt-bound generated progress.
+
 ## ACP terminal failure diagnostics
 
 The shared ACP adapter engine preserves typed terminal session failures in the
