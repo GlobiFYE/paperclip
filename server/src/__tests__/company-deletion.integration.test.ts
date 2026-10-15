@@ -12,9 +12,16 @@ import { loadConfig } from "../config.js";
 import { createLocalDiskStorageProvider } from "../storage/local-disk-provider.js";
 import { createStorageService } from "../storage/service.js";
 import { createBoardApiToken, hashBearerToken } from "../services/board-auth.js";
-import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
+import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 
-describe("company deletion through the configured server and real database", () => {
+const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
+const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
+
+if (!embeddedPostgresSupport.supported) {
+  console.warn(`Skipping company deletion integration tests: ${embeddedPostgresSupport.reason ?? "unsupported environment"}`);
+}
+
+describeEmbeddedPostgres("company deletion through the configured server and real database", () => {
   let temporary: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
   let db: ReturnType<typeof createDb>;
 

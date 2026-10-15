@@ -202,6 +202,37 @@ describe("Companies page", () => {
     act(() => root.unmount());
   });
 
+  it.each(["disabled", "unavailable"])("keeps a pending rejection visible when health becomes %s", async (healthState) => {
+    let rejectDeletion!: (reason: ApiError) => void;
+    mockCompaniesApi.remove.mockReturnValue(new Promise((_resolve, reject) => { rejectDeletion = reject; }));
+    const root = await renderPage({ health: { status: "ok", features: { companyDeletionEnabled: true } } });
+    await clickButton("Delete Organization");
+    await clickButton("Delete");
+    act(() => {
+      if (healthState === "disabled") {
+        queryClient.setQueryData(queryKeys.health, { status: "ok", features: { companyDeletionEnabled: false } });
+      } else {
+        queryClient.getQueryCache().find({ queryKey: queryKeys.health })!.setState({
+          status: "error", error: new Error("Health unavailable"),
+        });
+      }
+    });
+    await flushReact();
+    act(() => rejectDeletion(new ApiError("Company deletion is disabled", 403, {})));
+    await flushReact();
+    await flushReact();
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Company deletion is disabled");
+    expect(container.textContent).not.toContain("Delete Organization");
+    const deleteButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Delete");
+    expect(deleteButton?.disabled).toBe(true);
+    await clickButton("Delete");
+    expect(mockCompaniesApi.remove).toHaveBeenCalledTimes(1);
+    await clickButton("Cancel");
+    expect(container.querySelector('[role="alert"]')).toBeNull();
+    act(() => root.unmount());
+  });
+
   it("offers the company wizard when self-hosted", async () => {
     const root = await renderPage();
 

@@ -133,7 +133,10 @@ export function Companies() {
         {companies.map((company) => {
           const selected = company.id === selectedCompanyId;
           const isEditing = editingId === company.id;
-          const isConfirmingDelete = companyDeletionEnabled && confirmDeleteId === company.id;
+          const hasDeletionResult = deleteMutation.variables === company.id
+            && (deleteMutation.isPending || deleteMutation.isError);
+          const isConfirmingDelete = confirmDeleteId === company.id
+            && (companyDeletionEnabled || hasDeletionResult);
           const companyStats = stats?.[company.id];
           const agentCount = companyStats?.agentCount ?? 0;
           const issueCount = companyStats?.issueCount ?? 0;
@@ -335,7 +338,7 @@ export function Companies() {
                       variant="destructive"
                       size="sm"
                       onClick={() => deleteMutation.mutate(company.id)}
-                      disabled={deleteMutation.isPending}
+                      disabled={!companyDeletionEnabled || deleteMutation.isPending}
                     >
                       {deleteMutation.isPending ? "Deleting…" : "Delete"}
                     </Button>
