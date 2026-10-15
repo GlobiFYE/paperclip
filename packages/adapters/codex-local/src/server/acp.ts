@@ -266,10 +266,22 @@ async function prepareCodexRemoteManagedHome(
   };
 }
 
+// Provider-side model overload. The account is not exhausted; the same request
+// can succeed shortly, so it takes the bounded transient retry rather than the
+// quota reset wait.
+const CODEX_MODEL_CAPACITY_RE =
+  /\b(?:selected model is at capacity|model is at capacity|at capacity for this model|serverOverloaded|server overloaded)\b/i;
+
 export function classifyCodexTerminalSessionFailure(
   failure: AcpxTerminalSessionFailure,
   now: Date,
 ): AcpxTerminalFailureClassification | null {
+  if (failure.category === "service") {
+    const text = [failure.title, failure.details].filter(Boolean).join("\n");
+    return CODEX_MODEL_CAPACITY_RE.test(text)
+      ? { errorCode: "codex_transient_upstream", errorFamily: "transient_upstream" }
+      : null;
+  }
   // ACP's `limit` also covers context, turn, rate and configured budget limits.
   // Require explicit usage exhaustion; the CLI's broader capacity matcher would
   // also match a context/storage capacity limit and defer the wrong failure.

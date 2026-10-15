@@ -194,6 +194,19 @@ function isProviderQuotaFailure(run: HeartbeatRun, options: RunFailureReportOpti
 }
 
 /**
+ * The Codex ACP classifier proved the provider reported its model at capacity.
+ * The bounded transient retry owns recovery. Only the typed `service` failure
+ * qualifies; other transient upstream text stays reportable.
+ */
+function isCodexAcpModelCapacityFailure(run: HeartbeatRun, options: RunFailureReportOptions): boolean {
+  const result = asRecord(run.resultJson);
+  return run.status === "failed" && run.errorCode === "codex_transient_upstream" &&
+    result?.errorFamily === "transient_upstream" &&
+    asRecord(result.terminalSessionFailure)?.category === "service" &&
+    options.phase !== "setup" && run.signal == null;
+}
+
+/**
  * The Grok endpoint refused every work wake with an HTTP 4xx, so the offer
  * expired unaccepted. Durable delivery receipts prove the external cause. A
  * local rejection (no HTTP status), any delivered wake, or accepted work stays
@@ -236,6 +249,7 @@ export function reportRunFailure(db: Db, run: HeartbeatRun, options: RunFailureR
     isLocalPathWorkspaceConfigurationBlocker(run, options) ||
     isGitConnectionFailure(run, options) ||
     isProviderQuotaFailure(run, options) ||
+    isCodexAcpModelCapacityFailure(run, options) ||
     isRestartInterruptedSetup(run)
   )) return Promise.resolve();
   const runStatus = run.status;
