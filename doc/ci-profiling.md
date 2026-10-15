@@ -213,3 +213,11 @@ host cache. Each producer still installs into a separate empty directory, applie
 the release patches, and packs fresh output. npm resolution and integrity checks
 remain enabled; cache misses download normally. Without an explicit shared cache,
 producer installs keep their normal npm cache configuration.
+
+After the offline lifecycle finishes, Pi setup runs in its own download sandbox
+while the independent Codex/Grok probes run offline. Pi admission still waits
+for successful setup and an unchanged consumer lock. The setup container has a
+unique verifier-owned name and is removed on early failure as well as completion.
+`pi_setup_prefetch_ms` measures setup wall time; `pi_setup_wait_ms` measures only
+the remaining wait after the other probes. These overlapping durations must not
+be added when interpreting total verification time.

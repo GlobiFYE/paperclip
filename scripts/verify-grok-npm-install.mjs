@@ -217,6 +217,8 @@ const stagedGrok = join(prefetched, 'grok');
 const prefetches = [];
 const downloads = [];
 const timing = {};
+const piSetupContainer = `paperclip-pi-setup-${basename(root)}`;
+let piSetupStarted = false;
 // A prefetch failure surfaces where its result is awaited, never as an
 // unhandled rejection that would mask an earlier staging error.
 const prefetch = (name, cmd, args) => {
@@ -374,6 +376,13 @@ try {
   assert.equal(readFileSync(sentinel, 'utf8'), 'ok', 'Offline lifecycle scripts must actually execute');
   assert.equal(readFileSync(join(consumer, 'package-lock.json'), 'utf8'), consumerLock, 'Lifecycle execution must preserve the resolved consumer lock');
   phase('lifecycle_rebuild');
+  const piSetupReceipt = join(consumer, '.paperclip-pi-setup.json');
+  const piSetupArgs = grokConsumerDockerArgs({ assets, consumer, cache, uid: consumerUid, gid: process.getgid(),
+    command: ['sh', '-c', 'exec node /consumer/node_modules/paperclipai/dist/index.js runtime setup pi > /consumer/.paperclip-pi-setup.json'],
+    download: true, temporarySizeMiB: 2048 });
+  piSetupArgs.splice(1, 0, '--name', piSetupContainer);
+  const piSetupReady = prefetch('pi_setup', 'docker', piSetupArgs);
+  piSetupStarted = true;
   for (const name of needed) {
     const installedManifest = JSON.parse(readFileSync(join(consumer, 'node_modules', name, 'package.json'), 'utf8'));
     assert.equal(installedManifest.version, releaseVersion, `Installed release version for ${name}`);
@@ -422,8 +431,9 @@ try {
   // Pi assembles a bundled runtime in scratch space before atomic publication.
   // Keep the existing sandbox and memory bound; only this download needs more
   // temporary capacity than the smaller offline lifecycle probes.
-  const setup = isolated(['node', '/consumer/node_modules/paperclipai/dist/index.js', 'runtime', 'setup', 'pi'], { download: true, temporarySizeMiB: 2048 }).toString();
-  const receipt = JSON.parse(setup.trim());
+  await awaited('pi_setup', piSetupReady);
+  const receipt = JSON.parse(readFileSync(piSetupReceipt, 'utf8'));
+  rmSync(piSetupReceipt);
   phase('pi_setup');
   assert.equal(receipt.status, 'installed_verified');
   assert.equal(receipt.target, 'linux-x64');
@@ -453,6 +463,9 @@ try {
   // An earlier failure must not leave a prefetch running, and scratch is
   // removed only once both children have stopped writing into it.
   await stopPrefetches(prefetches);
+  if (piSetupStarted) {
+    try { execFileSync('docker', ['rm', '--force', piSetupContainer], { timeout: 10_000, stdio: 'ignore' }); } catch {}
+  }
   rmSync(root, { recursive: true, force: true });
 }
 }
