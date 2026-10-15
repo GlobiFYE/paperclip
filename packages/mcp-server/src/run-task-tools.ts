@@ -6,7 +6,6 @@ const READ_NAMES = [
 ] as const;
 const WRITE_NAMES = ["paperclipCreateIssue", "paperclipUpdateIssue", "paperclipAddComment"] as const;
 
-/** The bounded internal task tools a task-bound Paperclip run may receive. */
 export function createRunTaskTools(
   config: ConstructorParameters<typeof PaperclipApiClient>[0],
   allowWrites: boolean,
