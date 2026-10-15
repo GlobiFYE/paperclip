@@ -9393,11 +9393,21 @@ export function issueService(db: Db) {
             .limit(1)
             .then((rows) => rows[0]?.issue ?? null);
           if (existingChild) {
+            const [creationActivity] = await tx
+              .select({ details: activityLog.details })
+              .from(activityLog)
+              .where(and(
+                eq(activityLog.companyId, parent.companyId),
+                eq(activityLog.entityType, "issue"),
+                eq(activityLog.entityId, existingChild.id),
+                eq(activityLog.action, "issue.child_created"),
+              ))
+              .orderBy(asc(activityLog.createdAt), asc(activityLog.id))
+              .limit(1);
             if (existingChild.parentId !== parent.id ||
-                existingChild.assigneeAgentId !== data.assigneeAgentId) {
+                creationActivity?.details?.assigneeAgentId !== data.assigneeAgentId) {
               throw conflict("Delegation key already belongs to a different child or target agent");
             }
-            await data.assertCanReuseIssue?.(existingChild);
             const [enriched] = await withIssueLabels(tx, [existingChild]);
             const [issue] = await withIssueRelationSummaries(parent.companyId, [enriched], tx);
             return { issue, parentBlockerAdded: false, delegationReplay: true, delegatedParent: lockedParent };
@@ -9488,6 +9498,7 @@ export function issueService(db: Db) {
             delegatedParent: updatedParent,
           };
         });
+        if (result.delegationReplay) await data.assertCanReuseIssue?.(result.issue);
         for (const publication of publications) publishActivity(publication);
         await executeIssuePostCommitActions(db, postCommitActions);
         return result;
@@ -10044,7 +10055,7 @@ export function issueService(db: Db) {
       const deduplicateByTitle = allowDuplicate === false && !titleNeedsGeneration;
       issueData.title = resolvedTitle;
       const isolatedWorkspacesEnabled = (
-        await instanceSettings.getExperimental()
+        await instanceSettingsService(dbOrTx as Db).getExperimental()
       ).enableIsolatedWorkspaces;
       if (!isolatedWorkspacesEnabled) {
         delete issueData.executionWorkspaceId;
@@ -10055,7 +10066,7 @@ export function issueService(db: Db) {
         throw unprocessable("Issue can only have one assignee");
       }
       if (data.assigneeAgentId) {
-        await assertAssignableAgent(db, companyId, data.assigneeAgentId, {
+        await assertAssignableAgent(dbOrTx as Db, companyId, data.assigneeAgentId, {
           kind: "work",
         });
       }
@@ -10260,7 +10271,7 @@ export function issueService(db: Db) {
           : { type: "agent", agentId: issueData.createdByAgentId ?? issueData.assigneeAgentId, companyId });
         let workspaceIntent: TaskWorkspaceIntent | null = null;
         if (workspaceSelection && (workspaceSelectionSource === "explicit" || !inheritedWorkspaceSelection)) {
-          const projection = await executionWorkspaceService(db).validateSelection({ companyId,
+          const projection = await executionWorkspaceService(dbOrTx as Db).validateSelection({ companyId,
             actor: workspaceActor,
             selection: workspaceSelection, parentIssueId: issueData.parentId,
             taskCreation: { parentIssueId: issueData.parentId, projectId: issueData.projectId,
@@ -10342,7 +10353,7 @@ export function issueService(db: Db) {
             companyId, projectId: issueData.projectId, policy: projectPolicy,
           });
           if (projectWorkspaceId && isolatedWorkspacesEnabled) {
-            const sourceStrategy = await executionWorkspaceService(db).resolveSourceWorkspaceStrategy({ companyId,
+            const sourceStrategy = await executionWorkspaceService(dbOrTx as Db).resolveSourceWorkspaceStrategy({ companyId,
               assigneeAgentId: issueData.assigneeAgentId, assigneeAdapterOverrides: issueData.assigneeAdapterOverrides,
               executionWorkspaceSettings, executionWorkspacePolicy: projectPolicy,
               typedSelection: false, projectId: issueData.projectId, executionPolicy: issueData.executionPolicy }, tx);
@@ -10355,7 +10366,7 @@ export function issueService(db: Db) {
             .innerJoin(projects, eq(projects.id, projectWorkspaces.projectId))
             .where(and(eq(projectWorkspaces.id, projectWorkspaceId), eq(projectWorkspaces.companyId, companyId), await projectReadSqlCondition(tx, workspaceActor)));
           if (!readableSource) throw notFound("Workspace source is unavailable or inaccessible");
-          const sourceStrategy = await executionWorkspaceService(db).resolveSourceWorkspaceStrategy({ companyId,
+          const sourceStrategy = await executionWorkspaceService(dbOrTx as Db).resolveSourceWorkspaceStrategy({ companyId,
             assigneeAgentId: issueData.assigneeAgentId, assigneeAdapterOverrides: issueData.assigneeAdapterOverrides,
             executionWorkspaceSettings, executionWorkspacePolicy: readableSource.executionWorkspacePolicy,
             typedSelection: Boolean(workspaceIntent), projectId: issueData.projectId, executionPolicy: issueData.executionPolicy }, tx);
@@ -11019,7 +11030,7 @@ export function issueService(db: Db) {
         }
       }
       const isolatedWorkspacesEnabled = (
-        await instanceSettings.getExperimental()
+        await instanceSettingsService(dbOrTx as Db).getExperimental()
       ).enableIsolatedWorkspaces;
       if (options.bindRuntimeSharedWorkspace) {
         const workspaceId = issueData.executionWorkspaceId ?? existing.executionWorkspaceId;

@@ -39,7 +39,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { Router, type Request, type Response } from "express";
 import multer from "multer";
 import { z } from "zod";
-import { and, asc, desc, eq, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, ne, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import type { ChatChannelService } from "../services/chat-channels.js";
 import {
@@ -12819,8 +12819,11 @@ export function issueRoutes(
         actorAgentId: actor.agentId,
         actorUserId: actor.actorType === "user" ? actor.actorId : null,
         watchdogActorRunId: actor.runId,
-        assertCanReuseIssue: (existing) => assertCanReuseCreatedIssue(req, existing),
+        assertCanReuseIssue: req.body.delegateAndBlockParent
+          ? undefined
+          : (existing) => assertCanReuseCreatedIssue(req, existing),
       });
+      if (delegationReplay && !(await assertIssueReadAllowed(req, res, issue))) return;
       await externalObjectsSvc.syncIssueSafely(issue.id);
 
       if (!delegationReplay) {
@@ -12901,8 +12904,28 @@ export function issueRoutes(
       }
 
       await retainBacklogHumanAssignment(db, issue, actor);
-      if (!serializationContext || !currentSerializedChild) {
-        void queueIssueAssignmentWakeup({
+      const delegationWakeKey = req.body.delegateAndBlockParent
+        ? `issue-delegation:${issue.id}`
+        : null;
+      let shouldWakeChild = true;
+      if (delegationReplay) {
+        shouldWakeChild = issue.status === "todo" && issue.assigneeAgentId === createBody.assigneeAgentId;
+        if (shouldWakeChild) {
+          const [acceptedWake] = await db
+            .select({ id: agentWakeupRequests.id })
+            .from(agentWakeupRequests)
+            .where(and(
+              eq(agentWakeupRequests.companyId, parent.companyId),
+              eq(agentWakeupRequests.agentId, issue.assigneeAgentId!),
+              eq(agentWakeupRequests.idempotencyKey, delegationWakeKey!),
+              ne(agentWakeupRequests.status, "skipped"),
+            ))
+            .limit(1);
+          shouldWakeChild = !acceptedWake;
+        }
+      }
+      if ((!serializationContext || !currentSerializedChild) && shouldWakeChild) {
+        const wake = queueIssueAssignmentWakeup({
           heartbeat,
           issue,
           reason: "issue_assigned",
@@ -12910,7 +12933,10 @@ export function issueRoutes(
           contextSource: "issue.child_create",
           requestedByActorType: actor.actorType,
           requestedByActorId: actor.actorId,
+          idempotencyKey: delegationWakeKey,
         });
+        if (req.body.delegateAndBlockParent) await wake;
+        else void wake;
       }
       await blockWatchdogParentOnCurrentChild({
         actor,

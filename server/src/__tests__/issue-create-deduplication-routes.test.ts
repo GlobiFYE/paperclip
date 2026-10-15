@@ -5,6 +5,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
+  agentWakeupRequests,
   agents,
   companies,
   createDb,
@@ -48,6 +49,7 @@ describeEmbeddedPostgres("issue create deduplication routes", () => {
 
   afterEach(async () => {
     await db.delete(activityLog);
+    await db.delete(agentWakeupRequests);
     await db.delete(issueComments);
     await db.delete(issueRelations);
     await db.delete(issueCreateIdempotencyKeys);
@@ -129,10 +131,20 @@ describeEmbeddedPostgres("issue create deduplication routes", () => {
 
     const replay = await request(app).post(`/api/issues/${parent.id}/children`).send(body).expect(200);
     expect(replay.body.child.id).toBe(first.body.child.id);
+    await db.insert(agentWakeupRequests).values({
+      companyId,
+      agentId: targetAgentId,
+      source: "assignment",
+      status: "completed",
+      payload: { issueId: first.body.child.id },
+      idempotencyKey: `issue-delegation:${first.body.child.id}`,
+    });
+    const acceptedWakesBefore = await db.select().from(agentWakeupRequests);
     await db.update(issues).set({ status: "done" }).where(eq(issues.id, parent.id));
     const completedReplay = await request(app).post(`/api/issues/${parent.id}/children`).send(body).expect(200);
     expect(completedReplay.body.child.id).toBe(first.body.child.id);
     expect(completedReplay.body.parent.status).toBe("done");
+    expect(await db.select().from(agentWakeupRequests)).toHaveLength(acceptedWakesBefore.length);
     expect(await db.select().from(issues).where(eq(issues.parentId, parent.id))).toHaveLength(1);
     expect(await db.select().from(issueComments).where(eq(issueComments.issueId, parent.id))).toHaveLength(1);
   });

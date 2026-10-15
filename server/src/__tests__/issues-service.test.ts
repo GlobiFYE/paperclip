@@ -3709,12 +3709,56 @@ describeEmbeddedPostgres("issueService.create workspace inheritance", () => {
     expect(comments).toHaveLength(1);
     const creationActivity = await db.select().from(activityLog).where(eq(activityLog.entityId, first.issue.id));
     expect(creationActivity.filter((item) => item.action === "issue.child_created")).toHaveLength(1);
+    await db.update(issues).set({ assigneeAgentId: sourceAgentId }).where(eq(issues.id, first.issue.id));
+    const reassignedReplay = await svc.createChild(parentIssueId, input);
+    expect(reassignedReplay.issue.id).toBe(first.issue.id);
+    expect(reassignedReplay.issue.assigneeAgentId).toBe(sourceAgentId);
     await db.update(issues).set({ status: "done" }).where(eq(issues.id, parentIssueId));
     const completedReplay = await svc.createChild(parentIssueId, input);
     expect(completedReplay.issue.id).toBe(first.issue.id);
     const [completedParent] = await db.select().from(issues).where(eq(issues.id, parentIssueId));
     expect(completedParent.status).toBe("done");
   });
+
+  it("delegates with a one-connection database pool", async () => {
+    const companyId = randomUUID();
+    const parentIssueId = randomUUID();
+    const targetAgentId = randomUUID();
+    await seedIssueCompany(db, companyId);
+    await seedCodexCoder(db, companyId, targetAgentId);
+    await db.insert(issues).values({
+      id: parentIssueId,
+      companyId,
+      title: "Investigate one-connection handoff",
+      status: "todo",
+      priority: "medium",
+    });
+    const singleConnectionDb = createDb(tempDb!.connectionString, {
+      maxConnections: 1,
+      connectTimeoutSeconds: 2,
+    });
+    try {
+      const input = {
+        title: "Investigate report",
+        status: "todo" as const,
+        assigneeAgentId: targetAgentId,
+        idempotencyKey: "single-connection-handoff",
+        delegateAndBlockParent: true,
+      };
+      const result = await issueService(singleConnectionDb).createChild(parentIssueId, input);
+      expect(result.delegatedParent?.status).toBe("blocked");
+      const replay = await issueService(singleConnectionDb).createChild(parentIssueId, {
+        ...input,
+        assertCanReuseIssue: async (existing) => {
+          const [saved] = await singleConnectionDb.select().from(issues).where(eq(issues.id, existing.id));
+          expect(saved.id).toBe(result.issue.id);
+        },
+      });
+      expect(replay.issue.id).toBe(result.issue.id);
+    } finally {
+      await singleConnectionDb.$client.end({ timeout: 0 });
+    }
+  }, 10_000);
 
   it("does not move an issue awaiting review into a delegated blocked state", async () => {
     const companyId = randomUUID();

@@ -87,6 +87,7 @@ Write tools:
 It creates an assigned child, blocks the parent on that child, and records the
 handoff in one transaction. Retries return the same child without changing the
 parent's later disposition.
+The idempotency key follows the issue-create seven-day retention period.
 
 Escape hatch:
 
