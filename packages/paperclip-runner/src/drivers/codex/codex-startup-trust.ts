@@ -92,8 +92,6 @@ export function trustCodexStartupRoot(codexHome: string, cwd: string): void {
   const path = join(codexHome, "config.toml");
   const source = existsSync(path) ? readFileSync(path, "utf8") : "";
   const config = parse(source);
-  // Preserve the parser's table prototypes for editTrust's strict comparison.
-  // Parse empty tables too: smol-toml 1.9+ uses null-prototype objects.
   const projects = config.projects ?? parse("");
   if (
     typeof projects !== "object" ||
