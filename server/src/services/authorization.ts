@@ -752,9 +752,19 @@ function createAuthorizationService(db: Db | DbTransaction, readSnapshot?: ReadA
   }
 
   async function decideReads(actor: AuthorizationActor, resources: ReadAuthorizationResource[]): Promise<AuthorizationDecision[]> {
-    const snapshot: ReadAuthorizationSnapshot = { issues: new Map(), projects: new Map(), memo: new Map() };
+    return (await decideReadsForActors([actor], resources))[0];
+  }
+
+  async function decideReadsForActors(actors: AuthorizationActor[], resources: ReadAuthorizationResource[]): Promise<AuthorizationDecision[][]> {
+    if (!actors.length) return [];
+    const snapshots: ReadAuthorizationSnapshot[] = actors.map(() => ({ issues: new Map(), projects: new Map(), memo: new Map() }));
     // Do not carry a previous request's responsible-user snapshot into this batch.
-    const batchActor: ResponsibleUserActorWithMemo = { ...actor, __responsibleUserSnapshotMemo: undefined };
+    const batchActors: ResponsibleUserActorWithMemo[] = actors.map(actor => ({ ...actor, __responsibleUserSnapshotMemo: undefined }));
+    // Privacy depends on the two principals, while trust can differ by run.
+    // Share SQL privacy evaluation only; every run still gets its own decision.
+    const privacyKey = (actor: AuthorizationActor) => JSON.stringify([actor.type, actor.agentId, actor.userId, actor.onBehalfOfUserId]);
+    const privacyActors = [...new Map(batchActors.map(actor => [privacyKey(actor), actor])).values()];
+    const privacyIndexes = batchActors.map(actor => privacyActors.findIndex(peer => privacyKey(peer) === privacyKey(actor)));
     const issueIds = [...new Set(resources.flatMap(resource => resource.type === "issue" && resource.issueId ? [resource.issueId] : []))];
     const projectIds = new Set(resources.flatMap(resource => resource.type === "project" && resource.projectId ? [resource.projectId]
       : resource.type === "issue" && resource.projectId ? [resource.projectId] : []));
@@ -765,23 +775,32 @@ function createAuthorizationService(db: Db | DbTransaction, readSnapshot?: ReadA
         status: issues.status, executionPolicy: issues.executionPolicy, originKind: issues.originKind, originId: issues.originId,
         visibility: issues.visibility, privacyRootIssueId: issues.privacyRootIssueId,
         responsibleUserId: issues.responsibleUserId, createdByUserId: issues.createdByUserId,
-        readable: issuePrivacyCondition(batchActor),
+        readable: sql<boolean[]>`jsonb_build_array(${sql.join(privacyActors.map(actor => issuePrivacyCondition(actor)), sql`, `)})`,
       }).from(issues).where(inArray(issues.id, issueIds.slice(offset, offset + 500)));
-      for (const row of rows) { snapshot.issues.set(row.id, row); if (row.projectId) projectIds.add(row.projectId); }
+      for (const row of rows) {
+        for (let index = 0; index < snapshots.length; index++) snapshots[index].issues.set(row.id, { ...row, readable: row.readable[privacyIndexes[index]] });
+        if (row.projectId) projectIds.add(row.projectId);
+      }
     }
     const ids = [...projectIds];
     for (let offset = 0; offset < ids.length; offset += 500) {
       const rows = await db.select({ id: projects.id, companyId: projects.companyId,
         executionWorkspacePolicy: projects.executionWorkspacePolicy, visibility: projects.visibility,
-        readable: projectPrivacyCondition(batchActor),
+        readable: sql<boolean[]>`jsonb_build_array(${sql.join(privacyActors.map(actor => projectPrivacyCondition(actor)), sql`, `)})`,
       }).from(projects).where(inArray(projects.id, ids.slice(offset, offset + 500)));
-      for (const row of rows) snapshot.projects.set(row.id, row);
+      for (const row of rows) for (let index = 0; index < snapshots.length; index++) {
+        snapshots[index].projects.set(row.id, { ...row, readable: row.readable[privacyIndexes[index]] });
+      }
     }
-    const batch = createAuthorizationService(db, snapshot);
-    const decisions: AuthorizationDecision[] = [];
-    for (const resource of resources) decisions.push(await batch.decide({ actor: batchActor, resource,
-      action: resource.type === "issue" ? "issue:read" : resource.type === "project" ? "project:read" : "company_scope:read" }));
-    return decisions;
+    const results: AuthorizationDecision[][] = [];
+    for (let index = 0; index < batchActors.length; index++) {
+      const batch = createAuthorizationService(db, snapshots[index]);
+      const decisions: AuthorizationDecision[] = [];
+      for (const resource of resources) decisions.push(await batch.decide({ actor: batchActors[index], resource,
+        action: resource.type === "issue" ? "issue:read" : resource.type === "project" ? "project:read" : "company_scope:read" }));
+      results.push(decisions);
+    }
+    return results;
   }
 
   async function isInstanceAdmin(userId: string | null | undefined): Promise<boolean> {
@@ -2824,6 +2843,7 @@ function createAuthorizationService(db: Db | DbTransaction, readSnapshot?: ReadA
   return {
     decide,
     decideReads,
+    decideReadsForActors,
     projectDiscoveryCandidateIds,
     decidePrincipalGrant,
   };

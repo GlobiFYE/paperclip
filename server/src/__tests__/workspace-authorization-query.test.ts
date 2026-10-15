@@ -1,14 +1,14 @@
-import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
-import { agents, authUsers, companies, companyMemberships, createDb, executionWorkspaces, heartbeatRuns, issueAccessGrants,
+import { agents, authUsers, companies, companyMemberships, createDb, executionWorkspaces, executionWorkspaceRepositoryAccess, heartbeatRuns, issueAccessGrants,
   issues, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
 import { authorizationService, executionWorkspaceReadSqlCondition, type AuthorizationActor } from "../services/authorization.js";
-import { assertExecutionWorkspaceRootReadAccess } from "../services/execution-workspace-repositories.js";
+import { executionWorkspaceRepositoryService, assertExecutionWorkspaceRootReadAccess } from "../services/execution-workspace-repositories.js";
 import { assertTaskWorkspaceAccess } from "../services/task-workspace-source-access.js";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 
@@ -128,6 +128,35 @@ const support = await getEmbeddedPostgresTestSupport();
       await expect(assertExecutionWorkspaceRootReadAccess(db, { companyId, cwd, actor: { ...actor } })).rejects.toThrow();
     } finally {
       await db.delete(issues).where(inArray(issues.id, sourceIds));
+      await db.delete(executionWorkspaces).where(inArray(executionWorkspaces.id, workspaceIds));
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it("shares source loading across retained readers during actual repository admission", async () => {
+    const cwd = await realpath(await mkdtemp(path.join(tmpdir(), "multi-reader-admission-")));
+    const rootKey = createHash("sha256").update(cwd).digest("hex");
+    const workspaceIds = Array.from({ length: 40 }, () => randomUUID());
+    const taskIds = workspaceIds.map(() => randomUUID()), runIds = taskIds.slice(0, 10).map(() => randomUUID());
+    await db.insert(executionWorkspaces).values(workspaceIds.map(id => ({ id, companyId, cwd,
+      name: "Historical root", mode: "shared_workspace", strategyType: "operator_directory" })));
+    await db.insert(issues).values(taskIds.map((id, i) => ({ id, companyId, title: "Source", assigneeAgentId: agentId, executionWorkspaceId: workspaceIds[i] })));
+    await db.insert(heartbeatRuns).values(runIds.map((id, i) => ({ id, companyId, agentId, responsibleUserId: userId,
+      status: "succeeded", contextSnapshot: { issueId: taskIds[i] } })));
+    await db.insert(executionWorkspaceRepositoryAccess).values(runIds.map((scopeId, i) => ({ companyId, rootKey,
+      canonicalCwd: cwd, kind: "reader", scopeId, issueId: taskIds[i], agentId, responsibleUserId: userId })));
+    try {
+      const statements: string[] = [];
+      const recorded = drizzle(db.$client, { schema: db._.fullSchema,
+        logger: { logQuery: query => statements.push(query) } }) as unknown as typeof db;
+      await executionWorkspaceRepositoryService(recorded).prepareForAdmission({ companyId, cwd,
+        issueId: taskIds[0], workspaceId: workspaceIds[0], agentId, runId: runIds[0], responsibleUserId: userId });
+      expect(statements.filter(query => query.includes('from "execution_workspaces"')
+        || query.includes('from "issues"')).length).toBeLessThan(50);
+    } finally {
+      await db.delete(executionWorkspaceRepositoryAccess).where(and(eq(executionWorkspaceRepositoryAccess.companyId, companyId), eq(executionWorkspaceRepositoryAccess.rootKey, rootKey)));
+      await db.delete(heartbeatRuns).where(inArray(heartbeatRuns.id, runIds));
+      await db.delete(issues).where(inArray(issues.id, taskIds));
       await db.delete(executionWorkspaces).where(inArray(executionWorkspaces.id, workspaceIds));
       await rm(cwd, { recursive: true, force: true });
     }

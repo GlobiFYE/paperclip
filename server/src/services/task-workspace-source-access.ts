@@ -67,9 +67,16 @@ export async function assertTaskWorkspaceAccess(
 export async function assertTaskWorkspacesReadAccess(
   db: Db | DbTransaction, actor: AuthorizationActor, companyId: string, workspaceIds: Iterable<string>,
 ) {
+  return assertTaskWorkspacesReadAccessForActors(db, [actor], companyId, workspaceIds);
+}
+
+export async function assertTaskWorkspacesReadAccessForActors(
+  db: Db | DbTransaction, actors: AuthorizationActor[], companyId: string, workspaceIds: Iterable<string>,
+) {
   const ids = [...new Set(workspaceIds)];
-  if (!ids.length) return;
-  const privacy = await executionWorkspaceReadSqlCondition(db, actor);
+  if (!ids.length || !actors.length) return;
+  const privacyActors = [...new Map(actors.map(actor => [JSON.stringify({ ...actor, runId: undefined }), actor])).values()];
+  const privacy = and(...await Promise.all(privacyActors.map(actor => executionWorkspaceReadSqlCondition(db, actor))));
   const projectIds = new Set<string>(), sourceIds = new Set<string>();
   let needsCompanyRead = false;
   for (let offset = 0; offset < ids.length; offset += 500) {
@@ -105,8 +112,8 @@ export async function assertTaskWorkspacesReadAccess(
     ...[...sourceIds].map(issueId => ({ type: "issue" as const, companyId, issueId })),
     ...(needsCompanyRead ? [{ type: "company" as const, companyId }] : []),
   ];
-  const decisions = await authorizationService(db).decideReads(actor, resources);
-  for (let index = 0; index < decisions.length; index++) {
+  const batches = await authorizationService(db).decideReadsForActors(actors, resources);
+  for (const decisions of batches) for (let index = 0; index < decisions.length; index++) {
     if (decisions[index].allowed) continue;
     throw forbidden(resources[index].type === "issue"
       ? "Task workspace retains files outside this actor's authorization boundary"
