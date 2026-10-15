@@ -1,5 +1,5 @@
 import { uploadSchema, type PublicMcpTransfers } from "./public-mcp/file-transfers.js";
-import { grokRoutineService, grokWakeAcknowledgementSchema } from "./grok-bot/routine.js";
+import { grokRoutineService, grokWakeAcknowledgementSchema, lockGrokRoutineAcceptance } from "./grok-bot/routine.js";
 import { authorizeExternalBotBinding, authorizeExternalBotOperator, externalBotEnabled } from "./external-bot-authority.js";
 import { updateAgentConfigurationInTransaction } from "./agent-configuration-transaction.js";
 import type { heartbeatService } from "./heartbeat.js";
@@ -666,7 +666,17 @@ function createBroker(db: Db) {
         settle: async event => {
           const p = z.object({ requestId: z.uuid(), binding: z.object({ runId: z.literal(runId), bindingId: z.literal(execution.provider.binding.bindingId),
             bindingGeneration: z.literal(execution.provider.binding.bindingGeneration) }).passthrough(), outcome: z.record(z.string(), z.unknown()) }).parse(event.payload);
+          // Identify an immutable reserved accept command before taking any row
+          // locks. A webhook may hold this advisory lock while awaiting HTTP;
+          // Stop and acknowledgements must remain free to lock the binding.
+          const [grokAccept] = await db.select({ id: operations.id }).from(operations)
+            .innerJoin(assignments, eq(assignments.id, operations.assignmentId))
+            .innerJoin(bindings, eq(bindings.id, assignments.bindingId))
+            .where(and(eq(assignments.runId, runId), eq(bindings.id, p.binding.bindingId),
+              eq(bindings.providerKind, "grok_bot"), eq(operations.requestId, p.requestId),
+              sql`${operations.command}->>'action' = 'accept'`));
           await db.transaction(async tx => {
+            if (grokAccept) await lockGrokRoutineAcceptance(tx as unknown as Db, p.binding.bindingId);
             // Binding precedes assignment everywhere: serialize mailbox IDs
             // with dispatch, readiness and reconnect without reversing locks.
             await tx.select({ id: bindings.id }).from(bindings).where(eq(bindings.id, p.binding.bindingId)).for("update");

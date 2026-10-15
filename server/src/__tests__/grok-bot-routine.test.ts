@@ -6,7 +6,7 @@ import { createPublicMcpExecutor } from "../services/public-mcp/capabilities.js"
 import { createDotRunnerMcpTools } from "../services/dot-runner-broker.js";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
-import { beforeAll, afterAll, describe, expect, it, vi } from "vitest";
+import { beforeAll, afterAll, afterEach, describe, expect, it, vi } from "vitest";
 import { agents, authUsers, companies, companyMemberships, createDb, dotAgentBindings, grokBotDispatches,
   grokBotRoutines, mcpOauthGrants, activityLog, issues, heartbeatRuns, dotRunnerAssignments, dotRunnerOperations, dotMailboxItems, nativeRunFinalizations } from "@paperclipai/db";
 import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
@@ -16,6 +16,8 @@ import { createPublicMcpOAuth } from "../services/public-mcp/oauth.js";
 import { dotRunnerBroker } from "../services/dot-runner-broker.js";
 import { createGrokRoutineDispatcher } from "../services/grok-bot/dispatcher.js";
 import { grokRoutineService } from "../services/grok-bot/routine.js";
+import * as secretModule from "../services/secrets.js";
+import * as externalAuthority from "../services/external-bot-authority.js";
 import { type GrokRoutineWake } from "../services/grok-bot/webhook.js";
 
 let temporary: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
@@ -28,6 +30,8 @@ beforeAll(async () => {
   await instanceSettingsService(db).updateExperimental({ enablePublicMcp: true, enableNativeRunner: true, enableGrokBot: true, enableOpenAiDot: true });
 }, 120000);
 afterAll(async () => { try { await temporary?.cleanup(); } finally { vi.unstubAllEnvs(); } });
+
+afterEach(() => vi.restoreAllMocks());
 
 async function fixture() {
   const userId = randomUUID();
@@ -79,6 +83,18 @@ async function admittedWork(f: Awaited<ReturnType<typeof fixture>>, status: "off
     controllerGeneration: 1, catalogDigest: "test", status, projection: {},
     acceptBy: new Date(Date.now() + 60_000), expiresAt: new Date(Date.now() + 60_000) }).returning();
   return { run: run!, task: task!, work: work! };
+}
+
+async function acceptance(f: Awaited<ReturnType<typeof fixture>>, work: typeof dotRunnerAssignments.$inferSelect) {
+  const requestId = randomUUID();
+  await db.insert(dotRunnerOperations).values({ companyId: f.company.id, assignmentId: work.id, requestId,
+    digest: "accept", command: { action: "accept" }, status: "admitted" });
+  const binding = { companyId: f.company.id, agentId: f.agent.id, bindingId: f.pairing.bindingId,
+    bindingGeneration: 1, runId: work.runId, normalizedSessionId: work.normalizedSessionId,
+    turnId: work.turnId, assignmentRevision: work.revision };
+  const port = dotRunnerBroker(db).port({ binding, provider: { binding: { ...binding,
+    acceptByUnixMs: work.acceptBy.getTime(), expiresAtUnixMs: work.expiresAt.getTime() } } });
+  return () => port.settle({ sourceEventId: randomUUID(), payload: { requestId, binding, outcome: { status: "accepted" } } });
 }
 
 describe("durable Grok routine qualification", () => {
@@ -281,6 +297,73 @@ describe("durable Grok routine qualification", () => {
     f.delivery.mockClear(); await createGrokRoutineDispatcher(db, () => true, f.delivery).tick();
     expect(f.delivery).not.toHaveBeenCalled();
     expect((await db.select().from(grokBotDispatches).where(eq(grokBotDispatches.id, queued.id)))[0]?.status).toBe("cancelled");
+  });
+
+  it("cancels an unsent wake when acceptance commits during secret lookup", async () => {
+    const f = await fixture(); const { work } = await admittedWork(f, "offered");
+    const queued = await f.service.reserve({ companyId: f.company.id, agentId: f.agent.id,
+      bindingId: f.pairing.bindingId, assignmentId: work.id, kind: "mailbox_updated", sourceEventId: randomUUID() });
+    const accept = await acceptance(f, work);
+    const original = secretModule.secretService;
+    vi.spyOn(secretModule, "secretService").mockImplementation(database => {
+      const service = original(database);
+      return { ...service, resolveSecretValue: async (...args) => { await accept(); return service.resolveSecretValue(...args); } };
+    });
+    f.delivery.mockClear();
+    await f.service.send(f.company.id, f.agent.id, queued.id);
+    expect(f.delivery).not.toHaveBeenCalled();
+    expect((await db.select().from(grokBotDispatches).where(eq(grokBotDispatches.id, queued.id)))[0]).toMatchObject({ status: "cancelled", httpStatus: null });
+    expect((await db.select().from(dotRunnerAssignments).where(eq(dotRunnerAssignments.id, work.id)))[0]?.status).toBe("accepted");
+    expect(await f.service.recoveryNeeded(f.company.id, f.agent.id)).toBe(false);
+  });
+
+  it("serializes acceptance during the final send check without blocking an authenticated reply", async () => {
+    const f = await fixture(); const { work } = await admittedWork(f, "offered");
+    const queued = await f.service.reserve({ companyId: f.company.id, agentId: f.agent.id,
+      bindingId: f.pairing.bindingId, assignmentId: work.id, kind: "mailbox_updated", sourceEventId: randomUUID() });
+    const accept = await acceptance(f, work);
+    let accepting: Promise<void> | undefined; let authorityChecks = 0;
+    const original = externalAuthority.authorizeExternalBotBinding;
+    vi.spyOn(externalAuthority, "authorizeExternalBotBinding").mockImplementation(async (...args) => {
+      const result = await original(...args);
+      if (++authorityChecks === 3) {
+        accepting = accept();
+        await vi.waitFor(async () => {
+          const waiting = await db.execute(sql`select pid from pg_locks where locktype = 'advisory' and not granted`);
+          expect(waiting.length).toBeGreaterThan(0);
+        });
+      }
+      return result;
+    });
+    f.delivery.mockClear();
+    f.delivery.mockImplementation(async () => {
+      expect((await db.select().from(dotRunnerAssignments).where(eq(dotRunnerAssignments.id, work.id)))[0]?.status).toBe("offered");
+      await f.service.acknowledge(f.principal, { correlationId: queued.id, bindingId: f.pairing.bindingId, bindingGeneration: 1 });
+      return { delivery: "accepted", httpStatus: 200 };
+    });
+    await f.service.send(f.company.id, f.agent.id, queued.id);
+    expect(accepting).toBeDefined(); await accepting;
+    expect(f.delivery).toHaveBeenCalledTimes(1);
+    expect((await db.select().from(grokBotDispatches).where(eq(grokBotDispatches.id, queued.id)))[0]?.acknowledgedAt).not.toBeNull();
+    expect((await db.select().from(dotRunnerAssignments).where(eq(dotRunnerAssignments.id, work.id)))[0]?.status).toBe("accepted");
+  });
+
+  it("allows Stop to fence work while webhook delivery is pending", async () => {
+    const f = await fixture(); const { work } = await admittedWork(f, "offered");
+    const queued = await f.service.reserve({ companyId: f.company.id, agentId: f.agent.id,
+      bindingId: f.pairing.bindingId, assignmentId: work.id, kind: "mailbox_updated", sourceEventId: randomUUID() });
+    const cancelRun = vi.fn().mockResolvedValue(undefined);
+    const broker = dotRunnerBroker(db, { heartbeat: { wakeup: vi.fn(), cancelRun } });
+    f.delivery.mockClear();
+    f.delivery.mockImplementation(async () => {
+      expect(await broker.stopGrokWork(f.company.id, f.agent.id, f.principal.grant.userId, work.runId))
+        .toMatchObject({ stopped: true, remoteTerminationConfirmed: false });
+      expect((await db.select().from(dotRunnerAssignments).where(eq(dotRunnerAssignments.id, work.id)))[0]?.status).toBe("fenced");
+      return { delivery: "unknown", httpStatus: null };
+    });
+    await f.service.send(f.company.id, f.agent.id, queued.id);
+    expect(f.delivery).toHaveBeenCalledTimes(1); expect(cancelRun).toHaveBeenCalledTimes(1);
+    expect((await db.select().from(grokBotRoutines).where(eq(grokBotRoutines.bindingId, f.pairing.bindingId)))[0]?.recoveryReason).toBe("work_session");
   });
 
   it("accepts a late acknowledgement after the Bot has claimed its offer", async () => {

@@ -54,6 +54,9 @@ that requires a file output.
 An assignment wake starts a Grok routine. Once the Bot accepts that work,
 Paperclip keeps new comments and asynchronous operation receipts durable without
 starting another routine for that session. Silence does not mean the Bot is idle.
+Acceptance and the final webhook handoff are serialized. If acceptance finishes
+while credentials are loading, the unsent wake is cancelled. Stop and
+authenticated acknowledgements remain independent of a pending HTTP response.
 Human-question answers and resolved durable waits resume through normal Runner
 admission and a new assignment wake.
 
