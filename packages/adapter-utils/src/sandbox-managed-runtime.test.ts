@@ -435,6 +435,7 @@ describe("sandbox managed runtime", () => {
         adapterKey: "test",
         workspaceLocalDir: local,
         workspaceSnapshotIsolation: isolation,
+        workspaceCheckpoint: true,
         ...(detect ? { installCommand: "exit 99", detectCommand: "sh" } : {}),
       });
       expect(capture.mock.calls.length > 0).toBe(isolation === "worker");
