@@ -32,6 +32,10 @@ const fixture = vi.hoisted(() => ({
   documents: [] as IssueDocument[] | undefined,
   plan: null as IssueDocument | null | undefined,
 }));
+const documentPanelFixture = vi.hoisted(() => ({
+  canDeleteDocuments: false,
+  onDeleted: undefined as undefined | (() => void),
+}));
 
 const routeFixture = vi.hoisted(() => ({
   location: {
@@ -93,7 +97,19 @@ vi.mock("@/components/WorkspaceFileBrowser", () => ({
 vi.mock("./TaskAttachmentPanel", () => ({ TaskAttachmentPanel: ({ attachmentId }: { attachmentId: string }) => <div>Text file {attachmentId}</div> }));
 
 vi.mock("./TaskDocumentPanel", () => ({
-  TaskDocumentPanel: ({ documentKey }: { documentKey: string }) => <div>{`Document ${documentKey}`}</div>,
+  TaskDocumentPanel: ({
+    documentKey,
+    canDeleteDocuments,
+    onDeleted,
+  }: {
+    documentKey: string;
+    canDeleteDocuments?: boolean;
+    onDeleted?: (documentKey: string) => void;
+  }) => {
+    documentPanelFixture.canDeleteDocuments = canDeleteDocuments ?? false;
+    documentPanelFixture.onDeleted = () => onDeleted?.(documentKey);
+    return <button data-testid="mock-document-panel" onClick={documentPanelFixture.onDeleted}>{`Document ${documentKey}`}</button>;
+  },
 }));
 
 vi.mock("./TaskWorkspaceFilePanel", () => ({
@@ -134,6 +150,8 @@ describe("TaskSidePanel", () => {
     browserFixture.control.mockClear();
     fixture.documents = [];
     fixture.plan = null;
+    documentPanelFixture.canDeleteDocuments = false;
+    documentPanelFixture.onDeleted = undefined;
     routeFixture.location.search = "";
     window.history.replaceState(null, "", routeFixture.location.pathname);
     routeFixture.navigate.mockReset();
@@ -616,6 +634,44 @@ describe("TaskSidePanel", () => {
     expect(container.textContent).toContain("Document brief");
     await render(panel({ documentDeepLink: { requestId: 2, documentKey: "brief" } }));
     expect(container.querySelectorAll('[data-side-panel-tab-target="document:brief"]')).toHaveLength(1);
+  });
+
+  it("closes the selected document tab after its delete action succeeds", async () => {
+    fixture.documents = [issueDocument("brief", "Implementation brief")];
+    await render(panel({
+      canDeleteDocuments: true,
+      documentDeepLink: { requestId: 1, documentKey: "brief" },
+    }));
+
+    expect(documentPanelFixture.canDeleteDocuments).toBe(true);
+    await act(async () => container.querySelector<HTMLButtonElement>('[data-testid="mock-document-panel"]')?.click());
+
+    expect(container.querySelector('[data-side-panel-tab-target="document:brief"]')).toBeNull();
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("Properties");
+  });
+
+  it("closes the deleted document instead of a newly selected document", async () => {
+    fixture.documents = [
+      issueDocument("brief", "Implementation brief"),
+      issueDocument("notes", "Release notes"),
+    ];
+    await render(panel({
+      canDeleteDocuments: true,
+      documentDeepLink: { requestId: 1, documentKey: "brief" },
+    }));
+    const completeBriefDeletion = documentPanelFixture.onDeleted;
+
+    await render(panel({
+      canDeleteDocuments: true,
+      documentDeepLink: { requestId: 2, documentKey: "notes" },
+    }));
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("Release notes");
+
+    await act(async () => completeBriefDeletion?.());
+
+    expect(container.querySelector('[data-side-panel-tab-target="document:brief"]')).toBeNull();
+    expect(container.querySelector('[data-side-panel-tab-target="document:notes"]')).not.toBeNull();
+    expect(container.querySelector('[role="tab"][aria-selected="true"]')?.textContent).toContain("Release notes");
   });
 
   it("keeps Files out of the launcher when the experiment is disabled", async () => {
