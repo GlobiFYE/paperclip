@@ -563,6 +563,39 @@ describe("Grok inspection of historical workspace-less Stop", () => {
     expect(await db.select().from(activityLog).where(and(eq(activityLog.companyId, f.company.id), eq(activityLog.action, "grok.workspace_obligation_inspected")))).toHaveLength(1);
   });
 
+  it("does not retire task holds if another assignment prevents recovery", async () => {
+    const f = await historicalHold();
+    const [other] = await db.insert(heartbeatRuns).values({ companyId: f.company.id, agentId: f.agent.id,
+      status: "running", invocationSource: "assignment", triggerDetail: "system" }).returning();
+    await db.insert(dotRunnerAssignments).values({ ...f.work, id: randomUUID(), runId: other!.id,
+      normalizedSessionId: randomUUID(), turnId: randomUUID(), status: "accepted" });
+    await expect(f.service.recover(f.company.id, f.agent.id, f.principal.grant.userId)).rejects.toThrow("current Paperclip work session");
+    const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.run.id));
+    expect(hasRequiredWorkspaceRecovery(run!.resultJson)).toBe(true);
+    expect(await f.service.recoveryNeeded(f.company.id, f.agent.id)).toBe(true);
+  });
+
+  it("commits verification invalidation before waiting for historical task inspection", async () => {
+    const f = await historicalHold();
+    let recovery: Promise<unknown> | undefined;
+    try {
+      await db.transaction(async tx => {
+        await tx.select().from(issues).where(eq(issues.id, f.task.id)).for("update");
+        recovery = f.service.recover(f.company.id, f.agent.id, f.principal.grant.userId);
+        void recovery.catch(() => {});
+        await vi.waitFor(async () => {
+          expect(await f.service.state(f.company.id, f.agent.id, f.pairing.bindingId)).toMatchObject({ verified: false, recoveryNeeded: true });
+        });
+        await expect(verification(f)).rejects.toThrow("recover");
+        const [binding] = await db.select().from(dotAgentBindings).where(eq(dotAgentBindings.id, f.pairing.bindingId));
+        expect(binding).toMatchObject({ status: "connected", readyAt: null });
+        const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.run.id));
+        expect(hasRequiredWorkspaceRecovery(run!.resultJson)).toBe(true);
+      });
+    } finally { await recovery; }
+    expect(await f.service.state(f.company.id, f.agent.id, f.pairing.bindingId)).toMatchObject({ verified: false, recoveryNeeded: false });
+  });
+
   it.each(["cleanup_pending", "receipt_mismatch", "controller_owned", "assignment_active", "running", "operator_revoked", "foreign_company"])("does not retire an old obligation when %s", async condition => {
     const f = await historicalHold();
     if (condition === "cleanup_pending") await db.update(environmentLeases).set({ cleanupStatus: "failed" }).where(eq(environmentLeases.id, f.lease.id));
@@ -581,6 +614,9 @@ describe("Grok inspection of historical workspace-less Stop", () => {
     } else await expect(f.service.recover(f.company.id, f.agent.id, f.principal.grant.userId)).rejects.toThrow();
     const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.run.id));
     expect(hasRequiredWorkspaceRecovery(run!.resultJson)).toBe(true);
+    if (["cleanup_pending", "receipt_mismatch", "controller_owned"].includes(condition)) {
+      expect(await f.service.state(f.company.id, f.agent.id, f.pairing.bindingId)).toMatchObject({ verified: false, recoveryNeeded: true });
+    }
     expect(await f.continueWork()).toBeNull();
   });
 });

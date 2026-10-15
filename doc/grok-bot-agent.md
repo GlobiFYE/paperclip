@@ -89,6 +89,8 @@ routine is healthy. After inspecting Grok, use Clear recovery hold and verify
 the connection again. Paperclip retires the false file obligation only when the
 original admission denied workspace access, the assignment is fenced, the
 coordinator has settled, and the exact managed Runner leases have stop receipts.
+Connection readiness is invalidated before task inspection, so a partial failure
+cannot retain an old verified connection while removing a task hold.
 The inspection preserves the old result, action uncertainty, and no-replay hold.
 Send a new task message to request fresh work. Inspection does not certify global
 Grok termination or delete any previously retained allocation. Such allocations

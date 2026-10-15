@@ -51,7 +51,6 @@ export function grokRoutineService(db: Db, deliver: Delivery = deliverGrokRoutin
 
   async function recover(companyId: string, agentId: string, operatorId: string) {
     await authorizeExternalBotOperator(db, companyId, operatorId);
-    await inspectGrokWorkspaceObligations(db, companyId, agentId, operatorId);
     await db.transaction(async tx => {
       // All routine writers serialize on the binding before dispatch/routine rows.
       // Include retired bindings so recovery cannot bypass an old activity hold.
@@ -68,6 +67,10 @@ export function grokRoutineService(db: Db, deliver: Delivery = deliverGrokRoutin
       await logActivity(tx as unknown as Db, { companyId, actorType: "user", actorId: operatorId, action: "grok.recovery_inspected",
         entityType: "agent", entityId: agentId, details: { inspectedRemoteWork: true, remoteTerminationConfirmed: false, requiresVerification: true } });
     });
+    // Commit loss of readiness before retiring task holds. If inspection fails
+    // or waits for a task lock, the old verification cannot admit new work.
+    // The remaining task hold also prevents verification during this gap.
+    await inspectGrokWorkspaceObligations(db, companyId, agentId, operatorId);
     return { recovered: true, requiresVerification: true, remoteTerminationConfirmed: false };
   }
 

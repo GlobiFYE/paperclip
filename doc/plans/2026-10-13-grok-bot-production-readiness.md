@@ -280,3 +280,12 @@ negative assertion saw the earlier readiness gate instead of the revoked-session
 gate; the corrected test checks both before and after re-verification. Server
 typecheck passes after narrowing the native workspace union. Final current-head
 CI, review, deployed historical recovery and fresh Stop are still release gates.
+
+A second review caught a partial-transaction ordering gap. Routine readiness now
+commits as invalid before the separate task inspection transactions. New tests
+hold the task lock to prove readiness is already gone and verification remains
+blocked; an unrelated active assignment cannot cause a task hold to disappear.
+All 43 Grok routine tests pass. The first follow-up CI attempt also timed out in
+one unchanged run-history case at 15 seconds; all 91 tests in that file pass
+locally. The timeout remains a recorded failure with cause unproven. The new
+source head requires fresh CI and review.
