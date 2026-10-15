@@ -5159,7 +5159,7 @@ type LeaseCoordinator = {
 };
 
 function leaseDb(
-  boundExecution: NativeExecutionInputV1 = execution,
+  boundExecution: NativeExecutionInput = execution,
   coordinatorOverrides: Partial<LeaseCoordinator> = {},
   runResultJson: Record<string, unknown> = {},
   updates: Array<{ table: unknown; values: Record<string, unknown> }> = [],

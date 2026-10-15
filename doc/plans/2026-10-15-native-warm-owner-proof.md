@@ -28,7 +28,9 @@ the source is restored afterward.
 The first complete affected executor and resume suites passed 764 cases before
 the additional v5 runtime-context case. Full typecheck initially found an
 optional-argument error in the test database wrapper; after that correction,
-full typecheck and build passed. Repeat the final suites and repository checks
+full typecheck and build passed. The v5 fixture expansion then exposed a legacy
+v1-only type on the shared database fixture. Its implementation only uses the
+common binding, so it now accepts the full native input union. Repeat the final suites and repository checks
 after integrating the separate idle-expiry admission repair from #16432. Scripted-provider results do not establish real Daytona recovery,
 managed subscription behavior or hosted latency. Recheck the failed hosted
 continuation after normal deployment, preserving its existing recovery evidence.
