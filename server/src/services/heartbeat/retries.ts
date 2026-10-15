@@ -174,30 +174,34 @@ export interface SharedWorkspaceHolder {
 }
 
 // Pre-dispatch gate outcome: another running run currently holds the issue's
-// shared project workspace. Not a failure — the run is parked as a bounded
-// scheduled retry and re-attempted once the holder finishes, so two agents
-// never mutate the same working tree concurrently.
+// shared project workspace, or the shared execution workspace it reuses. Not a
+// failure — the run is parked as a bounded scheduled retry and re-attempted
+// once the holder finishes, so two agents never mutate the same working tree
+// concurrently.
 export class WorkspaceBusyDeferral extends Error {
   code = WORKSPACE_BUSY_ERROR_CODE;
   holder: SharedWorkspaceHolder;
-  projectWorkspaceId: string;
+  projectWorkspaceId: string | null;
+  executionWorkspaceId: string | null;
   deferralAttempt: number;
   wasIssueAssignee: boolean;
 
   constructor(input: {
     holder: SharedWorkspaceHolder;
-    projectWorkspaceId: string;
+    projectWorkspaceId?: string | null;
+    executionWorkspaceId?: string | null;
     deferralAttempt: number;
     wasIssueAssignee: boolean;
   }) {
     super(
-      `Shared project workspace is busy: run ${input.holder.runId} (issue ${
+      `Shared ${input.executionWorkspaceId ? "execution" : "project"} workspace is busy: run ${input.holder.runId} (issue ${
         input.holder.issueIdentifier ?? input.holder.issueId
       }) is still running`,
     );
     this.name = "WorkspaceBusyDeferral";
     this.holder = input.holder;
-    this.projectWorkspaceId = input.projectWorkspaceId;
+    this.projectWorkspaceId = input.projectWorkspaceId ?? null;
+    this.executionWorkspaceId = input.executionWorkspaceId ?? null;
     this.deferralAttempt = input.deferralAttempt;
     this.wasIssueAssignee = input.wasIssueAssignee;
   }
@@ -1365,6 +1369,52 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
       .then((rows) => rows[0] ?? null);
   }
 
+  // Finds a live running run (other than the caller's) on an issue bound to
+  // the same reused execution workspace, typically a parent run that is still
+  // active after delegating a child that inherited its workspace. Uses the
+  // same staleness cutoff as findSharedWorkspaceHolder.
+  async function findExecutionWorkspaceHolder(input: {
+    companyId: string;
+    executionWorkspaceId: string;
+    excludeRunId: string;
+    now?: Date;
+  }): Promise<SharedWorkspaceHolder | null> {
+    const staleCutoff = new Date(
+      (input.now ?? new Date()).getTime() -
+        WORKSPACE_BUSY_HOLDER_STALE_AFTER_MS,
+    );
+    return await db
+      .select({
+        runId: heartbeatRuns.id,
+        agentId: heartbeatRuns.agentId,
+        issueId: sql<string>`${issues.id}::text`,
+        issueIdentifier: issues.identifier,
+      })
+      .from(heartbeatRuns)
+      .innerJoin(
+        issues,
+        and(
+          eq(issues.companyId, heartbeatRuns.companyId),
+          eq(issues.executionWorkspaceId, input.executionWorkspaceId),
+          or(
+            eq(issues.executionRunId, heartbeatRuns.id),
+            sql`${issues.id}::text = coalesce(${heartbeatRuns.contextSnapshot} ->> 'issueId', ${heartbeatRuns.contextSnapshot} ->> 'taskId')`,
+          ),
+        ),
+      )
+      .where(
+        and(
+          eq(heartbeatRuns.companyId, input.companyId),
+          eq(heartbeatRuns.status, "running"),
+          ne(heartbeatRuns.id, input.excludeRunId),
+          sql`coalesce(${heartbeatRuns.lastOutputAt}, ${heartbeatRuns.startedAt}, ${heartbeatRuns.createdAt}) >= ${staleCutoff.toISOString()}::timestamptz`,
+        ),
+      )
+      .orderBy(asc(heartbeatRuns.createdAt), asc(heartbeatRuns.id))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+  }
+
   // Credential rotation can briefly contend with a fresh runtime read. Keep
   // the task on its automatic pre-provider retry path while the lock clears.
   async function finalizeAiConnectionBusyDeferral(
@@ -1446,11 +1496,12 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
           source: "control_plane",
           expected: true,
           initiator: { type: "system" },
-          reason: "Waiting for the shared project workspace",
+          reason: `Waiting for the shared ${deferral.executionWorkspaceId ? "execution" : "project"} workspace`,
           recordedAt: now.toISOString(),
         },
         workspaceBusy: {
           projectWorkspaceId: deferral.projectWorkspaceId,
+          executionWorkspaceId: deferral.executionWorkspaceId,
           holderRunId: deferral.holder.runId,
           holderIssueId: deferral.holder.issueId,
           deferralAttempt: deferral.deferralAttempt,
@@ -1514,6 +1565,7 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
             : `Deferred: ${deferral.message}. No retry could be scheduled; releasing the issue for other runs.`,
         payload: {
           projectWorkspaceId: deferral.projectWorkspaceId,
+          executionWorkspaceId: deferral.executionWorkspaceId,
           holderRunId: deferral.holder.runId,
           holderIssueId: deferral.holder.issueId,
           deferralAttempt: deferral.deferralAttempt,
@@ -1827,6 +1879,7 @@ export function createHeartbeatRetries(db: Db, dependencies: HeartbeatRetryDepen
     timerClaimWasFirstHeartbeat,
     scheduleInteractionContinuationInfrastructureRetryIfEligible,
     findSharedWorkspaceHolder,
+    findExecutionWorkspaceHolder,
     finalizeAiConnectionBusyDeferral,
     finalizeWorkspaceBusyDeferral,
     promoteDueScheduledRetries,
