@@ -802,6 +802,92 @@ describe("issue execution policy routes", () => {
     ]);
   });
 
+  it("binds an agent policy write to the policy it was authorized against", async () => {
+    const policy = normalizeIssueExecutionPolicy({
+      stages: [{
+        id: "11111111-1111-4111-8111-111111111111",
+        type: "review",
+        participants: [{ type: "agent", agentId: "44444444-4444-4444-8444-444444444444" }],
+      }],
+    })!;
+    const issue = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      companyId: "company-1",
+      status: "in_progress",
+      assigneeAgentId: "33333333-3333-4333-8333-333333333333",
+      assigneeUserId: null,
+      createdByUserId: "local-board",
+      identifier: "PAP-1007",
+      title: "Agent-only gate at read time",
+      executionPolicy: policy,
+      executionState: null,
+      monitorAttemptCount: 0,
+      monitorNextCheckAt: null,
+      monitorLastTriggeredAt: null,
+      monitorNotes: null,
+      monitorScheduledBy: null,
+    };
+    mockIssueService.getById.mockResolvedValue(issue);
+    // A board user adds a user participant after the agent's read and before
+    // the locked write: the service's snapshot check must reject the write.
+    const app = await createApp({
+      type: "agent",
+      agentId: "33333333-3333-4333-8333-333333333333",
+      companyId: "company-1",
+      runId: "55555555-5555-4555-8555-555555555555",
+    });
+    // Resolve the error helper from the same module registry as the route.
+    const { conflict } = await import("../errors.js");
+    mockIssueService.update.mockRejectedValue(
+      conflict("The task execution settings changed.", { code: "execution_policy_changed" }),
+    );
+
+    const res = await request(app)
+      .patch("/api/issues/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+      .send({ executionPolicy: null });
+
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ details: { code: "execution_policy_changed" } });
+    expect(mockIssueService.update).toHaveBeenCalledTimes(1);
+    const [, patch] = mockIssueService.update.mock.calls[0] as [
+      string,
+      { expectedExecutionPolicy?: NormalizedExecutionPolicy | null },
+    ];
+    expect(patch.expectedExecutionPolicy).toEqual(policy);
+  });
+
+  it("does not add a policy snapshot to a board policy write", async () => {
+    const issue = {
+      id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      companyId: "company-1",
+      status: "todo",
+      assigneeAgentId: "33333333-3333-4333-8333-333333333333",
+      assigneeUserId: null,
+      createdByUserId: "local-board",
+      identifier: "PAP-1008",
+      title: "Board policy write",
+      executionPolicy: null,
+      executionState: null,
+    };
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockIssueService.update.mockImplementation(async (_id: string, patch: Record<string, unknown>) => ({
+      ...issue,
+      ...patch,
+      updatedAt: new Date(),
+    }));
+
+    const res = await request(await createApp())
+      .patch("/api/issues/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+      .send({ executionPolicy: null });
+
+    expect(res.status).toBe(200);
+    const [, patch] = mockIssueService.update.mock.calls[0] as [
+      string,
+      { expectedExecutionPolicy?: unknown },
+    ];
+    expect(patch.expectedExecutionPolicy).toBeUndefined();
+  });
+
   it("allows an agent-authored in_review transition with a scheduled monitor", async () => {
     const issue = {
       id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",

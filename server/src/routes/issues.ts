@@ -14430,10 +14430,20 @@ export function issueRoutes(
       } = { value: null };
       const postCommitActivityPublications: ActivityPublication[] = [];
       const postCommitIssueActions: IssuePostCommitAction[] = [];
+      // A non-board policy write is bound to the policy that was authorized
+      // above, so a board edit that lands between the read and the locked
+      // write (for example one that adds a user participant) makes this
+      // request fail with execution_policy_changed instead of overwriting it.
+      const lockedExpectedExecutionPolicy =
+        expectedExecutionPolicy === undefined &&
+        req.body.executionPolicy !== undefined &&
+        req.actor.type !== "board"
+          ? (existing.executionPolicy ?? null)
+          : expectedExecutionPolicy;
       const issueUpdateData = {
         ...updateFields,
         workspaceSelectionActor: req.actor,
-        expectedExecutionPolicy,
+        expectedExecutionPolicy: lockedExpectedExecutionPolicy,
         actorAgentId: actor.agentId ?? null,
         actorRunId: actor.agentId ? actor.runId : null,
         actorRunStopId: actor.agentId && interruptedRunId === actor.runId ? issueMutationStopId : null,
