@@ -30,7 +30,6 @@ function sse(value: unknown, newline = "\n"): string {
   return `data: ${JSON.stringify(value)}${newline}${newline}`;
 }
 
-/** The shape of the PAP-384 failure: a completed bash part with huge output. */
 function completedToolPart(output: string) {
   return {
     type: "message.part.updated",
@@ -68,6 +67,28 @@ describe("parseOpenCodeSseFrames", () => {
     expect(parsed).toHaveLength(40);
     expect(parsed.every((frame) => frame.compaction === undefined)).toBe(true);
     expect(parsed.map((frame) => JSON.parse(frame.data))).toEqual(events);
+  });
+
+  it("bounds a complete oversized event inside one chunk without changing its neighbors", async () => {
+    const before = { type: "server.connected", properties: {} };
+    const after = { type: "session.idle", properties: { sessionID: "ses_1" } };
+    const output = "begin\n" + "x".repeat(1_200_000) + "\nexit status 1";
+    const text = sse(before) + sse(completedToolPart(output)) + sse(after);
+    const parsed = await frames(text, text.length);
+    expect(parsed).toHaveLength(3);
+    expect(JSON.parse(parsed[0]!.data)).toEqual(before);
+    expect(parsed[0]!.compaction).toBeUndefined();
+    expect(parsed[1]!.compaction).toMatchObject({ omitted: false, truncatedStrings: 2 });
+    expect(parsed[1]!.data.length).toBeLessThan(OPENCODE_SSE_LIMITS.frameChars);
+    const event = JSON.parse(parsed[1]!.data);
+    annotateOmittedProviderText(event, parsed[1]!.compaction!);
+    const [canonical] = canonicalProviderEventsFromOpenCodePart(event.properties.part);
+    expect(canonical?.payload).toMatchObject({
+      status: "completed", outputBytes: Buffer.byteLength(output), outputTruncated: true, outputDigest: null,
+    });
+    expect(String(canonical?.payload.output).endsWith("exit status 1")).toBe(true);
+    expect(JSON.parse(parsed[2]!.data)).toEqual(after);
+    expect(parsed[2]!.compaction).toBeUndefined();
   });
 
   it("compacts an oversized tool event and keeps its outcome and the next event", async () => {
@@ -136,6 +157,15 @@ describe("parseOpenCodeSseFrames", () => {
     expect(String(canonical!.payload.output).endsWith(tail)).toBe(true);
     expect(String(canonical!.payload.output).length).toBeLessThanOrEqual(64 * 1024);
     expect(JSON.stringify(part)).not.toContain("omittedProviderText");
+  });
+
+  it("counts unpaired surrogate output as the original UTF-8 text", async () => {
+    const output = "\ud800" + "x".repeat(1_200_000) + "\udc00";
+    const [frame] = await frames(sse(completedToolPart(output)), 4093);
+    expect(frame!.compaction!.truncations).toEqual([
+      expect.objectContaining({ bytes: Buffer.byteLength(output) }),
+      expect.objectContaining({ bytes: Buffer.byteLength(output) }),
+    ]);
   });
 
   it("does not report a separator blank line before an oversized frame", async () => {

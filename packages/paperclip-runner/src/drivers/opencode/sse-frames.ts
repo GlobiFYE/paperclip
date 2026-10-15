@@ -110,6 +110,12 @@ class OpenCodeSseParser {
         const rawFrame = this.#buffer.slice(0, boundary.index);
         const raw = this.#buffer.slice(0, boundary.index + boundary[0].length);
         this.#buffer = this.#buffer.slice(boundary.index + boundary[0].length);
+        if (rawFrame.length > OPENCODE_SSE_LIMITS.frameChars) {
+          const oversized = new OversizedSseFrame();
+          oversized.write(raw);
+          frames.push(oversized.finish());
+          continue;
+        }
         const data = rawFrame
           .replaceAll("\r", "")
           .split("\n")
@@ -366,6 +372,7 @@ class JsonStringReader {
   done = false;
   failed = false;
   #escape = "";
+  #pendingHighSurrogate = "";
 
   constructor(isKey: boolean) {
     this.isKey = isKey;
@@ -396,6 +403,8 @@ class JsonStringReader {
       if (!match) return text.length;
       index = stop + 1;
       if (match[0] === '"') {
+        this.bytes += Buffer.byteLength(this.#pendingHighSurrogate);
+        this.#pendingHighSurrogate = "";
         this.done = true;
         return index;
       }
@@ -407,7 +416,11 @@ class JsonStringReader {
   #append(value: string): void {
     const { stringHeadChars, stringTailChars } = OPENCODE_SSE_LIMITS;
     this.chars += value.length;
-    this.bytes += utf8Length(value);
+    const pending = this.#pendingHighSurrogate + value;
+    const lastCode = pending.charCodeAt(pending.length - 1);
+    const endsHigh = lastCode >= 0xd800 && lastCode <= 0xdbff;
+    this.#pendingHighSurrogate = endsHigh ? pending.slice(-1) : "";
+    this.bytes += Buffer.byteLength(endsHigh ? pending.slice(0, -1) : pending);
     if (!this.split) {
       this.full += value;
       if (this.full.length <= stringHeadChars + stringTailChars) return;
@@ -440,14 +453,4 @@ function decodeJsonEscape(sequence: string): string | null {
   return /^[0-9a-fA-F]{4}$/.test(hex)
     ? String.fromCharCode(Number.parseInt(hex, 16))
     : null;
-}
-
-/** UTF-8 length; each half of a surrogate pair counts two of its four bytes. */
-function utf8Length(value: string): number {
-  let bytes = 0;
-  for (let index = 0; index < value.length; index += 1) {
-    const code = value.charCodeAt(index);
-    bytes += code < 0x80 ? 1 : code < 0x800 || (code >= 0xd800 && code <= 0xdfff) ? 2 : 3;
-  }
-  return bytes;
 }
