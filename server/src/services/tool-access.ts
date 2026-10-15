@@ -1,4 +1,4 @@
-import { DAYTONA_TOOLS, daytonaClient, isDaytonaConnection } from "./daytona.js";
+import { DAYTONA_TOOLS, daytonaClient, daytonaRisk, isDaytonaConnection } from "./daytona.js";
 import { chatCredentialMutationLease } from "./chat-credential-mutation-lease.js";
 import { notifyChatEndpointWork } from "./chat-work-notifications.js";
 import { removeSlackRegistration } from "./chat-slack-registration-cleanup.js";
@@ -2402,6 +2402,7 @@ export function classifyRisk(
   if (sourceTemplateKey === "browser-use-cloud") {
     return BROWSER_USE_TOOLS.find(t => t.name === tool.name)?.annotations.readOnlyHint ? "read" : "destructive";
   }
+  if (sourceTemplateKey === "daytona") return daytonaRisk(tool.name);
   if (sourceTemplateKey === "railway") {
     const reviewed = railwayRisk(normalizedToolName);
     return reviewed === "read" && (annotations.readOnlyHint === false || annotations.writeHint === true) ? "write" : reviewed;
@@ -3689,7 +3690,7 @@ export function toolAccessService(
   function shouldQuarantineNewEntries(
     connection: typeof toolConnections.$inferSelect,
   ): boolean {
-    return asRecord(connection.config).quarantineNewEntries === true;
+    return isDaytonaConnection(connection) || asRecord(connection.config).quarantineNewEntries === true;
   }
 
   function isAttentionHealthStatus(
@@ -7698,7 +7699,7 @@ export function toolAccessService(
           oauth.connectorProfile === "github.code"
           ? "GitHub account, installation, and repository access are available."
           : isDaytonaConnection(connection)
-            ? "Daytona diagnostic API access is connected."
+            ? "Daytona API access is connected."
           : isBrowserUseConnection(connection)
             ? "Browser Use API key is connected."
           : isAgentMailConnection(connection)
@@ -7851,7 +7852,7 @@ export function toolAccessService(
         ? googleProfileValue
         : null;
     const preserveReviewedCatalog =
-      (isRailwayEndpoint(connection.config.url) || sourceTemplateKey === "enterpret") &&
+      (isRailwayEndpoint(connection.config.url) || sourceTemplateKey === "enterpret" || isDaytonaConnection(connection)) &&
       existingRows.length > 0;
     const quarantineOnRefresh =
       (!refreshOptions.enableAllByDefault || preserveReviewedCatalog) &&
@@ -7954,7 +7955,7 @@ export function toolAccessService(
     }
 
     const preserveQuarantine =
-      isRailwayEndpoint(connection.config.url) || sourceTemplateKey === "enterpret";
+      isRailwayEndpoint(connection.config.url) || sourceTemplateKey === "enterpret" || isDaytonaConnection(connection);
     const normalizedConfig = preserveQuarantine
       ? { ...connection.config, quarantineNewEntries: true }
       : refreshOptions.enableAllByDefault
@@ -12843,7 +12844,7 @@ export function toolAccessService(
           // Grant-backed setup keeps the full discovered catalog selectable;
           // the wizard projects the app's action defaults into policies at
           // finish time instead of using catalog quarantine as access state.
-          quarantineNewEntries: galleryEntry.slug === "railway" || galleryEntry.slug === "enterpret",
+          quarantineNewEntries: ["railway", "enterpret", "daytona"].includes(galleryEntry.slug),
           ...(remoteMcpConnector ? {
             mcpSessionRequired: true,
             mcpAuthMode: input.authMode ?? "auto",

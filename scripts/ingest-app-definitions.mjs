@@ -1969,24 +1969,6 @@ if (fs.existsSync(overridesDirectory)) {
   }
 }
 
-// Native workspace diagnostics share ordinary connection credentials and governance.
-{
-  const [slug, name, description, category, _domain, urlPatterns, m, extra = {}] = ["daytona", "Daytona", "Inspect Paperclip workspaces, Daytona lifecycle state, and saved workspace recovery evidence.", "developer", "daytona.io", ["https://app.daytona.io/*"],
-    method("workspace-diagnostics", "rest_api", "api_key", { serverUrl: "https://app.daytona.io/api" }, "S3",
-      "Create an API key in the Daytona organization that owns your sandboxes. This connection inspects only task workspaces recorded in this Paperclip company. It does not run commands or start, stop, or delete sandboxes.", {
-        label: "Connect Daytona", whenToUse: "Inspect this company's task workspaces using your Daytona API key.",
-        credentialFields: [field("authorization", "Daytona API key", "Enter Daytona API key")],
-        keyPlacement: { location: "header", name: "Authorization", prefix: "Bearer " },
-        tenantFields: [{ key: "organizationId", label: "Pin to organization ID", type: "text", advanced: true,
-          helperMd: "Optional. Reject a key or sandbox from a different Daytona organization.",
-          validation: { pattern: "^[a-fA-F0-9-]{36}$", maxLength: 36 } }],
-        requiredResourceFilters: ["company", "issue", "workspace"],
-        consoleLinks: { keys: "https://app.daytona.io/dashboard/keys", docs: "https://www.daytona.io/docs/en/api-keys/" },
-        warnings: ["Daytona API keys can access running sandboxes even without selected permissions. Paperclip keeps this key on the server and exposes only the listed diagnostic actions."]
-      }), { docsUrl: "https://www.daytona.io/docs/en/sandboxes/" }];
-  apps.push({ schemaVersion: 1, slug, name, description, categories: [category], featured: false,
-    branding: brandingFor(slug), urlPatterns, methods: [m], ...extra });
-}
 // Every tool method has a checked-in permission review. Discovery metadata is
 // evidence for reviewers, never a runtime instruction to request more scopes.
 const permissionReviews = JSON.parse(fs.readFileSync(

@@ -5988,7 +5988,7 @@ export function createToolGatewayService(
     }
     const grant = await resolveConnectionGrant(session, connection);
     if (isDaytonaConnection(connection)) {
-      const data = await executeDaytonaTool({ db, binding: session, connection,
+      const data = await executeDaytonaTool({ binding: session, connection,
         headers: await resolveCredentialHeaders(session, connection, grant),
         request: (url, init) => options.remoteHttpRequest ? options.remoteHttpRequest(url, init)
           : guardedRemoteHttpFetch(url, init, remoteHttpFetchOptions()),
