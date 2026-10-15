@@ -25,6 +25,7 @@ describe("project discovery result bounds", () => {
     expect(names).toEqual(expect.arrayContaining([
       "paperclipListAgents", "paperclipListIssues", "paperclipGetIssue", "paperclipListComments",
       "paperclipCreateIssue", "paperclipUpdateIssue", "paperclipAddComment",
+      "paperclipDelegateChildIssue",
     ]));
     expect(names).not.toContain("paperclipApiRequest");
     expect(names).not.toContain("paperclipListSecrets");
@@ -54,6 +55,17 @@ describe("project discovery result bounds", () => {
     expect(fetch.mock.calls[2]?.[1]).toMatchObject({ method: "POST" });
     expect(JSON.parse(String(fetch.mock.calls[2]?.[1]?.body))).toMatchObject({
       title: "Investigate the reported bug", parentId, assigneeAgentId,
+    });
+    await callProjectTool({ ...input, name: "paperclipDelegateChildIssue", arguments: {
+      parentIssueId: parentId,
+      title: "Investigate the reported bug",
+      assigneeAgentId,
+      idempotencyKey: "one-investigation",
+    } });
+    expect(String(fetch.mock.calls[3]?.[0])).toBe(`http://paperclip.test/api/issues/${parentId}/children`);
+    expect(JSON.parse(String(fetch.mock.calls[3]?.[1]?.body))).toMatchObject({
+      title: "Investigate the reported bug", assigneeAgentId,
+      idempotencyKey: "one-investigation", delegateAndBlockParent: true,
     });
   });
   it("requests bounded summaries and normalizes continuation cursors", async () => {

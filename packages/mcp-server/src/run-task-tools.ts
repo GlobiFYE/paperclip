@@ -4,7 +4,9 @@ import { createToolDefinitions, type ToolDefinition } from "./tools.js";
 const READ_NAMES = [
   "paperclipListAgents", "paperclipListIssues", "paperclipGetIssue", "paperclipListComments",
 ] as const;
-const WRITE_NAMES = ["paperclipCreateIssue", "paperclipUpdateIssue", "paperclipAddComment"] as const;
+const WRITE_NAMES = [
+  "paperclipCreateIssue", "paperclipUpdateIssue", "paperclipAddComment", "paperclipDelegateChildIssue",
+] as const;
 
 export function createRunTaskTools(
   config: ConstructorParameters<typeof PaperclipApiClient>[0],
