@@ -10,7 +10,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export function cachePlan({ files, read, scope, packageDirs }) {
   const dependencyInputs = files.filter((file) =>
     /(^|\/)package\.json$/.test(file)
-    || ["pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc", "scripts/link-plugin-dev-sdk.mjs", "scripts/ci-dependency-cache.mjs"].includes(file)
+    || ["pnpm-lock.yaml", "pnpm-workspace.yaml", ".npmrc", ".pnpmfile.cjs", "pnpmfile.cjs"].includes(file)
+    || file.startsWith("scripts/")
     || file.startsWith("patches/"));
   const digest = (inputs, salt) => {
     const hash = createHash("sha256").update(JSON.stringify(salt));
@@ -22,11 +23,20 @@ export function cachePlan({ files, read, scope, packageDirs }) {
     return hash.digest("hex");
   };
   const dependencyKey = `ci-dependencies-v1-${digest(dependencyInputs, scope)}`;
+  const cacheable = packageDirs.every((directory) => {
+    const manifest = read(path.posix.join(directory, 'package.json'));
+    if (manifest === null) return false;
+    const scripts = JSON.parse(manifest).scripts ?? {};
+    return ['preinstall', 'install', 'postinstall', 'prepare'].every((hook) =>
+      scripts[hook] === undefined || (directory === '.' && hook === 'postinstall'
+        && scripts[hook] === 'node scripts/link-plugin-dev-sdk.mjs'));
+  });
   const buildInputs = files.filter((file) =>
     file.startsWith("packages/shared/") || file.startsWith("packages/plugins/sdk/")
     || /^tsconfig[^/]*\.json$/.test(file)
     || file === "scripts/ensure-plugin-build-deps.mjs");
   return {
+    cacheable,
     dependencyKey,
     buildKey: `ci-build-dependencies-v1-${digest(buildInputs, dependencyKey)}`,
     dependencyPaths: [...new Set(packageDirs.map((directory) => {
@@ -41,7 +51,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   const command = (args) => execFileSync("pnpm", args, { cwd: root, encoding: "utf8" }).trim();
   const workspaces = JSON.parse(command(['-r', 'list', '--depth=-1', '--json']));
   const packageDirs = ['.',
-    ...workspaces.map((workspace) => path.relative(root, workspace.path).split(path.sep).join('/')),
+    ...workspaces.map((workspace) => path.relative(root, workspace.path).split(path.sep).join('/') || '.'),
     ...readPluginsUnder(path.join(root, 'packages/plugins/sandbox-providers')).map((directory) => path.relative(root, directory).split(path.sep).join('/')),
     'packages/plugins/examples/plugin-orchestration-smoke-example',
   ];
@@ -57,6 +67,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     },
   });
   const output = [
+    `cacheable=${plan.cacheable}`,
     `dependency-key=${plan.dependencyKey}`,
     `build-key=${plan.buildKey}`,
     "dependency-paths<<PAPERCLIP_CACHE_PATHS",

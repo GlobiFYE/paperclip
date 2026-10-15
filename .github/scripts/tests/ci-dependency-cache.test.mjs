@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { cachePlan } from "../../../scripts/ci-dependency-cache.mjs";
 
 const entries = {
-  "package.json": '{"postinstall":"node scripts/link-plugin-dev-sdk.mjs"}',
+  "package.json": '{"scripts":{"postinstall":"node scripts/link-plugin-dev-sdk.mjs"}}',
   "server/package.json": '{"dependencies":{"external":"1.0.0"}}',
   "packages/shared/package.json": '{}',
   "packages/plugins/sdk/package.json": '{}',
@@ -30,7 +30,7 @@ test('dependency identity includes manifests, resolution, patches, installer and
   const original = plan();
   for (const file of Object.keys(entries).filter((file) =>
     /package\.json$/.test(file) || /^(pnpm-|\.npmrc|patches\/|scripts\/(link-plugin-dev-sdk|ci-dependency-cache))/.test(file))) {
-    for (const value of ['changed', null]) {
+    for (const value of [file.endsWith('package.json') ? '{"changed":true}' : 'changed', null]) {
       const changed = plan({ ...entries, [file]: value });
       assert.notEqual(changed.dependencyKey, original.dependencyKey, file);
       assert.notEqual(changed.buildKey, original.buildKey, file);
@@ -42,10 +42,10 @@ test('dependency identity includes manifests, resolution, patches, installer and
   }
 });
 
-test('shared and SDK inputs invalidate their dependent build, without invalidating installed dependencies', () => {
+test('shared and SDK source changes invalidate dependent builds without reinstalling packages', () => {
   const original = plan();
   for (const file of ['packages/shared/src/index.ts', 'packages/plugins/sdk/src/index.ts',
-    'tsconfig.base.json', 'scripts/ensure-plugin-build-deps.mjs']) {
+    'tsconfig.base.json']) {
     const changed = plan({ ...entries, [file]: 'changed' });
     assert.equal(changed.dependencyKey, original.dependencyKey, file);
     assert.notEqual(changed.buildKey, original.buildKey, file);
@@ -57,6 +57,17 @@ test('shared and SDK inputs invalidate their dependent build, without invalidati
   assert.deepEqual(plan({ ...entries, 'tests/fixtures/app/package.json': '{}' }).dependencyPaths, original.dependencyPaths);
   for (const directory of ['/outside', '../outside', 'server/../../outside']) {
     assert.throws(() => cachePlan({ files: [], read: () => null, scope, packageDirs: [directory] }));
+  }
+});
+
+test('unmodelled workspace lifecycle scripts disable materialized reuse', () => {
+  assert.equal(plan().cacheable, true);
+  for (const hook of ['preinstall', 'install', 'postinstall', 'prepare']) {
+    assert.equal(plan({ ...entries, 'server/package.json': JSON.stringify({ scripts: { [hook]: 'node custom.mjs' } }) }).cacheable, false);
+  }
+  assert.equal(plan({ ...entries, 'package.json': '{"scripts":{"postinstall":"node other.mjs"}}' }).cacheable, false);
+  for (const file of ['scripts/ensure-plugin-build-deps.mjs', 'scripts/new-install-helper.mjs', '.pnpmfile.cjs']) {
+    assert.notEqual(plan({ ...entries, [file]: 'changed' }).dependencyKey, plan().dependencyKey);
   }
 });
 

@@ -174,11 +174,12 @@ populate master's caches. Normal PR lanes restore only; the exact canonical
 master push in release verification is the normal cache writer.
 
 Materialized dependency keys include every tracked package manifest, lockfile,
-workspace configuration, patches, postinstall code, Node version/ABI, platform,
+workspace configuration, patches, repository scripts, Node version/ABI, platform,
 architecture, libc, pnpm version, store location, and physical checkout path.
 There are no prefix restores. An input change takes the normal install path.
 A stale lockfile uses the existing resolution fallback but cannot publish an
-entry. Shared/SDK build outputs have a separate key that also includes both
+entry. An additional workspace install/prepare hook disables materialized reuse
+until its inputs are modeled. Shared/SDK build outputs have a separate key that also includes both
 packages' source/configuration and the build verifier. The existing verifier
 checks source and output fingerprints and rebuilds incomplete or changed output.
 Tests and their results are never cached or omitted by this mechanism.
