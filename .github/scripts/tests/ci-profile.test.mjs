@@ -275,7 +275,9 @@ function assertNoPrWorkflowCredentials(source) {
 
 test("PR credential guard permits filenames but rejects secret expressions", () => {
   assertNoPrWorkflowCredentials("run: node --test scripts/docker-compose-secrets.test.mjs");
-  for (const source of ["env: ${{ secrets.EXAMPLE }}", "env: ${{ secrets['EXAMPLE'] }}", "env: ${{ toJSON(secrets) }}", "env: ${{ format('}}', secrets.EXAMPLE) }}"]) {
+  for (const source of ["env: ${{ secrets.EXAMPLE }}", "env: ${{ secrets['EXAMPLE'] }}", "env: ${{ toJSON(secrets) }}", "env: ${{ format('}}', secrets.EXAMPLE) }}",
+    "# Expressions start with '${{'.\nTOKEN: ${{ secrets.PR_TOKEN }}",
+    "name: Example # Expressions start with '${{'.\nTOKEN: ${{ secrets.PR_TOKEN }}"]) {
     assert.throws(() => assertNoPrWorkflowCredentials(source));
   }
   assert.throws(() => assertNoPrWorkflowCredentials("HONEYCOMB_API_KEY: example"));
