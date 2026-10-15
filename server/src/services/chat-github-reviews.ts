@@ -58,6 +58,7 @@ import { toolAccessPolicyService } from "./tool-access-policy.js";
 import {
   githubAutomaticAdmission,
   githubPreviousAssessment,
+  githubReviewedAuthorCommentAdmission,
 } from "./chat-github-events.js";
 import { logActivity } from "./activity-log.js";
 import { DELIVERY_QUEUES, notifyDeliveryWork } from "./delivery-work-notifications.js";
@@ -222,7 +223,18 @@ export function githubChatReviewService(db: Db, fetchImpl = fetch) {
     const reviewedAuthorReview =
       automaticAdmission?.allowed === true &&
       automaticAdmission.reviewedAuthor === true;
-    if (!access?.allowed && !reviewedAuthorReview)
+    const reviewedAuthorComment =
+      !automatic &&
+      !access?.allowed &&
+      (
+        await githubReviewedAuthorCommentAdmission(
+          db,
+          source.endpoint,
+          source.delivery.principalId,
+          source.conversation.externalThreadId,
+        )
+      )?.allowed === true;
+    if (!access?.allowed && !reviewedAuthorReview && !reviewedAuthorComment)
       throw forbidden("The initiating GitHub person is no longer authorized");
     if (automatic && !automaticAdmission?.allowed)
       throw forbidden("Automatic GitHub task authority is no longer available");

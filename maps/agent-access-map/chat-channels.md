@@ -147,9 +147,11 @@ by the gateway. Registry replacement and missing-service controls are in
 [authority registration tests](../../server/src/services/connectors/slack-authority.test.ts).
 This is a source and local-database contract; hosted latency needs live evidence.
 
-GitHub reviewed authors (`reviewedAuthors` in the bot configuration) admit only
-automatic pull request events from listed GitHub user IDs. Mentions, comments and
-issues from them stay denied. Their tasks run under the responsible member
+GitHub reviewed authors (`reviewedAuthors` in the bot configuration) admit
+automatic pull request events from listed GitHub user IDs, and their mentions and
+replies in pull request conversations of enabled repositories. Issue
+conversations and governed actions stay denied, and a revoked identity link is
+refused. Their tasks run under the responsible member
 without low-trust quarantine. A run that their request started, and a later run
 on the task without its own GitHub request, uses only the bot's gateway
 connection and never a person's or the host's GitHub credentials; only the

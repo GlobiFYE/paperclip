@@ -135,7 +135,7 @@ import { canPublishIssueToChatAudience } from "./authorization.js";
 import { buildChatCommunicationGuidance } from "./chat-communication-guidance.js";
 import { assertChatTaskCreationAccess, resolveChatExecutionDefaults } from "./chat-execution-defaults.js";
 
-import { githubAutomaticAdmission } from "./chat-github-events.js";
+import { githubAutomaticAdmission, githubReviewedAuthorCommentAdmission } from "./chat-github-events.js";
 import type { GitHubReviewEventContext, GitHubIssueEventContext, GitHubReviewPolicy } from "@paperclipai/shared";
 
 import { resumeExternalConversation } from "./slack-conversation-state.js";
@@ -1725,12 +1725,28 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         publicVoiceTaskAllowed = await authorizeSpekoPublicVoiceTask(db, endpoint, principalResolution.principal.externalId, voiceStore.authorizePrincipal);
       }
       // The task transaction re-runs automatic admission before any task changes.
+      const linkedOrGuestAllowed =
+        !principalResolution.linkedDenied &&
+        (principalResolution.userId !== null ||
+          guestSponsorAllowed ||
+          publicVoiceTaskAllowed);
+      // The task transaction re-runs both reviewed-author admissions before any task changes.
+      const reviewedAuthorComment =
+        endpoint.provider === "github" &&
+        !githubAutomatic &&
+        !linkedOrGuestAllowed &&
+        (
+          await githubReviewedAuthorCommentAdmission(
+            db,
+            endpoint,
+            principalResolution.principal.id,
+            thread.id,
+          )
+        )?.allowed === true;
       const principalAllowed =
         githubAutomatic?.reviewedAuthor === true ||
-        (!principalResolution.linkedDenied &&
-          (principalResolution.userId !== null ||
-            guestSponsorAllowed ||
-            publicVoiceTaskAllowed));
+        reviewedAuthorComment ||
+        linkedOrGuestAllowed;
       const activationAllowed = addressed || existingConversation !== null;
       const allowed =
         endpointAllowed &&
@@ -2372,6 +2388,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
             tx,
             currentEndpoint,
             principalResolution.principal.id,
+            githubAutomatic ? null : thread.id,
           );
         const automaticContext = githubAutomatic?.context ?? githubIssue?.context;
         const automaticAdmission = automaticContext ? await githubAutomaticAdmission(tx, currentEndpoint, automaticContext) : null;

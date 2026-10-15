@@ -155,10 +155,12 @@ export function createInboundWakeAuthority(db: Db, options: WakeAuthorityOptions
         .limit(1)
         .then((rows) => rows[0] ?? null)
       : null;
+    const automaticGitHubEvent = Boolean(delivery.normalizedEvent.githubAutomatic ?? delivery.normalizedEvent.githubIssue);
     const authorization = await lockCurrentPrincipalAuthorization(
       tx,
       endpoint,
       action.principalId,
+      automaticGitHubEvent ? null : conversation.externalThreadId,
     );
     if (endpoint.provider === "github") {
       const automatic = await resolveGitHubWakeAuthority(tx, endpoint, delivery);

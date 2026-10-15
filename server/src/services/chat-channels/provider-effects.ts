@@ -159,7 +159,7 @@ type ProviderEffectsOptions = {
   withCredentialMutationLease: ReturnType<typeof chatCredentialMutationLease>;
   runtimeFor: (endpoint: EndpointRow) => Promise<ChatEndpointRuntime>;
   invalidateRuntime: (endpointId: string) => Promise<boolean>;
-  lockCurrentPrincipalAuthorization: (tx: DbOrTransaction, endpoint: EndpointRow, principalId: string) => Promise<{ allowed: boolean }>;
+  lockCurrentPrincipalAuthorization: (tx: DbOrTransaction, endpoint: EndpointRow, principalId: string, githubConversationId?: string | null) => Promise<{ allowed: boolean }>;
   redactError: (error: unknown) => string;
   MAX_ERROR_TEXT: number;
   nonDirectDestinationAllowed: (endpoint: EndpointRow, resource: typeof chatEndpointResources.$inferSelect | null | undefined) => boolean;
@@ -536,7 +536,12 @@ export function createProviderEffects(db: Db, options: ProviderEffectsOptions) {
     if (!destinationAllowed) return false;
     if (!action.principalId) return false;
     return (
-      await lockCurrentPrincipalAuthorization(tx, endpoint, action.principalId)
+      await lockCurrentPrincipalAuthorization(
+        tx,
+        endpoint,
+        action.principalId,
+        payload.threadId,
+      )
     ).allowed;
   }
 
