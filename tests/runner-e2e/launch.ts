@@ -1,17 +1,23 @@
+import { runnerE2EPlaywrightInvocation } from "./web-server-command.js";
+import { verifyInstalledDaytonaPlugin } from "./installed-daytona-plugin.js";
+import { assertInstalledCliSelection, assertInstalledStartupOnly, verifyInstalledCli } from "./installed-cli.js";
+import { createProcessTreeOwner, stopOwnedProcessTree } from "./process-tree-owner.js";
+import { createRunnerE2ETemporaryRoot } from "./server-config.js";
 import { randomBytes } from "node:crypto";
+import { prepareCodexCiSandbox, requiresCodexCiSandbox } from "./codex-ci-sandbox.js";
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { createRequire } from "node:module";
-import { createServer } from "node:net";
 import os from "node:os";
 import path from "node:path";
 import {
+  access,
   chmod,
   cp,
   lstat,
   mkdir,
-  mkdtemp,
   readFile,
+  realpath,
   readdir,
   rm,
   symlink,
@@ -20,13 +26,21 @@ import {
 import { isImmutableDaytonaImage, runnerMatrix } from "./catalog.js";
 import { renderRunnerE2EDashboard } from "./dashboard.js";
 import { packageEvidence } from "./evidence.js";
-import { classifyFailure, shouldRetryFailure } from "./failure-classifier.js";
+import { classifyFailure } from "./failure-classifier.js";
+import { mustPreserveRecoveryState, shouldKeepFailedDiagnostics } from "./cleanup-verification.js";
+import { effectiveAutomaticRetryLimit, executeWithAutomaticRetry } from "./automatic-retry.js";
 import { buildRunnerCampaign } from "./history.js";
+import {
+  buildRunnerE2EProcessEnvironment,
+  resolvePaperclipRemoteRunnerBinaryForHarness,
+  resolvePaperclipRunnerBinaryForHarness,
+} from "./harness-env.js";
 import { assertEmbeddedDatabaseIsolation } from "./instance-isolation.js";
 import {
   assertSecretFree,
   findSecretLeakInDirectory,
   isEphemeralCodexRuntimeAuthFile,
+  isEphemeralPostgresScanFile,
   normalizedSecrets,
   sanitizeJson,
 } from "./redaction.js";
@@ -36,21 +50,39 @@ import {
   RunnerSelectorError,
   selectRunnerExecutions,
 } from "./selectors.js";
+import { resolveRunnerE2ESource } from "./source.js";
 import {
   CREDENTIAL_NAMES,
   type MatrixExecution,
   type RunnerE2EResult,
 } from "./types.js";
+import { assertRemoteNativeEvidencePrerequisites, assertRunnerE2EPrerequisites } from "./prerequisites.js";
+import { assertNativeCompletionSelection, prepareNativeCompletionPreflight, NATIVE_COMPLETION_PREFLIGHT_ENV } from "./native-completion-admission.js";
+import { assertNativeInstructionSelection, prepareNativeInstructionPreflight, NATIVE_INSTRUCTION_PREFLIGHT_ENV, NATIVE_INSTRUCTION_SUITE } from "./native-instruction-consolidation.js";
+import { prepareStockHarnessPreflight, STOCK_PREFLIGHT_ENV } from "./stock-harness-admission.js";
+
 import {
   reapNewDetachedDarwinSharedMemory,
   snapshotDarwinSharedMemory,
 } from "./shared-memory.js";
+import { reserveRunnerE2EServerPort } from "./ports.js";
+import {
+  createResultExitGuard,
+  enforceResultProcessIntegrity,
+} from "./result-exit-guard.js";
+import {
+  observeDescendantProcessTree,
+  type ObservedProcessGroup,
+  readProcessTable,
+} from "./process-tree.js";
 
 const repositoryRoot = path.resolve(import.meta.dirname, "../..");
 const localEnvPath = path.join(repositoryRoot, ".env.runner-e2e.local");
 const resultsRoot = path.join(repositoryRoot, "tests/runner-e2e/results");
 const activeProcessGroups = new Set<number>();
 const activeProcessCleanup = new Map<number, Promise<string | null>>();
+const activeProcessTerminators = new Map<number, () => void>();
+const completedResultExitGraceMs = 120_000;
 let cancelled = false;
 
 function cleanId(value: string) {
@@ -115,12 +147,51 @@ async function terminateProcessGroup(pid: number) {
     : null;
 }
 
+function wait(milliseconds: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, milliseconds));
+}
+
+interface ProcessTreeDiagnostic {
+  summary: string;
+  groups: ObservedProcessGroup[];
+}
+
+async function processTreeDiagnostic(
+  rootPid: number,
+): Promise<ProcessTreeDiagnostic> {
+  const table = await readProcessTable();
+  if (!table) {
+    return {
+      summary: `process tree ${rootPid} (member inspection unavailable)`,
+      groups: [],
+    };
+  }
+  const observed = observeDescendantProcessTree(table, rootPid);
+  const members = observed.members
+    .slice(0, 64)
+    .map(
+      ({ process: candidate, depth }) =>
+        `pid=${candidate.pid} ppid=${candidate.parentPid} pgid=${candidate.processGroupId} depth=${depth} kind=${candidate.kind}`,
+    );
+  const descendantGroupIds = observed.groups
+    .filter((group) => group.processGroupId !== rootPid)
+    .map((group) => group.processGroupId);
+  return {
+    summary:
+      members.length > 0
+        ? `process tree ${rootPid}: ${members.join("; ")}; descendant pgids=${descendantGroupIds.join(",") || "none"}`
+        : `process tree ${rootPid}: no members reported`,
+    groups: observed.groups,
+  };
+}
+
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) {
   process.on(signal, () => {
     cancelled = true;
     for (const pid of activeProcessGroups) {
-      if (activeProcessCleanup.has(pid)) {
-        stopProcessGroup(pid, "SIGKILL");
+      const terminate = activeProcessTerminators.get(pid);
+      if (terminate) {
+        terminate();
         continue;
       }
       activeProcessCleanup.set(pid, terminateProcessGroup(pid));
@@ -154,21 +225,6 @@ async function loadLocalEnvironment(target: NodeJS.ProcessEnv) {
     }
     target[match[1]] = value;
   }
-}
-
-async function reservePort() {
-  const server = createServer();
-  await new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const address = server.address();
-  if (!address || typeof address === "string")
-    throw new Error("Failed to reserve a loopback port");
-  await new Promise<void>((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve())),
-  );
-  return address.port;
 }
 
 async function prepareProviderPath(
@@ -210,13 +266,15 @@ async function prepareProviderPath(
 }
 
 async function runProcess(
-  args: string[],
+  invocation: { command: string; args: string[] },
   env: NodeJS.ProcessEnv,
   timeoutMs: number | null,
   logPath: string,
+  completionPaths: readonly string[],
+  interactive: boolean,
 ) {
   const log = createWriteStream(logPath, { flags: "a", mode: 0o600 });
-  const child = spawn("pnpm", args, {
+  const child = spawn(invocation.command, invocation.args, {
     cwd: repositoryRoot,
     env,
     stdio: ["inherit", "pipe", "pipe"],
@@ -224,6 +282,7 @@ async function runProcess(
   });
   if (!child.pid) throw new Error("Failed to start Playwright");
   activeProcessGroups.add(child.pid);
+  const processOwner = createProcessTreeOwner(child);
   let outputTail = "";
   const recordOutput = (chunk: Buffer, destination: NodeJS.WriteStream) => {
     destination.write(chunk);
@@ -238,40 +297,103 @@ async function runProcess(
   child.stderr?.on("data", (chunk: Buffer) =>
     recordOutput(chunk, process.stderr),
   );
+  let childSettled = false;
+  let postResultStallError: string | null = null;
+  let boundedCleanup: Promise<string | null> | undefined;
+  let cleanupSettled!: () => void;
+  const cleanupFinished = new Promise<number>(resolve => { cleanupSettled = () => resolve(1); });
+  const stopChildTree = (_diagnostic?: ProcessTreeDiagnostic) => {
+    if (boundedCleanup) return;
+    boundedCleanup = stopOwnedProcessTree(child, processOwner)
+      .then(() => null, error => error instanceof Error ? error.message : String(error))
+      .finally(cleanupSettled);
+    activeProcessCleanup.set(child.pid!, boundedCleanup);
+  };
+  activeProcessTerminators.set(child.pid, stopChildTree);
+  const resultExitGuard = createResultExitGuard({
+    resultPaths: completionPaths,
+    interactive,
+    graceMs: completedResultExitGraceMs,
+    now: Date.now,
+    pathExists: (candidate) =>
+      access(candidate).then(
+        () => true,
+        () => false,
+      ),
+    onExpired: async () => {
+      const diagnostic = await processTreeDiagnostic(child.pid!);
+      if (childSettled) return;
+      postResultStallError = `Playwright remained alive for ${completedResultExitGraceMs}ms after every result was written`;
+      recordOutput(
+        Buffer.from(
+          `\n${postResultStallError}; forcing bounded cleanup. ${diagnostic.summary}\n`,
+        ),
+        process.stderr,
+      );
+      stopChildTree(diagnostic);
+    },
+  });
+  const completionPoll = resultExitGuard.enabled
+    ? setInterval(() => {
+        void resultExitGuard.poll().catch(() => {
+          if (childSettled || postResultStallError) return;
+          postResultStallError =
+            "Completed-result exit guard failed during bounded inspection";
+          recordOutput(
+            Buffer.from(`\n${postResultStallError}; forcing cleanup.\n`),
+            process.stderr,
+          );
+          stopChildTree();
+        });
+      }, 500)
+    : undefined;
+  completionPoll?.unref();
   let timedOut = false;
   const timer =
     timeoutMs === null
       ? undefined
       : setTimeout(() => {
           timedOut = true;
-          stopProcessGroup(child.pid!, "SIGTERM");
-          setTimeout(
-            () => stopProcessGroup(child.pid!, "SIGKILL"),
-            10_000,
-          ).unref();
+          stopChildTree();
         }, timeoutMs);
   timer?.unref();
   let spawnError: string | null = null;
-  const exitCode = await new Promise<number>((resolve, reject) => {
+  const childExit = new Promise<number>((resolve, reject) => {
     child.once("error", reject);
-    child.once("exit", (code) => resolve(code ?? 1));
+    child.once("exit", (code) => {
+      childSettled = true;
+      resolve(code ?? 1);
+    });
   }).catch((error) => {
+    childSettled = true;
     spawnError = error instanceof Error ? error.message : String(error);
     return 1;
   });
+  const exitCode = await Promise.race([childExit, cleanupFinished]);
   if (timer) clearTimeout(timer);
-  const processCleanupError = child.pid
-    ? await (activeProcessCleanup.get(child.pid) ??
-        terminateProcessGroup(child.pid))
-    : null;
+  if (completionPoll) clearInterval(completionPoll);
+  // Even a successful launcher exit can leave an already-observed detached
+  // server behind. Retire that retained tree, never only the root group.
+  stopChildTree();
+  const processCleanupError = await boundedCleanup!;
+  processOwner.stopObserving();
+  // Even a failed direct-child kill must not hold cancellation forever or let
+  // inherited pipes write into an ended log. The cleanup error remains fatal.
+  if (processCleanupError) {
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    if (child.exitCode === null && child.signalCode === null) child.unref();
+  }
   if (child.pid) {
     activeProcessGroups.delete(child.pid);
     activeProcessCleanup.delete(child.pid);
+    activeProcessTerminators.delete(child.pid);
   }
   await new Promise<void>((resolve) => log.end(resolve));
   return {
     exitCode,
     timedOut,
+    postResultStallError,
     processCleanupError,
     spawnError,
     outputTail,
@@ -291,16 +413,7 @@ function syntheticResult(
     executionId: execution.id,
     suiteId: execution.suite.id,
     suiteDefinitionHash: execution.suiteDefinitionHash,
-    source: {
-      sha: process.env.GITHUB_SHA ?? null,
-      ref: process.env.GITHUB_REF ?? null,
-      workflowRunUrl:
-        process.env.GITHUB_SERVER_URL &&
-        process.env.GITHUB_REPOSITORY &&
-        process.env.GITHUB_RUN_ID
-          ? `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`
-          : null,
-    },
+    source: resolveRunnerE2ESource(),
     ...(execution.profile.ranking
       ? { rankingSnapshot: execution.profile.ranking }
       : {}),
@@ -368,14 +481,19 @@ async function runAttempt(input: {
       "One isolated runner E2E harness cannot mix profiles or environments",
     );
   }
+  assertInstalledCliSelection(process.env, executions);
+  const installedCli = await verifyInstalledCli(process.env, executions);
+  const installedPlugin = await verifyInstalledDaytonaPlugin(process.env, executions);
   const startedAtMs = Date.now();
   const sharedMemoryBaseline = snapshotDarwinSharedMemory();
-  const temporaryRoot = await mkdtemp(
-    path.join(os.tmpdir(), "paperclip-runner-e2e-"),
-  );
+  const temporaryParent = await realpath(os.tmpdir());
+  const temporaryRoot = await createRunnerE2ETemporaryRoot(temporaryParent);
   const publishedResults: RunnerE2EResult[] = [];
   const publishedResultPaths = new Map<string, string>();
   let attemptSecrets: string[] = [];
+  let processCleanupFailed = false;
+  let startupReceiptPath: string | undefined;
+  const rawCleanupResults: Array<{ cleanup: string; synthetic: boolean; status: string }> = [];
   try {
     const paperclipHome = path.join(temporaryRoot, "paperclip-home");
     const workspace = path.join(temporaryRoot, "workspace");
@@ -387,7 +505,7 @@ async function runAttempt(input: {
       instanceId,
       "config.json",
     );
-    const port = await reservePort();
+    const port = await reserveRunnerE2EServerPort();
     await Promise.all([
       mkdir(paperclipHome, { recursive: true }),
       mkdir(workspace, { recursive: true }),
@@ -397,6 +515,9 @@ async function runAttempt(input: {
       temporaryRoot,
       process.env.PATH,
     );
+    if (requiresCodexCiSandbox(execution)) {
+      await prepareCodexCiSandbox(repositoryRoot, temporaryRoot);
+    }
     const agentJwtSecret = secret(48);
     const decisionSigningSecret = secret(48);
     const toolActionSigningSecret = secret(48);
@@ -409,18 +530,29 @@ async function runAttempt(input: {
       betterAuthSecret,
     ]);
     attemptSecrets = credentials;
+    if (installedCli) await writeFile(path.join(privateDir, "installed-cli-admission.json"), `${JSON.stringify(installedCli, null, 2)}\n`, { mode: 0o600 });
+    if (installedPlugin) await writeFile(path.join(privateDir, "installed-daytona-plugin-admission.json"), `${JSON.stringify(installedPlugin, null, 2)}\n`, { mode: 0o600 });
+    const runnerBinary = installedCli ? undefined : resolvePaperclipRunnerBinaryForHarness(
+      executions,
+      repositoryRoot,
+    );
     const childEnv: NodeJS.ProcessEnv = {
-      ...process.env,
+      ...buildRunnerE2EProcessEnvironment(process.env, executions),
       PATH: providerPath,
       PAPERCLIP_RUNNER_E2E_EXECUTION_IDS: JSON.stringify(
         executions.map((candidate) => candidate.id),
       ),
       PAPERCLIP_RUNNER_E2E_ATTEMPT: String(attempt),
+      PAPERCLIP_RUNNER_E2E_INSTALLED_STARTUP_ONLY: options.installedStartupOnly ? "1" : undefined,
+      PAPERCLIP_RUNNER_E2E_PUBLIC_MCP: executions.some(candidate => candidate.task.flow === "public_mcp") ? "1" : "0",
       PAPERCLIP_RUNNER_E2E_PORT: String(port),
       PAPERCLIP_RUNNER_E2E_TEMP_ROOT: temporaryRoot,
       PAPERCLIP_RUNNER_E2E_PRIVATE_DIR: privateDir,
       PAPERCLIP_RUNNER_E2E_WORKSPACE: workspace,
       PAPERCLIP_RUNNER_E2E_SERVER_LOG: path.join(privateDir, "server.log"),
+      PAPERCLIP_RUNNER_BINARY: runnerBinary,
+      PAPERCLIP_RUNNER_REMOTE_BINARY_PATH:
+        installedCli ? undefined : resolvePaperclipRemoteRunnerBinaryForHarness(executions, runnerBinary),
       // Vite's optimized dependency cache embeds revision query strings. A
       // private per-attempt cache prevents an earlier cell or local rebuild
       // from producing `504 Outdated Optimize Dep` during browser bootstrap.
@@ -447,8 +579,6 @@ async function runAttempt(input: {
     delete childEnv.DATABASE_MIGRATION_URL;
 
     const playwrightArgs = [
-      "exec",
-      "playwright",
       "test",
       "--config",
       "tests/runner-e2e/playwright.config.ts",
@@ -468,11 +598,28 @@ async function runAttempt(input: {
           ) +
           5 * 60_000;
     const processResult = await runProcess(
-      playwrightArgs,
+      runnerE2EPlaywrightInvocation(repositoryRoot, playwrightArgs, Boolean(installedCli)),
       childEnv,
       watchdog,
       path.join(privateDir, "playwright.log"),
+      executions.map((candidate) =>
+        path.join(privateDir, "cases", candidate.task.id, "result.json"),
+      ),
+      options.ui || options.debug,
     );
+    processCleanupFailed = processResult.processCleanupError !== null;
+    if (options.installedStartupOnly) {
+      const proofDir = path.join(resultsRoot, campaignId, "installed-startup-only");
+      await mkdir(proofDir, { recursive: true });
+      // This is private setup evidence, never a successful provider case/result.
+      await cp(privateDir, path.join(proofDir, "private"), { recursive: true });
+      const probe = JSON.parse(await readFile(path.join(privateDir, "installed-startup-only.json"), "utf8"));
+      if (processResult.exitCode !== 0 || processResult.timedOut || processResult.spawnError || processCleanupFailed || probe.status !== "health_ui_zero_company_passed" || probe.providerCalls !== 0 || probe.qualified !== false) throw new Error("Installed startup-only actual launch chain failed");
+      await assertEmbeddedDatabaseIsolation(configPath, temporaryRoot);
+      startupReceiptPath = path.join(proofDir, "receipt.json");
+      await writeFile(startupReceiptPath, `${JSON.stringify({ status: "installed_launch_chain_pending_scratch_cleanup", qualified: false, providerCalls: 0, credentialsLoaded: false, installedCli, processResult, probe }, null, 2)}\n`, { mode: 0o600 });
+      return [];
+    }
     const processFailure = processResult.spawnError
       ? `Playwright failed to start: ${processResult.spawnError}`
       : processResult.timedOut
@@ -504,15 +651,9 @@ async function runAttempt(input: {
           processFailureClass,
         );
         const result = await readResult(resultPath, fallback);
-        return processResult.processCleanupError
-          ? {
-              ...result,
-              status: "failed" as const,
-              failureClass: "cleanup_failure" as const,
-              error: processResult.processCleanupError,
-              cleanup: "failed" as const,
-            }
-          : result;
+        // Keep cleanup authority before evidence copying/publication can fail.
+        rawCleanupResults.push({ cleanup: result.cleanup, synthetic: result === fallback, status: result.status });
+        return enforceResultProcessIntegrity(result, processResult);
       }),
     );
     let isolationError: unknown;
@@ -522,40 +663,50 @@ async function runAttempt(input: {
       isolationError = error;
     }
     let persistedStateError: unknown;
-    try {
-      const expectedEphemeralCredentials = new Set<string>();
-      for (const [label, directory] of [
-        ["Paperclip home", paperclipHome],
-        ["workspace", workspace],
-      ] as const) {
-        while (true) {
-          // The managed Codex home may legitimately contain upstream source-code
-          // fixtures with fake `sk-*` strings. Reject exact campaign credentials.
-          const leak = await findSecretLeakInDirectory(directory, credentials, {
-            includeShapes: false,
-            ignoreFile: (file) => expectedEphemeralCredentials.has(file),
-          });
-          if (!leak) break;
-          const isManagedCodexRuntimeAuth =
-            label === "Paperclip home" &&
-            isEphemeralCodexRuntimeAuthFile(paperclipHome, leak.file);
-          if (isManagedCodexRuntimeAuth) {
-            const metadata = await lstat(leak.file);
-            if (metadata.isFile() && (metadata.mode & 0o777) === 0o600) {
-              // Codex CLI API-key mode requires this one runtime auth file. It
-              // lives only in the disposable cell root, is never published,
-              // must be owner-only, and is removed with the root below.
-              expectedEphemeralCredentials.add(leak.file);
-              continue;
+    // Onboarding evaluates behavior; credential persistence belongs to a separate layer.
+    // Keep artifact redaction/publication checks independent of this filesystem scan.
+    const persistenceCheckedExecutions = executions.filter(
+      (candidate) => candidate.suite.id !== "first-task",
+    );
+    if (persistenceCheckedExecutions.length > 0) {
+      try {
+        const expectedEphemeralCredentials = new Set<string>();
+        for (const [label, directory] of [
+          ["Paperclip home", paperclipHome],
+          ["workspace", workspace],
+        ] as const) {
+          while (true) {
+            // The managed Codex home may legitimately contain upstream source-code
+            // fixtures with fake `sk-*` strings. Reject exact campaign credentials.
+            const leak = await findSecretLeakInDirectory(directory, credentials, {
+              includeShapes: false,
+              ignoreFile: (file) => expectedEphemeralCredentials.has(file),
+              allowDisappearedFile: (file) =>
+                label === "Paperclip home" &&
+                isEphemeralPostgresScanFile(paperclipHome, file),
+            });
+            if (!leak) break;
+            const isManagedCodexRuntimeAuth =
+              label === "Paperclip home" &&
+              isEphemeralCodexRuntimeAuthFile(paperclipHome, leak.file);
+            if (isManagedCodexRuntimeAuth) {
+              const metadata = await lstat(leak.file);
+              if (metadata.isFile() && (metadata.mode & 0o777) === 0o600) {
+                // Codex CLI API-key mode requires this one runtime auth file. It
+                // lives only in the disposable cell root, is never published,
+                // must be owner-only, and is removed with the root below.
+                expectedEphemeralCredentials.add(leak.file);
+                continue;
+              }
             }
+            throw new Error(
+              `Secret leak in persisted ${label} state at ${path.relative(temporaryRoot, leak.file)}: ${leak.reason}`,
+            );
           }
-          throw new Error(
-            `Secret leak in persisted ${label} state at ${path.relative(temporaryRoot, leak.file)}: ${leak.reason}`,
-          );
         }
+      } catch (error) {
+        persistedStateError = error;
       }
-    } catch (error) {
-      persistedStateError = error;
     }
     for (const [index, candidate] of executions.entries()) {
       let result = results[index];
@@ -585,7 +736,7 @@ async function runAttempt(input: {
             : isolationMessage,
         };
       }
-      if (persistedStateError) {
+      if (persistedStateError && persistenceCheckedExecutions.includes(candidate)) {
         const persistedStateMessage =
           persistedStateError instanceof Error
             ? persistedStateError.message
@@ -672,10 +823,26 @@ async function runAttempt(input: {
     }
     return [...publishedResults];
   } finally {
-    reapNewDetachedDarwinSharedMemory(sharedMemoryBaseline);
+    if (!processCleanupFailed) reapNewDetachedDarwinSharedMemory(sharedMemoryBaseline);
     let cleanupError: unknown;
-    if (
-      temporaryRoot.startsWith(`${os.tmpdir()}${path.sep}paperclip-runner-e2e-`)
+    const resourceAdmissionStarted = await access(path.join(temporaryRoot, "artifacts-private", "resource-admission-started"))
+      .then(() => true).catch((error: NodeJS.ErrnoException) => error.code !== "ENOENT");
+    if (mustPreserveRecoveryState({ processCleanupFailed, resourceAdmissionStarted, results: rawCleanupResults })) {
+      // Remote allocation cleanup is journaled in this instance's database.
+      // Deleting it after the controller exits would strand uncertain creates.
+      await chmod(temporaryRoot, 0o700);
+      cleanupError = new Error(`Preserving private recovery state after unconfirmed cleanup: ${temporaryRoot}`);
+    } else if (shouldKeepFailedDiagnostics({
+      enabled: process.env.PAPERCLIP_RUNNER_E2E_KEEP_FAILED_PRIVATE === "1",
+      expectedResults: executions.length,
+      results: publishedResults,
+    })) {
+      // Explicit diagnosis only. Confirmed resource cleanup stays confirmed;
+      // keep private traces for investigation without publishing provider data.
+      await chmod(temporaryRoot, 0o700);
+      console.warn(`Retained private failed-case diagnostics: ${temporaryRoot}`);
+    } else if (
+      temporaryRoot.startsWith(`${temporaryParent}${path.sep}paperclip-runner-e2e-`)
     ) {
       for (let cleanupAttempt = 1; cleanupAttempt <= 3; cleanupAttempt += 1) {
         try {
@@ -697,6 +864,12 @@ async function runAttempt(input: {
         `Refusing to remove unexpected temporary path ${temporaryRoot}`,
       );
     }
+    if (startupReceiptPath) {
+      const receipt = JSON.parse(await readFile(startupReceiptPath, "utf8"));
+      receipt.status = cleanupError ? "installed_launch_chain_cleanup_failed" : "installed_launch_chain_passed";
+      receipt.temporaryRootRemoved = !cleanupError;
+      await writeFile(startupReceiptPath, `${JSON.stringify(receipt, null, 2)}\n`, { mode: 0o600 });
+    }
     if (cleanupError) {
       const message = `Temporary runner E2E state cleanup failed at ${temporaryRoot}: ${cleanupError instanceof Error ? cleanupError.message : String(cleanupError)}`;
       for (const publishedResult of publishedResults) {
@@ -707,7 +880,7 @@ async function runAttempt(input: {
         Object.assign(publishedResult, {
           status: "failed",
           failureClass: "cleanup_failure",
-          error: message,
+          error: publishedResult.error ? `${publishedResult.error}; ${message}` : message,
           cleanup: "failed",
         } satisfies Partial<RunnerE2EResult>);
         const safeResult = `${JSON.stringify(
@@ -721,6 +894,7 @@ async function runAttempt(input: {
       // Cleanup failure is a failed cell, but must not suppress later cells in
       // the same campaign. The result above carries the terminal failure.
       console.error(message);
+      if (options.installedStartupOnly) throw new Error(message);
     }
   }
 }
@@ -747,35 +921,19 @@ async function runExecutionWithRetry(input: {
   options: ReturnType<typeof parseRunnerSelectors>;
 }): Promise<RunnerE2EResult> {
   const { execution, campaignId, options } = input;
-  const [firstResult] = await runAttempt({
-    executions: [execution],
-    attempt: 1,
-    campaignId,
-    options,
+  return executeWithAutomaticRetry({
+    task: execution.task, options,
+    qualificationCandidate: execution.profile.qualificationCandidate !== undefined,
+    cancelled: () => cancelled,
+    onRetry: result => console.warn(
+      `Retrying ${execution.id} in a fresh isolated harness after ${result.failureClass!.replaceAll("_", " ")}`,
+    ),
+    runAttempt: async attempt => {
+      const [result] = await runAttempt({ executions: [execution], attempt, campaignId, options });
+      if (!result) throw new Error(`No result produced for ${execution.id} attempt ${attempt}`);
+      return result;
+    },
   });
-  if (!firstResult) throw new Error(`No result produced for ${execution.id}`);
-  if (
-    options.ui ||
-    options.debug ||
-    firstResult.status !== "failed" ||
-    !firstResult.failureClass ||
-    !shouldRetryFailure(firstResult.failureClass)
-  ) {
-    return firstResult;
-  }
-  if (cancelled) throw new Error("Runner E2E campaign cancelled");
-  console.warn(
-    `Retrying ${execution.id} in a fresh isolated harness after transient infrastructure failure`,
-  );
-  const [retryResult] = await runAttempt({
-    executions: [execution],
-    attempt: 2,
-    campaignId,
-    options,
-  });
-  if (!retryResult)
-    throw new Error(`No retry result produced for ${execution.id}`);
-  return retryResult;
 }
 
 async function runWithConcurrency<T, R>(
@@ -811,6 +969,14 @@ async function main() {
     throw error;
   }
   const executions = selectRunnerExecutions(options, runnerMatrix);
+  if (options.installedStartupOnly) {
+    assertInstalledStartupOnly(process.env, executions, options);
+    assertRunnerE2EPrerequisites(executions);
+    const campaignId = cleanId(process.env.PAPERCLIP_E2E_CAMPAIGN_ID ?? `installed-startup-${Date.now()}`);
+    await runAttempt({ executions, attempt: 1, campaignId, options });
+    console.log(`PASS installed launch chain (no provider qualification) -> ${path.join(resultsRoot, campaignId, "installed-startup-only")}`);
+    return;
+  }
   if (options.list) {
     printList(executions);
     return;
@@ -827,7 +993,36 @@ async function main() {
     return;
   }
 
+  if (executions.some(execution => execution.task.flow === "provider_connection")) {
+    const { runConnectionCampaign } = await import("./connection-launch.js");
+    await runConnectionCampaign({ executions, catalog: runnerMatrix, configFile: options.connectionConfig, repositoryRoot });
+    return;
+  }
+  if (options.connectionConfig) throw new Error("--connection-config is only supported by the provider-connections suite");
+
+  // Keep admission before local-env loading and credential checks. Pending
+  // profiles remain discoverable, but cannot reach a provider.
+  assertRunnerE2EPrerequisites(executions);
+  assertNativeCompletionSelection(executions);
+  assertNativeInstructionSelection(executions);
+  const campaignId = cleanId(
+    process.env.PAPERCLIP_E2E_CAMPAIGN_ID ??
+      `local-${new Date().toISOString().replace(/[:.]/g, "-")}`,
+  );
+  const summaryDir = path.join(resultsRoot, campaignId);
+  await mkdir(summaryDir, { recursive: true });
+  if (executions.some(execution => execution.suite.id === "native-completion")) {
+    process.env[NATIVE_COMPLETION_PREFLIGHT_ENV] = prepareNativeCompletionPreflight(summaryDir);
+  }
+  if (executions.some(execution => execution.suite.id === NATIVE_INSTRUCTION_SUITE)) {
+    process.env[NATIVE_INSTRUCTION_PREFLIGHT_ENV] = prepareNativeInstructionPreflight(summaryDir);
+  }
+  if (executions.some(execution => execution.suite.id === "stock-harness")) {
+    process.env[STOCK_PREFLIGHT_ENV] = prepareStockHarnessPreflight(summaryDir);
+  }
+
   await loadLocalEnvironment(process.env);
+  assertRemoteNativeEvidencePrerequisites(executions, process.env);
   const missingCredentials = [
     ...new Set(
       executions.flatMap((execution) => execution.requiredCredentials),
@@ -847,9 +1042,24 @@ async function main() {
     );
   }
 
-  const campaignId = cleanId(
-    process.env.PAPERCLIP_E2E_CAMPAIGN_ID ??
-      `local-${new Date().toISOString().replace(/[:.]/g, "-")}`,
+
+  await writeFile(
+    path.join(summaryDir, "invocation-policy.json"),
+    `${JSON.stringify(
+      {
+        version: 1,
+        maxAutomaticRetries: options.maxAutomaticRetries,
+        retryClasses: ["transient_infrastructure", "provider_variance"],
+        executions: executions.map(execution => ({
+          executionId: execution.id,
+          automaticRetryPolicy: execution.task.automaticRetryPolicy ?? "default",
+          maxAutomaticRetries: effectiveAutomaticRetryLimit(execution.task, options.maxAutomaticRetries),
+        })),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
   );
   const requestedParallelism =
     options.headed || options.ui || options.debug ? 1 : options.maxParallel;
@@ -869,8 +1079,6 @@ async function main() {
     expected: executions.map((execution) => execution.id),
     results: finalResults,
   });
-  const summaryDir = path.join(resultsRoot, campaignId);
-  await mkdir(summaryDir, { recursive: true });
   const campaignSecrets = normalizedSecrets(
     CREDENTIAL_NAMES.map((name) => process.env[name]),
   );

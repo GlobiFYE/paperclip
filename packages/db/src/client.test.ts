@@ -1,9 +1,17 @@
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { drizzle } from "drizzle-orm/postgres-js";
+import { migrate } from "drizzle-orm/postgres-js/migrator";
 import { afterEach, describe, expect, it } from "vitest";
 import postgres from "postgres";
 import {
+  DEFAULT_DATABASE_APPLICATION_NAME,
   applyPendingMigrations,
+  closeRegisteredClients,
+  createDb,
+  ensurePostgresDatabase,
   inspectMigrations,
   resetPostgresDatabase,
 } from "./client.js";
@@ -89,6 +97,48 @@ if (!embeddedPostgresSupport.supported) {
   );
 }
 
+describeEmbeddedPostgres("createDb pool defaults", () => {
+  it("names its backends and closes them once idle", async () => {
+    const url = await createTempDatabase();
+    const observer = postgres(url, { max: 1, onnotice: () => {} });
+    cleanups.push(async () => {
+      await observer.end({ timeout: 1 });
+    });
+
+    const backendsNamed = async (name: string) => {
+      const rows = await observer`
+        select count(*)::int as count from pg_stat_activity where application_name = ${name}
+      `;
+      return rows[0]?.count ?? 0;
+    };
+
+    const db = createDb(url);
+    cleanups.push(async () => {
+      await db.$client.end({ timeout: 1 });
+    });
+    const [self] = await db.$client`select application_name from pg_stat_activity where pid = pg_backend_pid()`;
+    expect(self?.application_name).toBe(DEFAULT_DATABASE_APPLICATION_NAME);
+
+    const shortLived = createDb(url, { applicationName: "paperclip-idle-test", idleTimeoutSeconds: 1 });
+    cleanups.push(async () => {
+      await shortLived.$client.end({ timeout: 1 });
+    });
+    await shortLived.$client`select 1`;
+    expect(await backendsNamed("paperclip-idle-test")).toBe(1);
+
+    // The driver closes the idle connection after `idle_timeout`; without the
+    // option (the driver default) the backend would stay until the process
+    // exits. Wait past the timeout, then poll PostgreSQL's own view.
+    const deadline = Date.now() + 10_000;
+    let remaining = await backendsNamed("paperclip-idle-test");
+    while (remaining > 0 && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      remaining = await backendsNamed("paperclip-idle-test");
+    }
+    expect(remaining).toBe(0);
+  }, 30_000);
+});
+
 describeEmbeddedPostgres("resetPostgresDatabase", () => {
   it("recreates an existing database so stale tables are removed", async () => {
     const connectionString = await createTempDatabase();
@@ -118,6 +168,74 @@ describeEmbeddedPostgres("resetPostgresDatabase", () => {
 });
 
 describeEmbeddedPostgres("applyPendingMigrations", () => {
+  it("upgrades an older clone whose replaced connection constraint is already absent", async () => {
+    const clusterUrl = new URL(await createTempDatabase());
+    const databaseName = "missing_connection_constraint";
+    clusterUrl.pathname = "/postgres";
+    await ensurePostgresDatabase(clusterUrl.toString(), databaseName);
+    clusterUrl.pathname = "/" + databaseName;
+    const connectionString = clusterUrl.toString();
+    const prefixFolder = await fs.promises.mkdtemp(join(tmpdir(), "paperclip-migration-prefix-"));
+    cleanups.push(() => fs.promises.rm(prefixFolder, { recursive: true, force: true }));
+    await fs.promises.mkdir(join(prefixFolder, "meta"));
+    const journal = JSON.parse(await fs.promises.readFile(new URL("./migrations/meta/_journal.json", import.meta.url), "utf8"));
+    journal.entries = journal.entries.filter((entry: { idx: number }) => entry.idx < 255);
+    await fs.promises.writeFile(join(prefixFolder, "meta/_journal.json"), JSON.stringify(journal));
+    for (const entry of journal.entries) {
+      await fs.promises.copyFile(new URL(`./migrations/${entry.tag}.sql`, import.meta.url), join(prefixFolder, `${entry.tag}.sql`));
+    }
+    const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+    try {
+      await migrate(drizzle(sql), { migrationsFolder: prefixFolder });
+      await sql`ALTER TABLE "tool_connections" DROP CONSTRAINT "tool_connections_transport_check"`;
+      await applyPendingMigrations(connectionString);
+      expect((await inspectMigrations(connectionString)).status).toBe("upToDate");
+      const [constraint] = await sql<{ definition: string }[]>`
+        SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
+        WHERE conrelid = 'tool_connections'::regclass AND conname = 'tool_connections_transport_check'
+      `;
+      expect(constraint?.definition).toContain("chat_sdk");
+      expect(constraint?.definition).toContain("runtime_auth");
+    } finally { await sql.end(); }
+  }, 30_000);
+
+  it("upgrades renumbered recovery migrations and replays their schema idempotently", async () => {
+    const connectionString = await createTempDatabase();
+    const recoveryFiles = [
+      "0250_exotic_dakota_north.sql", "0251_narrow_mastermind.sql",
+      "0252_friendly_kate_bishop.sql", "0253_real_firebrand.sql",
+      "0254_military_calypso.sql",
+    ];
+    const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
+    try {
+      // An instance may have applied this identical SQL under the pre-rebase
+      // numbers, before the new session-goal and tool-action migrations existed.
+      for (const file of recoveryFiles) {
+        const hash = await migrationHash(file);
+        await sql`UPDATE "drizzle"."__drizzle_migrations" SET created_at = 1788825600000 WHERE hash = ${hash}`;
+        const source = await fs.promises.readFile(new URL(`./migrations/${file}`, import.meta.url), "utf8");
+        for (const statement of source.split("--> statement-breakpoint")) {
+          if (statement.trim()) await sql.unsafe(statement);
+        }
+      }
+      for (const file of ["0248_small_manta.sql", "0249_fast_silverclaw.sql"]) {
+        const hash = await migrationHash(file);
+        await sql`DELETE FROM "drizzle"."__drizzle_migrations" WHERE hash = ${hash}`;
+      }
+      await applyPendingMigrations(connectionString);
+      expect((await inspectMigrations(connectionString)).status).toBe("upToDate");
+      for (const file of recoveryFiles) {
+        const hash = await migrationHash(file);
+        const rows = await sql`SELECT id FROM "drizzle"."__drizzle_migrations" WHERE hash = ${hash}`;
+        expect(rows).toHaveLength(1);
+      }
+      const indexes = await sql`SELECT indexname FROM pg_indexes WHERE indexname = 'heartbeat_runs_native_replacement_predecessor_uq'`;
+      expect(indexes).toHaveLength(1);
+    } finally {
+      await sql.end();
+    }
+  }, 30_000);
+
   it("rejects unallowlisted migration backfills that bump updated_at on user-visible tables", async () => {
     const entries = await fs.promises.readdir(new URL("./migrations", import.meta.url), {
       withFileTypes: true,
@@ -152,7 +270,6 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
     async () => {
       const connectionString = await createTempDatabase();
 
-      await applyPendingMigrations(connectionString);
 
       const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
       try {
@@ -205,7 +322,6 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
     async () => {
       const connectionString = await createTempDatabase();
 
-      await applyPendingMigrations(connectionString);
 
       const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
       try {
@@ -249,7 +365,6 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
     async () => {
       const connectionString = await createTempDatabase();
 
-      await applyPendingMigrations(connectionString);
 
       const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
       try {
@@ -279,7 +394,6 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
     async () => {
       const connectionString = await createTempDatabase();
 
-      await applyPendingMigrations(connectionString);
 
       const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
       try {
@@ -351,7 +465,6 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
     async () => {
       const connectionString = await createTempDatabase();
 
-      await applyPendingMigrations(connectionString);
 
       const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
       try {
@@ -445,7 +558,6 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
     async () => {
       const connectionString = await createTempDatabase();
 
-      await applyPendingMigrations(connectionString);
 
       const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
       try {
@@ -511,7 +623,6 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
     async () => {
       const connectionString = await createTempDatabase();
 
-      await applyPendingMigrations(connectionString);
 
       const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
       try {
@@ -577,7 +688,6 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
     async () => {
       const connectionString = await createTempDatabase();
 
-      await applyPendingMigrations(connectionString);
 
       const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
       try {
@@ -651,7 +761,6 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
     async () => {
       const connectionString = await createTempDatabase();
 
-      await applyPendingMigrations(connectionString);
 
       const builtInResourcesHash = await migrationHash(
         "0140_built_in_managed_resources.sql",
@@ -755,7 +864,6 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
     async () => {
       const connectionString = await createTempDatabase();
 
-      await applyPendingMigrations(connectionString);
 
       const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
       try {
@@ -888,7 +996,6 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
     async () => {
       const connectionString = await createTempDatabase();
 
-      await applyPendingMigrations(connectionString);
 
       const repairSweepHash = await migrationHash(
         "0135_repair_run_responsible_user_updated_at_sweep.sql",
@@ -1284,7 +1391,6 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
     async () => {
       const connectionString = await createTempDatabase();
 
-      await applyPendingMigrations(connectionString);
 
       const sql = postgres(connectionString, { max: 1, onnotice: () => {} });
       try {
@@ -1409,8 +1515,22 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
   it(
     "preserves legacy runs while adding native persistence and replay-safe status versioning",
     async () => {
-      const connectionString = await createTempDatabase();
-      await applyPendingMigrations(connectionString);
+      const clusterUrl = await createTempDatabase();
+      await ensurePostgresDatabase(clusterUrl, "native_legacy");
+      const legacyUrl = new URL(clusterUrl);
+      legacyUrl.pathname = "/native_legacy";
+      const connectionString = legacyUrl.href;
+      cleanups.push(() => closeRegisteredClients(connectionString));
+      const directory = await fs.promises.mkdtemp(join(tmpdir(), "paperclip-native-prior-migrations-"));
+      cleanups.push(() => fs.promises.rm(directory, { recursive: true, force: true }));
+      const migrationsRoot = new URL("./migrations/", import.meta.url);
+      const journal = JSON.parse(await fs.promises.readFile(new URL("meta/_journal.json", migrationsRoot), "utf8"));
+      const priorEntries = journal.entries.filter((entry: { idx: number }) => entry.idx < 227);
+      await fs.promises.mkdir(join(directory, "meta"));
+      for (const entry of priorEntries) {
+        await fs.promises.copyFile(new URL(`${entry.tag}.sql`, migrationsRoot), join(directory, `${entry.tag}.sql`));
+      }
+      await fs.promises.writeFile(join(directory, "meta/_journal.json"), JSON.stringify({ ...journal, entries: priorEntries }));
 
       const nativePersistenceHash = await migrationHash("0227_modern_pandemic.sql");
       const eventSequenceUniquenessHash = await migrationHash(
@@ -1435,44 +1555,10 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
       const otherDecisionId = "81000000-0000-4000-8000-000000000227";
 
       try {
-        await sql.unsafe(`
-          DROP TABLE IF EXISTS status_decision_effects, status_decisions, work_assessments,
-            native_run_finalizations, native_run_results, completion_contracts CASCADE;
-          DROP TRIGGER IF EXISTS paperclip_issue_status_version_trigger ON issues;
-          DROP FUNCTION IF EXISTS paperclip_bump_issue_status_version();
-          DROP INDEX IF EXISTS issues_company_id_uq;
-          DROP INDEX IF EXISTS heartbeat_run_events_run_source_event_uq;
-          DROP INDEX IF EXISTS heartbeat_run_events_run_source_seq_uq;
-          DROP INDEX IF EXISTS heartbeat_run_events_run_seq_uq;
-          ALTER TABLE heartbeat_run_events
-            DROP COLUMN IF EXISTS source_instance_id,
-            DROP COLUMN IF EXISTS source_event_id,
-            DROP COLUMN IF EXISTS source_seq,
-            DROP COLUMN IF EXISTS source_payload_sha256,
-            DROP COLUMN IF EXISTS protocol_schema_version;
-          ALTER TABLE heartbeat_run_events ALTER COLUMN seq TYPE integer;
-          ALTER TABLE heartbeat_runs
-            DROP COLUMN IF EXISTS runtime_mode,
-            DROP COLUMN IF EXISTS runtime_mode_resolver_version,
-            DROP COLUMN IF EXISTS runtime_mode_reason,
-            DROP COLUMN IF EXISTS runtime_mode_resolved_at,
-            DROP COLUMN IF EXISTS runner_profile_json,
-            DROP COLUMN IF EXISTS runner_instance_id,
-            DROP COLUMN IF EXISTS native_session_id,
-            DROP COLUMN IF EXISTS native_issue_id,
-            DROP COLUMN IF EXISTS driver_kind,
-            DROP COLUMN IF EXISTS driver_version,
-            DROP COLUMN IF EXISTS completion_contract_id,
-            DROP COLUMN IF EXISTS completion_contract_sha256,
-            DROP COLUMN IF EXISTS next_event_seq,
-            DROP COLUMN IF EXISTS native_phase,
-            DROP COLUMN IF EXISTS native_phase_updated_at;
-          ALTER TABLE issues
-            DROP COLUMN IF EXISTS status_version,
-            DROP COLUMN IF EXISTS last_status_decision_id;
-        `);
-        await sql`DELETE FROM "drizzle"."__drizzle_migrations" WHERE "hash" = ${nativePersistenceHash}`;
-        await sql`DELETE FROM "drizzle"."__drizzle_migrations" WHERE "hash" = ${eventSequenceUniquenessHash}`;
+        // Build the real pre-native schema. Downgrading the latest schema by
+        // dropping its unique index is invalid once later tenant FKs use it.
+        await migrate(drizzle(sql), { migrationsFolder: directory });
+        expect(await sql`SELECT to_regclass('public.native_run_results') AS native_results`).toEqual([{ native_results: null }]);
         await sql`
           INSERT INTO companies (id, name, issue_prefix)
           VALUES (${companyId}, 'Native persistence fixture', 'NPF')
@@ -1881,7 +1967,6 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
     "replays the idempotent provider trace migration",
     async () => {
       const connectionString = await createTempDatabase();
-      await applyPendingMigrations(connectionString);
       const hash = await migrationHash(
         "0234_provider_trace_records.sql",
       );
@@ -1909,7 +1994,6 @@ describeEmbeddedPostgres("applyPendingMigrations", () => {
     "removes retired model profiles from live records and configuration revisions",
     async () => {
       const connectionString = await createTempDatabase();
-      await applyPendingMigrations(connectionString);
       const hash = await migrationHash("0236_remove_cheap_model_profiles.sql");
       const companyId = "10000000-0000-4000-8000-000000000236";
       const agentId = "20000000-0000-4000-8000-000000000236";

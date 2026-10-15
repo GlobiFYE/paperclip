@@ -1,7 +1,11 @@
+import { spekoToolsForSession } from "../voice/speko-agent-tools.js";
+import { githubBotConnectionIdsForRun } from "../chat-github-tools.js";
+import { isBrowserUseConnection } from "../browser-use-client.js";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
-import type { Db } from "@paperclipai/db";
+import { and, eq } from "drizzle-orm";
+import { heartbeatRuns, type Db } from "@paperclipai/db";
 import type { PaperclipSkillEntry } from "@paperclipai/adapter-utils/server-utils";
 import { isToolConnectionAttentionHealth } from "@paperclipai/shared";
 import {
@@ -19,8 +23,10 @@ import {
   type NativeRuntimeContextSnapshot,
 } from "../../vendor/paperclip-runner/index.js";
 import { resolvePaperclipInstanceRoot } from "../../home-paths.js";
-import { agentInstructionsService } from "../agent-instructions.js";
+import { agentInstructionsService, agentInstructionsBundleMode } from "../agent-instructions.js";
+import { agentInstructionRevisionService } from "../agent-instruction-revisions.js";
 import { toolAccessService } from "../tool-access.js";
+import { filterResolvedGitHubConnectionsForRun } from "../git-credentials.js";
 
 const MAX_ASSET_FILES = 10_000;
 const MAX_ASSET_BYTES = 64 * 1024 * 1024;
@@ -85,7 +91,7 @@ async function verifyMaterializedAsset(
   }
 }
 
-async function materializeAsset(files: AssetFile[]): Promise<NativeRuntimeAssetReference> {
+export async function materializeAsset(files: AssetFile[]): Promise<NativeRuntimeAssetReference> {
   const sorted = [...files].sort((a, b) => a.path.localeCompare(b.path));
   const manifestFiles = sorted.map((file) => ({ path: safeRelativePath(file.path, "runtime context path"), sha256: sha256(file.content), mode: file.mode & 0o555, size: file.content.byteLength }));
   const totalBytes = manifestFiles.reduce((sum, file) => sum + file.size, 0);
@@ -142,8 +148,24 @@ async function materializeAsset(files: AssetFile[]): Promise<NativeRuntimeAssetR
   return { schema: NATIVE_RUNTIME_ASSET_SCHEMA, digest: assetDigest, manifestDigest, rootPath, fileCount: manifestFiles.length, totalBytes };
 }
 
-async function materializeInstructionBundle(agent: RuntimeAgent) {
+async function materializeInstructionBundle(db: Db, agent: RuntimeAgent, agentFiles = false) {
+  if (agentFiles) {
+    const current = await agentInstructionRevisionService(db).readCommittedForRuntime({ companyId: agent.companyId, agentId: agent.id });
+    if (!current) throw new Error("Configured instruction entry is missing");
+    const entryPath = safeRelativePath(current.revision.entryFile, "instruction entry path");
+    return { entryPath, bundle: await materializeAsset([{ path: entryPath, content: Buffer.from(current.content, "utf8"), mode: 0o444 }]) };
+  }
   const exported = await agentInstructionsService().exportFiles(agent, { rejectSymlinks: true });
+  if (agentInstructionsBundleMode(agent) === "managed") {
+    // The database head remains authoritative when a saved revision could not
+    // update its disk projection. Overlay the exact committed snapshot directly;
+    // a repair followed by a separate export can race another pending commit.
+    const current = await agentInstructionRevisionService(db).readCommittedForRuntime({ companyId: agent.companyId, agentId: agent.id });
+    if (current) {
+      exported.entryFile = current.revision.entryFile;
+      exported.files[current.revision.entryFile] = current.content;
+    }
+  }
   const entryPath = safeRelativePath(exported.entryFile, "instruction entry path");
   if (!(entryPath in exported.files)) throw new Error(`configured instruction entry is missing: ${entryPath}`);
   const files = Object.entries(exported.files).map(([relativePath, content]) => ({ path: safeRelativePath(relativePath, "instruction path"), content: Buffer.from(content, "utf8"), mode: 0o444 }));
@@ -166,14 +188,48 @@ async function materializeSelectedSkills(runtimeConfig: Record<string, unknown>,
 export async function resolveNativeRuntimeMcpSnapshot(input: { db: Db; agent: Pick<RuntimeAgent, "id" | "companyId">; runId: string }) {
   const effective = await toolAccessService(input.db).getEffectiveProfilesForAgent(input.agent.companyId, input.agent.id);
   const permitted = new Set([...effective.entries.filter((entry) => entry.effect === "include" && entry.connectionId).map((entry) => entry.connectionId!), ...effective.allowedTools.map((tool) => tool.connectionId)]);
+  const hasGitHubConnection = effective.installedConnections.some((connection) => {
+    const config = connection.config && typeof connection.config === "object"
+      ? connection.config as Record<string, unknown>
+      : {};
+    const transportConfig = connection.transportConfig && typeof connection.transportConfig === "object"
+      ? connection.transportConfig as Record<string, unknown>
+      : {};
+    return config.sourceTemplateKey === "github" || transportConfig.sourceTemplateKey === "github";
+  });
+  const hasVoiceConnection = effective.installedConnections.some(connection => connection.transport === "voice");
+  const [runIdentity] = hasGitHubConnection || hasVoiceConnection
+    ? await input.db.select({ contextSnapshot: heartbeatRuns.contextSnapshot, responsibleUserId: heartbeatRuns.responsibleUserId, activeIdentityContextId: heartbeatRuns.activeIdentityContextId })
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.id, input.runId),
+        eq(heartbeatRuns.companyId, input.agent.companyId),
+        eq(heartbeatRuns.agentId, input.agent.id),
+      ))
+      .limit(1)
+    : [];
+  // Broker runs pin the permitted tool catalog, not one person’s credential.
+  // Selection happens at each operation and can change through steering.
+  const resolvedInstalledConnections = runIdentity?.activeIdentityContextId
+    ? effective.installedConnections : await filterResolvedGitHubConnectionsForRun({
+    db: input.db,
+    companyId: input.agent.companyId,
+    agentId: input.agent.id,
+    responsibleUserId: runIdentity?.responsibleUserId ?? null,
+    connections: effective.installedConnections,
+  });
   // App access is optional runtime context. Keep usable assignments pinned, but
   // do not stop unrelated work because an assigned app needs attention.
-  const availableConnectionIds = new Set(effective.installedConnections.filter((connection) =>
+  const githubBotConnectionIds = await githubBotConnectionIdsForRun(input.db, input.agent.companyId, input.agent.id, input.runId);
+  const spekoConnectionIds = hasVoiceConnection ? new Set((await spekoToolsForSession(input.db, { companyId: input.agent.companyId, agentId: input.agent.id, runId: input.runId, issueId: typeof runIdentity?.contextSnapshot?.issueId === "string" ? runIdentity.contextSnapshot.issueId : typeof runIdentity?.contextSnapshot?.taskId === "string" ? runIdentity.contextSnapshot.taskId : null, identityContextId: runIdentity?.activeIdentityContextId })).map(tool => tool.connectionId)) : new Set<string>();
+  const availableConnectionIds = new Set(resolvedInstalledConnections.filter((connection) =>
     permitted.has(connection.id)
     && connection.status === "active"
     && connection.enabled
-    && !isToolConnectionAttentionHealth(connection.healthStatus)
-    && ["mcp_remote", "local_stdio"].includes(connection.transport)
+    && (Boolean(runIdentity?.activeIdentityContextId) && (connection.config?.sourceTemplateKey === "github" || connection.transportConfig?.sourceTemplateKey === "github")
+      || connection.credentialPolicy === "per_user"
+      || !isToolConnectionAttentionHealth(connection.healthStatus))
+    && (["mcp_remote", "local_stdio"].includes(connection.transport) || isBrowserUseConnection(connection) || githubBotConnectionIds.has(connection.id) || spekoConnectionIds.has(connection.id))
   ).map((connection) => connection.id));
   const assignment = {
     version: 1,
@@ -188,12 +244,20 @@ export async function resolveNativeRuntimeMcpSnapshot(input: { db: Db; agent: Pi
   return { assignmentSetId: `sha256:${assignmentDigest}`, digest: assignmentDigest, bindingId: assignment.connections.length ? `native-mcp:${input.runId}` : null };
 }
 
-export async function buildNativeRuntimeContext(input: { db: Db; agent: RuntimeAgent; runId: string; runtimeConfig: Record<string, unknown>; runtimeSkillEntries: PaperclipSkillEntry[] }): Promise<NativeRuntimeContextSnapshot> {
+export async function buildNativeRuntimeContext(input: { db: Db; agent: RuntimeAgent; runId: string; runtimeConfig: Record<string, unknown>; runtimeSkillEntries: PaperclipSkillEntry[]; instructionWorkingCopy?: { rootPath: string; entryPath: string; kind?: "agent_files" } }): Promise<NativeRuntimeContextSnapshot> {
   const [instructions, skills, mcp] = await Promise.all([
-    materializeInstructionBundle(input.agent),
+    materializeInstructionBundle(input.db, input.agent, input.instructionWorkingCopy?.kind === "agent_files"),
     materializeSelectedSkills(input.runtimeConfig, input.runtimeSkillEntries, input.agent.adapterType === "paperclip_runner"),
     resolveNativeRuntimeMcpSnapshot({ db: input.db, agent: input.agent, runId: input.runId }),
   ]);
-  const snapshot = { prompt: { revision: PAPERCLIP_EXECUTION_PROMPT_REVISION, text: PAPERCLIP_EXECUTION_PROMPT, digest: nativeRuntimePromptDigest() }, instructions, skills, mcp };
+  const snapshot = {
+    prompt: { revision: PAPERCLIP_EXECUTION_PROMPT_REVISION, text: PAPERCLIP_EXECUTION_PROMPT, digest: nativeRuntimePromptDigest() },
+    instructions: { ...instructions, ...(input.instructionWorkingCopy ? { workingCopy: input.instructionWorkingCopy } : {}) },
+    skills,
+    mcp,
+    ...(input.runtimeConfig.paperclipConnectionInstructions ? {
+      connectionInstructions: input.runtimeConfig.paperclipConnectionInstructions as { text: string; digest: string },
+    } : {}),
+  };
   return parseNativeRuntimeContext({ ...snapshot, aggregateDigest: canonicalNativeRuntimeContextDigest(snapshot) });
 }

@@ -7,10 +7,33 @@ import {
 } from "../services/instance-settings.js";
 
 describe("instance settings service", () => {
+  it("keeps OpenAI Dot opt-in and persists its setting independently of its prerequisites", () => {
+    expect(normalizeExperimentalSettings({}).enableOpenAiDot).toBe(false);
+    const enabled = applyExperimentalSettingsPatch({}, { enableOpenAiDot: true });
+    expect(normalizeExperimentalSettings(JSON.parse(JSON.stringify(enabled)))).toMatchObject({
+      enableOpenAiDot: true, enablePublicMcp: false,
+    });
+    expect(applyExperimentalSettingsPatch(enabled, { enableOpenAiDot: false }).enableOpenAiDot).toBe(false);
+  });
+  it("keeps chat connectors opt-in across legacy storage and patches without disabling Apps", () => {
+    for (const stored of [undefined, {}, { enableApps: true }, { enableConferenceRoomChat: true }]) {
+      expect(normalizeExperimentalSettings(stored).enableChatConnectors).toBe(false);
+    }
+    const enabled = applyExperimentalSettingsPatch({}, { enableChatConnectors: true });
+    expect(normalizeExperimentalSettings(JSON.parse(JSON.stringify(enabled))).enableChatConnectors).toBe(true);
+    const disabled = applyExperimentalSettingsPatch(enabled, { enableChatConnectors: false });
+    expect(disabled).toMatchObject({ enableApps: true, enableChatConnectors: false });
+  });
+  it("keeps GitHub review bots independent across legacy normalization and persistence", () => {
+    expect(normalizeExperimentalSettings({ enableChatConnectors: true })).toMatchObject({ enableChatConnectors: true, enableGitHubReviewBots: false });
+    const saved = applyExperimentalSettingsPatch({}, { enableGitHubReviewBots: true });
+    expect(normalizeExperimentalSettings(JSON.parse(JSON.stringify(saved)))).toMatchObject({ enableChatConnectors: false, enableGitHubReviewBots: true });
+  });
   it("ignores retired experimental flags without resetting current settings", () => {
     expect(normalizeExperimentalSettings({
       enableEnvironments: true,
       enableNativeRunner: false,
+      enableAiConnectionRouters: false,
       enableManagedSandboxOnly: false,
       enableIsolatedWorkspaces: true,
       enableIssuePlanDecompositions: true,
@@ -26,10 +49,22 @@ describe("instance settings service", () => {
     })).toEqual({
       enableEnvironments: true,
       enableNativeRunner: false,
+      enableAiConnectionRouters: false,
       enableManagedSandboxOnly: false,
       enableIsolatedWorkspaces: true,
+      enableIsolatedWorkspacesByDefault: false,
       enableStreamlinedLeftNavigation: true,
-      enableApps: false,
+      enableStreamlinedUi: true,
+      enableApps: true,
+    enableMcpAggregators: true,
+      enableAgentChat: false,
+      enablePublicMcp: false,
+      enableOpenAiDot: false,
+      enableGrokBot: false,
+      enableCombinedInboxTasks: false,
+      enableChatConnectors: false,
+      enableGitHubReviewBots: false,
+      enableMemoryConnectors: false,
       enableConferenceRoomChat: false,
       enableClassicTaskInterface: false,
       enableExternalObjects: false,
@@ -43,10 +78,12 @@ describe("instance settings service", () => {
       enableSummaries: false,
       enableStatusCards: false,
       enableDecisions: false,
+      enableFastResponses: false,
       enableGoalsSidebarLink: true,
       enableServerInfoDebugView: true,
       enablePaperclipDeveloperMode: true,
       enableSimplifiedEnglishInteractions: false,
+      enableFirstTaskPlanProposal: false,
       autoRestartDevServerWhenIdle: true,
       enableWorkspaceBranchReconcileForward: true,
       enableWorkspaceDirtyQuarantineRepair: false,
@@ -59,10 +96,20 @@ describe("instance settings service", () => {
     });
   });
 
-  it("defaults enableApps to false for empty and legacy stored settings", () => {
-    expect(normalizeExperimentalSettings(undefined).enableApps).toBe(false);
-    expect(normalizeExperimentalSettings({}).enableApps).toBe(false);
-    expect(normalizeExperimentalSettings({ enablePipelines: true }).enableApps).toBe(false);
+  it("defaults streamlined UI on without inheriting the retired navigation preference", () => {
+    expect(normalizeExperimentalSettings(undefined).enableStreamlinedUi).toBe(true);
+    expect(normalizeExperimentalSettings({}).enableStreamlinedUi).toBe(true);
+    expect(
+      normalizeExperimentalSettings({ enableStreamlinedLeftNavigation: false }).enableStreamlinedUi,
+    ).toBe(true);
+    expect(normalizeExperimentalSettings({ enableStreamlinedUi: false }).enableStreamlinedUi).toBe(false);
+  });
+
+  it("keeps Apps on for empty, legacy, and explicitly disabled stored settings", () => {
+    expect(normalizeExperimentalSettings(undefined).enableApps).toBe(true);
+    expect(normalizeExperimentalSettings({}).enableApps).toBe(true);
+    expect(normalizeExperimentalSettings({ enablePipelines: true }).enableApps).toBe(true);
+    expect(normalizeExperimentalSettings({ enableApps: false }).enableApps).toBe(true);
   });
 
   it("retains the deprecated ingress key for stored-settings compatibility", () => {

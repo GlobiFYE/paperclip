@@ -1,11 +1,14 @@
-import type { ActivityEvent, RunLivenessState } from "@paperclipai/shared";
+import type { ActivityEvent, ExecutionProjection, RunLivenessState } from "@paperclipai/shared";
 import { api, type RequestOptions } from "./client";
 
 export type { RunLivenessState } from "@paperclipai/shared";
 
 export interface RunForIssue {
   runId: string;
+  execution?: ExecutionProjection | null;
   runtimeMode?: "legacy" | "native";
+  wakeupRequestId?: string | null;
+  queuedCommentSourceWakeIds?: string[] | null;
   status: string;
   agentId: string;
   adapterType: string;
@@ -15,6 +18,8 @@ export interface RunForIssue {
   invocationSource: string;
   responsibleUserId?: string | null;
   errorCode?: string | null;
+  /** Bounded model rejection or the fixed credential-sharing denial message. */
+  error?: string | null;
   usageJson: Record<string, unknown> | null;
   resultJson: Record<string, unknown> | null;
   logBytes?: number | null;
@@ -31,6 +36,7 @@ export interface RunForIssue {
   wakeCommentIds?: string[] | null;
   wakeCommentId?: string | null;
   contextCommentId?: string | null;
+  contextIssueId?: string | null;
   contextSnapshot?: Record<string, unknown> | null;
   environment?: {
     id: string;
