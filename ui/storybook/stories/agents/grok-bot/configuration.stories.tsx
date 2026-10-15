@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 import type { AgentDetail, GrokConnection } from "@paperclipai/shared";
 import { ConfigurationTab } from "@/pages/AgentDetail";
 import { storybookAgents } from "../../../fixtures/paperclipData";
@@ -74,7 +74,9 @@ export const ConnectedBot: Story = { play: async ({ canvasElement }) => {
 } };
 export const DisconnectedBot: Story = { args: { disconnected: true }, play: async ({ canvasElement }) => {
   const page = within(canvasElement);
-  await userEvent.click(await page.findByRole("button", { name: "Reconnect agent access" }));
+  const reconnect = await page.findByRole("button", { name: "Reconnect agent access" });
+  await waitFor(() => expect(reconnect).toBeEnabled());
+  await userEvent.click(reconnect);
   await expect(await page.findByRole("button", { name: "Copy pairing code" })).toBeVisible();
   await expect(page.getByLabelText("One-use pairing code")).toHaveAttribute("type", "password");
   await expect(page.queryByText("synthetic-reconnect-code")).not.toBeInTheDocument();
