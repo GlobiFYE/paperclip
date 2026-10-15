@@ -193,11 +193,6 @@ function isProviderQuotaFailure(run: HeartbeatRun, options: RunFailureReportOpti
     options.phase !== "setup" && run.signal == null;
 }
 
-/**
- * The Codex ACP classifier proved the provider reported its model at capacity.
- * The bounded transient retry owns recovery. Only the typed `service` failure
- * qualifies; other transient upstream text stays reportable.
- */
 function isCodexAcpModelCapacityFailure(run: HeartbeatRun, options: RunFailureReportOptions): boolean {
   const result = asRecord(run.resultJson);
   return run.status === "failed" && run.errorCode === "codex_transient_upstream" &&

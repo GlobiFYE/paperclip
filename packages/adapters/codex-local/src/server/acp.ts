@@ -266,9 +266,6 @@ async function prepareCodexRemoteManagedHome(
   };
 }
 
-// Provider-side model overload. The account is not exhausted; the same request
-// can succeed shortly, so it takes the bounded transient retry rather than the
-// quota reset wait.
 const CODEX_MODEL_CAPACITY_RE =
   /\b(?:selected model is at capacity|model is at capacity|at capacity for this model|serverOverloaded|server overloaded)\b/i;
 
