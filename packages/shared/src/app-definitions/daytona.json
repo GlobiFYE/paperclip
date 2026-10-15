@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "slug": "daytona",
+  "name": "Daytona",
+  "description": "Inspect Paperclip workspaces, Daytona lifecycle state, and saved workspace recovery evidence.",
+  "categories": [
+    "developer"
+  ],
+  "featured": false,
+  "branding": {
+    "logoUrl": "/brands/apps/daytona.svg",
+    "darkLogoUrl": "/brands/apps/daytona-dark.svg"
+  },
+  "urlPatterns": [
+    "https://app.daytona.io/*"
+  ],
+  "methods": [
+    {
+      "key": "workspace-diagnostics",
+      "transport": "rest_api",
+      "auth": "api_key",
+      "ownershipModes": [
+        "customer"
+      ],
+      "whenToUse": "Inspect this company's task workspaces using your Daytona API key.",
+      "defaults": {
+        "serverUrl": "https://app.daytona.io/api"
+      },
+      "guidanceMd": "Create an API key in the Daytona organization that owns your sandboxes. This connection inspects only task workspaces recorded in this Paperclip company. It does not run commands or start, stop, or delete sandboxes.",
+      "riskTier": "S3",
+      "label": "Connect Daytona",
+      "credentialFields": [
+        {
+          "key": "authorization",
+          "label": "Daytona API key",
+          "type": "password",
+          "required": true,
+          "placeholder": "Enter Daytona API key",
+          "secret": true,
+          "helperMd": "A Daytona organization API key. No write or delete scopes are needed for these diagnostic reads. Every valid Daytona key can nevertheless access running sandbox processes and files; Paperclip retains it server-side and exposes only reviewed diagnostic actions."
+        }
+      ],
+      "keyPlacement": {
+        "location": "header",
+        "name": "Authorization",
+        "prefix": "Bearer "
+      },
+      "tenantFields": [
+        {
+          "key": "organizationId",
+          "label": "Pin to organization ID",
+          "type": "text",
+          "advanced": true,
+          "helperMd": "Optional. Reject a key or sandbox from a different Daytona organization.",
+          "validation": {
+            "pattern": "^[a-fA-F0-9-]{36}$",
+            "maxLength": 36
+          }
+        }
+      ],
+      "requiredResourceFilters": [
+        "company",
+        "issue",
+        "workspace"
+      ],
+      "consoleLinks": {
+        "keys": "https://app.daytona.io/dashboard/keys",
+        "docs": "https://www.daytona.io/docs/en/api-keys/"
+      },
+      "warnings": [
+        "Daytona API keys can access running sandboxes even without selected permissions. Paperclip keeps this key on the server and exposes only the listed diagnostic actions."
+      ]
+    }
+  ],
+  "docsUrl": "https://www.daytona.io/docs/en/sandboxes/"
+}
