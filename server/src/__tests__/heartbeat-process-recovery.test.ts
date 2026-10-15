@@ -2165,6 +2165,88 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     }
   });
 
+  it("retries an accepted interaction continuation whose controller lease is lost before dispatch", async () => {
+    const { companyId, agentId, runId, wakeupRequestId, issueId } = await seedQueuedIssueRunFixture();
+    const interactionId = randomUUID();
+    await db.insert(issueThreadInteractions).values({
+      id: interactionId,
+      companyId,
+      issueId,
+      kind: "request_confirmation",
+      status: "accepted",
+      continuationPolicy: "wake_assignee_on_accept",
+      createdByAgentId: agentId,
+      resolvedByUserId: "responsible-user",
+      resolvedAt: new Date("2026-03-19T00:00:00.000Z"),
+      payload: {
+        version: 1,
+        prompt: "Approve the plan?",
+        target: { type: "issue_document", issueId, key: "plan", revisionId: randomUUID() },
+      },
+      result: { version: 1, outcome: "accepted" },
+    });
+    const interactionContext = {
+      issueId,
+      interactionId,
+      interactionKind: "request_confirmation",
+      interactionStatus: "accepted",
+      mutation: "interaction",
+    };
+    await db.update(agentWakeupRequests)
+      .set({ source: "automation", reason: "issue_commented", payload: interactionContext })
+      .where(eq(agentWakeupRequests.id, wakeupRequestId));
+    await db.update(heartbeatRuns)
+      .set({
+        invocationSource: "automation",
+        contextSnapshot: { ...interactionContext, taskId: issueId, wakeReason: "issue_commented" },
+      })
+      .where(eq(heartbeatRuns.id, runId));
+    await db.update(issues).set({ status: "in_progress" }).where(eq(issues.id, issueId));
+
+    const originalWatch = controllerLeases.watchLegacyControllerLease;
+    const watcher = vi.spyOn(controllerLeases, "watchLegacyControllerLease").mockImplementation((...args) => {
+      const lease = originalWatch(...args);
+      if (args[1].id !== runId) return lease;
+      return { ...lease, async assertOwned(stage?: "dispatching") {
+        if (stage === undefined) {
+          await db.update(heartbeatRuns).set({ controllerLeaseExpiresAt: new Date(Date.now() - 60_000) })
+            .where(eq(heartbeatRuns.id, runId));
+        }
+        return lease.assertOwned(stage);
+      } };
+    });
+    const heartbeat = heartbeatService(db);
+    try {
+      await heartbeat.resumeQueuedRuns();
+      await waitForRunToSettle(heartbeat, runId);
+      await heartbeat.waitForRunExecutionDrain(runId);
+
+      expect(await heartbeat.getRun(runId)).toMatchObject({
+        status: "failed",
+        errorCode: "controller_lease_lost",
+        resultJson: { executionRecovery: { kind: "bootstrap", providerWorkStarted: false } },
+      });
+      expect(
+        mockAdapterExecute.mock.calls.some(
+          ([input]) => (input as { runId?: string } | undefined)?.runId === runId,
+        ),
+      ).toBe(false);
+      const retries = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.retryOfRunId, runId));
+      expect(retries).toHaveLength(1);
+      expect(retries[0]).toMatchObject({
+        scheduledRetryReason: INTERACTION_CONTINUATION_INFRA_RETRY_REASON,
+        scheduledRetryAttempt: 1,
+      });
+      expect(
+        await db.select({ status: issues.status }).from(issues).where(eq(issues.id, issueId))
+          .then((rows) => rows[0]?.status),
+      ).toBe("in_progress");
+    } finally {
+      await heartbeat.drainActiveRunExecutions().catch(() => undefined);
+      watcher.mockRestore();
+    }
+  });
+
   it("does not queue immediate recovery when the failed run's issue is hidden", async () => {
     mockAdapterExecute.mockResolvedValueOnce({
       exitCode: 1,
