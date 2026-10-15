@@ -175,6 +175,27 @@ describe.skipIf(!support.supported)("heartbeat run completion boundary", () => {
       cancellation: { source: "controller_lease", expected: false, reason: "Legacy controller lease lost (renewal_rejected)" } } });
   });
 
+  it("records the watchdog timings with a lease loss that stops the adapter", async () => {
+    const f = await fixture();
+    Object.assign(f.input.adapterResult, { exitCode: null, errorCode: "cancelled", errorMessage: "Grok execution was cancelled" });
+    f.controller.abort(new LegacyControllerLeaseLostError("renewal_deadline",
+      { sinceRenewalMs: 61_000, renewalPendingMs: 58_000, deadlineLateMs: 2, renewalCount: 41 }));
+    await f.completion.completeRun(f.input);
+    expect((await read(f.run.id)).resultJson).toMatchObject({ controllerLeaseLoss: {
+      cause: "renewal_deadline", sinceRenewalMs: 61_000, renewalPendingMs: 58_000, deadlineLateMs: 2, renewalCount: 41 } });
+  });
+
+  it("records the lease-loss cause and timings when setup fails on the abort reason", async () => {
+    const f = await fixture();
+    f.controller.abort(new LegacyControllerLeaseLostError("renewal_deadline",
+      { sinceRenewalMs: 60_004, renewalPendingMs: null, deadlineLateMs: 55_000, renewalCount: 3 }));
+    await f.completion.failRunSetup(f.setup(f.controller.signal.reason));
+    expect(await read(f.run.id)).toMatchObject({ status: "failed", errorCode: "controller_lease_lost", resultJson: {
+      executionRecovery: { kind: "bootstrap", providerWorkStarted: false },
+      controllerLeaseLoss: { cause: "renewal_deadline", sinceRenewalMs: 60_004, renewalPendingMs: null,
+        deadlineLateMs: 55_000, renewalCount: 3 } } });
+  });
+
   it("keeps a stop requested before the lease loss when the adapter throws", async () => {
     const f = await fixture();
     const requested = requestedRunCancellation({ cancelledByActorType: "user", cancelledByUserId: "operator-1" }, "Stopped from the board");

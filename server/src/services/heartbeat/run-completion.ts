@@ -320,11 +320,22 @@ function readNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
+// Keep the watchdog's closed cause and timings so the run and its failure
+// report show whether renewal stalled in the database or the event loop.
+function controllerLeaseLossEvidence(reason: unknown) {
+  return reason instanceof LegacyControllerLeaseLostError
+    ? { controllerLeaseLoss: { cause: reason.leaseLossCause, ...reason.leaseLossTiming } }
+    : {};
+}
+
 // Attribute a stop the lease watchdog caused, whether the adapter returned
 // or threw. A requested stop recorded earlier still wins in cancellationResultJson.
 function controllerLeaseLossResultJson(signal: AbortSignal) {
   return signal.reason instanceof LegacyControllerLeaseLostError
-    ? { cancellation: controllerLeaseLossCancellation(signal.reason.leaseLossCause) }
+    ? {
+        cancellation: controllerLeaseLossCancellation(signal.reason.leaseLossCause),
+        ...controllerLeaseLossEvidence(signal.reason),
+      }
     : {};
 }
 
@@ -1340,6 +1351,9 @@ export function createHeartbeatRunCompletion(db: Db, dependencies: HeartbeatRunC
     const setupFailureResultJson = {
       ...setupFailureDetails,
       ...(connectionFailure ? { connectionFailure } : {}),
+      // A lease lost during setup surfaces as the thrown abort reason, or as
+      // the signal's reason when a setup step threw a different error after it.
+      ...controllerLeaseLossEvidence(outerErr),
       ...controllerLeaseLossResultJson(signal),
       executionRecovery: { kind: "bootstrap", providerWorkStarted: false },
     };
