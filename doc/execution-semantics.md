@@ -841,6 +841,15 @@ On startup and on the periodic recovery loop, Paperclip performs the following r
 
 The stranded-work pass closes the gap where issue state survives a crash but the wake/run path does not. The silent-run scan covers the separate case where a live process exists but has stopped producing observable output.
 
+Startup health (`/api/health`) reports `starting` until these recovery passes and
+the other startup steps that serving requests depends on finish. Housekeeping
+that every scheduler tick repeats does not delay it: the custom-image setup
+cleanup, tool connection health, decision expiry, adapter and setup-token login
+reapers, environment lease cleanup, and the retention sweep run after readiness.
+A failed housekeeping step is logged as `startup housekeeping step failed` and
+the next step still runs. The heartbeat scheduler interval starts after
+housekeeping, so the reapers still finish before the first timer tick.
+
 The stale-lock sweep leaves native runs with their finalization coordinator while
 same-session recovery or accepted-result finalization is pending. A provider can
 exit before workspace copy-back, assessment, or arbitration completes. An expired
@@ -1264,6 +1273,13 @@ Examples:
 - a dependency graph has an invalid/uninvokable owner, unassigned blocker, or invalid review participant
 
 The recovery action stays source-scoped by default. Stranded-task escalation is board-owned and records the cause, evidence, next action, source and return owner, `routingPolicy: board_escalation_no_takeover_v1`, and wake or monitor policy in the source thread/detail surface.
+
+The recovery-actions read API also lists settled records whose automatic recovery
+receipt still blocks replay. A resolved recovery record does not by itself prove
+that work resumed. The task's stopped-run notice lets authorized board users
+inspect the matching decision under Recovery details, even when there is no
+active recovery action. Existing run inspection, verified continuation, new
+messages, and required-file repair remain the supported recovery paths.
 
 The board owns the recovery decision, not the source deliverable. Automatic recovery must preserve both source assignee fields. Only an explicit operator decision or applicable serious-failure policy may transfer the deliverable.
 

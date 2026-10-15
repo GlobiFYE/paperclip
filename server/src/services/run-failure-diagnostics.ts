@@ -154,14 +154,15 @@ const PUBLIC_BOOLEAN_ENV_KEYS = new Set([
   "CI", "NO_COLOR", "FORCE_COLOR",
   "VITEST", "MALLOCNANOZONE", "CODEX_CI", "CODEX_SHELL", "CODEX_SAGE_BACKFILL_TRACKER_TAB_REUSE",
   "DEV", "PROD", "SSR", "PAPERCLIP_REQUIRE_SENTRY_TEST_SDK",
-  "PAPERCLIP_DB_BACKUP_ENABLED", "PAPERCLIP_AUTH_DISABLE_SIGN_UP", "PAPERCLIP_ENABLE_COMPANY_DELETION",
+  "PAPERCLIP_DB_BACKUP_ENABLED", "PAPERCLIP_WORKSPACE_COMPACTION_ENABLED", "PAPERCLIP_AUTH_DISABLE_SIGN_UP", "PAPERCLIP_ENABLE_COMPANY_DELETION",
   "PAPERCLIP_STORAGE_S3_FORCE_PATH_STYLE", "PAPERCLIP_SECRETS_STRICT_MODE",
   "SERVE_UI", "PAPERCLIP_UI_DEV_MIDDLEWARE", "HEARTBEAT_SCHEDULER_ENABLED", "PAPERCLIP_ANNOUNCEMENTS_ENABLED",
   "GITHUB_ACTIONS", "GITHUB_REF_PROTECTED", "RUNNER_DEBUG", "ACTIONS_RUNNER_DEBUG", "ACTIONS_STEP_DEBUG",
 ]);
 const PUBLIC_NUMBER_ENV_KEYS = new Set([
   "PORT", "PAPERCLIP_DB_BACKUP_INTERVAL_MINUTES", "PAPERCLIP_DB_BACKUP_RETENTION_DAYS",
-  "PAPERCLIP_WORKSPACE_REAPER_COOLDOWN_DAYS", "HEARTBEAT_SCHEDULER_INTERVAL_MS",
+  "PAPERCLIP_WORKSPACE_REAPER_COOLDOWN_DAYS", "PAPERCLIP_WORKSPACE_COMPACTION_DELAY_HOURS",
+  "HEARTBEAT_SCHEDULER_INTERVAL_MS",
   "GITHUB_RUN_ATTEMPT", "GITHUB_RUN_NUMBER", "GITHUB_RUN_ID", "GITHUB_RETENTION_DAYS",
 ]);
 
@@ -181,7 +182,8 @@ export function collectRunFailureSecretValues(
       PUBLIC_ENV_KEYS.has(key.toUpperCase()) ||
       (PUBLIC_NUMBER_ENV_KEYS.has(key.toUpperCase()) && /^\d+$/.test(value)) ||
       (key === "BASE_URL" && value === "/") ||
-      (key === "MODE" && /^(?:test|development|production)$/.test(value))
+      (key === "MODE" && /^(?:test|development|production)$/.test(value)) ||
+      (key === "PAPERCLIP_SENTRY_RUN_FAILURES" && /^(?:off|unexpected|all)$/.test(value))
     )) ||
       (PUBLIC_BOOLEAN_ENV_KEYS.has(key.toUpperCase()) && /^(?:0|1|true|false)$/i.test(value));
     if (declared.has(key) || !publicSetting) values.push(value);
@@ -219,6 +221,19 @@ export function collectRunFailureDiagnostics(run: Run, options: RunFailureReport
     "runtimeMode", "executionStage", "nativePhase", "driverKind", "driverVersion",
   ]);
   if (options.phase) execution.failurePhase = options.phase;
+  const providerConfig = read(read(run.runnerProfileJson, "nativeExecutionInput"), "provider");
+  const providerKind = read(providerConfig, "kind");
+  const model = read(providerConfig, "model");
+  if (typeof providerKind === "string") execution.providerKind = providerKind;
+  if (typeof model === "string") execution.model = model;
+  for (const field of ["startedAt", "finishedAt"] as const) {
+    const value = run[field];
+    if (value instanceof Date && Number.isFinite(value.getTime())) execution[field] = value.toISOString();
+  }
+  const originalFailureCode = read(run.resultJson, "originalFailureCode");
+  if (typeof originalFailureCode === "string" && /^[a-z][a-z0-9_]{1,99}$/.test(originalFailureCode)) {
+    execution.originalFailureCode = originalFailureCode;
+  }
   if (run.startedAt && run.finishedAt) {
     const durationMs = run.finishedAt.getTime() - run.startedAt.getTime();
     if (Number.isFinite(durationMs) && durationMs >= 0) execution.durationMs = durationMs;
@@ -367,6 +382,10 @@ export function collectRunFailureDiagnostics(run: Run, options: RunFailureReport
       const value = read(error, field);
       if (typeof value === "string") entry[field] = value;
       else if (field === "code" && typeof value === "number" && Number.isFinite(value)) entry.code = String(value);
+    }
+    if (entry.code === undefined) {
+      const reasonCode = read(error, "reasonCode");
+      if (typeof reasonCode === "string") entry.code = reasonCode;
     }
     const status = read(error, "status") ?? read(error, "statusCode");
     if (typeof status === "number" && Number.isInteger(status) && status >= 100 && status <= 599) entry.status = status;

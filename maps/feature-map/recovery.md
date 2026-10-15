@@ -38,6 +38,13 @@ Open the affected task from Tasks, Inbox/Blocked, search, or a direct task link.
 Inspect the recovery notice/card in its history, expand details if needed, and
 use the currently offered action. Follow any linked repair task and return owner.
 
+An authorized board user can expand Recovery details on a stopped-run notice to
+read the decision that still blocks replay, including a settled recovery record.
+The notice matches the current action and run; it does not show another run's
+historical decision or authorize a retry. Source-reviewed behavior; the
+[notice regressions](../../ui/src/components/ExecutionBlockerNotice.test.tsx)
+cover empty active recovery, a mismatched source, and failed history reads.
+
 ### `run-detail`
 
 Open the agent's run (`/agents/:agentId/runs/:runId`) from activity or the task's
@@ -101,6 +108,17 @@ the exact receipt after operator stop verification, then confirm stale action
 cleanup. The [route regressions](../../server/src/__tests__/issue-recovery-actions.test.ts)
 and [heartbeat regression](../../server/src/__tests__/heartbeat-process-recovery.test.ts)
 cover this sequence without a live operator recovery claim.
+
+An intentionally Done onboarding parent can still need its validated
+child-completion report. Recovery must not mark that callback successful before
+execution solely because the parent is Done. The existing
+[stale-lock sweep suite](../../server/src/__tests__/recovery-stale-issue-lock-sweep.test.ts)
+covers delayed native/Legacy startup, invalid parent/child/company/assignee
+bindings and a dead owner. Process-death and ownership backstops remain active.
+Repeat the real onboarding journey and correlate callback turn events with its
+reply and downloadable child file; status alone does not prove delivery. The
+literal `ea6c8eb5e16d61111968f633a66748b397b64a3e` live failure is retained,
+and the revised behavior still needs live qualification.
 
 ### `run-detail`
 

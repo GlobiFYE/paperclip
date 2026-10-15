@@ -1,3 +1,4 @@
+import { enableRunFailureReporting } from "./helpers/run-failure-reporting.js";
 import { createHash, randomUUID } from "node:crypto";
 import { trace } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from "@opentelemetry/sdk-trace";
@@ -62,7 +63,7 @@ describePostgres("heartbeat execution configuration through adapter dispatch", (
       testEnvironment: async () => ({ adapterType, status: "pass", checks: [], testedAt: new Date().toISOString() }),
     });
   }, 30_000);
-  afterEach(() => { vi.restoreAllMocks(); skillFailures.clear(); });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllEnvs(); skillFailures.clear(); });
   afterAll(async () => {
     await heartbeat?.drainActiveRunExecutions();
     unregisterServerAdapter(adapterType);
@@ -112,6 +113,7 @@ describePostgres("heartbeat execution configuration through adapter dispatch", (
   });
 
   it("delivers the selected credential in an isolated home and removes it after completion", async () => {
+    vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.test");
     const f = await seed(true);
     let providerHome: string | undefined;
     inspect.set(f.agentId, async input => {
@@ -155,6 +157,7 @@ describePostgres("heartbeat execution configuration through adapter dispatch", (
   });
 
   it("cleans acquired credentials and redacts diagnostics when later skill preparation fails", async () => {
+    vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.test");
     const f = await seed(true);
     skillFailures.set(f.companyId, `Invalid fixture skill configuration: ${f.credential}`);
     const capturedFailure = vi.spyOn(sentry, "captureRunFailure").mockImplementation(() => undefined);
@@ -241,3 +244,6 @@ describePostgres("heartbeat execution configuration through adapter dispatch", (
     expect(input).toBeUndefined();
   });
 });
+
+
+enableRunFailureReporting();
