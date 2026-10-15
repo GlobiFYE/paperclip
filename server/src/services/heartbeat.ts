@@ -3644,7 +3644,7 @@ export function heartbeatService(
           && parseObject(failureRun.runnerProfileJson?.nativeWorkspaceSync).state === "prepared") {
           providerResourceDispositionForRun = "stop_and_retain";
           try {
-            await preserveNativeFailedWorkspace(db, failureRun, { allowPreterminal: true });
+            await preserveNativeFailedWorkspace(db, failureRun, { allowPreterminal: true, restartRecovery: runOptions.nativeRestartRecovery });
           } catch (recoveryError) {
             if (recoveryError instanceof NativeWorkspaceFinalizationBusyError) nativeOwnershipHeld = true;
             else logger.error({ err: recoveryError, runId: run.id }, "failed to record retained native workspace recovery");

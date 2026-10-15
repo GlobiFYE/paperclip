@@ -5,7 +5,9 @@ contains unpublished edits. A prepared workspace reference is not an export
 receipt. Terminal provider failure pins the exact bound sandbox and records a
 file-recovery obligation in the same transaction as the failed run. A startup
 failure after a restart records that obligation before the terminal writer and
-provider cleanup run. A current coordinator owner prevents that cleanup.
+provider cleanup run. Only its exact live recovery claim can settle an owned
+preparation failure; another owner or a stale claim prevents cleanup. Settling
+that claim and recording file retention share a transaction.
 
 The recovery card names the original run and requires evidence that its exact
 allocation stopped and its files were recovered. Recording that evidence does

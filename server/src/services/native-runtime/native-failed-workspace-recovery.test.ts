@@ -7,6 +7,7 @@ import { getExecutionBlocker } from "../execution-blocker.js";
 import { markExecutionReconciliation, validateExecutionReconciliation } from "../execution-recovery-resolution.js";
 import { settleStopOnlyCleanup } from "../sandbox-stop-and-retain.js";
 import { preserveNativeFailedWorkspace } from "./native-failed-workspace-recovery.js";
+import type { NativeRestartRecoveryClaim } from "./native-restart-recovery.js";
 import { NativeWorkspaceFinalizationBusyError } from "./native-workspace-finalization-ownership.js";
 import { preserveWorkspaceRestoreRecoveryMetadataSql } from "../legacy-workspace-restore-recovery.js";
 
@@ -95,12 +96,29 @@ const support = externalUrl ? { supported: true } : await getEmbeddedPostgresTes
     expect(await actions(f.issueId)).toMatchObject([{ evidence: { continuationDelivery: "not_requested" } }]);
   });
 
-  it("captures a restarted preparation failure before the terminal writer runs", async () => {
-    const f = await seed();
+  async function claimRestart(f: Awaited<ReturnType<typeof seed>>) {
+    const claim: NativeRestartRecoveryClaim = { kind: "reattach_remote_runner", runId: f.runId,
+      leaseOwner: randomUUID(), controllerGeneration: 2, providerAttempt: 3,
+      restartKind: "hard", recoveryRequestId: null,
+      remote: { providerLeaseId: f.lease.providerLeaseId!, remoteCwd: "/work" } };
     await db.update(heartbeatRuns).set({ status: "running", nativePhase: "observed" }).where(eq(heartbeatRuns.id, f.runId));
-    await db.update(nativeRunFinalizations).set({ phase: "observed" }).where(eq(nativeRunFinalizations.runId, f.runId));
-    await preserveNativeFailedWorkspace(db, await readRun(f.runId), { allowPreterminal: true });
+    await db.update(nativeRunFinalizations).set({ phase: "observed", leaseOwner: claim.leaseOwner,
+      leaseExpiresAt: new Date(Date.now() + 60_000), controllerGeneration: claim.controllerGeneration, attempt: claim.providerAttempt,
+    }).where(eq(nativeRunFinalizations.runId, f.runId));
+    return claim;
+  }
+
+  it.each([false, true])("captures a preparation failure before the terminal writer, with recovery claim: %s", async claimed => {
+    const f = await seed();
+    const restartRecovery = claimed ? await claimRestart(f) : undefined;
+    if (!claimed) {
+      await db.update(heartbeatRuns).set({ status: "running", nativePhase: "observed" }).where(eq(heartbeatRuns.id, f.runId));
+      await db.update(nativeRunFinalizations).set({ phase: "observed" }).where(eq(nativeRunFinalizations.runId, f.runId));
+    }
+    await preserveNativeFailedWorkspace(db, await readRun(f.runId), { allowPreterminal: true, restartRecovery });
     expect(await readRun(f.runId)).toMatchObject({ status: "running", resultJson: { workspaceRestoreRecovery: { leaseIds: [f.lease.id] } } });
+    if (claimed) expect(await db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, f.runId)))
+      .toMatchObject([{ phase: "terminal_failure", leaseOwner: null, leaseExpiresAt: null, nextAttemptAt: null }]);
     await db.update(heartbeatRuns).set({ status: "failed", resultJson: preserveWorkspaceRestoreRecoveryMetadataSql({ stopReason: "adapter_failed" }) })
       .where(eq(heartbeatRuns.id, f.runId));
     expect(await readRun(f.runId)).toMatchObject({ status: "failed", resultJson: {
@@ -108,6 +126,23 @@ const support = externalUrl ? { supported: true } : await getEmbeddedPostgresTes
     } });
     expect(await readLease(f.lease.id)).toMatchObject({ status: "pending_cleanup", leasePolicy: "retain_on_failure" });
     expect(await getExecutionBlocker(db, f.companyId, f.issueId)).toMatchObject({ workspaceRepairRequired: true });
+  });
+
+  it.each(["token", "generation", "attempt", "run", "remote", "expired", "released"])("refuses a stale %s recovery claim", async kind => {
+    const f = await seed();
+    const restartRecovery = await claimRestart(f);
+    if (kind === "token") restartRecovery.leaseOwner = randomUUID();
+    if (kind === "generation") restartRecovery.controllerGeneration += 1;
+    if (kind === "attempt") restartRecovery.providerAttempt += 1;
+    if (kind === "run") restartRecovery.runId = randomUUID();
+    if (kind === "remote" && restartRecovery.kind === "reattach_remote_runner") restartRecovery.remote.remoteCwd = "/other";
+    if (kind === "expired") await db.update(nativeRunFinalizations).set({ leaseExpiresAt: new Date(0) }).where(eq(nativeRunFinalizations.runId, f.runId));
+    if (kind === "released") await db.update(nativeRunFinalizations).set({ leaseOwner: null }).where(eq(nativeRunFinalizations.runId, f.runId));
+    await expect(preserveNativeFailedWorkspace(db, await readRun(f.runId), { allowPreterminal: true, restartRecovery }))
+      .rejects.toBeInstanceOf(NativeWorkspaceFinalizationBusyError);
+    expect(await readLease(f.lease.id)).toMatchObject({ status: "active" });
+    expect(await actions(f.issueId)).toHaveLength(0);
+    expect(await readRun(f.runId)).toMatchObject({ status: "running", nativePhase: "observed" });
   });
 
   it("refuses cleanup when another execution still owns the coordinator", async () => {
