@@ -1,6 +1,6 @@
 import { execFile, spawnSync } from "node:child_process";
 import { promises as fsPromises } from "node:fs";
-import { link, mkdir, mkdtemp, readdir, readFile, rm, stat, truncate, writeFile } from "node:fs/promises";
+import { link, mkdir, mkdtemp, readdir, readFile, rm, symlink, stat, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -545,6 +545,22 @@ describe("ssh workspace sync staging", { timeout: 90_000 }, () => {
     expect(await readFile(path.join(localDir, "packages/a/x.ts"), "utf8")).toBe("remote\n");
     expect(await readFile(path.join(localDir, "packages/a/.claude/worktrees/wt3/deep.txt"), "utf8")).toBe("local nested worktree\n");
     expect(await exists(path.join(localDir, "node_modules"))).toBe(false);
+  });
+
+  it("preserves a no-baseline nested worktree symlink without following it", async () => {
+    const target = path.join(root, "external-worktree");
+    await writeTree(target, { "tracked.txt": "outside workspace\n" });
+    await mkdir(path.join(localDir, "packages/a/.claude"), { recursive: true });
+    await symlink(target, path.join(localDir, "packages/a/.claude/worktrees"), "dir");
+    await writeFile(path.join(localDir, "stale.txt"), "remove me\\n");
+    const remote = path.join(remoteCwd, "ws");
+    await writeTree(remote, { "packages/a/app.ts": "remote\\n" });
+
+    await restoreWorkspaceFromSshExecution({ spec, localDir, remoteDir: remote });
+
+    expect(await readFile(path.join(localDir, "packages/a/app.ts"), "utf8")).toBe("remote\\n");
+    expect(await readFile(path.join(localDir, "packages/a/.claude/worktrees/tracked.txt"), "utf8")).toBe("outside workspace\n");
+    expect(await readFile(path.join(localDir, "stale.txt")).catch(() => null)).toBeNull();
   });
 
   it("refuses a no-baseline restore that replaces a kept worktree's parent before clearing anything", async () => {

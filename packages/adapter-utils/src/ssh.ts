@@ -706,12 +706,12 @@ async function findLocalNestedWorktreeDirs(localDir: string, dirs: readonly stri
       .readdir(relative ? path.join(localDir, relative) : localDir, { withFileTypes: true })
       .catch(() => []);
     await Promise.all(entries.map(async (entry) => {
-      if (!entry.isDirectory()) return;
       const entryRelative = relative ? `${relative}/${entry.name}` : entry.name;
       if (dirs.some((dir) => entryRelative === dir || entryRelative.endsWith(`/${dir}`))) {
         found.push(entryRelative);
         return;
       }
+      if (!entry.isDirectory()) return;
       if (entry.name === ".git" || entry.name === "node_modules") return;
       await walk(entryRelative);
     }));
