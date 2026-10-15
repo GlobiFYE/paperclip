@@ -160,25 +160,23 @@ function emptyResult(): SkillVersionPruneResult {
     skippedRecent: 0, failed: 0, truncated: false, skipped: {}, cursor: null };
 }
 
-type DirEntry = { name: string; mtimeMs: number };
+type DirEntry = { name: string };
 
-async function listDirectories(root: string): Promise<DirEntry[] | null> {
-  let names: string[];
+async function listDirectories(root: string, options: { after?: string; limit?: number } = {}): Promise<DirEntry[] | null> {
   try {
     await ensureSkillCacheDirectory(root);
-    names = (await fs.readdir(root)).sort();
+    // Directory-entry types avoid an lstat for every historical version on each
+    // continuation. Bound the returned candidates before any per-path inspection.
+    const entries = await fs.readdir(root, { withFileTypes: true });
+    return entries.filter(entry => (entry.isDirectory() || entry.isSymbolicLink())
+      && (!options.after || entry.name > options.after))
+      .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+      .slice(0, options.limit)
+      .map(entry => ({ name: entry.name }));
   } catch (error) {
     if (errorCode(error) === "ENOENT" || errorCode(error) === "ENOTDIR") return null;
     throw error;
   }
-  const out: DirEntry[] = [];
-  for (const name of names) {
-    const stat = await fs.lstat(path.join(root, name)).catch(() => null);
-    // Never follow a symbolic link out of the versions root.
-    if (!stat?.isDirectory() && !stat?.isSymbolicLink()) continue;
-    out.push({ name, mtimeMs: stat.mtimeMs });
-  }
-  return out;
 }
 
 function chunks<T>(values: T[], size: number): T[][] {
@@ -236,20 +234,28 @@ export function skillVersionRetentionService(db: Db, defaults: SkillVersionPrune
     const entries: Candidate[] = [];
     try {
       const rootEntries = await listDirectories(root) ?? [];
-      for (const entry of rootEntries.filter(entry => trashName(entry.name))) {
+      for (const entry of rootEntries.filter(entry => trashName(entry.name) && after("", entry.name)).slice(0, maxEntries + 1)) {
         entries.push({ ...entry, parent: root, skillId: "" });
       }
       for (const skillId of rootEntries.filter(entry => UUID_PATTERN.test(entry.name)).map(entry => entry.name)) {
         if (options.cursor && skillId < options.cursor.skillId) continue;
         if (!shouldContinue()) { result.truncated = true; break; }
+        if (entries.length > maxEntries) break;
         const parent = path.join(root, skillId);
         try {
-          for (const entry of await listDirectories(parent) ?? []) entries.push({ ...entry, parent, skillId });
+          const children = await listDirectories(parent, {
+            after: options.cursor?.skillId === skillId ? options.cursor.name : undefined,
+            limit: maxEntries - entries.length + 1,
+          }) ?? [];
+          for (const entry of children) entries.push({ ...entry, parent, skillId });
+          // Empty roots consume discovery work too. A sentinel advances the
+          // cursor without ever authorizing deletion of the skill root itself.
+          if (children.length === 0) entries.push({ parent, skillId, name: "\uffff" });
         } catch {
           // One unsafe root consumes a scan slot but cannot stop unrelated skills.
           entries.push({ parent, skillId, name: "\uffff", unsafe: true });
         }
-        if (entries.filter(entry => after(entry.skillId, entry.name)).length > maxEntries) break;
+        if (entries.length > maxEntries) break;
       }
     } catch (error) {
       result.checked++;

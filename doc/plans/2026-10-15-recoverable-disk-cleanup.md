@@ -39,7 +39,7 @@ product acceptance. Rollback disables deletion and retains restoration support.
 - Branch: `codex/skill-cache-retention-safety`, based on Devin Foley's
   [PR #16433](https://github.com/paperclipai/paperclip/pull/16433). User approved
   building on that PR. Added safety commits to its existing branch, preserving
-  Devin’s original commit; latest published revision is `d153929d7033a8d8cfd3c7cdc74390118339053e`.
+  Devin’s original commit; latest published revision is `666c60c8596679243de5373180972a4b4d6eb40c`.
   User also authorized merging every PR from this effort after checks pass.
 - Earlier proof/implementation preserved at `da754ff744` on
   `codex/recoverable-skill-cache`; do not ship its competing worker.
@@ -78,7 +78,16 @@ product acceptance. Rollback disables deletion and retains restoration support.
   `/tmp/paperclip-skill-final-controls.log`. A prior local attempt could not start
   Postgres because macOS shared-memory slots were full; retry succeeded after a
   slot became available, without changing global limits or unrelated services.
-  Final required checks and review remain. Git source unchanged.
+  Full typecheck on `666c60c859` passed in 32.98s. Full tests are still running;
+  initial native-session cases hit the same infrastructure limit. Removed 19
+  abandoned 56-byte IPC headers only after verifying zero attachments and dead
+  creator/last-user PIDs. Live databases and their files were untouched.
+- Review round four accepted batched reads but found unbounded per-directory
+  discovery stats. Discovery now uses directory-entry types and applies the cursor
+  and budget before per-path inspection, including empty-root budget accounting.
+  Twenty affected tests passed in 22.05s, including filesystem-call counts across
+  continuation pages (`/tmp/paperclip-skill-discovery-budget.log`). Final review
+  and full checks remain. Git source unchanged; draft helper is in `/tmp` only.
 - First Git baseline used a real bare remote, runtime workspace creation, a
   database row, and ordinary reopening: missing worktree restores A while its
   branch exists; missing branch restores upstream B; missing base fails. Fixture

@@ -294,6 +294,24 @@ describeEmbeddedPostgres("skill version snapshot retention", () => {
     expect(total).toBe(5);
     expect(await fs.readdir(path.join(resolveCompanySkillVersionsRoot(companyId), skillId))).toEqual([versionIds[5]]);
   });
+  it("bounds discovery inspections and never stats versions before the continuation cursor", async () => {
+    const companyId = await createCompany();
+    const { skillId, versionIds } = await createSkill(companyId, 12);
+    await Promise.all(versionIds.map(id => writeSnapshot(companyId, skillId, id)));
+    const parent = path.join(resolveCompanySkillVersionsRoot(companyId), skillId);
+    const stat = vi.spyOn(fs, "lstat");
+    const retention = skillVersionRetentionService(db, { maxEntries: 2, dryRun: true });
+    const first = await retention.tick();
+    expect(first).toMatchObject({ checked: 2, truncated: true });
+    const inspected = () => new Set(stat.mock.calls.map(call => String(call[0]))
+      .filter(file => path.dirname(file) === parent).map(file => path.basename(file)));
+    expect([...inspected()].sort()).toEqual([...versionIds].sort().slice(0, 2));
+    stat.mockClear();
+    const second = await retention.tick();
+    expect(second).toMatchObject({ checked: 2, truncated: true });
+    expect([...inspected()].sort()).toEqual([...versionIds].sort().slice(2, 4));
+  });
+
   it("bounds failed attempts and continues beyond them", async () => {
     const companyId = await createCompany();
     const { skillId, versionIds } = await createSkill(companyId, 6);
