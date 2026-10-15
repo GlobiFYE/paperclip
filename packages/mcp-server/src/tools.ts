@@ -132,6 +132,14 @@ const createIssueToolSchema = z.object({
   companyId: companyIdOptional,
 }).merge(createIssueInputSchema);
 
+const delegateChildIssueToolSchema = z.object({
+  parentIssueId: issueIdSchema,
+  title: z.string().trim().min(1).max(240),
+  description: z.string().max(200000).optional(),
+  assigneeAgentId: z.string().guid(),
+  idempotencyKey: z.string().trim().min(1).max(255),
+});
+
 const updateIssueToolSchema = z.object({
   issueId: issueIdSchema,
 }).merge(updateIssueSchema);
@@ -517,6 +525,15 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
       createIssueToolSchema,
       async ({ companyId, ...body }) =>
         client.requestJson("POST", `/companies/${client.resolveCompanyId(companyId)}/issues`, { body }),
+    ),
+    makeTool(
+      "paperclipDelegateChildIssue",
+      "Assign a child issue to another agent and block its parent until the child finishes",
+      delegateChildIssueToolSchema,
+      async ({ parentIssueId, ...body }) =>
+        client.requestJson("POST", `/issues/${encodeURIComponent(parentIssueId)}/children`, {
+          body: { ...body, delegateAndBlockParent: true },
+        }),
     ),
     makeTool(
       "paperclipUpdateIssue",

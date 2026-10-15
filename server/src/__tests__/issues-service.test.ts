@@ -3663,6 +3663,82 @@ describeEmbeddedPostgres("issueService.create workspace inheritance", () => {
     });
   });
 
+  it("delegates one assigned child and blocks its parent on that child, including on retry", async () => {
+    const companyId = randomUUID();
+    const parentIssueId = randomUUID();
+    const sourceAgentId = randomUUID();
+    const targetAgentId = randomUUID();
+    await seedIssueCompany(db, companyId);
+    await seedCodexCoder(db, companyId, sourceAgentId);
+    await seedCodexCoder(db, companyId, targetAgentId);
+    await db.insert(issues).values({
+      id: parentIssueId,
+      companyId,
+      title: "Investigate customer report",
+      status: "in_progress",
+      priority: "medium",
+      assigneeAgentId: sourceAgentId,
+    });
+
+    const input = {
+      title: "Investigate reproduction",
+      description: "Check the fictional report.",
+      status: "todo" as const,
+      assigneeAgentId: targetAgentId,
+      idempotencyKey: "delegation-proof",
+      delegateAndBlockParent: true,
+      actorAgentId: sourceAgentId,
+    };
+    await expect(svc.createChild(parentIssueId, {
+      ...input,
+      status: "backlog",
+      idempotencyKey: "parked-child-is-not-delegation",
+    })).rejects.toThrow();
+    const first = await svc.createChild(parentIssueId, input);
+    const [parent] = await db.select().from(issues).where(eq(issues.id, parentIssueId));
+    const relations = await svc.getRelationSummaries(parentIssueId);
+    expect(first.issue.assigneeAgentId).toBe(targetAgentId);
+    expect(parent.status).toBe("blocked");
+    expect(relations.blockedBy.map((item) => item.id)).toContain(first.issue.id);
+
+    const replay = await svc.createChild(parentIssueId, input);
+    const children = await db.select().from(issues).where(eq(issues.parentId, parentIssueId));
+    const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, parentIssueId));
+    expect(replay.issue.id).toBe(first.issue.id);
+    expect(children).toHaveLength(1);
+    expect(comments).toHaveLength(1);
+    const creationActivity = await db.select().from(activityLog).where(eq(activityLog.entityId, first.issue.id));
+    expect(creationActivity.filter((item) => item.action === "issue.child_created")).toHaveLength(1);
+    await db.update(issues).set({ status: "done" }).where(eq(issues.id, parentIssueId));
+    const completedReplay = await svc.createChild(parentIssueId, input);
+    expect(completedReplay.issue.id).toBe(first.issue.id);
+    const [completedParent] = await db.select().from(issues).where(eq(issues.id, parentIssueId));
+    expect(completedParent.status).toBe("done");
+  });
+
+  it("does not move an issue awaiting review into a delegated blocked state", async () => {
+    const companyId = randomUUID();
+    const parentIssueId = randomUUID();
+    const targetAgentId = randomUUID();
+    await seedIssueCompany(db, companyId);
+    await seedCodexCoder(db, companyId, targetAgentId);
+    await db.insert(issues).values({
+      id: parentIssueId,
+      companyId,
+      title: "Awaiting human review",
+      status: "in_review",
+      priority: "medium",
+    });
+    await expect(svc.createChild(parentIssueId, {
+      title: "Unexpected delegated work",
+      status: "todo",
+      assigneeAgentId: targetAgentId,
+      idempotencyKey: "review-delegation",
+      delegateAndBlockParent: true,
+    })).rejects.toThrow();
+    const children = await db.select().from(issues).where(eq(issues.parentId, parentIssueId));
+    expect(children).toHaveLength(0);
+  });
   it("createChild applies parent defaults, acceptance criteria, workspace inheritance, and optional parent blocker chaining", async () => {
     const companyId = randomUUID();
     const projectId = randomUUID();

@@ -208,6 +208,9 @@ describe("assigned backlog creation contract", () => {
         assigneeAgentId: data.assigneeAgentId as string | null | undefined,
       }),
       parentBlockerAdded: Boolean(data.blockParentUntilDone),
+      ...(data.delegateAndBlockParent ? {
+        delegatedParent: makeIssue({ id: "parent-1", title: "Parent issue", status: "blocked", assigneeAgentId }),
+      } : {}),
     }));
     mockIssueService.getRelationSummaries.mockResolvedValue({ blockedBy: [], blocks: [] });
     mockIssueService.listWakeableBlockedDependents.mockResolvedValue([]);
@@ -315,6 +318,48 @@ describe("assigned backlog creation contract", () => {
         payload: expect.objectContaining({ mutation: "create" }),
       }),
     );
+  });
+
+  it("validates delegation and returns both the assigned child and blocked parent", async () => {
+    const app = await createApp();
+    const invalid = await request(app)
+      .post("/api/issues/parent-1/children")
+      .send({ title: "Investigate", delegateAndBlockParent: true, assigneeAgentId });
+    expect(invalid.status).toBe(400);
+    expect(mockIssueService.createChild).not.toHaveBeenCalled();
+
+    const result = await request(app)
+      .post("/api/issues/parent-1/children")
+      .send({
+        title: "Investigate",
+        assigneeAgentId,
+        idempotencyKey: "parent-1-investigation",
+        delegateAndBlockParent: true,
+      });
+    expect(result.status).toBe(201);
+    expect(mockIssueService.createChild).toHaveBeenCalledWith(
+      "parent-1",
+      expect.objectContaining({ assigneeAgentId, idempotencyKey: "parent-1-investigation", delegateAndBlockParent: true }),
+    );
+    expect(result.body.child).toEqual(expect.objectContaining({ parentId: "parent-1", assigneeAgentId }));
+    expect(result.body.parent).toEqual(expect.objectContaining({ id: "parent-1", status: "blocked" }));
+    expect(mockWakeup).toHaveBeenCalledWith(assigneeAgentId, expect.anything());
+  });
+
+  it("replays a delegation without logging another child creation", async () => {
+    mockIssueService.createChild.mockResolvedValueOnce({
+      issue: makeIssue({ id: "child-1", title: "Investigate", parentId: "parent-1", assigneeAgentId }),
+      parentBlockerAdded: false,
+      delegationReplay: true,
+      delegatedParent: makeIssue({ id: "parent-1", title: "Parent issue", status: "done", assigneeAgentId }),
+    });
+    const result = await request(await createApp())
+      .post("/api/issues/parent-1/children")
+      .send({ title: "Investigate", assigneeAgentId, idempotencyKey: "same-key", delegateAndBlockParent: true });
+    expect(result.status).toBe(200);
+    expect(result.body.parent.status).toBe("done");
+    expect(mockLogActivity).not.toHaveBeenCalled();
+    expect(mockWakeup).toHaveBeenCalledWith(assigneeAgentId, expect.anything());
   });
 
   it("preserves deliberate assigned backlog as parked work without assignment wakeup", async () => {

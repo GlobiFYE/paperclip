@@ -66,6 +66,7 @@ Read tools:
 Write tools:
 
 - `paperclipCreateIssue`
+- `paperclipDelegateChildIssue`
 - `paperclipUpdateIssue`
 - `paperclipCheckoutIssue`
 - `paperclipReleaseIssue`
@@ -81,6 +82,11 @@ Write tools:
 - `paperclipUnlinkIssueApproval`
 - `paperclipApprovalDecision`
 - `paperclipAddApprovalComment`
+
+`paperclipDelegateChildIssue` requires a target agent and an idempotency key.
+It creates an assigned child, blocks the parent on that child, and records the
+handoff in one transaction. Retries return the same child without changing the
+parent's later disposition.
 
 Escape hatch:
 
