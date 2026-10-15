@@ -1,7 +1,8 @@
+import { VoiceCallProvider } from "./components/voice/VoiceCallProvider";
+import { useAccountIdentity } from "./api/companies-query";
 import * as React from "react";
 import { StrictMode } from "react";
 import * as ReactDOM from "react-dom";
-import { createRoot } from "react-dom/client";
 import { BrowserRouter } from "@/lib/router";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App } from "./App";
@@ -14,12 +15,14 @@ import { PanelProvider } from "./context/PanelContext";
 import { SidebarProvider } from "./context/SidebarContext";
 import { DialogProvider } from "./context/DialogContext";
 import { EditorAutocompleteProvider } from "./context/EditorAutocompleteContext";
+import { PrimaryAgentProvider } from "./context/PrimaryAgentProvider";
 import { ToastProvider } from "./context/ToastContext";
 import { ThemeProvider } from "./context/ThemeContext";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { initPluginBridge } from "./plugins/bridge-init";
 import { PluginLauncherProvider } from "./plugins/launchers";
 import { startPerfMeasureReaper } from "./lib/perf-measure-reaper";
+import { getOrCreatePaperclipReactRoot } from "./lib/react-root";
 import { startServiceWorkerUpdates } from "./lib/service-worker-updates";
 import "@mdxeditor/editor/style.css";
 import "./index.css";
@@ -57,7 +60,16 @@ function CompanyAwareBreadcrumbProvider({ children }: { children: React.ReactNod
   return <BreadcrumbProvider companyName={selectedCompany?.name ?? null}>{children}</BreadcrumbProvider>;
 }
 
-createRoot(document.getElementById("root")!).render(
+function CompanyVoiceCalls({ children }: { children: React.ReactNode }) {
+  const { selectedCompanyId } = useCompany();
+  const { userId } = useAccountIdentity();
+  return <VoiceCallProvider companyId={selectedCompanyId} userId={userId}>{children}</VoiceCallProvider>;
+}
+
+const rootElement = document.getElementById("root");
+if (!rootElement) throw new Error("Paperclip root element is missing");
+
+getOrCreatePaperclipReactRoot(window, rootElement).render(
   <StrictMode>
     <AppErrorBoundary>
       <QueryClientProvider client={queryClient}>
@@ -67,6 +79,7 @@ createRoot(document.getElementById("root")!).render(
             <CompanyProvider>
               <EditorAutocompleteProvider>
                 <ToastProvider>
+                  <PrimaryAgentProvider>
                   <LiveUpdatesProvider>
                     <TooltipProvider>
                       <CompanyAwareBreadcrumbProvider>
@@ -74,7 +87,7 @@ createRoot(document.getElementById("root")!).render(
                           <PanelProvider>
                             <PluginLauncherProvider>
                               <DialogProvider>
-                                <App />
+                                <CompanyVoiceCalls><App /></CompanyVoiceCalls>
                               </DialogProvider>
                             </PluginLauncherProvider>
                           </PanelProvider>
@@ -82,6 +95,7 @@ createRoot(document.getElementById("root")!).render(
                       </CompanyAwareBreadcrumbProvider>
                     </TooltipProvider>
                   </LiveUpdatesProvider>
+                  </PrimaryAgentProvider>
                 </ToastProvider>
               </EditorAutocompleteProvider>
             </CompanyProvider>

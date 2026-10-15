@@ -72,6 +72,7 @@ export interface WorkspaceCommandDefinition {
   kind: WorkspaceCommandKind;
   command: string | null;
   cwd: string | null;
+  port: number | null;
   lifecycle: "shared" | "ephemeral" | null;
   serviceIndex: number | null;
   disabledReason: string | null;
@@ -228,9 +229,9 @@ export interface WorkspaceOverviewItem {
   kind: "execution_workspace";
   workspaceId: string;
   workspaceName: string;
-  projectId: string;
-  projectUrlKey: string;
-  projectName: string;
+  projectId: string | null;
+  projectUrlKey: string | null;
+  projectName: string | null;
   mode: ExecutionWorkspaceSummary["mode"];
   strategyType: ExecutionWorkspaceStrategyType;
   cwd: string | null;
@@ -261,7 +262,7 @@ export interface WorkspaceOverviewResponse {
 export interface ExecutionWorkspace {
   id: string;
   companyId: string;
-  projectId: string;
+  projectId: string | null;
   projectWorkspaceId: string | null;
   sourceIssueId: string | null;
   mode: Exclude<ExecutionWorkspaceMode, "inherit" | "reuse_existing" | "agent_default"> | "adapter_managed" | "cloud_sandbox";
