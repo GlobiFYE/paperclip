@@ -29,8 +29,11 @@ paste it into Paperclip's authorization page. Keep it out of Bot chat.
 Assign ordinary tasks to the agent. Read its progress, answer its question cards,
 and review its documents and files in the task thread. The Bot can initiate a
 new task from its Grok conversation through the admitted work-session tools.
-An immediate proactive claim does not send the same assignment back through the
-routine.
+The originating conversation checks the same request while admission is queued.
+Neither immediate nor delayed Bot-initiated admission sends that assignment back
+through the routine. Grok keeps the request ID stable until admission succeeds
+or fails. Human-assigned work and continuations after an answered question still
+use their normal assignment wakes.
 
 ## Files and completion
 
@@ -48,6 +51,23 @@ Publication also verifies stored filename, byte size and SHA-256. Normal Runner
 completion verifies that receipt against the upload and admitted assignment.
 A visible attachment without that verified publication does not satisfy a task
 that requires a file output.
+
+## Feedback and pending operations
+
+An assignment wake starts a Grok routine. Once the Bot accepts that work,
+Paperclip keeps new comments and asynchronous operation receipts durable without
+starting another routine for that session. Silence does not mean the Bot is idle.
+Acceptance and the final webhook handoff are serialized. If acceptance finishes
+while credentials are loading, the unsent wake is cancelled. Stop and
+authenticated acknowledgements remain independent of a pending HTTP response.
+Human-question answers and resolved durable waits resume through normal Runner
+admission and a new assignment wake.
+
+If a tool returns pending, poll `paperclip_grok_operation_status` with the same
+assignment and request IDs for its durable outcome. Do not repeat it under a new
+ID or perform dependent work first. An unknown outcome requires reconciliation. At safe boundaries and before finishing,
+the Bot reads its inbox and current task history for queued feedback. Current
+assignment reads include these instructions, including for existing connections.
 
 ## Recovery and stop
 
