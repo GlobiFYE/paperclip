@@ -51,6 +51,13 @@ the same sanitized environment as execution, so a CLI visible only in the
 provider's default environment cannot pass the launch check. Failed path
 discovery stops startup instead of silently falling back to a minimal path.
 
+Providers that declare concurrent sync support stage at most three independent
+launcher files at once. Other providers keep serial staging. Each file retains
+its content hash, upload lock, integrity check and atomic rename. A failed batch
+settles all started uploads before startup rejects; later files and the final
+permission step do not start. This changes startup scheduling, not credentials
+or callback transport selection.
+
 Scripts that previously read a persistent `GH_TOKEN` must use managed `git`, `gh`, or GitHub gateway tools. Managed execution skips legacy GitHub token bindings in agent, environment, project, and routine configuration before secret preflight. Configure personal or dedicated access through the GitHub connection instead. Directly invoking an unmanaged executable or retaining a token obtained during an earlier invocation is outside the managed invocation contract.
 
 ## Legacy hosts and networking
