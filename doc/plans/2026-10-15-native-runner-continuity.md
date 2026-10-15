@@ -94,19 +94,28 @@ starting harnesses; past passing evidence does not qualify this change.
   Daytona or live model evidence. The prior lease fixture uses the expired status
   observed on staging. The third turn retains the runner and provider processes.
 - Full workspace typecheck and production build pass on the warm candidate.
-  The full required test suite is running. The earlier focused run had 752 passes
-  and two error-label assertions; the original failure classification is restored.
+  The server and UI typechecks and production build also pass after the final
+  changes. All 749 focused executor/restart tests pass; the full required test
+  suite is running.
 - Greptile found a stale recovery ownership check retained across later warm
   turns. Recovery admission now retires after verified attachment; the three-turn
   regression passes. The earlier saved-state diagnostic finding is also fixed.
-  Fresh review is pending.
+  The third-turn fix received 5/5. Fresh review of the final changes is pending.
+- The existing source-only file-recovery form now supports retained native holds
+  as well as legacy holds. It preserves board authority, exact stop-receipt
+  validation, task status, and the prohibition on replaying the original run.
+  All 52 UI/native recovery tests, token gates, and map checks pass.
 - Fresh read-only staging records confirm both original tasks remain blocked.
   The Codex failure preceded its coordinator claim. The OpenCode failure followed
   controller takeover, with an active turn in the saved checkpoint. Its original
   log lacks the failed probe reason; process death is not established.
-- No live task or deployment has been changed. Remaining: full tests and review,
-  staging qualification, retained-state recovery,
-  and useful disposition of both tasks.
+- Both retained sandboxes were restored for file inspection. The completed
+  website commit is intact; the other workspace retains a benchmark script and
+  lockfile changes. Backup and task disposition remain in progress. No agent
+  turn, task status, or deployment has been changed.
+- The selected tenant has an existing fleet rollout deferred by active work.
+  Do not override it. Remaining: full tests and review, staging qualification,
+  retained-state recovery, and useful disposition of both tasks.
 
 Deferred: unrelated skill-import setup failures, database query optimization,
 general UI redesign, and broad provider qualification unrelated to the changed
