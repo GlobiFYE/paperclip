@@ -213,4 +213,39 @@ describe("cross-issue influence limit rollout", () => {
     });
     expect(fake.inserted).toEqual([]);
   });
+
+  it("reads the source issue from the run's bound issue when the snapshot omits it", async () => {
+    const targetIssueId = "55555555-5555-4555-8555-555555555555";
+    const fake = counterDb(0, {
+      issueId: targetIssueId,
+      contextSnapshot: {},
+    });
+
+    // A run bound to the target issue is a self-write, so nothing is observed.
+    await expect(observeCrossIssueInfluence(fake.db as never, {
+      companyId: "22222222-2222-4222-8222-222222222222",
+      runId: "11111111-1111-4111-8111-111111111111",
+      agentId: "33333333-3333-4333-8333-333333333333",
+      targetIssueId,
+      kind: "update",
+    })).resolves.toBeNull();
+    expect(fake.inserted).toEqual([]);
+  });
+
+  it("counts cross-issue influence from the run's bound issue when the snapshot omits it", async () => {
+    const fake = counterDb(0, {
+      issueId: "66666666-6666-4666-8666-666666666666",
+      contextSnapshot: {},
+    });
+
+    await expect(observeCrossIssueInfluence(fake.db as never, {
+      companyId: "22222222-2222-4222-8222-222222222222",
+      runId: "11111111-1111-4111-8111-111111111111",
+      agentId: "33333333-3333-4333-8333-333333333333",
+      targetIssueId: "55555555-5555-4555-8555-555555555555",
+      kind: "comment",
+      now: new Date(CROSS_ISSUE_INFLUENCE_ENFORCE_AT.getTime() - 1),
+    })).resolves.toMatchObject({ count: 1, allowed: true });
+    expect(fake.inserted.map((row) => (row.details as { kind: string }).kind)).toEqual(["comment"]);
+  });
 });
