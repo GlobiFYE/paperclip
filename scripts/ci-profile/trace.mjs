@@ -105,7 +105,8 @@ export function buildTrace(run, jobs, records = []) {
       invocations.set(invocation, state);
       continue;
     }
-    if (!["file", "test"].includes(record.kind) || !text(record.id) || !text(record.name)
+    if (!["file", "test"].includes(record.kind) || !text(record.id)
+      || (record.kind === "file" ? !text(record.name) : typeof record.name !== "string")
       || !text(record.file) || !["vitest", "playwright", "node"].includes(record.framework)
       || !Number.isFinite(record.start) || !Number.isFinite(record.duration) || record.duration < 0
       || record.start < millis(job.started_at) - 1000
@@ -128,7 +129,7 @@ export function buildTrace(run, jobs, records = []) {
       && candidate.conclusion !== "skipped");
     const parent = files.get(`${invocation}:${record.parent}`)
       || (step ? id(`${jobId}:step:${step.number}`) : jobId);
-    span(recordId(entry), parent, record.name, record.start, record.start + record.duration, {
+    span(recordId(entry), parent, record.kind === "test" ? record.name.slice(0, 256) : record.name, record.start, record.start + record.duration, {
       "ci.kind": record.kind, "ci.job": job.name, "test.framework": record.framework,
       "test.file": record.file, "test.status": typeof record.status === "string" ? record.status.slice(0, 32) : "unknown", error: failed(record.status),
       "test.retries": Number.isFinite(record.retries) ? record.retries : 0,
@@ -140,7 +141,9 @@ export function buildTrace(run, jobs, records = []) {
   const expectedReceipts = jobs.filter((job) => job.steps?.some((step) => step.name === "Initialize CI profile"));
   const missing = expectedReceipts.filter((job) => !receipts.has(job.id));
   if (missing.length) warnings.push(`Missing timing artifacts for ${missing.length} jobs`);
-  const incomplete = [...invocations.values()].filter((value) => !value.expected || !value.start || !value.end).length;
+  // Some package scripts invoke a reporter without using the launcher. Its
+  // start/end pair proves collection even when no intent record was written.
+  const incomplete = [...invocations.values()].filter((value) => !value.start || !value.end).length;
   if (incomplete) warnings.push(`${incomplete} test invocations did not finish reporting`);
   if (rejected) warnings.push(`${rejected} invalid timing records ignored`);
   if (run.conclusion !== "success") warnings.push("Workflow did not succeed; later tests or steps may not have run");
@@ -159,8 +162,8 @@ export function buildTrace(run, jobs, records = []) {
   if (expectedReceipts.length && missingTests.length) warnings.push(`Missing test detail for ${missingTests.length} test jobs (including jobs that failed before testing)`);
   root["ci.test_count"] = valid.filter(({ record }) => record.kind === "test").length;
   root["ci.file_count"] = valid.filter(({ record }) => record.kind === "file").length;
-  root["ci.expected_invocations"] = [...invocations.values()].filter((value) => value.expected).length;
-  root["ci.reported_invocations"] = [...invocations.values()].filter((value) => value.expected && value.start && value.end).length;
+  root["ci.expected_invocations"] = invocations.size;
+  root["ci.reported_invocations"] = [...invocations.values()].filter((value) => value.start && value.end).length;
   root["ci.profile_complete"] = warnings.length === 0 && run.run_attempt === 1;
   root["ci.coverage_warnings"] = warnings.join("; ");
   return { traceId, events, warnings, wallMs: end - start, jobCount: jobs.length };

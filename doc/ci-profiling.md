@@ -43,6 +43,10 @@ The expandable hierarchy is **workflow → job → step → test filename → te
 Vitest, Playwright, and Node file rows use repository-relative filenames, also
 available in `test.file`. Separate files retain their own children even when
 individual test names repeat across files.
+Honeycomb shows only the 32,000 spans closest to the root in a very large trace.
+All file rows are near the root, but the chart can omit some individual test
+rows. Use **View events** to query all recorded test spans. Test names are
+limited to 256 characters in the trace; file paths remain intact.
 
 - Compare the jobs that finish last (`ci.finishes_last`) with other overlapping
   work. A long job that finishes early is not necessarily delaying CI.
@@ -80,7 +84,9 @@ artifacts, interrupted reporters, rejected data, and absent test details visible
 Test launchers write an expected-invocation record before starting each Vitest,
 Playwright, or Node process. Each reporter must write matching start/end records,
 so a missing reporter cannot hide behind another successful invocation in the
-same job. Compare `ci.expected_invocations` with `ci.reported_invocations`.
+same job. Direct package scripts can start a reporter without the launcher;
+their start/end pair proves collection. Compare `ci.expected_invocations` with
+`ci.reported_invocations`.
 Failed or cancelled workflows are conservatively incomplete because a failed
 command can prevent later tests or steps from running.
 
@@ -91,9 +97,10 @@ unambiguous full-suite baseline. GitHub may carry earlier successful jobs into
 the new attempt's job inventory. Jobs completed before the new attempt started
 are excluded and counted in `ci.carried_job_count`.
 
-If export fails, inspect **CI profile** and rerun that exporter after fixing the
-cause. A partial HTTP export may already have sent some spans; retries use the
-same IDs but the Events API does not promise deduplication. Timing artifacts
+The exporter sends bounded batches with pauses and retries only events that
+Honeycomb rejects temporarily. If export still fails, inspect **CI profile**
+before rerunning it. A partial HTTP export may already have sent some spans;
+reruns use the same IDs but the Events API does not promise deduplication. Timing artifacts
 remain available for 14 days. Invalid/oversized artifacts stop export instead of
 silently truncating the suite. No logs, environment dumps, error messages, stack
 traces, or credentials are included in the exported field allowlist.
@@ -145,4 +152,5 @@ workflow.
 
 References: [Honeycomb trace fields](https://docs.honeycomb.io/get-started/best-practices/organizing-data/),
 [Events API](https://docs.honeycomb.io/api/events/create-events),
+[large trace display limit](https://docs.honeycomb.io/troubleshoot/common-issues/data-in-honeycomb/#your-very-large-trace-displays-only-32000-spans),
 [GitHub workflow_run](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run).

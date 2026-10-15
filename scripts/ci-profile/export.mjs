@@ -14,19 +14,35 @@ const get = (endpoint) => JSON.parse(gh([endpoint]).toString());
 const pages = (endpoint, field) => JSON.parse(gh(["--paginate", "--slurp", endpoint]).toString())
   .flatMap((page) => field ? page[field] : page);
 
-export async function sendEvents(events, apiKey, dataset, fetcher = fetch) {
+export async function sendEvents(events, apiKey, dataset, fetcher = fetch, pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
   if (!apiKey) throw new Error("HONEYCOMB_CI_API_KEY is not configured");
-  for (let offset = 0; offset < events.length; offset += 500) {
-    const batch = events.slice(offset, offset + 500);
-    const response = await fetcher(`https://api.honeycomb.io/1/batch/${encodeURIComponent(dataset)}`, {
-      method: "POST", headers: { "X-Honeycomb-Team": apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify(batch), redirect: "error", signal: AbortSignal.timeout(30_000),
-    });
-    if (!response.ok) throw new Error(`Honeycomb export failed (HTTP ${response.status})`);
-    const results = await response.json();
-    if (!Array.isArray(results) || results.length !== batch.length || results.some((result) => result.status !== 202)) {
-      throw new Error("Honeycomb did not accept every span in the batch");
+  const transient = new Set([429, 500, 502, 503, 504]);
+  for (let offset = 0; offset < events.length; offset += 250) {
+    let pending = events.slice(offset, offset + 250);
+    for (let attempt = 0; pending.length; attempt += 1) {
+      if (attempt >= 8) throw new Error(`Honeycomb did not accept ${pending.length} spans after retries`);
+      const response = await fetcher(`https://api.honeycomb.io/1/batch/${encodeURIComponent(dataset)}`, {
+        method: "POST", headers: { "X-Honeycomb-Team": apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify(pending), redirect: "error", signal: AbortSignal.timeout(30_000),
+      });
+      if (!response.ok) {
+        if (!transient.has(response.status)) throw new Error(`Honeycomb export failed (HTTP ${response.status})`);
+        await pause(Math.min(30_000, 1000 * 2 ** attempt));
+        continue;
+      }
+      const results = await response.json();
+      if (!Array.isArray(results) || results.length !== pending.length) {
+        throw new Error("Honeycomb returned an unexpected batch response");
+      }
+      const rejected = results.flatMap((result, index) => result.status === 202 ? [] : [{ event: pending[index], status: result.status }]);
+      const permanent = rejected.find(({ status }) => !transient.has(status));
+      if (permanent) throw new Error(`Honeycomb rejected ${rejected.length} spans (status ${permanent.status})`);
+      pending = rejected.map(({ event }) => event);
+      if (pending.length) await pause(Math.min(30_000, 1000 * 2 ** attempt));
     }
+    // The full suite can exceed Honeycomb's burst allowance. Leave capacity
+    // for the team's other telemetry rather than exhausting it in one export.
+    if (offset + 250 < events.length) await pause(1000);
   }
 }
 

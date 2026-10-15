@@ -105,6 +105,21 @@ test("coverage is conservative after failures and does not merge framework invoc
   assert.equal(trace.events[0].data["ci.reported_invocations"], 1);
 });
 
+test("complete reporter pairs count without launcher intent, and long test names remain timed", () => {
+  const records = [
+    record({ kind: "job" }), record({ kind: "job", job: "second" }),
+    record({ framework: "node", kind: "start" }), record({ framework: "node", kind: "end" }),
+    record({ kind: "test", id: "long", parent: "file", name: "x".repeat(5000),
+      file: "a.test.ts", start: Date.parse(at(4)), duration: 100, status: "passed" }),
+    record({ kind: "file", id: "file", name: "a.test.ts", file: "a.test.ts",
+      start: Date.parse(at(4)), duration: 100, status: "passed" }),
+  ];
+  const trace = buildTrace({ ...run, conclusion: "success" }, jobs, records);
+  assert.equal(trace.events[0].data["ci.profile_complete"], true);
+  assert.equal(trace.events[0].data["ci.test_count"], 1);
+  assert.equal(trace.events.find((event) => event.data["ci.kind"] === "test").data.name.length, 256);
+});
+
 test("trusted policy commands work with both current and pre-profile checkouts", () => {
   const source = readFileSync(new URL("../../workflows/pr-trusted.yml", import.meta.url), "utf8");
   const block = source.split("      - name: Select compatible Node test command\n")[1].split("\n      - name:")[0];
@@ -191,18 +206,30 @@ test("profiling uses only infrastructure CODEOWNERS resolved at trusted master",
   ]);
 });
 
-test("export checks per-event ingestion results, including partial failures", async () => {
+test("export paces batches and retries only rejected transient events", async () => {
   const events = Array.from({ length: 501 }, () => ({ data: {} }));
   const sizes = [];
+  const pauses = [];
   await sendEvents(events, "test-only", "paperclip-ci", async (url, options) => {
     assert.equal(url, "https://api.honeycomb.io/1/batch/paperclip-ci");
     assert.equal(options.redirect, "error");
     const size = JSON.parse(options.body).length;
     sizes.push(size);
     return { ok: true, json: async () => Array.from({ length: size }, () => ({ status: 202 })) };
-  });
-  assert.deepEqual(sizes, [500, 1]);
-  await assert.rejects(sendEvents([events[0]], "test-only", "paperclip-ci", async () => ({ ok: true, json: async () => [{ status: 400 }] })), /every span/);
+  }, async (ms) => { pauses.push(ms); });
+  assert.deepEqual(sizes, [250, 250, 1]);
+  assert.deepEqual(pauses, [1000, 1000]);
+  let calls = 0;
+  const retried = [];
+  await sendEvents([{ data: { id: 1 } }, { data: { id: 2 } }], "test-only", "paperclip-ci", async (_url, options) => {
+    const batch = JSON.parse(options.body);
+    retried.push(batch.map((event) => event.data.id));
+    calls += 1;
+    return { ok: true, json: async () => calls === 1 ? [{ status: 202 }, { status: 429 }] : [{ status: 202 }] };
+  }, async (ms) => { pauses.push(ms); });
+  assert.deepEqual(retried, [[1, 2], [2]]);
+  assert.equal(pauses.at(-1), 1000);
+  await assert.rejects(sendEvents([events[0]], "test-only", "paperclip-ci", async () => ({ ok: true, json: async () => [{ status: 400 }] })), /status 400/);
 });
 
 test("workflow exporter runs trusted code and keeps keys out of the PR jobs", () => {
