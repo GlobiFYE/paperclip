@@ -27,6 +27,7 @@ export interface AiConnectionPickerProps {
   allowNone?: boolean;
   onChange: (binding: AiConnectionBinding | undefined) => void;
   onConnect: () => void;
+  onReconnect?: () => void;
   onRetry?: () => void;
 }
 
@@ -42,6 +43,7 @@ export function AiConnectionPicker({
   allowNone,
   onChange,
   onConnect,
+  onReconnect,
   onRetry,
 }: AiConnectionPickerProps) {
   const compatible = connections.filter((connection) =>
@@ -141,14 +143,16 @@ export function AiConnectionPicker({
             </p>
           )}
           {!readOnly && (
-            <Button
-              type="button"
-              variant="outline"
-              className="self-end"
-              onClick={onConnect}
-            >
-              Connect another account
-            </Button>
+            <div className="flex justify-end gap-2">
+              {onReconnect && <Button type="button" variant="outline" onClick={onReconnect}>Reconnect account</Button>}
+              <Button
+                type="button"
+                variant="outline"
+                onClick={onConnect}
+              >
+                Connect another account
+              </Button>
+            </div>
           )}
         </>
       )}
