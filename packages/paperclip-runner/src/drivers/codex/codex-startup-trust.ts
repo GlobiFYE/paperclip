@@ -92,24 +92,25 @@ export function trustCodexStartupRoot(codexHome: string, cwd: string): void {
   const path = join(codexHome, "config.toml");
   const source = existsSync(path) ? readFileSync(path, "utf8") : "";
   const config = parse(source);
-  const projects = config.projects ?? {};
+  // Preserve the parser's table prototypes for editTrust's strict comparison.
+  // Parse empty tables too: smol-toml 1.9+ uses null-prototype objects.
+  const projects = config.projects ?? parse("");
   if (
     typeof projects !== "object" ||
     Array.isArray(projects) ||
     projects instanceof Date
   )
     throw new Error("codex_startup_trust_invalid_projects");
-  const project = projects[root] ?? {};
+  const project = projects[root] ?? parse("");
   if (
     typeof project !== "object" ||
     Array.isArray(project) ||
     project instanceof Date
   )
     throw new Error("codex_startup_trust_invalid_project");
-  config.projects = {
-    ...projects,
-    [root]: { ...project, trust_level: "trusted" },
-  };
+  project.trust_level = "trusted";
+  projects[root] = project;
+  config.projects = projects;
   const updated = editTrust(source, root, config);
   if (updated === source) return;
   const temporary = resolve(codexHome, `config.toml.${randomUUID()}.tmp`);
