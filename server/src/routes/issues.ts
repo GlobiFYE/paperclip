@@ -14003,6 +14003,43 @@ export function issueRoutes(
         updateFields.executionPolicy !== undefined
           ? (updateFields.executionPolicy as NormalizedExecutionPolicy | null)
           : previousExecutionPolicy;
+      // Only a board actor may change or remove a policy that holds a user
+      // (board) participant in any stage. An agent may still change the
+      // monitor of such a policy; the gate itself stays locked.
+      if (
+        req.body.executionPolicy !== undefined &&
+        req.actor.type !== "board" &&
+        previousExecutionPolicy?.stages?.some((stage) =>
+          stage.participants?.some((participant) => participant.type === "user"),
+        )
+      ) {
+        // Participant ids are generated on normalization, so a client that
+        // resends the stages without them must still compare equal.
+        const gateFingerprint = (policy: NormalizedExecutionPolicy | null) => {
+          if (!policy) return "null";
+          const { monitor: _monitor, ...gate } = policy;
+          return JSON.stringify({
+            ...gate,
+            stages: gate.stages.map((stage) => ({
+              ...stage,
+              participants: stage.participants.map(
+                ({ id: _id, ...participant }) => participant,
+              ),
+            })),
+          });
+        };
+        if (
+          gateFingerprint(previousExecutionPolicy) !==
+          gateFingerprint(nextExecutionPolicy)
+        ) {
+          res.status(403).json({
+            error:
+              "Only the board can change or remove an execution policy that has a user participant",
+            code: "user_stage_policy_locked",
+          });
+          return;
+        }
+      }
       if (normalizedAssigneeAgentId !== undefined) {
         updateFields.assigneeAgentId = normalizedAssigneeAgentId;
       }
