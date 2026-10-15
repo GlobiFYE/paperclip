@@ -99,6 +99,45 @@ describeEmbeddedPostgres("reconstructable Git expiration", () => {
     const continued = git(f.cwd, "rev-parse", "HEAD");
     expect(await f.reopen()).toMatchObject({ ok: true, reopened: false });
     expect(git(f.cwd, "rev-parse", "HEAD")).toBe(continued);
+    expect((await f.row()).metadata?.gitCacheRestoration).toBeUndefined();
+    git(f.baseCwd, "worktree", "remove", f.cwd);
+    await db.update(executionWorkspaces).set({ status: "archived" }).where(eq(executionWorkspaces.id, f.workspaceId));
+    expect(await f.reopen()).toMatchObject({ ok: true, reopened: true });
+    expect(git(f.cwd, "rev-parse", "HEAD")).toBe(continued);
+  });
+
+  it("expires again after a reopened task consumes its fence and finishes", async () => {
+    const f = await fixture();
+    expect((await f.expire()).expired).toBe(true);
+    expect(await f.reopen()).toMatchObject({ ok: true, reopened: true });
+    await db.update(issues).set({ status: "in_progress", completedAt: null }).where(eq(issues.id, f.issueId));
+    const worker = executionWorkspaceService(db, { gitCacheExpirationEnabled: true, gitBaseExpirationEnabled: true });
+    await worker.sweepTerminalWorkspaces();
+    expect((await f.row()).metadata?.reopenPendingConsumption).not.toBe(true);
+    await fs.writeFile(path.join(f.cwd, "continued.txt"), "second task cycle\n");
+    git(f.cwd, "add", "."); git(f.cwd, "commit", "-m", "Second task cycle");
+    git(f.cwd, "push", "origin", "HEAD:refs/heads/continued");
+    const continued = git(f.cwd, "rev-parse", "HEAD");
+    await db.update(issues).set({ status: "done", completedAt: new Date(Date.now() - 48 * 3_600_000) }).where(eq(issues.id, f.issueId));
+    expect((await worker.sweepTerminalWorkspaces()).archived).toBe(1);
+    expect((await f.row()).metadata?.gitCacheRestoration).toMatchObject({ commit: continued });
+    expect(await f.reopen()).toMatchObject({ ok: true, reopened: true });
+    expect(git(f.cwd, "rev-parse", "HEAD")).toBe(continued);
+  });
+
+  it("preserves worktrees whose Git administration parent is a symlink", async () => {
+    const f = await fixture();
+    const adminParent = path.join(f.baseCwd, ".git", "worktrees");
+    const external = path.join(root, `external-admin-${randomUUID()}`);
+    const admin = git(f.cwd, "rev-parse", "--absolute-git-dir");
+    await fs.writeFile(path.join(admin, "commondir"), `${path.join(f.baseCwd, ".git")}\n`);
+    await fs.rename(adminParent, external);
+    await fs.symlink(external, adminParent);
+    expect(git(f.cwd, "rev-parse", "HEAD")).toBe(f.commitA);
+    expect(await f.expire()).toMatchObject({ expired: false, skipReason: "unproven_worktree_admin" });
+    expect(await exists(f.cwd)).toBe(true);
+    expect(await fs.readdir(external)).not.toEqual([]);
+    expect((await f.row()).metadata?.gitCacheRestoration).toBeUndefined();
   });
 
   it.each(["dirty", "untracked", "ignored", "local_commit", "stash", "unknown_git_file"])("preserves %s unique state", async kind => {

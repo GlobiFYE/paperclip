@@ -274,7 +274,10 @@ export async function finishGitCacheTrash(workspace: Workspace) {
   if (!await exists(recipe.worktreePath) && await exists(state.worktreeAdmin)) {
     await verifiedGitCacheSource(workspace, recipe.sourcePath);
     const entry = await fs.lstat(state.worktreeAdmin);
-    if (!entry.isDirectory() || entry.isSymbolicLink()) throw new GitCacheRestorationFailure();
+    if (!entry.isDirectory() || entry.isSymbolicLink()
+      || await fs.realpath(state.worktreeAdmin) !== path.join(await fs.realpath(recipe.sourcePath), ".git", "worktrees", path.basename(state.worktreeAdmin))) {
+      throw new GitCacheRestorationFailure();
+    }
     const pointer = (await fs.readFile(path.join(state.worktreeAdmin, "gitdir"), "utf8")).trim();
     const expected = path.join(await fs.realpath(path.dirname(recipe.worktreePath)), path.basename(recipe.worktreePath), ".git");
     if (pointer !== expected) throw new GitCacheRestorationFailure();

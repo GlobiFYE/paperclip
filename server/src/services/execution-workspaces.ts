@@ -3211,21 +3211,6 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         // also leaves leftover trash for a later sweep.
         if (options.compact !== false) await purgeCompactionTrashIfDue(workspace);
         else deferCompactionTrashPurge(workspace);
-        if (opts.gitCacheExpirationEnabled && (hasPendingGitExpiration(workspace)
-          || (workspace.mode === "isolated_workspace" && workspace.strategyType === "git_worktree"))) {
-          const expiration = await expireReconstructableGitWorkspace(db, workspace, {
-            dryRun: opts.gitCacheExpirationDryRun ?? false, expireBase: opts.gitBaseExpirationEnabled ?? false,
-            now: now(), signal, beforeDelete: opts.beforeTerminalWorkspaceCleanup,
-          });
-          terminalWorkspaceDeadlines.set(workspace.id, now().getTime() + 60 * 60 * 1000);
-          if (expiration.candidate) result.eligible += 1;
-          if (expiration.expired) result.archived += 1;
-          logger.info({ event: "execution_workspace.git_cache_expiration", executionWorkspaceId: workspace.id,
-            companyId: workspace.companyId, dryRun: opts.gitCacheExpirationDryRun ?? false, ...expiration },
-          "Git workspace cache expiration inspected");
-          // A failed reconstruction proof must not fall through to legacy deletion.
-          continue;
-        }
         const issueTree = await listWorkspaceIssueTree(workspace);
         const sourceIssue = issueTree.find((issue) => issue.id === workspace.sourceIssueId);
         const reopenPending = metadataHasReopenPendingConsumption(
@@ -3241,6 +3226,21 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
             });
           }
           result.skippedNonTerminalTree += 1;
+          continue;
+        }
+        if (opts.gitCacheExpirationEnabled && (hasPendingGitExpiration(workspace)
+          || (workspace.mode === "isolated_workspace" && workspace.strategyType === "git_worktree"))) {
+          const expiration = await expireReconstructableGitWorkspace(db, workspace, {
+            dryRun: opts.gitCacheExpirationDryRun ?? false, expireBase: opts.gitBaseExpirationEnabled ?? false,
+            now: now(), signal, beforeDelete: opts.beforeTerminalWorkspaceCleanup,
+          });
+          terminalWorkspaceDeadlines.set(workspace.id, now().getTime() + 60 * 60 * 1000);
+          if (expiration.candidate) result.eligible += 1;
+          if (expiration.expired) result.archived += 1;
+          logger.info({ event: "execution_workspace.git_cache_expiration", executionWorkspaceId: workspace.id,
+            companyId: workspace.companyId, dryRun: opts.gitCacheExpirationDryRun ?? false, ...expiration },
+          "Git workspace cache expiration inspected");
+          // A failed reconstruction proof must not fall through to legacy deletion.
           continue;
         }
         const latestTerminalAt = Math.max(...issueTree.map(issue => issueTerminalTimestamp(issue)!.getTime()));
@@ -3963,6 +3963,9 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         // the issue out of the terminal state only after this reopen returns. The
         // flag stops the terminal reaper and the archive route from archiving and
         // destroying the rebuilt worktree in that window.
+        // This recipe described the expired files. New work owns its current branch
+        // again; a later expiration records and verifies a fresh recipe.
+        delete nextMetadata.gitCacheRestoration;
         const activeMetadata = setMetadataReopenPendingConsumption(nextMetadata, now());
         await measureRunPhase("workspace.notification", () => notifyTerminalWorkspaceWork(tx, `workspace:${row.id}`));
         const activeRow = await tx

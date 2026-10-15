@@ -159,7 +159,10 @@ export async function expireReconstructableGitWorkspace(db: Db, snapshot: Worksp
           const generation = Number(workspace.metadata?.lifecycleGeneration ?? 0) + 1;
           const rawAdmin = (await gitCacheCommand(recipe.worktreePath, ["rev-parse", "--absolute-git-dir"], options.signal)).trim();
           const worktreeAdmin = path.join(recipe.sourcePath, ".git", "worktrees", path.basename(rawAdmin));
-          if (await fs.realpath(worktreeAdmin) !== await fs.realpath(rawAdmin)) throw new Error("unproven_worktree_admin");
+          const canonicalAdmin = path.join(await fs.realpath(recipe.sourcePath), ".git", "worktrees", path.basename(rawAdmin));
+          if (await fs.realpath(worktreeAdmin) !== canonicalAdmin || await fs.realpath(rawAdmin) !== canonicalAdmin) {
+            throw new Error("unproven_worktree_admin");
+          }
           state = { schema: "paperclip.git-cache-expiration.v1", generation, workspaceRemoved: false,
             worktreeTrash: path.join(path.dirname(recipe.worktreePath), `.expired-git-worktree-${workspace.id}-${generation}`),
             worktreeAdmin, baseTrash: null, completed: false };
