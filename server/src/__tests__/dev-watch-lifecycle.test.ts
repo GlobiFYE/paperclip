@@ -15,6 +15,8 @@ interface FixtureEvent {
   pid?: number;
   port?: number;
   signals?: string[];
+  migrationPrompt?: string;
+  migrationAutoApply?: string;
 }
 
 const serverSource = `
@@ -43,7 +45,9 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
   });
 }
 server.listen(0, "127.0.0.1", () => {
-  report({ type: "ready", pid: process.pid, port: server.address().port });
+  report({ type: "ready", pid: process.pid, port: server.address().port,
+    migrationPrompt: process.env.PAPERCLIP_MIGRATION_PROMPT,
+    migrationAutoApply: process.env.PAPERCLIP_MIGRATION_AUTO_APPLY });
 });
 `;
 
@@ -60,6 +64,10 @@ async function createFixture(realWatch = false) {
   await fs.writeFile(path.join(server, "src/index.ts"), serverSource);
   const tsx = path.join(server, "node_modules/tsx");
   if (realWatch) {
+    const manifest = JSON.parse(await fs.readFile(new URL("../../package.json", import.meta.url), "utf8"));
+    await fs.writeFile(path.join(server, "package.json"), JSON.stringify({
+      type: "module", scripts: { "dev:watch": manifest.scripts["dev:watch"] },
+    }));
     await fs.symlink(path.dirname(require.resolve("tsx/package.json")), tsx, "dir");
   } else {
     await fs.mkdir(tsx);
@@ -73,8 +81,10 @@ else import("../../src/index.ts");
   return path.join(server, "scripts/dev-watch.ts");
 }
 
-function startWrapper(entry: string, env: NodeJS.ProcessEnv = {}, throughTsx = false) {
-  const child = spawn(process.execPath, throughTsx ? [require.resolve("tsx/cli"), entry] : [entry], {
+function startWrapper(entry: string, env: NodeJS.ProcessEnv = {}, throughPackageScript = false) {
+  const child = spawn(throughPackageScript ? "pnpm" : process.execPath,
+    throughPackageScript ? ["run", "dev:watch"] : [entry], {
+    cwd: throughPackageScript ? path.resolve(path.dirname(entry), "..") : undefined,
     env: { ...process.env, ...env },
     // The test owns this group so failure cleanup cannot kill another service.
     detached: true,
@@ -104,10 +114,10 @@ function startWrapper(entry: string, env: NodeJS.ProcessEnv = {}, throughTsx = f
   };
 }
 
-async function launch(options: { realWatch?: boolean; env?: NodeJS.ProcessEnv; missingCli?: boolean } = {}) {
+async function launch(options: { realWatch?: boolean; env?: NodeJS.ProcessEnv; missingCli?: boolean; throughPackageScript?: boolean } = {}) {
   const entry = await createFixture(options.realWatch);
   if (options.missingCli) await fs.rm(path.join(path.dirname(entry), "../node_modules/tsx/cli.cjs"));
-  const run = startWrapper(entry, options.env, options.realWatch);
+  const run = startWrapper(entry, options.env, options.throughPackageScript);
   runs.push(run);
   return run;
 }
@@ -144,6 +154,7 @@ describe.skipIf(process.platform === "win32")("dev-watch lifecycle", () => {
   it.each(["SIGINT", "SIGTERM"] as const)("lets tsx handle %s and finish server cleanup before exiting", async (signal) => {
     const run = await launch({ realWatch: true });
     const ready = await waitForEvent(run, "ready");
+    expect(ready).toMatchObject({ migrationPrompt: "never", migrationAutoApply: "true" });
     run.child.kill(signal);
     await waitForEvent(run, "stopping");
     expect(run.child.exitCode).toBeNull();
@@ -198,5 +209,19 @@ describe.skipIf(process.platform === "win32")("dev-watch lifecycle", () => {
     await run.closed;
     expect(run.events.some((event) => event.type === "cleaned")).toBe(true);
     expect(await canListen(ready.port!)).toBe(true);
+  });
+
+  it.each(["SIGINT", "SIGTERM"] as const)("finishes server cleanup through the package script after %s", async (signal) => {
+    const run = await launch({ realWatch: true, throughPackageScript: true });
+    const ready = await waitForEvent(run, "ready");
+    process.kill(-run.child.pid!, signal);
+    await waitForEvent(run, "stopping");
+    await run.releaseCleanup();
+    // pnpm can itself exit from the group signal. Its children must still
+    // complete cleanup and release their inherited stdout/stderr handles.
+    await run.closed;
+    expect(run.events.some((event) => event.type === "cleaned")).toBe(true);
+    expect(await canListen(ready.port!)).toBe(true);
+    expect(() => process.kill(ready.pid!, 0)).toThrow();
   });
 });

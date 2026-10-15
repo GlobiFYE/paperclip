@@ -11,6 +11,8 @@ const ignoreArgs = resolveServerDevWatchIgnorePaths(serverRoot).flatMap((ignoreP
 // Let tsx own this process and its shutdown lifecycle. A separate wrapper can
 // orphan the watcher on exit; forwarding group signals can instead deliver them
 // twice and make tsx force-kill the server before it finishes cleanup.
+process.env.PAPERCLIP_MIGRATION_PROMPT = "never";
+process.env.PAPERCLIP_MIGRATION_AUTO_APPLY = "true";
 process.chdir(serverRoot);
 process.argv = [process.execPath, tsxCliPath, "watch", ...ignoreArgs, "src/index.ts"];
 await import(pathToFileURL(tsxCliPath).href);
