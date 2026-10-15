@@ -1,10 +1,8 @@
 ---
 name: honeycomb-tracing
 description: >-
-  Investigate Paperclip run, request, and CI latency with Honeycomb waterfalls;
-  configure opt-in OpenTelemetry and add targeted spans when coverage is missing.
-  Use for finding a run's trace, explaining slow preparation or completion, or
-  profiling the full PR suite. First-party Telemetry events are a separate path.
+  Trace Paperclip runs, requests, and full CI suites in Honeycomb. Use to find
+  traces, diagnose latency, configure opt-in OpenTelemetry, or add missing spans.
 ---
 
 # Honeycomb Tracing
