@@ -38,6 +38,7 @@ import type {
   RequestCheckboxConfirmationInteraction,
   CreateIssueThreadInteraction,
   CreateIssueThreadInteractionInput,
+  RespondIssueThreadInteraction,
   PluginIssueOriginKind,
   IssueSurfaceVisibility,
   PluginManagedAgentResolution,
@@ -1432,7 +1433,7 @@ export interface PluginIssueAttachmentContent {
  * `ctx.issues` — read and mutate issues plus comments.
  *
  * Requires:
- * - `issues.read` for read operations
+ * - `issues.read` for plugin-visible reads; `issues.read_as_user` for an explicitly identified active human's visibility
  * - `issues.create` for create
  * - `issues.update` for update
  * - `issues.checkout` for checkout ownership assertions
@@ -1442,7 +1443,7 @@ export interface PluginIssueAttachmentContent {
  * - `issue.comments.create` for `createComment`
  * - `issue.comments.create_human_attributed` for `createComment` calls that pass `actorUserId`
  * - `issue.interactions.create` for `createInteraction`, `suggestTasks`, `askUserQuestions`, `requestConfirmation`, and `requestCheckboxConfirmation`
- * - `issue.interactions.read` for `listInteractions`
+ * - `issue.interactions.read` for plugin-visible reads; `issue.interactions.read_as_user` when passing `actorUserId`
  * - `issue.interactions.respond` for `respondInteraction`
  * - `issue.attachments.read` for `listAttachments` and `getAttachmentContent`
  * - `issue.documents.read` for `documents.list` and `documents.get`
@@ -1451,6 +1452,8 @@ export interface PluginIssueAttachmentContent {
 export interface PluginIssuesClient {
   list(input: {
     companyId: string;
+    /** Read using this active human member's issue visibility. Requires `issues.read_as_user`. */
+    actorUserId?: string;
     projectId?: string;
     assigneeAgentId?: string;
     originKind?: PluginIssueOriginKind;
@@ -1603,11 +1606,12 @@ export interface PluginIssuesClient {
   ): Promise<RequestCheckboxConfirmationInteraction>;
   /**
    * List the issue-thread interactions (decision cards) on an issue.
-   * Requires `issue.interactions.read`.
+   * Requires `issue.interactions.read`; passing `actorUserId` additionally requires
+   * `issue.interactions.read_as_user` and applies that active human's visibility.
    */
-  listInteractions(issueId: string, companyId: string): Promise<IssueThreadInteraction[]>;
+  listInteractions(issueId: string, companyId: string, options?: { actorUserId?: string }): Promise<IssueThreadInteraction[]>;
   /**
-   * Resolve (accept/reject) a pending issue-thread interaction on behalf of a
+   * Resolve or answer a pending issue-thread interaction on behalf of a
    * paired board user. Requires `issue.interactions.respond`.
    *
    * `actorUserId` is the human company member the decision is attributed to.
@@ -1616,6 +1620,8 @@ export interface PluginIssuesClient {
    * only ever resolve interactions as an identity that could have resolved
    * them in the web app (whose interaction-resolve routes are board-only).
    *
+   * For `action: "answer"`, pass typed question answers. The host validates and
+   * delivers them through Paperclip's normal durable question-response path.
    * Returns the (possibly already-resolved) interaction and `applied`, which is
    * `true` when this call performed the resolution and `false` when the
    * interaction had already converged to a resolved state (idempotent replays).
@@ -1623,7 +1629,8 @@ export interface PluginIssuesClient {
   respondInteraction(
     issueId: string,
     interactionId: string,
-    input: { action: "accept" | "reject"; actorUserId?: string; reason?: string | null },
+    input: ({ action: "accept" | "reject"; actorUserId?: string; reason?: string | null }
+      | ({ action: "answer"; actorUserId?: string } & RespondIssueThreadInteraction)),
     companyId: string,
   ): Promise<{ interaction: IssueThreadInteraction; applied: boolean }>;
   /** List attachment metadata for an issue. Requires `issue.attachments.read`. */

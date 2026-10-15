@@ -821,6 +821,7 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
         async list(input) {
           return callHost("issues.list", {
             companyId: input.companyId,
+            actorUserId: input.actorUserId,
             projectId: input.projectId,
             assigneeAgentId: input.assigneeAgentId,
             originKind: input.originKind,
@@ -1019,14 +1020,15 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
           }) as Promise<RequestCheckboxConfirmationInteraction>;
         },
 
-        async listInteractions(issueId: string, companyId: string) {
-          return callHost("issues.listInteractions", { issueId, companyId });
+        async listInteractions(issueId: string, companyId: string, options?: { actorUserId?: string }) {
+          return callHost("issues.listInteractions", { issueId, companyId, actorUserId: options?.actorUserId });
         },
 
         async respondInteraction(
           issueId: string,
           interactionId: string,
-          input: { action: "accept" | "reject"; actorUserId?: string; reason?: string | null },
+          input: ({ action: "accept" | "reject"; actorUserId?: string; reason?: string | null }
+            | ({ action: "answer"; actorUserId?: string } & import("@paperclipai/shared").RespondIssueThreadInteraction)),
           companyId: string,
         ) {
           return callHost("issues.respondInteraction", {
@@ -1035,7 +1037,9 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
             companyId,
             action: input.action,
             actorUserId: input.actorUserId,
-            reason: input.reason,
+            ...(input.action === "answer"
+              ? { answers: input.answers, summaryMarkdown: input.summaryMarkdown }
+              : { reason: input.reason }),
           });
         },
 

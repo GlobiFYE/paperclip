@@ -33,6 +33,7 @@ import type {
   IssueAttachment,
   IssueThreadInteraction,
   CreateIssueThreadInteractionInput,
+  RespondIssueThreadInteraction,
   Approval,
   PluginManagedAgentResolution,
   PluginManagedProjectResolution,
@@ -1856,6 +1857,7 @@ export interface WorkerToHostMethods {
   "issues.list": [
     params: {
       companyId: string;
+      actorUserId?: string;
       projectId?: string;
       assigneeAgentId?: string;
       originKind?: string;
@@ -2029,7 +2031,7 @@ export interface WorkerToHostMethods {
     result: IssueThreadInteraction,
   ];
   "issues.listInteractions": [
-    params: { issueId: string; companyId: string },
+    params: { issueId: string; companyId: string; actorUserId?: string },
     result: IssueThreadInteraction[],
   ];
   "issues.respondInteraction": [
@@ -2037,7 +2039,7 @@ export interface WorkerToHostMethods {
       issueId: string;
       interactionId: string;
       companyId: string;
-      action: "accept" | "reject";
+      action: "accept" | "reject" | "answer";
       /**
        * Active human company member the decision is attributed to. Required —
        * resolving an interaction is a board-user action; the host re-verifies
@@ -2045,6 +2047,8 @@ export interface WorkerToHostMethods {
        */
       actorUserId?: string;
       reason?: string | null;
+      answers?: RespondIssueThreadInteraction["answers"];
+      summaryMarkdown?: RespondIssueThreadInteraction["summaryMarkdown"];
     },
     result: { interaction: IssueThreadInteraction; applied: boolean },
   ];
