@@ -553,16 +553,17 @@ function runSerializedSuites(routeTests, shardIndex, shardCount) {
     `\n[test:run] serialized shard ${shardIndex + 1}/${shardCount} running ${shardTests.length} of ${routeTests.length} suites`,
   );
 
-  for (const routeTest of shardTests) {
+  if (shardTests.length > 0) {
     runVitest(
       [
         "--project",
         "@paperclipai/server",
-        routeTest.repoPath,
+        ...shardTests.map((test) => test.repoPath),
         "--pool=forks",
         "--isolate",
+        ...serializedServerVitestArgs,
       ],
-      routeTest.repoPath,
+      `serialized shard ${shardIndex + 1}/${shardCount}`,
     );
   }
 }

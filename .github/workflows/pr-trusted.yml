@@ -186,13 +186,19 @@ jobs:
 
       # Share the checked-in lockfile key with master. PR merge refs must not
       # save full copies of the store or evict the post-merge build caches.
+      - name: Restore materialized dependencies and shared builds
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') != ''
+        uses: ./.github/actions/setup-ci-dependencies
+
       - name: Locate pnpm store
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         id: pnpm_store
         run: |
           echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
           echo "arch=$(node -p 'process.arch')" >> "$GITHUB_OUTPUT"
 
       - name: Restore pnpm store (read only)
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.pnpm_store.outputs.path }}
@@ -200,6 +206,7 @@ jobs:
           restore-keys: node-cache-${{ runner.os }}-${{ steps.pnpm_store.outputs.arch }}-pnpm-
 
       - name: Install dependencies
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         # Manifest-changing and stacked PRs can hold a pnpm-lock.yaml that is
         # stale for the merge tree. Resolve it inline instead of waiting on a
         # policy-job artifact: that dependency put the policy job's queue and
@@ -484,13 +491,19 @@ jobs:
 
       # Share the checked-in lockfile key with master. PR merge refs must not
       # save full copies of the store or evict the post-merge build caches.
+      - name: Restore materialized dependencies and shared builds
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') != ''
+        uses: ./.github/actions/setup-ci-dependencies
+
       - name: Locate pnpm store
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         id: pnpm_store
         run: |
           echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
           echo "arch=$(node -p 'process.arch')" >> "$GITHUB_OUTPUT"
 
       - name: Restore pnpm store (read only)
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.pnpm_store.outputs.path }}
@@ -498,6 +511,7 @@ jobs:
           restore-keys: node-cache-${{ runner.os }}-${{ steps.pnpm_store.outputs.arch }}-pnpm-
 
       - name: Install dependencies
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         # Manifest-changing and stacked PRs can hold a pnpm-lock.yaml that is
         # stale for the merge tree. Resolve it inline instead of waiting on a
         # policy-job artifact: that dependency put the policy job's queue and
@@ -684,13 +698,19 @@ jobs:
 
       # Share the checked-in lockfile key with master. PR merge refs must not
       # save full copies of the store or evict the post-merge build caches.
+      - name: Restore materialized dependencies and shared builds
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') != ''
+        uses: ./.github/actions/setup-ci-dependencies
+
       - name: Locate pnpm store
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         id: pnpm_store
         run: |
           echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
           echo "arch=$(node -p 'process.arch')" >> "$GITHUB_OUTPUT"
 
       - name: Restore pnpm store (read only)
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.pnpm_store.outputs.path }}
@@ -698,6 +718,7 @@ jobs:
           restore-keys: node-cache-${{ runner.os }}-${{ steps.pnpm_store.outputs.arch }}-pnpm-
 
       - name: Install dependencies
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         # Manifest-changing and stacked PRs can hold a pnpm-lock.yaml that is
         # stale for the merge tree. Resolve it inline instead of waiting on a
         # policy-job artifact: that dependency put the policy job's queue and
@@ -885,13 +906,19 @@ jobs:
 
       # Share the checked-in lockfile key with master. PR merge refs must not
       # save full copies of the store or evict the post-merge build caches.
+      - name: Restore materialized dependencies and shared builds
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') != ''
+        uses: ./.github/actions/setup-ci-dependencies
+
       - name: Locate pnpm store
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         id: pnpm_store
         run: |
           echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
           echo "arch=$(node -p 'process.arch')" >> "$GITHUB_OUTPUT"
 
       - name: Restore pnpm store (read only)
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.pnpm_store.outputs.path }}
@@ -899,6 +926,7 @@ jobs:
           restore-keys: node-cache-${{ runner.os }}-${{ steps.pnpm_store.outputs.arch }}-pnpm-
 
       - name: Install dependencies
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         # Manifest-changing and stacked PRs can hold a pnpm-lock.yaml that is
         # stale for the merge tree. Resolve it inline instead of waiting on a
         # policy-job artifact: that dependency put the policy job's queue and
@@ -1160,13 +1188,19 @@ jobs:
 
       # Share the checked-in lockfile key with master. PR merge refs must not
       # save full copies of the store or evict the post-merge build caches.
+      - name: Restore materialized dependencies and shared builds
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') != ''
+        uses: ./.github/actions/setup-ci-dependencies
+
       - name: Locate pnpm store
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         id: pnpm_store
         run: |
           echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
           echo "arch=$(node -p 'process.arch')" >> "$GITHUB_OUTPUT"
 
       - name: Restore pnpm store (read only)
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.pnpm_store.outputs.path }}
@@ -1174,6 +1208,7 @@ jobs:
           restore-keys: node-cache-${{ runner.os }}-${{ steps.pnpm_store.outputs.arch }}-pnpm-
 
       - name: Install dependencies
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         # Manifest-changing and stacked PRs can hold a pnpm-lock.yaml that is
         # stale for the merge tree. Resolve it inline instead of waiting on a
         # policy-job artifact: that dependency put the policy job's queue and
@@ -1239,13 +1274,19 @@ jobs:
 
       # Share the checked-in lockfile key with master. PR merge refs must not
       # save full copies of the store or evict the post-merge build caches.
+      - name: Restore materialized dependencies and shared builds
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') != ''
+        uses: ./.github/actions/setup-ci-dependencies
+
       - name: Locate pnpm store
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         id: pnpm_store
         run: |
           echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
           echo "arch=$(node -p 'process.arch')" >> "$GITHUB_OUTPUT"
 
       - name: Restore pnpm store (read only)
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.pnpm_store.outputs.path }}
@@ -1253,6 +1294,7 @@ jobs:
           restore-keys: node-cache-${{ runner.os }}-${{ steps.pnpm_store.outputs.arch }}-pnpm-
 
       - name: Install dependencies
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         # Manifest-changing and stacked PRs can hold a pnpm-lock.yaml that is
         # stale for the merge tree. Resolve it inline instead of waiting on a
         # policy-job artifact: that dependency put the policy job's queue and
@@ -1486,13 +1528,19 @@ jobs:
 
       # Share the checked-in lockfile key with master. PR merge refs must not
       # save full copies of the store or evict the post-merge build caches.
+      - name: Restore materialized dependencies and shared builds
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') != ''
+        uses: ./.github/actions/setup-ci-dependencies
+
       - name: Locate pnpm store
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         id: pnpm_store
         run: |
           echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
           echo "arch=$(node -p 'process.arch')" >> "$GITHUB_OUTPUT"
 
       - name: Restore pnpm store (read only)
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ${{ steps.pnpm_store.outputs.path }}
@@ -1500,6 +1548,7 @@ jobs:
           restore-keys: node-cache-${{ runner.os }}-${{ steps.pnpm_store.outputs.arch }}-pnpm-
 
       - name: Install dependencies
+        if: hashFiles('.github/actions/setup-ci-dependencies/action.yml') == ''
         # Manifest-changing and stacked PRs can hold a pnpm-lock.yaml that is
         # stale for the merge tree. Resolve it inline instead of waiting on a
         # policy-job artifact: that dependency put the policy job's queue and
