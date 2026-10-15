@@ -49,8 +49,20 @@ for (const [name] of commands) {
   assert.deepEqual(after.files, before.files, `${name}: file inventory changed`);
   if (name === 'serialized') assert.deepEqual(after.tests, before.tests, 'serialized case inventory changed');
   else {
-    assert.equal(before.tests.length, 2, 'baseline must exercise both original fixture contracts');
-    assert.equal(after.tests.length, 3, 'candidate must exercise the database, large Git lanes and bounded staging');
+    const contracts = (tests) => {
+      const found = new Set();
+      for (const [file, title, status] of tests) {
+        assert.equal(status, 'passed');
+        if (file.endsWith('/workspace-runtime.test.ts') && title.includes('commits fixed-port reservations')) found.add('database');
+        if (file.endsWith('/workspace-git-snapshot-streaming.test.ts')) {
+          if (title.includes('above 32 MiB')) found.add('large Git lanes');
+          if (/stag(?:es|ing)/.test(title)) found.add('bounded staging');
+        }
+      }
+      return [...found].sort();
+    };
+    for (const result of [before, after]) assert.deepEqual(contracts(result.tests),
+      ['bounded staging', 'database', 'large Git lanes'], 'fixture contracts must all execute');
   }
   rows.push(`| ${name} | ${(before.wallMs / 1000).toFixed(2)}s | ${(after.wallMs / 1000).toFixed(2)}s | ${((1 - after.wallMs / before.wallMs) * 100).toFixed(1)}% | ${after.tests.length} |`);
 }
