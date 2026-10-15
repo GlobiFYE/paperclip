@@ -14,7 +14,6 @@ permissions:
 # Test reporters write local artifacts only. The workflow_run exporter owns
 # the Honeycomb credential, so fork PRs cannot execute with it.
 env:
-  PAPERCLIP_CI_PROFILE: ${{ contains(github.event.pull_request.labels.*.name, 'profile-ci') }}
   PAPERCLIP_CI_PROFILE_DIR: ${{ github.workspace }}/.ci-profile
 
 concurrency:
@@ -31,6 +30,7 @@ jobs:
     timeout-minutes: 10
 
     env:
+      PAPERCLIP_CI_PROFILE: ${{ needs.gate.outputs.profile_ci }}
       PAPERCLIP_CI_PROFILE_JOB: policy
 
     steps:
@@ -145,6 +145,7 @@ jobs:
     timeout-minutes: 20
 
     env:
+      PAPERCLIP_CI_PROFILE: ${{ needs.gate.outputs.profile_ci }}
       PAPERCLIP_CI_PROFILE_JOB: Typecheck + Release Registry
 
     steps:
@@ -441,6 +442,7 @@ jobs:
             group_label: workspaces-c
 
     env:
+      PAPERCLIP_CI_PROFILE: ${{ needs.gate.outputs.profile_ci }}
       PAPERCLIP_CI_PROFILE_JOB: General tests (${{ matrix.group_label }})
 
     steps:
@@ -524,6 +526,7 @@ jobs:
     timeout-minutes: 15
 
     env:
+      PAPERCLIP_CI_PROFILE: ${{ needs.gate.outputs.profile_ci }}
       PAPERCLIP_CI_PROFILE_JOB: Docker context integrity
 
     steps:
@@ -637,6 +640,7 @@ jobs:
             release_crate: true
 
     env:
+      PAPERCLIP_CI_PROFILE: ${{ needs.gate.outputs.profile_ci }}
       PAPERCLIP_CI_PROFILE_JOB: Verify Paperclip Runner (${{ matrix.lane_label }})
 
     steps:
@@ -836,6 +840,7 @@ jobs:
     timeout-minutes: 20
 
     env:
+      PAPERCLIP_CI_PROFILE: ${{ needs.gate.outputs.profile_ci }}
       PAPERCLIP_CI_PROFILE_JOB: Build
 
     steps:
@@ -1109,6 +1114,7 @@ jobs:
             shard_label: 9/9
 
     env:
+      PAPERCLIP_CI_PROFILE: ${{ needs.gate.outputs.profile_ci }}
       PAPERCLIP_CI_PROFILE_JOB: Verify serialized server suites (${{ matrix.shard_label }})
 
     steps:
@@ -1186,6 +1192,7 @@ jobs:
     timeout-minutes: 20
 
     env:
+      PAPERCLIP_CI_PROFILE: ${{ needs.gate.outputs.profile_ci }}
       PAPERCLIP_CI_PROFILE_JOB: Canary Dry Run
 
     steps:
@@ -1431,6 +1438,7 @@ jobs:
             shard_label: 8/8
 
     env:
+      PAPERCLIP_CI_PROFILE: ${{ needs.gate.outputs.profile_ci }}
       PAPERCLIP_CI_PROFILE_JOB: e2e shard (${{ matrix.shard_label }})
 
     steps:

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildTrace, traceUrl } from "./trace.mjs";
+import { associatedProfilePr, trustedOwnerIds } from "./authorize.mjs";
 
 const repository = "paperclipai/paperclip";
 const repoPath = `/repos/${repository}`;
@@ -29,13 +30,6 @@ export async function sendEvents(events, apiKey, dataset, fetcher = fetch) {
   }
 }
 
-export function associatedProfilePr(run, pulls) {
-  return pulls.find((pr) => pr.base.repo.full_name === repository
-    && pr.head.repo?.id === run.head_repository.id
-    && pr.head.sha === run.head_sha
-    && pr.labels.some((label) => label.name === "profile-ci"));
-}
-
 async function main() {
   const args = process.argv.slice(2);
   const arg = (name) => args.find((value) => value.startsWith(`${name}=`))?.slice(name.length + 1);
@@ -53,11 +47,11 @@ async function main() {
   // GitHub often leaves workflow_run.pull_requests empty for fork PRs. Resolve
   // association through the head commit, then validate repo and exact head.
   const pulls = pages(`${repoPath}/commits/${run.head_sha}/pulls?per_page=100`);
-  const pr = associatedProfilePr(run, pulls);
   const historical = args.includes("--historical");
   if (historical && process.env.GITHUB_ACTIONS) throw new Error("Historical export is a local-only operation");
+  const pr = historical ? undefined : associatedProfilePr(run, pulls, trustedOwnerIds(get));
   if (!pr && !historical) {
-    console.log("No current profile-ci PR at this revision; no data exported.");
+    console.log("No CODEOWNERS-authorized profile-ci PR at this revision; no data exported.");
     return;
   }
   const jobs = pages(`${repoPath}/actions/runs/${runId}/attempts/${attempt}/jobs?per_page=100`, "jobs");

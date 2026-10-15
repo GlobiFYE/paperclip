@@ -10,12 +10,12 @@ follow-up, not part of this change.
 | Case | Required behavior | Evidence |
 | --- | --- | --- |
 | Unlabeled PR | Existing scope and commands; no profile export | Routing and exporter tests |
-| Labeled PR, including stacked/release-notes-only | All main PR lanes run | Routing tests and full-run job inventory |
+| Labeled CI CODEOWNER PR, including stacked/release-notes-only | All main PR lanes run | Routing tests and full-run job inventory |
 | Completed profile | One trace per run attempt; every job and step uses actual timestamps | Honeycomb waterfall reconciled against GitHub job API |
 | Parallel work | Shared wall clock, with waiting and execution distinguishable | Overlapping lanes and root duration checked against GitHub |
 | Tests | Vitest and Playwright file/test timings under their job/step; Node test timings where supported | Real reporter smoke runs and hierarchy checks |
 | Failure/cancellation/rerun | Preserve completed timing data; mark missing coverage; attempts stay separate | Exporter regression cases |
-| Credentials | Trusted exporter owns ingest secret; PR jobs only write timing artifacts | Workflow review and tests |
+| Credentials | Master-only environment owns ingest secret; trusted exporter verifies CI CODEOWNER author and actors; PR jobs only write timing artifacts | Workflow review, hostile-identity cases, and environment settings |
 
 Scope: the main `PR` workflow and every lane of `pr-trusted.yml`, including
 policy, build, typecheck/release-registry, general/serialized test shards,
@@ -29,16 +29,20 @@ No sampling inside a selected run.
 - Branch: `codex/ci-honeycomb-profiling` in the existing `76aa` worktree.
 - Baseline: GitHub run `38671274294`, 48 jobs, 479 seconds from creation to last
   job completion. Raw GitHub evidence is in `/tmp/paperclip-ci-profile-evidence`.
-- Honeycomb: existing `paperclip` team / `test` environment. Credential use is
-  awaiting the explicit authorization required by automatic approval review.
+- Honeycomb: existing `paperclip` team / `test` environment; dedicated `paperclip-ci`
+  dataset. Authorized local configuration key ingested the historical baseline;
+  verified 731 spans and 7m 59s in the [live Honeycomb waterfall](https://ui.honeycomb.io/paperclip/environments/test/datasets/paperclip-ci/trace/oaPMzw8zGwG).
 - Implemented label selection, full-suite override, test timing reporters, trusted
   post-run exporter, direct waterfall link, and missing-data diagnostics.
-- Verified: 48-job / 731-span historical reconstruction; 456 workflow/reporter
+- Verified: 48-job / 731-span historical reconstruction; 460 workflow/reporter
   checks; real root-config probe with 13 tests and one file span; full Node 24
   typecheck and build. Repository-wide Vitest is being rerun after the final
   reporter-default correction and base update.
-- Created and verified the repository `profile-ci` label. Ingest secret and live
-  Honeycomb export remain pending credential authorization.
+- Created and verified the repository `profile-ci` label. Dedicated ingest key
+  and master-only GitHub environment configuration remain pending. No credential
+  is present in GitHub or repository source.
+- Added CODEOWNER author/actor authorization and rejection tests, plus CODEOWNERS
+  coverage of the privileged exporter.
 - Delivery: reviewable PR and live Honeycomb evidence. Activation of new trusted
   workflow definitions requires merge to master; do not claim pre-merge evidence
   proves the post-merge label-triggered journey.

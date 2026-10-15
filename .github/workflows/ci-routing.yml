@@ -8,6 +8,8 @@ on:
         value: ${{ jobs.gate.outputs.runner }}
       full_ci:
         value: ${{ jobs.gate.outputs.full_ci }}
+      profile_ci:
+        value: ${{ jobs.gate.outputs.profile_ci }}
 
 permissions:
   actions: read
@@ -22,6 +24,7 @@ jobs:
     outputs:
       runner: ${{ steps.route.outputs.runner }}
       full_ci: ${{ steps.scope.outputs.full_ci }}
+      profile_ci: ${{ steps.profile.outputs.profile_ci }}
 
     steps:
       - name: Validate PR identity and select runner
@@ -219,6 +222,31 @@ jobs:
           echo "runner=$aws_runner" >> "$GITHUB_OUTPUT"
           echo '::notice title=AWS CI routing::Using an ephemeral RunsOn Fleet runner'
 
+      - name: Authorize CODEOWNERS CI profiling
+        id: profile
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROFILE_REQUESTED: ${{ contains(github.event.pull_request.labels.*.name, 'profile-ci') }}
+        run: |
+          set -euo pipefail
+          if [[ "$PROFILE_REQUESTED" != 'true' ]]; then
+            echo 'profile_ci=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Fetch only from canonical master, never the PR ref. Pin both the
+          # authorization program and CODEOWNERS to the same trusted revision.
+          if ! TRUSTED_PROFILE_SHA="$(gh api /repos/paperclipai/paperclip/git/ref/heads/master --jq .object.sha)" ||
+             [[ ! "$TRUSTED_PROFILE_SHA" =~ ^[0-9a-f]{40}$ ]] ||
+             ! gh api -H 'Accept: application/vnd.github.raw+json' \
+               "/repos/paperclipai/paperclip/contents/scripts/ci-profile/authorize.mjs?ref=$TRUSTED_PROFILE_SHA" \
+               > "$RUNNER_TEMP/ci-profile-authorize.mjs"; then
+            echo 'profile_ci=false' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          export TRUSTED_PROFILE_SHA
+          node "$RUNNER_TEMP/ci-profile-authorize.mjs"
+
       - name: Select PR CI scope
         id: scope
         shell: bash
@@ -227,7 +255,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           EVENT_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PROFILE_CI: ${{ contains(github.event.pull_request.labels.*.name, 'profile-ci') }}
+          PROFILE_CI: ${{ steps.profile.outputs.profile_ci }}
           STACK_JSON: ${{ toJSON(github.event.pull_request.stack) }}
           PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |

@@ -6,12 +6,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildTrace } from "../../../scripts/ci-profile/trace.mjs";
-import { associatedProfilePr, sendEvents } from "../../../scripts/ci-profile/export.mjs";
+import { sendEvents } from "../../../scripts/ci-profile/export.mjs";
+import { associatedProfilePr, ciOwners, trustedOwnerIds } from "../../../scripts/ci-profile/authorize.mjs";
 
 const at = (seconds) => new Date(1_800_000_000_000 + seconds * 1000).toISOString();
 const run = {
   id: 42, run_attempt: 1, run_number: 7, status: "completed", conclusion: "failure",
-  repository: { full_name: "paperclipai/paperclip" }, head_repository: { id: 99 },
+  repository: { id: 1170821064, full_name: "paperclipai/paperclip" }, head_repository: { id: 99 },
+  actor: { id: 123, type: "User" }, triggering_actor: { id: 123, type: "User" },
   head_sha: "abc", head_branch: "branch", created_at: at(0), run_started_at: at(0),
   html_url: "https://github.com/paperclipai/paperclip/actions/runs/42",
 };
@@ -75,11 +77,41 @@ test("reruns use separate IDs and clocks and cannot mix job attempts", () => {
   assert.throws(() => buildTrace({ ...run, status: "in_progress" }, jobs), /complete/);
 });
 
-test("label authorization requires exact repository and tested revision", () => {
-  const pr = { base: { repo: { full_name: "paperclipai/paperclip" } }, head: { repo: { id: 99 }, sha: "abc" }, labels: [{ name: "profile-ci" }] };
-  assert.equal(associatedProfilePr(run, [pr]), pr);
-  assert.equal(associatedProfilePr(run, [{ ...pr, labels: [] }]), undefined);
-  assert.equal(associatedProfilePr(run, [{ ...pr, head: { ...pr.head, sha: "next" } }]), undefined);
+test("label alone cannot authorize outsiders, bots, stale revisions or outsider reruns", () => {
+  const pr = { user: { id: 123, type: "User" }, base: { repo: run.repository }, head: { repo: { id: 99 }, sha: "abc" }, labels: [{ name: "profile-ci" }] };
+  assert.equal(associatedProfilePr(run, [pr], [123]), pr);
+  for (const changed of [
+    { ...pr, labels: [] },
+    { ...pr, head: { ...pr.head, sha: "next" } },
+    { ...pr, head: { ...pr.head, repo: { id: 100 } } },
+    { ...pr, user: { id: 999, type: "User" } },
+    { ...pr, user: { id: 123, type: "Bot" } },
+    { ...pr, base: { repo: { ...run.repository, id: 100 } } },
+  ]) assert.equal(associatedProfilePr(run, [changed], [123]), undefined);
+  assert.equal(associatedProfilePr({ ...run, actor: { id: 999, type: "User" } }, [pr], [123]), undefined);
+  assert.equal(associatedProfilePr({ ...run, triggering_actor: { id: 999, type: "User" } }, [pr], [123]), undefined);
+  assert.equal(associatedProfilePr({ ...run, repository: { ...run.repository, id: 100 } }, [pr], [123]), undefined);
+  assert.equal(associatedProfilePr(run, [pr], []), undefined);
+});
+
+test("profiling uses only infrastructure CODEOWNERS resolved at trusted master", () => {
+  const source = '.github/** @owner @second\ndoc/** @outsider\n';
+  assert.deepEqual(ciOwners(source), ["owner", "second"]);
+  for (const invalid of ['', '.github/**', '.github/** @org/team', '.github/** @owner\n/.github/** @other']) {
+    assert.throws(() => ciOwners(invalid), /CODEOWNERS/);
+  }
+  const endpoints = [];
+  const sha = "a".repeat(40);
+  assert.deepEqual(trustedOwnerIds((endpoint) => {
+    endpoints.push(endpoint);
+    if (endpoint.endsWith('git/ref/heads/master')) return { object: { sha } };
+    if (endpoint.endsWith(`CODEOWNERS?ref=${sha}`)) return { encoding: 'base64', content: Buffer.from(source).toString('base64') };
+    return { id: endpoint === '/users/owner' ? 123 : 456, type: 'User' };
+  }), [123, 456]);
+  assert.deepEqual(endpoints, [
+    '/repos/paperclipai/paperclip/git/ref/heads/master',
+    `/repos/paperclipai/paperclip/contents/.github/CODEOWNERS?ref=${sha}`, '/users/owner', '/users/second',
+  ]);
 });
 
 test("export checks per-event ingestion results, including partial failures", async () => {
@@ -100,10 +132,17 @@ test("workflow exporter runs trusted code and keeps keys out of the PR jobs", ()
   const workflow = readFileSync(new URL("../../workflows/ci-profile.yml", import.meta.url), "utf8");
   assert.match(workflow, /ref: \$\{\{ github.sha \}\}/);
   assert.match(workflow, /startsWith\(github.event.workflow_run.display_title/);
+  assert.match(workflow, /environment: ci-profiling/);
   assert.doesNotMatch(workflow, /head_sha|secrets: inherit|contents: write|pull-requests: write|pnpm install/);
   const pr = readFileSync(new URL("../../workflows/pr-trusted.yml", import.meta.url), "utf8");
   assert.doesNotMatch(pr, /HONEYCOMB.*KEY|secrets\./);
   assert.match(pr, /if: always\(\) && env.PAPERCLIP_CI_PROFILE == 'true'/);
+  assert.doesNotMatch(pr, /PAPERCLIP_CI_PROFILE:.*labels/);
+  assert.equal(pr.match(/PAPERCLIP_CI_PROFILE: \$\{\{ needs.gate.outputs.profile_ci \}\}/g).length, 9);
+  const routing = readFileSync(new URL("../../workflows/ci-routing.yml", import.meta.url), "utf8");
+  assert.match(routing, /PROFILE_CI: \$\{\{ steps.profile.outputs.profile_ci \}\}/);
+  assert.match(routing, /\/git\/ref\/heads\/master/);
+  assert.match(routing, /authorize\.mjs\?ref=\$TRUSTED_PROFILE_SHA/);
 });
 
 test("artifact parsing never extracts paths or executes files and rejects oversized records", () => {

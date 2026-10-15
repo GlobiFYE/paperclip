@@ -1,6 +1,6 @@
 # Profile the complete PR suite
 
-Add the `profile-ci` label to a PR. Adding the label starts a fresh `PR` workflow
+Add the `profile-ci` label to a PR authored by a CI CODEOWNER. Adding the label starts a fresh `PR` workflow
 run. Further pushes while the label remains also run with profiling enabled.
 The run is named **CI profile · PR #number**. It runs all lanes of the main PR
 suite, including middle-of-stack and release-notes-only PRs that normally skip
@@ -13,6 +13,12 @@ warnings. Keep the label on the PR and its head unchanged until export finishes.
 Remove the label to stop profiling subsequent pushes. To profile the same
 revision again, remove and re-add the label or rerun all jobs.
 
+The PR author, original workflow actor, and rerun actor must all be individual
+users in the trusted `master` branch's `.github/**` CODEOWNERS rule. GitHub user
+IDs are resolved from that rule; PR edits to CODEOWNERS cannot grant access.
+A label on an outside contributor's PR does not enable profiling, even when a
+maintainer applies it. Failed identity lookups disable profiling.
+
 Ordinary PRs do not write timing artifacts or export traces. The exporter job is
 skipped for ordinary run names. Adding another label does not run the CI matrix.
 
@@ -22,7 +28,9 @@ The workflow root measures elapsed time from run creation to the last job's
 completion. For reruns, it starts at that attempt's `run_started_at` instead of
 the original creation time. Every job is a child on the same wall clock, with
 its steps and available test details beneath it. All spans use a sample rate of
-one. There is no sampling within the selected attempt.
+one. There is no sampling within the selected attempt. For a compact Gantt view,
+open a job row's menu and choose **Collapse spans at this depth**. Expand an
+individual job to inspect its steps and test files.
 
 - Compare the jobs that finish last (`ci.finishes_last`) with other overlapping
   work. A long job that finishes early is not necessarily delaying CI.
@@ -73,8 +81,12 @@ traces, or credentials are included in the exported field allowlist.
 ## Operator setup and activation
 
 Use the existing Honeycomb `paperclip` team, `test` environment, and a separate
-service dataset named `paperclip-ci`. Configure repository Actions secret
-`HONEYCOMB_CI_API_KEY` with an ingest key for that environment. It needs event
+service dataset named `paperclip-ci`. Create GitHub environment `ci-profiling` with **Selected branches and tags**:
+allow only the branch `master`, with no PR-ref or tag patterns. Store environment
+secret `HONEYCOMB_CI_API_KEY` with a dedicated ingest-only key for the Honeycomb
+`test` environment. Do not create a repository- or organization-level secret of
+that name: the environment restriction prevents in-repository PR workflows from
+requesting the key. It needs event
 ingest permission; dataset creation permission is needed only if the dataset
 has not been created yet. Do not store the environment configuration key in CI.
 Create the repository label `profile-ci` if it does not exist.
@@ -82,8 +94,12 @@ Create the repository label `profile-ci` if it does not exist.
 `ci-profile.yml` runs from the trusted default-branch revision. It checks out only
 the exporter, installs no dependencies, and parses PR artifacts as bounded JSON
 without extracting or executing their contents. The PR jobs never receive the
-Honeycomb key. The exporter verifies the current label, repository, and exact
-tested PR revision before sending data.
+Honeycomb key. The exporter independently verifies CI CODEOWNER identities,
+the current label, repository, and exact tested PR revision before reading
+artifacts or sending data. Its credential is sent only in an HTTPS header to
+`api.honeycomb.io`; redirects are rejected. Exported fields are allowlisted.
+`CODEOWNERS` also covers `scripts/ci-profile/**`, so changes to the privileged
+exporter require infrastructure-owner review.
 
 The new trusted workflow and routing definitions must merge to master before
 the label-triggered journey is active. A PR uses `pr-trusted.yml@master` and

@@ -18,6 +18,9 @@ jobs:
       startsWith(github.event.workflow_run.display_title, 'CI profile · PR #')
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # This environment permits only the master branch. Do not use a repository
+    # secret: an in-repository PR must not be able to request this credential.
+    environment: ci-profiling
     steps:
       # workflow_run is privileged. Never check out its head SHA or run code
       # from downloaded artifacts. This checkout is the trusted default branch.
