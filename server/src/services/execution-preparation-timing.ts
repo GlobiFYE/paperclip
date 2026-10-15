@@ -165,6 +165,20 @@ export function beginRunPhase(phase: ExecutionPhase): (failed?: boolean) => void
   } catch { return () => {}; }
 }
 
+export function measureToolDiscovery<T>(schedule: (work: () => Promise<T>) => Promise<T>, work: () => Promise<T>): Promise<T> {
+  return measureRunPhase("connectors.discovery.scheduled", async () => {
+    const queued = beginRunPhase("connectors.discovery.queue");
+    const build = AsyncLocalStorage.bind(() => {
+      queued();
+      return measureRunPhase("connectors.discovery.build", work);
+    });
+    let failed = false;
+    try { return await schedule(build); }
+    catch (error) { failed = true; throw error; }
+    finally { queued(failed); }
+  });
+}
+
 export function createRunPreparationTiming(runId: string, scope: "heartbeat.prepare" | "native.controller" = "heartbeat.prepare") {
   return <T>(phase: PreparationPhase, work: () => T | Promise<T>): Promise<T> => measure(runId, `${scope}.${phase}`, work);
 }

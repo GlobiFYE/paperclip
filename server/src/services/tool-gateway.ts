@@ -1,6 +1,5 @@
 import { notifyDeliveryWork, DELIVERY_QUEUES } from "./delivery-work-notifications.js";
-import { AsyncLocalStorage } from "node:async_hooks";
-import { beginRunPhase, measureRunPhase } from "./execution-preparation-timing.js";
+import { measureToolDiscovery, measureRunPhase } from "./execution-preparation-timing.js";
 import { composeConnectionInstructions } from "./connection-instructions.js";
 import { isInsufficientConnectionScope, INSUFFICIENT_CONNECTION_SCOPE_MESSAGE } from "./connection-permission-errors.js";
 import { boundedMcpToolName } from "./mcp-tool-names.js";
@@ -3028,17 +3027,7 @@ export function createToolGatewayService(
     signal?: AbortSignal,
   ): Promise<ToolGatewayDescriptor[]> {
     try {
-      return await measureRunPhase("connectors.discovery.scheduled", async () => {
-        const queued = beginRunPhase("connectors.discovery.queue");
-        const build = AsyncLocalStorage.bind(() => {
-          queued();
-          return measureRunPhase("connectors.discovery.build", () => buildToolsForContext(session, signal));
-        });
-        let failed = false;
-        try { return await toolDiscoveryScheduler.run(build, signal); }
-        catch (error) { failed = true; throw error; }
-        finally { queued(failed); }
-      });
+      return await measureToolDiscovery(work => toolDiscoveryScheduler.run(work, signal), () => buildToolsForContext(session, signal));
     } catch (error) {
       if (error instanceof ToolDiscoveryBusyError) {
         throw new ToolGatewayHttpError(503, error.message, "tool_discovery_busy");
