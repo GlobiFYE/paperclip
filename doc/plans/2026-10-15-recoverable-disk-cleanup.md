@@ -33,7 +33,7 @@ Each slice gets focused tests, required repository checks, review, single-worksp
 deployment at an exact SHA, dry-run inspection, measured reclamation, and ordinary
 product acceptance. Rollback disables deletion and retains restoration support.
 
-## Current state (2026-10-15, 19:11 UTC)
+## Current state (2026-10-15, 19:27 UTC)
 
 - Skill [PR #16433](https://github.com/paperclipai/paperclip/pull/16433) merged as
   `86c965ce7ab1499864f74b8dd6ed0d2d8db15197`. Git
@@ -66,10 +66,32 @@ product acceptance. Rollback disables deletion and retains restoration support.
   branches directory, retains populated/symlink variants, and fixes pending-base
   dry-run inspection after the worktree is already absent. Local reproduction
   failed before the fix; lifecycle regression checks are running.
-- Remaining: finish follow-up review/checks/merge/deploy; resume the retained
-  Git fixture through the real cleanup service; ordinary reopening at A after
-  upstream B and subsequent persisted work; finish v3 ordinary skill journey;
-  enable Git apply after live proof; record disk usage and cleanup owned fixtures.
+- Normal v3 skill task acceptance passed at 19:12:24 UTC on full SHA `59a70dc9`:
+  run `4d7f0b23-3f4a-4de0-946f-91776d3f80c3` succeeded, task is done,
+  saved result is `SAVED-SKILL-V3-20261015`, restored hash/mode and version pin
+  match. Screenshot `skill-v3-user-proof.png`; evidence `ui-v3-restoration.jsonl`.
+  The failed disposable Studio task was cancelled through the normal UI.
+- Follow-up [PR #16476](https://github.com/paperclipai/paperclip/pull/16476)
+  initially reached Greptile 5/5 after removing added comments. Before rollout,
+  inspection found the Git expiration branch bypassed existing dependency/build
+  compaction and replaced its startup deadline with a one-hour delay. A real Git
+  and database comparison reproduced both failures in 7.67s. The fix retains
+  existing guarded compaction before expiration, excludes already-closed rows,
+  and preserves a pending compaction deadline. Affected lifecycle/compaction
+  controls are running. The superseded preview build `38793078424` was cancelled;
+  wait for the corrected reviewed candidate before the only next deployment.
+- Git apply is configured for the next deployment only (`--skip-deploys`); the
+  current process remains dry-run. Retained fixture baseline at 19:18:43 UTC:
+  base 229,376 bytes, expired worktree 1,069,056 bytes, unique control SHA-256
+  `e1f76d842fffaac2347b23932bd604fda5e22fc6c3a7df434459b416295d3ab1`.
+  Let the restarted scheduler resume pending base deletion; inspect its logs,
+  then reopen through the UI at A after B and perform subsequent persisted work.
+- Remaining: finish follow-up review/checks/merge/deploy; automatic Git cleanup,
+  ordinary reopening and subsequent work; record final usage; remove owned test
+  clutter, reconcile the pin, and revoke/remove the temporary SSH key. The fleet
+  default is still `95692b7785` (before both original PRs), so unpinning now would
+  roll back the verified build. Do not change the fleet default.
+
 
 Evidence root: `/tmp/paperclip-cleanup-staging/` locally and
 `/paperclip/instances/default/acceptance/recoverable-cache-20261015/` on staging.
