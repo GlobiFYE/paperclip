@@ -67,6 +67,30 @@ export interface FocusDashboardActiveProject {
   zone: string;
   color?: string | null;
   icon?: string | null;
+  /**
+   * Owner-facing brief: a short markdown TLDR curated by the CoS —
+   * bullet points with hyperlinks to anything the owner needs (tasks,
+   * netenv requests, external links). Rendered as markdown, not plain
+   * text, so links are clickable.
+   */
+  ownerBrief?: string | null;
+}
+
+/**
+ * A finish-line item summary for the focus dashboard lane: the project's
+ * "what done looks like" bullets with their tagged tasks and a derived
+ * progress fraction. Distinct from the full FinishLineItem type — this is
+ * the read-only projection the lane needs, nothing more.
+ */
+export interface FocusDashboardFinishLineItem {
+  id: string;
+  title: string;
+  status: string;
+  /** Tasks tagged to this bullet (non-done first). */
+  tasks: { id: string; title: string; status: string }[];
+  /** Done tasks / total tasks — 0 when no tasks tagged. */
+  completedCount: number;
+  totalCount: number;
 }
 
 /** One selectable option of a previewed question, mirroring the card payload field names. */
@@ -117,6 +141,11 @@ export interface FocusDashboardLane {
   project: FocusDashboardActiveProject;
   nextSteps: FocusDashboardNextStep[];
   laneActivity: ActivityEvent[];
+  /**
+   * The project's finish-line items (end-goal bullets) with their tagged
+   * tasks and progress — rendered as compact progress bars in the lane.
+   */
+  finishLineItems: FocusDashboardFinishLineItem[];
 }
 
 /**

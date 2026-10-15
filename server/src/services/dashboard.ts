@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   activityLog,
@@ -6,6 +6,7 @@ import {
   approvals,
   companies,
   costEvents,
+  finishLineItems,
   heartbeatRuns,
   issueThreadInteractions,
   issues,
@@ -287,6 +288,7 @@ export function dashboardService(db: Db) {
           zone: projects.zone,
           color: projects.color,
           icon: projects.icon,
+          ownerBrief: projects.ownerBrief,
         })
         .from(projects)
         .where(
@@ -431,6 +433,70 @@ export function dashboardService(db: Db) {
           .orderBy(desc(activityLog.createdAt))
           .limit(FOCUS_LANE_ACTIVITY_LIMIT));
 
+        // Finish-line items (end-goal bullets) for this lane's project — the
+        // "what done looks like" list with their tagged tasks and derived
+        // progress. Batch-loaded per lane; tasks are scoped to the project
+        // and ordered non-done first (matching FinishLineSection's convention).
+        const finishLineRows = await retryIdempotentDatabaseOperation(() => db
+          .select()
+          .from(finishLineItems)
+          .where(
+            and(
+              eq(finishLineItems.companyId, companyId),
+              eq(finishLineItems.projectId, activeProject.id),
+            ),
+          )
+          .orderBy(asc(finishLineItems.position), asc(finishLineItems.createdAt)));
+
+        const finishLineIds = finishLineRows.map((row) => row.id);
+        const finishLineTasks = finishLineIds.length === 0
+          ? []
+          : await db
+              .select({
+                id: issues.id,
+                title: issues.title,
+                status: issues.status,
+                finishLineItemId: issues.finishLineItemId,
+              })
+              .from(issues)
+              .where(
+                and(
+                  eq(issues.companyId, companyId),
+                  eq(issues.projectId, activeProject.id),
+                  inArray(issues.finishLineItemId, finishLineIds),
+                ),
+              );
+
+        const tasksByFinishLine = new Map<string, { id: string; title: string; status: string }[]>();
+        for (const task of finishLineTasks) {
+          const key = task.finishLineItemId;
+          if (!key) continue;
+          const group = tasksByFinishLine.get(key) ?? [];
+          group.push({ id: task.id, title: task.title, status: task.status });
+          tasksByFinishLine.set(key, group);
+        }
+        for (const group of tasksByFinishLine.values()) {
+          group.sort((a, b) => {
+            const aDone = a.status === "done";
+            const bDone = b.status === "done";
+            if (aDone !== bDone) return aDone ? 1 : -1;
+            return a.title.localeCompare(b.title);
+          });
+        }
+
+        const laneFinishLineItems = finishLineRows.map((row) => {
+          const tasks = tasksByFinishLine.get(row.id) ?? [];
+          const completedCount = tasks.filter((t) => t.status === "done").length;
+          return {
+            id: row.id,
+            title: row.title,
+            status: row.status,
+            tasks,
+            completedCount,
+            totalCount: tasks.length,
+          };
+        });
+
         lanes.push({
           project: activeProject,
           nextSteps: nextSteps.map((step) => ({
@@ -438,6 +504,7 @@ export function dashboardService(db: Db) {
             questions: questionsByIssue.get(step.id) ?? [],
           })),
           laneActivity,
+          finishLineItems: laneFinishLineItems,
         });
       }
 

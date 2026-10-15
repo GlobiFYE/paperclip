@@ -1,0 +1,1 @@
+ALTER TABLE "projects" ADD COLUMN "owner_brief" text;

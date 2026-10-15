@@ -34,6 +34,14 @@ export const projects = pgTable(
     targetDate: date("target_date"),
     color: text("color"),
     icon: text("icon"),
+    /**
+     * Owner-facing brief: a short markdown TLDR curated by the CoS for the
+     * dashboard lane — bullet points with hyperlinks to anything the owner
+     * needs (tasks, netenv requests, external links). Distinct from
+     * `description` (the project summary) because this is actionable "what
+     * needs you" content, not a static summary.
+     */
+    ownerBrief: text("owner_brief"),
     env: jsonb("env").$type<AgentEnvConfig>(),
     pauseReason: text("pause_reason"),
     pausedAt: timestamp("paused_at", { withTimezone: true }),

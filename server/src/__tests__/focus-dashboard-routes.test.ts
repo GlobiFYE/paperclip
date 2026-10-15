@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import {
   activityLog,
   companies,
   createDb,
+  finishLineItems,
   issueThreadInteractions,
   issues,
   projects,
@@ -49,6 +51,7 @@ describeEmbeddedPostgres("focus dashboard contract", () => {
     await db.delete(issueThreadInteractions);
     await db.delete(activityLog);
     await db.delete(issues);
+    await db.delete(finishLineItems);
     await db.delete(projects);
     await db.delete(companies);
   });
@@ -320,5 +323,76 @@ describeEmbeddedPostgres("focus dashboard contract", () => {
     expect(entityKeys).toContain(`issue:${laneIssueId}`);
     expect(entityKeys).not.toContain(`project:${otherProjectId}`);
     expect(entityKeys).not.toContain(`issue:${otherIssueId}`);
+  });
+
+  it("returns finishLineItems with task progress and project ownerBrief in the lane", async () => {
+    const companyId = await seedCompany("Finish line co");
+    const laneProjectId = await seedProject(companyId, "Active lane", "b");
+
+    // Tag the project with an ownerBrief via a direct update.
+    await db.update(projects).set({ ownerBrief: "Review PCB layout → [BCR-42](/issues/BCR-42)\n- Approve netenv secret" }).where(eq(projects.id, laneProjectId));
+
+    // Two finish-line items: one done, one in-progress with tagged tasks.
+    const doneItemId = randomUUID();
+    const openItemId = randomUUID();
+    await db.insert(finishLineItems).values([
+      {
+        id: doneItemId,
+        companyId,
+        projectId: laneProjectId,
+        title: "PCB design finalized",
+        status: "done",
+        position: 0,
+      },
+      {
+        id: openItemId,
+        companyId,
+        projectId: laneProjectId,
+        title: "Firmware flashing",
+        status: "open",
+        position: 1,
+      },
+    ]);
+
+    // Tag tasks: 1 done + 1 in_progress on the open bullet, 1 done on the done bullet.
+    const doneTaskId = await seedIssue(companyId, laneProjectId, "Flash bootloader", { status: "done" });
+    const inProgressTaskId = await seedIssue(companyId, laneProjectId, "Write firmware", { status: "in_progress" });
+    await db.update(issues).set({ finishLineItemId: openItemId }).where(eq(issues.id, doneTaskId));
+    await db.update(issues).set({ finishLineItemId: openItemId }).where(eq(issues.id, inProgressTaskId));
+    const doneBulletTaskId = await seedIssue(companyId, laneProjectId, "Schematic review", { status: "done" });
+    await db.update(issues).set({ finishLineItemId: doneItemId }).where(eq(issues.id, doneBulletTaskId));
+
+    const focus = await dashboardService(db).focus(companyId);
+
+    expect(focus.lanes).toHaveLength(1);
+    const lane = focus.lanes[0];
+    expect(lane.project.ownerBrief).toContain("BCR-42");
+    expect(lane.finishLineItems).toHaveLength(2);
+
+    const doneItem = lane.finishLineItems.find((i) => i.id === doneItemId);
+    expect(doneItem).toBeDefined();
+    expect(doneItem!.status).toBe("done");
+    expect(doneItem!.totalCount).toBe(1);
+    expect(doneItem!.completedCount).toBe(1);
+
+    const openItem = lane.finishLineItems.find((i) => i.id === openItemId);
+    expect(openItem).toBeDefined();
+    expect(openItem!.status).toBe("open");
+    expect(openItem!.totalCount).toBe(2);
+    expect(openItem!.completedCount).toBe(1);
+    // Non-done tasks come first in the tasks array.
+    expect(openItem!.tasks[0].status).toBe("in_progress");
+    expect(openItem!.tasks[1].status).toBe("done");
+  });
+
+  it("returns empty finishLineItems and null ownerBrief for lanes without them", async () => {
+    const companyId = await seedCompany("Empty finish line co");
+    await seedProject(companyId, "Active lane", "b");
+
+    const focus = await dashboardService(db).focus(companyId);
+
+    expect(focus.lanes).toHaveLength(1);
+    expect(focus.lanes[0].finishLineItems).toEqual([]);
+    expect(focus.lanes[0].project.ownerBrief).toBeNull();
   });
 });

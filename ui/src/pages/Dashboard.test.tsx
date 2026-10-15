@@ -167,6 +167,7 @@ const focusSummary: FocusDashboardSummary = {
           details: { issueTitle: "Wire up the contact form" },
         },
       ],
+      finishLineItems: [],
     },
     {
       project: {
@@ -192,6 +193,7 @@ const focusSummary: FocusDashboardSummary = {
         },
       ],
       laneActivity: [],
+      finishLineItems: [],
     },
   ],
 };

@@ -31,15 +31,17 @@ import { ProjectTile } from "../components/ProjectTile";
 import { timeAgo } from "../lib/timeAgo";
 import { cn, formatCents } from "../lib/utils";
 import { SHOW_TASK_PRIORITY_UI } from "../lib/ui-flags";
-import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle } from "lucide-react";
+import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard, PauseCircle, Target, ClipboardList } from "lucide-react";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { PageSkeleton } from "../components/PageSkeleton";
+import { MarkdownBody } from "../components/MarkdownBody";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { InlineBanner } from "../components/InlineBanner";
 import type {
   Agent,
+  FocusDashboardFinishLineItem,
   FocusDashboardLane,
   FocusDashboardSummary,
   Issue,
@@ -162,6 +164,88 @@ function FocusLaneQuestionRow({
 }
 
 /**
+ * Compact progress bar for a single finish-line item: the bullet title, a
+ * thin bar showing completed/total tasks, and the fraction as text. Done
+ * bullets get a muted treatment; empty bullets (no tasks) show just the
+ * title. Clicking a task under a bullet navigates to the issue.
+ */
+function FinishLineProgressRow({ item }: { item: FocusDashboardFinishLineItem }) {
+  const done = item.status === "done";
+  const pct = item.totalCount > 0 ? Math.round((item.completedCount / item.totalCount) * 100) : 0;
+  return (
+    <div
+      className="rounded-md px-2 py-1.5 transition-colors hover:bg-accent/30"
+      data-testid="focus-lane-goal-row"
+    >
+      <div className="flex items-center gap-2">
+        <span
+          className={cn(
+            "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[8px]",
+            done
+              ? "border-emerald-500/40 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+              : "border-border bg-muted/40 text-muted-foreground",
+          )}
+        >
+          {done ? "✓" : ""}
+        </span>
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-sm",
+            done && "text-muted-foreground line-through",
+          )}
+          title={item.title}
+        >
+          {item.title}
+        </span>
+        {item.totalCount > 0 ? (
+          <span className="shrink-0 text-xs text-muted-foreground">
+            {item.completedCount}/{item.totalCount}
+          </span>
+        ) : null}
+      </div>
+      {item.totalCount > 0 ? (
+        <div className="ml-6 mt-1 h-1 w-[calc(100%-1.5rem)] overflow-hidden rounded-full bg-muted">
+          <div
+            className={cn(
+              "h-full rounded-full transition-all",
+              done ? "bg-emerald-500/50" : "bg-primary/60",
+            )}
+            style={{ width: `${pct}%` }}
+          />
+        </div>
+      ) : null}
+      {item.tasks.length > 0 ? (
+        <ul className="ml-8 mt-1 space-y-0.5" data-testid="focus-lane-goal-tasks">
+          {item.tasks.map((task) => (
+            <li key={task.id} className="flex min-w-0 items-center gap-1.5">
+              <span
+                aria-hidden
+                className={cn(
+                  "h-1.5 w-1.5 shrink-0 rounded-full",
+                  task.status === "done"
+                    ? "bg-emerald-500/40"
+                    : "bg-muted-foreground/40",
+                )}
+              />
+              <Link
+                to={`/issues/${task.id}`}
+                className={cn(
+                  "min-w-0 flex-1 truncate text-xs hover:underline",
+                  task.status === "done" ? "text-muted-foreground line-through" : "text-foreground",
+                )}
+                title={task.title}
+              >
+                {task.title}
+              </Link>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+/**
  * One focus lane as a swim-lane COLUMN: the project's title + status chip
  * in a header band across the top of its column (the project's own color as
  * the column's top-border accent), its next steps flowing down beneath the
@@ -180,7 +264,7 @@ function FocusLaneColumn({
   agentMap: Map<string, Agent>;
   userProfileMap: Map<string, CompanyUserProfile>;
 }) {
-  const { project, nextSteps, laneActivity } = lane;
+  const { project, nextSteps, laneActivity, finishLineItems } = lane;
 
   // Lane-scoped entity maps: only this lane's project and its own next steps —
   // the same `entityType:entityId` convention the classic activity list uses.
@@ -238,6 +322,53 @@ function FocusLaneColumn({
           </p>
         ) : null}
       </div>
+
+      {/* End-goal progress: the project's finish-line items with compact
+          progress bars and their tagged tasks. Skips entirely when the
+          project has no finish-line items — never an empty section. */}
+      {finishLineItems.length > 0 ? (
+        <div
+          className="border-b border-border px-4 py-2"
+          data-testid="focus-lane-goals"
+        >
+          <div className="flex items-center gap-1.5">
+            <Target className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Goals
+            </h3>
+            {finishLineItems.length >= 2 ? (
+              <span className="text-xs text-muted-foreground">
+                {finishLineItems.filter((i) => i.status === "done").length} of {finishLineItems.length} done
+              </span>
+            ) : null}
+          </div>
+          <div className="mt-1 space-y-0.5">
+            {finishLineItems.map((item) => (
+              <FinishLineProgressRow key={item.id} item={item} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Owner brief: a short markdown TLDR curated by the CoS — bullet
+          points with hyperlinks to anything the owner needs. Rendered as
+          markdown so links are clickable. Skips entirely when empty. */}
+      {project.ownerBrief ? (
+        <div
+          className="border-b border-border px-4 py-2"
+          data-testid="focus-lane-owner-brief"
+        >
+          <div className="flex items-center gap-1.5">
+            <ClipboardList className="h-3.5 w-3.5 text-muted-foreground" aria-hidden />
+            <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              For You
+            </h3>
+          </div>
+          <div className="mt-1 [&_.paperclip-markdown]:!text-sm [&_a]:text-primary [&_a]:underline [&_li]:mt-0.5 [&_p]:!my-0 [&_ul]:!my-0 [&_ul]:list-disc [&_ul]:pl-4">
+            <MarkdownBody>{project.ownerBrief}</MarkdownBody>
+          </div>
+        </div>
+      ) : null}
 
       {/* Next steps flow down below the band — work in progress first, server-ordered.
           The full project description stays on the project page; the band above

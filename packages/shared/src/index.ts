@@ -1298,6 +1298,7 @@ export type {
   DashboardRunActivityDay,
   DashboardSummary,
   FocusDashboardActiveProject,
+  FocusDashboardFinishLineItem,
   FocusDashboardLane,
   FocusDashboardNextStep,
   FocusDashboardSummary,
