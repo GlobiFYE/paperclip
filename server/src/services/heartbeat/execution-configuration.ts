@@ -77,7 +77,9 @@ export async function prepareHeartbeatExecutionConfiguration(db: Db, input: Hear
   const { run, agent, onFailureSecretsResolved, onManagedAiRuntimeAcquired, onIdentityRedactorPrepared } = input;
   const time = createHeartbeatPreparationTiming(run.id);
   const { issueId, context, responsibleUserId, acceptedPlanContinuationWake, acceptedPlanWakeRoutingDecision, taskProjectContext, routineEnvContext } = input.task;
-  const { sourceWorkspaceConfig, aiBinding } = input.config;
+  const { sourceWorkspaceConfig } = input.config;
+  const preconfiguredHome = agent.adapterType === "paperclip_runner" && sourceWorkspaceConfig.homeMode === "preconfigured";
+  const aiBinding = preconfiguredHome ? undefined : input.config.aiBinding;
   const { trustPreset, useIsolatedTaskDirectory, explicitTaskDirectory } = input.policy;
   const { selectedEnvironmentId, selectedEnvironmentForConfig, resolvedInstanceSettings, persistedNativeExecutionInput } = input.environment;
   const { secretsSvc, companySkills, appendRunEvent, finalizeAiConnectionBusyDeferral } = input.services;
@@ -97,7 +99,7 @@ export async function prepareHeartbeatExecutionConfiguration(db: Db, input: Hear
   const skillActor: AuthorizationActor = { type: "agent", agentId: agent.id, companyId: agent.companyId,
     runId: run.id, source: "agent_jwt", onBehalfOfUserId: responsibleUserId === "local-board" ? null : responsibleUserId };
   const runScopedMentionedSkillKeys =
-    await time("configuration_mentions", () => resolveRunScopedMentionedSkillKeys({
+    preconfiguredHome ? [] : await time("configuration_mentions", () => resolveRunScopedMentionedSkillKeys({
       db,
       companyId: agent.companyId,
       issueId,
@@ -215,6 +217,7 @@ export async function prepareHeartbeatExecutionConfiguration(db: Db, input: Hear
     ? run.contextSnapshot?.skillSelectionSnapshot === true && Object.keys(storedVersions).length === 0
     : agent.adapterType === "paperclip_runner" && runtimeSkillPreference.desiredSkills.length === 0;
   const prepareSkills = async () => {
+
     try {
       const versionSelections = hasStoredVersions
         ? new Map(Object.entries(storedVersions).filter((entry): entry is [string, string | null] => entry[1] === null || typeof entry[1] === "string"))
@@ -268,7 +271,7 @@ export async function prepareHeartbeatExecutionConfiguration(db: Db, input: Hear
       throw error;
     }
   };
-  const runtimeSkillEntries = await time("configuration_skills", () => emptySkillSelection
+  const runtimeSkillEntries = preconfiguredHome ? [] : await time("configuration_skills", () => emptySkillSelection
     ? prepareSkills()
     : withSkillVersionCacheLock(db, agent.companyId, prepareSkills));
   nativeRunnerPreparationSpans.push({
@@ -277,7 +280,7 @@ export async function prepareHeartbeatExecutionConfiguration(db: Db, input: Hear
     startedAtMs: skillsPrepareStartedAtMs,
     endedAtMs: Date.now(),
   });
-  const connectorAssignments = await time("configuration_connector_assignments", () => resolveConnectorAssignments(db, { companyId: agent.companyId, agentId: agent.id, runId: run.id, issueId: typeof context.issueId === "string" ? context.issueId : undefined }));
+  const connectorAssignments = preconfiguredHome ? [] : await time("configuration_connector_assignments", () => resolveConnectorAssignments(db, { companyId: agent.companyId, agentId: agent.id, runId: run.id, issueId: typeof context.issueId === "string" ? context.issueId : undefined }));
   const connectorSkillConfig = await time("configuration_connector_skills", () => applyConnectorSkills(skillDeliveryConfig, runtimeSkillEntries, connectorAssignments));
   // Both CLI adapters and native context materialization use the same resolved set.
   runtimeSkillEntries.splice(0, runtimeSkillEntries.length, ...connectorSkillConfig.paperclipRuntimeSkills);
