@@ -1,4 +1,6 @@
 import express from "express";
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { activityLog, documents, issueDocuments } from "@paperclipai/db";
 import request from "supertest";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
@@ -19,6 +21,8 @@ import { sql } from "drizzle-orm";
 import { museIdentity, museCredentialHash } from "../services/muse-identity.js";
 import * as museIdentityModule from "../services/muse-identity.js";
 import { museTransportRoutes } from "../routes/muse.js";
+import { activityRoutes } from "../routes/activity.js";
+import * as activityLogModule from "../services/activity-log.js";
 import { errorHandler } from "../middleware/error-handler.js";
 import { museRunnerBroker } from "../services/muse-runner-broker.js";
 import { museReceiver } from "../services/muse-receiver.js";
@@ -1084,6 +1088,47 @@ describe("personal Muse control plane",()=>{
       await f.broker.act(f.subject,{version:1,command:"accept",assignmentId:f.assignment.id,requestId:randomUUID()});expect((await museReceiver(db).signal(f.binding.id)).signal).toBeNull();
     }finally{await f.detach();}
   });
+  it("wakes the exact v9 detector for a distinct offer after native success and mailbox acknowledgement",async()=>{
+    const first=await active(await oauthFixture(true));
+    let second:Awaited<ReturnType<typeof active>>|undefined;
+    try {
+      const poll=()=>museReceiver(db).signal(first.binding.id,oauthResource);
+      const offeredA=await poll();expect(offeredA.signal?.reference).toMatch(/^sha256:[a-f0-9]{64}$/);
+      expect(await first.broker.act(first.subject,{version:1,command:"accept",assignmentId:first.assignment.id,requestId:randomUUID()})).toMatchObject({status:"accepted"});
+      expect(await first.broker.act(first.subject,{version:1,command:"finish",assignmentId:first.assignment.id,requestId:randomUUID(),result:{}})).toMatchObject({status:"completed"});
+      await db.update(heartbeatRuns).set({status:"succeeded",finishedAt:new Date()}).where(eq(heartbeatRuns.id,first.runId));
+      await first.broker.reconcileTerminalAssignments(first.company.id,first.agent.id,first.binding.id);
+      const [completed]=await db.select().from(assignments).where(eq(assignments.id,first.assignment.id));
+      expect(completed).toMatchObject({status:"settled",nativeAcceptedAt:expect.any(Date),acceptedResultAt:expect.any(Date),finalizedAt:expect.any(Date)});
+      const inbox=await first.broker.inspect(first.subject,{version:1,query:"mailbox",after:0}) as {items:Array<{assignmentId:string|null}>;nextCursor:number};
+      expect(inbox.items.some(item=>item.assignmentId===first.assignment.id)).toBe(true);
+      await first.broker.inspect(first.subject,{version:1,query:"mailbox",after:inbox.nextCursor});
+      expect((await db.select().from(bindings).where(eq(bindings.id,first.binding.id)))[0].workerCursor).toBe(inbox.nextCursor);
+      const idleAfterSuccess=await poll();expect(idleAfterSuccess).toEqual({version:1,signal:null});
+      await first.detach();
+      second=await active(first);
+      expect(second.assignment.id).not.toBe(first.assignment.id);expect(second.runId).not.toBe(first.runId);
+      expect(second.assignment.bindingId).toBe(first.binding.id);expect(second.assignment.bindingGeneration).toBe(first.binding.generation);
+      const [offerB]=await db.select().from(mailbox).where(and(eq(mailbox.assignmentId,second.assignment.id),eq(mailbox.kind,"assignment")));
+      const offeredB=await poll();
+      expect(offeredB).toEqual({version:1,signal:{reference:"sha256:"+createHash("sha256").update(`${first.binding.id}:${first.binding.generation}:${offerB.sourceEventId}:1`).digest("hex")}});
+      expect(offeredB.signal?.reference).not.toBe(offeredA.signal?.reference);
+      const duplicateB=await poll();expect(duplicateB).toEqual(offeredB);
+      await db.update(mailbox).set({signalNotifiedAt:new Date(Date.now()-31000)}).where(eq(mailbox.id,offerB.id));
+      const rearmedB=await poll();
+      expect(rearmedB).toEqual({version:1,signal:{reference:"sha256:"+createHash("sha256").update(`${first.binding.id}:${first.binding.generation}:${offerB.sourceEventId}:2`).digest("hex")}});
+      expect(rearmedB.signal?.reference).not.toBe(offeredB.signal?.reference);
+      expect(await second.broker.act(second.subject,{version:1,command:"accept",assignmentId:second.assignment.id,requestId:randomUUID()})).toMatchObject({status:"accepted"});
+      const [claimed]=await db.select().from(assignments).where(eq(assignments.id,second.assignment.id));
+      expect(claimed).toMatchObject({claimedAt:expect.any(Date),nativeAcceptedAt:expect.any(Date)});
+      const idleAfterClaim=await poll();expect(idleAfterClaim).toEqual({version:1,signal:null});
+      const proof=JSON.parse(execFileSync("python3",[
+        fileURLToPath(new URL("./fixtures/muse-client-contract.py",import.meta.url)),
+        fileURLToPath(new URL("../services/scripts/v9/client.py",import.meta.url)),"--receiver-sequence",
+      ],{input:JSON.stringify({bindingId:first.binding.id,origin:oauthOrigin,scope:{companyId:first.company.id,companyName:first.company.name,agentId:first.agent.id,agentName:first.agent.name},responses:[offeredA,idleAfterSuccess,offeredB,duplicateB,rearmedB,idleAfterClaim]}),encoding:"utf8",timeout:10000}));
+      expect(proof).toEqual({outputs:["wake","idle","wake","duplicate","wake","idle"],providerAcknowledgement:"not_observed"});
+    }finally{await second?.detach();await first.detach();}
+  });
   it("rejects missing public origin before replacing a durable connection",async()=>{
     const f=await fixture(),state=(await f.broker.bindingForAgent(f.company.id,f.agent.id))!;
     // A broker instance keeps its configured public origin; use a fresh DB
@@ -1528,6 +1573,164 @@ describe("personal Muse control plane",()=>{
     expect((await inspectMuseConnectionCredential(db,(await db.select().from(bindings).where(eq(bindings.id,f.binding.id)))[0],oauthResource)).state).toBe("active");
     expect((await request(transport()).post("/api/muse/v1/queries").set("Authorization","Bearer "+tokens.access_token).send({version:1,query:"identify"})).body).toMatchObject({bindingId:f.binding.id,agentId:f.agent.id});
     await expect(f.oauth.authorize(f.input)).rejects.toThrow();await expect(f.oauth.token(f.tokenInput())).rejects.toThrow();
+  });
+  describe("Muse OAuth code exchange diagnostics",()=>{
+    const prefix="muse.oauth_code_exchange_",generic={error:"invalid_grant",error_description:"Authorization is expired, revoked, or invalid."};
+    async function events(f:Awaited<ReturnType<typeof oauthFixture>>,rejectionsOnly=true) {
+      const rows=await db.select().from(activityLog).where(and(eq(activityLog.companyId,f.company.id),eq(activityLog.entityType,"agent"),eq(activityLog.entityId,f.agent.id)));
+      return rows.filter(row=>row.action.startsWith(prefix+(rejectionsOnly?"rejected_":"")));
+    }
+    async function codeState(f:Awaited<ReturnType<typeof oauthFixture>>) {
+      const [code]=await db.select().from(mcpOauthRequests).where(eq(mcpOauthRequests.grantId,f.binding.grantId!));return code;
+    }
+    it.each(["code_expired","redirect_mismatch","pkce_mismatch","client_mismatch","code_consumed"] as const)("records only scoped static %s evidence while preserving the public error",async(check)=>{
+      const f=await oauthFixture(),input=f.tokenInput();
+      if(check==="code_expired")await db.update(mcpOauthRequests).set({expiresAt:new Date(Date.now()-1)}).where(eq(mcpOauthRequests.grantId,f.binding.grantId!));
+      if(check==="redirect_mismatch")input.redirect_uri="https://other-authd.example/callback";
+      if(check==="pkce_mismatch")input.code_verifier="a".repeat(43);
+      if(check==="client_mismatch")input.client_id="pcmcp_client_wrong";
+      if(check==="code_consumed")await f.oauth.token(f.tokenInput());
+      const response=await request(transport()).post("/api/muse/v1/oauth/token").type("form").send(input);
+      expect(response.status).toBe(400);expect(response.body).toEqual(generic);
+      const rows=await events(f);expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({actorType:"system",actorId:"muse-oauth",responsibleUserId:f.operatorId,agentId:f.agent.id,action:prefix+"rejected_"+check});
+      expect(rows[0].details).toMatchObject({schemaVersion:1,bindingId:f.binding.id,generation:f.binding.generation,grantId:f.binding.grantId,failedChecks:[check]});
+      const details=rows[0].details!;
+      for(const field of ["receivedAt","decisionAt","authorizationAt","deadlineAt"])expect(Number.isFinite(Date.parse(String(details[field])))).toBe(true);
+      expect(details.decisionLatencyMs).toBeGreaterThanOrEqual(0);expect(details.codeAgeMs).toBeTypeOf("number");
+      expect((await codeState(f)).consumedAt===null).toBe(check!=="code_consumed");
+      expect(await db.select().from(mcpOauthTokens).where(eq(mcpOauthTokens.grantId,f.binding.grantId!))).toHaveLength(check==="code_consumed"?2:0);
+    });
+    it.each(["wrong_resource","missing_client","both"] as const)("records known-code early invalid_target evidence for %s without changing public errors",async(kind)=>{
+      const f=await oauthFixture(),input=f.tokenInput(),resource="https://resource-canary.example/unsupported",claimedCompany=randomUUID();
+      const submitted:Record<string,unknown>={...input},failedChecks:string[]=[];
+      if(kind!=="wrong_resource"){delete submitted.client_id;failedChecks.push("client_mismatch");}
+      if(kind!=="missing_client"){submitted.resource=resource;failedChecks.push("resource_mismatch");}
+      const expected={error:"invalid_target",error_description:"Client and matching resource are required."};
+      const unknown=await request(transport()).post("/api/muse/v1/oauth/token").type("form").send({...submitted,code:"pcmcp_code_unknown_resource_canary",company_id:claimedCompany});
+      expect(unknown.status).toBe(400);expect(unknown.body).toEqual(expected);expect(await events(f)).toHaveLength(0);
+      const response=await request(transport()).post("/api/muse/v1/oauth/token").type("form").set("X-Private-Canary","resource-header-canary")
+        .send({...submitted,company_id:claimedCompany,reason:"resource-client-reason-canary"});
+      expect(response.status).toBe(400);expect(response.body).toEqual(expected);
+      const rows=await events(f);expect(rows).toHaveLength(failedChecks.length);expect(rows.map(row=>row.action).sort()).toEqual(failedChecks.map(check=>prefix+"rejected_"+check).sort());
+      for(const row of rows){expect(row).toMatchObject({actorType:"system",actorId:"muse-oauth",responsibleUserId:f.operatorId,entityType:"agent",entityId:f.agent.id,agentId:f.agent.id});expect(row.details).toMatchObject({bindingId:f.binding.id,generation:f.binding.generation,grantId:f.binding.grantId,failedChecks});}
+      const serialized=JSON.stringify(rows),code=await codeState(f);
+      for(const value of [resource,claimedCompany,input.code,input.code_verifier,f.client.client_id,f.input.code_challenge,f.input.state,oauthCallback,code.id,code.codeHash,"resource-header-canary","resource-client-reason-canary"])expect(serialized).not.toContain(value);
+      expect(code.consumedAt).toBeNull();expect(await db.select().from(mcpOauthTokens).where(eq(mcpOauthTokens.grantId,f.binding.grantId!))).toHaveLength(0);
+      await expect(f.oauth.token(input)).resolves.toMatchObject({token_type:"Bearer"});
+    });
+    it("retains overlapping failed checks without claiming a single cause",async()=>{
+      const f=await oauthFixture();await db.update(mcpOauthRequests).set({expiresAt:new Date(Date.now()-1)}).where(eq(mcpOauthRequests.grantId,f.binding.grantId!));
+      await expect(f.oauth.token({...f.tokenInput(),redirect_uri:oauthCallback+"?changed=1",code_verifier:"z".repeat(43)})).rejects.toMatchObject({code:"invalid_grant",status:400});
+      const rows=await events(f);expect(rows.map(row=>row.action).sort()).toEqual(["code_expired","pkce_mismatch","redirect_mismatch"].map(check=>prefix+"rejected_"+check).sort());
+      for(const row of rows)expect(row.details?.failedChecks).toEqual(["redirect_mismatch","pkce_mismatch","code_expired"]);
+    });
+    it("attributes a malformed verifier only from a known code and excludes all private request material",async()=>{
+      const f=await oauthFixture(),input=f.tokenInput(),code=await codeState(f);
+      const response=await request(transport()).post("/api/muse/v1/oauth/token").type("form").set("X-Private-Canary","header-private-canary")
+        .send({...input,code_verifier:"malformed-verifier-canary",reason:"client-chosen-reason-canary",client_secret:"body-private-canary"});
+      expect(response.status).toBe(400);expect(response.body).toEqual(generic);
+      const rows=await events(f);expect(rows).toHaveLength(1);expect(rows[0].action).toBe(prefix+"rejected_verifier_format");
+      expect(Object.keys(rows[0].details!).sort()).toEqual(["schemaVersion","bindingId","generation","grantId","failedChecks","receivedAt","decisionAt","authorizationAt","deadlineAt","codeAgeMs","decisionLatencyMs"].sort());
+      const serialized=JSON.stringify(rows);
+      for(const value of [input.code,input.code_verifier,f.verifier,f.input.code_challenge,f.input.state,f.ticket,f.client.client_id,oauthCallback,code.id,code.codeHash,"header-private-canary","malformed-verifier-canary","client-chosen-reason-canary","body-private-canary"])expect(serialized).not.toContain(value);
+      expect((await codeState(f)).consumedAt).toBeNull();
+    });
+    it("commits independent S256 proof success and its timing evidence with the credential family",async()=>{
+      const f=await oauthFixture(false,false),verifier="dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+      const redirect=await f.oauth.authorize({...f.input,code_challenge:"E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"});
+      const code=new URL(redirect).searchParams.get("code")!;
+      const response=await request(transport()).post("/api/muse/v1/oauth/token").set("Content-Type","application/x-www-form-urlencoded; charset=UTF-8")
+        .send({grant_type:"authorization_code",client_id:f.client.client_id,redirect_uri:oauthCallback,code,code_verifier:verifier});
+      expect(response.status).toBe(200);expect(response.body.token_type).toBe("Bearer");
+      const [binding]=await db.select().from(bindings).where(eq(bindings.id,f.binding.id));
+      const rows=await events(f,false);expect(rows).toHaveLength(1);expect(rows[0].action).toBe(prefix+"succeeded");expect(rows[0].responsibleUserId).toBe(f.operatorId);
+      expect((await db.select().from(mcpOauthRequests).where(eq(mcpOauthRequests.grantId,binding.grantId!)))[0].consumedAt).toBeInstanceOf(Date);
+      expect(await db.select().from(mcpOauthTokens).where(eq(mcpOauthTokens.grantId,binding.grantId!))).toHaveLength(2);
+      expect((await inspectMuseConnectionCredential(db,binding,oauthResource)).state).toBe("active");
+    });
+    it("rolls back consumption and tokens if atomic success evidence cannot persist",async()=>{
+      const f=await oauthFixture(),original=activityLogModule.logActivity,fault=new Error("synthetic diagnostic storage failure");
+      const spy=vi.spyOn(activityLogModule,"logActivity").mockImplementation(async(...args)=>{if(args[1].action===prefix+"succeeded")throw fault;return original(...args);});
+      try {await expect(f.oauth.token(f.tokenInput())).rejects.toBe(fault);}finally{spy.mockRestore();}
+      expect((await codeState(f)).consumedAt).toBeNull();expect(await events(f,false)).toHaveLength(0);
+      expect(await db.select().from(mcpOauthTokens).where(eq(mcpOauthTokens.grantId,f.binding.grantId!))).toHaveLength(0);
+      await expect(f.oauth.token(f.tokenInput())).resolves.toMatchObject({token_type:"Bearer"});expect(await events(f,false)).toHaveLength(1);
+    });
+    it("keeps a committed exchange successful when postcommit publication fails",async()=>{
+      const f=await oauthFixture(),original=activityLogModule.publishActivity;
+      const spy=vi.spyOn(activityLogModule,"publishActivity").mockImplementation(publication=>{if(publication.payload.action===prefix+"succeeded")throw new Error("synthetic publication failure");return original(publication);});
+      try {const response=await request(transport()).post("/api/muse/v1/oauth/token").type("form").send(f.tokenInput());expect(response.status).toBe(200);}finally{spy.mockRestore();}
+      expect((await codeState(f)).consumedAt).toBeInstanceOf(Date);expect(await events(f,false)).toHaveLength(1);
+      expect(await db.select().from(mcpOauthTokens).where(eq(mcpOauthTokens.grantId,f.binding.grantId!))).toHaveLength(2);
+    });
+    it("preserves the original public rejection and rolls back partial diagnostic writes on audit failure",async()=>{
+      const f=await oauthFixture(),original=activityLogModule.logActivity;
+      await db.update(mcpOauthRequests).set({expiresAt:new Date(Date.now()-1)}).where(eq(mcpOauthRequests.grantId,f.binding.grantId!));
+      const spy=vi.spyOn(activityLogModule,"logActivity").mockImplementation(async(...args)=>{if(args[1].action===prefix+"rejected_code_expired")throw new Error("synthetic private audit error");return original(...args);});
+      try {const response=await request(transport()).post("/api/muse/v1/oauth/token").type("form").send({...f.tokenInput(),code_verifier:"z".repeat(43)});expect(response.status).toBe(400);expect(response.body).toEqual(generic);}finally{spy.mockRestore();}
+      expect(await events(f)).toHaveLength(0);expect((await codeState(f)).consumedAt).toBeNull();
+      expect(await db.select().from(mcpOauthTokens).where(eq(mcpOauthTokens.grantId,f.binding.grantId!))).toHaveLength(0);
+      await expect(f.oauth.token({...f.tokenInput(),code_verifier:"z".repeat(43)})).rejects.toMatchObject({code:"invalid_grant"});expect(await events(f)).toHaveLength(2);
+    });
+    it("does not let a public Board activity forgery suppress trusted first-denial evidence",async()=>{
+      const f=await oauthFixture(),app=express();app.use(express.json());
+      app.use((req,_res,next)=>{req.actor={type:"board",source:"session",userId:f.operatorId,companyIds:[f.company.id],isInstanceAdmin:false};next();});
+      app.use("/api",activityRoutes(db));app.use(errorHandler);
+      const action=prefix+"rejected_pkce_mismatch",details={bindingId:f.binding.id,generation:f.binding.generation,grantId:f.binding.grantId};
+      const forged=await request(app).post(`/api/companies/${f.company.id}/activity`).send({actorType:"system",actorId:"muse-oauth",action,entityType:"agent",entityId:f.agent.id,agentId:f.agent.id,responsibleUserId:f.operatorId,details});
+      expect(forged.status).toBe(201);expect(forged.body.responsibleUserId).toBeNull();
+      await expect(f.oauth.token({...f.tokenInput(),code_verifier:"z".repeat(43)})).rejects.toMatchObject({code:"invalid_grant"});
+      const rows=await events(f);expect(rows).toHaveLength(2);expect(rows.filter(row=>row.responsibleUserId===f.operatorId)).toHaveLength(1);
+    });
+    it("caps concurrent repeated denials and preserves the first recorded timing",async()=>{
+      const f=await oauthFixture(),input={...f.tokenInput(),code_verifier:"z".repeat(43)};
+      const results=await Promise.allSettled(Array.from({length:4},()=>f.oauth.token(input)));expect(results.every(result=>result.status==="rejected")).toBe(true);
+      const first=await events(f);expect(first).toHaveLength(1);
+      await expect(f.oauth.token(input)).rejects.toMatchObject({code:"invalid_grant"});expect(await events(f)).toEqual(first);
+      expect((await codeState(f)).consumedAt).toBeNull();
+      await expect(f.oauth.token(f.tokenInput())).resolves.toMatchObject({token_type:"Bearer"});
+    });
+    it("does not attribute unknown or pruned codes from claimed client or company fields",async()=>{
+      const f=await oauthFixture(),other=await oauthFixture();
+      await expect(f.oauth.token({...f.tokenInput(),code:"pcmcp_code_unknown_canary",company_id:other.company.id,agent_id:other.agent.id,reason:"code_expired"})).rejects.toMatchObject({code:"invalid_grant"});
+      expect(await events(f)).toHaveLength(0);expect(await events(other)).toHaveLength(0);
+      await db.update(mcpOauthRequests).set({expiresAt:new Date(Date.now()-1)}).where(eq(mcpOauthRequests.grantId,f.binding.grantId!));
+      await f.oauth.register({client_name:"Prune control",redirect_uris:[oauthCallback]},randomUUID());
+      expect(await codeState(f)).toBeUndefined();await expect(f.oauth.token(f.tokenInput())).rejects.toMatchObject({code:"invalid_grant"});
+      expect(await events(f)).toHaveLength(0);
+      await expect(other.oauth.token(other.tokenInput())).resolves.toMatchObject({token_type:"Bearer"});
+    });
+    it("retains historical scope when revocation and replacement occur during the admission wait",async()=>{
+      const f=await oauthFixture();let operation:Promise<{error?:unknown}>|undefined;
+      try {await db.transaction(tx=>withExternalAdmissionGuard(tx,f.company.id,f.agent.id,async()=>{
+        await tx.select().from(bindings).where(eq(bindings.id,f.binding.id)).for("update");
+        operation=f.oauth.token(f.tokenInput()).then(()=>({}),error=>({error}));
+        await expect.poll(async()=>{const result=await db.execute(sql`select count(*)::int as count from pg_stat_activity where datname=current_database() and lower(wait_event)='advisory'`);return Number(result[0]?.count??0);},{timeout:5000,interval:25}).toBeGreaterThan(0);
+        await tx.update(bindings).set({revokedAt:new Date(),status:"revoked"}).where(eq(bindings.id,f.binding.id));
+        const [replacement]=await tx.insert(bindings).values({companyId:f.company.id,agentId:f.agent.id,operatorId:f.operatorId,generation:f.binding.generation+1}).returning();
+        await tx.update(agents).set({adapterConfig:{...f.agent.adapterConfig,museBindingId:replacement.id}}).where(eq(agents.id,f.agent.id));
+      }));}finally{await operation;}
+      expect((await operation!).error).toMatchObject({code:"invalid_grant"});const rows=await events(f);expect(rows).toHaveLength(1);
+      expect(rows[0].details).toMatchObject({bindingId:f.binding.id,generation:f.binding.generation,grantId:f.binding.grantId,failedChecks:["binding_unavailable"]});
+      expect((await codeState(f)).consumedAt).toBeNull();expect(await db.select().from(mcpOauthTokens).where(eq(mcpOauthTokens.grantId,f.binding.grantId!))).toHaveLength(0);
+    });
+    it("records simulated Date-only expiry after a proven admission wait without changing the deadline",async()=>{
+      const f=await oauthFixture(),code=await codeState(f),enteredAt=Date.now();let operation:Promise<{error?:unknown}>|undefined;
+      vi.useFakeTimers({toFake:["Date"]});vi.setSystemTime(enteredAt);
+      try {
+        await db.transaction(tx=>withExternalAdmissionGuard(tx,f.company.id,f.agent.id,async()=>{
+          await tx.select().from(bindings).where(eq(bindings.id,f.binding.id)).for("update");operation=f.oauth.token(f.tokenInput()).then(()=>({}),error=>({error}));
+          await expect.poll(async()=>{const result=await db.execute(sql`select count(*)::int as count from pg_stat_activity where datname=current_database() and lower(wait_event)='advisory'`);return Number(result[0]?.count??0);},{timeout:5000,interval:25}).toBeGreaterThan(0);
+          vi.setSystemTime(code.expiresAt.getTime()+1);
+        }));
+        expect((await operation!).error).toMatchObject({code:"invalid_grant"});
+      } finally {await operation;vi.useRealTimers();}
+      const rows=await events(f);expect(rows).toHaveLength(1);const details=rows[0].details!;
+      expect(Date.parse(String(details.receivedAt))).toBeLessThan(code.expiresAt.getTime());expect(Date.parse(String(details.decisionAt))).toBeGreaterThan(code.expiresAt.getTime());
+      expect(details.deadlineAt).toBe(code.expiresAt.toISOString());expect(details.failedChecks).toEqual(["code_expired"]);
+      expect((await codeState(f)).consumedAt).toBeNull();expect(await db.select().from(mcpOauthTokens).where(eq(mcpOauthTokens.grantId,f.binding.grantId!))).toHaveLength(0);
+    });
   });
   it("enforces registered redirects,S256,current authority and ticket expiry before Muse redemption",async()=>{
     const f=await oauthFixture(false,false);
