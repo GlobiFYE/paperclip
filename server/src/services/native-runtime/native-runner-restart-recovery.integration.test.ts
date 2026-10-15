@@ -1,3 +1,5 @@
+import { enableRunFailureReporting } from "../../__tests__/helpers/run-failure-reporting.js";
+import { hasNativeLocalProcessStop } from "../native-local-process-stop.js";
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -12,6 +14,8 @@ import {
   companies,
   createDb,
   heartbeatRuns,
+  heartbeatRunEvents,
+  issueRecoveryActions,
   issues,
   nativeRunFinalizations,
   nativeRunResults,
@@ -19,8 +23,10 @@ import {
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import {
+  canonicalNativeRuntimeContextDigest,
   createRunnerdCodexTransport,
   defaultCapabilityRunnerdBinary,
+  parseNativeExecutionInput,
 } from "../../vendor/paperclip-runner/index.js";
 import {
   getEmbeddedPostgresTestSupport,
@@ -33,10 +39,37 @@ import {
 } from "../../realtime/runner-prp-ws.js";
 import { readProcessStartedAt } from "../hot-restart.js";
 import { prepareNativeHeartbeatRun } from "./prepare-native-run.js";
+import { buildNativeExecutionInput } from "./native-execution-input.js";
+import { nativeRuntimeContextFixture } from "./runtime-context.test-fixture.js";
+import { executePaperclipNativeSession, NativeControllerDetachedForRestartError } from "./native-session-executor.js";
+
+const mockCaptureRunFailure = vi.hoisted(() => vi.fn());
+vi.mock("../../sentry.js", async () => {
+  const actual = await vi.importActual<typeof import("../../sentry.js")>("../../sentry.js");
+  return {
+    ...actual,
+    captureRunFailure: mockCaptureRunFailure,
+  };
+});
+
 import {
   claimNativeRestartRecoveries,
   type NativeControllerIdentity,
 } from "./native-restart-recovery.js";
+
+// Exact v5 wire prompt from before the task-monitor upgrade (#15446).
+const historicalPrompt = {
+  revision: "paperclip-execution.v5",
+  text: "You are running as a Paperclip agent. Complete the assigned task in the provided execution environment. Follow the attached agent instructions and use assigned skills and tools when relevant. Use Paperclip tools for coordination. To hire or reuse a persistent teammate, use list_agents, then search_api for agent-hires and call_api if a hire is needed. Provider helper threads do not create Paperclip agents. When the user assigns work or a revision to a teammate, use create_task with that agent's ID; review their result rather than doing their assigned work yourself. When remaining work depends on a child task, use set_dependencies to add its ID while preserving existing blocker IDs. Complete independent work, then call paperclip_block with the child agent as owner and child completion as the unblock action. End the turn so the child can use the workspace. Do not sleep or poll for child results while holding the workspace. Paperclip resumes the parent when the dependency completes. When the user asks to connect a service, call connections_search before any service tool, even when that tool is already installed. Follow the returned instruction and wait for any required user choice before executing. For other tasks needing a service, use installed tools if available; otherwise use connections_search and follow its instruction. The request appears as a card in the task. Finish independent work before yielding for access; do not poll or request the same connection repeatedly. Paperclip will continue automatically with updated tools after resolution. After a decline, pursue alternatives unless the user explicitly asks to retry. Finish exactly once with `paperclip_finish` or `paperclip_block`.",
+  digest: "bec3e633d8d828103ce50b3a8b8dc9991c8ef65e07538bdab1a7663957c2ef9b",
+} as const;
+
+// A saved prompt unknown to this release must recover without adding source data.
+const unregisteredPrompt = {
+  revision: "saved-prompt-before-upgrade",
+  text: "Complete the assigned task using the saved instructions.",
+  digest: "b0cab3306694028624bbccbf40984a7aca7c809f77b29bfd959325a2af3f7a66",
+} as const;
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported
@@ -224,7 +257,8 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
       issueId,
       phase: "observed",
     });
-    return { db, issueId, runId, native };
+    const [preparedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
+    return { db, issueId, runId, native, preparedProfile: preparedRun.runnerProfileJson };
   }
 
   function transportOptions(
@@ -351,6 +385,37 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
       })
       .where(eq(nativeRunFinalizations.runId, input.fixture.runId));
   }
+
+  it.each([null, process.pid])("claims sandbox recovery without interpreting remote PID %s locally", async (remotePid) => {
+    const fixture = await seedRun(`remote-${remotePid ?? "warm"}`);
+    await fixture.db.update(heartbeatRuns).set({
+      processPid: remotePid,
+      processStartedAt: new Date("2020-01-01T00:00:00Z"),
+      runnerProfileJson: {
+        nativeWorkspaceSync: {
+          schema: "paperclip.native-workspace-sync/v1", state: "prepared",
+          descriptorSha256: "a".repeat(64), baselineSha256: "b".repeat(64),
+          workspaceId: "workspace", leaseId: "lease", providerLeaseId: "sandbox",
+          remoteCwd: "/workspace",
+        },
+        sessionCheckpoint: {
+          identity: { companyId, agentId, issueId: fixture.issueId, runId: fixture.runId,
+            sessionId: fixture.native.normalizedSessionId },
+          providerSessionId: "provider-session",
+          process: { providerPid: process.pid },
+        },
+      },
+    }).where(eq(heartbeatRuns.id, fixture.runId));
+    const [claim] = await claimNativeRestartRecoveries({ db: fixture.db, controller: successor,
+      restartKind: "graceful", runIds: [fixture.runId] });
+    expect(claim).toMatchObject({ kind: "reattach_remote_runner", runId: fixture.runId,
+      providerAttempt: 0, remote: { providerLeaseId: "sandbox", remoteCwd: "/workspace" } });
+    const [coordinator] = await fixture.db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, fixture.runId));
+    expect(coordinator?.recoveryState).toBe("awaiting_runner_reattach");
+    const [run] = await fixture.db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, fixture.runId));
+    expect(run?.status).toBe("running");
+    expect(run?.processPid).toBe(remotePid);
+  });
 
   realProcessIt("adopts one active runner across hot and hard controller restarts without duplicating steering", async () => {
     const fixture = await seedRun("LIVE");
@@ -521,8 +586,29 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
     }
   }, 45_000);
 
-  realProcessIt("hard-restarts a dead runner on the same run and provider session", async () => {
-    const fixture = await seedRun("DEAD");
+  realProcessIt.each([
+    ["hard", "current"],
+    ["hot", "historical"],
+    ["hot", "unregistered"],
+  ] as const)("%s-restarts a dead runner with a %s prompt on the same run and provider session", async (restartKind, promptKind) => {
+    const fixture = await seedRun(`DEAD-${promptKind}`);
+    const context = nativeRuntimeContextFixture();
+    const runtimeContext = { ...context, prompt: promptKind === "current"
+      ? context.prompt
+      : promptKind === "historical" ? historicalPrompt : unregisteredPrompt };
+    runtimeContext.aggregateDigest = canonicalNativeRuntimeContextDigest(runtimeContext);
+    const execution = { ...buildNativeExecutionInput({
+      companyId,
+      runId: fixture.runId,
+      issue: { id: fixture.issueId, identifier: `NRR-DEAD-${promptKind}`, title: "Recover a dead runner", description: null, workMode: "standard" },
+      taskPrompt: "Resume this active turn after process loss.",
+      agentId,
+      workspace: { id: fixture.runId, cwd: tmpdir(), repoUrl: null, repoRef: null, branchName: null },
+      normalizedSessionId: fixture.native.normalizedSessionId,
+      provider: "codex",
+      completionContract: { id: randomUUID(), sha256: `sha256:${"a".repeat(64)}`, schemaVersion: "paperclip.run-result.v1", contract: { revision: "1", objective: "Recover the same turn", criteria: [{ id: "objective", requirement: "Resume without a duplicate turn" }] } },
+      runtimeContext: context,
+    }), runtimeContext };
     const stateDirectory = resolve(runtimeRoot, fixture.runId);
     const baseOptions = transportOptions(fixture, stateDirectory);
     const options = {
@@ -537,6 +623,7 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
       const started = await first.transport.request("thread/start", {
         cwd: tmpdir(),
         dynamicTools: [],
+        baseInstructions: runtimeContext.prompt.text,
       });
       const thread = started.thread as Record<string, unknown>;
       const turnStarted = await first.transport.request("turn/start", {
@@ -555,6 +642,10 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
         providerPid,
         providerSessionId: String(thread.id),
       });
+      const [persistedRun] = await fixture.db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, fixture.runId));
+      await fixture.db.update(heartbeatRuns).set({
+        runnerProfileJson: { ...persistedRun.runnerProfileJson, nativeExecutionInput: execution },
+      }).where(eq(heartbeatRuns.id, fixture.runId));
 
       await first.detachControllerForRestart();
       await stopOwnedProcessGroup(firstRunnerPid, stateDirectory);
@@ -566,7 +657,7 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
       const [claim] = await claimNativeRestartRecoveries({
         db: fixture.db,
         controller: successor,
-        restartKind: "hard",
+        restartKind,
         now: new Date(),
         runIds: [fixture.runId],
       });
@@ -579,6 +670,16 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
       if (!claim || claim.kind !== "resume_dead_runner") {
         throw new Error("Expected dead-runner recovery claim");
       }
+      expect(await hasNativeLocalProcessStop(fixture.db, companyId, fixture.runId)).toBe(true);
+      const [stoppedRun] = await fixture.db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, fixture.runId));
+      expect(stoppedRun.processPid).toBeNull();
+      expect(stoppedRun.processGroupId).toBeNull();
+      // executeRun reads this immutable input before resuming after a restart.
+      const recoveredExecution = parseNativeExecutionInput(stoppedRun.runnerProfileJson?.nativeExecutionInput);
+      if (!("runtimeContext" in recoveredExecution)) throw new Error("Expected a pinned runtime context");
+      expect(recoveredExecution.binding).toEqual(execution.binding);
+      expect(recoveredExecution.session).toEqual(execution.session);
+      expect(recoveredExecution.runtimeContext).toEqual(runtimeContext);
 
       restored = createRunnerdCodexTransport({
         ...options,
@@ -971,6 +1072,178 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
     ]);
   });
 
+  it("recovers an unclaimed remote startup once without requiring a provider checkpoint", async () => {
+    const fixture = await seedRun("REMOTE-UNCLAIMED");
+    await fixture.db.update(heartbeatRuns).set({
+      runnerProfileJson: { ...fixture.preparedProfile, nativeWorkspaceSync: remotePreparedWorkspace() },
+    }).where(eq(heartbeatRuns.id, fixture.runId));
+    const dispositions = (await Promise.all([successor, { ...successor, bootId: randomUUID() }].map(controller =>
+      claimNativeRestartRecoveries({ db: fixture.db, controller, restartKind: "hard", runIds: [fixture.runId] }),
+    ))).flat();
+    expect(dispositions.filter(row => row.kind === "bootstrap_incomplete")).toEqual([
+      expect.objectContaining({ runId: fixture.runId, providerAttempt: 0, controllerGeneration: 1 }),
+    ]);
+    expect(dispositions.filter(row => row.kind === "awaiting_evidence")).toHaveLength(1);
+    const [run] = await fixture.db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, fixture.runId));
+    expect(run).toMatchObject({ status: "running", nativeSessionId: fixture.native.normalizedSessionId });
+    expect(await fixture.db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, fixture.issueId))).toHaveLength(0);
+  });
+
+  it.each([false, true])("yields an original preparation after remote recovery claims its run (expired lease=%s)", async (expired) => {
+    const fixture = await seedRun(`REMOTE-PREPARATION-${expired}`);
+    await fixture.db.update(heartbeatRuns).set({
+      runnerProfileJson: { ...fixture.preparedProfile, nativeWorkspaceSync: remotePreparedWorkspace() },
+    }).where(eq(heartbeatRuns.id, fixture.runId));
+    const execution = buildNativeExecutionInput({
+      companyId, agentId, runId: fixture.runId,
+      issue: { id: fixture.issueId, identifier: null, title: "Resume prepared work", description: null, workMode: "standard" },
+      taskPrompt: "Resume prepared work", provider: "codex",
+      workspace: { id: randomUUID(), cwd: runtimeRoot, repoUrl: null, repoRef: null, branchName: null },
+      normalizedSessionId: fixture.native.normalizedSessionId,
+      runtimeContext: nativeRuntimeContextFixture(),
+      completionContract: { id: randomUUID(), sha256: `sha256:${"a".repeat(64)}`, schemaVersion: "paperclip.run-result.v1",
+        contract: { revision: "1", objective: "Resume prepared work", criteria: [{ id: "result", requirement: "Complete work" }] } },
+    });
+    let prepared!: () => void, release!: () => void;
+    const preparing = new Promise<void>(resolveReady => { prepared = resolveReady; });
+    const continuePreparation = new Promise<void>(resolveContinue => { release = resolveContinue; });
+    const openSession = vi.fn(async () => { throw new Error("Losing preparation must not open a provider"); });
+    const descriptor = vi.fn(async () => { throw new Error("Losing preparation must not configure a provider"); });
+    const original = executePaperclipNativeSession({
+      db: fixture.db, execution, runnerInstanceId: fixture.native.runnerInstanceId,
+      backend: { descriptor, openSession },
+      preparationSpans: [{ name: "heartbeat.prepare_after_environment", startedAtMs: Date.now(), endedAtMs: Date.now() }],
+      onEvent: async event => {
+        if (event.payload?.span === "heartbeat.prepare_after_environment") {
+          prepared();
+          await continuePreparation;
+        }
+      },
+    }).catch(error => error);
+    try {
+      await Promise.race([preparing, original.then(error => { throw error; })]);
+      expect(await claimNativeRestartRecoveries({ db: fixture.db, restartKind: "hard", runIds: [fixture.runId] })).toEqual([
+        { kind: "awaiting_evidence", runId: fixture.runId, reason: "current_controller_preparing" },
+      ]);
+      const [claim] = await claimNativeRestartRecoveries({ db: fixture.db, controller: successor, restartKind: "hard", runIds: [fixture.runId] });
+      expect(claim.kind).toBe("bootstrap_incomplete");
+      if (expired) await fixture.db.update(nativeRunFinalizations).set({ leaseExpiresAt: new Date(0) })
+        .where(eq(nativeRunFinalizations.runId, fixture.runId));
+      const [before] = await fixture.db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, fixture.runId));
+      release();
+      expect(await original).toBeInstanceOf(NativeControllerDetachedForRestartError);
+      expect(openSession).not.toHaveBeenCalled();
+      expect(descriptor).not.toHaveBeenCalled();
+      expect((await fixture.db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, fixture.runId)))[0]).toEqual(before);
+      expect((await fixture.db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, fixture.runId)))[0].status).toBe("running");
+      expect(await fixture.db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, fixture.issueId))).toHaveLength(0);
+    } finally {
+      release();
+      await original;
+    }
+  });
+
+  function remotePreparedWorkspace() {
+    return { schema: "paperclip.native-workspace-sync/v3", state: "prepared",
+      descriptorSha256: "a".repeat(64), baselineSha256: "b".repeat(64), finalHostSha256: null,
+      workspaceId: randomUUID(), leaseId: randomUUID(), providerLeaseId: randomUUID(),
+      remoteCwd: "/workspace", resourceDisposition: "destroy" };
+  }
+
+  it.each(["claimed", "generation", "process", "launch", "provider-event", "checkpoint", "invalid-workspace", "unfenced"])(
+    "keeps remote startup recovery blocked with contradictory %s evidence", async (kind) => {
+      const fixture = await seedRun(`REMOTE-${kind}`);
+      let profile = fixture.preparedProfile;
+      if (kind === "unfenced") {
+        profile = { ...profile };
+        delete profile.nativePreparationFencingVersion;
+        await fixture.db.update(heartbeatRuns).set({ runnerProfileJson: profile }).where(eq(heartbeatRuns.id, fixture.runId));
+        const [olderRun] = await fixture.db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, fixture.runId));
+        await prepareNativeHeartbeatRun({ db: fixture.db,
+          run: { ...olderRun, runnerProfileJson: { ...profile, nativePreparationFencingVersion: 1 } },
+          issue: { id: fixture.issueId, title: "Older preparation", description: null }, environmentLeaseId: "older-lease" });
+        const [unchanged] = await fixture.db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, fixture.runId));
+        expect(unchanged.runnerProfileJson).not.toHaveProperty("nativePreparationFencingVersion");
+        profile = unchanged.runnerProfileJson;
+      }
+      await fixture.db.update(heartbeatRuns).set({
+        runnerProfileJson: { ...profile, nativeWorkspaceSync: kind === "invalid-workspace" ? {} : remotePreparedWorkspace(),
+          ...(kind === "checkpoint" ? { sessionCheckpoint: {} } : {}) },
+        ...(kind === "process" ? { processPid: 2_000_000_001 } : {}),
+      }).where(eq(heartbeatRuns.id, fixture.runId));
+      if (kind === "claimed" || kind === "generation") await fixture.db.update(nativeRunFinalizations)
+        .set(kind === "claimed" ? { attempt: 1 } : { controllerGeneration: 1 })
+        .where(eq(nativeRunFinalizations.runId, fixture.runId));
+      if (kind === "launch" || kind === "provider-event") await fixture.db.insert(heartbeatRunEvents).values({
+        companyId, runId: fixture.runId, agentId, seq: 1, stream: "system", level: "info",
+        eventType: kind === "launch" ? "native.process_start_requested" : "item.updated",
+        ...(kind === "provider-event" ? { sourceEventId: "provider-event-1" } : {}),
+      });
+      expect(await claimNativeRestartRecoveries({ db: fixture.db, controller: successor,
+        restartKind: "hard", runIds: [fixture.runId] })).toEqual([
+        { kind: "blocked", runId: fixture.runId, reason: "ambiguous_remote_recovery_evidence" },
+      ]);
+    },
+  );
+
+  it.each([2, 3])("recovers a checkpointed restart interruption within provider budget %s", async (attempt) => {
+    const fixture = await seedRun(`INTERRUPTED-${attempt}`);
+    await fixture.db.update(heartbeatRuns).set({ runnerProfileJson: { sessionCheckpoint: {
+      driverKind: "codex_app_server",
+      sessionId: fixture.native.normalizedSessionId,
+      identity: { companyId, issueId: fixture.issueId, runId: fixture.runId, agentId, sessionId: fixture.native.normalizedSessionId },
+      providerSessionId: "interrupted-provider",
+      activeTurnId: null,
+      semanticResult: null,
+      terminal: { runTerminalState: "failed", turnTerminalState: "failed" },
+      terminalTurns: [{ turnId: "interrupted-turn", fingerprint: JSON.stringify({
+        terminalState: "failed", result: null,
+        error: { code: "provider_turn_lost_on_restore", recoverable: true },
+      }) }],
+    } } }).where(eq(heartbeatRuns.id, fixture.runId));
+    await fixture.db.update(nativeRunFinalizations).set({ attempt }).where(eq(nativeRunFinalizations.runId, fixture.runId));
+    const dispositions = await claimNativeRestartRecoveries({
+      db: fixture.db, controller: successor, restartKind: "hot", runIds: [fixture.runId],
+    });
+    expect(dispositions).toEqual([expect.objectContaining(attempt < 3
+      ? { kind: "resume_dead_runner", runId: fixture.runId, providerAttempt: attempt }
+      : { kind: "blocked", runId: fixture.runId, reason: "execution_recovery_budget_exhausted" })]);
+  });
+
+  it("terminalizes the recorded failed-checkpoint incident atomically instead of resuming it on upgrade", async () => {
+    const fixture = await seedRun("FAILED-CHECKPOINT");
+    await fixture.db.update(heartbeatRuns).set({ runnerProfileJson: { sessionCheckpoint: {
+      terminal: { runTerminalState: "failed", turnTerminalState: "failed" },
+      providerSessionId: "unusable-provider-session",
+    } } }).where(eq(heartbeatRuns.id, fixture.runId));
+    await fixture.db.update(nativeRunFinalizations).set({ attempt: 3 }).where(eq(nativeRunFinalizations.runId, fixture.runId));
+    const input = { db: fixture.db, controller: successor, restartKind: "hard" as const, runIds: [fixture.runId] };
+    const captureCallsBeforeFirstClaim = mockCaptureRunFailure.mock.calls.length;
+    expect(await claimNativeRestartRecoveries(input)).toEqual([{ kind: "blocked", runId: fixture.runId, reason: "provider_checkpoint_permanently_failed" }]);
+    // The report fires without being awaited, so wait for it before asserting.
+    await vi.waitFor(() => {
+      expect(mockCaptureRunFailure.mock.calls.length).toBeGreaterThan(captureCallsBeforeFirstClaim);
+    });
+    const firstClaimCaptures = mockCaptureRunFailure.mock.calls.slice(captureCallsBeforeFirstClaim);
+    expect(firstClaimCaptures).toHaveLength(1);
+    expect(firstClaimCaptures[0]?.[0]).toMatchObject({
+      runId: fixture.runId,
+      runStatus: "failed",
+      errorCode: "native_restart_recovery_blocked",
+    });
+
+    const captureCallsBeforeReplay = mockCaptureRunFailure.mock.calls.length;
+    expect(await claimNativeRestartRecoveries(input)).toEqual([]);
+    // A replay that finds no eligible candidate must not report a second event.
+    expect(mockCaptureRunFailure.mock.calls.slice(captureCallsBeforeReplay)).toHaveLength(0);
+
+    const [run] = await fixture.db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, fixture.runId));
+    const [issue] = await fixture.db.select().from(issues).where(eq(issues.id, fixture.issueId));
+    expect(run).toMatchObject({ status: "failed", nativePhase: "terminal_failure", errorCode: "native_restart_recovery_blocked" });
+    expect(issue).toMatchObject({ assigneeAgentId: agentId, executionRunId: null });
+    expect(await fixture.db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, fixture.issueId))).toHaveLength(1);
+  });
+
   it("classifies every requested recovery candidate without an implicit 100-run cap", async () => {
     const db = createDb(temporary.connectionString);
     const fixtures: Array<Awaited<ReturnType<typeof seedRun>>> = [];
@@ -996,3 +1269,6 @@ describeEmbeddedPostgres("native runner restart recovery with real processes", (
     ).toBe(true);
   }, 30_000);
 });
+
+
+enableRunFailureReporting();

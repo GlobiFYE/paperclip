@@ -104,6 +104,14 @@ fn install_diagnostic_panic_hook(directory: Option<PathBuf>) {
     }));
 }
 
+fn install_crypto_provider() {
+    // The production dependency graph enables both rustls crypto backends.
+    // Select the backend declared by this workspace before any TLS builder
+    // asks rustls for the process-level default. An embedding process may have
+    // already selected a provider, which is also a valid initialized state.
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 fn build_metadata() -> serde_json::Value {
     json!({
         "schema": RUNNERD_BUILD_METADATA_SCHEMA,
@@ -111,12 +119,14 @@ fn build_metadata() -> serde_json::Value {
         "packageName": "@paperclipai/paperclip-runner",
         "packageVersion": env!("CARGO_PKG_VERSION"),
         "binaryContractVersion": 2,
+        "durableSessionCapabilities": ["unlimited_runtime", "connection_lease_renewal"],
+        "externalProviderCapabilities": ["openai_dot_mcp", "grok_bot_mcp"],
         "nativeExecutionVersion": 1,
         "harnessDriverVersion": 1,
         "prp": {
             "name": "paperclip.runner",
             "minimumVersion": 1,
-            "maximumVersion": 1
+            "maximumVersion": 2
         },
         "prpTransportModes": ["dial_ws_loopback", "dial_wss", "listen_ws"]
     })
@@ -132,6 +142,16 @@ fn value(args: &[String], name: &str) -> Result<String, LocalRunnerError> {
         .ok_or_else(|| LocalRunnerError::invalid(format!("missing value for {name}")))
 }
 
+fn optional_value(args: &[String], name: &str) -> Result<Option<String>, LocalRunnerError> {
+    let Some(index) = args.iter().position(|argument| argument == name) else {
+        return Ok(None);
+    };
+    args.get(index + 1)
+        .cloned()
+        .map(Some)
+        .ok_or_else(|| LocalRunnerError::invalid(format!("missing value for {name}")))
+}
+
 fn optional_u64(args: &[String], name: &str) -> Result<Option<u64>, LocalRunnerError> {
     let Some(index) = args.iter().position(|argument| argument == name) else {
         return Ok(None);
@@ -143,16 +163,6 @@ fn optional_u64(args: &[String], name: &str) -> Result<Option<u64>, LocalRunnerE
         .parse::<u64>()
         .map(Some)
         .map_err(|error| LocalRunnerError::invalid(format!("invalid {name}: {error}")))
-}
-
-fn optional_value(args: &[String], name: &str) -> Result<Option<String>, LocalRunnerError> {
-    let Some(index) = args.iter().position(|argument| argument == name) else {
-        return Ok(None);
-    };
-    args.get(index + 1)
-        .cloned()
-        .map(Some)
-        .ok_or_else(|| LocalRunnerError::invalid(format!("missing value for {name}")))
 }
 
 fn acpx_launch_profile(args: &[String]) -> Result<Option<AcpxLaunchProfile>, LocalRunnerError> {
@@ -252,6 +262,42 @@ fn usize_value(args: &[String], name: &str, default: usize) -> Result<usize, Loc
     })
 }
 
+fn durable_connect_url(args: &[String], run_id: &str) -> Result<String, LocalRunnerError> {
+    let has_connect = args.iter().any(|argument| argument == "--connect-url");
+    let has_listener = ["--listen-address", "--listen-port", "--listen-path"]
+        .iter()
+        .any(|name| args.iter().any(|argument| argument == name));
+    match (has_connect, has_listener) {
+        (true, false) => value(args, "--connect-url"),
+        (false, true) => {
+            let address = value(args, "--listen-address")?;
+            let port = optional_u64(args, "--listen-port")?.unwrap_or(43127);
+            if !(1..=u16::MAX as u64).contains(&port) {
+                return Err(LocalRunnerError::invalid(
+                    "runner listener port must be in 1..=65535",
+                ));
+            }
+            let path = value(args, "--listen-path")?;
+            if address != "0.0.0.0" {
+                return Err(LocalRunnerError::invalid(
+                    "runner listener requires --listen-address 0.0.0.0",
+                ));
+            }
+            if path != format!("/api/runner/v1/connect/{run_id}") {
+                return Err(LocalRunnerError::invalid(
+                    "runner listener path must exactly match the configured run",
+                ));
+            }
+            Ok(format!("listen://{address}:{port}{path}"))
+        }
+        _ => {
+            return Err(LocalRunnerError::invalid(
+                "durable runner requires exactly one connect URL or complete listener group",
+            ))
+        }
+    }
+}
+
 fn run_durable(args: &[String]) -> Result<(), LocalRunnerError> {
     let ticket = capture_bootstrap_ticket()
         .map_err(|error| LocalRunnerError::invalid(error.to_string()))?
@@ -265,34 +311,7 @@ fn run_durable(args: &[String]) -> Result<(), LocalRunnerError> {
     };
     let state_dir = PathBuf::from(value(args, "--state-dir")?);
     let run_id = value(args, "--run-id")?;
-    let has_connect = args.iter().any(|argument| argument == "--connect-url");
-    let has_listener = ["--listen-address", "--listen-port", "--listen-path"]
-        .iter()
-        .any(|name| args.iter().any(|argument| argument == name));
-    let connect_url = match (has_connect, has_listener) {
-        (true, false) => value(args, "--connect-url")?,
-        (false, true) => {
-            let address = value(args, "--listen-address")?;
-            let port = value(args, "--listen-port")?;
-            let path = value(args, "--listen-path")?;
-            if address != "0.0.0.0" || port != "43127" {
-                return Err(LocalRunnerError::invalid(
-                    "runner listener requires --listen-address 0.0.0.0 and --listen-port 43127",
-                ));
-            }
-            if path != format!("/api/runner/v1/connect/{run_id}") {
-                return Err(LocalRunnerError::invalid(
-                    "runner listener path must exactly match the configured run",
-                ));
-            }
-            format!("listen://{address}:{port}{path}")
-        }
-        _ => {
-            return Err(LocalRunnerError::invalid(
-                "durable runner requires exactly one connect URL or complete listener group",
-            ))
-        }
-    };
+    let connect_url = durable_connect_url(args, &run_id)?;
     let ca_bundle_path = args
         .iter()
         .any(|argument| argument == "--ca-bundle-path")
@@ -322,7 +341,7 @@ fn run_durable(args: &[String]) -> Result<(), LocalRunnerError> {
         max_frame_bytes: usize_value(args, "--max-frame-bytes", 1024 * 1024)?,
         reconnect_delay: duration("--reconnect-delay-ms", 250)?,
         reconnect_grace: optional_u64(args, "--reconnect-grace-ms")?.map(Duration::from_millis),
-        max_runtime: duration("--max-runtime-ms", 60 * 60 * 1000)?,
+        max_runtime: duration("--max-runtime-ms", 0)?,
     };
     let executor = NativeProviderCommandExecutor::with_runner_config(state_dir, &config);
     run_durable_runner(config, ticket, executor)
@@ -359,9 +378,68 @@ fn run(args: &[String]) -> Result<(), LocalRunnerError> {
     })
 }
 
+fn run_main(args: Vec<String>) -> ExitCode {
+    let diagnostics_directory = diagnostic_directory(&args);
+    install_diagnostic_panic_hook(diagnostics_directory.clone());
+    install_crypto_provider();
+    match run(&args) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            let message = format!("paperclip-runnerd: {error}");
+            if let Some(directory) = diagnostics_directory {
+                if let Err(persist_error) = persist_runner_diagnostic(&directory, &message) {
+                    eprintln!(
+                        "paperclip-runnerd: failed to persist bounded diagnostic: {persist_error}"
+                    );
+                }
+            } else {
+                eprintln!("{message}");
+            }
+            ExitCode::FAILURE
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn listener_port_is_configurable_and_defaults_to_43127() {
+        let base: Vec<String> = [
+            "--listen-address",
+            "0.0.0.0",
+            "--listen-path",
+            "/api/runner/v1/connect/run_1",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect();
+        assert_eq!(
+            durable_connect_url(&base, "run_1").unwrap(),
+            "listen://0.0.0.0:43127/api/runner/v1/connect/run_1"
+        );
+        for port in ["43000", "43999", "65535"] {
+            let mut args = base.clone();
+            args.extend(["--listen-port".to_owned(), port.to_owned()]);
+            assert_eq!(
+                durable_connect_url(&args, "run_1").unwrap(),
+                format!("listen://0.0.0.0:{port}/api/runner/v1/connect/run_1")
+            );
+        }
+        for port in ["0", "65536", "-1", "invalid", ""] {
+            let mut args = base.clone();
+            args.extend(["--listen-port".to_owned(), port.to_owned()]);
+            assert!(durable_connect_url(&args, "run_1").is_err());
+        }
+        assert!(durable_connect_url(&base, "another_run").is_err());
+        let mut mixed = base.clone();
+        mixed.extend([
+            "--connect-url".to_owned(),
+            "wss://example.test/connect".to_owned(),
+        ]);
+        assert!(durable_connect_url(&mixed, "run_1").is_err());
+    }
 
     #[test]
     fn build_metadata_advertises_the_remote_transport_contract() {
@@ -369,9 +447,28 @@ mod tests {
         assert_eq!(metadata["schema"], RUNNERD_BUILD_METADATA_SCHEMA);
         assert_eq!(metadata["binaryContractVersion"], 2);
         assert_eq!(
+            metadata["externalProviderCapabilities"],
+            json!(["openai_dot_mcp", "grok_bot_mcp"])
+        );
+        assert_eq!(
+            metadata["durableSessionCapabilities"],
+            json!(["unlimited_runtime", "connection_lease_renewal"])
+        );
+        assert_eq!(
             metadata["prpTransportModes"],
             json!(["dial_ws_loopback", "dial_wss", "listen_ws"])
         );
+    }
+
+    #[test]
+    fn startup_installs_a_crypto_provider_before_tls_initialization() {
+        let _ = run_main(vec!["--build-metadata".to_owned()]);
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+
+        // Startup is process-global. A repeated startup call must remain
+        // safe when a provider was selected earlier in the process lifetime.
+        let _ = run_main(vec!["--build-metadata".to_owned()]);
+        let _ = rustls::ClientConfig::builder();
     }
 
     #[test]
@@ -422,23 +519,5 @@ mod tests {
 }
 
 fn main() -> ExitCode {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let diagnostics_directory = diagnostic_directory(&args);
-    install_diagnostic_panic_hook(diagnostics_directory.clone());
-    match run(&args) {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error) => {
-            let message = format!("paperclip-runnerd: {error}");
-            if let Some(directory) = diagnostics_directory {
-                if let Err(persist_error) = persist_runner_diagnostic(&directory, &message) {
-                    eprintln!(
-                        "paperclip-runnerd: failed to persist bounded diagnostic: {persist_error}"
-                    );
-                }
-            } else {
-                eprintln!("{message}");
-            }
-            ExitCode::FAILURE
-        }
-    }
+    run_main(std::env::args().skip(1).collect())
 }

@@ -11,6 +11,12 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { sumAttemptCosts } from "./runner-protocol-eval-metrics.mjs";
+import {
+  publicChatView,
+  PUBLIC_CHAT_SCHEMA,
+  PUBLIC_CHAT_NOTICE,
+} from "./public-eval-chat.mjs";
 
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,199}$/;
 const ATTEMPT_FILES = new Set([
@@ -48,7 +54,14 @@ function inside(root, candidate, label) {
   return resolve(candidate);
 }
 
-export function credentialForConfig(config) {
+function validateGrokAuthenticationMode(mode) {
+  if (mode !== "api_key" && mode !== "subscription") {
+    throw new Error("Grok authentication mode must be api_key or subscription");
+  }
+  return mode;
+}
+
+export function credentialForConfig(config, grokAuthenticationMode = "api_key") {
   if (config.provider === "opencode") return "OPENROUTER_API_KEY";
   if (config.provider === "claude_managed") return "ANTHROPIC_API_KEY";
   if (config.provider === "aws_agentcore") return "AWS_AGENTCORE_OIDC";
@@ -58,6 +71,11 @@ export function credentialForConfig(config) {
   if (config.provider === "acpx") {
     if (config.acpxAgent === "pi") return "OPENROUTER_API_KEY";
     if (config.acpxAgent === "claude") return "ANTHROPIC_API_KEY";
+    if (config.acpxAgent === "grok") {
+      return validateGrokAuthenticationMode(grokAuthenticationMode) === "subscription"
+        ? "PAPERCLIP_ACPX_GROK_AUTH_JSON_SECRET"
+        : "XAI_API_KEY";
+    }
     if (config.acpxAgent === "codex") return "OPENAI_API_KEY";
   }
   throw new Error(
@@ -97,7 +115,9 @@ async function maintainedRosterSelection(programRoot) {
       return basename(rosterPath);
     });
   if (selected.length === 0 || new Set(selected).size !== selected.length) {
-    throw new Error("Maintained live campaign must contain unique enabled rosters");
+    throw new Error(
+      "Maintained live campaign must contain unique enabled rosters",
+    );
   }
   return new Set(selected);
 }
@@ -108,8 +128,10 @@ export async function buildProtocolEvalCatalog({
   campaignId,
   source = {},
   maxParallel = 100,
+  grokAuthenticationMode = "api_key",
 }) {
   safeId(campaignId, "campaign ID");
+  validateGrokAuthenticationMode(grokAuthenticationMode);
   if (
     !Number.isSafeInteger(maxParallel) ||
     maxParallel < 2 ||
@@ -120,8 +142,7 @@ export async function buildProtocolEvalCatalog({
   const programRoot = resolve(evalsRoot, "evals/paperclip-runner");
   const rosterRoot = resolve(programRoot, "rosters");
   const requested = parseRosterSelection(rosterSelection);
-  const selected =
-    requested ?? (await maintainedRosterSelection(programRoot));
+  const selected = requested ?? (await maintainedRosterSelection(programRoot));
   const rosterFiles = (await readdir(rosterRoot, { withFileTypes: true }))
     .filter(
       (entry) =>
@@ -151,7 +172,7 @@ export async function buildProtocolEvalCatalog({
       `Config for ${rosterId}`,
     );
     const config = await loadObject(configPath);
-    const credentialName = credentialForConfig(config);
+    const credentialName = credentialForConfig(config, grokAuthenticationMode);
     const cases = roster.cases.map((caseId) => safeId(caseId, "case ID"));
     if (new Set(cases).size !== cases.length) {
       throw new Error(`Live roster ${rosterId} repeats a case`);
@@ -164,6 +185,9 @@ export async function buildProtocolEvalCatalog({
       provider: String(config.provider ?? "codex"),
       driver: String(config.driver ?? "codex_app_server"),
       credentialName,
+      ...(config.provider === "acpx" && config.acpxAgent === "grok"
+        ? { authenticationMode: grokAuthenticationMode }
+        : {}),
       cases,
     });
   }
@@ -177,6 +201,9 @@ export async function buildProtocolEvalCatalog({
     }
   }
   if (rosters.length === 0) throw new Error("No live rosters were selected");
+  if (grokAuthenticationMode === "subscription" && !rosters.some((roster) => roster.authenticationMode === "subscription")) {
+    throw new Error("Subscription selection requires an explicit Grok roster");
+  }
 
   const cells = rosters.flatMap((roster) =>
     roster.cases.map((caseId) => ({
@@ -188,6 +215,7 @@ export async function buildProtocolEvalCatalog({
       provider: roster.provider,
       driver: roster.driver,
       credentialName: roster.credentialName,
+      ...(roster.authenticationMode ? { authenticationMode: roster.authenticationMode } : {}),
     })),
   );
   const shards = [[], []];
@@ -201,6 +229,7 @@ export async function buildProtocolEvalCatalog({
     schema: "paperclip.runner-protocol-eval.catalog/v1",
     campaignId,
     source,
+    selection: { kind: requested === null ? "maintained_full" : "subset", rosters: rosterSelection, grokAuthenticationMode },
     rosters,
     cells,
     matrices: shards.map((include) => ({ include })),
@@ -390,6 +419,10 @@ export async function aggregateProtocolEvalCampaign({
     ) {
       throw new Error(`Downloaded cell metadata drifted for ${cellId}`);
     }
+    if (expected.authenticationMode !== undefined &&
+        (status.authenticationMode !== expected.authenticationMode || status.authenticationEvidenceFailure !== undefined)) {
+      throw new Error(`Invalid Grok authentication evidence for ${cellId}; retained cell metadata and attempts require inspection`);
+    }
     const attemptRoot = resolve(dirname(statusPath), "runs");
     const attemptIds = [];
     const attemptMetadata = await lstat(attemptRoot).catch(() => null);
@@ -432,6 +465,7 @@ export async function aggregateProtocolEvalCampaign({
   }
 
   const results = [];
+  const attemptUsages = [];
   for (const cell of catalog.cells) {
     const retained = retainedByCell.get(cell.cellId);
     const attemptIds = retained?.attemptIds?.length
@@ -445,6 +479,10 @@ export async function aggregateProtocolEvalCampaign({
           }),
         ];
     const finalAttemptId = attemptIds.at(-1);
+    for (const attemptId of attemptIds) {
+      const attempt = await loadObject(join(runsOut, attemptId, "artifact.json"));
+      attemptUsages.push(attempt.usage);
+    }
     const [score, artifact] = await Promise.all([
       loadObject(join(runsOut, finalAttemptId, "score.json")),
       loadObject(join(runsOut, finalAttemptId, "artifact.json")),
@@ -459,6 +497,7 @@ export async function aggregateProtocolEvalCampaign({
       model: cell.model,
       provider: cell.provider,
       driver: cell.driver,
+      ...(cell.authenticationMode ? { authenticationMode: cell.authenticationMode } : {}),
       attemptIds,
       finalAttemptId,
       disposition: score.disposition,
@@ -484,6 +523,8 @@ export async function aggregateProtocolEvalCampaign({
     schema: "paperclip.runner-protocol-eval.campaign/v1",
     campaignId: catalog.campaignId,
     generatedAt,
+    selection: catalog.selection,
+    costs: sumAttemptCosts(attemptUsages),
     source: {
       paperclip: source.paperclip,
       evals: source.evals,
@@ -497,6 +538,7 @@ export async function aggregateProtocolEvalCampaign({
       model: roster.model,
       provider: roster.provider,
       driver: roster.driver,
+      ...(roster.authenticationMode ? { authenticationMode: roster.authenticationMode } : {}),
       selected: roster.cases.length,
       passed: results.filter(
         (result) => result.rosterId === roster.rosterId && result.passed,
@@ -509,7 +551,8 @@ export async function aggregateProtocolEvalCampaign({
   return campaign;
 }
 
-function publicArtifact(artifact) {
+function publicArtifact(artifact, evalCase) {
+  const issueThread = publicChatView(artifact, evalCase);
   const model = artifact.snapshot?.providerModel ?? {};
   const infrastructure = artifact.infrastructureFailure;
   const providerVersion =
@@ -525,12 +568,29 @@ function publicArtifact(artifact) {
     provider: artifact.provider,
     driver: artifact.driver,
     providerVersion,
-    retainedSession: false,
+    retainedSession: null,
     retainedSessionStatus: "redacted from the public report",
     usage: safeUsage(artifact.usage),
-    turn: { status: artifact.turn?.status ?? "failed" },
+    timing: {
+      startedAt:
+        typeof artifact.timing?.startedAt === "string"
+          ? artifact.timing.startedAt
+          : null,
+      finishedAt:
+        typeof artifact.timing?.finishedAt === "string"
+          ? artifact.timing.finishedAt
+          : null,
+      durationMs: Number.isFinite(artifact.timing?.durationMs)
+        ? artifact.timing.durationMs
+        : null,
+    },
+    turn: {
+      status: artifact.turn?.status ?? "failed",
+      turnId: issueThread.turns.at(-1).id,
+    },
     snapshot: {
       createdAt: artifact.snapshot?.createdAt ?? artifact.createdAt,
+      sessionId: "public-report",
       providerModel: {
         id: model.id ?? artifact.requestedModel,
         provider: model.provider ?? artifact.provider,
@@ -539,6 +599,8 @@ function publicArtifact(artifact) {
       evidence: [],
     },
     devtools: { revisions: [] },
+    publication: { schema: PUBLIC_CHAT_SCHEMA, notice: PUBLIC_CHAT_NOTICE },
+    issueThread,
     ...(infrastructure && typeof infrastructure === "object"
       ? {
           infrastructureFailure: {
@@ -622,15 +684,22 @@ export async function sanitizeProtocolEvalRuns({ runsRoot, publicRunsRoot }) {
     await Promise.all([
       writeFile(
         join(destination, "artifact.json"),
-        json(publicArtifact(artifact)),
+        json(publicArtifact(artifact, evalCase)),
         { mode: 0o600 },
       ),
       writeFile(join(destination, "score.json"), json(publicScore(score)), {
         mode: 0o600,
       }),
-      writeFile(join(destination, "case.json"), json(evalCase), {
-        mode: 0o600,
-      }),
+      writeFile(
+        join(destination, "case.json"),
+        json({
+          id: evalCase.id,
+          checks: (evalCase.checks ?? []).map(({ id, kind }) => ({ id, kind })),
+        }),
+        {
+          mode: 0o600,
+        },
+      ),
       writeFile(join(destination, "config.json"), json(publicConfig(config)), {
         mode: 0o600,
       }),
@@ -656,6 +725,7 @@ async function main() {
       rosterSelection: argument(args, "--rosters", "all"),
       campaignId: argument(args, "--campaign-id", `local-${Date.now()}`),
       maxParallel: Number(argument(args, "--max-parallel", "100")),
+      grokAuthenticationMode: argument(args, "--grok-authentication", "api_key"),
       source: {
         paperclipSha: process.env.PAPERCLIP_PROTOCOL_EVAL_SOURCE_SHA ?? null,
         evalsSha: process.env.PAPERCLIP_PROTOCOL_EVALS_SHA ?? null,

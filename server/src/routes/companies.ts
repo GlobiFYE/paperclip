@@ -55,6 +55,7 @@ import {
   accessService,
   agentService,
   budgetService,
+  heartbeatService,
   buildExportFidelityReport,
   collectExportFidelityCounts,
   companyArtifactsService,
@@ -278,7 +279,9 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
   const router = Router();
   const importTransferSpoolRoot =
     options?.importTransferSpoolRoot ?? resolveDefaultImportTransferSpoolRoot();
-  const svc = companyService(db);
+  const svc = companyService(db, {
+    cancelWorkForScope: (scope) => heartbeatService(db).cancelBudgetScopeWork(scope),
+  });
   const agents = agentService(db);
   const portability = companyPortabilityService(db, storage);
   const access = accessService(db);
@@ -376,7 +379,18 @@ export function companyRoutes(db: Db, storage?: StorageService, options?: Compan
 
   router.get("/", async (req, res) => {
     assertBoard(req);
+    const scope = req.query.scope;
+    if (scope !== undefined && scope !== "accessible") {
+      throw badRequest("scope must be a single accessible value when provided");
+    }
     const result = await svc.list();
+    // Navigation needs the same membership scope as company detail routes.
+    // Instance admins can inspect the directory without membership, but that
+    // visibility alone does not let them open a company's inbox or tasks.
+    if (scope === "accessible") {
+      res.json(result.filter((company) => hasCompanyAccess(req, company.id)));
+      return;
+    }
     if (req.actor.source === "local_implicit" || req.actor.isInstanceAdmin) {
       res.json(result);
       return;

@@ -18,6 +18,31 @@ export const ACPX_HANDSHAKE_TIMEOUT_MS = 60_000;
 // of a channel loss.
 export const ACPX_HANDSHAKE_TRANSPORT_POLL_MS = 250;
 
+// The bound on how long the host waits, after a latched terminal sandbox
+// duplex-channel loss, for the agent to answer the `turn.cancel()` request.
+// `cancel()` only asks the agent to end the turn; it does not end the turn by
+// itself. An agent that stopped answering never honors it, so this deadline
+// is the host-side bound that ends the run without the agent's help. It is
+// much smaller than the whole-adapter execution timeout.
+export const ACPX_DUPLEX_LOSS_CANCEL_DEADLINE_MS = 30_000;
+
+// The per-call deadline Claude applies to MCP tool calls (`MCP_TOOL_TIMEOUT`)
+// when Paperclip attaches runtime MCP servers. Claude's own default is far
+// longer than a run, so a gateway call that never answers holds the turn until
+// the 4h sandbox backstop ends the run. The gateway bounds each provider call
+// at 60s and approval preparation at 2 minutes; this leaves wide headroom over
+// both.
+// On expiry Claude returns an MCP error to the model and the turn continues.
+// A user-configured `MCP_TOOL_TIMEOUT` still wins.
+export const ACPX_CLAUDE_MCP_TOOL_TIMEOUT_MS = 15 * 60 * 1000;
+
+// The closed ACP `ToolKind` enum. Run diagnostics may report these labels for
+// pending tool calls; tool titles, names, and inputs never leave the run.
+// Any other reported kind is collapsed to "unknown".
+export const ACP_TOOL_KINDS = [
+  "read", "edit", "delete", "move", "search", "execute", "think", "fetch", "switch_mode", "other",
+] as const;
+
 export const ACPX_ADAPTER_AGENT_IDS = {
   claude_local: "claude",
   codex_local: "codex",

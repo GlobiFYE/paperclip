@@ -13,6 +13,7 @@ export type {
   ConnectionsSearchResult,
   ConnectionRequestResult,
   ConnectionIntentSetupOptions,
+  ConnectionIntentSetupConnection,
   CompleteConnectionIntentInput,
   DeclineConnectionIntentInput,
 } from "./connection-intent.js";
@@ -279,6 +280,7 @@ export type {
   AgentDetail,
   ClearAgentErrorResponse,
   AgentPermissions,
+  AgentPublicIdentity,
   AgentRuntimeConfig,
   AgentInstructionsBundleMode,
   AgentInstructionsFileSummary,
@@ -298,6 +300,7 @@ export type {
   AdapterAuthSessionResponse,
   AdapterAuthSessionPrompt,
   AdapterAuthSessionOwnerResponse,
+  CodexAccountBindingClaim,
   StartAdapterAuthSessionRequest,
   AdapterAuthPanelMode,
   ClaudeSetupTokenSessionPrompt,
@@ -349,7 +352,22 @@ export type {
   DocumentTextRange,
   UpdateDocumentAnnotationThreadRequest,
 } from "./document-annotation.js";
-export type { Project, ProjectBudgetSummary, ProjectCodebase, ProjectCodebaseOrigin, ProjectGoalRef, ProjectManagedByPlugin, ProjectWorkspace } from "./project.js";
+export type {
+  Project,
+  ProjectRepository,
+  ProjectRepositoryOptions,
+  ProjectAccessMember,
+  ProjectAccessSubjectType,
+  ProjectDiscoverySummary,
+  ProjectDiscoveryPage,
+  ProjectBudgetSummary,
+  ProjectCodebase,
+  ProjectCodebaseOrigin,
+  ProjectGoalRef,
+  ProjectManagedByPlugin,
+  ProjectVisibility,
+  ProjectWorkspace,
+} from "./project.js";
 export type {
   CompanySearchCountType,
   CompanySearchExtractIssueResult,
@@ -506,6 +524,7 @@ export type {
   ToolConnectionCredentialSource,
   ToolConnectionCredentialPolicy,
   ToolConnectionOwnership,
+  ToolConnectionPurpose,
   ToolConnectionTransport,
   ToolConnectionStatus,
   ToolConnectionKind,
@@ -605,6 +624,7 @@ export type {
   ToolConnectionTestAgentAccessResponse,
   ToolConnectionTestAgentsResponse,
   ToolConnectionTestCallResult,
+  ToolUpstreamPending,
   ToolConnectionTestCallStatus,
   ToolConnectionTestCallStatusPhase,
 } from "./tool-access.js";
@@ -659,6 +679,13 @@ export type {
   IssueSubtreeDiagnosticNode,
   IssueSubtreeDiagnosticEdge,
   IssueSubtreeDiagnosticsResponse,
+  IssueVisibility,
+  IssuePrivacyConstraints,
+  IssueAccessGrant,
+  IssueAccessGrantAgentVisibility,
+  IssueAccessGrantSubjectType,
+  IssueAccessGrantSource,
+  IssueLockedStub,
   IssueBlockerAttention,
   IssueBlockerAttentionIssueSummary,
   IssueBlockerAttentionReason,
@@ -680,8 +707,6 @@ export type {
   IssueBlockedInboxReason,
   IssueBlockedInboxSeverity,
   IssueBlockedInboxState,
-  IssueProductivityReview,
-  IssueProductivityReviewTrigger,
   IssueRecoveryAction,
   SuccessfulRunHandoffState,
   SuccessfulRunHandoffStateKind,
@@ -779,6 +804,7 @@ export type {
   IssueAncestorProject,
   IssueAncestorGoal,
   IssueAttachment,
+  IssueCreationSource,
   IssueLabel,
   IssueWatchdog,
   IssueWatchdogStatus,
@@ -787,6 +813,7 @@ export type {
 export type {
   IssueTreeControlPreview,
   IssueTreeHold,
+  ReleaseIssueTreeHoldResponse,
   IssueTreeHoldMember,
   IssueTreeHoldReleasePolicy,
   IssueTreePreviewAgent,
@@ -865,6 +892,7 @@ export type {
   RoutineRevisionSnapshot,
   RoutineRevision,
   RoutineTrigger,
+  RoutineWebhookDelivery,
   RoutineRun,
   RoutineTriggerSecretMaterial,
   RoutineDetail,
@@ -872,10 +900,11 @@ export type {
   RoutineExecutionIssueOrigin,
   RoutineListItem,
 } from "./routine.js";
-export type { CostEvent, CostSummary, IssueCostSummary, CostByAgent, CostByProviderModel, CostByBiller, CostByAgentModel, CostWindowSpendRow, CostByProject } from "./cost.js";
+export type { CostEvent, CostSummary, CostDataQualityItem, CostDataQualityReport, CostDataQualityReason, IssueCostSummary, CostByUser, CostByUserReport, CostByAgent, CostByProviderModel, CostByBiller, CostByAgentModel, CostWindowSpendRow, CostByProject } from "./cost.js";
 export type { FinanceEvent, FinanceSummary, FinanceByBiller, FinanceByKind } from "./finance.js";
 export type {
   AgentWakeupResponse,
+  ChatFailedRunRetryResponse,
   AgentWakeupSkipped,
   GitWorktreeBranchAncestryVerdict,
   GitWorktreeBranchIncoherenceEvidence,
@@ -1060,3 +1089,17 @@ export type {
   PluginDatabaseNamespaceStatus,
 } from "./plugin.js";
 export * from "./app-definition.js";
+export * from "./chat-channels.js";
+export * from "./chat-github.js";
+
+export * from "./email.js";
+
+export type { AgentInstructionErrorCode, AgentInstructionErrorDetails, AgentInstructionSource, AgentInstructionRevision, AgentInstructionSnapshot, AgentInstructionCommitReceipt, AgentInstructionHistory, AgentInstructionDiff } from "./agent.js";
+
+export type { AgentInstructionCandidate } from "./agent.js";
+
+export * from "./skill-source.js";
+
+export * from "./agent-lifecycle.js";
+
+export * from "./task-workspace.js";

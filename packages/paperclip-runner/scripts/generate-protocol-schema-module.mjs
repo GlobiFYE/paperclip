@@ -15,7 +15,11 @@ const validatorsOutputPath = resolve(
 const schemaNames = [
   "identity",
   "capabilities",
+  "capabilities-v2",
+  "capabilities-v3",
   "command",
+  "command-v2",
+  "command-v3",
   "provider-descriptor",
   "provider-event",
   "workspace-diff",
@@ -30,6 +34,9 @@ const schemaNames = [
   "request",
   "result",
   "event",
+  "event-v2",
+  "event-v3",
+  "session-goal",
   "fixture",
 ];
 
@@ -61,6 +68,8 @@ for (const { value } of schemas) ajv.addSchema(value);
 const standaloneValidators = standaloneCode(ajv, {
   fixtureValidator: schemaByName.fixture.$id,
   eventValidator: schemaByName.event.$id,
+  eventV2Validator: schemaByName["event-v2"].$id,
+  eventV3Validator: schemaByName["event-v3"].$id,
   resultValidator: schemaByName.result.$id,
 });
 const ucs2RuntimePattern = /const (func\d+) = require\("ajv\/dist\/runtime\/ucs2length"\)\.default;/;

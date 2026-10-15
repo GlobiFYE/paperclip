@@ -1,5 +1,89 @@
 # Direct live Runner protocol evals
 
+For choosing between Runner Evals and full-stack Product E2E Evals, and for
+shared guidance on provenance, history, cost, and failure classification, see
+the [Paperclip evaluation guide](../../../doc/evals.md). This document remains
+the authoritative Runner Evals live protocol runbook.
+
+## One Evalbook presentation
+
+Every new report uses the canonical Evalbook grid and the existing Runner Lab
+chat viewer for attempt drill-downs. There is no plain-HTML attempt fallback.
+The grid, Latest, test-design, inventory and server-gate pages load the same
+built stylesheet and fonts as the chat viewer. The long-term S3 history index
+references that stylesheet inside an immutable campaign, so every page keeps
+the same dark theme. Static site styles live in
+`devtools/issue-thread/src/evalbook-site.css`, scoped to `.evalbook-site`;
+colors and typography come from the Runner Lab token layer.
+Missing recordings show a notice in the same viewer; missing viewer builds
+fail generation. Build with
+`pnpm --filter @paperclipai/paperclip-runner build:issue-thread` and provide
+`--viewer-root` or `PAPERCLIP_EVAL_VIEWER_ROOT` to the canonical Python renderer.
+
+The Actions artifact contains full evidence. S3 uses the same viewer with a
+closed public DTO: only isolated mock-run conversation text, scrubbed private
+references, named tool outcomes, and checks. Tool arguments/results, reasoning,
+provider identities, and company snapshots stay private. The public notice
+explains these redactions. An unverified isolation boundary yields no public
+conversation, not a guessed reconstruction.
+
+Public attempts use inert JSON and one shared viewer asset directory. The
+publisher verifies each shell and asset against the exact same-run viewer build,
+checks the public payload contract and local links, and rejects other scripts.
+The CSP prohibits network calls, forms and external resources. Supply
+`PAPERCLIP_RUNNER_PROTOCOL_EVAL_VIEWER_DIR` to the publisher. The workflow sends
+a viewer-only artifact to that job; raw attempts and provider secrets stay out.
+After publication succeeds, the publishing job writes **Open this run's
+Evalbook** and **All eval runs** links to the Actions summary. Its deployment
+URL also points to the exact immutable report, not to the downloadable ZIP.
+Failed publication does not advertise a successful deployment.
+
+Before uploading, the report job runs the actual built application in Chromium
+against representative passing, failing and missing-recording pages in both
+reports. It checks initial rendering, tool expansion, read-only controls,
+navigation, reload, a narrow viewport and the public no-API-request boundary.
+In full-evidence reports, a tool's **View in Evidence** link selects the Evidence
+tab and highlights its record, including when reopening that same record after
+switching tabs. The browser check exercises this cross-link too.
+Run the same check locally with
+`node packages/paperclip-runner/scripts/verify-runner-evalbook-viewer.mjs --report-root /path/to/report`.
+Add `--screenshots /path/to/proof` for visual evidence. Public screenshots are
+retained in the aggregate Actions artifact, not added to the public report's
+closed file allowlist.
+
+These screenshots are generated acceptance-test evidence from the scrubbed
+completed campaign, not a separate report design:
+
+![Passing chat replay with expanded tool evidence](images/evalbook-chat/passed.png)
+![Failed chat replay with visible assertions](images/evalbook-chat/failed.png)
+![Missing recording shown in the same viewer](images/evalbook-chat/missing-recording.png)
+
+### Refresh a completed report without calling models
+
+Download the aggregate Actions artifact, then:
+
+```sh
+node packages/paperclip-runner/scripts/refresh-runner-protocol-eval-report.mjs \
+  --source /path/to/downloaded-aggregate \
+  --evals-root /path/to/paperclip-evals \
+  --viewer-root packages/paperclip-runner/dist-issue-thread \
+  --output /path/to/new-refresh-directory \
+  --revision chat-v1
+```
+
+Publish the returned `reportRoot` with the normal history publisher. The new ID
+is `gha-RUN-ATTEMPT-report-chat-v1`. Original reports remain immutable; history
+adds a labeled refresh and retains the source campaign, original measurement
+timestamp, renderer digest, and `providerCalls: 0`. Scores and evaluated source
+revisions do not change. This is not a new model qualification run. Future live
+runs create chat reports automatically.
+Refreshes are ordered by their render time in the history list, but keep the
+original measurement timestamp and never replace the latest or latest-green
+qualification identities. The HTML history links each measurement to its newest
+presentation, while retaining every original bundle and listing refreshes separately.
+Refreshes also recover retry-inclusive estimated and provider-list costs from the
+retained attempt records. They never add another model-cost measurement.
+
 This is the provider-backed, one-turn protocol qualification layer in
 `paperclipai/paperclip-evals/evals/paperclip-runner`. It is intentionally
 separate from both the browser full-stack model E2E and the stress-derived
@@ -36,6 +120,34 @@ from the default branch and provide:
 - `max_infrastructure_retries`: zero through three, applied only when an
   attempt explicitly reports a retryable infrastructure failure.
 
+Native suspension failures are non-retryable infrastructure failures. The CLI
+retains only allowlisted close diagnostics: suspension and provider-drain
+booleans, the suspension-command status, the durable Runner lifecycle, and
+whether its identity matches. Missing or conflicting suspension evidence never
+becomes a pass. Preserve the original artifact before correcting a close defect
+and explicitly authorizing a new attempt.
+
+Pi cleanup stops an idle provider during close preparation through the exact
+native process owner. Native code rejects active turns or pending callbacks on
+that idle path. It proves release of the original inherited lifetime fence and
+preserves the attested provider identity. The subsequent drain and suspension
+barriers still require their durable receipts. An unconfirmed provider exit
+cannot certify a reusable checkpoint.
+- `grok_authentication`: `api_key` (the compatibility default) or `subscription`.
+  Subscription requires an explicitly selected Grok roster and the owner-approved
+  `GROK_AUTH_JSON` secret in the protected `runner-e2e-paid` environment. API mode
+  uses only `XAI_API_KEY`. A missing selected credential fails; it never changes
+  authentication mode or falls back to another credential.
+
+For subscription qualification, pass `-f grok_authentication=subscription` when
+dispatching the default-branch workflow. The immutable catalog, retained cell,
+campaign roster, and result record carry `authenticationMode`. The cell reads it
+from the pinned eval program's actual roster summary, and aggregation rejects
+missing or mismatched authentication evidence. Select an eval revision that
+supports Grok subscription admission and records this summary field. Keep API
+and subscription campaigns separate when interpreting results. Remove temporary
+subscription test secrets after the authorized qualification completes.
+
 The authorization job resolves the Paperclip branch to a commit and verifies
 the supplied eval commit before any checkout. A short-lived bot token generated
 from `COMMITPERCLIP_KEY` authorizes each checkout of the private eval repository;
@@ -55,6 +167,16 @@ versions and patched ACP server bytes. Do not replace this step with a fresh
 `npm install` of the packed Runner tarball: npm cannot apply the workspace's
 `patchedDependencies`, so the resulting ACPX executables no longer match their
 qualified digests.
+
+Candidate ACPX evals require both `--candidate-profile <agent>` and
+`--expected-acpx-profile <JSON>`. The eval program supplies the exact configured
+profile as the JSON argument. Before creating a runtime context or provider
+service, the built CLI compares every profile field, including model, version
+and command digest, with its own resolved profile. Missing, extra or mismatched
+fields fail admission. Older CLIs reject the new flag before execution; there
+is no retry without the check. The daemon's own profile admission and binary
+digest check remain independent gates. Post-run scoring still compares the
+retained profile as evidence, but cannot replace this pre-launch check.
 
 The direct eval CLI also materializes a minimal immutable native runtime
 context in each isolated attempt workspace. This keeps the direct layer on the
@@ -88,6 +210,9 @@ replacement objective or proof that a newly requested action is already done.
 Finishing the provider turn does not authorize an unrequested mock task-state
 change or completion comment. These harness instructions keep single-operation
 cases bounded while leaving their operation and state-effect assertions intact.
+For a bounded request, the harness also asks for only the context needed to act.
+A brief progress request does not require an investigation of unrelated history
+or documents. Its grader still requires the actual successful mutation.
 
 ACPX accounting uses the qualified server's billable token semantics: Claude
 and Codex already include reasoning in output, and Codex has no cache-write
@@ -121,6 +246,7 @@ The paid jobs read only the credential selected for each roster:
 - `OPENAI_API_KEY` for native Codex and ACPX Codex;
 - `ANTHROPIC_API_KEY` for ACPX Claude and Claude Managed;
 - `OPENROUTER_API_KEY` for native OpenCode and ACPX Pi;
+- `XAI_API_KEY` for an explicitly selected ACPX Grok roster;
 - short-lived GitHub OIDC workload identity for AWS AgentCore.
 
 Claude Managed also requires the four nonsecret
@@ -149,11 +275,11 @@ read-only Runner issue-thread attempt pages, and raw immutable run records.
 
 Public publishing uses a separate projection and a separate trusted OIDC job.
 The projection retains model/config identity, status, usage totals, and check
-outcomes but removes provider session identifiers, transcripts, semantic-tool
+outcomes and scrubbed mock conversation, but removes provider session identifiers, semantic-tool
 payloads, state revisions, traces, remote profile identities, and raw failure
 text. The same Evalbook `report` command renders that projection, so the public
-grid and test pages have the standard Evalbook layout. The publisher rejects
-scripts, remote resources, symlinks, unknown paths, broken links, raw session
+grid, test pages and chat viewer have the standard Evalbook layout. The publisher rejects
+untrusted scripts, remote resources, symlinks, unknown paths, broken links, raw session
 fields, and credential-shaped values.
 
 S3 publication is additive:
@@ -178,9 +304,27 @@ runner-protocol-evals/
 Campaign files use immutable cache headers and a digest manifest. Reusing a
 campaign ID with different bytes fails closed. Only the root history and
 pointer files are mutable, and the publisher never deletes objects. The root
-history retains at most 200 records, reserving one record for the latest green
-campaign when it would otherwise fall outside that window so its pointer stays
-valid.
+history retains **all** run records; it no longer drops entries after 200 campaigns.
+
+The history index includes:
+
+- Pass-rate and cost timelines, grouped by identical cell/model/driver membership
+  and eval-suite SHA. Different suites and subsets cannot silently share a baseline.
+- Regression and recovery lists against the previous matching run, linking to the
+  affected tests. Infrastructure failures stay distinct from behavior failures.
+- Estimated cost and provider-reported list cost, shown separately, never added.
+  New campaigns include all retained attempts (including retries). Backfilled old
+  campaigns with only final-cell usage are labeled **historical final attempts only**.
+  Missing usage is unknown, not zero; partial totals use `≥` and display coverage.
+- Exact Paperclip and eval-suite commit links (full SHA on hover), the source ref,
+  and the GitHub Actions run. These identify the code **evaluated**, not merely
+  the commit used to render an old report.
+- A separate report-refresh list, excluded from trend points and model-spend totals.
+
+`history.json` stores a versioned, derived `analytics` projection separately from
+immutable campaign records. The publisher backfills missing analytics from each
+original `campaign.json`; a refresh may enrich costs using retained raw attempts
+only when its source metadata and scores still match the original record.
 
 The publishing job uses dedicated `RUNNER_PROTOCOL_EVAL_HISTORY_*` variables
 when present and falls back to the existing Runner E2E history role, region,
@@ -206,3 +350,14 @@ pnpm --filter @paperclipai/paperclip-runner \
   --campaign-id gha-1-1 \
   --output /tmp/runner-protocol-eval-catalog.json
 ```
+
+
+For Grok qualification, select `protocol-live-acpx-grok` and its exact eval
+revision. Set `max_parallel: 2` when the API key has a low custom rate limit;
+this admits one case per shard. The override can only lower the configured
+campaign ceiling and cannot change the key's provider limits. Retain any
+rate-limited attempts as failures. The build installs the target's pinned,
+checksum-verified Grok binary before packaging the portable runtime. Targets
+without the Grok package keep their existing build behavior. This protocol
+workflow uses the explicitly selected API key; subscription credentials are
+not delivered by it.

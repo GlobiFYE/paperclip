@@ -96,7 +96,6 @@ vi.mock("../adapters/use-adapter-capabilities", () => ({
 }));
 // Animation / canvas-ish children that add nothing to the logic under test.
 vi.mock("./AsciiArtAnimation", () => ({ AsciiArtAnimation: () => null }));
-vi.mock("./FrontDoor", () => ({ FrontDoor: () => null }));
 vi.mock("./AgentCapsule", () => ({ AgentCapsule: () => null }));
 
 import { queryKeys } from "../lib/queryKeys";
@@ -201,7 +200,7 @@ describe("OnboardingWizard adapter selection", () => {
     });
   });
 
-  it("keeps onboarding on legacy adapters even when Paperclip Runner is enabled", async () => {
+  it("recovers a saved Codex runner draft without changing its model or runner", async () => {
     mockAdapterRegistry.list = [
       { type: "paperclip_runner" },
       { type: "codex_local" },
@@ -224,7 +223,8 @@ describe("OnboardingWizard adapter selection", () => {
       window.localStorage.getItem(ONBOARDING_STORAGE_KEY) ?? "{}",
     );
     expect(saved.adapterType).toBe("codex_local");
-    expect(saved.model).toBe("");
+    expect(saved.runner).toBe("paperclip");
+    expect(saved.model).toBe("gpt-runner-only");
     expect(saved.command).toBe("");
     expect(saved.args).toBe("");
     expect(saved.url).toBe("");
@@ -254,8 +254,9 @@ describe("OnboardingWizard adapter selection", () => {
     const saved = JSON.parse(
       window.localStorage.getItem(ONBOARDING_STORAGE_KEY) ?? "{}",
     );
-    expect(saved.adapterType).toBe("claude_local");
-    expect(saved.model).toBe("");
+    expect(saved.adapterType).toBe("codex_local");
+    expect(saved.runner).toBe("paperclip");
+    expect(saved.model).toBe("gpt-runner-only");
     expect(saved.command).toBe("");
     expect(saved.args).toBe("");
     expect(saved.url).toBe("");
