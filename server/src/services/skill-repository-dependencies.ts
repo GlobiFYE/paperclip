@@ -15,6 +15,7 @@ export async function skillRepositoryDependencies(
   const paths = indexSkillPackagePaths(entries.map(entry => entry.path));
   const byPath = new Map(entries.map(entry => [entry.path, entry]));
   const selected = new Map<string, GitSkillTreeEntry>();
+  let pending: GitSkillTreeEntry[] = [];
   let bytes = 0;
   const add = (entry: GitSkillTreeEntry) => {
     if (entry.type === 'tree' || selected.has(entry.path)) return;
@@ -22,18 +23,16 @@ export async function skillRepositoryDependencies(
     if (selected.size > MAX_REPOSITORY_FILES) throw unprocessable('Repository package exceeds the 9,990 file limit.');
     if (entry.type === 'blob' && ['100644', '100755'].includes(entry.mode) && (entry.size ?? 0) <= 1024 * 1024) bytes += entry.size ?? 0;
     if (bytes > MAX_REPOSITORY_BYTES) throw unprocessable('Repository package exceeds the 61 MB runtime limit.');
+    if (entry.type === 'blob' && ['100644', '100755'].includes(entry.mode) && /\.md$/i.test(entry.path)) pending.push(entry);
   };
   for (const entry of initial) add(entry);
   const manifest = byPath.get('paperclip.skills.json');
   if (manifest) add(manifest);
-  const inspected = new Set<string>();
-  for (;;) {
-    const pending = [...selected.values()].filter(entry => !inspected.has(entry.path)
-      && entry.type === 'blob' && ['100644', '100755'].includes(entry.mode) && /\.md$/i.test(entry.path));
-    if (!pending.length) break;
-    await prefetch?.(pending);
-    for (const entry of pending) {
-      inspected.add(entry.path);
+  while (pending.length) {
+    const frontier = pending;
+    pending = [];
+    await prefetch?.(frontier);
+    for (const entry of frontier) {
       const content = await readBlob(entry);
       if (!content) continue;
       let root = path.posix.dirname(entry.path);
