@@ -14,6 +14,9 @@ current execution/checkout owners, other live work, dependencies, pause holds,
 and stop/successor records before restoring the binding. Attachment authorization
 keeps its existing requirement for that exact binding. Skipped retry candidates
 wait 30 seconds before recheck so they cannot fill every bounded claim batch.
+Undated retries sort first. A failed candidate cannot discard earlier committed
+claims. Queued waiters do not block the original execution owner from recovery;
+they still wait for that owner to settle before normal queue promotion.
 This is local run-log data.
 
 Fresh remote Codex model substitution emits `runner.model_fallback` on the
