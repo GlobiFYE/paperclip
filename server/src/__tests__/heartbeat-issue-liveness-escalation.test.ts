@@ -1225,6 +1225,56 @@ describeEmbeddedPostgres("heartbeat resolved dependency wake reconciliation", ()
     expect(result.healed).toBe(1);
   });
 
+  it.each(["title", "monitorNotes"])("preserves an assignee block after an unrelated %s edit", async (field) => {
+    const { companyId, agentId, blockedIssueId } =
+      await seedResolvedDependencyBackstopFixture({ workspaceState: "none" });
+    const blockedTransitionAt = new Date("2026-08-01T12:00:00.000Z");
+    await db.update(issues).set({ blockedTransitionAt }).where(eq(issues.id, blockedIssueId));
+    await db.insert(activityLog).values([
+      { companyId, actorType: "agent", actorId: agentId, agentId, action: "issue.updated",
+        entityType: "issue", entityId: blockedIssueId, details: { status: "blocked" }, createdAt: blockedTransitionAt },
+      { companyId, actorType: "user", actorId: "board-user", action: "issue.updated",
+        entityType: "issue", entityId: blockedIssueId, details: { changes: { [field]: { from: "old", to: "new" } } },
+        createdAt: new Date("2026-08-01T12:05:00.000Z") },
+    ]);
+    const result = await heartbeatService(db).reconcileResolvedDependencyWakes();
+    expect(result.healed).toBe(0);
+    expect(result.selfBlockedSkipped).toBe(1);
+  });
+
+  it.each([true, false])("checks the native blocked decision run owner (assignee: %s)", async (sameOwner) => {
+    const { companyId, agentId, blockedIssueId } =
+      await seedResolvedDependencyBackstopFixture({ workspaceState: "none" });
+    const blockedTransitionAt = new Date("2026-08-01T12:00:00.000Z");
+    await db.update(issues).set({ blockedTransitionAt }).where(eq(issues.id, blockedIssueId));
+    const otherAgentId = randomUUID();
+    if (!sameOwner) await db.insert(agents).values({ id: otherAgentId, companyId, name: "Other agent", role: "engineer", status: "idle", adapterType: "process" });
+    const [run] = await db.insert(heartbeatRuns).values({ companyId, agentId: sameOwner ? agentId : otherAgentId,
+      issueId: blockedIssueId, status: "succeeded", runtimeMode: "native", contextSnapshot: { issueId: blockedIssueId } }).returning();
+    await db.insert(activityLog).values({ companyId, actorType: "system", actorId: "native-status-committer",
+      runId: run.id, action: "issue.updated", entityType: "issue", entityId: blockedIssueId,
+      details: { source: "native_status_decision", fromStatus: "in_progress", toStatus: "blocked" }, createdAt: blockedTransitionAt });
+    const result = await heartbeatService(db).reconcileResolvedDependencyWakes();
+    expect(result.healed).toBe(sameOwner ? 0 : 1);
+    expect(result.selfBlockedSkipped).toBe(sameOwner ? 1 : 0);
+  });
+
+  it.each(["completion", "finalize"] as const)("heals a self-block after later blocker %s", async (event) => {
+    const { companyId, agentId, blockedIssueId, blockerIssueId, executionWorkspaceId } =
+      await seedResolvedDependencyBackstopFixture({ workspaceState: event === "finalize" ? "not_finalized" : "none" });
+    const blockedTransitionAt = new Date("2026-08-01T12:00:00.000Z");
+    const completedAt = new Date("2026-08-01T12:05:00.000Z");
+    await db.update(issues).set({ blockedTransitionAt }).where(eq(issues.id, blockedIssueId));
+    await db.insert(activityLog).values({ companyId, actorType: "agent", actorId: agentId, agentId,
+      action: "issue.updated", entityType: "issue", entityId: blockedIssueId, details: { status: "blocked" }, createdAt: blockedTransitionAt });
+    if (event === "completion") await db.update(issues).set({ completedAt }).where(eq(issues.id, blockerIssueId));
+    else await db.insert(workspaceOperations).values({ companyId, executionWorkspaceId, issueId: blockerIssueId,
+      phase: "workspace_finalize", status: "succeeded", startedAt: completedAt, finishedAt: completedAt });
+    const result = await heartbeatService(db).reconcileResolvedDependencyWakes();
+    expect(result.healed).toBe(1);
+    expect(result.selfBlockedSkipped).toBe(0);
+  });
+
   it("still heals when someone other than the assignee opened the blocked cycle", async () => {
     const { companyId, agentId, blockedIssueId } =
       await seedResolvedDependencyBackstopFixture({ workspaceState: "none" });
