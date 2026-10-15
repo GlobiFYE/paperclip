@@ -64,7 +64,7 @@ const credential = "daytona-fixture-secret";
       expect(tool, name).toBeTruthy();
       return gateway.executeTool({ sessionToken: session.token, tool: tool!.name, parameters, idempotencyKey: randomUUID() });
     };
-    return { company, service, connected, agent, request, call, organizationId, sandboxId,
+    return { company, service, connected, agent, request, call, gateway, session, organizationId, sandboxId,
       foreignOrganization: () => { sandboxOrganization = randomUUID(); }, foreignProxy: () => { proxy = "https://attacker.example/toolbox"; } };
   }
 
@@ -144,6 +144,70 @@ const credential = "daytona-fixture-secret";
     f.request.mockClear();
     await expect(f.call("daytona_toolbox_execute_command", { sandboxId: f.sandboxId, body: { command: "true" } })).rejects.toThrow();
     expect(f.request).not.toHaveBeenCalled();
+  });
+
+  async function installLegacyCatalog(f: Awaited<ReturnType<typeof fixture>>) {
+    await db.delete(toolCatalogEntries).where(eq(toolCatalogEntries.connectionId, f.connected.connectionId));
+    const legacyNames = ["daytona_get_account", "daytona_list_workspaces", "daytona_get_workspace", "daytona_get_workspace_recovery"];
+    const legacy = await db.insert(toolCatalogEntries).values(legacyNames.map(toolName => ({
+      companyId: f.company.id, applicationId: f.connected.connection.applicationId, connectionId: f.connected.connectionId,
+      name: toolName, toolName, title: toolName === "daytona_get_workspace_recovery" ? "Get workspace recovery" : toolName,
+      entryKind: "tool", status: "active", riskLevel: "read", isReadOnly: true,
+      inputSchema: { type: "object" }, versionHash: "legacy", schemaHash: "legacy",
+    }))).returning();
+    await f.service.finishGalleryAppConnection(f.company.id, f.connected.connectionId, {
+      enabledCatalogEntryIds: legacy.map(entry => entry.id), askFirstCatalogEntryIds: [], access: { agentIds: [f.agent.id] },
+    }, actor);
+    // Earlier read-only defaults must not authorize the expanded native catalog.
+    const [row] = await db.select().from(toolConnections).where(eq(toolConnections.id, f.connected.connectionId));
+    await db.update(toolConnections).set({ config: { ...row.config, safeDefault: true } }).where(eq(toolConnections.id, row.id));
+    return legacyNames;
+  }
+
+  it.each([false, true])("upgrades a saved four-action catalog without exposing or authorizing retired tools (personal=%s)", async personal => {
+    const f = await fixture(personal);
+    const legacyNames = await installLegacyCatalog(f);
+    expect((await f.gateway.listToolsForSession(f.session.token)).some(tool => legacyNames.includes(tool.upstreamToolName ?? ""))).toBe(false);
+    f.request.mockClear();
+    const catalog = await f.service.listCatalog(f.connected.connectionId, f.company.id, actor);
+    expect(catalog).toHaveLength(274);
+    expect(catalog.every(entry => entry.status === "quarantined")).toBe(true);
+    expect(catalog.some(entry => legacyNames.includes(entry.toolName))).toBe(false);
+    const stored = await db.select().from(toolCatalogEntries).where(eq(toolCatalogEntries.connectionId, f.connected.connectionId));
+    expect(stored.filter(entry => legacyNames.includes(entry.toolName))).toHaveLength(4);
+    expect(stored.filter(entry => legacyNames.includes(entry.toolName)).every(entry => entry.status === "removed")).toBe(true);
+    expect(f.request).toHaveBeenCalledTimes(1);
+    f.request.mockClear();
+    expect(await f.service.listCatalog(f.connected.connectionId, f.company.id, actor)).toHaveLength(274);
+    expect(f.request).not.toHaveBeenCalled();
+    expect((await f.gateway.listToolsForSession(f.session.token)).some(tool => tool.upstreamToolName?.startsWith("daytona_"))).toBe(false);
+  }, 30000);
+
+  it("hides retired native actions even when the saved key cannot refresh its catalog", async () => {
+    const f = await fixture();
+    await installLegacyCatalog(f);
+    f.request.mockRejectedValue(new Error("Provider unavailable"));
+    expect(await f.service.listCatalog(f.connected.connectionId, f.company.id, actor)).toEqual([]);
+    expect((await f.gateway.listToolsForSession(f.session.token)).some(tool => tool.upstreamToolName?.startsWith("daytona_get_"))).toBe(false);
+  });
+
+  it("preserves existing Off and Allowed choices while retiring leftover actions", async () => {
+    const f = await fixture();
+    await f.service.finishGalleryAppConnection(f.company.id, f.connected.connectionId, {
+      enabledCatalogEntryIds: f.connected.catalog.filter(entry => entry.toolName !== "daytona_toolbox_execute_command").map(entry => entry.id),
+      askFirstCatalogEntryIds: [], access: { agentIds: [f.agent.id] },
+    }, actor);
+    await db.insert(toolCatalogEntries).values({
+      companyId: f.company.id, applicationId: f.connected.connection.applicationId, connectionId: f.connected.connectionId,
+      name: "daytona_get_workspace_recovery", toolName: "daytona_get_workspace_recovery", title: "Get workspace recovery",
+      entryKind: "tool", status: "active", riskLevel: "read", isReadOnly: true,
+      inputSchema: { type: "object" }, versionHash: "legacy", schemaHash: "legacy",
+    });
+    expect(await f.service.listCatalog(f.connected.connectionId, f.company.id, actor)).toHaveLength(274);
+    f.request.mockClear();
+    await expect(f.call("daytona_toolbox_execute_command", { sandboxId: f.sandboxId, body: { command: "true" } })).rejects.toThrow();
+    expect(f.request).not.toHaveBeenCalled();
+    expect(JSON.stringify(await f.call("daytona_api_list_sandboxes", {}))).toContain(f.sandboxId);
   });
 });
 

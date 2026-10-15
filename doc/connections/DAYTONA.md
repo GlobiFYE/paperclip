@@ -116,6 +116,10 @@ pending an operator connecting a key and trying an allowed read and write. No
 platform key or live provider credential is installed by this change. Existing
 saved connections must review the expanded catalog through normal Permissions;
 new actions do not inherit approval from the previous four diagnostic actions.
+Opening a saved Daytona connection upgrades an outdated catalog. The earlier
+Paperclip-specific actions are retired and hidden from both Permissions and
+agent discovery, even if a provider outage prevents refresh. Historical rows
+remain for audit, and newly discovered actions require review.
 
 Provider research verified 2026-10-15:
 

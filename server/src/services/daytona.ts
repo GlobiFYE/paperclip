@@ -25,6 +25,10 @@ export const DAYTONA_TOOLS = catalog.tools.map(({ name, title, description, inpu
   name, title, description, inputSchema: inputSchema as Record<string, unknown>, annotations,
 }));
 
+export function isDaytonaToolName(name: string): boolean {
+  return operations.has(name);
+}
+
 export function isDaytonaConnection(connection: { transport: string; config?: Record<string, unknown> }) {
   return connection.transport === "rest_api" && connection.config?.sourceTemplateKey === "daytona"
     && connection.config.connectionMethodKey === DAYTONA_METHOD && connection.config.url === DAYTONA_API_URL;

@@ -1,4 +1,4 @@
-import { DAYTONA_TOOLS, daytonaClient, daytonaRisk, isDaytonaConnection } from "./daytona.js";
+import { DAYTONA_TOOLS, daytonaClient, daytonaRisk, isDaytonaConnection, isDaytonaToolName } from "./daytona.js";
 import { chatCredentialMutationLease } from "./chat-credential-mutation-lease.js";
 import { notifyChatEndpointWork } from "./chat-work-notifications.js";
 import { removeSlackRegistration } from "./chat-slack-registration-cleanup.js";
@@ -7810,11 +7810,13 @@ export function toolAccessService(
     const existingByName = new Map(
       existingRows.map((entry) => [entry.toolName, entry]),
     );
-    if (isRemoteMcpConnectorMethod(connection.config.sourceTemplateKey, connection.config.connectionMethodKey)) {
+    const nativeDaytona = isDaytonaConnection(connection);
+    if (nativeDaytona || isRemoteMcpConnectorMethod(connection.config.sourceTemplateKey, connection.config.connectionMethodKey)) {
       const discoveredNames = new Set(descriptors.map((descriptor) => descriptor.name));
-      const removedIds = existingRows.filter((entry) => !discoveredNames.has(entry.toolName) && entry.status !== "disabled").map((entry) => entry.id);
+      const removedStatus = nativeDaytona ? "removed" : "disabled";
+      const removedIds = existingRows.filter((entry) => !discoveredNames.has(entry.toolName) && entry.status !== removedStatus).map((entry) => entry.id);
       if (removedIds.length) await db.update(toolCatalogEntries)
-        .set({ status: "disabled", quarantineReason: "mcp_tool_removed", updatedAt: refreshedAt })
+        .set({ status: removedStatus, quarantineReason: nativeDaytona ? "provider_tool_removed" : "mcp_tool_removed", updatedAt: refreshedAt })
         .where(and(eq(toolCatalogEntries.companyId, connection.companyId), eq(toolCatalogEntries.connectionId, connection.id), inArray(toolCatalogEntries.id, removedIds)));
     }
     // Retired native actions are absent from discovery, but old catalog rows
@@ -7874,7 +7876,7 @@ export function toolAccessService(
         quarantineOnRefresh &&
         (!existing || changed) &&
         existing?.status !== "disabled" &&
-        (!safeDefault || riskLevel !== "read");
+        (!safeDefault || riskLevel !== "read" || nativeDaytona);
       const providerPermanentlyBlocked = Boolean(
         googleProfile &&
         !isGoogleWorkspaceToolAllowed(googleProfile, descriptor),
@@ -19154,6 +19156,7 @@ export function toolAccessService(
     listCatalog: async (
       connectionId: string,
       companyId?: string,
+      actor?: ActorInfo,
     ): Promise<ToolCatalogEntry[]> => {
       const connection = await getConnectionRow(connectionId, companyId);
       let rows = await db
@@ -19161,17 +19164,29 @@ export function toolAccessService(
         .from(toolCatalogEntries)
         .where(eq(toolCatalogEntries.connectionId, connection.id))
         .orderBy(desc(toolCatalogEntries.updatedAt));
-      const cacheExpired =
+      // Native provider catalogs change with the deployed code. Upgrade saved
+      // Daytona connections too; their first small catalog must not survive
+      // merely because REST discovery has no remote MCP cache timer.
+      const nativeDaytona = isDaytonaConnection(connection);
+      const rowsByName = new Map(rows.map((row) => [row.toolName, row]));
+      const daytonaCatalogChanged = nativeDaytona && connection.status === "active" && (
+        rows.some((row) => row.status !== "removed" && !isDaytonaToolName(row.toolName))
+        || DAYTONA_TOOLS.some((tool) => {
+          const existing = rowsByName.get(tool.name);
+          return !existing || existing.versionHash !== descriptorHash(tool, daytonaRisk(tool.name));
+        })
+      );
+      const cacheExpired = daytonaCatalogChanged || (
         connection.transport === "mcp_remote" &&
         connection.status !== "archived" &&
         (rows.length === 0 ||
           !connection.lastCatalogRefreshAt ||
           connection.lastCatalogRefreshAt.getTime() <=
-            now().getTime() - catalogCacheTtlMs);
+            now().getTime() - catalogCacheTtlMs));
       if (cacheExpired) {
         try {
           await singleFlight(catalogRefreshFlights, connection.id, () =>
-            refreshCatalog(connection.id, {
+            refreshCatalog(connection.id, nativeDaytona && actor ? actor : {
               actorType: "system",
               actorId: "tool_catalog_cache",
             }),
@@ -19188,7 +19203,11 @@ export function toolAccessService(
           if (rows.length === 0) throw error;
         }
       }
-      return rows.map((row) => toCatalogEntryForConnection(row, connection));
+      // Even failed discovery must not keep retired native tools visible.
+      // Their database rows remain available to historical invocation records.
+      return rows
+        .filter((row) => !nativeDaytona || (row.status !== "removed" && isDaytonaToolName(row.toolName)))
+        .map((row) => toCatalogEntryForConnection(row, connection));
     },
 
     /** Recent tool-call events for one connection — drives App detail · Recent activity. */
