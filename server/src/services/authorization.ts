@@ -2,6 +2,7 @@ import { and, eq, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { withHumanDirectedWork } from "./human-directed-work.js";
 import { hasOwnerChatInstructionAuthority } from "./owner-chat-instruction-authority.js";
+import { canonicalExecutionUuid } from "./execution-identity.js";
 import {
   agents,
   approvals,
@@ -94,6 +95,7 @@ export type AuthorizationAction =
   | "project:read"
   | "project:write_workspace"
   | "runtime:manage"
+  | "runtime:confirm_owner_stop"
   | "secrets:read"
   | "secrets:propose";
 
@@ -184,6 +186,7 @@ function permissionForAction(action: AuthorizationAction): PermissionKey | null 
     action === "issue:read" ||
     action === "project:read" ||
     action === "runtime:manage" ||
+    action === "runtime:confirm_owner_stop" ||
     action === "secrets:read" ||
     action === "secrets:propose"
   ) {
@@ -1858,6 +1861,11 @@ export function authorizationService(db: Db | DbTransaction) {
       });
     }
 
+    if (input.action === "runtime:confirm_owner_stop" && input.actor.type !== "board") {
+      return deny({ action: input.action, reason: "deny_unsupported_action",
+        explanation: "Only a deployment administrator can confirm a workspace controller has stopped." });
+    }
+
     if (input.actor.type === "board") {
       let taskAssignmentPolicyEffect: AssignmentPolicyEffect | null = null;
       if (input.actor.source === "local_implicit") {
@@ -1885,6 +1893,15 @@ export function authorizationService(db: Db | DbTransaction) {
           reason: "allow_instance_admin",
           explanation: "Allowed because the actor is an instance admin.",
         });
+      }
+      if (input.action === "runtime:confirm_owner_stop") {
+        const membership = await getActiveMembership(companyId, "user", input.actor.userId ?? "");
+        if (membership?.membershipRole === "owner" || membership?.membershipRole === "admin") {
+          return allow({ action: input.action, reason: "allow_role_default",
+            explanation: "Allowed by the active company owner or administrator role." });
+        }
+        return deny({ action: input.action, reason: "deny_missing_grant",
+          explanation: "Only a company owner, company administrator, or instance administrator can confirm a workspace controller has stopped." });
       }
       // What instance-admin elevation used to give cloud tenant users is
       // replaced by company-scoped visibility: an active membership in the
@@ -2753,7 +2770,7 @@ export async function executionWorkspaceReadSqlCondition(db: Db | DbTransaction,
       select 1 from ${projects} where ${projects.id} = ${executionWorkspaces.projectId}
         and ${projects.companyId} = ${executionWorkspaces.companyId} and ${projectCondition}))
     and not exists (select 1 from jsonb_object_keys(coalesce(${executionWorkspaces.metadata}->'_issuePrivacySources', '{}'::jsonb)) source(id)
-      where not exists (select 1 from ${issues} where ${issues.id}::text = source.id
+      where not exists (select 1 from ${issues} where ${issues.id} = ${canonicalExecutionUuid(sql`source.id`)}
         and ${issues.companyId} = ${executionWorkspaces.companyId} and ${issueCondition}))
     and not exists (select 1 from ${issues}
       where ${issues.companyId} = ${executionWorkspaces.companyId}
