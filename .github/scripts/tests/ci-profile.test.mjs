@@ -239,6 +239,7 @@ test("PR workflow secret guard distinguishes expressions from test filenames", (
   assert.doesNotMatch("${{ github.sha }}", prWorkflowSecretReference);
   for (const expression of [
     "${{ secrets.API_KEY }}",
+    "${{\n secrets.PR_TOKEN\n }}",
     "${{secrets['API_KEY']}}",
     '${{ secrets["API_KEY"] }}',
     "${{ toJSON(secrets) }}",
