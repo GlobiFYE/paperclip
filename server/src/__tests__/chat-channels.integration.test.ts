@@ -28500,6 +28500,47 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     } finally { release(); await inbound; await service.shutdown(); }
   });
 
+  it.each(["confirmed", "already reacted"] as const)("keeps an omitted-file warning after an early Slack receipt failure and %s retry", async outcome => {
+    const fixture = await seedCompany();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const entered = vi.fn();
+    const { callbacks, endpoint, runtime, service } = await configuredSlackEndpoint(fixture, { storage: createStorageService().storage });
+    const provider = runtime.endpoints.get(endpoint.id)!;
+    provider.reactionErrors.push(Object.assign(new Error("missing_scope\nsynthetic provider detail"), { code: "slack_webapi_platform_error", data: { error: "missing_scope" } }));
+    if (outcome === "already reacted") provider.reactionErrors.push(Object.assign(new Error("already reacted"), { code: "slack_webapi_platform_error", data: { error: "already_reacted" } }));
+    const reaction = vi.spyOn(provider, "applySlackReceiptReaction");
+    const thread = makeThread({ channelId: "COMITTEDERROR", id: "slack:COMITTEDERROR:1740000092.1" });
+    const inbound = deliverMessage({ callbacks, endpointId: endpoint.id, thread: thread.thread, trigger: "mention",
+      message: makeMessage({ id: "1740000092.1", text: "@maya retain both warnings", mentioned: true,
+        attachments: [{ type: "file", name: "omitted.txt", mimeType: "text/plain", fetchData: async () => { entered(); await gate; throw new Error("controlled file download failure"); } } as Attachment],
+      }),
+    });
+    try {
+      await vi.waitFor(() => expect(entered).toHaveBeenCalled(), { timeout: 3_000, interval: 10 });
+      const [delivery] = await readChatDeliveriesByEndpointId(endpoint.id);
+      await vi.waitFor(async () => {
+        const [receipt] = await readChatActionsByProviderActionId(`receipt_reaction:${delivery.id}`);
+        expect(receipt.status).toBe("failed");
+      }, { timeout: 1_000, interval: 10 });
+      release();
+      await inbound;
+      const before = (await readChatDeliveriesByEndpointId(endpoint.id))[0];
+      expect(before.redactedError).toContain("Receipt reaction");
+      expect(before.redactedError).toContain("1 external attachment was omitted");
+      expect(reaction).toHaveBeenCalledTimes(1);
+      const [receipt] = await readChatActionsByProviderActionId(`receipt_reaction:${delivery.id}`);
+      await db.update(chatActions).set({ result: { ...receipt.result, retryable: true, retryAt: new Date(0).toISOString() } }).where(eq(chatActions.id, receipt.id));
+      await service.processPendingReceiptReactions(1, receipt.id);
+      const after = (await readChatDeliveriesByEndpointId(endpoint.id))[0];
+      expect(after.redactedError).toContain("1 external attachment was omitted");
+      expect(after.redactedError).not.toContain("Receipt reaction");
+      expect(after.redactedError).not.toContain("synthetic provider detail");
+      expect(reaction).toHaveBeenCalledTimes(2);
+      expect((await readChatActionsById(receipt.id))[0].status).toBe("processed");
+    } finally { release(); await inbound; await service.shutdown(); }
+  });
+
   it("acknowledges a signed URL mention through the real Slack SDK without waiting for an unfurl", async () => {
     const fixture = await seedCompany();
     const { endpoint, runtime, service, wakeup } = await configuredSlackEndpoint(fixture);

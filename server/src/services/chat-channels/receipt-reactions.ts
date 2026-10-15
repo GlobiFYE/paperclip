@@ -68,6 +68,17 @@ type ReceiptReactionsOptions = {
   receiptReactionTransportBarrier?: () => Promise<void>;
 };
 
+function deliveryWarningWithoutReceipt(previousDiagnostic: unknown) {
+  const remaining = sql<string | null>`nullif(regexp_replace(${chatDeliveries.redactedError}, ${"^Receipt reaction [^\\n]*(\\n|$)"}, ''), '')`;
+  if (typeof previousDiagnostic !== "string" || !previousDiagnostic) return remaining;
+  return sql<string | null>`case
+    when ${chatDeliveries.redactedError} = ${previousDiagnostic}::text then null
+    when left(${chatDeliveries.redactedError}, length(${previousDiagnostic}::text) + 1) = ${previousDiagnostic}::text || ${"\n"}::text
+      then nullif(substring(${chatDeliveries.redactedError} from length(${previousDiagnostic}::text) + 2), '')
+    else ${remaining}
+  end`;
+}
+
 export function createReceiptReactions(db: Db, options: ReceiptReactionsOptions) {
   const { endpointRecord, runtimeContextForRecord, withCredentialMutationLease, runtimeFor, fetchImpl, runtime, runtimeGeneration, credentialFingerprint, redactError, MAX_ERROR_TEXT } = options;
 
@@ -472,7 +483,7 @@ export function createReceiptReactions(db: Db, options: ReceiptReactionsOptions)
         if (action.deliveryId) {
           await tx
             .update(chatDeliveries)
-            .set({ redactedError: null, updatedAt: new Date() })
+            .set({ redactedError: deliveryWarningWithoutReceipt(action.result?.redactedError), updatedAt: new Date() })
             .where(
               and(
                 eq(chatDeliveries.id, action.deliveryId),
@@ -518,7 +529,7 @@ export function createReceiptReactions(db: Db, options: ReceiptReactionsOptions)
           if (action.deliveryId) {
             await tx
               .update(chatDeliveries)
-              .set({ redactedError: null, updatedAt: new Date() })
+              .set({ redactedError: deliveryWarningWithoutReceipt(action!.result?.redactedError), updatedAt: new Date() })
               .where(
                 and(
                   eq(chatDeliveries.id, action.deliveryId),
@@ -542,7 +553,7 @@ export function createReceiptReactions(db: Db, options: ReceiptReactionsOptions)
       const operationLabel =
         payload.operation === "remove" ? " reaction removal" : " reaction";
       const diagnostic =
-        `Receipt${operationLabel} ${retryable ? "deferred" : "failed"} after ${attempt} attempt${attempt === 1 ? "" : "s"} (${disposition.kind}): ${redactError(error)}`.slice(
+        `Receipt${operationLabel} ${retryable ? "deferred" : "failed"} after ${attempt} attempt${attempt === 1 ? "" : "s"} (${disposition.kind}): ${redactError(error).replace(/[\r\n]+/g, " ")}`.slice(
           0,
           MAX_ERROR_TEXT,
         );
@@ -580,7 +591,7 @@ export function createReceiptReactions(db: Db, options: ReceiptReactionsOptions)
         if (failed && action.deliveryId) {
           await tx
             .update(chatDeliveries)
-            .set({ redactedError: diagnostic, updatedAt: new Date() })
+            .set({ redactedError: sql`concat_ws(${"\n"}, ${diagnostic}::text, ${deliveryWarningWithoutReceipt(action.result?.redactedError)})`, updatedAt: new Date() })
             .where(
               and(
                 eq(chatDeliveries.id, action.deliveryId),

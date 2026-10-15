@@ -116,8 +116,8 @@ export function createInboundWakeups(db: Db, options: WakeupOptions) {
           .set({
             state: "processed",
             processedAt: acceptedAt,
-            redactedError: sql<string | null>`coalesce((
-              select ${chatActions.result}->>'redactedError' from ${chatActions}
+            redactedError: sql<string | null>`nullif(concat_ws(${"\n"}, (
+              select replace(replace(${chatActions.result}->>'redactedError', ${"\n"}, ' '), ${"\r"}, ' ') from ${chatActions}
               where ${chatActions.companyId} = ${delivery.companyId}
                 and ${chatActions.endpointId} = ${delivery.endpointId}
                 and ${chatActions.deliveryId} = ${deliveryId}
@@ -126,7 +126,7 @@ export function createInboundWakeups(db: Db, options: WakeupOptions) {
                 and ${chatActions.status} = 'failed'
                 and ${chatActions.payload}->>'operation' = 'add'
               limit 1
-            ), ${attachmentOmissionDetail(attachmentResult)})`,
+            ), ${attachmentOmissionDetail(attachmentResult)}::text), '')`,
             nextAttemptAt: null,
             updatedAt: new Date(),
           })
