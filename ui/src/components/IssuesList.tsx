@@ -962,6 +962,35 @@ function StreamlinedIssuesList({
       placeholderData: (previousData: Issue[] | undefined) => previousData,
     })),
   });
+  const hasClientOnlyBoardFilters = viewState.priorities.length > 0 || viewState.assignees.length > 0
+    || viewState.creators.length > 0 || viewState.labels.length > 0 || viewState.projects.length > 0
+    || viewState.workspaces.length > 0 || !!viewState.liveOnly || viewState.externalObjectStatuses.length > 0;
+  const boardCountQueries = useQueries({
+    queries: boardIssueStatuses.map((status) => ({
+      queryKey: [
+        ...queryKeys.issues.list(selectedCompanyId ?? "__no-company__"), "board-column-count", status,
+        normalizedIssueSearch, projectId, searchFilters ?? {},
+        enableAgentCreatedVisibilityFilter, viewState.showAgentCreatedTasks,
+      ],
+      queryFn: ({ signal }: { signal: AbortSignal }) => issuesApi.count(selectedCompanyId!, {
+        ...searchFilters,
+        ...(normalizedIssueSearch.length > 0 ? { q: normalizedIssueSearch } : {}),
+        projectId, status,
+        ...(enableAgentCreatedVisibilityFilter ? { includeRoutineExecutions: true, includeAgentCreatedTasks: viewState.showAgentCreatedTasks } : {}),
+      }, { signal }),
+      enabled: !!selectedCompanyId && viewState.viewMode === "board" && !searchWithinLoadedIssues
+        && !hasClientOnlyBoardFilters && (viewState.statuses.length === 0 || viewState.statuses.includes(status)),
+    })),
+  });
+  const boardColumnCounts = Object.fromEntries(boardIssueStatuses.flatMap((status, index) => {
+    if (viewState.statuses.length > 0 && !viewState.statuses.includes(status)) return [[status, 0]];
+    const query = boardCountQueries[index];
+    const count = query?.isError ? undefined : query?.data?.count;
+    return !searchWithinLoadedIssues && !hasClientOnlyBoardFilters && count !== undefined ? [[status, count]] : [];
+  }));
+  const cappedBoardStatuses = boardIssueStatuses.filter((status, index) =>
+    boardIssueQueries[index]?.data?.length === ISSUE_BOARD_COLUMN_RESULT_LIMIT
+    && (viewState.statuses.length === 0 || viewState.statuses.includes(status)));
   const { data: executionWorkspaces = [] } = useQuery({
     queryKey: selectedCompanyId
       ? queryKeys.executionWorkspaces.summaryList(selectedCompanyId)
@@ -2049,6 +2078,9 @@ function StreamlinedIssuesList({
           Showing up to {ISSUE_SEARCH_RESULT_LIMIT} matches. Refine the search to narrow further.
         </p>
       )}
+      {viewState.viewMode === "board" && boardCountQueries.some((query) => query.isError) && (
+        <p className="text-xs text-destructive">Totals could not be loaded. Capped columns show a lower bound.</p>
+      )}
       {boardColumnLimitReached && (
         <p className="text-xs text-muted-foreground">
           Some board columns are showing up to {ISSUE_BOARD_COLUMN_RESULT_LIMIT} tasks. Refine filters or search to reveal the rest.
@@ -2067,6 +2099,8 @@ function StreamlinedIssuesList({
       {viewState.viewMode === "board" ? (
         <KanbanBoard
           issues={filtered}
+          columnCounts={boardColumnCounts}
+          cappedStatuses={cappedBoardStatuses}
           agents={agents}
           liveIssueIds={liveIssueIds}
           compactCards={boardCompactCards}
