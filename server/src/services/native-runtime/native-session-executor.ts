@@ -36,6 +36,7 @@ import { selectRemotePiCompanion } from "./remote-pi-companion.js";
 import { readNativeLocalProcessStop, PROCESS_START_REQUESTED } from "../native-local-process-stop.js";
 import { remoteLeaseCleanupScope } from "../remote-execution-termination.js";
 import { resolveConnectorAssignments, isConnectorSkill } from "../connector-runtime.js";
+import { activeNativeExecutionRunIds } from "./native-active-runs.js";
 import {
   boundedExecutionCleanup,
   EXECUTION_CONTROL_DEADLINE_MS,
@@ -7515,6 +7516,7 @@ export async function executePaperclipNativeSession(input: {
     resolve: session => resolveStartup(session),
   };
   nativeSessionStartups.set(runId, startup);
+  activeNativeExecutionRunIds.add(runId);
   let preparedInput: typeof input = input;
   let cleanupStagedAttachments: () => Promise<void> = async () => undefined;
   let sessionScopeId: string | null = null;
@@ -7620,6 +7622,7 @@ export async function executePaperclipNativeSession(input: {
     startup.settle();
     if (nativeSessionStartups.get(runId) === startup) {
       nativeSessionStartups.delete(runId);
+      activeNativeExecutionRunIds.delete(runId);
     }
     if (
       ownsSessionScope &&
@@ -7862,11 +7865,9 @@ async function executePaperclipNativeSessionWithinScope(
             throw new Error("native_run_already_committed");
           if (
             coordinator.leaseOwner &&
-            coordinator.leaseOwner !== leaseOwner &&
-            coordinator.leaseExpiresAt &&
-            coordinator.leaseExpiresAt > leaseNow
+            coordinator.leaseOwner !== leaseOwner
           )
-            throw new Error("native_finalization_lease_busy");
+            throw new NativeControllerDetachedForRestartError();
           const recovering = input.restartRecovery;
           if (
             recovering &&
