@@ -3,6 +3,7 @@ import { resolvePinnedOpenCodeCommand } from "../drivers/opencode/opencode-serve
 import { ACPX_CAPABILITY_PROFILES } from "../drivers/acpx/capability-profiles.js";
 import { admittedPiThinkingLevel, resolvePiThinkingLevel } from "../drivers/acpx/pi-thinking.js";
 import { configuredEnvironment } from "../configured-environment.js";
+import { githubCredentialEnvironment } from "../github-credential-environment.js";
 import { resolveAcpxProviderMode } from "../drivers/acpx/provider-mode.js";
 import { isAcpxCanonicalInputMethod } from "../drivers/acpx/profile-extensions.js";
 import { RunnerdTraceFrameIndex } from "./runnerd-trace-frame-index.js";
@@ -3393,7 +3394,7 @@ function createSanitizedOpenCodeRunnerEnvironment(
     delete candidate[key];
     if (source?.[key] !== undefined) candidate[key] = source[key];
   }
-  return { ...configuredEnvironment(source), ...Object.fromEntries(
+  return { ...configuredEnvironment(source), ...githubCredentialEnvironment(source ?? {}), ...Object.fromEntries(
     Object.entries(candidate).filter(
       ([key, value]) =>
         typeof value === "string" &&

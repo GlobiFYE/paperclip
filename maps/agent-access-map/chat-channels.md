@@ -122,6 +122,13 @@ cleanup still apply. PostgreSQL fixtures block attachments, subscription and
 wakeup independently to verify that none gates the reaction; live Slack latency
 remains a separate check. See [receipt worker](../../server/src/services/chat-channels/receipt-reactions.ts).
 
+Controller-owned receipt reactions accept the SDK's empty thread timestamp for
+linear DMs. Channel IDs and source message timestamps remain validated. This
+does not add an agent tool or change sender, task, or credential authorization.
+The pinned SDK transport regression is covered in
+[receipt tests](../../server/src/services/chat-slack-receipts.test.ts); live
+acknowledgement speed needs a separate provider test.
+
 New conversations resolve typed project/workspace defaults from their endpoint
 and destination under the task-creation transaction. Defaults do not authorize
 private sources: admission checks the linked user's authority and assigned agent.
