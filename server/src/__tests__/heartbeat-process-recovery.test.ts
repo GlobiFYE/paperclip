@@ -13709,33 +13709,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     if (next) await waitForRunToSettle(heartbeat, next.id);
   });
 
-  it("repairs missing disposition independently of the productive diagnostic label", async () => {
-    const { agentId, issueId, runId } = await seedStrandedIssueFixture({
-      status: "in_progress",
-      runStatus: "succeeded",
-      livenessState: "advanced",
-    });
-    const heartbeat = heartbeatService(db);
-
-    const result = await heartbeat.reconcileStrandedAssignedIssues();
-    expect(result.continuationRequeued).toBe(1);
-    expect(result.escalated).toBe(0);
-    expect(result.issueIds).toEqual([issueId]);
-
-    const runs = await selectRecoveryRunsByAgent(agentId);
-    const retryRun = runs.find((row) => row.id !== runId);
-    expect(
-      retryRun?.contextSnapshot as Record<string, unknown> | undefined,
-    ).toMatchObject({
-      issueId,
-      retryReason: "issue_disposition_repair",
-      source: "issue.deliberate_wait_disposition_repair",
-    });
-    if (retryRun) {
-      await waitForRunToSettle(heartbeat, retryRun.id);
-    }
-  });
-
   it("reuses the raced stranded recovery issue when duplicate active recovery creation conflicts", async () => {
     const { companyId, issueId } = await seedStrandedIssueFixture({
       status: "in_progress",
@@ -13971,47 +13944,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
     const wakeups = await selectRecoveryWakesByAgent(agentId);
     expect(wakeups).toHaveLength(1);
-  });
-
-  it("re-enqueues recovery when the latest in-progress continuation made progress but left no live path", async () => {
-    const { agentId, issueId, runId } = await seedStrandedIssueFixture({
-      status: "in_progress",
-      runStatus: "succeeded",
-      livenessState: "advanced",
-    });
-    const heartbeat = heartbeatService(db);
-
-    const result = await heartbeat.reconcileStrandedAssignedIssues();
-    expect(result.continuationRequeued).toBe(1);
-    expect(result.productiveContinuationObserved).toBe(0);
-    expect(result.successfulContinuationObserved).toBe(0);
-    expect(result.escalated).toBe(0);
-    expect(result.issueIds).toEqual([issueId]);
-
-    const issue = await selectRecoveryIssueById(issueId);
-    expect(issue?.status).toBe("in_progress");
-
-    const comments = await selectRecoveryCommentsForIssue(issueId);
-    expect(comments).toHaveLength(0);
-
-    const runs = await selectRecoveryRunsByAgent(agentId);
-    expect(runs).toHaveLength(2);
-    const retryRun = runs.find((row) => row.id !== runId);
-    expect(
-      retryRun?.contextSnapshot as Record<string, unknown> | undefined,
-    ).toMatchObject({
-      issueId,
-      taskId: issueId,
-      retryReason: "issue_disposition_repair",
-      retryOfRunId: runId,
-      source: "issue.deliberate_wait_disposition_repair",
-    });
-    expect(
-      retryRun?.contextSnapshot as Record<string, unknown>,
-    ).not.toHaveProperty("modelProfile");
-
-    const wakeups = await selectRecoveryWakesByAgent(agentId);
-    expect(wakeups).toHaveLength(2);
   });
 
   it("does not accept unmanaged local-background wait evidence as a live continuation path", async () => {
@@ -15939,8 +15871,14 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
     const result = await heartbeat.reconcileStrandedAssignedIssues();
     expect(result.productiveContinuationObserved).toBe(0);
+    expect(result.successfulContinuationObserved).toBe(0);
+    expect(result.continuationRequeued).toBe(1);
+    expect(result.escalated).toBe(0);
     expect(result.continuationRequeued + result.escalated).toBe(1);
     expect(result.issueIds).toEqual([issueId]);
+
+    const issue = await selectRecoveryIssueById(issueId);
+    expect(issue?.status).toBe("in_progress");
 
     const comments = await selectRecoveryCommentsForIssue(issueId);
     const recoveryIssues = await selectStrandedRecoveryIssuesForCompany(companyId);
@@ -15956,6 +15894,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(comments).toHaveLength(0);
     expect(recoveryIssues).toHaveLength(0);
     expect(followupRuns).toHaveLength(2);
+    expect(await selectRecoveryRunsByAgent(agentId)).toHaveLength(2);
     const retryRun = followupRuns.find((row) => row.id !== runId);
     expect(
       retryRun?.contextSnapshot as Record<string, unknown> | undefined,
@@ -15969,6 +15908,12 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(
       retryRun?.contextSnapshot as Record<string, unknown>,
     ).not.toHaveProperty("modelProfile");
+
+    const wakeups = await selectRecoveryWakesByAgent(agentId);
+    expect(wakeups).toHaveLength(2);
+    if (retryRun) {
+      await waitForRunToSettle(heartbeat, retryRun.id);
+    }
   });
 
   it("does not replenish exhausted legacy repair from a recent comment", async () => {
