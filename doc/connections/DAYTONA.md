@@ -44,7 +44,7 @@ The selected connection credential is redacted from results and errors.
 | --- | --- |
 | Ordinary reads, file downloads, and read-only lookups | Read |
 | Resource creation, file/Git changes, lifecycle and configuration changes | Write |
-| Deletion, command/code/interactive input, reset/restore, secret/credential access, signed access links and access changes | Destructive |
+| Deletion (including TTL/auto-delete), command/code/interactive input, reset/restore, secret/credential access, signed access links and file/account access changes | Destructive |
 
 The source inventory also records **two WebSocket upgrade endpoints**:
 interactive interpreter execution and PTY connection. These are streaming
@@ -77,7 +77,9 @@ File uploads take base64 bytes; downloads return bytes with content type and
 length. The connector never reads a local host file path, writes host files,
 launches the Daytona CLI, or executes commands on the Paperclip server. Provider
 commands execute inside the selected Daytona sandbox. Reads and transfers have
-an 8 MiB bound and requests have a 30-second deadline. Mutations are never
+an 8 MiB bound. An action shares one deadline across identity, target lookup,
+dispatch, and response reading: the caller's budget, capped at 30 seconds.
+Expiry blocks later dispatches and cancels active requests. Mutations are never
 retried automatically. A timed-out command or write can still be running at the
 provider; inspect it before retrying.
 
@@ -120,6 +122,14 @@ Opening a saved Daytona connection upgrades an outdated catalog. The earlier
 Paperclip-specific actions are retired and hidden from both Permissions and
 agent discovery, even if a provider outage prevents refresh. Historical rows
 remain for audit, and newly discovered actions require review.
+Agent discovery and dispatch also check same-name saved contracts against the
+deployed schema and risk classification. An outdated action cannot execute
+while it waits for a human to open Permissions and review the change.
+
+The HTTP boundary tests use a real local server and the pinned transport to
+check multipart uploads, audit filter encoding, response cancellation, and
+unrelated request responsiveness. The provider network/TLS leg is simulated;
+these checks do not replace live account proof.
 
 Provider research verified 2026-10-15:
 

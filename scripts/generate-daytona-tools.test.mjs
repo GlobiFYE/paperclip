@@ -38,10 +38,13 @@ test("requires destructive permission for credentials, access changes, and inter
     "/secret/{id}": { get: { operationId: "getSecret" } },
     "/organizations/{id}/roles": { post: { operationId: "createRole" } },
     "/sandbox/{id}/ports/{port}/signed-preview-url": { get: { operationId: "getSignedPortPreviewUrl" } },
+    "/sandbox/{id}/ttl/{minutes}": { post: { operationId: "setTtl" } },
+    "/sandbox/{id}/autodelete/{interval}": { post: { operationId: "setAutoDeleteInterval" } },
   } }, toolbox: { paths: {
     "/computeruse/keyboard/type": { post: { operationId: "TypeText" } },
     "/process/session/{sessionId}/command/{commandId}/input": { post: { operationId: "SendInput" } },
     "/process/pty": { post: { operationId: "CreatePtySession" } },
+    "/files/permissions": { post: { operationId: "SetFilePermissions" } },
   } } });
   for (const tool of result.tools) {
     assert.equal(tool.annotations.readOnlyHint, false, tool.name);

@@ -41,8 +41,9 @@ const credential = "daytona-fixture-secret";
       if (parsed.pathname === `/toolbox/${sandboxId}/process/execute`) return Response.json({ exitCode: 0, result: `done ${credential}` });
       if (parsed.pathname === `/toolbox/${sandboxId}/files/download`) return new Response("file bytes", { headers: { "Content-Type": "application/octet-stream" } });
       if (parsed.pathname === `/toolbox/${sandboxId}/files/upload-v2`) {
-        expect(init.body).toBeInstanceOf(FormData);
-        expect(await ((init.body as FormData).get("file") as Blob).text()).toBe("uploaded bytes");
+        expect(Buffer.isBuffer(init.body)).toBe(true);
+        const form = await new Response(init.body, { headers: init.headers }).formData();
+        expect(await (form.get("file") as Blob).text()).toBe("uploaded bytes");
         return Response.json({ path: parsed.searchParams.get("path") });
       }
       throw new Error("Unexpected provider request");
@@ -59,10 +60,10 @@ const credential = "daytona-fixture-secret";
     const gateway = createToolGatewayService(db, { remoteHttpRequest: request });
     const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id, issueId: issue.id });
     const tools = await gateway.listToolsForSession(session.token);
-    const call = (name: string, parameters: unknown) => {
+    const call = (name: string, parameters: unknown, timeoutMs?: number) => {
       const tool = tools.find(t => t.upstreamToolName === name);
       expect(tool, name).toBeTruthy();
-      return gateway.executeTool({ sessionToken: session.token, tool: tool!.name, parameters, idempotencyKey: randomUUID() });
+      return gateway.executeTool({ sessionToken: session.token, tool: tool!.name, parameters, timeoutMs, idempotencyKey: randomUUID() });
     };
     return { company, service, connected, agent, request, call, gateway, session, organizationId, sandboxId,
       foreignOrganization: () => { sandboxOrganization = randomUUID(); }, foreignProxy: () => { proxy = "https://attacker.example/toolbox"; } };
@@ -78,6 +79,9 @@ const credential = "daytona-fixture-secret";
     expect(f.connected.catalog).toHaveLength(DAYTONA_TOOLS.length);
     expect(f.connected.catalog.find(c => c.toolName === "daytona_api_list_sandboxes")).toMatchObject({ isReadOnly: true });
     expect(f.connected.catalog.find(c => c.toolName === "daytona_toolbox_execute_command")).toMatchObject({ isDestructive: true, isReadOnly: false });
+    for (const name of ["daytona_api_set_ttl", "daytona_api_set_auto_delete_interval", "daytona_toolbox_set_file_permissions"]) {
+      expect(f.connected.catalog.find(c => c.toolName === name), name).toMatchObject({ isDestructive: true, isReadOnly: false });
+    }
     expect(JSON.stringify(await f.service.getConnection(f.connected.connectionId))).not.toContain(credential);
     // The sandbox has no Paperclip environment lease or task ownership record.
     expect(JSON.stringify(await f.call("daytona_api_list_sandboxes", {}))).toContain(f.sandboxId);
@@ -208,6 +212,32 @@ const credential = "daytona-fixture-secret";
     await expect(f.call("daytona_toolbox_execute_command", { sandboxId: f.sandboxId, body: { command: "true" } })).rejects.toThrow();
     expect(f.request).not.toHaveBeenCalled();
     expect(JSON.stringify(await f.call("daytona_api_list_sandboxes", {}))).toContain(f.sandboxId);
+  });
+
+  it("blocks a stale same-name contract before board refresh, including an existing session", async () => {
+    const f = await fixture();
+    const changed = f.connected.catalog.find(entry => entry.toolName === "daytona_toolbox_execute_command")!;
+    await db.update(toolCatalogEntries).set({ versionHash: "earlier-provider-contract", schemaHash: "earlier-schema", riskLevel: "read" })
+      .where(eq(toolCatalogEntries.id, changed.id));
+    f.request.mockClear();
+    expect((await f.gateway.listToolsForSession(f.session.token)).some(tool => tool.upstreamToolName === changed.toolName)).toBe(false);
+    await expect(f.call(changed.toolName, { sandboxId: f.sandboxId, body: { command: "true" } })).rejects.toThrow();
+    expect(f.request).not.toHaveBeenCalled();
+    const refreshed = await f.service.refreshCatalog(f.connected.connectionId, actor);
+    expect(refreshed.catalog.find(entry => entry.toolName === changed.toolName)?.status).toBe("quarantined");
+  });
+
+  it("carries a caller deadline across prerequisite reads and never starts a late write", async () => {
+    const f = await fixture();
+    const original = f.request.getMockImplementation()!;
+    f.request.mockImplementation(async (url, init) => {
+      if (url.endsWith("/api-keys/current")) await new Promise(resolve => setTimeout(resolve, 80));
+      return original(url, init);
+    });
+    f.request.mockClear();
+    await expect(f.call("daytona_toolbox_execute_command", { sandboxId: f.sandboxId, body: { command: "true" } }, 20)).rejects.toThrow("deadline expired");
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect(f.request.mock.calls.every(([url]) => url.endsWith("/api-keys/current"))).toBe(true);
   });
 });
 

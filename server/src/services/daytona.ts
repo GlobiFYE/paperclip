@@ -3,6 +3,7 @@ import addFormats from "ajv-formats";
 import { z } from "zod";
 import { HttpError } from "../errors.js";
 import { redactSensitiveText } from "../redaction.js";
+import { descriptorHash, stableHash } from "./tool-catalog-hash.js";
 import catalog from "./daytona/operations.generated.json" with { type: "json" };
 
 export const DAYTONA_API_URL = "https://app.daytona.io/api";
@@ -27,6 +28,15 @@ export const DAYTONA_TOOLS = catalog.tools.map(({ name, title, description, inpu
 
 export function isDaytonaToolName(name: string): boolean {
   return operations.has(name);
+}
+
+const currentContracts = new Map(DAYTONA_TOOLS.map(tool => [tool.name, {
+  versionHash: descriptorHash(tool, daytonaRisk(tool.name)), schemaHash: stableHash(tool.inputSchema), riskLevel: daytonaRisk(tool.name),
+}]));
+
+export function isCurrentDaytonaCatalogEntry(entry: { toolName: string; versionHash: string; schemaHash: string | null; riskLevel: string }): boolean {
+  const current = currentContracts.get(entry.toolName);
+  return Boolean(current && current.versionHash === entry.versionHash && current.schemaHash === entry.schemaHash && current.riskLevel === entry.riskLevel);
 }
 
 export function isDaytonaConnection(connection: { transport: string; config?: Record<string, unknown> }) {
@@ -61,12 +71,29 @@ function decodeFile(value: unknown) {
 
 /** A provider-focused REST bridge. It never reads host files, calls host shell
  * commands, borrows provider-plugin credentials, or looks up Paperclip tasks. */
-export function daytonaClient(headers: Record<string, string>, request: DaytonaRequest, pinnedOrganizationId?: unknown) {
+export function daytonaClient(headers: Record<string, string>, request: DaytonaRequest, pinnedOrganizationId?: unknown,
+  signal: AbortSignal = AbortSignal.timeout(30_000), deadlineAt: number = Date.now() + 30_000) {
   const authorization = headers.Authorization;
   if (!authorization || !/^Bearer [^\r\n]+$/.test(authorization)) {
     throw failure(422, "daytona_credential_missing", "Reconnect Daytona to restore its API key.");
   }
   const secret = authorization.slice(7);
+  const expired = () => failure(504, "daytona_deadline_exceeded", "The Daytona action deadline expired. An operation already sent may still be running; inspect it before retrying.");
+  // Bound the caller even if a transport or body reader is slow to acknowledge
+  // cancellation. A late prerequisite result never advances to the next call.
+  async function withinDeadline<T>(work: () => Promise<T>): Promise<T> {
+    if (signal.aborted || Date.now() >= deadlineAt) throw expired();
+    let abort!: () => void;
+    try {
+      return await Promise.race([
+        Promise.resolve().then(() => { if (signal.aborted || Date.now() >= deadlineAt) throw expired(); return work(); }),
+        new Promise<never>((_resolve, reject) => {
+          abort = () => reject(expired());
+          signal.addEventListener("abort", abort, { once: true });
+        }),
+      ]);
+    } finally { signal.removeEventListener("abort", abort); }
+  }
   function sanitize(value: unknown): unknown {
     if (typeof value === "string") return redactSensitiveText(value.split(secret).join("[REDACTED]"));
     if (Array.isArray(value)) return value.map(sanitize);
@@ -81,15 +108,15 @@ export function daytonaClient(headers: Record<string, string>, request: DaytonaR
     if (organizationId) projected.set("X-Daytona-Organization-ID", organizationId);
     let response: Response;
     try {
-      response = await request(url, { ...init, redirect: "error", headers: Object.fromEntries(projected),
-        signal: AbortSignal.timeout(30_000) });
+      response = await withinDeadline(() => request(url, { ...init, redirect: "error", headers: Object.fromEntries(projected), signal }));
     } catch {
+      if (signal.aborted || Date.now() >= deadlineAt) throw expired();
       throw failure(502, "daytona_outcome_unknown", init.method === "GET"
         ? "Daytona could not complete the request."
         : "Daytona did not return a result. The operation may have started; inspect its state before retrying.");
     }
     if (!response.ok) {
-      await response.body?.cancel().catch(() => {});
+      void response.body?.cancel().catch(() => {});
       const status = [400, 401, 403, 404, 409, 422, 429].includes(response.status) ? response.status : 502;
       throw failure(status, "daytona_request_failed", status === 401 || status === 403
         ? "Daytona denied access. Check this key's organization and permissions. Some account operations require provider user authentication."
@@ -101,7 +128,7 @@ export function daytonaClient(headers: Record<string, string>, request: DaytonaR
     let length = 0;
     try {
       for (;;) {
-        const part = await reader.read();
+        const part = await withinDeadline(() => reader.read());
         if (part.done) break;
         length += part.value.byteLength;
         if (length > MAX_BYTES) throw failure(502, "daytona_output_limit", "Daytona's response exceeded the limit. Request a smaller page or file range.");
@@ -110,7 +137,7 @@ export function daytonaClient(headers: Record<string, string>, request: DaytonaR
     } catch (error) {
       if (error instanceof HttpError) throw error;
       throw failure(502, "daytona_outcome_unknown", "Daytona's response was interrupted. Inspect the operation before retrying.");
-    } finally { await reader.cancel().catch(() => {}); }
+    } finally { void reader.cancel().catch(() => {}); }
     const bytes = Buffer.concat(chunks);
     if (!bytes.length) return null;
     const contentType = response.headers.get("Content-Type") ?? "application/octet-stream";
@@ -166,7 +193,10 @@ export function daytonaClient(headers: Record<string, string>, request: DaytonaR
         projectedHeaders[parameter.name] = text;
       } else if (parameter.json || (value && typeof value === "object" && !Array.isArray(value))) {
         if (parameter.style === "deepObject") {
-          for (const [key, child] of Object.entries(record(value))) url.searchParams.append(`${parameter.name}[${key}]`, String(child));
+          for (const [key, child] of Object.entries(record(value))) {
+            if (Array.isArray(child)) child.forEach(item => url.searchParams.append(`${parameter.name}[${key}]`, String(item)));
+            else url.searchParams.append(`${parameter.name}[${key}]`, String(child));
+          }
         } else url.searchParams.append(parameter.name, JSON.stringify(value));
       } else if (Array.isArray(value)) {
         if (parameter.explode) value.forEach(item => url.searchParams.append(parameter.name, String(item)));
@@ -190,7 +220,12 @@ export function daytonaClient(headers: Record<string, string>, request: DaytonaR
           else form.append(key, String(value));
         }
       }
-      body = form;
+      // The guarded, DNS-pinned transport accepts bytes, not FormData. Use the
+      // platform encoder to serialize parts and its matching boundary header.
+      const encoded = new Request(DAYTONA_API_URL, { method: "POST", body: form });
+      body = Buffer.from(await withinDeadline(() => encoded.arrayBuffer()));
+      if (body.byteLength > MAX_BYTES) throw failure(422, "daytona_input_limit", "The multipart upload exceeds the limit.");
+      projectedHeaders["Content-Type"] = encoded.headers.get("Content-Type")!;
     } else if (parameters.body !== undefined) {
       body = JSON.stringify(parameters.body);
       if (Buffer.byteLength(body) > MAX_BYTES) throw failure(422, "daytona_input_limit", "The request body exceeds the limit.");
@@ -207,6 +242,8 @@ type Connection = { companyId: string; config: Record<string, unknown> };
 export async function executeDaytonaTool(input: {
   binding: Binding; connection: Connection; headers: Record<string, string>;
   request: DaytonaRequest; toolName: string; parameters: unknown;
+  signal?: AbortSignal;
+  deadlineAt?: number;
 }) {
   if (!input.binding.agentId || input.connection.companyId !== input.binding.companyId) {
     throw failure(404, "daytona_connection_not_found", "Connection not found.");
@@ -217,5 +254,5 @@ export async function executeDaytonaTool(input: {
   if (!validate) { validate = ajv.compile(operation.inputSchema); validators.set(operation.name, validate!); }
   if (!validate!(input.parameters)) throw failure(422, "daytona_arguments_invalid", "Invalid Daytona action arguments.");
   const config = record(input.connection.config.methodConfig);
-  return daytonaClient(input.headers, input.request, config.organizationId).execute(operation, record(input.parameters));
+  return daytonaClient(input.headers, input.request, config.organizationId, input.signal, input.deadlineAt).execute(operation, record(input.parameters));
 }

@@ -71,7 +71,11 @@ export function generateDaytonaCatalog(specs) {
           groups[group].properties[parameter.name] = { ...(parameter.schema ?? parameter.content?.["application/json"]?.schema ?? {}),
             ...(parameter.description ? { description: parameter.description } : {}) };
           if (parameter.required) groups[group].required.push(parameter.name);
-          parameters.push({ name: parameter.name, group, style: parameter.style ?? "form", explode: parameter.explode ?? true,
+          // The audit API documents bracket-key filters despite declaring form
+          // style for its referenced filter objects in the OpenAPI document.
+          const auditFilter = kind === "api" && operation.operationId === "getOrganizationAuditLogs"
+            && group === "query" && /Filter$/.test(parameter.schema?.$ref ?? "");
+          parameters.push({ name: parameter.name, group, style: auditFilter ? "deepObject" : parameter.style ?? "form", explode: parameter.explode ?? true,
             json: Boolean(parameter.content?.["application/json"]) });
         }
         for (const [group, schema] of Object.entries(groups)) {
@@ -103,7 +107,7 @@ export function generateDaytonaCatalog(specs) {
         const interactiveInput = kind === "toolbox" && !readOnly
           && (/^\/computeruse\//.test(route) || route === "/process/pty" || /\/command\/[^/]+\/input$/.test(route));
         const destructive = method === "delete" || sensitive || accessChange || interactiveInput
-          || /execute|code.?run|push.?changes|reset.?changes|restore.?files|initialize|update.?env|public.?status|network.?settings|authenticate/i.test(operation.operationId);
+          || /execute|code.?run|push.?changes|reset.?changes|restore.?files|initialize|update.?env|public.?status|network.?settings|authenticate|set.?ttl|auto.?delete|file.?permissions/i.test(operation.operationId);
         tools.push({ name, kind, path: route, method: method.toUpperCase(), parameters,
           ...(bodyContentType ? { bodyContentType } : {}),
           title: operation.summary || operation.operationId,

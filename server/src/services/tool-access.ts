@@ -1,3 +1,4 @@
+import { stableHash, descriptorHash } from "./tool-catalog-hash.js";
 import { DAYTONA_TOOLS, daytonaClient, daytonaRisk, isDaytonaConnection, isDaytonaToolName } from "./daytona.js";
 import { chatCredentialMutationLease } from "./chat-credential-mutation-lease.js";
 import { notifyChatEndpointWork } from "./chat-work-notifications.js";
@@ -2256,11 +2257,6 @@ function buildProfileDetails(input: {
   };
 }
 
-function stableHash(value: unknown): string {
-  return createHash("sha256")
-    .update(JSON.stringify(value, Object.keys(flattenKeys(value)).sort()))
-    .digest("hex");
-}
 
 function connectionSetupMutationFingerprint(
   row: typeof toolConnections.$inferSelect,
@@ -2281,20 +2277,6 @@ function connectionSetupMutationFingerprint(
   });
 }
 
-function flattenKeys(
-  value: unknown,
-  keys: Record<string, true> = {},
-): Record<string, true> {
-  if (value && typeof value === "object") {
-    for (const [key, nested] of Object.entries(
-      value as Record<string, unknown>,
-    )) {
-      keys[key] = true;
-      flattenKeys(nested, keys);
-    }
-  }
-  return keys;
-}
 
 function normalizeToolDescriptor(tool: unknown): McpToolDescriptor | null {
   const record = asRecord(tool);
@@ -2868,19 +2850,6 @@ function recordValue(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function descriptorHash(
-  tool: McpToolDescriptor,
-  riskLevel: ToolRiskLevel,
-): string {
-  return stableHash({
-    name: tool.name,
-    title: tool.title ?? null,
-    description: tool.description ?? null,
-    inputSchema: tool.inputSchema ?? {},
-    annotations: tool.annotations ?? {},
-    riskLevel,
-  });
-}
 
 /**
  * Did this error come from the OAuth endpoint gate (PAP-17099)? Such a refusal

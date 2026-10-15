@@ -5206,7 +5206,7 @@
       },
       "annotations": {
         "readOnlyHint": false,
-        "destructiveHint": false,
+        "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": true
       }
@@ -5320,7 +5320,7 @@
       },
       "annotations": {
         "readOnlyHint": false,
-        "destructiveHint": false,
+        "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": true
       }
@@ -9376,70 +9376,70 @@
         {
           "name": "id",
           "group": "query",
-          "style": "form",
+          "style": "deepObject",
           "explode": true,
           "json": false
         },
         {
           "name": "actorId",
           "group": "query",
-          "style": "form",
+          "style": "deepObject",
           "explode": true,
           "json": false
         },
         {
           "name": "actorEmail",
           "group": "query",
-          "style": "form",
+          "style": "deepObject",
           "explode": true,
           "json": false
         },
         {
           "name": "actorApiKeyPrefix",
           "group": "query",
-          "style": "form",
+          "style": "deepObject",
           "explode": true,
           "json": false
         },
         {
           "name": "actorApiKeySuffix",
           "group": "query",
-          "style": "form",
+          "style": "deepObject",
           "explode": true,
           "json": false
         },
         {
           "name": "action",
           "group": "query",
-          "style": "form",
+          "style": "deepObject",
           "explode": true,
           "json": false
         },
         {
           "name": "targetType",
           "group": "query",
-          "style": "form",
+          "style": "deepObject",
           "explode": true,
           "json": false
         },
         {
           "name": "targetId",
           "group": "query",
-          "style": "form",
+          "style": "deepObject",
           "explode": true,
           "json": false
         },
         {
           "name": "statusCode",
           "group": "query",
-          "style": "form",
+          "style": "deepObject",
           "explode": true,
           "json": false
         },
         {
           "name": "createdAt",
           "group": "query",
-          "style": "form",
+          "style": "deepObject",
           "explode": true,
           "json": false
         }
@@ -12664,7 +12664,7 @@
       },
       "annotations": {
         "readOnlyHint": false,
-        "destructiveHint": false,
+        "destructiveHint": true,
         "idempotentHint": false,
         "openWorldHint": true
       }
