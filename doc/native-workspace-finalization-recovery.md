@@ -3,9 +3,9 @@
 A native provider can fail before it submits a result while its workspace still
 contains unpublished edits. A prepared workspace reference is not an export
 receipt. Terminal provider failure pins the exact bound sandbox and records a
-file-recovery obligation in the same transaction as the failed run. A startup
-failure after a restart records that obligation before the terminal writer and
-provider cleanup run. Only its exact live recovery claim can settle an owned
+file-recovery obligation in the same transaction as the failed run. Both setup
+failure handlers record that obligation before their terminal writer and provider
+cleanup run. This includes descriptor reads that fail inside runtime selection. Only its exact live recovery claim can settle an owned
 preparation failure; another owner or a stale claim prevents cleanup. Settling
 that claim and recording file retention share a transaction.
 

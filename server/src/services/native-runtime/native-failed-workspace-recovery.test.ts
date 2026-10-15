@@ -128,6 +128,18 @@ const support = externalUrl ? { supported: true } : await getEmbeddedPostgresTes
     expect(await getExecutionBlocker(db, f.companyId, f.issueId)).toMatchObject({ workspaceRepairRequired: true });
   });
 
+  it("records terminal file retention after the executor retires its recovery claim", async () => {
+    const f = await seed();
+    const restartRecovery = await claimRestart(f);
+    await db.update(nativeRunFinalizations).set({ phase: "terminal_failure", leaseOwner: null, leaseExpiresAt: null })
+      .where(eq(nativeRunFinalizations.runId, f.runId));
+    await db.update(heartbeatRuns).set({ status: "failed", nativePhase: "terminal_failure" }).where(eq(heartbeatRuns.id, f.runId));
+    await preserveNativeFailedWorkspace(db, await readRun(f.runId), { allowPreterminal: true, restartRecovery });
+    expect(await readRun(f.runId)).toMatchObject({ status: "failed", nativePhase: "terminal_failure" });
+    expect(await readLease(f.lease.id)).toMatchObject({ status: "pending_cleanup", leasePolicy: "retain_on_failure" });
+    expect(await getExecutionBlocker(db, f.companyId, f.issueId)).toMatchObject({ workspaceRepairRequired: true });
+  });
+
   it.each(["token", "generation", "attempt", "run", "remote", "expired", "released"])("refuses a stale %s recovery claim", async kind => {
     const f = await seed();
     const restartRecovery = await claimRestart(f);

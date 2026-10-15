@@ -28,7 +28,7 @@ export async function preserveNativeFailedWorkspace(db: Db, selected: typeof hea
       && coordinator.leaseExpiresAt && coordinator.leaseExpiresAt.getTime() > Date.now()
       && (claim.kind !== "reattach_remote_runner" || (claim.remote.providerLeaseId === reference.providerLeaseId
         && claim.remote.remoteCwd === reference.remoteCwd)));
-    if ((coordinator?.leaseOwner || claim) && !ownsClaim) throw new NativeWorkspaceFinalizationBusyError();
+    if ((coordinator?.leaseOwner || (claim && coordinator?.phase === "observed")) && !ownsClaim) throw new NativeWorkspaceFinalizationBusyError();
     if (!coordinator || coordinator.resultId
       || !(options.allowPreterminal ? ["observed", "terminal_failure"] : ["terminal_failure"]).includes(coordinator.phase)) return;
     const [run] = await tx.select().from(heartbeatRuns).where(and(

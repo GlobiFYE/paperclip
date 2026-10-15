@@ -1936,6 +1936,23 @@ export function heartbeatService(
     let requiredWorkspaceRestoreEvidence: Record<string, unknown> | null = null;
     let providerResourceDispositionForRun:
       ProviderResourceDisposition | undefined;
+    const preserveNativeWorkspaceOnFailure = async () => {
+      const failureRun = await getRun(run.id);
+      if (failureRun?.runtimeMode === "native"
+        && parseObject(failureRun.runnerProfileJson?.nativeWorkspaceSync).state === "prepared") {
+        providerResourceDispositionForRun = "stop_and_retain";
+        try {
+          await preserveNativeFailedWorkspace(db, failureRun, {
+            allowPreterminal: true,
+            restartRecovery: runOptions.nativeRestartRecovery,
+          });
+        } catch (recoveryError) {
+          if (recoveryError instanceof NativeWorkspaceFinalizationBusyError) nativeOwnershipHeld = true;
+          else logger.error({ err: recoveryError, runId: run.id }, "failed to record retained native workspace recovery");
+        }
+      }
+      return !nativeOwnershipHeld;
+    };
     let nativeLifecycleTelemetryForRun:
       | {
           provider: string;
@@ -3593,6 +3610,7 @@ export function heartbeatService(
           }
           return;
         }
+        if (!(await preserveNativeWorkspaceOnFailure())) return;
         await runCompletion.failRun({
           run, agent, issueId, issueRef, signal: executionControl.controller.signal,
           output: runOutput,
@@ -3639,17 +3657,7 @@ export function heartbeatService(
           },
         );
       } else {
-        const failureRun = await getRun(run.id);
-        if (failureRun?.runtimeMode === "native"
-          && parseObject(failureRun.runnerProfileJson?.nativeWorkspaceSync).state === "prepared") {
-          providerResourceDispositionForRun = "stop_and_retain";
-          try {
-            await preserveNativeFailedWorkspace(db, failureRun, { allowPreterminal: true, restartRecovery: runOptions.nativeRestartRecovery });
-          } catch (recoveryError) {
-            if (recoveryError instanceof NativeWorkspaceFinalizationBusyError) nativeOwnershipHeld = true;
-            else logger.error({ err: recoveryError, runId: run.id }, "failed to record retained native workspace recovery");
-          }
-        }
+        await preserveNativeWorkspaceOnFailure();
         if (!nativeOwnershipHeld) await runCompletion.failRunSetup({
           run, runId, outerErr, signal: executionControl.controller.signal,
           providerDispatchStarted: legacyAdapterEntered || nativeDispatchStarted,
