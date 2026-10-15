@@ -1,3 +1,4 @@
+import { notifyDeliveryWork, DELIVERY_QUEUES } from "./delivery-work-notifications.js";
 import { composeConnectionInstructions } from "./connection-instructions.js";
 import { isInsufficientConnectionScope, INSUFFICIENT_CONNECTION_SCOPE_MESSAGE } from "./connection-permission-errors.js";
 import { boundedMcpToolName } from "./mcp-tool-names.js";
@@ -13,6 +14,7 @@ import { executeSlackTool } from "./connectors/slack.js";
 import { githubGuestBotConnectionForSession, githubBotToolsForSession } from "./chat-github-tools.js";
 import { githubChatReviewService } from "./chat-github-reviews.js";
 import { runIdentityContexts } from "@paperclipai/db";
+import { executeSpekoVoiceTool, spekoToolsForSession } from "./voice/speko-agent-tools.js";
 import { captureRunIdentity } from "./run-identity.js";
 import { emitConnectionInvoked } from "./connector-telemetry.js";
 import { resolveManagedGitHubIdentitySelection } from "./git-credentials.js";
@@ -20,6 +22,7 @@ import { extractRemoteMcpPending } from "./remote-mcp-pending.js";
 import { logger } from "../middleware/logger.js";
 import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import {
   and,
   asc,
@@ -91,6 +94,7 @@ import type {
   UpdateToolMcpGateway,
 } from "@paperclipai/shared";
 import {
+  getConnectableAppDefinition,
   isGitHubConnectorProfileId,
   isGoogleWorkspaceConnectorProfileId,
   type GitHubConnectorProfileId,
@@ -206,6 +210,7 @@ export function isConnectionGrantAudienceAllowed(
 // `tool_timeout` even though the approval succeeded. Give approved executions
 // the full permitted headroom instead.
 const APPROVED_EXECUTION_TIMEOUT_MS = 60_000;
+const GITHUB_BOT_TOOL_TIMEOUT_MS = 60_000;
 const ACTION_REQUEST_EXECUTION_POLL_MS = 25;
 // Approval execution performs live target, signature, managed-argument, and
 // issue-state checks before provider dispatch. Give that preparation a
@@ -272,7 +277,8 @@ export type ToolGatewayProviderType =
   | "paperclip_plugin"
   | "paperclip_virtual"
   | "paperclip_github_chat"
-  | "paperclip_slack_chat";
+  | "paperclip_slack_chat"
+  | "paperclip_speko_voice";
 
 export interface ConnectedMcpGatewayMetadata {
   applicationId: string;
@@ -347,6 +353,24 @@ export class ToolGatewayHttpError extends Error {
   ) {
     super(message);
   }
+}
+
+/** Repeated discovery rows are one tool; conflicting bindings stay ambiguous. */
+export function deduplicateToolDescriptors(tools: readonly ToolGatewayDescriptor[]): ToolGatewayDescriptor[] {
+  const unique = new Map<string, ToolGatewayDescriptor>();
+  for (const tool of tools) {
+    const previous = unique.get(tool.name);
+    if (previous) {
+      if (!isDeepStrictEqual(previous, tool)) {
+        throw new ToolGatewayHttpError(409,
+          `Conflicting tool definitions share the name ${JSON.stringify(tool.name)} (connections ${JSON.stringify([previous.connectionId ?? null, tool.connectionId ?? null])}).`,
+          "tool_name_collision");
+      }
+      continue;
+    }
+    unique.set(tool.name, tool);
+  }
+  return [...unique.values()];
 }
 
 interface ExecuteGatewayToolInput {
@@ -468,6 +492,21 @@ const BUILTIN_LOCAL_STDIO_RUNTIME_TEMPLATES: Record<
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Record<string, unknown>;
+}
+
+function connectionRequiresMcpSession(connection: { config: unknown }): boolean {
+  const config = asRecord(connection.config);
+  if (config?.mcpSessionRequired === true) return true;
+  const sourceTemplateKey = typeof config?.sourceTemplateKey === "string"
+    ? config.sourceTemplateKey
+    : null;
+  const connectionMethodKey = typeof config?.connectionMethodKey === "string"
+    ? config.connectionMethodKey
+    : null;
+  if (!sourceTemplateKey || !connectionMethodKey) return false;
+  return getConnectableAppDefinition(sourceTemplateKey)?.methods.some((method) =>
+    method.key === connectionMethodKey && method.defaults?.mcpSessionRequired === true
+  ) ?? false;
 }
 
 async function mapWithConcurrency<T, R>(
@@ -713,8 +752,10 @@ function gatewaySessionFromRow(
   };
 }
 
-function timeoutMs(value: number | undefined) {
-  if (!Number.isFinite(value)) return DEFAULT_TOOL_TIMEOUT_MS;
+function timeoutMs(value: number | undefined, tool?: ToolGatewayDescriptor) {
+  if (!Number.isFinite(value)) return tool?.providerType === "paperclip_github_chat"
+    ? GITHUB_BOT_TOOL_TIMEOUT_MS
+    : DEFAULT_TOOL_TIMEOUT_MS;
   return Math.max(
     1,
     Math.min(60_000, Math.floor(value ?? DEFAULT_TOOL_TIMEOUT_MS)),
@@ -2599,15 +2640,18 @@ export function createToolGatewayService(
       );
     }
 
-    await db
-      .insert(toolActionDeliveries)
-      .values({
-        companyId: input.session.companyId,
-        actionRequestId: actionRequest.id,
-        issueId: input.session.issueId,
-        interactionId: interaction.id,
-      })
-      .onConflictDoNothing();
+    await db.transaction(async tx => {
+      await notifyDeliveryWork(tx, DELIVERY_QUEUES.toolAction);
+      await tx
+        .insert(toolActionDeliveries)
+        .values({
+          companyId: input.session.companyId,
+          actionRequestId: actionRequest.id,
+          issueId: input.session.issueId!,
+          interactionId: interaction.id,
+        })
+        .onConflictDoNothing();
+    });
 
     await writeToolCallEvent({
       invocationId: input.invocation.id,
@@ -2771,7 +2815,7 @@ export function createToolGatewayService(
     const hasOnDemandTargets = connectedTools.some(isOnDemandRemoteTool);
     const virtualTools = hasOnDemandTargets ? VIRTUAL_TOOLS : [];
     const githubBotTools = await githubBotToolsForSession(db, session);
-    const tool = [...allTools(), ...connectedTools, ...virtualTools, ...githubBotTools, ...await slackToolsForSession(db, session)]
+    const tool = [...allTools(), ...connectedTools, ...virtualTools, ...githubBotTools, ...await slackToolsForSession(db, session), ...await spekoToolsForSession(db, session)]
       .filter(
         (candidate) =>
           session.agentId ||
@@ -2994,6 +3038,7 @@ export function createToolGatewayService(
     return [
       ...await githubBotToolsForSession(db, session),
       ...await slackToolsForSession(db, session),
+      ...await spekoToolsForSession(db, session),
       ...connectedTools,
     ];
   }
@@ -3058,7 +3103,7 @@ export function createToolGatewayService(
         visibleTools.push(...VIRTUAL_TOOLS);
       }
     }
-    return visibleTools;
+    return deduplicateToolDescriptors(visibleTools);
   }
 
   async function executeBuiltinTool(
@@ -3069,6 +3114,15 @@ export function createToolGatewayService(
   ) {
     const params = asRecord(parameters) ?? {};
 
+    if (tool.providerType === "paperclip_speko_voice") {
+      try {
+        const data = await executeSpekoVoiceTool(db, session, String(asRecord(tool.providerMetadata)?.endpointId ?? ""), parameters, invocationId);
+        return { content: JSON.stringify(data), data };
+      } catch (error) {
+        if (error instanceof HttpError) throw new ToolGatewayHttpError(error.status, error.message, "speko_operation_rejected", asRecord(error.details) ?? {});
+        throw error;
+      }
+    }
     if (tool.providerType === "paperclip_slack_chat") {
       if (!session.agentId || !session.runId || !session.issueId) throw new ToolGatewayHttpError(403, "Slack task binding required", "slack_task_required");
       try {
@@ -5972,6 +6026,27 @@ export function createToolGatewayService(
               // letting the tighter default cut a legitimately slow tool short.
               responseTimeoutMs: ms,
             });
+      const requireExplicitRetryAfterOAuthRefresh = async (refreshedResponse: Response): Promise<never> => {
+        // The provider rejected this dispatch, but automatic replay is unsafe:
+        // a server can apply a request before returning 401. A caller retry
+        // starts a fresh credential-scoped MCP session and dispatches once.
+        if (mcpSession) forgetMcpHttpSession(mcpSession);
+        await refreshedResponse.body?.cancel().catch(() => undefined);
+        execution.response = {
+          httpStatus: refreshedResponse.status,
+          contentType: refreshedResponse.headers.get("content-type"),
+          bodySizeBytes: 0,
+          upstreamRequestId:
+            refreshedResponse.headers.get("x-request-id") ??
+            refreshedResponse.headers.get("traceparent"),
+        };
+        throw new ToolGatewayHttpError(
+          409,
+          "The provider rejected the saved OAuth token, which has now been refreshed. Retry the action explicitly; the original call was not replayed.",
+          "oauth_refreshed_retry_required",
+          { connectionId: connection.id, catalogEntryId: entry.id, execution },
+        );
+      };
       if (isRailwayEndpoint(connection.config.url) && normalizeRailwayToolName(entry.toolName).startsWith(RAILWAY_TOOL_PREFIX)) {
         if (!isRailwayConnection(connection) || connection.config.railwayApiStatus !== "available") {
           throw new ToolGatewayHttpError(422, "Railway API access is not verified. Refresh actions or reconnect this Railway connection.", "railway_api_not_verified");
@@ -6002,7 +6077,7 @@ export function createToolGatewayService(
         };
       }
       let requestHeaders = headers;
-      if (connection.config.mcpSessionRequired === true) {
+      if (connectionRequiresMcpSession(connection)) {
         const scope = `${connection.id}:grant:${grant.id}:actor:${session.agentId}:${endpoint}`;
         requestHeaders = await getMcpHttpSession({
           scope,
@@ -6066,24 +6141,7 @@ export function createToolGatewayService(
         });
         headers = builtHeaders.headers;
         headerSummary = builtHeaders.summary;
-        response = await dispatchRemote(endpoint, {
-          ...requestInit,
-          headers: mcpHttpRequestHeaders(headers),
-        });
-        if (response.status === 401) {
-          await db
-            .update(connectionGrants)
-            .set({
-              status: "needs_reauthorization",
-              updatedAt: new Date(options.now?.() ?? Date.now()),
-            })
-            .where(
-              and(
-                eq(connectionGrants.id, grant.id),
-                eq(connectionGrants.companyId, connection.companyId),
-              ),
-            );
-        }
+        await requireExplicitRetryAfterOAuthRefresh(response);
       }
       if (
         response.status === 401 &&
@@ -6106,10 +6164,7 @@ export function createToolGatewayService(
         });
         headers = builtHeaders.headers;
         headerSummary = builtHeaders.summary;
-        response = await dispatchRemote(endpoint, {
-          ...requestInit,
-          headers: mcpHttpRequestHeaders(headers),
-        });
+        await requireExplicitRetryAfterOAuthRefresh(response);
       }
       if (
         response.status === 401 &&
@@ -6146,10 +6201,7 @@ export function createToolGatewayService(
         });
         headers = builtHeaders.headers;
         headerSummary = builtHeaders.summary;
-        response = await dispatchRemote(endpoint, {
-          ...requestInit,
-          headers: mcpHttpRequestHeaders(headers),
-        });
+        await requireExplicitRetryAfterOAuthRefresh(response);
       }
       const sessionExpired = response.status === 404 && new Headers(requestHeaders).has("mcp-session-id");
       if (sessionExpired) {
@@ -7240,7 +7292,7 @@ export function createToolGatewayService(
 
     const startedAt = Date.now();
     try {
-      const executionTimeoutMs = timeoutMs(args.timeoutMs);
+      const executionTimeoutMs = timeoutMs(args.timeoutMs, args.tool);
       const connectedMcpExecution =
         (args.tool.providerType === "mcp_remote_http" || args.tool.providerType === "provider_rest")
           ? await executeRemoteHttpTool(
@@ -9003,12 +9055,14 @@ export function createToolGatewayService(
           tool,
         }),
       );
-      return decisions
+      const visibleTools = decisions
         .filter(
           ({ decision }) =>
             decision.allowed || decision.decision === "require_approval",
         )
-        .map(({ tool }) => {
+        .map(({ tool }) => tool);
+      return deduplicateToolDescriptors(visibleTools)
+        .map((tool) => {
           const {
             providerType: _providerType,
             risk: _risk,
@@ -9074,6 +9128,12 @@ export function createToolGatewayService(
 
     async browserUseResources(binding: { companyId: string; agentId: string; runId?: string; issueId?: string }) {
       if (!binding.runId || !binding.issueId) return [];
+      const [connection] = await db.select({ id: toolConnections.id }).from(toolConnections).where(and(
+        eq(toolConnections.companyId, binding.companyId), eq(toolConnections.transport, "rest_api"),
+        eq(toolConnections.enabled, true), eq(toolConnections.status, "active"),
+        sql`${toolConnections.config}->>'sourceTemplateKey' = 'browser-use-cloud'`,
+      )).limit(1);
+      if (!connection) return [];
       const session: ToolGatewaySession = { ...binding, runId: binding.runId, issueId: binding.issueId, id: randomUUID(), token: "", projectId: null, createdAt: new Date(), expiresAt: new Date(Date.now() + 60000) };
       const tools = (await listToolsForContext(session)).filter(t => t.providerType === "provider_rest");
       const resources: Array<{ id: string; label: string; connectionId: string }> = [];
@@ -9089,6 +9149,9 @@ export function createToolGatewayService(
       companyId: string;
       connectionId: string;
       agentId: string;
+      heartbeatRunId?: string | null;
+      issueId?: string | null;
+      projectId?: string | null;
     }) {
       await assertAgentInCompany(input.companyId, input.agentId);
       const tools = await connectedMcpToolsForConnection(
@@ -9100,6 +9163,9 @@ export function createToolGatewayService(
           policyInputForAgentTool({
             companyId: input.companyId,
             agentId: input.agentId,
+            heartbeatRunId: input.heartbeatRunId,
+            issueId: input.issueId,
+            projectId: input.projectId,
             tool,
           }),
         )
@@ -10092,12 +10158,21 @@ export function createToolGatewayService(
           argumentsHash: argumentValidation.summary.sha256 ?? "",
         });
         if (replay?.matched) {
+          let replayResult: unknown = replay.result;
+          if (tool.providerType === "paperclip_github_chat" && ["comment", "update_comment", "submit_review"].includes(tool.upstreamToolName ?? "")) {
+            const access = await policyService.decide(policyInputForTool({ session, tool, parameters: effectiveParameters, consumeRateLimit: false }));
+            if (!access.allowed && access.decision !== "require_approval")
+              throw new ToolGatewayHttpError(policyErrorStatus(access), access.explanation, access.reasonCode);
+            const receipt = await githubChatReviewService(db).readPublicationReceipt(session, tool.upstreamToolName ?? "", effectiveParameters, replay.invocationId);
+            if (receipt) replayResult = validateToolContent({ value: { content: JSON.stringify(receipt), data: receipt },
+              direction: "result", sensitiveMode: "redact", promptInjectionMode: "block" }).value;
+          }
           return {
             invocationId: replay.invocationId,
             status: "replayed" as const,
             tool: virtualToolName ?? tool.name,
             targetTool: virtualToolName ? tool.name : undefined,
-            result: replay.result,
+            result: replayResult,
           };
         }
       }
@@ -10484,7 +10559,23 @@ export function createToolGatewayService(
         const retryingSlackRateLimit = recorded.replayed && accessDecision.allowed && tool.providerType === "paperclip_slack_chat" && session.agentId && session.runId && session.issueId
           ? await claimSlackRateLimitRetry(db, { companyId: session.companyId, agentId: session.agentId, runId: session.runId, issueId: session.issueId, endpointId: String(asRecord(tool.providerMetadata)?.endpointId ?? ""), identityContextId: session.identityContextId }, invocationId)
           : false;
-        if (recorded.replayed && !retryingSlackRateLimit) {
+        const gitHubPublicationReplay = recorded.replayed &&
+          tool.providerType === "paperclip_github_chat" &&
+          ["comment", "update_comment", "submit_review"].includes(tool.upstreamToolName ?? "") &&
+          recorded.invocation.approvalState === "not_required";
+        const gitHubReplayPolicyAllowed = accessDecision.allowed;
+        const gitHubReplayBindingMatches =
+          recorded.invocation.agentId === session.agentId && recorded.invocation.runId === session.runId &&
+          recorded.invocation.issueId === session.issueId && recorded.invocation.connectionId === tool.connectionId &&
+          recorded.invocation.toolName === tool.name && recorded.invocation.argumentsHash === effectiveArgumentsSummary.sha256 &&
+          ["authorized", "executing", "succeeded", "failed", "timed_out"].includes(recorded.invocation.status);
+        if (gitHubPublicationReplay && gitHubReplayPolicyAllowed && !gitHubReplayBindingMatches)
+          throw new ToolGatewayHttpError(409, "Idempotency key belongs to a different GitHub publication", "github_idempotency_conflict");
+        const retryingGitHubPublication = gitHubPublicationReplay && accessDecision.allowed &&
+          recorded.invocation.approvalState === "not_required" && gitHubReplayBindingMatches;
+        if (recorded.replayed && !retryingSlackRateLimit && !retryingGitHubPublication) {
+          if (gitHubPublicationReplay && !gitHubReplayPolicyAllowed)
+            throw new ToolGatewayHttpError(policyErrorStatus(accessDecision), accessDecision.explanation, accessDecision.reasonCode);
           await writeAudit({
             session,
             companyId: session.companyId,
@@ -10560,6 +10651,7 @@ export function createToolGatewayService(
           .update(toolInvocations)
           .set({
             status: "executing",
+            ...(retryingGitHubPublication ? { errorCode: null, errorMessage: null, completedAt: null } : {}),
             startedAt: new Date(),
             updatedAt: new Date(),
           })
@@ -10588,7 +10680,7 @@ export function createToolGatewayService(
       });
 
       try {
-        const executionTimeoutMs = timeoutMs(input.timeoutMs);
+        const executionTimeoutMs = timeoutMs(input.timeoutMs, tool);
         if (
           tool.providerType === "paperclip_plugin" &&
           (!session.agentId || !session.runId)

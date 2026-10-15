@@ -23,6 +23,7 @@ import { agentRoutes } from "../routes/agents.js";
 import { issueRoutes } from "../routes/issues.js";
 import { setupLiveEventsWebSocketServer } from "../realtime/live-events-ws.js";
 import { agentService } from "../services/agents.js";
+import { createAgentLifecycle } from "../services/agent-lifecycle.js";
 import { issueService } from "../services/issues.js";
 import { publishLiveEvent } from "../services/live-events.js";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
@@ -281,7 +282,9 @@ describeDb("seven host service keys on real issue routes and test DB", () => {
 
   it.each(["manual", "budget"] as const)("preserves a %s pause made after the watchdog scope guard", async (reason) => {
     const path = `/api/agents/${watchdogRecoverAgentId}`;
-    await db.update(agents).set({ status: "error", pauseReason: null, pausedAt: null })
+    await db.update(agents).set({
+      status: "error", lifecycleState: "ready", lifecycleHolds: [], pauseReason: null, pausedAt: null,
+    })
       .where(eq(agents.id, watchdogRecoverAgentId));
     let reachedGuard = false;
     let releasePatch!: () => void;
@@ -298,7 +301,7 @@ describeDb("seven host service keys on real issue routes and test DB", () => {
         const paused = await request(app).post(`${path}/pause`).set("x-test-board-session", "pause");
         expect(paused.status, JSON.stringify(paused.body)).toBe(200);
       } else {
-        const paused = await agentService(db).pause(watchdogRecoverAgentId, "budget");
+        const paused = await createAgentLifecycle(db).pauseAgent(watchdogRecoverAgentId, "budget");
         expect(paused?.status).toBe("paused");
       }
     } finally {
@@ -412,7 +415,7 @@ describeDb("seven host service keys on real issue routes and test DB", () => {
         "run", "--rm", "--network", "host",
         "--mount", `type=bind,src=${packageDir},dst=/package,readonly`,
         "--mount", `type=bind,src=${fixtureDir},dst=/root/fixture,readonly`,
-        "python:3.12-alpine", "sh", "-c",
+        process.env.PAPERCLIP_HOST_UID_PROBE_IMAGE ?? "python:3.12-alpine", "sh", "-c",
         "mkdir -p /opt/paperclip-cron && cp /package/probe_uid_fixture.py /package/service_http.py /package/verify_boundary.py /opt/paperclip-cron/ && exec python3 /opt/paperclip-cron/probe_uid_fixture.py /root/fixture",
       ], { timeout: 90_000 });
       for (const [uid, action] of Object.entries(manifest.services)) {

@@ -109,6 +109,8 @@ seven distinct fixture API keys, then runs seven Docker UIDs against real HTTP
 routes. Each UID can read only its own private credential and must produce one
 allowed and one denied response. UID 1000 reads no private credential and its
 unauthenticated API request returns 401. The fixture never uses live keys.
+Set `PAPERCLIP_HOST_UID_PROBE_IMAGE` to an existing Python 3.12 image when the
+default `python:3.12-alpine` image is unavailable locally.
 
 Both installers compare exact reviewed host script SHA-256 before patching or
 staging. The HELA-12871 installer also hashes its copied source bytes after

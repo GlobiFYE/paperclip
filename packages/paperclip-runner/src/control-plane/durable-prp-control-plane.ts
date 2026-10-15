@@ -30,7 +30,8 @@ import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import { NativeSessionProtocolIntegrityError } from "../contracts/native-session-backend.js";
-import { ACPX_CREDENTIAL_BINDING_ENV, ACPX_CREDENTIAL_NAMES, CLAUDE_ROUTING_ENV_KEYS } from "../drivers/acpx/environment.js";
+import { ACPX_CREDENTIAL_BINDING_ENV, ACPX_CREDENTIAL_NAMES, CLAUDE_ROUTING_ENV_KEYS, createAcpxSidecarHostEnvironment } from "../drivers/acpx/environment.js";
+import { piCredentialNames } from "../drivers/acpx/pi-provider-config.js";
 import { githubCredentialEnvironment } from "../github-credential-environment.js";
 import {
   validatePrpEvent,
@@ -1491,6 +1492,9 @@ export class DurablePrpControlPlane {
   #expectedRunnerDigest: string;
   #server: Server | null = null;
   #connections = new Set<AuthorityConnection>();
+  // Set when the last authenticated Runner connection closes; cleared on the
+  // next authentication. Diagnostic only: it never gates authority.
+  #runnerDisconnectedAt: number | null = null;
   #connectionProcessing = new Map<AuthorityConnection, Promise<void>>();
   #pendingSemanticCalls = new Set<string>();
   #semanticCallbacksRetired = false;
@@ -1651,6 +1655,15 @@ export class DurablePrpControlPlane {
     return [...this.#connections].filter(
       (connection) => connection.secureChannel !== null,
     ).length;
+  }
+
+  /**
+   * Milliseconds since the last authenticated Runner connection closed, or
+   * null when a Runner is connected or has never authenticated.
+   */
+  runnerDisconnectedForMs(now = Date.now()): number | null {
+    if (this.#runnerDisconnectedAt === null || this.activeRunnerConnectionCount() > 0) return null;
+    return Math.max(0, now - this.#runnerDisconnectedAt);
   }
 
   /** A reusable close requires every admitted callback's exact durable result. */
@@ -2083,7 +2096,11 @@ export class DurablePrpControlPlane {
         };
         void tail.then(release, release);
       },
-      onClose: () => this.#connections.delete(connection),
+      onClose: () => {
+        this.#connections.delete(connection);
+        if (connection.secureChannel !== null && this.activeRunnerConnectionCount() === 0)
+          this.#runnerDisconnectedAt ??= Date.now();
+      },
     });
     this.#connections.add(connection);
     return {
@@ -2745,6 +2762,7 @@ export class DurablePrpControlPlane {
       pending.serverProof,
       clientProof,
     );
+    this.#runnerDisconnectedAt = null;
     for (const active of this.#connections) {
       if (active !== connection && active.secureChannel !== null)
         active.close();
@@ -3392,7 +3410,7 @@ const runnerExplicitProviderEnvironmentKeys = [
   "PAPERCLIP_AGENT_KEY_ID",
   "PAPERCLIP_AGENT_PUBLIC_KEY",
   "PAPERCLIP_AGENT_PRIVATE_KEY",
-  ...ACPX_CREDENTIAL_NAMES.pi,
+  ...ACPX_CREDENTIAL_NAMES.pi.filter(name => !name.startsWith("AWS_")),
   ...ACPX_CREDENTIAL_NAMES.cursor,
   ...ACPX_CREDENTIAL_NAMES.copilot,
   ACPX_CREDENTIAL_BINDING_ENV,
@@ -3431,6 +3449,7 @@ const runnerExplicitProviderEnvironmentKeys = [
 
 function runnerEnvironment(
   ticket: string,
+  normalizedSessionId: string,
   explicitSource?: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
   const platformSource = explicitSource ?? process.env;
@@ -3454,7 +3473,23 @@ function runnerEnvironment(
         if (explicitSource[key] !== undefined) environment[key] = explicitSource[key];
       }
     }
-    Object.assign(environment, githubCredentialEnvironment(explicitSource), configuredEnvironment(explicitSource));
+    // Pi custom-provider references and direct cloud credentials cross only
+    // under the controller's exact run/session credential binding.
+    const marker = explicitSource[ACPX_CREDENTIAL_BINDING_ENV];
+    let binding: unknown;
+    if (marker !== undefined && Buffer.byteLength(marker) <= 4_096) {
+      try { binding = JSON.parse(marker); } catch { /* Sidecar admission rejects invalid markers. */ }
+    }
+    let taskEnvironmentSource = explicitSource;
+    if (binding !== null && typeof binding === "object" && !Array.isArray(binding)
+      && (binding as Record<string, unknown>).agent === "pi") {
+      const bound = createAcpxSidecarHostEnvironment(explicitSource, "pi", normalizedSessionId);
+      taskEnvironmentSource = bound;
+      for (const key of piCredentialNames(explicitSource)) {
+        if (bound[key] !== undefined) environment[key] = bound[key];
+      }
+    }
+    Object.assign(environment, githubCredentialEnvironment(explicitSource), configuredEnvironment(taskEnvironmentSource));
   }
   return environment;
 }
@@ -3602,7 +3637,7 @@ export function spawnRunner(options: {
   }
 
   const command = options.runnerBinaryPath ?? runnerBinary;
-  const environment = runnerEnvironment(options.ticket, options.environment);
+  const environment = runnerEnvironment(options.ticket, options.identity.normalizedSessionId, options.environment);
   const withRestart = (handle: RunnerProcessHandle): RunnerProcessHandle => ({
     ...handle,
     restart: (ticket) => spawnRunner({ ...options, ticket }),

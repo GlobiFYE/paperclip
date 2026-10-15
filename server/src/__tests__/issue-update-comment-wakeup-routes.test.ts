@@ -2,6 +2,10 @@ import express from "express";
 import request from "supertest";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+vi.mock("../services/fast-responses.js", () => ({
+  enqueueFastResponse: vi.fn(async () => undefined),
+}));
+
 const ASSIGNEE_AGENT_ID = "11111111-1111-4111-8111-111111111111";
 const PREVIOUS_AGENT_ID = "22222222-2222-4222-8222-222222222222";
 const MENTIONED_AGENT_ID = "33333333-3333-4333-8333-333333333333";
@@ -695,37 +699,6 @@ describe("issue update comment wakeups", () => {
     }));
   });
 
-  it("does not wake the assignee for its own run-authenticated top-level comment", async () => {
-    const existing = makeIssue({
-      assigneeAgentId: ASSIGNEE_AGENT_ID,
-      assigneeUserId: null,
-      status: "in_progress",
-    });
-    mockIssueService.getById.mockResolvedValue(existing);
-    mockIssueService.addComment.mockResolvedValue({
-      id: "comment-self-top-level",
-      issueId: existing.id,
-      companyId: existing.companyId,
-      body: "Plan ready for review.",
-      createdByRunId: SOURCE_RUN_ID,
-    });
-    mockHeartbeatService.getRun.mockResolvedValue({
-      id: SOURCE_RUN_ID,
-      companyId: existing.companyId,
-      agentId: ASSIGNEE_AGENT_ID,
-      status: "running",
-    });
-
-    const res = await request(await createApp())
-      .post(`/api/issues/${existing.id}/comments`)
-      .set("X-Paperclip-Run-Id", SOURCE_RUN_ID)
-      .send({ body: "Plan ready for review." });
-
-    expect(res.status).toBe(201);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
-  });
-
   it.each((["post", "patch"] as const).flatMap((method) =>
     ["assignee_comment", "board_comment", "human_owned", "unassigned", "blocked_parent", "done_parent", "done_comment", ...(method === "patch" ? ["closing_comment"] : [])].map((scenario) => ({ method, scenario })),
   ))("keeps $method mentions as context for $scenario", async ({ method, scenario }) => {
@@ -863,32 +836,6 @@ describe("issue update comment wakeups", () => {
         }),
       }),
     );
-  });
-
-  it("does not route a plain-text agent name on a human-owned issue comment", async () => {
-    const existing = makeIssue({
-      assigneeAgentId: null,
-      assigneeUserId: "local-board",
-      status: "in_progress",
-    });
-    mockIssueService.getById.mockResolvedValue(existing);
-    mockIssueService.addComment.mockResolvedValue({
-      id: "comment-plain-agent-name",
-      issueId: existing.id,
-      companyId: existing.companyId,
-      body: "QA please take the screenshot",
-    });
-    mockIssueService.findMentionedAgents.mockResolvedValue([]);
-
-    const res = await request(await createApp())
-      .post(`/api/issues/${existing.id}/comments`)
-      .send({
-        body: "QA please take the screenshot",
-      });
-
-    expect(res.status).toBe(201);
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
 });

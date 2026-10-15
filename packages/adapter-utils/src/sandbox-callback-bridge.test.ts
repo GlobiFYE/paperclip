@@ -1,6 +1,6 @@
 import { execFile as execFileCallback, spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
+import fs, { mkdir, mkdtemp, readFile, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -24,6 +24,7 @@ import {
   startSandboxCallbackBridgeWorker,
 } from "./sandbox-callback-bridge.js";
 import type { SandboxCallbackBridgeQueueClient } from "./sandbox-callback-bridge.js";
+import { DUPLEX_FRAME_VERSION, encodeDuplexFrame } from "./duplex-frame-codec.js";
 import { createHttp2BridgeServer } from "./http2-bridge-server.js";
 import type { Http2BridgeForwardRequest, Http2BridgeForwardResult } from "./http2-bridge-server.js";
 import type { CommandManagedDuplexChannel } from "./command-managed-runtime.js";
@@ -34,6 +35,64 @@ const execFile = promisify(execFileCallback);
 
 describe("sandbox callback bridge", () => {
   const cleanupDirs: string[] = [];
+  function queueRuntimeInput(
+    runner: ReturnType<typeof createExecRunner>,
+    remoteWorkspaceDir: string,
+    localWorkspaceDir: string,
+    bridgeAsset: Awaited<ReturnType<typeof createSandboxCallbackBridgeAsset>>,
+  ): Parameters<typeof prepareCommandManagedRuntime>[0] {
+    return {
+      runner,
+      spec: {
+        remoteCwd: remoteWorkspaceDir,
+        timeoutMs: 30_000,
+      },
+      adapterKey: "codex",
+      workspaceLocalDir: localWorkspaceDir,
+      assets: [
+        {
+          key: "bridge",
+          localDir: bridgeAsset.localDir,
+        },
+      ],
+    };
+  }
+
+  function createWorkerWaiter() {
+    return async (predicate: () => boolean, timeoutMs: number) => {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        if (predicate()) {
+          return;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      throw new Error("waitFor timed out");
+    };
+  }
+
+  function virtualQueueReadClient(
+    directories: ReturnType<typeof sandboxCallbackBridgeDirectories>,
+    requestBodies: Map<string, string>,
+  ): Pick<SandboxCallbackBridgeQueueClient, "makeDir" | "makeDirs" | "listJsonFiles" | "readTextFile" | "writeTextFile"> {
+    return {
+      makeDir: async () => {},
+      makeDirs: async () => {},
+      listJsonFiles: async (dir) =>
+        dir === directories.requestsDir
+          ? [...requestBodies.keys()].map((entry) => path.posix.basename(entry)).sort()
+          : [],
+      readTextFile: async (remotePath) => {
+        const body = requestBodies.get(remotePath);
+        if (body === undefined) {
+          throw new Error(`missing request ${remotePath}`);
+        }
+        return body;
+      },
+      writeTextFile: async () => {},
+    };
+  }
+
   const cleanupFns: Array<() => Promise<void>> = [];
 
   function createExecRunner() {
@@ -101,6 +160,12 @@ describe("sandbox callback bridge", () => {
     };
   }
 
+  // Match the gateway's atomic publication. A visible, growing .json file can
+  // be stat'ed while empty and exceed the reader's reserved size on the read.
+  function publishBridgeRequest(requestPath: string, body: string): Promise<void> {
+    return createFileSystemSandboxCallbackBridgeQueueClient().writeTextFile(requestPath, body);
+  }
+
   async function waitForJsonFile(directory: string, timeoutMs = 2_000): Promise<string> {
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
@@ -140,21 +205,7 @@ describe("sandbox callback bridge", () => {
     const bridgeAsset = await createSandboxCallbackBridgeAsset();
     cleanupFns.push(bridgeAsset.cleanup);
 
-    const prepared = await prepareCommandManagedRuntime({
-      runner,
-      spec: {
-        remoteCwd: remoteWorkspaceDir,
-        timeoutMs: 30_000,
-      },
-      adapterKey: "codex",
-      workspaceLocalDir: localWorkspaceDir,
-      assets: [
-        {
-          key: "bridge",
-          localDir: bridgeAsset.localDir,
-        },
-      ],
-    });
+    const prepared = await prepareCommandManagedRuntime(queueRuntimeInput(runner, remoteWorkspaceDir, localWorkspaceDir, bridgeAsset));
 
     const queueDir = path.posix.join(prepared.runtimeRootDir, "paperclip-bridge");
     const directories = sandboxCallbackBridgeDirectories(queueDir);
@@ -297,6 +348,80 @@ describe("sandbox callback bridge", () => {
 
   });
 
+  it("publishes complete fixture envelopes before queue readers can reserve their size", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-bridge-publication-"));
+    cleanupDirs.push(rootDir);
+    const client = createFileSystemSandboxCallbackBridgeQueueClient();
+    const requestPath = path.join(rootDir, "fixture.json");
+    const payload = JSON.stringify({ id: "fixture", method: "GET", path: "/api/openapi.json", body: "" });
+    const listingsDuringWrite: string[][] = [];
+    const write = fs.writeFile.bind(fs);
+    // Force a poll while the writer has created its file but not filled it.
+    // A direct .json write would become visible and reserve zero bytes here.
+    const spy = vi.spyOn(fs, "writeFile").mockImplementation(async (file, body, options) => {
+      if (typeof file !== "string" || path.dirname(file) !== rootDir) return write(file, body, options);
+      await write(file, "", options);
+      const visible = await client.listJsonFiles(rootDir);
+      listingsDuringWrite.push(visible);
+      const reserved = visible.includes("fixture.json") ? await client.fileSize!(requestPath) : null;
+      await write(file, body, options);
+      if (reserved !== null) await client.readTextFile(requestPath, reserved);
+    });
+    try {
+      await publishBridgeRequest(requestPath, payload);
+      expect(listingsDuringWrite).toEqual([[]]);
+      expect(await client.listJsonFiles(rootDir)).toEqual(["fixture.json"]);
+      const size = await client.fileSize!(requestPath);
+      expect(size).toBe(Buffer.byteLength(payload));
+      await expect(client.readTextFile(requestPath, size)).resolves.toBe(payload);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("keeps the bounded reader fail-closed when a visible request grows after its size is reserved", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-bridge-growing-request-"));
+    cleanupDirs.push(rootDir);
+    const queueDir = path.join(rootDir, "queue");
+    const directories = sandboxCallbackBridgeDirectories(queueDir);
+    const client = createFileSystemSandboxCallbackBridgeQueueClient();
+    const requestPath = path.join(directories.requestsDir, "growing.json");
+    await mkdir(directories.requestsDir, { recursive: true });
+    // Deliberately violate the publication contract to reproduce the old
+    // fixture interleaving, without timing assumptions or a weakened limit.
+    await writeFile(requestPath, "");
+    const payload = JSON.stringify({ id: "growing", method: "GET", path: "/api/openapi.json", body: "" });
+    let reserved: number | undefined;
+    const handleRequest = vi.fn(async () => ({ status: 200, body: "unexpected" }));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const worker = await startSandboxCallbackBridgeWorker({
+        queueDir, handleRequest,
+        client: { ...client, fileSize: async (file) => {
+          const size = await client.fileSize!(file);
+          if (file === requestPath && reserved === undefined) {
+            reserved = size;
+            await writeFile(requestPath, payload);
+          }
+          return size;
+        } },
+      });
+      cleanupFns.push(() => worker.stop());
+      const responseFile = await waitForJsonFile(directories.responsesDir);
+      const response = JSON.parse(await readFile(path.join(directories.responsesDir, responseFile), "utf8"));
+      expect(reserved).toBe(0);
+      expect(response.status).toBe(503);
+      expect(JSON.parse(response.body)).toEqual({
+        error: "Sandbox callback bridge worker failed: Bridge envelope exceeded the configured size limit.",
+      });
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("Bridge envelope exceeded the configured size limit."));
+      expect(handleRequest).not.toHaveBeenCalled();
+      await worker.stop();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("serves schema discovery over the queue and denies schema mutations and lookalikes", async () => {
     const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-bridge-schema-"));
     cleanupDirs.push(rootDir);
@@ -322,11 +447,14 @@ describe("sandbox callback bridge", () => {
       { method: "GET", path: "/api/secrets" },
     ];
     for (const [index, request] of requests.entries()) {
-      await writeFile(path.join(directories.requestsDir, `schema-${index}.json`), JSON.stringify({
+      await publishBridgeRequest(path.join(directories.requestsDir, `schema-${index}.json`), JSON.stringify({
         id: `schema-${index}`, ...request, query: "", headers: {}, body: "", createdAt: new Date().toISOString(),
       }));
     }
-    await worker.stop({ drainTimeoutMs: 5_000 });
+    await vi.waitFor(async () => {
+      expect(await createFileSystemSandboxCallbackBridgeQueueClient().listJsonFiles(directories.responsesDir))
+        .toEqual(requests.map((_, index) => `schema-${index}.json`));
+    }, { timeout: 5_000 });
     for (const [index] of requests.entries()) {
       const response = JSON.parse(await readFile(path.join(directories.responsesDir, `schema-${index}.json`), "utf8"));
       expect(response.status).toBe(index === 0 ? 200 : 403);
@@ -355,7 +483,7 @@ describe("sandbox callback bridge", () => {
       },
     });
 
-    await writeFile(
+    await publishBridgeRequest(
       path.posix.join(directories.requestsDir, "req-1.json"),
       `${JSON.stringify({
         id: "req-1",
@@ -366,7 +494,6 @@ describe("sandbox callback bridge", () => {
         body: "",
         createdAt: new Date().toISOString(),
       })}\n`,
-      "utf8",
     );
 
     await worker.stop({ drainTimeoutMs: 1_000 });
@@ -403,7 +530,7 @@ describe("sandbox callback bridge", () => {
       },
     });
 
-    await writeFile(
+    await publishBridgeRequest(
       path.posix.join(directories.requestsDir, "req-a.json"),
       `${JSON.stringify({
         id: "req-a",
@@ -414,9 +541,8 @@ describe("sandbox callback bridge", () => {
         body: "",
         createdAt: new Date().toISOString(),
       })}\n`,
-      "utf8",
     );
-    await writeFile(
+    await publishBridgeRequest(
       path.posix.join(directories.requestsDir, "req-b.json"),
       `${JSON.stringify({
         id: "req-b",
@@ -427,7 +553,6 @@ describe("sandbox callback bridge", () => {
         body: "",
         createdAt: new Date().toISOString(),
       })}\n`,
-      "utf8",
     );
 
     await worker.stop({ drainTimeoutMs: 1_000 });
@@ -462,7 +587,7 @@ describe("sandbox callback bridge", () => {
       },
     });
 
-    await writeFile(
+    await publishBridgeRequest(
       path.posix.join(directories.requestsDir, "req-a.json"),
       `${JSON.stringify({
         id: "req-a",
@@ -473,9 +598,8 @@ describe("sandbox callback bridge", () => {
         body: "",
         createdAt: new Date().toISOString(),
       })}\n`,
-      "utf8",
     );
-    await writeFile(
+    await publishBridgeRequest(
       path.posix.join(directories.requestsDir, "req-b.json"),
       `${JSON.stringify({
         id: "req-b",
@@ -486,7 +610,6 @@ describe("sandbox callback bridge", () => {
         body: "",
         createdAt: new Date().toISOString(),
       })}\n`,
-      "utf8",
     );
 
     // Begin the short drain deadline only after the first handler has started.
@@ -592,7 +715,7 @@ describe("sandbox callback bridge", () => {
     });
 
     const requestId = "transient-recovery-1";
-    await writeFile(
+    await publishBridgeRequest(
       path.join(directories.requestsDir, `${requestId}.json`),
       JSON.stringify({
         id: requestId,
@@ -602,7 +725,6 @@ describe("sandbox callback bridge", () => {
         headers: {},
         body: "",
       }),
-      "utf8",
     );
 
     const responseFile = await waitForJsonFile(directories.responsesDir, 10_000);
@@ -861,16 +983,7 @@ describe("sandbox callback bridge", () => {
     const runner = createExecRunner();
     const bridgeAsset = await createSandboxCallbackBridgeAsset();
     cleanupFns.push(bridgeAsset.cleanup);
-    const prepared = await prepareCommandManagedRuntime({
-      runner,
-      spec: {
-        remoteCwd: remoteWorkspaceDir,
-        timeoutMs: 30_000,
-      },
-      adapterKey: "codex",
-      workspaceLocalDir: localWorkspaceDir,
-      assets: [{ key: "bridge", localDir: bridgeAsset.localDir }],
-    });
+    const prepared = await prepareCommandManagedRuntime(queueRuntimeInput(runner, remoteWorkspaceDir, localWorkspaceDir, bridgeAsset));
 
     const queueDir = path.posix.join(prepared.runtimeRootDir, "paperclip-bridge");
     const directories = sandboxCallbackBridgeDirectories(queueDir);
@@ -954,16 +1067,7 @@ describe("sandbox callback bridge", () => {
 
     const bridgeAsset = await createSandboxCallbackBridgeAsset();
     cleanupFns.push(bridgeAsset.cleanup);
-    const prepared = await prepareCommandManagedRuntime({
-      runner,
-      spec: {
-        remoteCwd: remoteWorkspaceDir,
-        timeoutMs: 30_000,
-      },
-      adapterKey: "codex",
-      workspaceLocalDir: localWorkspaceDir,
-      assets: [{ key: "bridge", localDir: bridgeAsset.localDir }],
-    });
+    const prepared = await prepareCommandManagedRuntime(queueRuntimeInput(runner, remoteWorkspaceDir, localWorkspaceDir, bridgeAsset));
 
     const queueDir = path.posix.join(prepared.runtimeRootDir, "paperclip-bridge");
     const directories = sandboxCallbackBridgeDirectories(queueDir);
@@ -982,7 +1086,7 @@ describe("sandbox callback bridge", () => {
       await bridge.stop();
     });
 
-    await writeFile(
+    await publishBridgeRequest(
       path.posix.join(directories.requestsDir, "existing.json"),
       `${JSON.stringify({
         id: "existing",
@@ -993,7 +1097,6 @@ describe("sandbox callback bridge", () => {
         body: "",
         createdAt: new Date().toISOString(),
       })}\n`,
-      "utf8",
     );
 
     const queueFullResponse = await fetch(`${bridge.baseUrl}/api/agents/me`, {
@@ -1053,16 +1156,7 @@ describe("sandbox callback bridge", () => {
     const runner = createExecRunner();
     const bridgeAsset = await createSandboxCallbackBridgeAsset();
     cleanupFns.push(bridgeAsset.cleanup);
-    const prepared = await prepareCommandManagedRuntime({
-      runner,
-      spec: {
-        remoteCwd: remoteWorkspaceDir,
-        timeoutMs: 30_000,
-      },
-      adapterKey: "codex",
-      workspaceLocalDir: localWorkspaceDir,
-      assets: [{ key: "bridge", localDir: bridgeAsset.localDir }],
-    });
+    const prepared = await prepareCommandManagedRuntime(queueRuntimeInput(runner, remoteWorkspaceDir, localWorkspaceDir, bridgeAsset));
 
     const queueDir = path.posix.join(prepared.runtimeRootDir, "paperclip-bridge");
     const bridgeToken = createSandboxCallbackBridgeToken();
@@ -1105,16 +1199,7 @@ describe("sandbox callback bridge", () => {
     const runner = createExecRunner();
     const bridgeAsset = await createSandboxCallbackBridgeAsset();
     cleanupFns.push(bridgeAsset.cleanup);
-    const prepared = await prepareCommandManagedRuntime({
-      runner,
-      spec: {
-        remoteCwd: remoteWorkspaceDir,
-        timeoutMs: 30_000,
-      },
-      adapterKey: "codex",
-      workspaceLocalDir: localWorkspaceDir,
-      assets: [{ key: "bridge", localDir: bridgeAsset.localDir }],
-    });
+    const prepared = await prepareCommandManagedRuntime(queueRuntimeInput(runner, remoteWorkspaceDir, localWorkspaceDir, bridgeAsset));
 
     const queueDir = path.posix.join(prepared.runtimeRootDir, "paperclip-bridge");
     const directories = sandboxCallbackBridgeDirectories(queueDir);
@@ -1424,6 +1509,7 @@ describe("sandbox callback bridge", () => {
       { method: "GET", path: "/api/goals/goal-1" },
       { method: "GET", path: "/api/issues/issue-1" },
       { method: "GET", path: "/api/issues/issue-1/heartbeat-context" },
+      { method: "GET", path: "/api/issues/issue-1/activity" },
       { method: "GET", path: "/api/issues/issue-1/comments" },
       { method: "GET", path: "/api/issues/issue-1/comments/c-1" },
       { method: "POST", path: "/api/issues/issue-1/comments" },
@@ -1470,6 +1556,10 @@ describe("sandbox callback bridge", () => {
     }
 
     const denied: Array<{ method: string; path: string }> = [
+      { method: "POST", path: "/api/issues/issue-1/activity" },
+      { method: "GET", path: "/api/issues/issue-1/activity/extra" },
+      { method: "GET", path: "/api/companies/co-1/activity" },
+      { method: "GET", path: "/api/companies/co-1/audit/agent-actions" },
       { method: "GET", path: "/api/companies/co-1/agent-commentary" },
       { method: "POST", path: "/api/companies/co-1/agent-commentary/other" },
       { method: "POST", path: "/api/companies/co-1/email/inboxes" },
@@ -1823,7 +1913,7 @@ describe("sandbox callback bridge", () => {
     const queueDir = path.posix.join(rootDir, "queue");
     const directories = sandboxCallbackBridgeDirectories(queueDir);
     await mkdir(directories.requestsDir, { recursive: true });
-    await writeFile(path.posix.join(directories.requestsDir, "req-a.json"), bridgeRequestJson("req-a"), "utf8");
+    await publishBridgeRequest(path.posix.join(directories.requestsDir, "req-a.json"), bridgeRequestJson("req-a"));
 
     const { runtimeSpan, workerErrors } = createWorkerErrorCapture();
 
@@ -1872,16 +1962,7 @@ describe("sandbox callback bridge", () => {
     // not write a 503 there; a 503 makes the caller retry while the original
     // mutation still completes, applying it twice. The test proves no 503 lands
     // and the handler's real response is delivered exactly once.
-    const waitFor = async (predicate: () => boolean, timeoutMs: number) => {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        if (predicate()) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-      throw new Error("waitFor timed out");
-    };
+    const waitFor = createWorkerWaiter();
 
     const queueDir = "/virtual-bridge/queue";
     const directories = sandboxCallbackBridgeDirectories(queueDir);
@@ -1902,20 +1983,7 @@ describe("sandbox callback bridge", () => {
     let handlerCompleted = false;
 
     const client: SandboxCallbackBridgeQueueClient = {
-      makeDir: async () => {},
-      makeDirs: async () => {},
-      listJsonFiles: async (dir) =>
-        dir === directories.requestsDir
-          ? [...requestBodies.keys()].map((entry) => path.posix.basename(entry)).sort()
-          : [],
-      readTextFile: async (remotePath) => {
-        const body = requestBodies.get(remotePath);
-        if (body === undefined) {
-          throw new Error(`missing request ${remotePath}`);
-        }
-        return body;
-      },
-      writeTextFile: async () => {},
+      ...virtualQueueReadClient(directories, requestBodies),
       writeResponseFile: async (remotePath, body) => {
         responseWrites.push({ path: remotePath, status: JSON.parse(body.trim()).status });
         return { wrote: true };
@@ -1985,16 +2053,7 @@ describe("sandbox callback bridge", () => {
     // operation started, so the handler finalizes a non-retryable 504, not a
     // retryable 502; the caller then does not retry a mutation that may have
     // committed.
-    const waitFor = async (predicate: () => boolean, timeoutMs: number) => {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        if (predicate()) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-      throw new Error("waitFor timed out");
-    };
+    const waitFor = createWorkerWaiter();
 
     const queueDir = "/virtual-bridge/queue";
     const directories = sandboxCallbackBridgeDirectories(queueDir);
@@ -2008,20 +2067,7 @@ describe("sandbox callback bridge", () => {
     const requestRemovals: string[] = [];
 
     const client: SandboxCallbackBridgeQueueClient = {
-      makeDir: async () => {},
-      makeDirs: async () => {},
-      listJsonFiles: async (dir) =>
-        dir === directories.requestsDir
-          ? [...requestBodies.keys()].map((entry) => path.posix.basename(entry)).sort()
-          : [],
-      readTextFile: async (remotePath) => {
-        const body = requestBodies.get(remotePath);
-        if (body === undefined) {
-          throw new Error(`missing request ${remotePath}`);
-        }
-        return body;
-      },
-      writeTextFile: async () => {},
+      ...virtualQueueReadClient(directories, requestBodies),
       writeResponseFile: async (remotePath, body) => {
         responseWrites.push({ path: remotePath, status: JSON.parse(body.trim()).status });
         return { wrote: true };
@@ -2082,16 +2128,7 @@ describe("sandbox callback bridge", () => {
     // gets a terminal response even when the handler ignores the abort. The 504
     // is non-retryable, so the caller does not retry a mutation that may have
     // committed.
-    const waitFor = async (predicate: () => boolean, timeoutMs: number) => {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        if (predicate()) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-      throw new Error("waitFor timed out");
-    };
+    const waitFor = createWorkerWaiter();
 
     const queueDir = "/virtual-bridge/queue";
     const directories = sandboxCallbackBridgeDirectories(queueDir);
@@ -2105,20 +2142,7 @@ describe("sandbox callback bridge", () => {
     const requestRemovals: string[] = [];
 
     const client: SandboxCallbackBridgeQueueClient = {
-      makeDir: async () => {},
-      makeDirs: async () => {},
-      listJsonFiles: async (dir) =>
-        dir === directories.requestsDir
-          ? [...requestBodies.keys()].map((entry) => path.posix.basename(entry)).sort()
-          : [],
-      readTextFile: async (remotePath) => {
-        const body = requestBodies.get(remotePath);
-        if (body === undefined) {
-          throw new Error(`missing request ${remotePath}`);
-        }
-        return body;
-      },
-      writeTextFile: async () => {},
+      ...virtualQueueReadClient(directories, requestBodies),
       writeResponseFile: async (remotePath, body) => {
         responseWrites.push({ path: remotePath, status: JSON.parse(body.trim()).status, body });
         return { wrote: true };
@@ -2180,16 +2204,7 @@ describe("sandbox callback bridge", () => {
     // host operation that is in flight. The handler completes late, after the
     // abort. Its response must be a non-retryable 504, never a retryable 502 or
     // 503; a retry of either would apply the mutation twice.
-    const waitFor = async (predicate: () => boolean, timeoutMs: number) => {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        if (predicate()) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-      throw new Error("waitFor timed out");
-    };
+    const waitFor = createWorkerWaiter();
 
     const queueDir = "/virtual-bridge/queue";
     const directories = sandboxCallbackBridgeDirectories(queueDir);
@@ -2203,20 +2218,7 @@ describe("sandbox callback bridge", () => {
     const requestRemovals: string[] = [];
 
     const client: SandboxCallbackBridgeQueueClient = {
-      makeDir: async () => {},
-      makeDirs: async () => {},
-      listJsonFiles: async (dir) =>
-        dir === directories.requestsDir
-          ? [...requestBodies.keys()].map((entry) => path.posix.basename(entry)).sort()
-          : [],
-      readTextFile: async (remotePath) => {
-        const body = requestBodies.get(remotePath);
-        if (body === undefined) {
-          throw new Error(`missing request ${remotePath}`);
-        }
-        return body;
-      },
-      writeTextFile: async () => {},
+      ...virtualQueueReadClient(directories, requestBodies),
       writeResponseFile: async (remotePath, body) => {
         responseWrites.push({ path: remotePath, status: JSON.parse(body.trim()).status, body });
         return { wrote: true };
@@ -2285,16 +2287,7 @@ describe("sandbox callback bridge", () => {
     // handler, so the caller waits to its own deadline and gets a generic 502. The
     // recovery path retries the write and removes the request file only after the
     // write lands.
-    const waitFor = async (predicate: () => boolean, timeoutMs: number) => {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        if (predicate()) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-      throw new Error("waitFor timed out");
-    };
+    const waitFor = createWorkerWaiter();
 
     const queueDir = "/virtual-bridge/queue";
     const directories = sandboxCallbackBridgeDirectories(queueDir);
@@ -2309,20 +2302,7 @@ describe("sandbox callback bridge", () => {
     let writeAttempts = 0;
 
     const client: SandboxCallbackBridgeQueueClient = {
-      makeDir: async () => {},
-      makeDirs: async () => {},
-      listJsonFiles: async (dir) =>
-        dir === directories.requestsDir
-          ? [...requestBodies.keys()].map((entry) => path.posix.basename(entry)).sort()
-          : [],
-      readTextFile: async (remotePath) => {
-        const body = requestBodies.get(remotePath);
-        if (body === undefined) {
-          throw new Error(`missing request ${remotePath}`);
-        }
-        return body;
-      },
-      writeTextFile: async () => {},
+      ...virtualQueueReadClient(directories, requestBodies),
       writeResponseFile: async (remotePath, body) => {
         writeAttempts += 1;
         // The first backstop write fails; the retry then succeeds.
@@ -2383,16 +2363,7 @@ describe("sandbox callback bridge", () => {
     // once. `finalize` must retry the write and deliver the real response. It
     // must not fence out recovery and leave the request for a retryable 503,
     // which would let the caller repeat a possibly-committed mutation.
-    const waitFor = async (predicate: () => boolean, timeoutMs: number) => {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        if (predicate()) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-      throw new Error("waitFor timed out");
-    };
+    const waitFor = createWorkerWaiter();
 
     const queueDir = "/virtual-bridge/queue";
     const directories = sandboxCallbackBridgeDirectories(queueDir);
@@ -2407,20 +2378,7 @@ describe("sandbox callback bridge", () => {
     let writeAttempts = 0;
 
     const client: SandboxCallbackBridgeQueueClient = {
-      makeDir: async () => {},
-      makeDirs: async () => {},
-      listJsonFiles: async (dir) =>
-        dir === directories.requestsDir
-          ? [...requestBodies.keys()].map((entry) => path.posix.basename(entry)).sort()
-          : [],
-      readTextFile: async (remotePath) => {
-        const body = requestBodies.get(remotePath);
-        if (body === undefined) {
-          throw new Error(`missing request ${remotePath}`);
-        }
-        return body;
-      },
-      writeTextFile: async () => {},
+      ...virtualQueueReadClient(directories, requestBodies),
       writeResponseFile: async (remotePath, body) => {
         writeAttempts += 1;
         // The first handler-response write fails; the retry then succeeds.
@@ -2474,16 +2432,7 @@ describe("sandbox callback bridge", () => {
     // recovery still delivers a non-retryable terminal response. Without the
     // re-arm, a rejected write leaves the request for a retryable 503 and a hung
     // write strands the caller until its own deadline.
-    const waitFor = async (predicate: () => boolean, timeoutMs: number) => {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        if (predicate()) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-      throw new Error("waitFor timed out");
-    };
+    const waitFor = createWorkerWaiter();
 
     const queueDir = "/virtual-bridge/queue";
     const directories = sandboxCallbackBridgeDirectories(queueDir);
@@ -2498,20 +2447,7 @@ describe("sandbox callback bridge", () => {
     let writeAttempts = 0;
 
     const client: SandboxCallbackBridgeQueueClient = {
-      makeDir: async () => {},
-      makeDirs: async () => {},
-      listJsonFiles: async (dir) =>
-        dir === directories.requestsDir
-          ? [...requestBodies.keys()].map((entry) => path.posix.basename(entry)).sort()
-          : [],
-      readTextFile: async (remotePath) => {
-        const body = requestBodies.get(remotePath);
-        if (body === undefined) {
-          throw new Error(`missing request ${remotePath}`);
-        }
-        return body;
-      },
-      writeTextFile: async () => {},
+      ...virtualQueueReadClient(directories, requestBodies),
       writeResponseFile: async (remotePath, body) => {
         writeAttempts += 1;
         // Fail every `finalize` write attempt. The re-armed 504 backstop then
@@ -2576,16 +2512,7 @@ describe("sandbox callback bridge", () => {
     // unclaimed, so its host mutation never ran; the 503 stays retry-safe. (A
     // hung poll no longer triggers this pass — the loop backs off and retries
     // the poll instead, and a sustained hang is the watchdog's job.)
-    const waitFor = async (predicate: () => boolean, timeoutMs: number) => {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        if (predicate()) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-      throw new Error("waitFor timed out");
-    };
+    const waitFor = createWorkerWaiter();
 
     const queueDir = "/virtual-bridge/queue";
     const directories = sandboxCallbackBridgeDirectories(queueDir);
@@ -2672,16 +2599,7 @@ describe("sandbox callback bridge", () => {
     // of dropping it. Without the fix, the recovery removed the request before its
     // single write attempt, so a failed write left no queue state; a later
     // recovery pass found nothing and the caller waited until its own deadline.
-    const waitFor = async (predicate: () => boolean, timeoutMs: number) => {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        if (predicate()) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-      throw new Error("waitFor timed out");
-    };
+    const waitFor = createWorkerWaiter();
 
     const queueDir = "/virtual-bridge/queue";
     const directories = sandboxCallbackBridgeDirectories(queueDir);
@@ -2757,33 +2675,12 @@ describe("sandbox callback bridge", () => {
     await worker.stop({ drainTimeoutMs: 10 });
   });
 
-  it("maps an indeterminate host outcome to a non-retryable 409 in the in-sandbox bridge server", () => {
-    // The in-sandbox server returns the host response to the sandbox caller. A 5xx
-    // status is retryable by convention, so the server must not forward the
-    // indeterminate 504 as a retry-safe status. It maps the indeterminate outcome
-    // to a non-retryable 409, so a caller that retries 5xx does not repeat a
-    // possibly-committed mutation. The outcome header and body still forward, so a
-    // caller that reads them still sees the indeterminate result.
-    const source = getSandboxCallbackBridgeServerSource();
-    expect(source).toContain("x-paperclip-bridge-outcome");
-    expect(source).toContain('=== "indeterminate"');
-    expect(source).toContain("res.statusCode = 409");
-  });
 
   it("abandons a request before its handler starts, so the mutation never runs", async () => {
     // Prove the reverse race. When the recovery path claims a request before the
     // handler starts its host operation, the handler must bail without running
     // the mutation. A retry after the 503 then applies the mutation once.
-    const waitFor = async (predicate: () => boolean, timeoutMs: number) => {
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        if (predicate()) {
-          return;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 5));
-      }
-      throw new Error("waitFor timed out");
-    };
+    const waitFor = createWorkerWaiter();
 
     const queueDir = "/virtual-bridge/queue";
     const directories = sandboxCallbackBridgeDirectories(queueDir);
@@ -2796,20 +2693,7 @@ describe("sandbox callback bridge", () => {
     const responseWrites: Array<{ path: string; status: number }> = [];
 
     const client: SandboxCallbackBridgeQueueClient = {
-      makeDir: async () => {},
-      makeDirs: async () => {},
-      listJsonFiles: async (dir) =>
-        dir === directories.requestsDir
-          ? [...requestBodies.keys()].map((entry) => path.posix.basename(entry)).sort()
-          : [],
-      readTextFile: async (remotePath) => {
-        const body = requestBodies.get(remotePath);
-        if (body === undefined) {
-          throw new Error(`missing request ${remotePath}`);
-        }
-        return body;
-      },
-      writeTextFile: async () => {},
+      ...virtualQueueReadClient(directories, requestBodies),
       writeResponseFile: async (remotePath, body) => {
         responseWrites.push({ path: remotePath, status: JSON.parse(body.trim()).status });
         return { wrote: true };
@@ -2872,7 +2756,7 @@ describe("sandbox callback bridge", () => {
     const queueDir = path.posix.join(rootDir, "queue");
     const directories = sandboxCallbackBridgeDirectories(queueDir);
     await mkdir(directories.requestsDir, { recursive: true });
-    await writeFile(path.posix.join(directories.requestsDir, "req-w.json"), bridgeRequestJson("req-w"), "utf8");
+    await publishBridgeRequest(path.posix.join(directories.requestsDir, "req-w.json"), bridgeRequestJson("req-w"));
 
     const base = createFileSystemSandboxCallbackBridgeQueueClient();
     let listCalls = 0;
@@ -2919,7 +2803,7 @@ describe("sandbox callback bridge", () => {
     const queueDir = path.posix.join(rootDir, "queue");
     const directories = sandboxCallbackBridgeDirectories(queueDir);
     await mkdir(directories.requestsDir, { recursive: true });
-    await writeFile(path.posix.join(directories.requestsDir, "req-ok.json"), bridgeRequestJson("req-ok"), "utf8");
+    await publishBridgeRequest(path.posix.join(directories.requestsDir, "req-ok.json"), bridgeRequestJson("req-ok"));
 
     const { runtimeSpan, workerErrors } = createWorkerErrorCapture();
     const processed: string[] = [];
@@ -2963,13 +2847,7 @@ describe("sandbox callback bridge", () => {
     const runner = createExecRunner();
     const bridgeAsset = await createSandboxCallbackBridgeAsset();
     cleanupFns.push(bridgeAsset.cleanup);
-    const prepared = await prepareCommandManagedRuntime({
-      runner,
-      spec: { remoteCwd: remoteWorkspaceDir, timeoutMs: 30_000 },
-      adapterKey: "codex",
-      workspaceLocalDir: localWorkspaceDir,
-      assets: [{ key: "bridge", localDir: bridgeAsset.localDir }],
-    });
+    const prepared = await prepareCommandManagedRuntime(queueRuntimeInput(runner, remoteWorkspaceDir, localWorkspaceDir, bridgeAsset));
     const queueDir = path.posix.join(prepared.runtimeRootDir, "paperclip-bridge");
     return {
       runner,
@@ -3324,6 +3202,7 @@ describe("sandbox callback bridge", () => {
     // would change the bytes on the wire without failing a looser assertion.
     const readyLine = firstBytes.subarray(0, newlineIndex).toString("utf8");
     expect(readyLine).toBe(`{"version":2,"type":"ready","nonce":"${nonce}"}`);
+    expect(encodeDuplexFrame({ version: DUPLEX_FRAME_VERSION, type: "ready", nonce })).toBe(`${readyLine}\n`);
     const afterReady = firstBytes.subarray(newlineIndex + 1, newlineIndex + 1 + preface.length);
     expect(afterReady).toEqual(preface);
   }, 15_000);
@@ -3780,13 +3659,7 @@ describe("sandbox callback bridge", () => {
     const runner = createExecRunner();
     const bridgeAsset = await createSandboxCallbackBridgeAsset();
     cleanupFns.push(bridgeAsset.cleanup);
-    const prepared = await prepareCommandManagedRuntime({
-      runner,
-      spec: { remoteCwd: remoteWorkspaceDir, timeoutMs: 30_000 },
-      adapterKey: "codex",
-      workspaceLocalDir: localWorkspaceDir,
-      assets: [{ key: "bridge", localDir: bridgeAsset.localDir }],
-    });
+    const prepared = await prepareCommandManagedRuntime(queueRuntimeInput(runner, remoteWorkspaceDir, localWorkspaceDir, bridgeAsset));
 
     const queueDir = path.posix.join(prepared.runtimeRootDir, "paperclip-bridge");
     const directories = sandboxCallbackBridgeDirectories(queueDir);
@@ -3836,13 +3709,7 @@ describe("sandbox callback bridge", () => {
     const runner = createExecRunner();
     const bridgeAsset = await createSandboxCallbackBridgeAsset();
     cleanupFns.push(bridgeAsset.cleanup);
-    const prepared = await prepareCommandManagedRuntime({
-      runner,
-      spec: { remoteCwd: remoteWorkspaceDir, timeoutMs: 30_000 },
-      adapterKey: "codex",
-      workspaceLocalDir: localWorkspaceDir,
-      assets: [{ key: "bridge", localDir: bridgeAsset.localDir }],
-    });
+    const prepared = await prepareCommandManagedRuntime(queueRuntimeInput(runner, remoteWorkspaceDir, localWorkspaceDir, bridgeAsset));
 
     const queueDir = path.posix.join(prepared.runtimeRootDir, "paperclip-bridge");
     const bridgeToken = createSandboxCallbackBridgeToken();

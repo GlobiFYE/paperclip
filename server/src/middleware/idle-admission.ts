@@ -25,6 +25,12 @@ function isControlRequest(req: Request) {
 
 /** Install before body parsers, auth, webhooks and tool ingress. */
 export const idleAdmissionMiddleware: RequestHandler = (req, res, next) => {
+  // This exact route is synchronous and has no auth, SQL, or accepted work.
+  // Probing it must not prevent an otherwise quiescent instance from draining.
+  if (req.path.replace(/\/$/, "") === "/api/liveness" && ["GET", "HEAD"].includes(req.method)) {
+    next();
+    return;
+  }
   const controlRequest = isControlRequest(req);
   if (!controlRequest && isIdleTaskDrainActive()) {
     res.set("Retry-After", "1").status(503).json({ error: "instance_preparing_to_sleep" });
@@ -53,14 +59,16 @@ export const idleAdmissionMiddleware: RequestHandler = (req, res, next) => {
 // preserving router objects and error-handler arity. Waiting only for finish
 // loses async work after res.json(), including the disconnected-client case.
 // Keep this adapter isolated and exercise it against real Express in tests.
-type Layer = { handle: Function & { stack?: Layer[] }; route?: { stack: Layer[] } };
+type Layer = { handle: Function & { stack?: Layer[] }; route?: { stack: Layer[] } | string };
 export function trackIdleRequestHandlers(app: Application): void {
   const seen = new Set<Layer>();
   const visit = (stack: Layer[], route = false) => {
     for (const layer of stack) {
       if (seen.has(layer)) continue;
       seen.add(layer);
-      if (layer.route) { visit(layer.route.stack, true); continue; }
+      // Connect/Vite layers use a mount-path string for route; only Express
+      // Route objects contain a nested handler stack.
+      if (layer.route && typeof layer.route !== "string") { visit(layer.route.stack, true); continue; }
       if (layer.handle.stack) { visit(layer.handle.stack); continue; }
       const original = layer.handle;
       if (original === idleAdmissionMiddleware) continue;

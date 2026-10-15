@@ -19,6 +19,7 @@ import { resolve } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { configuredEnvironmentProjection } from "../configured-environment.js";
 import { NativeSessionProtocolIntegrityError } from "../contracts/native-session-backend.js";
 import { createCapabilityRunnerdCodexTransport, createCapabilityRunnerdProviderEnvironment } from "../live/runnerd-codex-transport.js";
 import { ACPX_CREDENTIAL_BINDING_ENV, createAcpxSidecarHostEnvironment } from "../drivers/acpx/environment.js";
@@ -106,6 +107,42 @@ it("renews one authenticated connection for three weeks without replacing its au
     } finally { await restored.stop(); }
   } finally {
     clock.mockRestore();
+    await core.stop();
+    rmSync(root, { recursive: true, force: true });
+  }
+}, 30_000);
+
+it("reports how long the authenticated Runner has been disconnected", async () => {
+  const root = mkdtempSync(resolve(tmpdir(), "runner-disconnect-age-"));
+  const core = new DurablePrpControlPlane({ stateDirectory: root, identity, expectedRunnerVersion, expectedRunnerDigest });
+  try {
+    await core.start();
+    expect(core.runnerDisconnectedForMs()).toBeNull();
+    // An unauthenticated peer closing is not a Runner disconnect.
+    let closeUnauthenticated = () => {};
+    const unauthenticated = core.attachWireConnection({
+      onJson: () => {},
+      onClose: (listener) => {
+        closeUnauthenticated = () => listener({ message: "closed" });
+      },
+      close: () => closeUnauthenticated(),
+      sendJson: () => {},
+    });
+    expect(unauthenticated.isAuthenticated()).toBe(false);
+    closeUnauthenticated();
+    expect(core.runnerDisconnectedForMs()).toBeNull();
+    const client = (await authenticate(core, core.issueBootstrapTicket()))!;
+    expect(core.runnerDisconnectedForMs()).toBeNull();
+    const before = Date.now();
+    client.socket.destroy();
+    await vi.waitFor(() => expect(core.activeRunnerConnectionCount()).toBe(0), { timeout: 1_000 });
+    const after = Date.now();
+    expect(core.runnerDisconnectedForMs(after + 300_000)).toBeGreaterThanOrEqual(300_000);
+    expect(core.runnerDisconnectedForMs(after + 300_000)).toBeLessThanOrEqual(300_000 + after - before);
+    const resumed = (await authenticate(core, client.leaseToken!))!;
+    expect(core.runnerDisconnectedForMs()).toBeNull();
+    resumed.socket.destroy();
+  } finally {
     await core.stop();
     rmSync(root, { recursive: true, force: true });
   }
@@ -550,6 +587,8 @@ it("preserves the controller-selected ACPX provider package root", () => {
 
 it.each([
   ["pi", "OPENROUTER_API_KEY"],
+  ["pi", "AWS_BEARER_TOKEN_BEDROCK"],
+  ["pi", "CUSTOM_PI_API_KEY"],
   ["cursor", "CURSOR_API_KEY"],
   ["cursor", "CURSOR_AUTH_TOKEN"],
   ["copilot", "COPILOT_GITHUB_TOKEN"],
@@ -557,13 +596,15 @@ it.each([
   const launches: RunnerProcessLaunchSpec[] = [];
   vi.stubEnv(key, "ambient-must-not-cross");
   vi.stubEnv(ACPX_CREDENTIAL_BINDING_ENV, "ambient-forged-marker");
+  const iam = agent === "pi" ? configuredEnvironmentProjection({ AWS_ACCESS_KEY_ID: "general-key", AWS_SECRET_ACCESS_KEY: "general-secret", AWS_SESSION_TOKEN: "general-session", CUSTOM_SETTING: "allowed" }) : {};
+  const custom = key === "CUSTOM_PI_API_KEY" ? { PAPERCLIP_PI_PROVIDERS: JSON.stringify({ private: { baseUrl: "https://provider.invalid", apiKey: key } }) } : {};
   try {
     for (const explicit of [true, false]) {
       const environment = createCapabilityRunnerdProviderEnvironment({
         provider: "acpx", identity, codexHome: "/fixture/home",
         runtimeContextPath: "/fixture/context.json", hasRuntimeContext: false,
         options: { acpxAgent: agent,
-          environment: explicit ? { [key]: "explicit-fixture-credential", [ACPX_CREDENTIAL_BINDING_ENV]: "caller-forged-marker", DATABASE_URL: "must-not-cross" } : undefined },
+          environment: explicit ? { ...custom, ...iam, [key]: "explicit-fixture-credential", [ACPX_CREDENTIAL_BINDING_ENV]: "caller-forged-marker", DATABASE_URL: "must-not-cross" } : undefined },
       });
       const handle = spawnRunner({
         connection: { mode: "connect", connectUrl: "ws://127.0.0.1:43127" },
@@ -582,9 +623,13 @@ it.each([
         const receipt = launch.environment[ACPX_CREDENTIAL_BINDING_ENV];
         expect(receipt).toBeDefined();
         expect(JSON.parse(receipt!)).toEqual({ schema: "paperclip.acpx_credential_binding.v1", agent,
-          sessionId: identity.normalizedSessionId, names: explicit ? [key] : [] });
+          sessionId: identity.normalizedSessionId, names: explicit ? [...(key === "CUSTOM_PI_API_KEY" ? ["PAPERCLIP_PI_PROVIDERS"] : []), key] : [] });
         expect(receipt).not.toContain("fixture-credential");
         expect(launch.environment.DATABASE_URL).toBeUndefined();
+        if (agent === "pi") {
+          for (const name of ["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN"]) expect(launch.environment).not.toHaveProperty(name);
+          if (explicit) expect(launch.environment.CUSTOM_SETTING).toBe("allowed");
+        }
         const provider = createAcpxSidecarHostEnvironment(launch.environment, agent, identity.normalizedSessionId);
         expect(provider[key]).toBe(explicit ? "explicit-fixture-credential" : undefined);
         expect(provider[ACPX_CREDENTIAL_BINDING_ENV]).toBeUndefined();
