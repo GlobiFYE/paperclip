@@ -649,6 +649,7 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
                     }
                   : {}),
               },
+              onTaskDispatched: markDispatchStarted,
               runnerExecutionTarget: executionTarget,
               runnerIngressAuthorized: isRunnerIngressAuthorized(
                 nativeRuntimeResolution,

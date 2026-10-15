@@ -342,6 +342,12 @@ it("pins the ACPX launch profile in runner startup arguments and restarts", () =
 
   handle.restart("replacement-ticket");
   expect(launches).toHaveLength(2);
+  expect(launches[0].nativeRunner).toMatchObject({ identity, ticket: "bootstrap-ticket",
+    runnerVersion: expectedRunnerVersion, runnerDigest: expectedRunnerDigest,
+    connection: { mode: "connect", connectUrl: "ws://127.0.0.1:43127" },
+    acpxLaunchProfile: { authorityDigest: `sha256:${"d".repeat(64)}` },
+  });
+  expect(launches[1].nativeRunner?.ticket).toBe("replacement-ticket");
   for (const launch of launches) {
     expect(launch.args).toContain("--acpx-launch-authority-digest");
     expect(launch.args).toContain("--acpx-sidecar-command");
@@ -414,9 +420,9 @@ it("pins the OpenCode launch profile in runner startup arguments and restarts", 
   }
 });
 
-it("preserves an explicit OpenCode permission mode at the runner spawn boundary", () => {
+it.each([false, true])("preserves explicit OpenCode permissions and process-owner restart policy (%s)", (pluginSettings) => {
   const launches: RunnerProcessLaunchSpec[] = [];
-  spawnRunner({
+  const handle = spawnRunner({
     connection: { mode: "connect", connectUrl: "ws://127.0.0.1:43127" },
     stateDirectory: "/tmp/paperclip-runner-test",
     identity,
@@ -426,6 +432,7 @@ it("preserves an explicit OpenCode permission mode at the runner spawn boundary"
     runnerVersion: expectedRunnerVersion,
     runnerDigest: expectedRunnerDigest,
     environment: {
+      OPENCODE_CONFIG_DIR: "provider-config", PROVIDER_PRIVATE_ROOT: "provider-storage", PAPERCLIP_RUNNER_BOOTSTRAP_TICKET: "wrong-ticket",
       PATH: "/bin",
       PAPERCLIP_AGENT_KEY_ID: "sha256:identity",
       PAPERCLIP_AGENT_PUBLIC_KEY: "public-pem",
@@ -443,6 +450,7 @@ it("preserves an explicit OpenCode permission mode at the runner spawn boundary"
     processLauncher: (spec) => {
       launches.push(spec);
       return {
+        restart: pluginSettings ? null : undefined,
         child: {
           pid: 42,
           exitCode: null,
@@ -460,6 +468,10 @@ it("preserves an explicit OpenCode permission mode at the runner spawn boundary"
   });
 
   expect(launches).toHaveLength(1);
+  expect(handle.restart).toEqual(pluginSettings ? null : expect.any(Function));
+  expect(launches[0]!.environment.OPENCODE_CONFIG_DIR).toBeUndefined();
+  expect(launches[0]!.environment.PROVIDER_PRIVATE_ROOT).toBeUndefined();
+  expect(launches[0]!.environment.PAPERCLIP_RUNNER_BOOTSTRAP_TICKET).toBe("bootstrap-ticket");
   expect(launches[0]!.environment).toMatchObject({
     PATH: "/bin",
     PAPERCLIP_AGENT_KEY_ID: "sha256:identity",

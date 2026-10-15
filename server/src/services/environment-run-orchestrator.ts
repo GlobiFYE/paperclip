@@ -344,7 +344,7 @@ export function environmentRunOrchestrator(
     });
 
     // Step 4: Resolve execution transport
-    const executionTransport = await resolveTransport({
+    const executionTransport = environment.driver === "plugin" ? null : await resolveTransport({
       companyId: input.companyId,
       adapterType: input.adapterType,
       environment,
@@ -381,6 +381,7 @@ export function environmentRunOrchestrator(
     executionWorkspace: RealizedExecutionWorkspace;
     effectiveExecutionWorkspaceMode: string | null;
     persistedExecutionWorkspace: ExecutionWorkspace | null;
+    runnerTaskProjectIds?: readonly string[];
     /**
      * The host duplex observability recorder for this run. The orchestrator threads
      * it to `resolveEnvironmentExecutionTarget`, which stamps it on the sandbox
@@ -415,6 +416,10 @@ export function environmentRunOrchestrator(
     // Step 2: Realize workspace in the environment via the runtime driver
     let workspaceRealization: Record<string, unknown> = {};
     let realizedWorkspaceCwd: string | null = null;
+    const pluginTaskWorkspace = environment.driver === "plugin" && adapterType === "paperclip_runner";
+    if (pluginTaskWorkspace && !await environmentRuntime.supportsTasks({ lease })) {
+      throw new EnvironmentRunError("unsupported_adapter_environment", "Plugin environment does not provide native Runner task execution");
+    }
     if (ENVIRONMENT_DRIVER_TRAITS[environment.driver].realizesWorkspace) {
       try {
         const remoteCwd =
@@ -467,7 +472,7 @@ export function environmentRunOrchestrator(
     // for `local`. Keep the step for `ssh`, which runs the command on the
     // remote host that shares the workspace path.
     const driverSkipsHostProvision =
-      environment.driver === "local" || environment.driver === "sandbox";
+      environment.driver === "local" || environment.driver === "sandbox" || pluginTaskWorkspace;
     if (provisionCommand && environment.driver === "sandbox") {
       logger.info(
         {
@@ -553,8 +558,8 @@ export function environmentRunOrchestrator(
         environmentRuntime,
         duplexObservabilityRecorder: input.duplexObservabilityRecorder ?? null,
       });
-      const realizationMode = workspaceRealization.mode === "in_place" ? "in_place" : "copy";
-      const authoritativeRoot =
+      const realizationMode = pluginTaskWorkspace || workspaceRealization.mode === "in_place" ? "in_place" : "copy";
+      const authoritativeRoot = pluginTaskWorkspace && executionTarget?.kind === "remote" ? executionTarget.remoteCwd :
         typeof workspaceRealization.authoritativeRoot === "string" && workspaceRealization.authoritativeRoot.trim().length > 0
           ? workspaceRealization.authoritativeRoot.trim()
           : realizedCwd;
@@ -576,6 +581,11 @@ export function environmentRunOrchestrator(
       if (executionTarget) {
         executionTarget = {
           ...executionTarget,
+          ...(executionTarget.kind === "remote" && executionTarget.transport === "sandbox" && executionTarget.runnerTask
+            ? { runnerTaskProjectIds: [...new Set([executionWorkspace.projectId,
+                ...input.runnerTaskProjectIds ?? [],
+                ...(executionWorkspace.additionalWorkspaces ?? []).map(workspace => workspace.projectId)]
+                .filter((id): id is string => Boolean(id)))] } : {}),
           ...(executionTarget.kind === "remote" && realizationMode === "in_place"
             ? { remoteCwd: authoritativeRoot }
             : {}),

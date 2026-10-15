@@ -1,3 +1,4 @@
+import { bindAcpxAgentFiles } from "../acpx/agent-files-binding.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { accessSync, constants, readFileSync, realpathSync, statSync } from "node:fs";
@@ -2200,6 +2201,7 @@ async function startRuntime(input: {
     mkdir(dataHome, { recursive: true, mode: 0o700 }),
     mkdir(cacheHome, { recursive: true, mode: 0o700 }),
   ]);
+  const agentFiles = bindAcpxAgentFiles(input.options.runtimeContext, [input.root]);
   // HOME contains a read-only skill snapshot, whose destination must be fresh.
   // Keep OpenCode's XDG data stable for provider-session recovery while giving
   // every launch (including retries and recovery) a new isolated HOME.
@@ -2355,6 +2357,7 @@ async function startRuntime(input: {
       input.options.environment ?? process.env,
       {
         HOME: isolatedHome,
+        ...(agentFiles ? { AGENT_HOME: agentFiles.root } : {}),
         XDG_CONFIG_HOME: configHome,
         XDG_DATA_HOME: dataHome,
         XDG_CACHE_HOME: cacheHome,
@@ -2375,6 +2378,7 @@ async function startRuntime(input: {
       while (stdio.length <= input.options.commandFd) stdio.push("ignore");
       stdio[input.options.commandFd] = input.options.commandFd;
     }
+    agentFiles?.assertHeld();
     input.options.commandLifecycle?.beforeSpawn();
     launchPrepared = true;
     child = spawn(

@@ -1,3 +1,4 @@
+import { probePluginRunnerEnvironment } from "../services/native-runtime/plugin-runner-probe.js";
 import type { AdapterRuntimeCommandSpec, ServerAdapterModule } from "./types.js";
 import { parseAdapterModelsEnv } from "../services/adapter-models-env.js";
 import { stampClaudeAgentIdHeader } from "./claude-agent-id-header.js";
@@ -404,6 +405,9 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
           message: profileError.message,
         }],
       };
+    }
+    if (context.executionTarget?.kind === "remote" && context.executionTarget.transport === "sandbox" && context.executionTarget.runnerTask) {
+      return probePluginRunnerEnvironment(context);
     }
     if (profile.provider === "openai_dot") {
       return { adapterType: "paperclip_runner", status: "warn" as const, testedAt: new Date().toISOString(),

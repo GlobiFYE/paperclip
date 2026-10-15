@@ -128,6 +128,7 @@ impl NativeProviderCommandExecutor {
         if self.recovery_checked {
             return Ok(());
         }
+        crate::persistent_agent_runtime::check_installed_environment(&self.config)?;
         self.recovery_checked = true;
         let codex = self.state_dir.join(CODEX_PROVIDER_STATE_FILE).exists();
         let acpx = self.state_dir.join(ACPX_PROVIDER_STATE_FILE).exists();
@@ -213,6 +214,8 @@ impl CommandExecutor for NativeProviderCommandExecutor {
     }
     fn execute(&mut self, command: &Command) -> Result<CommandExecution, DurableRunnerError> {
         self.select_recovery()?;
+        let resolved = crate::persistent_agent_runtime::resolve_command(command, &self.config)?;
+        let command = &resolved;
         if self.selected.is_none()
             && matches!(command.command_type.as_str(), "run.prepare" | "run.attach")
         {

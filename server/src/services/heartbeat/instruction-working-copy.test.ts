@@ -14,7 +14,7 @@ type Input = Parameters<typeof createHeartbeatInstructionWorkingCopy>[0];
 type Prepare = Parameters<ReturnType<typeof createHeartbeatInstructionWorkingCopy>["prepare"]>[0];
 type Copy = NonNullable<Awaited<ReturnType<Input["instructionCopies"]["prepare"]>>>;
 
-function fixture() {
+function fixture(target: Input["workspace"]["executionTarget"] = null) {
   let run = { id: "current-run", companyId: "company", agentId: "agent", runnerProfileJson: null, status: "queued" } as ReturnType<Input["readRun"]>;
   const copy = { runId: run.id, companyId: run.companyId, agentId: run.agentId,
     localRoot: "/workspace/copy", executionRoot: "/workspace/copy", entryFile: "AGENTS.md",
@@ -35,7 +35,7 @@ function fixture() {
     agent: { id: "agent", companyId: "company", adapterType: "codex_local", adapterConfig: { lifecycleMode: "warm" }, runtimeConfig: {} } as unknown as Input["agent"],
     context,
     session: { taskSession: null, taskSessionForRun: { lastRunId: "previous-run" }, sessionConfigMetadata: {} as Input["session"]["sessionConfigMetadata"] },
-    workspace: { executionTarget: null, executionWorkspace: { cwd: "/workspace" } as Input["workspace"]["executionWorkspace"], persistedExecutionWorkspace: null },
+    workspace: { executionTarget: target, executionWorkspace: { cwd: "/workspace" } as Input["workspace"]["executionWorkspace"], persistedExecutionWorkspace: null },
     appendRunEvent,
   });
   const prepare: Prepare = { runtimeConfig: { retained: true }, hasInstructionFilesystem: true,
@@ -49,6 +49,18 @@ function fixture() {
 beforeEach(() => { vi.clearAllMocks(); native.claim.mockResolvedValue(null); });
 
 describe("instruction working-copy extraction boundary", () => {
+  it("leaves the persistent agent home with the task provider", async () => {
+    const task = vi.fn();
+    const f = fixture({ kind: "remote", transport: "sandbox", providerKey: "plugin", remoteCwd: "/unused", leaseId: "task-lease",
+      runnerTask: task, runnerLifecyclePolicy: { mode: "per_turn", idleTimeoutMs: null } });
+    await f.controller.prepare(f.prepare);
+    await f.controller.collectStoppedInstructions();
+    expect(f.controller.nativeInstructionWorkingCopy()).toBeUndefined();
+    expect(f.copies.prepare).not.toHaveBeenCalled();
+    expect(f.copies.collectStopped).not.toHaveBeenCalled();
+    expect(task).not.toHaveBeenCalled();
+  });
+
   it("retains a warm reservation for outer cleanup when subsequent preparation throws", async () => {
     const f = fixture();
     f.copies.prepare.mockRejectedValue(new Error("preparation interrupted"));

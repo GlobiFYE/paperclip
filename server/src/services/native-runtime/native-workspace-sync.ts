@@ -873,7 +873,7 @@ export async function prepareNativeWorkspaceSync(input: {
   onPhase?: RuntimeSpanRunner;
   onCheckpoint?: (metrics: WorkspaceCheckpointMetrics) => Promise<void>;
 }): Promise<PreparedNativeWorkspaceSync | null> {
-  if (input.target?.kind !== "remote" || input.target.transport !== "sandbox") {
+  if (input.target?.kind !== "remote" || input.target.transport !== "sandbox" || input.target.runnerTask) {
     return null;
   }
   const target = input.target;
