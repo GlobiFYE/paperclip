@@ -1,3 +1,4 @@
+import { savedGitWorkspaceCommit, ensureSavedGitCommit, GitCacheRestorationFailure } from "./git-workspace-restoration.js";
 import { sanitizeRuntimeServiceBaseEnv } from "./runtime-service-env.js";
 import { verifiedRecordedIsolatedRemoteSource } from "./isolated-remote-workspace-source.js";
 export { sanitizeRuntimeServiceBaseEnv } from "./runtime-service-env.js";
@@ -3848,6 +3849,9 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
       "Cannot rebuild the git worktree: the base project checkout directory does not exist.",
     );
   }
+  const savedCommit = savedGitWorkspaceCommit({ metadata: input.workspace.metadata, companyId: input.agent.companyId,
+    workspaceId: input.workspace.id, cwd, baseCwd, repoUrl: input.workspace.repoUrl ?? input.base.repoUrl,
+    branchName: input.workspace.branchName ?? null });
   const repoRoot = await runGit(["rev-parse", "--show-toplevel"], baseCwd);
   await input.beforeSourceCopy?.(repoRoot, realized.worktreePath ?? cwd);
   const recordedBaseRefSha = readRecordedBaseRefSha(input.workspace.metadata);
@@ -3908,7 +3912,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     const currentBaseRefSha = reuseBaseRef ? await resolveBaseRefSha(repoRoot, reuseBaseRef) : null;
     // An unstarted-worktree refresh can fast-forward the checked-out branch.
     // Never run it for an attached operator-owned ref.
-    const refresh = realized.branchCreatedByRuntime && reuseBaseRef && currentBaseRefSha
+    const refresh = !savedCommit && realized.branchCreatedByRuntime && reuseBaseRef && currentBaseRefSha
       ? await refreshUnstartedWorktreeToBase({
           repoRoot,
           worktreePath: reuseWorktreePath,
@@ -3955,7 +3959,12 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
 
   await fs.mkdir(path.dirname(worktreePath), { recursive: true });
   await runGit(["worktree", "prune"], repoRoot).catch(() => {});
-  const restoreBaseRef = input.workspace.baseRef ?? input.base.repoRef ?? null;
+  if (savedCommit) {
+    await ensureSavedGitCommit(repoRoot, input.workspace.repoUrl ?? input.base.repoUrl!, savedCommit, input.resolveGitAuth ?? (async () => null));
+    const existingTip = await resolveBaseRefSha(repoRoot, `refs/heads/${branchName}`);
+    if (existingTip && existingTip !== savedCommit) throw new GitCacheRestorationFailure();
+  }
+  const restoreBaseRef = savedCommit ? null : input.workspace.baseRef ?? input.base.repoRef ?? null;
   const restoreRefreshWarnings = restoreBaseRef
     ? await refreshRemoteTrackingBaseRef(repoRoot, restoreBaseRef, input.resolveGitAuth)
     : [];
@@ -3992,7 +4001,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
         `Execution workspace "${worktreePath}" cannot be restored because its operator-owned branch "${branchName}" no longer exists.`,
       );
     }
-    const baseRef = input.workspace.baseRef ?? await detectDefaultBranch(repoRoot) ?? "HEAD";
+    const baseRef = savedCommit ?? input.workspace.baseRef ?? await detectDefaultBranch(repoRoot) ?? "HEAD";
     const recreatedBaseRefSha = await resolveBaseRefSha(repoRoot, baseRef);
     await recordGitOperation(input.recorder, {
       phase: "worktree_prepare",

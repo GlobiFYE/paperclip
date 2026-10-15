@@ -96,7 +96,23 @@ product acceptance. Rollback disables deletion and retains restoration support.
   Actual runtime/service reopening now restores A after deleting the worktree,
   branch, and base while upstream is at B. A subsequent commit survives another
   reopen. The real repository/DB experiment took 6.831s; evidence is
-  `/tmp/paperclip-git-recovery-candidate.json`. Expiration is not implemented yet.
+  `/tmp/paperclip-git-recovery-candidate.json`. Expiration now uses the lifecycle worker, immutable recipes, atomic worktree
+  trash, resumable cleanup and shared source/lifecycle exclusion. Fifteen local
+  cases covered data preservation, recovery, upstream failure and concurrency;
+  a stale pre-lock snapshot found by concurrent reopening was fixed and the
+  affected case passed. Seventeen focused cases now pass in 48.04s, including staging-like nested
+  worktrees and shared-base preservation (`/tmp/paperclip-git-expiration-tests4.log`).
+  Broader existing controls, full required checks and review remain.
+- Live inventory shows 152 active Git workspaces: 150 have versioned runtime
+  ownership, 37 have isolated remote sources; other owned task worktrees use
+  shared managed project clones. The Git slice supports both worktree layouts
+  and preserves shared bases. Nested-layout tests now match staging.
+- Staging service flags are prepared for skill dry run without a restart:
+  `PAPERCLIP_SKILL_VERSION_RETENTION_ENABLED=true`,
+  `PAPERCLIP_SKILL_VERSION_RETENTION_DRY_RUN=true`. No deletion or deployment yet.
+- Skill head `afc159cf39a1228608c1f864648ab359a57bf357` passed GitHub CI and
+  Greptile 5/5. Security review is still running. Its prior bounded-discovery
+  finding is fixed and the review thread resolved. Merge after the remaining gate.
 - First Git baseline used a real bare remote, runtime workspace creation, a
   database row, and ordinary reopening: missing worktree restores A while its
   branch exists; missing branch restores upstream B; missing base fails. Fixture

@@ -1,7 +1,9 @@
 import { measureRunTransaction } from "./execution-transaction-timing.js";
 import { measureRunPhase } from "./execution-preparation-timing.js";
 import { assertTaskWorkspaceAccess, assertTaskWorkspaceSourceProjectAccess } from "./task-workspace-source-access.js";
-import { verifiedRecordedIsolatedRemoteSource } from "./isolated-remote-workspace-source.js";
+import { verifiedRecordedIsolatedRemoteSource, withIsolatedRepositorySourceLock } from "./isolated-remote-workspace-source.js";
+import { expireReconstructableGitWorkspace, hasPendingGitExpiration } from "./git-workspace-expiration.js";
+import { readGitCacheRestoration, restoreGitCacheBase, GitCacheRestorationFailure } from "./git-workspace-restoration.js";
 import { parseObject } from "../adapters/utils.js";
 import { resolveCoreTrustPreset } from "./trust-preset-resolver.js";
 import { CONTROLLER_PROVISION_COPY_ONLY, workspaceRequiresCopyOnlyProvisioning } from "./workspace-host-provision.js";
@@ -286,6 +288,9 @@ export type ReopenClosedIsolatedExecutionWorkspaceResult =
   | { ok: false; code: "not_reopenable" | "rebuild_failed"; message: string };
 
 export type ExecutionWorkspaceServiceOptions = {
+  gitCacheExpirationEnabled?: boolean;
+  gitBaseExpirationEnabled?: boolean;
+  gitCacheExpirationDryRun?: boolean;
   terminalWorkspaceInspectionBackoffMs?: number;
   resolvePullRequestDetails?: PullRequestMergeDetailsResolver;
   now?: () => Date;
@@ -3132,9 +3137,10 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
       try {
       if (options.compact !== false) await purgeDeferredCompactionTrash(signal);
       const baseCandidateFilter = and(
-        inArray(executionWorkspaces.status, ["active", "idle", "in_review"]),
-        isNull(executionWorkspaces.closedAt),
         sql<boolean>`${executionWorkspaces.sourceIssueId} IS NOT NULL`,
+        or(and(inArray(executionWorkspaces.status, ["active", "idle", "in_review"]), isNull(executionWorkspaces.closedAt)),
+          opts.gitCacheExpirationEnabled ? and(inArray(executionWorkspaces.status, ["archived", "cleanup_failed"]),
+            sql`${executionWorkspaces.metadata}->'gitCacheExpiration'->>'completed' = 'false'`) : undefined),
       );
       // Continue the scan after the previous sweep's last row. The keyset
       // predicate uses the same (updatedAt, id) order as the query, so each
@@ -3205,6 +3211,21 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         // also leaves leftover trash for a later sweep.
         if (options.compact !== false) await purgeCompactionTrashIfDue(workspace);
         else deferCompactionTrashPurge(workspace);
+        if (opts.gitCacheExpirationEnabled && (hasPendingGitExpiration(workspace)
+          || (workspace.mode === "isolated_workspace" && workspace.strategyType === "git_worktree"))) {
+          const expiration = await expireReconstructableGitWorkspace(db, workspace, {
+            dryRun: opts.gitCacheExpirationDryRun ?? false, expireBase: opts.gitBaseExpirationEnabled ?? false,
+            now: now(), signal, beforeDelete: opts.beforeTerminalWorkspaceCleanup,
+          });
+          terminalWorkspaceDeadlines.set(workspace.id, now().getTime() + 60 * 60 * 1000);
+          if (expiration.candidate) result.eligible += 1;
+          if (expiration.expired) result.archived += 1;
+          logger.info({ event: "execution_workspace.git_cache_expiration", executionWorkspaceId: workspace.id,
+            companyId: workspace.companyId, dryRun: opts.gitCacheExpirationDryRun ?? false, ...expiration },
+          "Git workspace cache expiration inspected");
+          // A failed reconstruction proof must not fall through to legacy deletion.
+          continue;
+        }
         const issueTree = await listWorkspaceIssueTree(workspace);
         const sourceIssue = issueTree.find((issue) => issue.id === workspace.sourceIssueId);
         const reopenPending = metadataHasReopenPendingConsumption(
@@ -3632,13 +3653,29 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         eq(issues.executionWorkspaceId, input.workspaceId),
         await issueReadSqlCondition(db, input.authorizationActor),
       ));
-      const snapshot = boundSnapshot ? await db.select().from(executionWorkspaces).where(and(
+      const authorizedSnapshot = boundSnapshot ? await db.select().from(executionWorkspaces).where(and(
         eq(executionWorkspaces.id, input.workspaceId), eq(executionWorkspaces.companyId, issue.companyId),
         eq(executionWorkspaces.mode, "isolated_workspace"),
         await executionWorkspaceReadSqlCondition(db, input.authorizationActor),
       )).then(rows => rows[0] ?? null) : null;
-      if (!snapshot) return { ok: false, code: "not_reopenable", message: "Execution workspace is not reopenable" };
+      if (!authorizedSnapshot) return { ok: false, code: "not_reopenable", message: "Execution workspace is not reopenable" };
+      await assertTaskWorkspaceAccess(db, input.authorizationActor, issue.companyId, authorizedSnapshot.id);
+      const sourceIssueId = authorizedSnapshot.sourceIssueId;
+      const reopen = async (): Promise<ReopenClosedIsolatedExecutionWorkspaceResult> => {
+      const freshSnapshot = await db.select().from(executionWorkspaces).where(and(
+        eq(executionWorkspaces.id, input.workspaceId), eq(executionWorkspaces.companyId, issue.companyId),
+        eq(executionWorkspaces.mode, "isolated_workspace"),
+        await executionWorkspaceReadSqlCondition(db, input.authorizationActor),
+      )).then(rows => rows[0] ?? null);
+      if (!freshSnapshot || freshSnapshot.sourceIssueId !== sourceIssueId) {
+        return { ok: false, code: "not_reopenable", message: "Execution workspace source changed during reopen" };
+      }
+      const snapshot = freshSnapshot;
       await assertTaskWorkspaceAccess(db, input.authorizationActor, issue.companyId, snapshot.id);
+      let recipe: ReturnType<typeof readGitCacheRestoration>;
+      try { recipe = readGitCacheRestoration(snapshot); }
+      catch { return { ok: false, code: "rebuild_failed", message: new GitCacheRestorationFailure().message }; }
+      const gitAuth = createGitRemoteAuthProvider(db, snapshot.companyId, { issueId: snapshot.sourceIssueId ?? issue.id });
       const [
         { ensurePersistedExecutionWorkspaceAvailable },
         { workspaceOperationService },
@@ -3666,8 +3703,14 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           .then((rows) => parseProjectExecutionWorkspacePolicy(rows[0]?.executionWorkspacePolicy)),
       ]);
       let resolvedBaseCwd: string | null;
-      try { resolvedBaseCwd = await verifiedRecordedIsolatedRemoteSource(snapshot) ?? projectWorkspace?.cwd ?? null; }
-      catch { return { ok: false, code: "rebuild_failed", message: "Failed to rebuild the execution workspace" }; }
+      try {
+        resolvedBaseCwd = recipe && isClosedExecutionWorkspaceStatus(snapshot.status)
+          ? await restoreGitCacheBase(snapshot, recipe, gitAuth)
+          : await verifiedRecordedIsolatedRemoteSource(snapshot) ?? projectWorkspace?.cwd ?? null;
+      } catch {
+        return { ok: false, code: "rebuild_failed", message: recipe
+          ? new GitCacheRestorationFailure().message : "Failed to rebuild the execution workspace" };
+      }
       if (isClosedExecutionWorkspaceStatus(snapshot.status) && resolvedBaseCwd == null && snapshot.strategyType === "git_worktree" && snapshot.projectId) {
         try {
           const managedWorkspace = await ensureManagedProjectWorkspace({
@@ -3689,7 +3732,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           });
           resolvedBaseCwd = managedWorkspace.cwd;
         } catch {
-          return { ok: false, code: "rebuild_failed", message: "Failed to rebuild the execution workspace" };
+          return { ok: false, code: "rebuild_failed", message: recipe ? new GitCacheRestorationFailure().message : "Failed to rebuild the execution workspace" };
         }
       }
       let capturedSource: IsolatedWorkspaceSourceAccess | null = null;
@@ -3709,7 +3752,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
             actor: input.authorizationActor, captured: capturedSource, issueId: issue.id, phase: "preparing",
           });
         } catch {
-          return { ok: false, code: "rebuild_failed", message: "Failed to rebuild the execution workspace" };
+          return { ok: false, code: "rebuild_failed", message: recipe ? new GitCacheRestorationFailure().message : "Failed to rebuild the execution workspace" };
         }
       }
       const result = await db.transaction(async (tx): Promise<ReopenClosedIsolatedExecutionWorkspaceResult> => {
@@ -3779,6 +3822,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         const nextMetadata = bumpExecutionWorkspaceLifecycleGeneration(
           row.metadata as Record<string, unknown> | null,
         );
+        delete nextMetadata.gitCacheExpiration;
         const recorder = workspaceOperationService(db).createRecorder({
           companyId: row.companyId,
           executionWorkspaceId: row.id,
@@ -3815,6 +3859,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           if (copyOnlyProvisioning) nextMetadata[CONTROLLER_PROVISION_COPY_ONLY] = true;
           const realized = await ensurePersistedExecutionWorkspaceAvailable({
             db: tx as unknown as Db,
+            resolveGitAuth: gitAuth,
             skipHostProvision: trust.kind === "low_trust_review" || copyOnlyProvisioning,
             beforeSourceCopy: verifyCopyIdentity,
             afterSourceCopy: verifyCopyIdentity,
@@ -3909,7 +3954,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
               generation: nextGeneration,
             },
           });
-          return { ok: false, code: "rebuild_failed", message: "Failed to rebuild the execution workspace" };
+          return { ok: false, code: "rebuild_failed", message: recipe ? new GitCacheRestorationFailure().message : "Failed to rebuild the execution workspace" };
         }
 
         // The rebuild succeeded. Publish the row as active in one write, and clear
@@ -3935,7 +3980,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           .returning()
           .then((rows) => rows[0] ?? null);
         if (!activeRow) {
-          return { ok: false, code: "rebuild_failed", message: "Failed to rebuild the execution workspace" };
+          return { ok: false, code: "rebuild_failed", message: recipe ? new GitCacheRestorationFailure().message : "Failed to rebuild the execution workspace" };
         }
         logger.info(
           {
@@ -3967,7 +4012,7 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
         return { ok: true, reopened: true, workspace: toExecutionWorkspace(activeRow), generation: nextGeneration };
       }).catch((error): ReopenClosedIsolatedExecutionWorkspaceResult => {
         logger.warn({ error, executionWorkspaceId: snapshot.id }, "Execution workspace reopen failed");
-        return { ok: false, code: "rebuild_failed", message: "Failed to rebuild the execution workspace" };
+        return { ok: false, code: "rebuild_failed", message: recipe ? new GitCacheRestorationFailure().message : "Failed to rebuild the execution workspace" };
       });
       if (capturedSource && authorizedTarget && resolvedBaseCwd) {
         try {
@@ -3981,10 +4026,14 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
               workspaceId: snapshot.id, issue, actor, expectedGeneration: result.generation,
             });
           }
-          return { ok: false, code: "rebuild_failed", message: "Failed to rebuild the execution workspace" };
+          return { ok: false, code: "rebuild_failed", message: recipe ? new GitCacheRestorationFailure().message : "Failed to rebuild the execution workspace" };
         }
       }
       return result;
+      };
+      return authorizedSnapshot.sourceIssueId
+        ? withIsolatedRepositorySourceLock(db, authorizedSnapshot.companyId, authorizedSnapshot.sourceIssueId, reopen)
+        : reopen();
     },
 
     // Clear the reopen-pending flag after a caller failed to consume a reopened
