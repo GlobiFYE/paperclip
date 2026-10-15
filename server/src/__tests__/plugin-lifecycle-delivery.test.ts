@@ -10,7 +10,7 @@ import { pluginLifecycleInbox } from "../services/plugin-lifecycle-inbox.js";
 import { pluginRegistryService } from "../services/plugin-registry.js";
 import { recordProjectLifecycleEvent, recordResourceCreationEvent } from "../services/resource-lifecycle-events.js";
 import { DELIVERY_QUEUES, subscribeDeliveryWork } from "../services/delivery-work-notifications.js";
-import type { createDeliveryWorkCoordinator } from "../services/delivery-work-coordinator.js";
+import { createDeliveryWorkCoordinator } from "../services/delivery-work-coordinator.js";
 import type { PluginLifecycleManager } from "../services/plugin-lifecycle.js";
 import type { PluginWorkerManager } from "../services/plugin-worker-manager.js";
 
@@ -54,6 +54,22 @@ describePostgres("durable plugin lifecycle delivery", () => {
     const worker = registerPluginLifecycleDelivery(coordinator as never, db, { call, isRunning: running, onConfigApplied } as unknown as PluginWorkerManager, lifecycle as unknown as PluginLifecycleManager);
     return { call, running, wake, lifecycle, worker, applied: () => { for (const listener of configApplied) listener(); }, run: () => task.run(new AbortController().signal), pending: () => task.hasPending(), nextRunAt: () => task.nextRunAt?.(), settled: () => task.onSettled?.() };
   }
+  it.each([false, true])("does not wait for queued plugin callbacks during startup (runtime subscriber: %s)", async runtime => {
+    if (runtime) await db.update(plugins).set({ manifestJson: { resourceLifecycle: ["project", "agent_runtime"], capabilities: ["events.subscribe"] } as never }).where(eq(plugins.id, pluginId));
+    await event();
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const call = vi.fn(async (_plugin, _method, input) => { await blocked; return { eventId: input.id, status: "acknowledged" }; });
+    const coordinator = createDeliveryWorkCoordinator({ owner: db, canRun: () => true, onError: () => {} });
+    const worker = registerPluginLifecycleDelivery(coordinator, db, { call, isRunning: () => true, onConfigApplied: () => () => {} } as never, new EventEmitter() as never);
+    let ready = false;
+    void worker.ready.then(() => { ready = true; });
+    try {
+      await vi.waitFor(() => expect(call).toHaveBeenCalled(), { timeout: 5000 });
+      await vi.waitFor(() => expect(ready).toBe(true));
+      expect(await pluginLifecycleInbox(db, pluginId).list(companyId)).toHaveLength(1);
+    } finally { release(); worker.dispose(); await coordinator.stop(); }
+  });
   it("drains creation before transitions, recovers acknowledgments across dispatcher replacement, and ignores agent events", async () => {
     const id = await event(); await event(id, "update"); await event(id, "delete");
     await db.transaction(tx => recordResourceCreationEvent(tx as unknown as Db, companyId, "agent", randomUUID()));

@@ -128,7 +128,7 @@ export function registerPluginLifecycleDelivery(
   lifecycle.on("plugin.worker_started", pluginChanged);
   return {
     ...delivery,
-    ready: Promise.all([delivery.ready, listenerReady]),
+    ready: listenerReady,
     wake,
     dispose() {
       disposed = true;
