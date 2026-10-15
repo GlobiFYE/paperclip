@@ -34,6 +34,8 @@ export function AgentEnvironmentSecretAccessEditor({
   const incomingMap = useMemo(() => rowsToEnvMap(entriesToEnvironmentRows(bindings)), [bindings]);
   const incomingKey = useMemo(() => normalizeAccessMapKey(incomingMap), [incomingMap]);
   const [rows, setRows] = useState<EnvironmentSecretRow[]>(() => entriesToEnvironmentRows(bindings));
+  // The last saved version of each row, used while that row has a name problem.
+  const savedRowsRef = useRef(new Map(rows.map((row) => [row.id, row])));
   const lastEmittedKeyRef = useRef(incomingKey);
   const lastIncomingKeyRef = useRef(incomingKey);
 
@@ -41,15 +43,32 @@ export function AgentEnvironmentSecretAccessEditor({
     if (incomingKey === lastIncomingKeyRef.current) return;
     lastIncomingKeyRef.current = incomingKey;
     if (incomingKey === lastEmittedKeyRef.current) return;
-    setRows(entriesToEnvironmentRows(bindings));
+    const nextRows = entriesToEnvironmentRows(bindings);
+    savedRowsRef.current = new Map(nextRows.map((row) => [row.id, row]));
+    setRows(nextRows);
   }, [bindings, incomingKey]);
 
   function emit(nextRows: EnvironmentSecretRow[]) {
     setRows(nextRows);
-    // Keep the last valid assignment while a name is invalid, duplicated or
-    // taken: emitting would drop or overwrite a binding without a warning.
-    if (nextRows.some((row) => environmentRowNameIssue(row, nextRows, reserved))) return;
-    const map = rowsToEnvMap(nextRows);
+    // A row whose name is invalid, duplicated or taken keeps its last saved
+    // assignment, so it is neither dropped nor written over another binding.
+    // Edits and removals in the other rows still reach the form.
+    const effectiveRows: EnvironmentSecretRow[] = [];
+    const saved = new Map<string, EnvironmentSecretRow>();
+    for (const row of nextRows) {
+      if (environmentRowNameIssue(row, nextRows, reserved)) {
+        const previous = savedRowsRef.current.get(row.id);
+        if (previous) {
+          effectiveRows.push(previous);
+          saved.set(row.id, previous);
+        }
+      } else {
+        effectiveRows.push(row);
+        saved.set(row.id, row);
+      }
+    }
+    savedRowsRef.current = saved;
+    const map = rowsToEnvMap(effectiveRows);
     lastEmittedKeyRef.current = normalizeAccessMapKey(map);
     onChange(map);
   }

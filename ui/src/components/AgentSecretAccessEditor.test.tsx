@@ -273,7 +273,13 @@ describe("AgentSecretAccessEditor component", () => {
       flushSync(() => nameInput.dispatchEvent(new Event("input", { bubbles: true })));
       expect(container.querySelector("[role=alert]")?.textContent).toContain(message);
     }
-    expect(emitted).toEqual([]);
+    // Every emit while the name is bad keeps the saved assignment.
+    for (const map of emitted) {
+      expect(map).toEqual({
+        GH_TOKEN: { type: "secret_ref", secretId: "s0", version: 1 },
+        STRIPE_KEY: { type: "secret_ref", secretId: "s1", version: "latest" },
+      });
+    }
 
     setter.call(nameInput, "GITHUB_TOKEN");
     flushSync(() => nameInput.dispatchEvent(new Event("input", { bubbles: true })));
@@ -282,6 +288,36 @@ describe("AgentSecretAccessEditor component", () => {
       GITHUB_TOKEN: { type: "secret_ref", secretId: "s0", version: 1 },
       STRIPE_KEY: { type: "secret_ref", secretId: "s1", version: "latest" },
     });
+  });
+
+  it("saves edits to other rows while one renamed key is invalid", () => {
+    const emitted: Array<Record<string, EnvSecretRefBinding>> = [];
+    render(
+      <AgentSecretAccessEditor
+        config={{
+          env: {
+            GH_TOKEN: { type: "secret_ref", secretId: "s0", version: 1 },
+            STRIPE_KEY: { type: "secret_ref", secretId: "s1", version: "latest" },
+          },
+        }}
+        secrets={secrets}
+        onEnvChange={(next) => emitted.push(next)}
+        onChange={() => {}}
+      />,
+    );
+    const nameInput = container.querySelector<HTMLInputElement>('input[aria-label="Environment variable name"]')!;
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    setter.call(nameInput, "GH-TOKEN");
+    flushSync(() => nameInput.dispatchEvent(new Event("input", { bubbles: true })));
+    // The invalid row keeps its saved assignment.
+    expect(emitted.at(-1)).toEqual({
+      GH_TOKEN: { type: "secret_ref", secretId: "s0", version: 1 },
+      STRIPE_KEY: { type: "secret_ref", secretId: "s1", version: "latest" },
+    });
+
+    const removeButtons = container.querySelectorAll<HTMLButtonElement>('[aria-label="Remove environment secret"]');
+    flushSync(() => removeButtons[1]!.click());
+    expect(emitted.at(-1)).toEqual({ GH_TOKEN: { type: "secret_ref", secretId: "s0", version: 1 } });
   });
 
   it("shows user-secret environment bindings and edits their requirement", () => {
