@@ -1,4 +1,6 @@
 import { notifyDeliveryWork, DELIVERY_QUEUES } from "./delivery-work-notifications.js";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { beginRunPhase, measureRunPhase } from "./execution-preparation-timing.js";
 import { composeConnectionInstructions } from "./connection-instructions.js";
 import { isInsufficientConnectionScope, INSUFFICIENT_CONNECTION_SCOPE_MESSAGE } from "./connection-permission-errors.js";
 import { boundedMcpToolName } from "./mcp-tool-names.js";
@@ -3021,7 +3023,17 @@ export function createToolGatewayService(
     signal?: AbortSignal,
   ): Promise<ToolGatewayDescriptor[]> {
     try {
-      return await toolDiscoveryScheduler.run(() => buildToolsForContext(session, signal), signal);
+      return await measureRunPhase("connectors.discovery.scheduled", async () => {
+        const queued = beginRunPhase("connectors.discovery.queue");
+        const build = AsyncLocalStorage.bind(() => {
+          queued();
+          return measureRunPhase("connectors.discovery.build", () => buildToolsForContext(session, signal));
+        });
+        let failed = false;
+        try { return await toolDiscoveryScheduler.run(build, signal); }
+        catch (error) { failed = true; throw error; }
+        finally { queued(failed); }
+      });
     } catch (error) {
       if (error instanceof ToolDiscoveryBusyError) {
         throw new ToolGatewayHttpError(503, error.message, "tool_discovery_busy");
@@ -3032,13 +3044,13 @@ export function createToolGatewayService(
 
   /** Shared connection descriptors and task restrictions; no provider calls. */
   async function connectionToolsForContext(session: ToolGatewaySession): Promise<ToolGatewayDescriptor[]> {
-    const guestBotConnection = await githubGuestBotConnectionForSession(db, session);
-    const connectedTools = (await connectedMcpToolsForCompany(session.companyId))
+    const guestBotConnection = await measureRunPhase("connectors.discovery.github", () => githubGuestBotConnectionForSession(db, session));
+    const connectedTools = (await measureRunPhase("connectors.discovery.connections", () => connectedMcpToolsForCompany(session.companyId)))
       .filter(tool => !guestBotConnection || !tool.connectionId || (tool.connectionId === guestBotConnection && tool.providerType === "paperclip_github_chat"));
     return [
-      ...await githubBotToolsForSession(db, session),
-      ...await slackToolsForSession(db, session),
-      ...await spekoToolsForSession(db, session),
+      ...await measureRunPhase("connectors.discovery.github", () => githubBotToolsForSession(db, session)),
+      ...await measureRunPhase("connectors.discovery.slack", () => slackToolsForSession(db, session)),
+      ...await measureRunPhase("connectors.discovery.speko", () => spekoToolsForSession(db, session)),
       ...connectedTools,
     ];
   }
@@ -3049,7 +3061,7 @@ export function createToolGatewayService(
   ): Promise<ToolGatewayDescriptor[]> {
     signal?.throwIfAborted();
     if (session.agentId) {
-      await assertAgentInCompany(session.companyId, session.agentId);
+      await measureRunPhase("connectors.discovery.agent", () => assertAgentInCompany(session.companyId, session.agentId!));
     }
     const connectionTools = await connectionToolsForContext(session);
     const onDemandTargets = connectionTools.filter(isOnDemandRemoteTool);
@@ -3063,12 +3075,12 @@ export function createToolGatewayService(
           tool.providerType !== "paperclip_plugin"),
     );
     const decisionCache = createToolAccessDecisionCache();
-    const decisions = await decideToolsForListing(
+    const decisions = await measureRunPhase("connectors.discovery.policy", () => decideToolsForListing(
       tools,
       (tool) => policyInputForTool({ session, tool }),
       decisionCache,
       signal,
-    );
+    ));
     const visibleTools = decisions
       .filter(
         ({ decision }) =>
@@ -3088,12 +3100,12 @@ export function createToolGatewayService(
           : tool,
       );
     if (onDemandTargets.length > 0) {
-      const targetDecisions = await decideToolsForListing(
+      const targetDecisions = await measureRunPhase("connectors.discovery.on_demand_policy", () => decideToolsForListing(
         onDemandTargets,
         (tool) => policyInputForTool({ session, tool }),
         decisionCache,
         signal,
-      );
+      ));
       if (
         targetDecisions.some(
           ({ decision }) =>
@@ -9128,19 +9140,19 @@ export function createToolGatewayService(
 
     async browserUseResources(binding: { companyId: string; agentId: string; runId?: string; issueId?: string }) {
       if (!binding.runId || !binding.issueId) return [];
-      const [connection] = await db.select({ id: toolConnections.id }).from(toolConnections).where(and(
+      const [connection] = await measureRunPhase("connectors.browser_use.connection", () => db.select({ id: toolConnections.id }).from(toolConnections).where(and(
         eq(toolConnections.companyId, binding.companyId), eq(toolConnections.transport, "rest_api"),
         eq(toolConnections.enabled, true), eq(toolConnections.status, "active"),
         sql`${toolConnections.config}->>'sourceTemplateKey' = 'browser-use-cloud'`,
-      )).limit(1);
+      )).limit(1));
       if (!connection) return [];
       const session: ToolGatewaySession = { ...binding, runId: binding.runId, issueId: binding.issueId, id: randomUUID(), token: "", projectId: null, createdAt: new Date(), expiresAt: new Date(Date.now() + 60000) };
-      const tools = (await listToolsForContext(session)).filter(t => t.providerType === "provider_rest");
+      const tools = (await measureRunPhase("connectors.browser_use.catalog", () => listToolsForContext(session))).filter(t => t.providerType === "provider_rest");
       const resources: Array<{ id: string; label: string; connectionId: string }> = [];
       for (const connectionId of new Set(tools.map(t => t.connectionId!))) {
-        const [connection] = await db.select().from(toolConnections).where(and(eq(toolConnections.companyId, binding.companyId), eq(toolConnections.id, connectionId)));
+        const [connection] = await measureRunPhase("connectors.browser_use.connection", () => db.select().from(toolConnections).where(and(eq(toolConnections.companyId, binding.companyId), eq(toolConnections.id, connectionId))));
         if (!connection || !isBrowserUseConnection(connection)) continue;
-        try { await resolveConnectionGrant(session, connection, false); resources.push({ id: connectionId, connectionId, label: "Browser Use Cloud" }); } catch { /* Unavailable grants do not contribute a runtime skill. */ }
+        try { await measureRunPhase("connectors.browser_use.grant", () => resolveConnectionGrant(session, connection, false)); resources.push({ id: connectionId, connectionId, label: "Browser Use Cloud" }); } catch { /* Unavailable grants do not contribute a runtime skill. */ }
       }
       return resources;
     },
