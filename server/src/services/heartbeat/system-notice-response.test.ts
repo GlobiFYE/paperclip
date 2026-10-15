@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findHeartbeatRunCompletionComment, resolveHeartbeatRunResponse } from "../services/heartbeat-run-summary.js";
+import { findHeartbeatRunCompletionComment, resolveHeartbeatRunResponse } from "../heartbeat-run-summary.js";
 
 describe("system notices and final run replies", () => {
   const notice = { id: "workspace-ready", body: "## Workspace Ready", presentation: { kind: "system_notice" } };
