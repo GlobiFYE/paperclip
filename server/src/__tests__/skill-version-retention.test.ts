@@ -294,22 +294,37 @@ describeEmbeddedPostgres("skill version snapshot retention", () => {
     expect(total).toBe(5);
     expect(await fs.readdir(path.join(resolveCompanySkillVersionsRoot(companyId), skillId))).toEqual([versionIds[5]]);
   });
-  it("bounds discovery inspections and never stats versions before the continuation cursor", async () => {
+  it("bounds directory reads and retains the discovery cursor between pages", async () => {
     const companyId = await createCompany();
-    const { skillId, versionIds } = await createSkill(companyId, 12);
+    const { skillId, versionIds } = await createSkill(companyId, 100);
     await Promise.all(versionIds.map(id => writeSnapshot(companyId, skillId, id)));
     const parent = path.join(resolveCompanySkillVersionsRoot(companyId), skillId);
+    const originalOpen = fs.opendir.bind(fs);
+    let reads = 0;
+    const opened = vi.spyOn(fs, "opendir").mockImplementation(async (...args: Parameters<typeof fs.opendir>) => {
+      const directory = await originalOpen(...args);
+      const read = directory.read.bind(directory);
+      vi.spyOn(directory, "read").mockImplementation(async () => { reads++; return read(); });
+      return directory;
+    });
     const stat = vi.spyOn(fs, "lstat");
     const retention = skillVersionRetentionService(db, { maxEntries: 2, dryRun: true });
-    const first = await retention.tick();
-    expect(first).toMatchObject({ checked: 2, truncated: true });
-    const inspected = () => new Set(stat.mock.calls.map(call => String(call[0]))
-      .filter(file => path.dirname(file) === parent).map(file => path.basename(file)));
-    expect([...inspected()].sort()).toEqual([...versionIds].sort().slice(0, 2));
-    stat.mockClear();
-    const second = await retention.tick();
-    expect(second).toMatchObject({ checked: 2, truncated: true });
-    expect([...inspected()].sort()).toEqual([...versionIds].sort().slice(2, 4));
+    try {
+      const first = await retention.tick();
+      expect(first).toMatchObject({ checked: 2, truncated: true });
+      expect(reads).toBeLessThanOrEqual(2);
+      const inspected = () => new Set(stat.mock.calls.map(call => String(call[0]))
+        .filter(file => path.dirname(file) === parent).map(file => path.basename(file)));
+      const firstPaths = inspected();
+      expect(firstPaths.size).toBe(1); // Opening the skill root also consumes a slot.
+      stat.mockClear(); reads = 0;
+      const second = await retention.tick();
+      expect(second).toMatchObject({ checked: 2, truncated: true });
+      expect(reads).toBe(2);
+      expect(inspected().size).toBe(2);
+      expect([...inspected()].some(name => firstPaths.has(name))).toBe(false);
+      expect(opened.mock.calls.filter(call => call[0] === parent)).toHaveLength(1);
+    } finally { await retention.dispose(); }
   });
 
   it("continues beyond a page ending at an exhausted skill root", async () => {
@@ -347,7 +362,7 @@ describeEmbeddedPostgres("skill version snapshot retention", () => {
       failures += result.failed;
       if (!result.truncated) break;
     }
-    expect(checked).toBe(6);
+    expect(checked).toBe(7); // Six versions plus the skill-root discovery slot.
     expect(failures).toBe(5);
     expect(rename).toHaveBeenCalledTimes(5);
   });

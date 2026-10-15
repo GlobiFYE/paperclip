@@ -103,6 +103,12 @@ product acceptance. Rollback disables deletion and retains restoration support.
   script `/tmp/paperclip-git-recovery-baseline.mts`, inspected output
   `/tmp/paperclip-git-recovery-baseline.json`, retained Git fixture
   `/tmp/paperclip-git-baseline-sbJWbo`. The test DB was cleaned up.
+- Greptile cleared `0da71b2ca2` (all its findings resolved). Security review then
+  identified repeated full-directory enumeration. Discovery now retains bounded
+  directory iterators across continuations, counts root entries in its budget,
+  closes abandoned iterators, and bounds company discovery. Twenty-one focused
+  cases passed in 29.99s (`/tmp/paperclip-skill-streaming-final.log`); server
+  typecheck passed. A new regression inspects actual directory reads/opener reuse.
 - No deployed artifact or staging acceptance yet. Next: publish review fixes,
   qualify final skill SHA, then perform dry-run rollout and measured restoration.
 

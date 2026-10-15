@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
-import { and, asc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, inArray, lte, sql } from "drizzle-orm";
 import { agents, companies, companySkills, companySkillVersions, type Db } from "@paperclipai/db";
 import { readPaperclipSkillSyncPreference } from "@paperclipai/adapter-utils/server-utils";
 import { resolvePaperclipInstanceRoot } from "../home-paths.js";
@@ -160,23 +160,40 @@ function emptyResult(): SkillVersionPruneResult {
     skippedRecent: 0, failed: 0, truncated: false, skipped: {}, cursor: null };
 }
 
-type DirEntry = { name: string };
+type Candidate = { parent: string; skillId: string; name: string; unsafe?: boolean; discoveryOnly?: boolean };
 
-async function listDirectories(root: string, options: { after?: string; limit?: number } = {}): Promise<DirEntry[] | null> {
+// Retain directory handles between pages instead of re-reading/sorting N names
+// for every 50-entry continuation. Every directory entry consumes a scan slot.
+async function* discoverDirectories(root: string): AsyncGenerator<Candidate> {
+  await ensureSkillCacheDirectory(root);
+  const directory = await fs.opendir(root, { bufferSize: 1 });
   try {
-    await ensureSkillCacheDirectory(root);
-    // Directory-entry types avoid an lstat for every historical version on each
-    // continuation. Bound the returned candidates before any per-path inspection.
-    const entries = await fs.readdir(root, { withFileTypes: true });
-    return entries.filter(entry => (entry.isDirectory() || entry.isSymbolicLink())
-      && (!options.after || entry.name > options.after))
-      .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
-      .slice(0, options.limit)
-      .map(entry => ({ name: entry.name }));
-  } catch (error) {
-    if (errorCode(error) === "ENOENT" || errorCode(error) === "ENOTDIR") return null;
-    throw error;
-  }
+    for (;;) {
+      const entry = await directory.read();
+      if (!entry) break;
+      if (!UUID_PATTERN.test(entry.name)) {
+        yield { parent: root, skillId: "", name: entry.name };
+        continue;
+      }
+      const parent = path.join(root, entry.name);
+      yield { parent, skillId: entry.name, name: "", discoveryOnly: true };
+      let childDirectory;
+      try {
+        await ensureSkillCacheDirectory(parent);
+        childDirectory = await fs.opendir(parent, { bufferSize: 1 });
+      } catch {
+        yield { parent, skillId: entry.name, name: "", unsafe: true };
+        continue;
+      }
+      try {
+        for (;;) {
+          const child = await childDirectory.read();
+          if (!child) break;
+          yield { parent, skillId: entry.name, name: child.name };
+        }
+      } finally { await childDirectory.close(); }
+    }
+  } finally { await directory.close(); }
 }
 
 function chunks<T>(values: T[], size: number): T[][] {
@@ -186,6 +203,18 @@ function chunks<T>(values: T[], size: number): T[][] {
 }
 
 export function skillVersionRetentionService(db: Db, defaults: SkillVersionPruneOptions = {}) {
+  const scans = new Map<string, { iterator: AsyncGenerator<Candidate>; cursor: CompanyCursor | null;
+    pending: Candidate[]; expiry: ReturnType<typeof setTimeout> }>();
+  const scanning = new Set<string>();
+  async function closeScan(companyId: string) {
+    const scan = scans.get(companyId);
+    if (!scan) return;
+    scans.delete(companyId);
+    clearTimeout(scan.expiry);
+    await scan.iterator.return(undefined);
+  }
+  async function dispose() { for (const id of [...scans.keys()]) await closeScan(id); }
+
   async function protectedVersionIds(companyId: string, skillIds: string[], keepNewest: number) {
     const keep = new Set<string>();
     if (skillIds.length === 0) return keep;
@@ -214,7 +243,7 @@ export function skillVersionRetentionService(db: Db, defaults: SkillVersionPrune
     return keep;
   }
 
-  async function pruneCompany(companyId: string, options: SkillVersionPruneOptions & { cursor?: CompanyCursor | null } = {}): Promise<SkillVersionPruneResult> {
+  async function pruneCompanyPage(companyId: string, options: SkillVersionPruneOptions & { cursor?: CompanyCursor | null } = {}): Promise<SkillVersionPruneResult> {
     if (!UUID_PATTERN.test(companyId)) throw new Error("Invalid company ID for skill retention");
     const keepNewest = Math.max(0, Math.floor(options.keepNewest ?? defaults.keepNewest ?? SKILL_VERSION_RETENTION_DEFAULT_KEEP_NEWEST));
     const graceMs = Math.max(0, options.graceMs ?? defaults.graceMs ?? SKILL_VERSION_RETENTION_DEFAULT_GRACE_MS);
@@ -228,44 +257,37 @@ export function skillVersionRetentionService(db: Db, defaults: SkillVersionPrune
     const trash: string[] = [];
     const root = resolveCompanySkillVersionsRoot(companyId);
     const trashName = (name: string) => name.startsWith(TRASH_PREFIX) && UUID_PATTERN.test(name.slice(TRASH_PREFIX.length));
-    const after = (skillId: string, name: string) => !options.cursor || skillId > options.cursor.skillId
-      || (skillId === options.cursor.skillId && name > options.cursor.name);
-    type Candidate = { parent: string; skillId: string; name: string; unsafe?: boolean };
+    let scan = scans.get(companyId);
+    if (!options.cursor || !scan || scan.cursor?.skillId !== options.cursor.skillId || scan.cursor?.name !== options.cursor.name) {
+      await closeScan(companyId);
+      // A service normally holds two descriptors for one company's continuation.
+      // Bound direct/internal callers too; abandoned cursors expire automatically.
+      if (scans.size >= 16) await closeScan(scans.keys().next().value!);
+      const expiry = setTimeout(() => { if (!scanning.has(companyId)) void closeScan(companyId).catch(() => {}); }, 5 * 60 * 1000);
+      expiry.unref();
+      scan = { iterator: discoverDirectories(root), cursor: null, pending: [], expiry };
+      scans.set(companyId, scan);
+    }
+    scan.expiry.refresh();
     const entries: Candidate[] = [];
+    let discoveryDone = false;
     try {
-      const rootEntries = await listDirectories(root) ?? [];
-      for (const entry of rootEntries.filter(entry => trashName(entry.name) && after("", entry.name)).slice(0, maxEntries + 1)) {
-        entries.push({ ...entry, parent: root, skillId: "" });
-      }
-      for (const skillId of rootEntries.filter(entry => UUID_PATTERN.test(entry.name)).map(entry => entry.name)) {
-        if (options.cursor && (skillId < options.cursor.skillId
-          || (skillId === options.cursor.skillId && options.cursor.name === "\uffff"))) continue;
-        if (!shouldContinue()) { result.truncated = true; break; }
-        if (entries.length > maxEntries) break;
-        const parent = path.join(root, skillId);
-        try {
-          const children = await listDirectories(parent, {
-            after: options.cursor?.skillId === skillId ? options.cursor.name : undefined,
-            limit: maxEntries - entries.length + 1,
-          }) ?? [];
-          for (const entry of children) entries.push({ ...entry, parent, skillId });
-          // Empty roots consume discovery work too. A sentinel advances the
-          // cursor without ever authorizing deletion of the skill root itself.
-          if (children.length === 0) entries.push({ parent, skillId, name: "\uffff" });
-        } catch {
-          // One unsafe root consumes a scan slot but cannot stop unrelated skills.
-          entries.push({ parent, skillId, name: "\uffff", unsafe: true });
-        }
-        if (entries.length > maxEntries) break;
+      while (entries.length < maxEntries && shouldContinue()) {
+        const next = scan.pending.length ? { done: false, value: scan.pending.shift()! } : await scan.iterator.next();
+        if (next.done) { discoveryDone = true; break; }
+        entries.push(next.value);
       }
     } catch (error) {
+      await closeScan(companyId);
+      if (errorCode(error) === "ENOENT" || errorCode(error) === "ENOTDIR") return result;
       result.checked++;
       result.failed++;
       skip("unsafe_or_unavailable");
       logger.warn({ err: error, companyId }, "skill version retention skipped unsafe company root");
       return result;
     }
-    if (entries.length === 0) return result;
+    result.truncated = !discoveryDone;
+    if (entries.length === 0) { await closeScan(companyId); return result; }
     const skillIds = [...new Set(entries.filter(entry => !entry.unsafe && entry.skillId).map(entry => entry.skillId))];
     let initialKeep: Set<string> | null;
     try { initialKeep = await withSkillVersionCacheLock(db, companyId, () => protectedVersionIds(companyId, skillIds, keepNewest), true); }
@@ -273,20 +295,22 @@ export function skillVersionRetentionService(db: Db, defaults: SkillVersionPrune
       result.checked = 1;
       if (error instanceof SkillCacheBusy) skip("cache_busy");
       else { result.failed++; skip("unavailable_pins"); }
+      await closeScan(companyId);
+      result.truncated = false;
       return result;
     }
-    if (!initialKeep) { result.checked = 1; skip("unknown_run_pins"); return result; }
+    if (!initialKeep) { await closeScan(companyId); result.truncated = false; result.checked = 1; skip("unknown_run_pins"); return result; }
     const inspected: Array<{
       entry: Candidate; isStaging: boolean; version: boolean;
       before: { dev: number; ino: number }; bytes: number;
       eligible: (keep: Set<string> | null) => Promise<{ dev: number; ino: number } | null>;
     }> = [];
     for (const entry of entries) {
-      if (!after(entry.skillId, entry.name)) continue;
-      if (result.checked >= maxEntries || !shouldContinue()) { result.truncated = true; break; }
+      if (!shouldContinue()) { scan.pending.push(...entries.slice(result.checked)); result.truncated = true; break; }
       result.checked++;
       result.cursor = { skillId: entry.skillId, name: entry.name };
       if (entry.unsafe) { skip("unsafe_or_unavailable"); continue; }
+      if (entry.discoveryOnly) continue;
       const target = path.join(entry.parent, entry.name);
       const isTrash = trashName(entry.name);
       const isVersion = UUID_PATTERN.test(entry.name);
@@ -369,7 +393,8 @@ export function skillVersionRetentionService(db: Db, defaults: SkillVersionPrune
         else { result.failed++; skip("unavailable_pins"); }
       }
     }
-    if (!result.truncated) result.cursor = null;
+    if (!result.truncated) { result.cursor = null; await closeScan(companyId); }
+    else scan.cursor = result.cursor;
     // These unique names are never reused by materialization. A crash leaves
     // them for the next scan; a returning run can rehydrate immediately.
     for (const target of trash) {
@@ -392,6 +417,13 @@ export function skillVersionRetentionService(db: Db, defaults: SkillVersionPrune
     return result;
   }
 
+  async function pruneCompany(companyId: string, options: SkillVersionPruneOptions & { cursor?: CompanyCursor | null } = {}) {
+    if (scanning.has(companyId)) return { ...emptyResult(), checked: 1, skipped: { scan_busy: 1 } };
+    scanning.add(companyId);
+    try { return await pruneCompanyPage(companyId, options); }
+    finally { scanning.delete(companyId); }
+  }
+
   // A continuation visits later companies and protected directories too; a busy
   // first company or a dry run cannot starve the remainder of the instance.
   let cursor: SkillVersionRetentionCursor | null = null;
@@ -400,9 +432,11 @@ export function skillVersionRetentionService(db: Db, defaults: SkillVersionPrune
     const maxEntries = Math.min(maxRemovals, options.maxEntries ?? defaults.maxEntries ?? 50);
     const shouldContinue = options.shouldContinue ?? defaults.shouldContinue ?? (() => true);
     const totals = { ...emptyResult(), companies: 0, cursor: null as SkillVersionRetentionCursor | null };
-    const companyRows = await db.select({ id: companies.id }).from(companies).orderBy(asc(companies.id));
+    const companyRows = await db.select({ id: companies.id }).from(companies)
+      .where(cursor ? cursor.skillId === "\uffff" ? gt(companies.id, cursor.companyId) : gte(companies.id, cursor.companyId) : undefined)
+      .orderBy(asc(companies.id)).limit(51);
     for (const company of companyRows) {
-      if (cursor && company.id < cursor.companyId) continue;
+      if (cursor && (company.id < cursor.companyId || (company.id === cursor.companyId && cursor.skillId === "\uffff"))) continue;
       if (totals.companies >= 50 || totals.checked >= maxEntries || totals.candidates >= maxRemovals || !shouldContinue()) { totals.truncated = true; break; }
       const result = await pruneCompany(company.id, { ...options, cursor: cursor?.companyId === company.id ? cursor : null,
         maxEntries: maxEntries - totals.checked, maxRemovals: maxRemovals - totals.candidates, shouldContinue });
@@ -420,5 +454,5 @@ export function skillVersionRetentionService(db: Db, defaults: SkillVersionPrune
     totals.cursor = cursor;
     return totals;
   }
-  return { pruneCompany, tick };
+  return { pruneCompany, tick, dispose };
 }

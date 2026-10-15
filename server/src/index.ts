@@ -2018,6 +2018,7 @@ async function startServerWithDatabaseTeardown(
     clearInterval(skillVersionRetentionInterval);
     clearTimeout(skillVersionRetentionStartup);
     clearTimeout(skillVersionRetentionContinuation);
+    await skillVersionRetention.dispose();
     await skillSourceSync.stop();
     unsubscribeChatCompletions();
     await deliveryWork.stop();
