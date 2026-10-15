@@ -1,0 +1,121 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { mkdtempSync, readFileSync, existsSync, rmSync } from "node:fs";
+import { execFileSync, spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { buildTrace } from "../../../scripts/ci-profile/trace.mjs";
+import { associatedProfilePr, sendEvents } from "../../../scripts/ci-profile/export.mjs";
+
+const at = (seconds) => new Date(1_800_000_000_000 + seconds * 1000).toISOString();
+const run = {
+  id: 42, run_attempt: 1, run_number: 7, status: "completed", conclusion: "failure",
+  repository: { full_name: "paperclipai/paperclip" }, head_repository: { id: 99 },
+  head_sha: "abc", head_branch: "branch", created_at: at(0), run_started_at: at(0),
+  html_url: "https://github.com/paperclipai/paperclip/actions/runs/42",
+};
+const job = (id, name, start, end) => ({
+  id, run_id: 42, run_attempt: 1, name: `ci / ${name}`, status: "completed",
+  conclusion: "success", created_at: at(1), started_at: at(start), completed_at: at(end),
+  labels: ["ubuntu-latest"], steps: [
+    { number: 1, name: "Initialize CI profile", started_at: at(start), completed_at: at(start + 1), conclusion: "success" },
+    { number: 2, name: "Tests", started_at: at(start + 1), completed_at: at(end), conclusion: "success" },
+  ],
+});
+const jobs = [job(1, "first", 2, 12), job(2, "second", 3, 20)];
+const record = (fields) => ({ version: 1, runId: "42", attempt: "1", invocation: "invocation", job: "first", framework: "vitest", ...fields });
+
+test("one wall-clock trace includes parallel jobs, wait, and every step", () => {
+  const trace = buildTrace(run, jobs);
+  assert.equal(trace.wallMs, 20000);
+  assert.equal(trace.events[0].data.duration_ms, 20000);
+  assert.equal(trace.events.filter((event) => event.data["ci.kind"] === "job").length, 2);
+  assert.equal(trace.events.filter((event) => event.data["ci.kind"] === "step").length, 4);
+  assert.equal(trace.events.filter((event) => event.data["ci.kind"] === "wait").length, 2);
+  assert.equal(new Set(trace.events.map((event) => event.data["trace.trace_id"])).size, 1);
+  assert.equal(trace.events.find((event) => event.data.name === "ci / second").data["ci.finishes_last"], true);
+  assert.equal(trace.events[0].data.error, true);
+});
+
+test("file/test hierarchy keeps runner timestamps and rejects unrelated artifact data", () => {
+  const records = [
+    record({ kind: "job" }), record({ kind: "job", job: "second" }),
+    record({ kind: "start" }), record({ kind: "end" }),
+    record({ kind: "file", id: "file", name: "a.test.ts", file: "a.test.ts", start: Date.parse(at(4)), duration: 6000, status: "passed" }),
+    record({ kind: "test", id: "case", parent: "file", name: "runs", file: "a.test.ts", start: Date.parse(at(5)), duration: 100, status: "passed", secret: "must not leave artifact" }),
+    record({ kind: "test", id: "foreign", runId: "41", name: "wrong run" }),
+  ];
+  const trace = buildTrace(run, jobs, records);
+  const file = trace.events.find((event) => event.data.name === "a.test.ts");
+  const entry = trace.events.find((event) => event.data.name === "runs");
+  assert.equal(entry.time, at(5));
+  assert.equal(entry.data["trace.parent_id"], file.data["trace.span_id"]);
+  assert.equal(file.data["trace.parent_id"], trace.events.find((event) => event.data.name === "Tests").data["trace.span_id"]);
+  assert.equal(trace.events.some((event) => event.data.name === "wrong run"), false);
+  assert.doesNotMatch(JSON.stringify(trace), /must not leave artifact/);
+  assert.equal(trace.events[0].data["ci.profile_complete"], false);
+  assert.match(trace.warnings.join(), /1 invalid/);
+});
+
+test("cancelled reporters and missing shards remain explicit", () => {
+  const trace = buildTrace({ ...run, conclusion: "cancelled" }, jobs, [record({ kind: "job" }), record({ kind: "start" })]);
+  assert.equal(trace.events[0].data["ci.profile_complete"], false);
+  assert.match(trace.warnings.join(), /Missing timing artifacts for 1 jobs/);
+  assert.match(trace.warnings.join(), /1 test invocations/);
+});
+
+test("reruns use separate IDs and clocks and cannot mix job attempts", () => {
+  const rerun = { ...run, run_attempt: 2, run_started_at: at(2) };
+  assert.throws(() => buildTrace(rerun, jobs), /another run or attempt/);
+  const trace = buildTrace(rerun, jobs.map((entry) => ({ ...entry, run_attempt: 2 })));
+  assert.equal(trace.wallMs, 18000);
+  assert.notEqual(trace.traceId, buildTrace(run, jobs).traceId);
+  assert.equal(trace.events[0].data["ci.partial_rerun"], true);
+  assert.throws(() => buildTrace({ ...run, status: "in_progress" }, jobs), /complete/);
+});
+
+test("label authorization requires exact repository and tested revision", () => {
+  const pr = { base: { repo: { full_name: "paperclipai/paperclip" } }, head: { repo: { id: 99 }, sha: "abc" }, labels: [{ name: "profile-ci" }] };
+  assert.equal(associatedProfilePr(run, [pr]), pr);
+  assert.equal(associatedProfilePr(run, [{ ...pr, labels: [] }]), undefined);
+  assert.equal(associatedProfilePr(run, [{ ...pr, head: { ...pr.head, sha: "next" } }]), undefined);
+});
+
+test("export checks per-event ingestion results, including partial failures", async () => {
+  const events = Array.from({ length: 501 }, () => ({ data: {} }));
+  const sizes = [];
+  await sendEvents(events, "test-only", "paperclip-ci", async (url, options) => {
+    assert.equal(url, "https://api.honeycomb.io/1/batch/paperclip-ci");
+    assert.equal(options.redirect, "error");
+    const size = JSON.parse(options.body).length;
+    sizes.push(size);
+    return { ok: true, json: async () => Array.from({ length: size }, () => ({ status: 202 })) };
+  });
+  assert.deepEqual(sizes, [500, 1]);
+  await assert.rejects(sendEvents([events[0]], "test-only", "paperclip-ci", async () => ({ ok: true, json: async () => [{ status: 400 }] })), /every span/);
+});
+
+test("workflow exporter runs trusted code and keeps keys out of the PR jobs", () => {
+  const workflow = readFileSync(new URL("../../workflows/ci-profile.yml", import.meta.url), "utf8");
+  assert.match(workflow, /ref: \$\{\{ github.sha \}\}/);
+  assert.match(workflow, /startsWith\(github.event.workflow_run.display_title/);
+  assert.doesNotMatch(workflow, /head_sha|secrets: inherit|contents: write|pull-requests: write|pnpm install/);
+  const pr = readFileSync(new URL("../../workflows/pr-trusted.yml", import.meta.url), "utf8");
+  assert.doesNotMatch(pr, /HONEYCOMB.*KEY|secrets\./);
+  assert.match(pr, /if: always\(\) && env.PAPERCLIP_CI_PROFILE == 'true'/);
+});
+
+test("artifact parsing never extracts paths or executes files and rejects oversized records", () => {
+  const directory = mkdtempSync(path.join(tmpdir(), "ci-artifact-test-"));
+  const archive = path.join(directory, "artifact.zip");
+  const reader = fileURLToPath(new URL("../../../scripts/ci-profile/read-artifact.py", import.meta.url));
+  try {
+    execFileSync("python3", ["-c", "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],'w'); z.writestr('../escape.ndjson', '{\"kind\":\"test\"}\\n'); z.close()", archive]);
+    const result = execFileSync("python3", [reader, archive], { encoding: "utf8" });
+    assert.deepEqual(JSON.parse(result), { kind: "test" });
+    assert.equal(existsSync(path.join(directory, "escape.ndjson")), false);
+    execFileSync("python3", ["-c", "import zipfile,sys; z=zipfile.ZipFile(sys.argv[1],'w'); z.writestr('large.ndjson', 'x'*33000); z.close()", archive]);
+    assert.notEqual(spawnSync("python3", [reader, archive]).status, 0);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
