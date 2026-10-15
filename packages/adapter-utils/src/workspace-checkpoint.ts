@@ -66,6 +66,7 @@ async function checkpointMain(
       } else return;
       if (fingerprint(before) !== fingerprint(await fs.lstat(source))) throw new Error("Workspace changed during checkpoint capture");
       const encoded = JSON.stringify(entry);
+      if (!result.isTransaction) throw new Error("Workspace checkpoint transaction ended during capture");
       insert.run(name, encoded);
       if (lookup.get(name)?.value !== encoded) {
         const destination = path.join(payload, name);
