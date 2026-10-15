@@ -60,17 +60,33 @@ function makeSandbox() {
  * `broken: true` makes the stub fail the way an unmounted or unreadable volume
  * does, which is how we exercise the measurement-failure path.
  */
-function installDfStub(sandbox, { size, used, avail, broken = false, usePct }) {
+function installDfStub(
+  sandbox,
+  { size, used, avail, broken = false, usePct, iavail = 1_000_000, itotal = 13_107_200 },
+) {
   const pct =
     usePct !== undefined
       ? usePct
       : Math.ceil((100 * used) / (used + avail || 1));
+  // The guard reads bytes with `df --block-size=1 -P` and inodes with
+  // `df --output=iavail --output=itotal`. Both shapes come from this one stub,
+  // so it branches on the argument list. The inode row defaults to a healthy
+  // 1,000,000 free of 13,107,200, well above the 200,000 floor and its 2x warn
+  // band, so a test that does not care about inodes sees no inode signal.
   const lines = broken
     ? "#!/bin/sh\nexit 1\n"
     : [
         "#!/bin/sh",
-        'echo "Filesystem 1024-blocks Used Available Capacity Mounted on"',
-        `echo "stub ${size} ${used} ${avail} ${pct}% /mnt"`,
+        'case "$*" in',
+        "  *--output=iavail*)",
+        '    echo "Iavail Itotal"',
+        `    echo "${iavail} ${itotal}"`,
+        "    ;;",
+        "  *)",
+        '    echo "Filesystem 1024-blocks Used Available Capacity Mounted on"',
+        `    echo "stub ${size} ${used} ${avail} ${pct}% /mnt"`,
+        "    ;;",
+        "esac",
         "",
       ].join("\n");
   const stub = path.join(sandbox.binDir, "df");
@@ -594,6 +610,56 @@ test("MIN_FREE_MB=0 disables the floor, leaving percentage as the only signal", 
     assert.equal(result.status, RC_OK);
     assert.match(result.stdout, /level=ok/);
     assert.match(result.stdout, /floor=0MiB/);
+  } finally {
+    sandbox.cleanup();
+  }
+});
+
+test("inode floor: free inodes below the floor trip critical while bytes stay healthy", () => {
+  const sandbox = makeSandbox();
+  try {
+    // 5% used by bytes, so nothing but the inode signal can escalate. The
+    // default floor is 200000; 150000 free is below it, so this is critical.
+    installDfStub(sandbox, {
+      size: 100 * 1024 * MIB,
+      used: 5 * 1024 * MIB,
+      avail: 95 * 1024 * MIB,
+      iavail: 150000,
+      itotal: 13_107_200,
+    });
+    const result = run(sandbox, ["--check"]);
+    assert.equal(result.status, RC_CRITICAL);
+    const status = readFileSync(sandbox.statusFile, "utf8");
+    assert.match(status, /inode_pressure=critical/);
+    assert.match(status, /iavail=150000/);
+    // Inode pressure must never authorize a prune: it raises the reported
+    // level, but level_snapshot stays the byte measurement, so a healthy-by-
+    // bytes volume is not reclaimed on an inode signal alone.
+    assert.match(status, /level_snapshot=ok/);
+  } finally {
+    sandbox.cleanup();
+  }
+});
+
+test("inode floor: free inodes in the warn band raise warn, and 0 disables the floor", () => {
+  const sandbox = makeSandbox();
+  try {
+    // 300000 free is below 2x the 200000 floor but above the floor itself.
+    installDfStub(sandbox, {
+      size: 100 * 1024 * MIB,
+      used: 5 * 1024 * MIB,
+      avail: 95 * 1024 * MIB,
+      iavail: 300000,
+      itotal: 13_107_200,
+    });
+    const warn = run(sandbox, ["--check"]);
+    assert.equal(warn.status, RC_WARN);
+    assert.match(readFileSync(sandbox.statusFile, "utf8"), /inode_pressure=warn/);
+
+    // With the floor disabled, the same inode reading is not a signal at all.
+    const disabled = run(sandbox, ["--check"], { DISK_GUARD_MIN_FREE_INODES: "0" });
+    assert.equal(disabled.status, RC_OK);
+    assert.match(readFileSync(sandbox.statusFile, "utf8"), /inode_pressure=0/);
   } finally {
     sandbox.cleanup();
   }
@@ -2570,7 +2636,7 @@ test("trend: --check needs no company id, so the signal cannot be lost to a tena
 // that is PRESENT but reports a different version, or differs by a byte, is
 // always a bug and is checked. Set the env var only for a deliberate
 // uninstall, never to quiet a real mismatch.
-const EXPECTED_GUARD_VERSION = 8;
+const EXPECTED_GUARD_VERSION = 9;
 const RUNTIME_COPIES = ["/paperclip/bin/disk-guard.sh", "/paperclip/disk-guard.sh"];
 
 test("the committed script declares the guard_version the repo expects", () => {
