@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { agents, companies, companyMemberships, createDb, heartbeatRuns, issues, projects, type Db } from '@paperclipai/db';
+import { agents, companies, companyMemberships, createDb, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, heartbeatRuns, issues, projects, type Db } from '@paperclipai/db';
 import { LOW_TRUST_REVIEW_PRESET } from '@paperclipai/shared';
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from './helpers/embedded-postgres.js';
 import { authorizationService } from '../services/authorization.js';
@@ -21,7 +21,7 @@ const support = await getEmbeddedPostgresTestSupport();
       if (recording && column.type === 3802 && value !== null) jsonBytes.push(Buffer.byteLength(JSON.stringify(value)));
       return value;
     };
-  }, 30_000);
+  }, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS);
   beforeEach(() => { recording = false; jsonBytes = []; });
   afterAll(async () => { await client?.end({ timeout: 5 }); await database?.cleanup(); });
 
