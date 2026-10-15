@@ -49,6 +49,20 @@ completion verifies that receipt against the upload and admitted assignment.
 A visible attachment without that verified publication does not satisfy a task
 that requires a file output.
 
+## Feedback and pending operations
+
+An assignment wake starts a Grok routine. Once the Bot accepts that work,
+Paperclip keeps new comments and asynchronous operation receipts durable without
+starting another routine for that session. Silence does not mean the Bot is idle.
+Human-question answers and resolved durable waits resume through normal Runner
+admission and a new assignment wake.
+
+If a tool returns pending, poll `paperclip_grok_operation_status` with the same
+assignment and request IDs for its durable outcome. Do not repeat it under a new
+ID or perform dependent work first. An unknown outcome requires reconciliation. At safe boundaries and before finishing,
+the Bot reads its inbox and current task history for queued feedback. Current
+assignment reads include these instructions, including for existing connections.
+
 ## Recovery and stop
 
 Inspect a rejected delivery before using **Retry rejected delivery**. An uncertain

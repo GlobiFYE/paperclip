@@ -165,7 +165,7 @@ export function grokRoutineService(db: Db, deliver: Delivery = deliverGrokRoutin
       if (row.kind === "mailbox_updated") {
         if (!row.assignmentId) throw fail("Work wake requires an admitted assignment.");
         const { dotRunnerBroker } = await import("../dot-runner-broker.js");
-        await dotRunnerBroker(db).assertWakeAuthority(companyId, agentId, row.bindingId, row.assignmentId);
+        await dotRunnerBroker(db).assertWakeAuthority(companyId, agentId, row.bindingId, row.assignmentId, { requireOffered: true });
       }
       // Accepted, acknowledged and uncertain work is never sent again after restart.
       if (row.expiresAt <= new Date()) throw fail("Unsent dispatch expired. Inspect before creating a new verification.");
@@ -186,7 +186,7 @@ export function grokRoutineService(db: Db, deliver: Delivery = deliverGrokRoutin
       await current(db, companyId, agentId, intent.row.bindingId);
       if (intent.row.kind === "mailbox_updated") {
         const { dotRunnerBroker } = await import("../dot-runner-broker.js");
-        await dotRunnerBroker(db).assertWakeAuthority(companyId, agentId, intent.row.bindingId, intent.row.assignmentId!);
+        await dotRunnerBroker(db).assertWakeAuthority(companyId, agentId, intent.row.bindingId, intent.row.assignmentId!, { requireOffered: true });
       }
       networkAttempted = true;
       outcome = await deliver(JSON.parse(secret), intent.row.payload as GrokRoutineWake);
@@ -215,7 +215,7 @@ export function grokRoutineService(db: Db, deliver: Delivery = deliverGrokRoutin
     if (row.dispatch.kind === "mailbox_updated") {
       if (!row.dispatch.assignmentId) throw fail("Work wake requires an admitted assignment.");
       const { dotRunnerBroker } = await import("../dot-runner-broker.js");
-      await dotRunnerBroker(db).assertWakeAuthority(companyId, agentId, binding.id, row.dispatch.assignmentId);
+      await dotRunnerBroker(db).assertWakeAuthority(companyId, agentId, binding.id, row.dispatch.assignmentId, { requireOffered: true });
     }
     // Retain the rejected receipt. Concurrent clicks reserve the same next intent;
     // accepted/unknown work can never enter this path, and is never replayed.
