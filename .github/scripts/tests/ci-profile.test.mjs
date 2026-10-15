@@ -81,6 +81,21 @@ test("a completely absent reporter invocation cannot hide behind a successful si
   assert.match(trace.warnings.join(), /1 test invocations/);
 });
 
+test("coverage is conservative after failures and does not merge framework invocation IDs", () => {
+  const records = [
+    record({ kind: "job" }), record({ kind: "job", job: "second" }),
+    record({ kind: "expected" }), record({ kind: "start" }), record({ kind: "end" }),
+  ];
+  assert.equal(buildTrace({ ...run, conclusion: "success" }, jobs, records).events[0].data["ci.profile_complete"], true);
+  assert.equal(buildTrace(run, jobs, records).events[0].data["ci.profile_complete"], false);
+  const trace = buildTrace({ ...run, conclusion: "success" }, jobs, [
+    ...records, record({ framework: "node", kind: "expected" }),
+  ]);
+  assert.equal(trace.events[0].data["ci.profile_complete"], false);
+  assert.equal(trace.events[0].data["ci.expected_invocations"], 2);
+  assert.equal(trace.events[0].data["ci.reported_invocations"], 1);
+});
+
 test("trusted policy commands work with both current and pre-profile checkouts", () => {
   const source = readFileSync(new URL("../../workflows/pr-trusted.yml", import.meta.url), "utf8");
   const block = source.split("      - name: Select compatible Node test command\n")[1].split("\n      - name:")[0];

@@ -69,6 +69,8 @@ Test launchers write an expected-invocation record before starting each Vitest,
 Playwright, or Node process. Each reporter must write matching start/end records,
 so a missing reporter cannot hide behind another successful invocation in the
 same job. Compare `ci.expected_invocations` with `ci.reported_invocations`.
+Failed or cancelled workflows are conservatively incomplete because a failed
+command can prevent later tests or steps from running.
 
 Each attempt gets a different trace ID. Rerunning failed jobs alone produces an
 attempt trace for those jobs; it does not replay completed jobs. Reruns are marked

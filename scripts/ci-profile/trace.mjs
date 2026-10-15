@@ -91,7 +91,7 @@ export function buildTrace(run, jobs, records = []) {
       rejected++; continue;
     }
     if (record.kind === "job") { receipts.add(job.id); continue; }
-    const invocation = `${job.id}:${record.invocation}`;
+    const invocation = `${job.id}:${record.framework}:${record.invocation}`;
     if (["expected", "start", "end"].includes(record.kind)) {
       const state = invocations.get(invocation) || {};
       state[record.kind] = true;
@@ -135,6 +135,7 @@ export function buildTrace(run, jobs, records = []) {
   const incomplete = [...invocations.values()].filter((value) => !value.expected || !value.start || !value.end).length;
   if (incomplete) warnings.push(`${incomplete} test invocations did not finish reporting`);
   if (rejected) warnings.push(`${rejected} invalid timing records ignored`);
+  if (run.conclusion !== "success") warnings.push("Workflow did not succeed; later tests or steps may not have run");
   if (!expectedReceipts.length) warnings.push("Job/step timings only; no test reporter collection steps were present");
   const root = events[0].data;
   const expectedFramework = (name) => {
