@@ -197,7 +197,9 @@ if (process.argv[2] === '--linux-arm64-consumer') {
 assert.equal(process.platform, 'linux', 'Run this verification on disposable EC2 Linux, not a developer host');
 const root = mkdtempSync(join(tmpdir(), 'paperclip-grok-public-install-'));
 const prerequisite = join(root, 'native/grok');
-const env = { ...process.env, NODE_PATH: '', PAPERCLIP_RELEASE_REUSE_UI_DIST: '1', npm_config_ignore_scripts: 'false', npm_config_audit: 'false', npm_config_fund: 'false' };
+const cache = process.env.PAPERCLIP_PUBLIC_INSTALL_NPM_CACHE ? resolve(process.env.PAPERCLIP_PUBLIC_INSTALL_NPM_CACHE) : join(root, 'cache');
+mkdirSync(cache, { recursive: true });
+const env = { ...process.env, NODE_PATH: '', ...(process.env.PAPERCLIP_PUBLIC_INSTALL_NPM_CACHE ? { npm_config_cache: cache } : {}), PAPERCLIP_RELEASE_REUSE_UI_DIST: '1', npm_config_ignore_scripts: 'false', npm_config_audit: 'false', npm_config_fund: 'false' };
 const run = (cmd, args, cwd = root) => execFileSync(cmd, args, { cwd, env, stdio: 'pipe', maxBuffer: 32 * 1024 * 1024 });
 const sourceRevision = run('git', ['rev-parse', 'HEAD'], repo).toString().trim();
 const releaseVersion = `0.0.0-grok-verify.${sourceRevision.slice(0, 12)}`;
@@ -291,7 +293,7 @@ try {
   const sourcesStarted = performance.now();
   for (const entry of entries.filter(entry => entry.bundled)) stageSource(entry);
   const installsStarted = performance.now();
-  const installs = startBundledInstalls(entries.filter(entry => entry.bundled), { logDir: prefetched, cwd: repo });
+  const installs = startBundledInstalls(entries.filter(entry => entry.bundled), { logDir: prefetched, cwd: repo, env });
   prefetches.push(...installs.map(({ handle }) => handle));
   for (const entry of entries.filter(entry => !entry.bundled)) {
     const releaseManifest = stageSource(entry);
@@ -339,8 +341,6 @@ try {
   // checks every cached tarball against the integrity its own resolution
   // records, so a warm cache changes where bytes come from, never what is
   // installed; the consumer directory and its lock still start empty.
-  const cache = process.env.PAPERCLIP_PUBLIC_INSTALL_NPM_CACHE ? resolve(process.env.PAPERCLIP_PUBLIC_INSTALL_NPM_CACHE) : join(root, 'cache');
-  mkdirSync(cache, { recursive: true });
   writeFileSync(join(consumer, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
   for (const tarball of tarballs) {
     const destination = join(assets, basename(tarball)); cpSync(tarball, destination); chmodSync(destination, 0o644);

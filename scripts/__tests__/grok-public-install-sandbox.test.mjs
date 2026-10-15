@@ -244,7 +244,7 @@ test('the bundled-dependency installs run together while the other packages are 
   // cleanup as it starts, with the results put back into dependency order
   // before every tarball is checked.
   const bundledSources = position('for (const entry of entries.filter(entry => entry.bundled)) stageSource(entry)');
-  const start = position("startBundledInstalls(entries.filter(entry => entry.bundled), { logDir: prefetched, cwd: repo })");
+  const start = position("startBundledInstalls(entries.filter(entry => entry.bundled), { logDir: prefetched, cwd: repo, env })");
   const registered = position('prefetches.push(...installs.map(({ handle }) => handle))');
   const otherSources = position('for (const entry of entries.filter(entry => !entry.bundled))');
   const join = position("await awaited('bundled', Promise.all(installs.map(({ handle }) => handle.done)))");

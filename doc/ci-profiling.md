@@ -205,3 +205,11 @@ the public npm registry; public tarball URLs remain unchanged. The temporary
 registry closes before the existing offline lifecycle rebuild and runtime
 probes. No lifecycle, network-isolation, lock-preservation or provider checks
 are skipped. Native ARM and Mac qualification keep their existing file installs.
+
+The Linux verifier also shares `PAPERCLIP_PUBLIC_INSTALL_NPM_CACHE` with the
+producer installs that prepare bundled dependencies. These run after the existing
+cache warm-up and reuse its downloaded archives instead of populating a second
+host cache. Each producer still installs into a separate empty directory, applies
+the release patches, and packs fresh output. npm resolution and integrity checks
+remain enabled; cache misses download normally. Without an explicit shared cache,
+producer installs keep their normal npm cache configuration.
