@@ -18,6 +18,7 @@ import { GROK_PUBLIC_INSTALL_IMAGE, GROK_PUBLIC_INSTALL_LIFECYCLE, assertInstall
 import { startPrefetch, stopPrefetches } from './prefetch-child.mjs';
 import { retainRunnerQualificationPackages } from './retain-runner-qualification-packages.mjs';
 import { bundledInstallTimings, startBundledInstalls } from './stage-bundled-packages.mjs';
+import { writePackedRegistryCatalog } from './public-install-registry.mjs';
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 async function verifyMacConsumer(packageDirectory, sourceRevision, receiptPath) {
   assert.equal(process.env.GITHUB_ACTIONS, 'true', 'Mac clean consumers run only on disposable hosted CI');
@@ -358,7 +359,11 @@ try {
   await awaited('image', imageReady);
   // npm resolution is intentionally the public consumer graph, not the pnpm
   // workspace graph. Freeze that result before any lifecycle script can run.
-  isolated(['npm', 'install', '--ignore-scripts', '--omit=dev', ...readdirSync(assets).filter(file => file.endsWith('.tgz')).map(file => `/packages/${file}`)], { download: true });
+  const metadataStarted = performance.now();
+  await writePackedRegistryCatalog(assets);
+  cpSync(join(repo, 'scripts/public-install-registry.mjs'), join(assets, 'public-install-registry.mjs'));
+  timing.registry_metadata_ms = Math.round(performance.now() - metadataStarted);
+  isolated(['node', '/packages/public-install-registry.mjs', '/packages'], { download: true });
   phase('consumer_install');
   assert.equal(existsSync(sentinel), false, 'Dependency download must not run lifecycle scripts');
   const consumerLock = readFileSync(join(consumer, 'package-lock.json'), 'utf8');
@@ -408,7 +413,7 @@ try {
   renameSync(stagedGrok, prerequisite);
   isolated(['node', '/packages/probe.mjs', 'present'], { prerequisite });
   phase('grok_probes');
-  console.log(JSON.stringify({ schema: 'paperclip.grok.public-npm-install.v1', sourceRevision, releaseVersion, lifecycleScriptsEnabled: true, lifecycleSentinelVerified: true, lifecycleNetwork: 'none', consumerImage: GROK_PUBLIC_INSTALL_IMAGE, consumerUid, consumerLockPreserved: true, cleanNpmInstall: true, packageCount: needed.size, codexPackedPayloadsOmitted: true, codexPackedPackagesChecked: tarballs.length, ...codex, builtinLauncherPresent: true, separateGrokPackage: false, npmProvisionedBinary: false, missingPrerequisiteRejected: true, provisionedBinaryVerified: true, commandLeaseVerified: true, providerCalls: 0 }));
+  console.log(JSON.stringify({ schema: 'paperclip.grok.public-npm-install.v1', artifactTransport: 'loopback-registry', sourceRevision, releaseVersion, lifecycleScriptsEnabled: true, lifecycleSentinelVerified: true, lifecycleNetwork: 'none', consumerImage: GROK_PUBLIC_INSTALL_IMAGE, consumerUid, consumerLockPreserved: true, cleanNpmInstall: true, packageCount: needed.size, codexPackedPayloadsOmitted: true, codexPackedPackagesChecked: tarballs.length, ...codex, builtinLauncherPresent: true, separateGrokPackage: false, npmProvisionedBinary: false, missingPrerequisiteRejected: true, provisionedBinaryVerified: true, commandLeaseVerified: true, providerCalls: 0 }));
   // Exercise Pi's public CLI and installed server, never a private workspace
   // package or binary override. Public dependency downloads are explicit and
   // isolated; the actual admission probe runs without a network or credentials.
