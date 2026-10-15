@@ -6,6 +6,7 @@ import { FAST_RESPONSE_AGENT_GUIDANCE } from "@paperclipai/shared";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   agents,
+  authUsers,
   agentWakeupRequests,
   chatActions,
   chatConversations,
@@ -310,6 +311,15 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
     runningProcesses.clear();
   });
 
+  async function grantFixtureWorkspaceAccess(companyId: string, userIds: string[]) {
+    await db.insert(authUsers).values(userIds.map(id => ({
+      id, name: "Fixture commenter", email: `${id}@example.test`, createdAt: new Date(), updatedAt: new Date(),
+    }))).onConflictDoNothing();
+    await db.insert(companyMemberships).values(userIds.map(principalId => ({
+      companyId, principalId, principalType: "user", status: "active", membershipRole: "member",
+    })));
+  }
+
   async function readGatewayWakePayload(
     payload: Record<string, unknown>,
   ): Promise<Record<string, unknown>> {
@@ -559,6 +569,7 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
 
     try {
       await db.insert(companies).values(wakeCompanyRow(companyId, issuePrefix));
+      await grantFixtureWorkspaceAccess(companyId, ["responsible-user", "user-1"]);
 
       await db.insert(agents).values(wakeGatewayAgentRow(agentId, companyId, "Gateway Agent", gateway));
 
@@ -956,6 +967,7 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
 
     try {
       await db.insert(companies).values(wakeCompanyRow(companyId, issuePrefix));
+      await grantFixtureWorkspaceAccess(companyId, ["responsible-user", "user-1"]);
 
       await db.insert(agents).values(wakeGatewayAgentRow(agentId, companyId, "Gateway Agent", gateway));
 
@@ -1111,6 +1123,7 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
 
     try {
       await db.insert(companies).values(wakeCompanyRow(companyId, issuePrefix));
+      await grantFixtureWorkspaceAccess(companyId, ["responsible-user"]);
 
       await db.insert(agents).values([
         {
@@ -1331,6 +1344,7 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
 
     try {
       await db.insert(companies).values(wakeCompanyRow(companyId, issuePrefix));
+      await grantFixtureWorkspaceAccess(companyId, ["responsible-user", "local-cli-user", "external-user"]);
 
       await db.insert(agents).values(wakeGatewayAgentRow(agentId, companyId, "Local CLI Agent", gateway));
 
@@ -1985,6 +1999,7 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
 
     try {
       await db.insert(companies).values(wakeCompanyRow(companyId, issuePrefix));
+      await grantFixtureWorkspaceAccess(companyId, ["responsible-user", "local-cli-user", "user-1"]);
 
       await db.insert(agents).values(wakeGatewayAgentRow(agentId, companyId, "Local CLI Agent", gateway));
 
@@ -2444,6 +2459,7 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
 
     try {
       await db.insert(companies).values(wakeCompanyRow(companyId, issuePrefix));
+      await grantFixtureWorkspaceAccess(companyId, ["responsible-user", "local-cli-user", "user-1"]);
 
       await db.insert(agents).values(wakeGatewayAgentRow(agentId, companyId, "Local CLI Agent", gateway));
 
@@ -2574,6 +2590,7 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
 
     try {
       await db.insert(companies).values(wakeCompanyRow(companyId, issuePrefix));
+      await grantFixtureWorkspaceAccess(companyId, ["responsible-user"]);
 
       await db.insert(agents).values(wakeGatewayAgentRow(agentId, companyId, "Gateway Agent", gateway));
 
@@ -2704,6 +2721,7 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
 
     try {
       await db.insert(companies).values(wakeCompanyRow(companyId, issuePrefix));
+      await grantFixtureWorkspaceAccess(companyId, ["responsible-user", "user-1"]);
 
       await db.insert(agents).values([
         {

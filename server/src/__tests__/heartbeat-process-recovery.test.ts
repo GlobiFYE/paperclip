@@ -1,3 +1,5 @@
+import { enableRunFailureReporting } from "./helpers/run-failure-reporting.js";
+import { EMBEDDED_POSTGRES_TEST_TIMEOUT_MS } from "@paperclipai/db";
 import * as conversationContinuation from "../services/conversation-continuation.js";
 import { environmentRuntimeService } from "../services/environment-runtime.js";
 import * as workspaceRuntime from "../services/workspace-runtime.js";
@@ -628,7 +630,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       createdAt: now,
       updatedAt: now,
     });
-  }, 20_000);
+  }, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS);
 
   afterEach(async () => {
     vi.clearAllMocks();
@@ -795,6 +797,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       await db.delete(companySecretBindings);
       await db.delete(companySecrets);
       try {
+        await db.delete(companyMemberships);
         await db.delete(companies);
         break;
       } catch (error) {
@@ -1261,6 +1264,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
     await db.insert(companies).values(recoveryCompanyRow(companyId, issuePrefix));
 
+    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(agents).values(recoveryAgentRow(agentId, companyId, "CodexReviewer", "engineer", "idle"));
 
     await db.insert(agentWakeupRequests).values({
@@ -1525,6 +1529,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
     await db.insert(companies).values(recoveryCompanyRow(companyId, issuePrefix));
 
+    await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
     await db.insert(agents).values({
       id: agentId,
       companyId,
@@ -1674,7 +1679,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
   it.each(["missing_default", "credential_not_shared", "database_error", "unmarked_http_error", "unmarked_forbidden", "provider_error"] as const)(
     "preserves AI configuration recovery and reports only unexpected causes: %s", async (cause) => {
       const { companyId, agentId, issueId, runId, wakeupRequestId } = await seedQueuedIssueRunFixture();
-      await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" });
+      await db.insert(companyMemberships).values({ companyId, principalType: "user", principalId: "responsible-user", status: "active", membershipRole: "member" }).onConflictDoNothing();
       await db.update(agents).set({ runtimeConfig: {
         heartbeat: { wakeOnDemand: true, maxConcurrentRuns: 1 },
         aiConnection: { provider: "openai", method: "api_key", mode: "responsible_user" },
@@ -2474,7 +2479,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       .toMatchObject({ status: "active", resolvedAt: null });
   });
 
-  it("keeps existing terminal-task disposition for a native finalization hold", async () => {
+  it("retains the exact native owner hold without changing a terminal task's disposition", async () => {
     const f = await seedPendingNativeFinalization();
     await db.update(heartbeatRuns).set({ runnerProfileJson: { nativeWorkspaceFinalizationOwner: { unknown: true } } })
       .where(eq(heartbeatRuns.id, f.runId));
@@ -2482,6 +2487,13 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     await heartbeat.recoverNativeRunsAfterRestart();
     const [hold] = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, f.issueId));
     await db.update(issues).set({ status: "done" }).where(eq(issues.id, f.issueId));
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      await heartbeat.reconcileStrandedAssignedIssues();
+      expect((await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, hold.id)))[0])
+        .toEqual(hold);
+      expect((await db.select().from(issues).where(eq(issues.id, f.issueId)))[0].status).toBe("done");
+    }
+    await db.update(heartbeatRuns).set({ runnerProfileJson: {} }).where(eq(heartbeatRuns.id, f.runId));
     await heartbeat.reconcileStrandedAssignedIssues();
     expect((await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, hold.id)))[0])
       .toMatchObject({ status: "resolved", resolutionNote: "source_terminal" });
@@ -3274,6 +3286,72 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(retries).toHaveLength(0);
   });
 
+  // A hard restart can kill the server after it claimed a legacy run but before
+  // the adapter dispatch renewal, leaving an expired lease from another boot.
+  async function seedRestartOrphanedLegacySetup(executionStage: "preparing" | "dispatching") {
+    const fixture = await seedRunFixture({
+      adapterType: "paperclip_runner",
+      agentStatus: "idle",
+      runtimeMode: "legacy",
+    });
+    await db.update(heartbeatRuns).set({
+      controllerBootId: randomUUID(),
+      controllerLeaseExpiresAt: sql`clock_timestamp() - interval '1 second'`,
+      executionStage,
+    }).where(eq(heartbeatRuns.id, fixture.runId));
+    return fixture;
+  }
+
+  it("retries a legacy run that a restart stopped before adapter dispatch", async () => {
+    const { companyId, runId, issueId } = await seedRestartOrphanedLegacySetup("preparing");
+
+    const heartbeat = heartbeatService(db);
+    const result = await heartbeat.reapOrphanedRuns();
+
+    expect(result).toEqual({ reaped: 1, runIds: [runId] });
+    const [reaped] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
+    expect(reaped).toMatchObject({
+      status: "failed",
+      errorCode: "process_lost",
+      error: "Process lost -- server may have restarted; retrying once",
+    });
+    expect(reaped?.resultJson).toMatchObject({
+      executionRecovery: { kind: "bootstrap", providerWorkStarted: false },
+      processLossDiagnostic: { localCheck: "no_identifiers", retryEligible: true, runPredatesObserver: true },
+    });
+    const retries = await db.select().from(heartbeatRuns).where(and(
+      eq(heartbeatRuns.companyId, companyId),
+      eq(heartbeatRuns.retryOfRunId, runId),
+    ));
+    expect(retries).toEqual([expect.objectContaining({ status: "scheduled_retry" })]);
+    expect(await db.select().from(issueRecoveryActions)
+      .where(eq(issueRecoveryActions.sourceIssueId, issueId))).toEqual([]);
+    expect(mockAdapterExecute).not.toHaveBeenCalled();
+  });
+
+  it("keeps an orphaned legacy run that reached adapter dispatch held for reconciliation", async () => {
+    const { companyId, runId, issueId } = await seedRestartOrphanedLegacySetup("dispatching");
+
+    const heartbeat = heartbeatService(db);
+    await heartbeat.reapOrphanedRuns();
+
+    const [reaped] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
+    expect(reaped).toMatchObject({
+      status: "failed",
+      errorCode: "process_lost",
+      error: "Process lost -- server may have restarted",
+    });
+    expect(reaped?.resultJson).not.toHaveProperty("executionRecovery");
+    expect(await db.select().from(heartbeatRuns).where(and(
+      eq(heartbeatRuns.companyId, companyId),
+      eq(heartbeatRuns.retryOfRunId, runId),
+    ))).toEqual([]);
+    expect(await db.select().from(issueRecoveryActions)
+      .where(eq(issueRecoveryActions.sourceIssueId, issueId))).toEqual([
+      expect.objectContaining({ cause: "legacy_execution_requires_reconciliation" }),
+    ]);
+  });
+
   async function withTempPaperclipHome<T>(
     fn: (home: string) => Promise<T>,
   ): Promise<T> {
@@ -3370,11 +3448,18 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     });
   });
 
-  it("dispatches local native external chat inside the server-selected task root", async () => {
+  it.each(["projectless", "organization_only", "empty_source"] as const)("dispatches local native external chat inside the server-selected task root: %s", async placement => {
     await withTempPaperclipHome(async () => {
       const { companyId, agentId, issueId, runId } =
         await seedQueuedIssueRunFixture();
       await fs.mkdir(resolvePaperclipInstanceRoot(), { recursive: true });
+      const projectId = placement === "projectless" ? null : randomUUID();
+      if (projectId) {
+        await db.insert(projects).values({ id: projectId, companyId, name: "Chat channel project default" });
+        if (placement === "empty_source") {
+          await db.insert(projectWorkspaces).values({ companyId, projectId, name: "Unconfigured source", cwd: "  ", repoUrl: null });
+        }
+      }
       await db
         .update(agents)
         .set({
@@ -3384,7 +3469,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
         .where(eq(agents.id, agentId));
       await db
         .update(issues)
-        .set({ originKind: "chat_channel" })
+        .set({ originKind: "chat_channel", projectId })
         .where(eq(issues.id, issueId));
       await db
         .update(heartbeatRuns)
@@ -3414,15 +3499,59 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       expect(input.workspace.cwd).toBe(
         path.join(
           await fs.realpath(resolvePaperclipInstanceRoot()),
-          "chat-workspaces",
+          "isolated-workspaces",
           companyId,
-          agentId,
           issueId,
         ),
       );
       expect(input.workspace.cwd).not.toBe(
         resolveDefaultAgentWorkspaceDir(agentId),
       );
+      const [task] = await db.select().from(issues).where(eq(issues.id, issueId));
+      const [workspace] = await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, task.executionWorkspaceId!));
+      expect(task.projectId).toBe(projectId);
+      expect(workspace).toMatchObject({ sourceIssueId: issueId, projectId: null, projectWorkspaceId: null, cwd: input.workspace.cwd });
+      expect(mockAdapterExecute).not.toHaveBeenCalled();
+    });
+  });
+
+  it.each(["managed_isolated", "shared"] as const)("prepares a fresh native chat configured source safely: %s", async (mode) => {
+    await withTempPaperclipHome(async () => {
+      const { companyId, agentId, issueId, runId } = await seedQueuedIssueRunFixture();
+      const instanceRoot = resolvePaperclipInstanceRoot();
+      await fs.mkdir(instanceRoot, { recursive: true });
+      const cwd = path.join(instanceRoot, "source-repository");
+      await fs.mkdir(cwd, { recursive: true });
+      execFileSync("git", ["init", "-b", "main"], { cwd, stdio: "ignore" });
+      await fs.writeFile(path.join(cwd, "report.txt"), "source bytes");
+      execFileSync("git", ["add", "report.txt"], { cwd, stdio: "ignore" });
+      execFileSync("git", ["-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "Source"], { cwd, stdio: "ignore" });
+      const [project] = await db.insert(projects).values({ companyId, name: "Chat source" }).returning();
+      const [source] = await db.insert(projectWorkspaces).values({ companyId, projectId: project.id, name: "Source", cwd, isPrimary: true }).returning();
+      await db.update(agents).set({ adapterType: "paperclip_runner", adapterConfig: { provider: "codex", model: "gpt-5.6-luna" } }).where(eq(agents.id, agentId));
+      await db.update(issues).set({ originKind: "chat_channel", projectWorkspaceId: source.id,
+        workspaceSelection: { version: 1, source: "channel", selection: { kind: "configured_source", projectWorkspaceId: source.id, mode } },
+        executionWorkspaceSettings: { mode: mode === "managed_isolated" ? "isolated_workspace" : "shared_workspace" },
+      }).where(eq(issues.id, issueId));
+      await db.update(heartbeatRuns).set({ runtimeMode: "native", runtimeModeResolvedAt: new Date(), nativeIssueId: issueId }).where(eq(heartbeatRuns.id, runId));
+      const nativeSessionBackendFactory = vi.fn((_execution: { workspace: { cwd: string } }) => { throw new NativeRunnerOwnershipUnverifiedError(); });
+      const heartbeat = heartbeatService(db, { nativeSessionBackendFactory });
+      await heartbeat.resumeQueuedRuns();
+      await waitForValue(async () => nativeSessionBackendFactory.mock.calls.length > 0 || Boolean((await heartbeat.getRun(runId))?.errorCode), 15_000);
+      await heartbeat.waitForRunExecutionDrain(runId);
+      if (mode === "shared") {
+        expect(nativeSessionBackendFactory).not.toHaveBeenCalled();
+        expect((await heartbeat.getRun(runId))?.error).toContain("External chat requires a task-owned isolated workspace");
+      } else {
+        expect(nativeSessionBackendFactory).toHaveBeenCalledTimes(1);
+        const input = nativeSessionBackendFactory.mock.calls[0]![0];
+        expect(await fs.realpath(input.workspace.cwd)).not.toBe(await fs.realpath(cwd));
+        expect(await fs.readFile(path.join(input.workspace.cwd, "report.txt"), "utf8")).toBe("source bytes");
+        const [task] = await db.select().from(issues).where(eq(issues.id, issueId));
+        const [workspace] = await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, task.executionWorkspaceId!));
+        expect(workspace).toMatchObject({ sourceIssueId: issueId, projectId: project.id, mode: "isolated_workspace", strategyType: "git_worktree", cwd: input.workspace.cwd, providerRef: input.workspace.cwd });
+      }
+      expect(await fs.readFile(path.join(cwd, "report.txt"), "utf8")).toBe("source bytes");
       expect(mockAdapterExecute).not.toHaveBeenCalled();
     });
   });
@@ -5743,7 +5872,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     mockAdapterExecute.mockClear();
   });
 
-  it("blocks a git-sensitive local adapter before launch when a project-workspace-linked issue is missing its project id", async () => {
+  it("blocks a projectless task before launch when its configured source directory is unavailable", async () => {
     mockAdapterExecute.mockClear();
     const { companyId, agentId, runId, issueId } =
       await seedQueuedIssueRunFixture();
@@ -5793,7 +5922,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       errorCode: "workspace_validation_failed",
     });
     expect(failedRun?.error).toContain(
-      "linked to a project workspace but has no project id",
+      "Configured project workspace is unavailable",
     );
     // The adapter process never started, so no agent could post an issue
     // comment. The comment policy is not_applicable and no missing-comment
@@ -5812,8 +5941,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
     expect(missingCommentWakeups).toHaveLength(0);
     expect(failedRun?.resultJson).toMatchObject({
       workspaceValidation: {
-        reason: "missing_project_id",
-        adapterType: "codex_local",
+        reason: "configured_workspace_unavailable",
         issueId,
         issueProjectId: null,
         issueProjectWorkspaceId: projectWorkspaceId,
@@ -5976,8 +6104,10 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
           executionRecovery: { kind: "bootstrap", providerWorkStarted: false },
         },
       });
-      expect(run.error).toContain("checkout could not be prepared");
+      expect(run.error).toContain("Configured project workspace is unavailable");
+      expect(run.error).toContain("Repair the configured path or repository access");
       const validation = run.resultJson!.workspaceValidation as Record<string, unknown>;
+      expect(validation.baseCwdFallback).toBe(false);
       const materializations = validation.materializationFailures as Array<Record<string, unknown>>;
       expect(materializations).toHaveLength(failures.length);
       expect(materializations.map((failure) => failure.connectionFailure)).toEqual(failures.map((failure) =>
@@ -6274,7 +6404,8 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       legacyDispositionEpisode: { id: runId, attempt: 1, maxAttempts: 2 },
       dispositionRepairInstruction: LEGACY_DISPOSITION_REPAIR_INSTRUCTION,
     });
-    expect(repair?.status).toBe("succeeded");
+    expect({ status: repair?.status, errorCode: repair?.errorCode, error: repair?.error })
+      .toEqual({ status: "succeeded", errorCode: null, error: null });
     expect((await db.select().from(issues).where(eq(issues.id, issueId)))[0].status).toBe("done");
     expect(mockAdapterExecute).toHaveBeenCalledTimes(2);
     expect(await selectRecoveryCommentsForIssue(issueId)).not.toEqual(expect.arrayContaining([expect.objectContaining({body: SUCCESSFUL_RUN_HANDOFF_REQUIRED_NOTICE_BODY})]));
@@ -16041,3 +16172,6 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
   });
 
 });
+
+
+enableRunFailureReporting();
