@@ -28465,6 +28465,41 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     await service.shutdown();
   });
 
+  it.each(["attachment", "subscription"] as const)("preserves an early Slack receipt failure after %s acceptance", async phase => {
+    const fixture = await seedCompany();
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    const entered = vi.fn();
+    const block = async () => { entered(); await gate; };
+    const { callbacks, endpoint, runtime, service } = await configuredSlackEndpoint(fixture, {
+      ...(phase === "attachment" ? { storage: createStorageService().storage } : {}),
+    });
+    const provider = runtime.endpoints.get(endpoint.id)!;
+    provider.reactionErrors.push(Object.assign(new Error("missing_scope"), { code: "slack_webapi_platform_error", data: { error: "missing_scope" } }));
+    const reaction = vi.spyOn(provider, "applySlackReceiptReaction");
+    const thread = makeThread({ channelId: "CEARLYERROR", id: "slack:CEARLYERROR:1740000091.1" });
+    if (phase === "subscription") thread.thread.subscribe = block;
+    const message = makeMessage({ id: "1740000091.1", text: "@maya preserve the receipt warning", mentioned: true,
+      ...(phase === "attachment" ? { attachments: [{ type: "file", name: "receipt.txt", mimeType: "text/plain", fetchData: async () => { await block(); return Buffer.from("synthetic attachment"); } } as Attachment] } : {}),
+    });
+    const inbound = deliverMessage({ callbacks, endpointId: endpoint.id, thread: thread.thread, message, trigger: "mention" });
+    try {
+      await vi.waitFor(() => expect(entered).toHaveBeenCalled(), { timeout: 3_000, interval: 10 });
+      const [delivery] = await readChatDeliveriesByEndpointId(endpoint.id);
+      await vi.waitFor(async () => {
+        const [receipt] = await readChatActionsByProviderActionId(`receipt_reaction:${delivery.id}`);
+        expect(receipt).toMatchObject({ status: "failed", result: { redactedError: expect.stringContaining("missing_scope") } });
+      }, { timeout: 1_000, interval: 10 });
+      expect((await readChatDeliveriesByEndpointId(endpoint.id))[0].state).toBe("processing");
+      release();
+      await inbound;
+      expect((await readChatDeliveriesByEndpointId(endpoint.id))[0]).toMatchObject({
+        state: "processed", redactedError: expect.stringMatching(/Receipt reaction .*missing_scope/),
+      });
+      expect(reaction).toHaveBeenCalledTimes(1);
+    } finally { release(); await inbound; await service.shutdown(); }
+  });
+
   it("acknowledges a signed URL mention through the real Slack SDK without waiting for an unfurl", async () => {
     const fixture = await seedCompany();
     const { endpoint, runtime, service, wakeup } = await configuredSlackEndpoint(fixture);

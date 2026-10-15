@@ -116,7 +116,17 @@ export function createInboundWakeups(db: Db, options: WakeupOptions) {
           .set({
             state: "processed",
             processedAt: acceptedAt,
-            redactedError: attachmentOmissionDetail(attachmentResult),
+            redactedError: sql<string | null>`coalesce((
+              select ${chatActions.result}->>'redactedError' from ${chatActions}
+              where ${chatActions.companyId} = ${delivery.companyId}
+                and ${chatActions.endpointId} = ${delivery.endpointId}
+                and ${chatActions.deliveryId} = ${deliveryId}
+                and ${chatActions.providerActionId} = ${`receipt_reaction:${deliveryId}`}
+                and ${chatActions.kind} = 'receipt_reaction'
+                and ${chatActions.status} = 'failed'
+                and ${chatActions.payload}->>'operation' = 'add'
+              limit 1
+            ), ${attachmentOmissionDetail(attachmentResult)})`,
             nextAttemptAt: null,
             updatedAt: new Date(),
           })
