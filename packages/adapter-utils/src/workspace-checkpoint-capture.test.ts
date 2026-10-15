@@ -93,8 +93,8 @@ it("captures every changed file across bounded batches with valid directory pare
   expect(await validateCheckpointPayload({ baseline: f.baseline, snapshot, payload }))
     .toMatchObject({ changedFiles: 33, payloadBytes: 32 * 64 * 1024 + 11, scannedEntries: 36 });
   for (let index = 0; index < 32; index++) {
-    expect(await fs.readFile(path.join(payload, `file-${String(index).padStart(2, "0")}`)))
-      .toEqual(Buffer.alloc(64 * 1024, index + 1));
+    expect((await fs.readFile(path.join(payload, `file-${String(index).padStart(2, "0")}`)))
+      .equals(Buffer.alloc(64 * 1024, index + 1))).toBe(true);
   }
   expect((await fs.stat(path.join(payload, "file-00"))).mode & 0o777).toBe(0o755);
   expect(await fs.readlink(path.join(payload, "link"))).toBe("nested/inner/new");
