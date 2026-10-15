@@ -96,6 +96,20 @@ describe("persisted conversation process ownership", () => {
     expect(isAlive).toHaveBeenCalledWith(-49773);
   });
 
+  it("treats a PID reused one second after the original start as a different process", async () => {
+    await expect(persistedConversationProcessLiveness({ ...stored, processGroupId: 60000 }, {
+      isAlive: () => true,
+      startedAt: async () => "2026-09-30T06:30:01.000Z",
+    })).resolves.toEqual({ pidAlive: false, groupAlive: true });
+  });
+
+  it("keeps the hold when the stored start is a later spawn-callback timestamp of the same process", async () => {
+    await expect(persistedConversationProcessLiveness({ ...stored, processStartedAt: new Date("2026-09-30T06:30:00.700Z") }, {
+      isAlive: () => true,
+      startedAt: async () => "2026-09-30T06:30:00.000Z",
+    })).resolves.toEqual({ pidAlive: true, groupAlive: true });
+  });
+
   it("retains the hold when process identity cannot be read", async () => {
     await expect(persistedConversationProcessLiveness(stored, {
       isAlive: () => true,
@@ -136,11 +150,14 @@ describe("persisted conversation process ownership", () => {
     })).resolves.toEqual({ pidAlive: false, groupAlive: true });
   });
 
-  it("keeps a live PID when its recorded timestamp differs by less than five seconds", async () => {
+  it("does not trust a PID that started three seconds after the recorded start", async () => {
+    // The recorded start is never earlier than the real one: it is either the
+    // ps reading or a timestamp taken after spawn. A later start is a reuse.
+    // Without membership evidence the matching group keeps its hold.
     await expect(persistedConversationProcessLiveness(stored, {
       isAlive: () => true,
       startedAt: async () => "2026-09-30T06:30:03.000Z",
-    })).resolves.toEqual({ pidAlive: true, groupAlive: true });
+    })).resolves.toEqual({ pidAlive: false, groupAlive: true });
   });
 
   it("releases a rapidly reused PID when it started after the terminal run ended", async () => {

@@ -133,13 +133,16 @@ export async function persistedConversationProcessLiveness(
     // A reused PID does not prove that its old process group has ended: a
     // descendant may still be running in it. Keep the independent group probe.
     const observed = await probes.startedAt(run.processPid!).catch(() => null);
-    // ps reports whole seconds and a spawn callback may have supplied the
-    // timestamp when the first start-time read failed.
+    // ps reports whole seconds. When the first start-time read failed, the
+    // spawn callback stored a timestamp taken after the process started, so the
+    // original process never reads as later than the stored second. A reused
+    // PID belongs to a process that started after the original one did.
     const observedTime = observed === null ? NaN : new Date(observed).getTime();
     const startedAfterRunEnded = run.finishedAt !== null && run.finishedAt !== undefined &&
       observedTime > run.finishedAt.getTime();
-    if (Number.isFinite(observedTime) &&
-        (Math.abs(observedTime - run.processStartedAt.getTime()) >= 5_000 || startedAfterRunEnded)) {
+    const startedInLaterSecond =
+      Math.floor(observedTime / 1_000) > Math.floor(run.processStartedAt.getTime() / 1_000);
+    if (Number.isFinite(observedTime) && (startedInLaterSecond || startedAfterRunEnded)) {
       pidReused = true;
       pidAlive = false;
     }
