@@ -331,6 +331,13 @@ export class AcpxRuntimeHost {
       throw new Error("Pi admission requires an explicit task execution policy");
     }
     const preconfigured = usesPreconfiguredHome(options.environment);
+    if (preconfigured && options.permissionMode !== "approve-all") {
+      throw new Error("preconfigured home currently requires ACPX approve-all; local permission rules still apply");
+    }
+    // shortcut: qualify a read-only provider launch before enabling preconfigured ACPX planning.
+    if (preconfigured && options.providerPolicy?.readOnly) {
+      throw new Error("preconfigured ACPX read-only execution is not supported; use isolated mode or native Codex");
+    }
     const nativeMcp = preconfigured ? null : nativeMcpLaunchBinding(options.environment);
     if (nativeMcp?.name === "paperclip") {
       throw new Error("assigned native MCP name conflicts with the task bridge");
@@ -597,7 +604,7 @@ export class AcpxRuntimeHost {
               : { assertWorkspaceHeld: () => { options.assertWorkspaceHeld?.(); agentFiles?.assertHeld(); } }),
             ...(options.signal === undefined ? {} : { signal: options.signal }),
             mcpServers: [
-              ...(toolBridge ? [{ name: "paperclip", url: toolBridge.url,
+              ...(toolBridge ? [{ name: preconfigured ? `paperclip_runner_${binding.profileSessionKey.slice(-16)}` : "paperclip", url: toolBridge.url,
                 bearerToken: toolBridge.secret, runnerOwned: true }] : []),
               // This is Paperclip's authenticated gateway, not a direct upstream
               // binding. Its existing grants and approval checks remain authoritative.
