@@ -107,36 +107,53 @@ export function registerPluginLifecycleDelivery(
     },
   });
   function wake() { if (disposed) return; pending = true; delivery.wake(); }
-  let listening: ReturnType<Db["$client"]["listen"]> | undefined;
-  async function ensureListening() {
-    if (disposed || !db.$client?.listen) return;
-    if (listening) return listening;
-    const installed = await db.select({ manifest: plugins.manifestJson }).from(plugins).where(eq(plugins.status, "ready"));
-    if (!disposed && installed.some(plugin => plugin.manifest.resourceLifecycle?.includes("agent_runtime"))) {
-      const attempt = listening ??= db.$client.listen("paperclip_plugin_lifecycle", wake, wake);
-      try { return await attempt; }
-      catch (error) { if (listening === attempt) listening = undefined; throw error; }
-    }
+  let listening: Awaited<ReturnType<Db["$client"]["listen"]>> | undefined;
+  let listenerUpdate = Promise.resolve();
+  function ensureListening() {
+    const update = listenerUpdate.then(async () => {
+      if (disposed || !db.$client?.listen) return;
+      const installed = await db.select({ manifest: plugins.manifestJson }).from(plugins)
+        .innerJoin(pluginConfig, eq(pluginConfig.pluginId, plugins.id))
+        .leftJoin(pluginCompanySettings, and(eq(pluginCompanySettings.pluginId, plugins.id), eq(pluginCompanySettings.companyId, pluginConfig.companyId)))
+        .where(and(eq(plugins.status, "ready"), or(isNull(pluginCompanySettings.enabled), eq(pluginCompanySettings.enabled, true))));
+      if (disposed) return;
+      const wanted = installed.some(plugin => plugin.manifest.resourceLifecycle?.includes("agent_runtime") && plugin.manifest.capabilities?.includes("events.subscribe"));
+      if (wanted) listening ??= await db.$client.listen("paperclip_plugin_lifecycle", wake, wake);
+      else if (listening) {
+        const subscription = listening;
+        listening = undefined;
+        await subscription.unlisten();
+      }
+    });
+    listenerUpdate = update.catch(() => {});
+    return update;
   }
   function pluginChanged() {
     wake();
+    void ensureListening().catch(wake);
   }
   const listenerReady = ensureListening();
   const unsubscribeConfig = manager.onConfigApplied(pluginChanged);
   lifecycle.on("plugin.loaded", pluginChanged);
   lifecycle.on("plugin.enabled", pluginChanged);
   lifecycle.on("plugin.worker_started", pluginChanged);
+  lifecycle.on("plugin.status_changed", pluginChanged);
+  lifecycle.on("plugin.disabled", pluginChanged);
+  lifecycle.on("plugin.unloaded", pluginChanged);
   return {
     ...delivery,
     ready: listenerReady,
     wake,
     dispose() {
       disposed = true;
-      void listening?.then(subscription => subscription.unlisten()).catch(() => {});
+      void listenerUpdate.then(() => listening?.unlisten()).catch(() => {});
       unsubscribeConfig();
       lifecycle.off("plugin.loaded", pluginChanged);
       lifecycle.off("plugin.enabled", pluginChanged);
       lifecycle.off("plugin.worker_started", pluginChanged);
+      lifecycle.off("plugin.status_changed", pluginChanged);
+      lifecycle.off("plugin.disabled", pluginChanged);
+      lifecycle.off("plugin.unloaded", pluginChanged);
     },
   };
 }

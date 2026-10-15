@@ -193,6 +193,7 @@ describePostgres("durable plugin lifecycle delivery", () => {
   });
   it("retains a failed scan across a retry skipped during idle drain", async () => {
     await event(); const d = delivery();
+    await d.worker.ready;
     const select = vi.spyOn(db, "select").mockImplementationOnce(() => { throw new Error("database unavailable"); });
     await expect(d.run()).rejects.toThrow("database unavailable");
     // The coordinator's drain path checks hasPending without calling run.
@@ -217,12 +218,51 @@ describePostgres("durable plugin lifecycle delivery", () => {
     const listen = vi.mocked(db.$client.listen);
     listen.mockRejectedValueOnce(new Error("temporary listener outage"));
     d.lifecycle.emit("plugin.enabled");
-    await expect(d.run()).rejects.toThrow("temporary listener outage");
+    await vi.waitFor(() => expect(listen).toHaveBeenCalledTimes(1));
     expect(await d.pending()).toBe(true);
     await d.run();
     expect(listen).toHaveBeenCalledTimes(2);
     expect(await d.pending()).toBe(false);
     d.worker.dispose();
+  });
+  it("unregisters the listener on the last disable or unload and can subscribe again", async () => {
+    await db.update(plugins).set({ manifestJson: { resourceLifecycle: ["agent_runtime"], capabilities: ["events.subscribe"] } as never }).where(eq(plugins.id, pluginId));
+    const otherPluginId = randomUUID();
+    await db.insert(plugins).values({ id: otherPluginId, pluginKey: otherPluginId, packageName: "other-runtime", version: "1.0.0", status: "ready", manifestJson: { resourceLifecycle: ["agent_runtime"], capabilities: ["events.subscribe"] } as never });
+    await db.insert(pluginConfig).values({ pluginId: otherPluginId, companyId, configJson: {} });
+    const first = { unlisten: vi.fn(), state: {} };
+    const second = { unlisten: vi.fn(), state: {} };
+    const third = { unlisten: vi.fn(), state: {} };
+    const listen = vi.mocked(db.$client.listen).mockResolvedValueOnce(first as never).mockResolvedValueOnce(second as never).mockResolvedValueOnce(third as never);
+    const d = delivery();
+    await d.worker.ready;
+    await db.update(plugins).set({ status: "disabled" }).where(eq(plugins.id, pluginId));
+    d.lifecycle.emit("plugin.status_changed");
+    await d.run();
+    expect(first.unlisten).not.toHaveBeenCalled();
+    await db.update(plugins).set({ status: "disabled" }).where(eq(plugins.id, otherPluginId));
+    d.lifecycle.emit("plugin.disabled");
+    await vi.waitFor(() => expect(first.unlisten).toHaveBeenCalledTimes(1));
+    await db.update(plugins).set({ status: "ready" }).where(eq(plugins.id, pluginId));
+    d.lifecycle.emit("plugin.enabled");
+    await d.run();
+    expect(listen).toHaveBeenCalledTimes(2);
+    const registry = pluginRegistryService(db);
+    await registry.upsertCompanySettings(pluginId, companyId, { enabled: false, settingsJson: {} });
+    d.applied();
+    await vi.waitFor(() => expect(second.unlisten).toHaveBeenCalledTimes(1));
+    await registry.upsertCompanySettings(pluginId, companyId, { enabled: true, settingsJson: {} });
+    d.applied(); await d.run();
+    expect(listen).toHaveBeenCalledTimes(3);
+    await db.delete(plugins).where(eq(plugins.id, pluginId));
+    d.lifecycle.emit("plugin.unloaded");
+    await vi.waitFor(() => expect(third.unlisten).toHaveBeenCalledTimes(1));
+    expect(first.unlisten).toHaveBeenCalledTimes(1);
+    expect(second.unlisten).toHaveBeenCalledTimes(1);
+    d.worker.dispose();
+    expect(d.lifecycle.listenerCount("plugin.status_changed")).toBe(0);
+    expect(d.lifecycle.listenerCount("plugin.disabled")).toBe(0);
+    expect(d.lifecycle.listenerCount("plugin.unloaded")).toBe(0);
   });
   it("records failed delivery scope and stage without provider secrets", async () => {
     await event(); const d = delivery();

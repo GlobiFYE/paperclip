@@ -107,6 +107,14 @@ describeDatabase("agent runtime synchronization hooks", () => {
     expect(await fs.readFile(path.join(state!.instructionsRootPath!, state!.instructionsEntryFile), "utf8")).toBe("restored instructions");
   });
 
+  it("uses the company reporting graph for runtime health data", async () => {
+    const [manager] = await db.insert(agents).values({ companyId, name: "Manager" }).returning();
+    await db.update(agents).set({ reportsTo: manager.id }).where(eq(agents.id, agentId));
+    expect((await pluginAgentRuntimeState(db, pluginId, companyId, agentId))!.agent.orgChainHealth?.status).toBe("healthy");
+    await db.update(agents).set({ reportsTo: agentId }).where(eq(agents.id, manager.id));
+    expect((await pluginAgentRuntimeState(db, pluginId, companyId, agentId))!.agent.orgChainHealth?.status).toBe("invalid_org_chain");
+  });
+
   it("scopes runtime inputs to the enabled owning plugin and returns the current revision", async () => {
     const state = await pluginAgentRuntimeState(db, pluginId, companyId, agentId);
     expect(state).toMatchObject({ revision: String((await events()).at(-1)!.id), agent: { id: agentId }, instructionsEntryFile: "AGENTS.md", instanceSecrets: {} });

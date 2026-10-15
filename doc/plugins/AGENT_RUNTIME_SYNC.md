@@ -31,7 +31,8 @@ is no recurring empty-inbox poll. Existing retry deadlines still retry failed wo
 A process opens one listener connection only after a ready plugin opts into
 `agent_runtime`. The database connection must support session-level `LISTEN`;
 transaction-mode poolers are not supported for this opt-in feature. Startup waits
-for listener registration. Legacy subscriptions keep process-local work signals.
+for listener registration. It releases the listener after the last runtime
+subscriber is disabled or removed. Legacy subscriptions keep process-local work signals.
 
 A plugin that also has `agents.lifecycle.manage` can call
 `ctx.agents.getRuntime(agentId, companyId)` from a company-scoped invocation.
