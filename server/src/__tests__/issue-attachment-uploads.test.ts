@@ -194,6 +194,33 @@ describe("attachment upload spool budget", () => {
     onClose?.();
     expect(spooler.inFlightBytes).toBe(0);
   });
+
+  it("holds the reservation when the response closes while the spool file is being read", async () => {
+    // A disconnect does not stop the storage transfer, and unlinking an open
+    // file does not reclaim its disk blocks on Linux. Freeing the reservation on
+    // close would therefore admit new uploads onto disk the abandoned read still
+    // holds; the reservation has to survive until the reader stops.
+    const spooler = createAttachmentUploadSpooler(root, { maxInFlightBytes: 1_000 });
+    let onClose: (() => void) | undefined;
+    const response = {
+      once: (event: string, cb: () => void) => {
+        if (event === "close") onClose = cb;
+      },
+    };
+    const req = fakeRequest(900);
+
+    spooler.admit(req, response as never);
+    spooler.beginSpoolRead(req);
+    expect(spooler.inFlightBytes).toBe(900);
+
+    onClose?.();
+    expect(spooler.inFlightBytes).toBe(900);
+
+    // The reader stopped (route `finally`), so the spool — and its reservation —
+    // are released together.
+    await spooler.release(req);
+    expect(spooler.inFlightBytes).toBe(0);
+  });
 });
 
 /**

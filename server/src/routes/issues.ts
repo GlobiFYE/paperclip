@@ -19446,6 +19446,12 @@ export function issueRoutes(
           return;
         }
 
+        // The spool file is about to be read — hashed, then streamed to storage.
+        // Tell the spooler so a client disconnect cannot free the disk-budget
+        // reservation while this read is still open (the storage transfer keeps
+        // running after the client leaves).
+        attachmentSpooler.beginSpoolRead(req);
+
         // `PutFileInput` requires an exact size and digest up front for a
         // streamed body, so hash the spool file with a disk read first. That is a
         // second pass over the file, not over the heap.

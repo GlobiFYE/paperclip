@@ -95,6 +95,13 @@ export interface AttachmentUploadSpooler {
    * retryable status. Reservation is released by {@link release}.
    */
   admit: (request: Request, response?: Response) => AttachmentUploadAdmission;
+  /**
+   * Mark the spool file as being read: first hashed, then streamed to storage.
+   * While a read is in flight the response-`close` backstop leaves the
+   * reservation alone (see {@link admit}); the read releases it via
+   * {@link release} once the stream has ended and the disk is reclaimed.
+   */
+  beginSpoolRead(request: Request): void;
   /** `multer.diskStorage` destination callback. */
   destination: (req: Request, file: unknown, cb: (err: Error | null, dir: string) => void) => void;
   /** Delete one request's spool directory and free its reservation. Idempotent. */
@@ -163,6 +170,10 @@ export function createAttachmentUploadSpooler(
   // the entry collectable as soon as the response is done.
   const dirByRequest = new WeakMap<Request, string>();
   const reservedByRequest = new WeakMap<Request, number>();
+  // Requests whose spool file is currently being read (hashed or streamed to
+  // storage). Tracked separately from the reservation because the response can
+  // close while the read is still open.
+  const readingByRequest = new WeakSet<Request>();
   let inFlightBytes = 0;
 
   const free = (request: Request): void => {
@@ -202,7 +213,13 @@ export function createAttachmentUploadSpooler(
       reservedByRequest.set(request, requested);
       // Backstop: if the handler never reaches its `finally`, a closed response
       // still frees the reservation so the budget cannot leak across requests.
+      // It must not run while the spool file is being read, though: a disconnect
+      // does not stop the storage transfer, and unlinking an open file does not
+      // reclaim its disk blocks on Linux, so freeing here would admit new
+      // uploads onto disk that the abandoned read still holds. `release` frees
+      // the reservation once the reader has stopped.
       response?.once("close", () => {
+        if (readingByRequest.has(request)) return;
         free(request);
         const dir = dirByRequest.get(request);
         if (dir) {
@@ -212,6 +229,10 @@ export function createAttachmentUploadSpooler(
         }
       });
       return { admitted: true, inFlightBytes, maxInFlightBytes: budget };
+    },
+
+    beginSpoolRead(request: Request): void {
+      readingByRequest.add(request);
     },
 
     destination(req: Request, _file: unknown, cb: (err: Error | null, dir: string) => void): void {
@@ -231,6 +252,7 @@ export function createAttachmentUploadSpooler(
     },
 
     async release(request: Request): Promise<void> {
+      readingByRequest.delete(request);
       free(request);
       const file = (request as Request & { file?: { path?: string } }).file;
       // `file.path` is `<dir>/upload`; removing the parent drops the whole
