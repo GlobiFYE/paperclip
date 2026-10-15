@@ -80,7 +80,10 @@ import { ClaudeLocalAdvancedFields } from "../adapters/claude-local/config-field
 import { MarkdownEditor } from "./MarkdownEditor";
 import { ChoosePathButton } from "./PathInstructionsModal";
 import { ReportsToPicker } from "./ReportsToPicker";
-import type { EnvironmentVariablesEditorHandle } from "./environment-variables-editor";
+import {
+  EnvironmentVariablesEditor,
+  type EnvironmentVariablesEditorHandle,
+} from "./environment-variables-editor";
 import {
   AgentEnvironmentVariablesEditor,
   replaceAgentCompanySecretEnv,
@@ -153,6 +156,12 @@ type AgentConfigFormProps = {
       mode: "create";
       values: CreateConfigValues;
       onChange: (patch: Partial<CreateConfigValues>) => void;
+      /**
+       * Keep organization and user secret sources in the environment editor.
+       * Company import uses this: imported agents carry secret references and
+       * have no Secrets tab yet.
+       */
+      showSecretSources?: boolean;
     }
   | {
       mode: "edit";
@@ -362,6 +371,17 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     queryFn: () => secretsApi.list(selectedCompanyId!),
     enabled: Boolean(selectedCompanyId),
   });
+  const showSecretSources = isCreate && props.showSecretSources === true;
+  // An imported agent has no Secrets tab yet, so its form keeps the full editor
+  // with organization and user secret sources.
+  const { data: userSecretDefinitions = [] } = useQuery({
+    queryKey: selectedCompanyId
+      ? queryKeys.secrets.userDefinitions(selectedCompanyId)
+      : ["user-secret-definitions", "none"],
+    queryFn: () => secretsApi.listUserSecretDefinitions(selectedCompanyId!),
+    enabled: Boolean(selectedCompanyId) && showSecretSources,
+    retry: false,
+  });
   // Pending binding proposals targeting this agent (PAP-14731). Board-only route;
   // non-permitted viewers simply get an empty list.
   const editAgentId = !isCreate ? props.agent.id : null;
@@ -443,6 +463,17 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     () => resolveForcedKubernetesEnvironment(generalSettings?.executionMode, environments),
     [generalSettings?.executionMode, environments],
   );
+  const createSecret = useMutation({
+    mutationFn: (input: { name: string; value: string }) => {
+      if (!selectedCompanyId) throw new Error("Select an organization to create secrets");
+      return secretsApi.create(selectedCompanyId, input);
+    },
+    onSuccess: () => {
+      if (!selectedCompanyId) return;
+      queryClient.invalidateQueries({ queryKey: queryKeys.secrets.list(selectedCompanyId) });
+    },
+  });
+
   const uploadMarkdownImage = useMutation({
     mutationFn: async ({ file, namespace }: { file: File; namespace: string }) => {
       if (!selectedCompanyId) throw new Error("Select an organization to upload images");
@@ -1385,7 +1416,18 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     });
   }
 
-  const environmentVariablesEditor = (
+  const environmentVariablesEditor = showSecretSources ? (
+    <EnvironmentVariablesEditor
+      ref={environmentVariablesEditorRef}
+      key={environmentEditorKey}
+      onDirtyChange={setEnvironmentDraftDirty}
+      value={(val!.envBindings ?? EMPTY_ENV) as Record<string, EnvBinding>}
+      secrets={availableSecrets}
+      userSecretDefinitions={userSecretDefinitions}
+      onCreateSecret={(name, value) => createSecret.mutateAsync({ name, value })}
+      onChange={(env) => set!({ envBindings: env ?? {}, envVars: "" })}
+    />
+  ) : (
     <AgentEnvironmentVariablesEditor
       ref={environmentVariablesEditorRef}
       key={environmentEditorKey}
