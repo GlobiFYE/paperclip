@@ -135,9 +135,16 @@ describe("Codex ACPX runtime adapter", () => {
     options.profile = { ...options.profile, agent };
     options.permissionMode = "approve-all";
     options.launchEnvironment = { HOME: "/users/executor", PAPERCLIP_RUNNER_HOME_MODE: "preconfigured" };
+    options.mcpServers = [
+      { name: "paperclip_runner_fixture", url: "http://127.0.0.1:3211/mcp", bearerToken: "runner-fixture", runnerOwned: true },
+      { name: "paperclip", url: "http://127.0.0.1:3212/mcp", bearerToken: "external-fixture", runnerOwned: false },
+    ];
     const port = await openCodexAcpxRuntime(options, {
       createRegistry: () => registry(), createStore: () => store(), createRuntime: value => { created = value; return runtime; },
     });
+    const sessionOptions = vi.mocked(runtime.ensureSession).mock.calls[0]?.[0].sessionOptions;
+    if (agent === "claude") expect(sessionOptions?.allowedTools).toEqual(["mcp__paperclip_runner_fixture__*"]);
+    else expect(sessionOptions?.allowedTools).toBeUndefined();
     expect(created.nonInteractivePermissions).toBe("deny");
     expect(created.permissionPolicy).toMatchObject({ defaultAction: "deny", autoApprove: undefined, escalate: undefined });
     expect(created.spawnEnvironment!().PAPERCLIP_ACPX_ISOLATED_CONTEXT).toBeUndefined();
