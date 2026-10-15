@@ -2314,10 +2314,22 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
         readNonEmptyString(runContext.wakeReason) === "issue_monitor_due" &&
         monitorNextCheckAt !== undefined &&
         (!monitorNextCheckAt || monitorNextCheckAt.getTime() <= now.getTime());
+      // A legacy controller persists "dispatching" in the same lease renewal
+      // that admits the adapter. An expired lease from another boot that is
+      // still "preparing" proves a restart stopped setup before provider work.
+      // Read the boot ID before revocation replaces it.
+      const restartInterruptedBeforeDispatch =
+        run.runtimeMode === "legacy" &&
+        run.executionStage === "preparing" &&
+        !!run.controllerBootId &&
+        run.controllerBootId !== legacyControllerBootId &&
+        !run.processPid &&
+        !run.processGroupId;
       const shouldRetry =
         (run.processLossRetryCount ?? 0) < 1 &&
         ((tracksLegacyLocalChild &&
           (!!run.processPid || !!run.processGroupId)) ||
+          restartInterruptedBeforeDispatch ||
           monitorDispatchLostWithoutFutureWake);
       if (!(await revokeExpiredLegacyController(db, run))) continue;
       const baseMessage = buildProcessLossMessage(run);
@@ -2344,7 +2356,13 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
               "failed",
               {
                 conversationContinuationEligible,
-                resultJson: { ...parseObject(run.resultJson), processLossDiagnostic },
+                resultJson: {
+                  ...parseObject(run.resultJson),
+                  processLossDiagnostic,
+                  ...(restartInterruptedBeforeDispatch
+                    ? { executionRecovery: { kind: "bootstrap", providerWorkStarted: false } }
+                    : {}),
+                },
                 errorCode: "process_lost",
                 errorMessage: shouldRetry
                   ? `${baseMessage}; retrying once`
