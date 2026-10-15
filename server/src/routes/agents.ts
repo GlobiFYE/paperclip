@@ -4753,6 +4753,9 @@ export function agentRoutes(
       // The onboarding marker is not an agent column. The server consumes it to
       // seed the chief-of-staff persona; it never reaches the insert values.
       onboardingFirstAgent: createOnboardingFirstAgent,
+      // The atomic-paused flag is not an agent column. The server forces the
+      // initial status below and never trusts a client-supplied status.
+      initialPaused: createInitialPaused,
       ...createInput
     } = req.body;
     createInput.adapterType = await assertSelectableAdapterType(createInput.adapterType);
@@ -4819,7 +4822,12 @@ export function agentRoutes(
         ...createInput,
         adapterConfig: normalizedAdapterConfig,
         runtimeConfig: normalizedRuntimeConfig,
-        status: "idle",
+        // Atomic paused creation: when the opt-in flag is set, the row is
+        // written as paused inside the same transaction — there is no
+        // idle-then-pause window. Defaults preserve historical idle creation.
+        status: createInitialPaused === true ? "paused" : "idle",
+        pausedAt: createInitialPaused === true ? new Date() : null,
+        pauseReason: createInitialPaused === true ? "created_paused" : null,
         spentMonthlyCents: 0,
         lastHeartbeatAt: null,
       },

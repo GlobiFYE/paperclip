@@ -108,6 +108,11 @@ export const createAgentSchema = z.object({
   // instruction file instead of the generic default, and honors it only for
   // board-authored requests. Mirrors onboardingFirstTask on issue create.
   onboardingFirstAgent: z.boolean().optional(),
+  // Opt-in flag requesting atomic paused creation. It is not an agent column:
+  // the server forces status/pausedAt/pauseReason inside the same create
+  // transaction and never trusts a client-supplied status. Defaults to false,
+  // preserving the historical initial-idle behavior.
+  initialPaused: z.boolean().optional().default(false),
 });
 
 export type CreateAgent = z.infer<typeof createAgentSchema>;
@@ -130,15 +135,20 @@ export const builtInAgentResetSchema = z.object({
 
 export type BuiltInAgentReset = z.infer<typeof builtInAgentResetSchema>;
 
-export const createAgentHireSchema = createAgentSchema.extend({
-  sourceIssueId: z.string().guid().optional().nullable(),
-  sourceIssueIds: z.array(z.string().guid()).optional(),
-});
+export const createAgentHireSchema = createAgentSchema
+  // The atomic-paused flag applies only to direct creation. Hires land in
+  // pending_approval (already non-invokable), so the flag is stripped here
+  // rather than silently ignored by the hire handler.
+  .omit({ initialPaused: true })
+  .extend({
+    sourceIssueId: z.string().guid().optional().nullable(),
+    sourceIssueIds: z.array(z.string().guid()).optional(),
+  });
 
 export type CreateAgentHire = z.infer<typeof createAgentHireSchema>;
 
 export const updateAgentSchema = objectWithoutDefaults(
-  createAgentSchema.omit({ permissions: true, onboardingFirstAgent: true }),
+  createAgentSchema.omit({ permissions: true, onboardingFirstAgent: true, initialPaused: true }),
 )
   .partial()
   .extend({
