@@ -3,6 +3,7 @@ import {
   buildKimiAcpConfig,
   nodeVersionMeetsKimiAcpMinimum,
   resolveKimiExecutionEngine,
+  testKimiAcpEnvironment,
 } from "./acp.js";
 
 describe("resolveKimiExecutionEngine", () => {
@@ -37,6 +38,11 @@ describe("buildKimiAcpConfig", () => {
     expect(out.agentCommand).toBe("/opt/kimi acp --foo");
   });
 
+  it("disables warm ACP processes so every heartbeat receives fresh run-scoped env", () => {
+    const out = buildKimiAcpConfig({ warmHandleIdleMs: 60_000, acpWarmHandleIdleMs: 60_000 });
+    expect(out.warmHandleIdleMs).toBe(0);
+  });
+
   it("drops the model when it equals the default so ACP uses the agent default", () => {
     const out = buildKimiAcpConfig({ model: "kimi-code/kimi-for-coding" });
     expect("model" in out).toBe(false);
@@ -67,5 +73,21 @@ describe("nodeVersionMeetsKimiAcpMinimum", () => {
   });
   it("rejects Node < 20", () => {
     expect(nodeVersionMeetsKimiAcpMinimum("v18.19.0")).toBe(false);
+  });
+});
+
+describe("testKimiAcpEnvironment", () => {
+  it("reports Kimi's effective disabled warm-handle timeout", async () => {
+    const result = await testKimiAcpEnvironment({
+      adapterType: "kimi_local",
+      config: {
+        agentCommand: process.execPath,
+        warmHandleIdleMs: 60_000,
+        env: {},
+      },
+    } as never);
+
+    expect(result.checks.find((check) => check.code === "kimi_acp_runtime_scaffold")?.detail)
+      .toBe("mode=persistent; warmHandleIdleMs=0");
   });
 });

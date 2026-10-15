@@ -67,6 +67,92 @@ it("spawns a real Node ACP agent with per-session env on this platform", async (
   expect(stderr).toContain("paperclip-acp-echo-agent started");
 });
 
+it("spawns ACP terminals with the sanitized per-run environment", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-acpx-terminal-env-"));
+  tempRoots.push(root);
+  const execute = createAcpxEngineExecutor();
+  vi.stubEnv("PAPERCLIP_AGENT_JWT_SECRET", "must-not-reach-terminal");
+
+  const result = await execute({
+    runId: "terminal-env-run",
+    authToken: "terminal-run-key",
+    agent: { id: "spawn-agent", companyId: "spawn-company" },
+    runtime: {},
+    config: {
+      agent: "custom",
+      agentCommand: `${JSON.stringify(process.execPath.replaceAll("\\", "/"))} ${JSON.stringify(fixturePath.replaceAll("\\", "/"))}`,
+      mode: "oneshot",
+      stateDir: path.join(root, "state"),
+      cwd: repoRoot,
+      env: { PAPERCLIP_ACPX_TERMINAL_ENV_SMOKE: "1" },
+    },
+    context: {},
+    onLog: async () => {},
+    onMeta: async () => {},
+  } as never);
+
+  expect(result.exitCode, JSON.stringify(result, null, 2)).toBe(0);
+  expect(JSON.parse(result.summary ?? "{}")).toMatchObject({
+    key: "terminal-run-key",
+    run: "terminal-env-run",
+    secret: null,
+    resumed: false,
+  });
+});
+
+it("resumes a backend session in a fresh provider process with the next run environment", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-acpx-resume-env-"));
+  tempRoots.push(root);
+  const execute = createAcpxEngineExecutor();
+  vi.stubEnv("PAPERCLIP_AGENT_JWT_SECRET", "must-not-reach-terminal");
+  const config = {
+    agent: "custom",
+    agentCommand: `${JSON.stringify(process.execPath.replaceAll("\\", "/"))} ${JSON.stringify(fixturePath.replaceAll("\\", "/"))}`,
+    mode: "persistent",
+    warmHandleIdleMs: 0,
+    stateDir: path.join(root, "state"),
+    cwd: repoRoot,
+    env: {
+      PAPERCLIP_ACPX_TERMINAL_ENV_SMOKE: "1",
+      PAPERCLIP_ACPX_SESSION_FILE: path.join(root, "backend-session"),
+    },
+  };
+  const base = {
+    agent: { id: "spawn-agent", companyId: "spawn-company" },
+    config,
+    context: {},
+    onLog: async () => {},
+    onMeta: async () => {},
+  };
+
+  const first = await execute({
+    ...base,
+    runId: "resume-env-run-1",
+    authToken: "resume-key-1",
+    runtime: {},
+  } as never);
+  const second = await execute({
+    ...base,
+    runId: "resume-env-run-2",
+    authToken: "resume-key-2",
+    runtime: { sessionParams: first.sessionParams },
+  } as never);
+
+  expect(first.exitCode, JSON.stringify(first, null, 2)).toBe(0);
+  expect(second.exitCode, JSON.stringify(second, null, 2)).toBe(0);
+  expect(second.sessionId).toBe(first.sessionId);
+  const firstEnv = JSON.parse(first.summary ?? "{}");
+  const secondEnv = JSON.parse(second.summary ?? "{}");
+  expect(secondEnv).toMatchObject({
+    key: "resume-key-2",
+    run: "resume-env-run-2",
+    secret: null,
+    resumed: true,
+  });
+  expect(secondEnv.providerPid).not.toBe(firstEnv.providerPid);
+  expect(secondEnv.terminalPid).not.toBe(firstEnv.terminalPid);
+});
+
 it("retains a typed ACP failure as diagnostics without making it assistant output", async () => {
   const root = await fs.mkdtemp(
     path.join(os.tmpdir(), "paperclip-acpx-typed-failure-"),

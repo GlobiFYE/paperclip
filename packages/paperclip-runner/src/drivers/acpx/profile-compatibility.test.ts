@@ -8,7 +8,10 @@ describe("historical ACPX profile decoding", () => {
     expect(isSupportedAcpxProfileVersion("pi", 17)).toBe(true);
     expect(isSupportedAcpxProfileVersion("pi", 18)).toBe(true);
     expect(isSupportedAcpxProfileVersion("cursor", 15)).toBe(true);
-    expect(isSupportedAcpxProfileVersion("cursor", 16)).toBe(false);
+    expect(isSupportedAcpxProfileVersion("cursor", 16)).toBe(true);
+    expect(isSupportedAcpxProfileVersion("cursor", 17)).toBe(false);
+    expect(isSupportedAcpxProfileVersion("pi", 22)).toBe(true);
+    expect(isSupportedAcpxProfileVersion("copilot", 18)).toBe(true);
     for (const agent of ["pi", "copilot"]) {
       expect(isSupportedAcpxProfileVersion(agent, 16)).toBe(true);
       const current = QUALIFIED_ACPX_PROFILE_DATA[agent as "pi" | "copilot"].agentProfileVersion;
