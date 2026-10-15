@@ -62,8 +62,6 @@ export async function assertTaskWorkspaceAccess(
   }
 }
 
-/** Authorize the complete retained source set with one policy snapshot per read
- * batch. Keep the single-workspace write path's assignment checks separate. */
 export async function assertTaskWorkspacesReadAccess(
   db: Db | DbTransaction, actor: AuthorizationActor, companyId: string, workspaceIds: Iterable<string>,
 ) {

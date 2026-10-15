@@ -121,8 +121,6 @@ const support = await getEmbeddedPostgresTestSupport();
       const recorded = drizzle(db.$client, { schema: db._.fullSchema,
         logger: { logQuery: query => statements.push(query) } }) as unknown as typeof db;
       await assertExecutionWorkspaceRootReadAccess(recorded, { companyId, cwd, actor: { ...actor } });
-      // Access decisions must still cover every source and both principals,
-      // without reloading the same actor/run/membership for each workspace.
       expect(statements.length).toBeLessThan(60);
       await db.update(issues).set({ visibility: "private", privacyRootIssueId: sourceIds[39] }).where(eq(issues.id, sourceIds[39]));
       await expect(assertExecutionWorkspaceRootReadAccess(db, { companyId, cwd, actor: { ...actor } })).rejects.toThrow();

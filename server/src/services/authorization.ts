@@ -742,8 +742,6 @@ export function authorizationService(db: Db | DbTransaction) {
 }
 
 function createAuthorizationService(db: Db | DbTransaction, readSnapshot?: ReadAuthorizationSnapshot) {
-  // Only a single, read-only batch owns this snapshot. Ordinary decisions and
-  // subsequent admissions always read current policies, membership and grants.
   function batchRead<T>(key: string, read: () => Promise<T>): Promise<T> {
     if (!readSnapshot) return read();
     let result = readSnapshot.memo.get(key);
@@ -758,10 +756,7 @@ function createAuthorizationService(db: Db | DbTransaction, readSnapshot?: ReadA
   async function decideReadsForActors(actors: AuthorizationActor[], resources: ReadAuthorizationResource[]): Promise<AuthorizationDecision[][]> {
     if (!actors.length) return [];
     const snapshots: ReadAuthorizationSnapshot[] = actors.map(() => ({ issues: new Map(), projects: new Map(), memo: new Map() }));
-    // Do not carry a previous request's responsible-user snapshot into this batch.
     const batchActors: ResponsibleUserActorWithMemo[] = actors.map(actor => ({ ...actor, __responsibleUserSnapshotMemo: undefined }));
-    // Privacy depends on the two principals, while trust can differ by run.
-    // Share SQL privacy evaluation only; every run still gets its own decision.
     const privacyKey = (actor: AuthorizationActor) => JSON.stringify([actor.type, actor.agentId, actor.userId, actor.onBehalfOfUserId]);
     const privacyActors = [...new Map(batchActors.map(actor => [privacyKey(actor), actor])).values()];
     const privacyIndexes = batchActors.map(actor => privacyActors.findIndex(peer => privacyKey(peer) === privacyKey(actor)));
@@ -1056,7 +1051,7 @@ function createAuthorizationService(db: Db | DbTransaction, readSnapshot?: ReadA
           id: heartbeatRuns.id,
           companyId: heartbeatRuns.companyId,
           agentId: heartbeatRuns.agentId,
-          contextSnapshot: heartbeatRuns.contextSnapshot,
+          contextSnapshot: sql<Record<string, unknown>>`jsonb_build_object('executionPolicy', ${heartbeatRuns.contextSnapshot}->'executionPolicy')`,
         })
         .from(heartbeatRuns)
         .where(eq(heartbeatRuns.id, runId))
@@ -1067,6 +1062,7 @@ function createAuthorizationService(db: Db | DbTransaction, readSnapshot?: ReadA
         ? { companyId: row.companyId, executionPolicy: context.executionPolicy }
         : null;
     });
+
   }
 
   async function loadRunIssueId(runId: string | null | undefined, companyId: string, agentId: string) {
@@ -1075,7 +1071,7 @@ function createAuthorizationService(db: Db | DbTransaction, readSnapshot?: ReadA
       .select({
         companyId: heartbeatRuns.companyId,
         agentId: heartbeatRuns.agentId,
-        contextSnapshot: heartbeatRuns.contextSnapshot,
+        contextSnapshot: sql<Record<string, unknown>>`jsonb_build_object('issueId', ${heartbeatRuns.contextSnapshot}->'issueId', 'taskId', ${heartbeatRuns.contextSnapshot}->'taskId')`,
       })
       .from(heartbeatRuns)
       .where(eq(heartbeatRuns.id, runId))

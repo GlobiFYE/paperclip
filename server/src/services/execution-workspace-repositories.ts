@@ -542,8 +542,6 @@ export function executionWorkspaceRepositoryService(db: Db) {
     const ownAdmissionOnly = input.preserveOwnAdmission && input.reader && input.sourceWorkspaceId
       && sourceIds.size === 1 && sourceIds.has(input.sourceWorkspaceId)
       && readers.every(reader => reader.issueId === input.reader!.issueId);
-    // Acquisition policy depends on the source project, not on each historical
-    // workspace. Revalidate each distinct project for every retained reader.
     const sourceProjects = sourceIds.size ? await tx.selectDistinct({ projectId: executionWorkspaces.projectId }).from(executionWorkspaces).where(and(
       eq(executionWorkspaces.companyId, input.companyId), inArray(executionWorkspaces.id, [...sourceIds]))) : [];
     const sourceActors: AuthorizationActor[] = [];

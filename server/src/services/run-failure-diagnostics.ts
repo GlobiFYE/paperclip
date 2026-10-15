@@ -9,7 +9,7 @@ import { sanitizeWorkspaceRestoreDiagnostic } from "@paperclipai/adapter-utils/w
 import { ACP_TOOL_KINDS } from "@paperclipai/adapter-utils/acpx-engine/constants";
 import { redactCurrentUserText } from "../log-redaction.js";
 import { redactSensitiveText, REDACTED_EVENT_VALUE } from "../redaction.js";
-import { readNativeModelRejectionDiagnostic } from "./native-runtime/native-provider-failure.js";
+import { readNativeModelRejectionDiagnostic, readNativeTurnFailureDiagnostic } from "./native-runtime/native-provider-failure.js";
 import { readRemoteRunnerRecoveryDiagnostic } from "./native-runtime/remote-runner-recovery-diagnostics.js";
 import { MANAGED_GIT_WORKTREE_REASON_CODES, PERSISTED_WORKSPACE_SOURCE_REASON_CODES, readManagedGitInspectionDiagnostic } from "./workspace-validation-diagnostics.js";
 
@@ -340,6 +340,8 @@ export function collectRunFailureDiagnostics(run: Run, options: RunFailureReport
   const provider = scalars(read(result, "terminalSessionFailure"), ["category", "title", "details"]);
   const nativeProviderFailure = readNativeModelRejectionDiagnostic(read(result, "nativeProviderFailure"));
   if (nativeProviderFailure) Object.assign(provider, nativeProviderFailure);
+  const nativeTurnFailure = readNativeTurnFailureDiagnostic(read(result, "nativeTurnFailure"));
+  if (nativeTurnFailure) Object.assign(provider, nativeTurnFailure);
   const truncatedFields: string[] = [];
   const providerTruncation = read(read(result, "terminalSessionFailure"), "truncatedFields");
   if (Array.isArray(providerTruncation)) {
