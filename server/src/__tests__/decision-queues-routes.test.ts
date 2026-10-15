@@ -563,6 +563,69 @@ describeEmbeddedPostgres("decision queue routes", () => {
       .toEqual([{ sourceId: addedId }]);
   });
 
+  it("keeps a pending seeded question that this feed does not report", async () => {
+    const { companyId, issueId } = await seed();
+    const omittedId = randomUUID();
+    await db.insert(issueThreadInteractions).values({
+      id: omittedId,
+      companyId,
+      issueId,
+      kind: "ask_user_questions",
+      status: "pending",
+      payload: { version: 1, questions: [] } as never,
+    });
+    const service = decisionQueueService(db);
+    await service.materializeSeededQueues(companyId, [seedQuestionItem(companyId, issueId, omittedId)]);
+    // The feed is not the full pending set. Absence alone must not retire a question
+    // that is still pending.
+    await service.materializeSeededQueues(companyId, []);
+
+    const questionsQueue = await db.select().from(decisionQueues).where(and(
+      eq(decisionQueues.companyId, companyId),
+      eq(decisionQueues.key, "questions"),
+    )).then((rows) => rows[0]!);
+    expect(await db.select({ sourceId: decisionQueueItems.sourceId })
+      .from(decisionQueueItems)
+      .where(eq(decisionQueueItems.queueId, questionsQueue.id))
+      .then((rows) => rows.map((row) => row.sourceId))).toEqual([omittedId]);
+  });
+
+  it("keeps a user-added row on a seed-enabled queue after the interaction resolves", async () => {
+    const { companyId, issueId } = await seed();
+    const liveId = randomUUID();
+    const addedId = randomUUID();
+    await db.insert(issueThreadInteractions).values([liveId, addedId].map((id) => ({
+      id,
+      companyId,
+      issueId,
+      kind: "ask_user_questions" as const,
+      status: "pending" as const,
+      payload: { version: 1, questions: [] } as never,
+    })));
+    const service = decisionQueueService(db);
+    await service.materializeSeededQueues(companyId, [seedQuestionItem(companyId, issueId, liveId)]);
+    const questionsQueue = await db.select().from(decisionQueues).where(and(
+      eq(decisionQueues.companyId, companyId),
+      eq(decisionQueues.key, "questions"),
+    )).then((rows) => rows[0]!);
+
+    await db.update(issueThreadInteractions).set({ status: "answered" }).where(eq(issueThreadInteractions.id, addedId));
+    await db.insert(decisionQueueItems).values({
+      companyId,
+      queueId: questionsQueue.id,
+      sourceKind: "issue_thread_interaction",
+      sourceId: addedId,
+      addedByType: "user",
+      addedByUserId: "board-user",
+    });
+    await service.materializeSeededQueues(companyId, []);
+
+    expect((await db.select({ sourceId: decisionQueueItems.sourceId })
+      .from(decisionQueueItems)
+      .where(eq(decisionQueueItems.queueId, questionsQueue.id))
+      .then((rows) => rows.map((row) => row.sourceId))).sort()).toEqual([addedId, liveId].sort());
+  });
+
   it("records agent decide-by, preserves override history, and exposes the board override attribution", async () => {
     const { companyId, agentId, issueId } = await seed();
     const agent = agentActor(companyId, agentId);
