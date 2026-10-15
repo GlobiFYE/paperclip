@@ -1519,7 +1519,23 @@ runnerd recovery, and durable control-plane readers. These paths synchronously
 read and parse the full JSON file, so memory use and parse time grow with file
 size. Remote checkpoint archive and expanded-size limits remain 64 MiB.
 
+Sparse remote workspace checkpoints capture at most eight regular files at once.
+Each file retains the content hash and mutation checks. A failed capture settles
+its active readers before closing the manifest and publishes no success receipt.
+
 ### Warm sandbox continuity
+
+Healthy native warm turns retain their runner and provider processes. After a
+controller crash, continuation can recover a completed remote session from its
+saved checkpoint and exact sandbox process identity. The prior controller must
+be stopped, its result committed, and the successor must hold current task and
+coordinator authority. Recovery reconnects through the prior run's route before
+the authenticated run attachment changes authority. Unavailable identity probes
+have a shared 30-second retry budget; an identity conflict never permits replay.
+Saved process configuration must match before reuse. Old checkpoints, changed
+configuration, and controller-owned credential or instruction resources use
+verified suspension and saved-history resume. This recovery can restart a
+provider; it does not suspend every healthy warm turn.
 
 For the native runner, warm mode requests a reusable sandbox lease **before**
 lease acquisition. The environment's explicit runner lifecycle overrides the

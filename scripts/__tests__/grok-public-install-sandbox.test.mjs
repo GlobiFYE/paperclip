@@ -211,7 +211,7 @@ test('the image and Grok downloads start before staging and join without weakeni
   assert.doesNotMatch(source, /provision-grok\.mjs'\), prerequisite\]/);
   // Both downloads start before any package is staged and before the first sandbox runs.
   const staging = position('publicInstallClosure(repo)');
-  const firstSandbox = position("isolated(['npm', 'install', '--ignore-scripts', '--omit=dev'");
+  const firstSandbox = position("isolated(['node', '/packages/public-install-registry.mjs', '/packages'], { download: true })");
   assert.ok(imagePull < staging && grokProvision < staging);
   assert.ok(position("await awaited('image', imageReady)") < firstSandbox);
   // The binary moves to the canonical host path only after npm is proven not to
