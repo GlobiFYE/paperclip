@@ -594,7 +594,7 @@ credentials belong to the connection; the model belongs to the agent.
 | Harness | Implemented managed routes |
 | --- | --- |
 | Codex legacy and Codex New Runner (app-server) | OpenRouter; custom/local OpenAI Responses endpoints; Foundry Responses |
-| Claude legacy and Claude New Runner (ACPX) | OpenRouter; custom/local Anthropic Messages; Bedrock API key; Foundry API key |
+| Claude legacy and Claude New Runner (ACPX) | OpenRouter; custom/local Anthropic Messages; Bedrock API key; Foundry API key (Claude legacy only) |
 | OpenCode legacy and New Runner | OpenRouter; custom/local Chat Completions; Foundry Chat Completions |
 | Hermes local | OpenRouter; custom/local Chat Completions; Foundry Chat Completions |
 | Gemini CLI, Grok | Their native API connections; custom routes are not advertised |
@@ -711,6 +711,12 @@ Completions** (OpenCode, Hermes) use the resource's OpenAI-compatible endpoint,
 `https://<resource>.services.ai.azure.com/openai/v1`, without an `api-version`.
 That endpoint serves Azure OpenAI and other Foundry models, such as DeepSeek and
 Grok. Use a separate connection per API format for the same resource.
+
+Claude New Runner (ACPX) does not offer Foundry connections yet. Its Claude
+credential boundary, `drivers/acpx/environment.ts`, is pinned by the qualified
+Pi profile, so adding Foundry names there requires profile requalification.
+Foundry Claude runs use the Claude adapter. Codex, OpenCode, and Hermes use the
+OpenAI-compatible endpoint and are not affected.
 
 Model IDs are Foundry deployment names. Foundry does not check the model at
 startup, so the Claude projection pins `ANTHROPIC_MODEL` and every

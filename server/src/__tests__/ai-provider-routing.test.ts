@@ -175,7 +175,8 @@ describe("provider routing", () => {
     expect(managedProviderRouting(routing, "claude_local", "fixture-foundry-key", "").env).not.toHaveProperty("ANTHROPIC_MODEL");
     const metadata = { provider: "anthropic", method: "api_key", routing } as const;
     expect(isAiConnectionCompatible(metadata, "claude_local")).toBe(true);
-    expect(isAiConnectionCompatible(metadata, "paperclip_runner", "claude-opus-4-8", "acpx", "claude")).toBe(true);
+    // The qualified ACPX Claude credential boundary does not admit Foundry yet.
+    expect(isAiConnectionCompatible(metadata, "paperclip_runner", "claude-opus-4-8", "acpx", "claude")).toBe(false);
     for (const adapter of ["codex_local", "opencode_local", "hermes_local"]) expect(isAiConnectionCompatible(metadata, adapter)).toBe(false);
   });
   it("routes other Foundry models through the resource's OpenAI-compatible v1 endpoint", () => {
@@ -187,6 +188,7 @@ describe("provider routing", () => {
     expect(codex.codexConfig).toContain('env_key = "PAPERCLIP_AI_PROVIDER_KEY"');
     expect(isAiConnectionCompatible({ provider: "openai", method: "api_key", routing: responses }, "codex_local")).toBe(true);
     expect(isAiConnectionCompatible({ provider: "openai", method: "api_key", routing: responses }, "claude_local")).toBe(false);
+    expect(isAiConnectionCompatible({ provider: "openai", method: "api_key", routing: responses }, "paperclip_runner", "gpt-5", "codex")).toBe(true);
 
     const chat = aiProviderRoutingSchema.parse({ kind: "foundry", protocol: "chat", resource: "contoso-ai" });
     const opencode = managedProviderRouting(chat, "opencode_local", "fixture-foundry-key", "DeepSeek-R1");

@@ -118,7 +118,11 @@ export function isAiConnectionCompatible(
   runnerProvider?: unknown,
   acpxAgent?: unknown,
 ): boolean {
+  const nativeRunner = adapterType === "paperclip_runner";
   adapterType = aiRoutingHarness(adapterType, runnerProvider, acpxAgent);
+  // The qualified ACPX Claude credential boundary does not admit Foundry
+  // credentials yet; Foundry Claude runs use the Claude adapter.
+  if (nativeRunner && adapterType === "claude_local" && "routing" in requirement && requirement.routing?.kind === "foundry") return false;
   if ("routing" in requirement && requirement.routing) return requirement.method === "api_key" && isAiRoutingCompatible(requirement.routing, adapterType);
   // A fixed binding contains identity only. The service checks authoritative
   // connection metadata before resolving credentials or running the harness.
