@@ -241,13 +241,14 @@ test("workflow exporter runs trusted code and keeps keys out of the PR jobs", ()
   const pr = readFileSync(new URL("../../workflows/pr-trusted.yml", import.meta.url), "utf8");
   // A script filename such as docker-compose-secrets.test.mjs is not a
   // GitHub secret lookup. Check expression context, including bracket access.
-  const secretReference = /HONEYCOMB.*KEY|\$\{\{(?:'(?:''|[^'])*'|(?!\}\})[^'])*?\bsecrets\s*(?:\.|\[)/;
+  const secretReference = /HONEYCOMB.*KEY|\$\{\{(?:'(?:''|[^'])*'|(?!\}\})[^'])*?\bsecrets\b/;
   assert.doesNotMatch("run: node --test scripts/docker-compose-secrets.test.mjs", secretReference);
-  for (const lookup of ["${{ secrets.PR_TOKEN }}", "${{ secrets['PR_TOKEN'] }}", "${{\n secrets.PR_TOKEN\n }}"]) {
+  for (const lookup of ["${{ secrets.PR_TOKEN }}", "${{ secrets['PR_TOKEN'] }}", "${{\n secrets.PR_TOKEN\n }}", "${{ toJSON(secrets) }}", "${{ secrets.HONEYCOMB_API_KEY }}"]) {
     assert.match(lookup, secretReference);
   }
   for (const lookup of [
     "${{ format('Bearer {0}', secrets.PR_TOKEN) }}",
+    "${{ format('{0}', toJSON(secrets)) }}",
     "${{ format('{{Bearer}} {0}', secrets['PR_TOKEN']) }}",
     "${{ format('it''s {0}',\n secrets.PR_TOKEN) }}",
   ]) {
