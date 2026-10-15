@@ -232,6 +232,21 @@ test("export paces batches and retries only rejected transient events", async ()
   await assert.rejects(sendEvents([events[0]], "test-only", "paperclip-ci", async () => ({ ok: true, json: async () => [{ status: 400 }] })), /status 400/);
 });
 
+function assertNoPrWorkflowCredentials(source) {
+  assert.doesNotMatch(source, /HONEYCOMB.*KEY/);
+  for (const [expression] of source.matchAll(/\$\{\{(?:'(?:[^']|'')*'|(?!\}\})[\s\S])*\}\}/g)) {
+    assert.doesNotMatch(expression, /\bsecrets\b/);
+  }
+}
+
+test("PR credential guard permits filenames but rejects secret expressions", () => {
+  assertNoPrWorkflowCredentials("run: node --test scripts/docker-compose-secrets.test.mjs");
+  for (const source of ["env: ${{ secrets.EXAMPLE }}", "env: ${{ secrets['EXAMPLE'] }}", "env: ${{ toJSON(secrets) }}", "env: ${{ format('}}', secrets.EXAMPLE) }}"]) {
+    assert.throws(() => assertNoPrWorkflowCredentials(source));
+  }
+  assert.throws(() => assertNoPrWorkflowCredentials("HONEYCOMB_API_KEY: example"));
+});
+
 test("workflow exporter runs trusted code and keeps keys out of the PR jobs", () => {
   const workflow = readFileSync(new URL("../../workflows/ci-profile.yml", import.meta.url), "utf8");
   assert.match(workflow, /ref: \$\{\{ github.sha \}\}/);
@@ -239,7 +254,7 @@ test("workflow exporter runs trusted code and keeps keys out of the PR jobs", ()
   assert.match(workflow, /environment: ci-profiling/);
   assert.doesNotMatch(workflow, /head_sha|secrets: inherit|contents: write|pull-requests: write|pnpm install/);
   const pr = readFileSync(new URL("../../workflows/pr-trusted.yml", import.meta.url), "utf8");
-  assert.doesNotMatch(pr, /HONEYCOMB.*KEY|secrets\./);
+  assertNoPrWorkflowCredentials(pr);
   assert.match(pr, /if: always\(\) && env.PAPERCLIP_CI_PROFILE == 'true'/);
   assert.doesNotMatch(pr, /PAPERCLIP_CI_PROFILE:.*labels/);
   assert.equal(pr.match(/PAPERCLIP_CI_PROFILE: \$\{\{ needs.gate.outputs.profile_ci \}\}/g).length, 9);
