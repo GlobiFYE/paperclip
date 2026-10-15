@@ -9506,9 +9506,6 @@ export function issueRoutes(
       sql`${issueRecoveryActions.evidence}->'automaticRecovery'->>'replay' = 'blocked'`,
       or(
         sql`${issueRecoveryActions.evidence}->'workspaceRestoreRecovery'->>'schema' = ${LEGACY_WORKSPACE_RECOVERY_SCHEMA}`,
-        // Reconciliation holds stay listed while they still gate execution, or
-        // the board sees a blocked task with an empty recovery list and no way
-        // to clear it. Mirrors executionBlockerPredicate's cause filter.
         inArray(issueRecoveryActions.cause, [...EXECUTION_RECONCILIATION_CAUSES]),
       ),
     )).orderBy(desc(issueRecoveryActions.createdAt));

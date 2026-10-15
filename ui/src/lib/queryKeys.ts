@@ -296,6 +296,7 @@ export const queryKeys = {
     dryRun: (id: string) => ["status-cards", "detail", id, "dry-run"] as const,
   },
   issues: {
+    recoveryActions: (id: string) => ["issues", id, "recovery-actions"] as const,
     list: (companyId: string) => ["issues", companyId] as const,
     mentionPool: (companyId: string) =>
       ["issues", companyId, "mention-pool"] as const,
