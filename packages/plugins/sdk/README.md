@@ -313,7 +313,9 @@ Declare in `manifest.capabilities`. Grouped by scope:
 | | `projects.read` |
 | | `project.workspaces.read` |
 | | `issues.read` |
+| | `issues.read_as_user` — read issues with an active human member's visibility rules. |
 | | `issue.comments.read` |
+| | `issue.interactions.read_as_user` — read interactions with an active human member's visibility rules. |
 | | `issue.documents.read` |
 | | `issue.relations.read` |
 | | `issue.subtree.read` |
@@ -1259,6 +1261,10 @@ await ctx.agents.sessions.close(session.sessionId, companyId);
 Requires capabilities: `agent.sessions.create`, `agent.sessions.list`, `agent.sessions.send`, `agent.sessions.close`.
 
 Exported types: `AgentSession`, `AgentSessionEvent`, `AgentSessionSendResult`, `PluginAgentSessionsClient`.
+
+## Answering issue interactions
+
+`ctx.issues.respondInteraction()` accepts, rejects, or answers a pending interaction on behalf of an active human company member. Every call must provide `actorUserId`; the host revalidates membership and interaction policy. For `ask_user_questions`, use `action: "answer"` with the standard structured `answers` array. Paperclip validates and persists the response, then sends it through the durable question-response delivery path so the waiting agent resumes. Formal approval records remain on the approval API.
 
 ## Testing utilities
 

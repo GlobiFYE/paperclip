@@ -1327,11 +1327,13 @@ export const PLUGIN_CAPABILITIES = [
   "project.workspaces.read",
   "execution.workspaces.read",
   "issues.read",
+  "issues.read_as_user",
   "issue.relations.read",
   "issue.subtree.read",
   "issue.comments.read",
   // Read pending issue-thread interactions (decision cards) on an issue.
   "issue.interactions.read",
+  "issue.interactions.read_as_user",
   // Read issue attachment metadata and, via the capability-scoped host
   // bridge, attachment content bytes (bytes-only, company-scoped, audit-logged).
   "issue.attachments.read",

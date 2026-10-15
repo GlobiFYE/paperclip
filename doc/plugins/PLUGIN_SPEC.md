@@ -802,6 +802,8 @@ The host enforces capabilities in the SDK layer and refuses calls outside the gr
 - `projects.read`
 - `project.workspaces.read`
 - `issues.read`
+- `issues.read_as_user` — read issues using the visibility rules of a supplied active human member.
+- `issue.interactions.read_as_user` — read interaction payloads using the visibility rules of a supplied active human member.
 - `issue.comments.read`
 - `issue.documents.read`
 - `issue.relations.read`

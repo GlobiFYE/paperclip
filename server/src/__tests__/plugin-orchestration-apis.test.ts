@@ -23,6 +23,7 @@ import {
   issueDocuments,
   issueRelations,
   issueThreadInteractions,
+  issueQuestionResponseDeliveries,
   issues,
   pluginManagedResources,
   plugins,
@@ -111,6 +112,7 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
     await db.delete(agentWakeupRequests);
     await db.delete(issueRelations);
     await db.delete(issueComments);
+    await db.delete(issueQuestionResponseDeliveries);
     await db.delete(issueThreadInteractions);
     await db.delete(issueAttachments);
     await db.delete(assets);
@@ -1060,6 +1062,42 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
     expect(result.applied).toBe(true);
     const [row] = await db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.id, interactionId));
     expect(row?.status).toBe("accepted");
+  });
+
+  it("respondInteraction persists a human question answer for durable delivery", async () => {
+    const { companyId } = await seedCompanyAndAgent();
+    const humanUserId = randomUUID();
+    await db.insert(companyMemberships).values({
+      companyId, principalType: "user", principalId: humanUserId, status: "active", membershipRole: "owner",
+    });
+    const issueId = randomUUID();
+    await db.insert(issues).values({
+      id: issueId, companyId, title: "Choose direction", status: "in_review", priority: "medium",
+    });
+    const interactionId = await seedInteraction(companyId, issueId, {
+      kind: "ask_user_questions",
+      payload: {
+        version: 1,
+        questions: [{ id: "direction", prompt: "Choose a direction", selectionMode: "single", required: true,
+          options: [{ id: "proceed", label: "Proceed" }] }],
+      } as never,
+    });
+    const services = buildHostServices(db, "plugin-record-id", "paperclip.gateway", createEventBusStub());
+    const input = {
+      issueId, interactionId, companyId, action: "answer" as const, actorUserId: humanUserId,
+      answers: [{ questionId: "direction", optionIds: ["proceed"] }],
+    };
+
+    const result = await services.issues.respondInteraction(input);
+    expect(result).toMatchObject({ applied: true, interaction: { status: "answered" } });
+    const [row] = await db.select().from(issueThreadInteractions).where(eq(issueThreadInteractions.id, interactionId));
+    expect(row).toMatchObject({ status: "answered", resolvedByUserId: humanUserId });
+    const deliveries = await db.select().from(issueQuestionResponseDeliveries)
+      .where(eq(issueQuestionResponseDeliveries.interactionId, interactionId));
+    expect(deliveries).toHaveLength(1);
+    expect((await services.issues.respondInteraction(input)).applied).toBe(false);
+    expect(await db.select().from(issueQuestionResponseDeliveries)
+      .where(eq(issueQuestionResponseDeliveries.interactionId, interactionId))).toHaveLength(1);
   });
 
   it.each(["accept", "reject"] as const)(

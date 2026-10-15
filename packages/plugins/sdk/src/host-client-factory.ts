@@ -883,6 +883,9 @@ export function createHostClientHandlers(
 
     // Issues
     "issues.list": gated("issues.list", async (params) => {
+      if (params.actorUserId && !capabilitySet.has("issues.read_as_user")) {
+        throw new CapabilityDeniedError(pluginId, "issues.list", "issues.read_as_user");
+      }
       return services.issues.list(params);
     }),
     "issues.get": gated("issues.get", async (params) => {
@@ -938,6 +941,9 @@ export function createHostClientHandlers(
       return services.issues.createInteraction(params);
     }),
     "issues.listInteractions": gated("issues.listInteractions", async (params) => {
+      if (params.actorUserId && !capabilitySet.has("issue.interactions.read_as_user")) {
+        throw new CapabilityDeniedError(pluginId, "issues.listInteractions", "issue.interactions.read_as_user");
+      }
       return services.issues.listInteractions(params);
     }),
     "issues.respondInteraction": gated("issues.respondInteraction", async (params) => {
