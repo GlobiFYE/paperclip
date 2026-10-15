@@ -30,6 +30,7 @@ describe("project discovery result bounds", () => {
     expect(read).toMatchObject({ id: "child" });
     expect(String(fetch.mock.calls[0]?.[0])).toBe("http://paperclip.test/api/issues/child");
     expect(fetch.mock.calls[0]?.[1]).toMatchObject({ method: "GET", headers: expect.objectContaining({ Authorization: "Bearer test-token" }) });
+    expect(fetch.mock.calls[0]?.[1]?.signal).toBeInstanceOf(AbortSignal);
     await callProjectTool({ ...input, name: "paperclipUpdateIssue", arguments: { issueId: "child", status: "blocked" } });
     expect(String(fetch.mock.calls[1]?.[0])).toBe("http://paperclip.test/api/issues/child");
     expect(fetch.mock.calls[1]?.[1]).toMatchObject({ method: "PATCH", body: JSON.stringify({ status: "blocked" }) });

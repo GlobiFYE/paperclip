@@ -11,7 +11,7 @@ export function createRunTaskTools(
   allowWrites: boolean,
 ): ToolDefinition[] {
   const selected = new Set<string>(allowWrites ? [...READ_NAMES, ...WRITE_NAMES] : READ_NAMES);
-  const tools = createToolDefinitions(new PaperclipApiClient(config)).filter((tool) => selected.has(tool.name));
+  const tools = createToolDefinitions(new PaperclipApiClient(config, 60_000)).filter((tool) => selected.has(tool.name));
   if (tools.length !== selected.size) throw new Error("The run task tool catalogue is incomplete");
   return tools;
 }
