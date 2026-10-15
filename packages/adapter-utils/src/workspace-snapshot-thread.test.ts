@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { createWorkspaceManifest } from "./workspace-manifest.js";
 import {
   captureDirectorySnapshot, captureDirectorySnapshotOffThread,
-  directorySnapshotSha256, disposeDirectorySnapshot,
+  directorySnapshotSha256, disposeDirectorySnapshot, mergeDirectoryWithBaseline,
   type DirectorySnapshot,
 } from "./workspace-restore-merge.js";
 
@@ -102,6 +102,32 @@ describe("workspace snapshot threads", () => {
     expect(results[2].status).toBe("fulfilled");
     if (results[2].status === "fulfilled") await disposeDirectorySnapshot(results[2].value);
     expect(created).toHaveLength(3);
+    for (const directory of created) await expect(fs.stat(directory)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it.each(["unchanged", "changed", "sparse"] as const)("isolates restore captures and cleans their manifests: %s", async mode => {
+    const target = await fixture(), source = await fixture();
+    await fs.writeFile(path.join(target, "file"), "before");
+    const baseline = await captureDirectorySnapshot(target, { diskBacked: true });
+    snapshots.push(baseline);
+    await fs.writeFile(path.join(target, "concurrent"), "host bytes");
+    await fs.writeFile(path.join(source, "file"), mode === "unchanged" ? "before" : "after");
+    const supplied = mode === "sparse" ? await captureDirectorySnapshot(source, { diskBacked: true }) : undefined;
+    if (supplied) snapshots.push(supplied);
+    const created: string[] = [];
+    const mkdtemp = fs.mkdtemp.bind(fs);
+    vi.spyOn(fs, "mkdtemp").mockImplementation(async (...args: Parameters<typeof fs.mkdtemp>) => {
+      const result = await mkdtemp(...args);
+      if (typeof result === "string" && path.basename(result).startsWith("paperclip-snapshot-thread-")) created.push(result);
+      return result;
+    });
+    await mergeDirectoryWithBaseline({
+      baseline, sourceDir: source, targetDir: target, workspaceSnapshotIsolation: "worker",
+      ...(supplied ? { snapshots: { source: supplied } } : {}),
+    });
+    expect(created).toHaveLength(mode === "changed" ? 2 : 1);
+    expect(await fs.readFile(path.join(target, "file"), "utf8")).toBe(mode === "unchanged" ? "before" : "after");
+    expect(await fs.readFile(path.join(target, "concurrent"), "utf8")).toBe("host bytes");
     for (const directory of created) await expect(fs.stat(directory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 

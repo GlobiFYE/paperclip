@@ -16,7 +16,9 @@ response latency.
 
 ## Change boundary
 
-- Move disk-backed sandbox snapshot capture into at most two concurrent workers.
+- Move disk-backed native sandbox snapshot capture into at most two concurrent workers.
+- Keep legacy adapter snapshot capture inline; worker startup must not enter their
+  existing lifecycle deadlines.
 - Keep the existing snapshot algorithm, privacy decisions and restore semantics.
 - Give each worker a private temporary directory; transfer sealed manifest
   ownership only after successful completion and clean failed captures before
