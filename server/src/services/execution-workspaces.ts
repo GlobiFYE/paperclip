@@ -4426,6 +4426,13 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
             branchName: inspection.toBranch,
             updatedAt: now,
           };
+          const restoration = readGitCacheRestoration(lockedRow);
+          if (restoration) {
+            updatePatch.metadata = {
+              ...lockedRow.metadata,
+              gitCacheRestoration: { ...restoration, branchName: inspection.toBranch },
+            };
+          }
           if (lockedWorkspace.name === inspection.fromBranch) {
             updatePatch.name = inspection.toBranch;
           }

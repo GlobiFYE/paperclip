@@ -111,6 +111,17 @@ product acceptance. Rollback disables deletion and retains restoration support.
   SHAs, dry-run both slices, measure actual reclamation, use restored skill and
   reopened workspace through the product, inspect persisted results and protected
   data, record final evidence, and revoke temporary access. No live acceptance yet.
+- Latest branch-adoption review fix keeps the retained recipe's branch synchronized
+  with the row inside the existing reconciliation transaction. The joined restore,
+  rename, adoption, and normal-preparation case passed in 16.67s; 11 existing
+  reconciliation controls passed in 21.83s. Full typecheck/build passed for this
+  change. Evidence: `/tmp/paperclip-git-branch-adoption.log`,
+  `/tmp/paperclip-git-reconcile-controls.log`, and
+  `/tmp/paperclip-git-adoption-{typecheck,build}.log`.
+- Skill deployment artifacts finished, but its deploy stage was rejected at
+  17:50 UTC because another campaign already held the target. No competing
+  campaign was created. Inspect that operation before rerunning the same request.
+  UI fixture v2 is saved; neither staging fixture eviction nor restoration has run.
 
 ## Feedback-loop evidence
 

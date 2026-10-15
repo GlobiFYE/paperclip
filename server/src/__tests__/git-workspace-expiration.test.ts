@@ -131,6 +131,28 @@ describeEmbeddedPostgres("reconstructable Git expiration", () => {
     expect(git(f.cwd, "rev-parse", "HEAD")).toBe(continued);
   });
 
+  it("prepares a restored workspace after adopting its renamed branch", async () => {
+    const f = await fixture();
+    await f.advance();
+    expect((await f.expire()).expired).toBe(true);
+    expect(await f.reopen()).toMatchObject({ ok: true });
+    git(f.cwd, "branch", "-m", "renamed-task");
+    await db.update(executionWorkspaces).set({ status: "idle" }).where(eq(executionWorkspaces.id, f.workspaceId));
+    const svc = executionWorkspaceService(db);
+    await svc.reconcileExecutionWorkspaceBranch(f.workspaceId, {
+      mode: "forward", actor: { actorType: "user", actorId: "local-board", agentId: null, runId: null },
+    });
+    expect((await f.row()).metadata?.gitCacheRestoration).toMatchObject({
+      branchName: "renamed-task", commit: f.commitA, restoredAt: expect.any(String),
+    });
+    await ensurePersistedExecutionWorkspaceAvailable({ db, base: f.base,
+      workspace: (await svc.getStoredById(f.companyId, f.workspaceId))!,
+      issue: { id: f.issueId, identifier: "GC-1", title: "Resumed task" },
+      agent: { id: null, name: "Fixture", companyId: f.companyId }, skipHostProvision: true });
+    expect(git(f.cwd, "branch", "--show-current")).toBe("renamed-task");
+    expect(git(f.cwd, "rev-parse", "HEAD")).toBe(f.commitA);
+  });
+
   it("preserves worktrees whose Git administration parent is a symlink", async () => {
     const f = await fixture();
     const adminParent = path.join(f.baseCwd, ".git", "worktrees");
