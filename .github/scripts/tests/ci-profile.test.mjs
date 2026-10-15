@@ -232,6 +232,56 @@ test("export paces batches and retries only rejected transient events", async ()
   await assert.rejects(sendEvents([events[0]], "test-only", "paperclip-ci", async () => ({ ok: true, json: async () => [{ status: 400 }] })), /status 400/);
 });
 
+function secretReference(text, includeQuoted = false) {
+  for (const line of text.split(/[\r\n\u2028\u2029]/)) {
+    const start = line.indexOf("HONEYCOMB");
+    if (start >= 0 && line.indexOf("KEY", start + "HONEYCOMB".length) >= 0) return true;
+  }
+  let offset = 0;
+  while (offset < text.length) {
+    const start = text.indexOf("${{", offset);
+    if (start < 0) return false;
+    offset = start + 3;
+    let quoted = false;
+    let expression = "";
+    while (offset < text.length) {
+      const char = text[offset];
+      if (char === "'") {
+        if (quoted && text[offset + 1] === "'") {
+          offset += 2;
+          continue;
+        }
+        quoted = !quoted;
+        expression += includeQuoted ? char : " ";
+      } else if (!quoted) {
+        if (char === "}" && text[offset + 1] === "}") {
+          offset += 2;
+          break;
+        }
+        expression += char;
+      } else if (includeQuoted) {
+        expression += char;
+      }
+      offset += 1;
+    }
+    if (/\bsecrets\b/.test(expression)) return true;
+  }
+  return false;
+}
+
+function assertNoPrWorkflowCredentials(source) {
+  assert.equal(secretReference(source, true), false);
+}
+
+test("PR credential guard permits filenames but rejects secret expressions", () => {
+  assertNoPrWorkflowCredentials("run: node --test scripts/docker-compose-secrets.test.mjs");
+  for (const source of ["env: ${{ secrets.EXAMPLE }}", "env: ${{ secrets['EXAMPLE'] }}", "env: ${{ toJSON(secrets) }}", "env: ${{ format('}}', secrets.EXAMPLE) }}"]) {
+    assert.throws(() => assertNoPrWorkflowCredentials(source));
+  }
+  assert.throws(() => assertNoPrWorkflowCredentials("HONEYCOMB_API_KEY: example"));
+  assert.throws(() => assertNoPrWorkflowCredentials("${{ format('secrets.EXAMPLE', 'literal') }}"));
+});
+
 test("workflow exporter runs trusted code and keeps keys out of the PR jobs", () => {
   const workflow = readFileSync(new URL("../../workflows/ci-profile.yml", import.meta.url), "utf8");
   assert.match(workflow, /ref: \$\{\{ github.sha \}\}/);
@@ -239,42 +289,6 @@ test("workflow exporter runs trusted code and keeps keys out of the PR jobs", ()
   assert.match(workflow, /environment: ci-profiling/);
   assert.doesNotMatch(workflow, /head_sha|secrets: inherit|contents: write|pull-requests: write|pnpm install/);
   const pr = readFileSync(new URL("../../workflows/pr-trusted.yml", import.meta.url), "utf8");
-  // A script filename such as docker-compose-secrets.test.mjs is not a
-  // GitHub secret lookup. Check expression context, including bracket access.
-  function secretReference(text) {
-    for (const line of text.split(/[\r\n\u2028\u2029]/)) {
-      const start = line.indexOf("HONEYCOMB");
-      if (start >= 0 && line.indexOf("KEY", start + "HONEYCOMB".length) >= 0) return true;
-    }
-    let offset = 0;
-    while (offset < text.length) {
-      const start = text.indexOf("${{", offset);
-      if (start < 0) return false;
-      offset = start + 3;
-      let quoted = false;
-      let expression = "";
-      while (offset < text.length) {
-        const char = text[offset];
-        if (char === "'") {
-          if (quoted && text[offset + 1] === "'") {
-            offset += 2;
-            continue;
-          }
-          quoted = !quoted;
-          expression += " ";
-        } else if (!quoted) {
-          if (char === "}" && text[offset + 1] === "}") {
-            offset += 2;
-            break;
-          }
-          expression += char;
-        }
-        offset += 1;
-      }
-      if (/\bsecrets\b/.test(expression)) return true;
-    }
-    return false;
-  }
   assert.equal(secretReference("run: node --test scripts/docker-compose-secrets.test.mjs"), false);
   for (const lookup of ["${{ secrets.PR_TOKEN }}", "${{ secrets['PR_TOKEN'] }}", "${{\n secrets.PR_TOKEN\n }}", "${{ toJSON(secrets) }}", "${{ secrets.HONEYCOMB_API_KEY }}"]) {
     assert.equal(secretReference(lookup), true);
@@ -297,13 +311,14 @@ test("workflow exporter runs trusted code and keeps keys out of the PR jobs", ()
     const expression = "${{ format('" + "it''s ".repeat(count) + "{0}', github.sha) }}";
     return [expression, expression.replace("github.sha", "secrets.PR_TOKEN"), expression.replace("github.sha", "toJSON(secrets)")];
   });
-  const boundedScan = spawnSync(process.execPath, ["-e", `const fs=require('node:fs');const scan=${secretReference.toString()};process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync(0,'utf8')).map(scan)));`], {
+  const boundedScan = spawnSync(process.execPath, ["-e", `const fs=require('node:fs');const scan=${secretReference.toString()};process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync(0,'utf8')).map(value=>[scan(value),scan(value,true)])));`], {
     input: JSON.stringify(escapedExpressions),
     encoding: "utf8", timeout: 2_000,
   });
   assert.equal(boundedScan.status, 0, boundedScan.error?.message);
-  assert.deepEqual(JSON.parse(boundedScan.stdout), [false, true, true, false, true, true]);
+  assert.deepEqual(JSON.parse(boundedScan.stdout), [[false, false], [true, true], [true, true], [false, false], [true, true], [true, true]]);
   assert.equal(secretReference(pr), false);
+  assertNoPrWorkflowCredentials(pr);
   assert.match(pr, /if: always\(\) && env.PAPERCLIP_CI_PROFILE == 'true'/);
   assert.doesNotMatch(pr, /PAPERCLIP_CI_PROFILE:.*labels/);
   assert.equal(pr.match(/PAPERCLIP_CI_PROFILE: \$\{\{ needs.gate.outputs.profile_ci \}\}/g).length, 9);

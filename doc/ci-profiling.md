@@ -195,3 +195,13 @@ Its configured readiness window stays long. The Git regression keeps all four
 filename lanes above 32 MiB, while the staging case transfers and deletes 4,000
 files whose filename list exceeds 2 MiB. It still checks every staged file,
 unusual names, snapshot ownership, cleanup, and bounded command lengths.
+
+The Linux public-install check serves metadata read from the actual packed
+archives through a temporary loopback registry inside its download container.
+This avoids npm's file-spec manifest extraction of every archive before the
+real install. npm still verifies each archive's SHA-512 and installs the same
+packed bytes into an empty consumer. Other dependency metadata redirects to
+the public npm registry; public tarball URLs remain unchanged. The temporary
+registry closes before the existing offline lifecycle rebuild and runtime
+probes. No lifecycle, network-isolation, lock-preservation or provider checks
+are skipped. Native ARM and Mac qualification keep their existing file installs.
