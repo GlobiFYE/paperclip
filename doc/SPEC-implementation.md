@@ -753,9 +753,9 @@ run context fails closed before mutation. A run may attempt at most 20 cross-iss
 updates, or issue-thread interaction resolutions across one shared counter. The
 server records each attempt with its source issue, target issue, run, count, and
 rollout mode, and fails closed with the cap in the error once enforcement is
-active. Writes to the run's own source issue are not counted. A run that holds
-the target issue's checkout is writing to its own source issue, so those writes
-are not counted either. Only a wake on an issue gives a run a source issue, so a
+active. Writes to the run's own source issue are not counted. When a run has no
+source issue and holds the target issue's checkout, those writes are not counted
+either. Only a wake on an issue gives a run a source issue, so a
 run woken on an interval has none. The per-run cap contains such a run instead of
 refusing it, and its recorded attempts carry a null source issue.
 Assignee self-comments do not

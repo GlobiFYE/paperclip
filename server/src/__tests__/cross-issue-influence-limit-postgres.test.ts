@@ -160,6 +160,20 @@ describeEmbeddedPostgres("cross-issue influence limit PostgreSQL serialization",
       companyId,
       title: "Someone else's issue",
     }).returning({ id: issues.id });
+    // The exemption is for the checkout *this* run holds. Another run's claim is
+    // not this run's business, so reaching it must still spend the budget.
+    const [otherRun] = await db.insert(heartbeatRuns).values({
+      companyId,
+      agentId,
+      status: "running",
+      responsibleUserId: "board-user",
+      contextSnapshot: { reason: "interval_elapsed", source: "scheduler", wakeReason: "heartbeat_timer" },
+    }).returning({ id: heartbeatRuns.id });
+    const [claimedByAnotherRun] = await db.insert(issues).values({
+      companyId,
+      title: "Claimed by a different run",
+      checkoutRunId: otherRun!.id,
+    }).returning({ id: issues.id });
 
     const base = {
       companyId,
@@ -178,12 +192,26 @@ describeEmbeddedPostgres("cross-issue influence limit PostgreSQL serialization",
     await expect(observeCrossIssueInfluence(db, { ...base, targetIssueId: untouched!.id, kind: "update" }))
       .resolves.toMatchObject({ allowed: true, mode: "enforce", count: 1 });
 
+    // An issue checked out by some *other* run is a cross-issue write like any
+    // other. If this were exempt, the exemption would be "anyone's checkout"
+    // rather than "mine", and a single run could reach every claimed issue on
+    // the board for free.
+    await expect(observeCrossIssueInfluence(db, { ...base, targetIssueId: claimedByAnotherRun!.id }))
+      .resolves.toMatchObject({ allowed: true, mode: "enforce", count: 2 });
+
     const recorded = await db
-      .select({ action: activityLog.action, details: activityLog.details })
+      .select({ action: activityLog.action, details: activityLog.details, entityId: activityLog.entityId })
       .from(activityLog)
       .where(and(eq(activityLog.companyId, companyId), eq(activityLog.runId, runId)));
-    expect(recorded).toHaveLength(1);
-    expect(recorded[0]!.action).toBe("issue.cross_issue_influence_observed");
-    expect((recorded[0]!.details as { sourceIssueId: unknown }).sourceIssueId).toBeNull();
+    expect(recorded).toHaveLength(2);
+    expect(recorded.map((row) => row.action)).toEqual([
+      "issue.cross_issue_influence_observed",
+      "issue.cross_issue_influence_observed",
+    ]);
+    expect(recorded.map((row) => row.entityId).sort())
+      .toEqual([untouched!.id, claimedByAnotherRun!.id].sort());
+    for (const row of recorded) {
+      expect((row.details as { sourceIssueId: unknown }).sourceIssueId).toBeNull();
+    }
   });
 });
