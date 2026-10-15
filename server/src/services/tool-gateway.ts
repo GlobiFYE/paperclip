@@ -313,6 +313,7 @@ export interface ToolGatewayDescriptor extends AgentToolDescriptor {
   connectionId?: string | null;
   catalogEntryId?: string | null;
   upstreamToolName?: string | null;
+  legacyToolNames?: string[];
   providerMetadata?: ConnectedMcpGatewayMetadata | Record<string, unknown>;
 }
 
@@ -1334,7 +1335,7 @@ export function createToolGatewayService(
     // every tool, and one connection can expose hundreds of tools. Both reads
     // share one read-only snapshot, so they agree like a single join, and the
     // second read gets only the connections that have listed tools.
-    const { connectionRows, catalogRows } = await db.transaction(
+    const { connectionRows, catalogRows, namingRows } = await db.transaction(
       async (tx) => {
         const catalogRows = await tx
           .select({ catalogEntry: toolCatalogEntries })
@@ -1363,7 +1364,7 @@ export function createToolGatewayService(
           ),
         ];
         if (connectionIds.length === 0)
-          return { connectionRows: [], catalogRows };
+          return { connectionRows: [], catalogRows, namingRows: [] };
         const connectionRows = await tx
           .select({
             connection: toolConnections,
@@ -1380,7 +1381,19 @@ export function createToolGatewayService(
               connectedMcpConnectionFilter(companyId),
             ),
           );
-        return { connectionRows, catalogRows };
+        const namingRows = await tx
+          .select({
+            id: toolConnections.id,
+            name: toolConnections.name,
+            applicationName: toolApplications.name,
+          })
+          .from(toolConnections)
+          .innerJoin(
+            toolApplications,
+            eq(toolConnections.applicationId, toolApplications.id),
+          )
+          .where(eq(toolConnections.companyId, companyId));
+        return { connectionRows, catalogRows, namingRows };
       },
       { isolationLevel: "repeatable read", accessMode: "read only" },
     );
@@ -1402,21 +1415,39 @@ export function createToolGatewayService(
         (connection.transport === "local_stdio" &&
           application.type === "mcp_stdio")),
     );
-    const baseNames = eligibleRows.map(
-      ({ catalogEntry, connection, application }) => {
-        const applicationKey = application.applicationKey ?? null;
-        const connectionNamespace = `${slugSegment(applicationKey ?? connection.name ?? application.name, "mcp")}-${shortStableId(connection.id)}`;
-        const toolSlug = slugSegment(catalogEntry.toolName, "tool");
-        return `${connection.transport === "rest_api" ? "app" : "mcp"}.${connectionNamespace}:${toolSlug}`;
-      },
+    const connectionSlugs = new Map(
+      namingRows.map(({ id, name, applicationName }) => [
+        id,
+        slugSegment(name.split("(")[0], slugSegment(applicationName, "mcp"))
+          .slice(0, 24)
+          .replace(/-+$/, ""),
+      ]),
     );
+    const connectionSlugCounts = new Map<string, number>();
+    for (const slug of connectionSlugs.values()) {
+      connectionSlugCounts.set(slug, (connectionSlugCounts.get(slug) ?? 0) + 1);
+    }
+    const baseNames = eligibleRows.map(({ catalogEntry, connection }) => {
+      const slug = connectionSlugs.get(connection.id)!;
+      const connectionNamespace =
+        connectionSlugCounts.get(slug)! > 1
+          ? `${slug}-${shortStableId(connection.id)}`
+          : slug;
+      return `${connectionNamespace}:${slugSegment(catalogEntry.toolName, "tool")}`;
+    });
     const baseNameCounts = baseNames.reduce<Map<string, number>>(
       (counts, name) => {
         counts.set(name, (counts.get(name) ?? 0) + 1);
         return counts;
       },
-      new Map(),
+      new Map(allTools().map((tool) => [tool.name, 1])),
     );
+    const legacyBaseNames = eligibleRows.map(({ catalogEntry, connection, application }) =>
+      `${connection.transport === "rest_api" ? "app" : "mcp"}.${slugSegment(application.applicationKey ?? connection.name ?? application.name, "mcp")}-${shortStableId(connection.id)}:${slugSegment(catalogEntry.toolName, "tool")}`);
+    const legacyBaseNameCounts = new Map<string, number>();
+    for (const name of legacyBaseNames) {
+      legacyBaseNameCounts.set(name, (legacyBaseNameCounts.get(name) ?? 0) + 1);
+    }
 
     return eligibleRows.map(
       ({ catalogEntry, connection, application }, index) => {
@@ -1437,6 +1468,18 @@ export function createToolGatewayService(
           connection.id, application.id, catalogEntry.toolName,
           ...(baseNameCounts.get(baseName)! > 1 ? [catalogEntry.id] : []),
         ]);
+        const legacyBaseName = legacyBaseNames[index]!;
+        const legacyCollides = legacyBaseNameCounts.get(legacyBaseName)! > 1;
+        const unboundedLegacyName = legacyCollides
+          ? `${legacyBaseName}-${shortStableId(catalogEntry.id)}`
+          : legacyBaseName;
+        const legacyToolNames = [...new Set([
+          unboundedLegacyName,
+          boundedMcpToolName(unboundedLegacyName, [
+            connection.id, application.id, catalogEntry.toolName,
+            ...(legacyCollides ? [catalogEntry.id] : []),
+          ]),
+        ])];
         const applicationKey = application.applicationKey ?? null;
         const inputSchema = projectedConnectionToolInputSchema(
           connection,
@@ -1491,6 +1534,7 @@ export function createToolGatewayService(
           connectionId: connection.id,
           catalogEntryId: catalogEntry.id,
           upstreamToolName: catalogEntry.toolName,
+          legacyToolNames,
           providerMetadata,
         };
       },
@@ -2769,6 +2813,7 @@ export function createToolGatewayService(
         catalogEntryId: input.tool.catalogEntryId ?? null,
         providerType: input.tool.providerType,
         upstreamToolName: input.tool.upstreamToolName ?? input.tool.name,
+        legacyToolNames: input.tool.legacyToolNames ?? [],
         riskLevel: input.tool.risk,
         arguments: input.parameters ?? {},
         idempotencyKey: input.idempotencyKey ?? null,
