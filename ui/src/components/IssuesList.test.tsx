@@ -1500,7 +1500,8 @@ describe("IssuesList", () => {
     });
   });
 
-  it("uses a server total above the card cap for the board badge", async () => {
+  it.each([true, false])("uses a server total above the card cap for the board badge (streamlined=%s)", async (streamlined) => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableStreamlinedUi: streamlined });
     localStorage.setItem("paperclip:test-issues:company-1", JSON.stringify({ viewMode: "board" }));
     mockIssuesApi.count.mockImplementation((_company, filters) => Promise.resolve({ count: filters?.status === "done" ? 258 : 0 }));
     const { root } = renderWithQueryClient(<IssuesList issues={[]} viewStateKey="paperclip:test-issues" onUpdateIssue={() => undefined} />, container);
@@ -1510,7 +1511,8 @@ describe("IssuesList", () => {
     act(() => root.unmount());
   });
 
-  it("does not use an unfiltered server total with local priority filters", async () => {
+  it.each([true, false])("does not use an unfiltered server total with local priority filters (streamlined=%s)", async (streamlined) => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableStreamlinedUi: streamlined });
     localStorage.setItem("paperclip:test-issues:company-1", JSON.stringify({ viewMode: "board", priorities: ["high"] }));
     mockIssuesApi.count.mockResolvedValue({ count: 258 });
     const { root } = renderWithQueryClient(<IssuesList issues={[]} viewStateKey="paperclip:test-issues" onUpdateIssue={() => undefined} />, container);
@@ -1520,7 +1522,8 @@ describe("IssuesList", () => {
     act(() => root.unmount());
   });
 
-  it("shows a count error without presenting a capped page as the total", async () => {
+  it.each([true, false])("shows a count error without presenting a capped page as the total (streamlined=%s)", async (streamlined) => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableStreamlinedUi: streamlined });
     localStorage.setItem("paperclip:test-issues:company-1", JSON.stringify({ viewMode: "board" }));
     mockIssuesApi.count.mockRejectedValue(new Error("Count unavailable"));
     const { root } = renderWithQueryClient(<IssuesList issues={[]} viewStateKey="paperclip:test-issues" onUpdateIssue={() => undefined} />, container);
@@ -1529,7 +1532,8 @@ describe("IssuesList", () => {
     act(() => root.unmount());
   });
 
-  it("shows a refinement hint when a board column hits its server cap", async () => {
+  it.each([true, false])("shows a refinement hint when a board column hits its server cap (streamlined=%s)", async (streamlined) => {
+    mockInstanceSettingsApi.getExperimental.mockResolvedValue({ enableStreamlinedUi: streamlined });
     localStorage.setItem(
       "paperclip:test-issues:company-1",
       JSON.stringify({ viewMode: "board" }),
@@ -1562,6 +1566,7 @@ describe("IssuesList", () => {
 
     await waitForAssertion(() => {
       expect(container.textContent).toContain("Some board columns are showing up to 200 tasks. Refine filters or search to reveal the rest.");
+      expect(mockKanbanBoard).toHaveBeenLastCalledWith(expect.objectContaining({ cappedStatuses: ["backlog"] }));
     });
 
     act(() => {

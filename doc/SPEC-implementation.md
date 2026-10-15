@@ -250,7 +250,7 @@ of the card page limit. The count endpoint applies the same visibility, company,
 creation, search, and filter conditions as the list endpoint, without pagination.
 Loading or failed counts must not turn a capped page into an exact total. When
 client-only filters prevent an exact count, capped columns show a lower bound
-with a `+` suffix. Card rendering and incremental reveal remain bounded.
+with a `+` suffix. Card rendering and incremental reveal remain bounded. Both supported board implementations (streamlined and legacy) use the same count and lower-bound rules.
 
 Task creation accepts an omitted or blank title when the description contains a prompt.
 The server stores the first 120 characters of its whitespace-normalized prompt as
