@@ -828,7 +828,7 @@ async function finalizePreparedRuntime(input: {
   await input.assertOwnership?.();
   const finalSnapshot =
     await import("@paperclipai/adapter-utils/workspace-restore-merge").then(
-      ({ captureDirectorySnapshot }) =>
+      ({ captureDirectorySnapshotOffThread: captureDirectorySnapshot }) =>
         captureDirectorySnapshot(input.descriptor.binding.localCwd, {
           exclude: input.runtime.workspaceSyncSnapshot?.baseline.exclude ?? [],
           ignoredPaths: input.runtime.workspaceSyncSnapshot?.baseline.ignoredPaths,

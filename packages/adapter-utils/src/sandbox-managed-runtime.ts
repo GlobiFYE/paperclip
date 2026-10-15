@@ -33,7 +33,7 @@ import {
   WORKSPACE_GIT_SCAN_SATURATED_CODE,
 } from "./git-workspace-sync.js";
 import {
-  captureDirectorySnapshot,
+  captureDirectorySnapshotOffThread as captureDirectorySnapshot,
   directorySnapshotSha256,
   classifyWorkspaceRestoreFailure,
   disposeDirectorySnapshot,
