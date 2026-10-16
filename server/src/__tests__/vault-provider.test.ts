@@ -186,6 +186,12 @@ describe("validateConfig — mount, prefix, role, retention", () => {
     expect(r.ok).toBe(false);
   });
 
+  it("rejects a namespace with control characters", async () => {
+    const r = await check({ namespace: "bad\r\nns" });
+    expect(r.ok).toBe(false);
+    expect(r.warnings.join(" ")).toMatch(/namespace/);
+  });
+
   it("accepts a fully valid kubernetes-auth config", async () => {
     const r = await check({
       kvMount: "secret",
@@ -424,6 +430,73 @@ describe("resolveVaultConfig", () => {
     });
     expect(r.config?.auth.saTokenPath).toBe("/operator/jwt");
     expect(r.warnings).toHaveLength(0);
+  });
+
+  it("operator env kvMount wins over a per-vault config mountPath, warning on the redirect", () => {
+    const r = resolveVaultConfig({
+      env: { PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200", PAPERCLIP_SECRETS_VAULT_KV_MOUNT: "op-mount" },
+      providerConfig: {
+        id: "v1",
+        provider: "vault",
+        status: "ready",
+        config: { address: "https://v:8200", mountPath: "attacker-mount" },
+      },
+    });
+    expect(r.config?.kvMount).toBe("op-mount");
+    expect(r.warnings.join(" ")).toMatch(/mountPath is overridden by the operator/i);
+  });
+
+  it("ignores a per-vault config kvPathPrefix when no operator pin is set (no opt-in)", () => {
+    const r = resolveVaultConfig({
+      env: { PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200" },
+      providerConfig: {
+        id: "v1",
+        provider: "vault",
+        status: "ready",
+        config: { address: "https://v:8200", secretPathPrefix: "attacker-prefix" },
+      },
+    });
+    expect(r.config?.kvPathPrefix).toBe("paperclip");
+    expect(r.warnings.join(" ")).toMatch(/secretPathPrefix is ignored/i);
+  });
+
+  it("honors a per-vault config kvMount when the operator opts in (ALLOW_CONFIG_ADDR=1)", () => {
+    const r = resolveVaultConfig({
+      env: { PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200", PAPERCLIP_SECRETS_VAULT_ALLOW_CONFIG_ADDR: "1" },
+      providerConfig: {
+        id: "v1",
+        provider: "vault",
+        status: "ready",
+        config: { address: "https://v:8200", mountPath: "custom-mount" },
+      },
+    });
+    expect(r.config?.kvMount).toBe("custom-mount");
+  });
+
+  it("operator env namespace wins over a per-vault config namespace", () => {
+    const r = resolveVaultConfig({
+      env: {
+        PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200",
+        PAPERCLIP_SECRETS_VAULT_NAMESPACE: "op/ns",
+      },
+      providerConfig: {
+        id: "v1",
+        provider: "vault",
+        status: "ready",
+        config: { address: "https://v:8200", namespace: "company/ns" },
+      },
+    });
+    expect(r.config?.namespace).toBe("op/ns");
+    expect(r.warnings.join(" ")).toMatch(/namespace is overridden by the operator/i);
+  });
+
+  it("rejects a namespace with control characters", () => {
+    const r = resolveVaultConfig({
+      env: { PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200", PAPERCLIP_SECRETS_VAULT_NAMESPACE: "bad\r\nns" },
+      providerConfig: null,
+    });
+    expect(r.warnings.join(" ")).toMatch(/namespace/i);
+    expect(r.config?.namespace).toBeNull();
   });
 
   it("rejects a kvPathPrefix containing a '..' segment", () => {
@@ -991,10 +1064,11 @@ describe("createSecret", () => {
       gateway: gw.impl,
     });
     process.env.VAULT_TOKEN = "static";
-    // Simulate a previous create that already wrote version 1 (a lost-response
-    // retry). A second createSecret must not write a second version.
+    // Simulate a previous create that already wrote version 1 with the SAME
+    // value (a lost-response retry). A second createSecret must not write a
+    // second version.
     const key = "secret/paperclip/prod-eu1/co-1/GH_TOKEN";
-    gw.store.set(key, { versions: [[JSON.stringify({ value: "first" })]] });
+    gw.store.set(key, { versions: [[JSON.stringify({ value: "supersecret" })]] });
 
     const result = await provider.createSecret({
       value: "supersecret",
@@ -1011,7 +1085,47 @@ describe("createSecret", () => {
     // Re-read the existing version instead of advancing it.
     expect(result.providerVersionRef).toBe("1");
     expect(gw.store.get(key)!.versions).toHaveLength(1);
-    expect(JSON.parse(gw.store.get(key)!.versions[0]![0])).toEqual({ value: "first" });
+    expect(JSON.parse(gw.store.get(key)!.versions[0]![0])).toEqual({ value: "supersecret" });
+  });
+
+  it("rejects a create-only CAS conflict when the existing entry holds a different value (rename-then-recreate)", async () => {
+    const gw = fakeVaultGateway();
+    const provider = createVaultProvider({
+      config: {
+        address: "https://v",
+        namespace: null,
+        kvMount: "secret",
+        kvPathPrefix: "paperclip",
+        auth: { method: "token", role: null, saTokenPath: "/dev/null" },
+        versionRetention: 7,
+      },
+      gateway: gw.impl,
+    });
+    process.env.VAULT_TOKEN = "static";
+    // A previous secret already owns this path (value "oldvalue"). A NEW secret
+    // created under the now-free key must not silently adopt that version — it
+    // would resolve to the old secret's value.
+    const key = "secret/paperclip/prod-eu1/co-1/GH_TOKEN";
+    gw.store.set(key, { versions: [[JSON.stringify({ value: "oldvalue" })]] });
+
+    await expect(
+      provider.createSecret({
+        value: "supersecret",
+        context: {
+          companyId: "co-1",
+          deploymentId: "prod-eu1",
+          secretId: "sec-1",
+          secretKey: "GH_TOKEN",
+          secretName: "GitHub Token",
+          version: 1,
+        } as never,
+      }),
+    ).rejects.toMatchObject({
+      code: "conflict",
+      message: /already holds a different value/,
+    });
+    // The colliding value must not have been overwritten.
+    expect(gw.store.get(key)!.versions).toHaveLength(1);
   });
 
   it("rethrows a genuine create 400 when the entry does not actually exist", async () => {
@@ -1270,11 +1384,12 @@ describe("createVersion", () => {
     });
   });
 
-  it("maps CAS mismatch to SecretProviderClientError(code:conflict)", async () => {
+  it("self-heals a CAS mismatch by writing on top of the current version (lost-response/desync recovery)", async () => {
     const gw = fakeVaultGateway();
-    // Pre-seed three versions so the fake gateway's CAS check rejects
-    // cas=2 (the current stored version is 3). The service-shaped context is
-    // `version: 3` (next), which the provider must convert to cas 2.
+    // Pre-seed three versions so the fake gateway's CAS check rejects cas=2
+    // (the current stored version is 3). The service-shaped context is
+    // `version: 3` (next) -> cas 2, which is now stale: a prior rotate's write
+    // committed but its response/DB step was lost, leaving Vault one ahead.
     gw.store.set("secret/paperclip/d/co/K", {
       versions: [
         [JSON.stringify({ value: "v1" })],
@@ -1291,37 +1406,67 @@ describe("createVersion", () => {
         auth: { method: "token", role: null, saTokenPath: "/dev/null" },
         versionRetention: 10,
       },
-      gateway: {
-        ...gw.impl,
-        putKv: async (input) => {
-          if (input.cas !== undefined && input.cas === 1) {
-            throw new SecretProviderClientError({
-              code: "conflict",
-              provider: "vault",
-              operation: "putKv",
-              message: "cas mismatch",
-            });
-          }
-          return gw.impl.putKv(input);
-        },
-      },
+      gateway: gw.impl,
     });
     process.env.VAULT_TOKEN = "static";
 
-    await expect(
-      provider.createVersion({
-        value: "v3",
-        context: {
-          companyId: "co",
-          deploymentId: "d",
-          secretId: "s",
-          secretKey: "K",
-          secretName: "K",
-          version: 3,
-        },
-        externalRef: "secret/paperclip/d/co/K",
-      }),
-    ).rejects.toMatchObject({ code: "conflict" });
+    const result = await provider.createVersion({
+      value: "v3",
+      context: {
+        companyId: "co",
+        deploymentId: "d",
+        secretId: "s",
+        secretKey: "K",
+        secretName: "K",
+        version: 3,
+      },
+      externalRef: "secret/paperclip/d/co/K",
+    });
+    // Self-heal: re-read the actual current version (3), then write on top with
+    // cas=3 -> version 4. Rotation must not brick permanently on a lost write.
+    expect(result.providerVersionRef).toBe("4");
+    const stored = gw.store.get("secret/paperclip/d/co/K")!;
+    expect(stored.versions).toHaveLength(4);
+    expect(JSON.parse(stored.versions[3][0])).toEqual({ value: "v3" });
+  });
+
+  it("adopts the existing version on a CAS conflict when it already holds the intended value (idempotent replay)", async () => {
+    const gw = fakeVaultGateway();
+    // A lost-response rotate already wrote version 2 = "v2"; the retry must
+    // adopt it rather than writing a third version.
+    gw.store.set("secret/paperclip/d/co/K", {
+      versions: [
+        [JSON.stringify({ value: "v1" })],
+        [JSON.stringify({ value: "v2" })],
+      ],
+    });
+    const provider = createVaultProvider({
+      config: {
+        address: "https://v",
+        namespace: null,
+        kvMount: "secret",
+        kvPathPrefix: "paperclip",
+        auth: { method: "token", role: null, saTokenPath: "/dev/null" },
+        versionRetention: 10,
+      },
+      gateway: gw.impl,
+    });
+    process.env.VAULT_TOKEN = "static";
+
+    const result = await provider.createVersion({
+      value: "v2",
+      context: {
+        companyId: "co",
+        deploymentId: "d",
+        secretId: "s",
+        secretKey: "K",
+        secretName: "K",
+        version: 2,
+      },
+      externalRef: "secret/paperclip/d/co/K",
+    });
+    expect(result.providerVersionRef).toBe("2");
+    expect(gw.store.get("secret/paperclip/d/co/K")!.versions).toHaveLength(2);
   });
 
   it("applies max_versions on rotation (createVersion refreshes KV metadata)", async () => {
@@ -1470,6 +1615,28 @@ describe("linkExternalSecret", () => {
       provider.linkExternalSecret({ externalRef: "secret/paperclip/d/co/SOMETHING" }),
     ).rejects.toThrow(/managed/);
   });
+
+  it("rejects an external ref overlapping the deployment-wide prefix even when the provider config relocated its own prefix", async () => {
+    // Simulate a company that overrode its own kvMount/kvPathPrefix (operator
+    // opted in). The guard must still reject a ref into the deployment-wide
+    // managed prefix ("secret"/"paperclip" from env/defaults), because that is
+    // where other companies' managed secrets live.
+    const provider = createVaultProvider({
+      config: {
+        address: "https://v",
+        namespace: null,
+        kvMount: "attacker-mount",
+        kvPathPrefix: "zzz",
+        auth: { method: "token", role: null, saTokenPath: "/dev/null" },
+        versionRetention: 10,
+      },
+      gateway: fakeVaultGateway().impl,
+    });
+    process.env.VAULT_TOKEN = "static";
+    await expect(
+      provider.linkExternalSecret({ externalRef: "secret/paperclip/d/co/SOMETHING" }),
+    ).rejects.toThrow(/managed/);
+  });
 });
 
 describe("resolveVersion — external", () => {
@@ -1599,6 +1766,28 @@ describe("healthCheck", () => {
     process.env.VAULT_TOKEN = "hvs.SECRET_SHOULD_NOT_LEAK";
     const r = await provider.healthCheck();
     expect(JSON.stringify(r)).not.toContain("hvs.SECRET_SHOULD_NOT_LEAK");
+  });
+
+  it("does not disclose the deployment token's TTL, renewability, policies, or capabilities", async () => {
+    const provider = createVaultProvider({
+      config: {
+        address: "https://v",
+        namespace: null,
+        kvMount: "secret",
+        kvPathPrefix: "paperclip",
+        auth: { method: "token", role: null, saTokenPath: "/dev/null" },
+        versionRetention: 10,
+      },
+      gateway: gwWith({}),
+    });
+    process.env.VAULT_TOKEN = "static";
+    const r = await provider.healthCheck();
+    expect(r.status).toBe("ok");
+    const details = (r as { details?: Record<string, unknown> }).details ?? {};
+    expect(details.tokenTtlSec).toBeUndefined();
+    expect(details.tokenRenewable).toBeUndefined();
+    expect(details.policies).toBeUndefined();
+    expect(details.capabilities).toBeUndefined();
   });
 });
 

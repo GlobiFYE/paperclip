@@ -181,6 +181,7 @@ function validateAddress(raw: unknown, warnings: string[]): URL | null {
 
 const KV_MOUNT_PATTERN = /^[A-Za-z0-9._-]+$/;
 const KV_PREFIX_PATTERN = /^[A-Za-z0-9._/-]+$/;
+const NAMESPACE_PATTERN = /^[A-Za-z0-9._/-]+$/;
 const ROLE_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
 function validateKvMount(raw: unknown, warnings: string[]): string | null {
@@ -222,6 +223,24 @@ function validateKvPathPrefix(raw: unknown, warnings: string[]): string | null {
   }
   if (!KV_PREFIX_PATTERN.test(value)) {
     warnings.push(`kvPathPrefix must match [A-Za-z0-9._/-]; got ${value}`);
+    return null;
+  }
+  return value;
+}
+
+function validateNamespace(raw: unknown, warnings: string[]): string | null {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const value = asString(raw);
+  if (!value) {
+    warnings.push("namespace must be a non-empty string");
+    return null;
+  }
+  // namespace is injected into the x-vault-namespace header. undici rejects
+  // CR/LF so a control character cannot smuggle a header, but a company
+  // writer could still store a namespace that breaks its own requests; keep
+  // it to the same safe character class as the other path fields.
+  if (!NAMESPACE_PATTERN.test(value) || value.includes("\r") || value.includes("\n")) {
+    warnings.push(`namespace must match [A-Za-z0-9._/-] with no control characters; got ${value}`);
     return null;
   }
   return value;
@@ -284,6 +303,64 @@ function validateNoCredentialFields(
   }
 }
 
+/**
+ * Resolve one operator-pinned field with the same policy as the address: the
+ * operator env value wins; a per-vault company-config value is honored only
+ * when no operator pin is set AND the operator has opted in with
+ * PAPERCLIP_SECRETS_VAULT_ALLOW_CONFIG_ADDR=1; otherwise it is ignored and a
+ * warning is emitted. Returns the effective raw value (or null), which the
+ * caller validates (validators map null/undefined to their own default).
+ */
+function pinOperatorField(input: {
+  operatorValue: string | undefined;
+  configValue: string | null;
+  allowConfig: boolean;
+  label: string;
+  envName: string;
+  consequence: string;
+  warnings: string[];
+}): string | null {
+  const { operatorValue, configValue, allowConfig, label, envName, consequence, warnings } = input;
+  if (configValue === null) return operatorValue ?? null;
+  if (operatorValue !== undefined) {
+    if (configValue !== operatorValue) {
+      warnings.push(
+        `vault config ${label} is overridden by the operator-deployed ${label}; ` +
+          `a per-vault ${label} cannot ${consequence}`,
+      );
+    }
+    return operatorValue;
+  }
+  if (!allowConfig) {
+    warnings.push(
+      `vault config ${label} is ignored: no operator-pinned ${label} is set ` +
+        `(${envName}) and the operator has not set PAPERCLIP_SECRETS_VAULT_ALLOW_CONFIG_ADDR=1, ` +
+        `so a company-config ${label} may not ${consequence}`,
+    );
+    return null;
+  }
+  return configValue;
+}
+
+/**
+ * The deployment-wide managed prefix (mount + path prefix), resolved from
+ * operator env only (never a company config). This is the boundary
+ * `assertNotManagedOverlap` and `createVersion`'s managed-prefix check guard
+ * against, so no per-vault company override of `mountPath`/`secretPathPrefix`
+ * can relocate the boundary and make an external reference to another
+ * company's managed path pass the guard.
+ */
+export function resolveDeploymentManagedPrefix(
+  env: NodeJS.ProcessEnv = process.env,
+): { mount: string; pathPrefix: string } {
+  const warnings: string[] = [];
+  const mount =
+    validateKvMount(env.PAPERCLIP_SECRETS_VAULT_KV_MOUNT, warnings) ?? DEFAULT_KV_MOUNT;
+  const pathPrefix =
+    validateKvPathPrefix(env.PAPERCLIP_SECRETS_VAULT_KV_PATH_PREFIX, warnings) ?? DEFAULT_KV_PATH_PREFIX;
+  return { mount, pathPrefix };
+}
+
 export interface ResolvedVaultConfig {
   config: VaultProviderConfig | null;
   warnings: string[];
@@ -298,11 +375,6 @@ export function resolveVaultConfig(input: {
     (input.providerConfig?.config ?? {}) as Record<string, unknown>;
 
   validateNoCredentialFields(vaultConfig, warnings);
-
-  function fromConfigOrEnv(key: keyof typeof vaultConfig, envKey: string): unknown {
-    if (vaultConfig[key] !== undefined) return vaultConfig[key];
-    return input.env[envKey];
-  }
 
   // The address is the endpoint that receives the deployment's Vault bootstrap
   // credential (env VAULT_TOKEN, the k8s SA token, or
@@ -349,19 +421,45 @@ export function resolveVaultConfig(input: {
         "a per-vault vault address cannot redirect the deployment's Vault credential to a different host",
     );
   }
+  // kvMount/kvPathPrefix/namespace locate where Paperclip's *managed* secrets
+  // live. They are operator-pinned for the same reason as the address: if a
+  // company config could relocate the managed prefix, the external-reference
+  // overlap guard (assertNotManagedOverlap) would be keyed on the company's
+  // own prefix and a company writer could point an external_reference at
+  // another company's managed path and read it with the shared deployment
+  // token. So operator env wins; a company config value is honored only when
+  // no operator pin is set AND the operator opted in with
+  // PAPERCLIP_SECRETS_VAULT_ALLOW_CONFIG_ADDR=1 (the same flag that gates the
+  // address), otherwise it is ignored + warned.
+  const operatorKvMount = asString(input.env.PAPERCLIP_SECRETS_VAULT_KV_MOUNT) ?? undefined;
+  const configKvMount =
+    asString(vaultConfig.mountPath) ?? asString(vaultConfig.kvMount);
   const kvMount = validateKvMount(
-    // The API/UI schema (and the shared VaultProviderConfig type) uses
-    // mountPath/secretPathPrefix; kvMount/kvPathPrefix are the legacy names
-    // some providers/tests were written against. Both are accepted.
-    fromConfigOrEnv("mountPath", "PAPERCLIP_SECRETS_VAULT_KV_MOUNT") ??
-      vaultConfig.kvMount ??
-      input.env.PAPERCLIP_SECRETS_VAULT_KV_MOUNT,
+    pinOperatorField({
+      operatorValue: operatorKvMount,
+      configValue: configKvMount,
+      allowConfig: allowConfigAddress,
+      label: "mountPath",
+      envName: "PAPERCLIP_SECRETS_VAULT_KV_MOUNT",
+      consequence: "relocate the managed prefix",
+      warnings,
+    }),
     warnings,
   );
+  const operatorKvPathPrefix =
+    asString(input.env.PAPERCLIP_SECRETS_VAULT_KV_PATH_PREFIX) ?? undefined;
+  const configKvPathPrefix =
+    asString(vaultConfig.secretPathPrefix) ?? asString(vaultConfig.kvPathPrefix);
   const kvPathPrefix = validateKvPathPrefix(
-    fromConfigOrEnv("secretPathPrefix", "PAPERCLIP_SECRETS_VAULT_KV_PATH_PREFIX") ??
-      vaultConfig.kvPathPrefix ??
-      input.env.PAPERCLIP_SECRETS_VAULT_KV_PATH_PREFIX,
+    pinOperatorField({
+      operatorValue: operatorKvPathPrefix,
+      configValue: configKvPathPrefix,
+      allowConfig: allowConfigAddress,
+      label: "secretPathPrefix",
+      envName: "PAPERCLIP_SECRETS_VAULT_KV_PATH_PREFIX",
+      consequence: "relocate the managed prefix",
+      warnings,
+    }),
     warnings,
   );
 
@@ -409,9 +507,18 @@ export function resolveVaultConfig(input: {
         : undefined;
   const versionRetention = validateVersionRetention(versionRetentionRaw, warnings);
 
-  const namespace =
-    asString(vaultConfig.namespace) ??
-    asString(input.env.PAPERCLIP_SECRETS_VAULT_NAMESPACE);
+  const namespace = validateNamespace(
+    pinOperatorField({
+      operatorValue: asString(input.env.PAPERCLIP_SECRETS_VAULT_NAMESPACE) ?? undefined,
+      configValue: asString(vaultConfig.namespace),
+      allowConfig: allowConfigAddress,
+      label: "namespace",
+      envName: "PAPERCLIP_SECRETS_VAULT_NAMESPACE",
+      consequence: "change the Vault namespace the deployment credential targets",
+      warnings,
+    }),
+    warnings,
+  );
 
   if (!url || !kvMount || !kvPathPrefix || !auth || versionRetention === null) {
     return { config: null, warnings };
@@ -465,10 +572,16 @@ function externalReferenceMaterial(ref: ParsedExternalRef): VaultManagedMaterial
   };
 }
 
-function assertNotManagedOverlap(config: VaultProviderConfig, ref: ParsedExternalRef): void {
-  if (ref.mount === config.kvMount && (ref.path === config.kvPathPrefix || ref.path.startsWith(`${config.kvPathPrefix}/`))) {
+function assertNotManagedOverlap(
+  managed: { mount: string; pathPrefix: string },
+  ref: ParsedExternalRef,
+): void {
+  if (
+    ref.mount === managed.mount &&
+    (ref.path === managed.pathPrefix || ref.path.startsWith(`${managed.pathPrefix}/`))
+  ) {
     throw unprocessable(
-      `vault external ref overlaps Paperclip-managed prefix '${config.kvMount}/${config.kvPathPrefix}'`,
+      `vault external ref overlaps Paperclip-managed prefix '${managed.mount}/${managed.pathPrefix}'`,
     );
   }
 }
@@ -581,6 +694,7 @@ export function createVaultProvider(
       // canonical config is flagged here rather than only in resolveVaultConfig.
       validateKvMount(rawConfig.mountPath ?? rawConfig.kvMount, warnings);
       validateKvPathPrefix(rawConfig.secretPathPrefix ?? rawConfig.kvPathPrefix, warnings);
+      validateNamespace(rawConfig.namespace, warnings);
       validateAuthBlock(rawConfig.auth, warnings);
       validateVersionRetention(rawConfig.versionRetention, warnings);
       return { ok: warnings.length === 0, warnings };
@@ -631,10 +745,24 @@ export function createVaultProvider(
             if (err instanceof SecretProviderClientError && err.code === "conflict") {
               // Vault returns 400 for both a genuine create-only CAS conflict
               // (a lost-response retry already wrote the entry) and other
-              // create errors. Confirm the entry exists before treating this
-              // as a replay; if it does not, the 400 was real — rethrow.
+              // create errors. Confirm the entry exists AND holds the value we
+              // are writing before treating this as a replay: a matching value
+              // is a lost-response replay (adopt the existing version); a
+              // DIFFERENT value means the path was re-keyed to a colliding
+              // secret key (rename-then-recreate) and adopting its version
+              // would silently point the new secret at the old secret's value,
+              // so reject with a clear conflict instead.
               try {
                 const existing = await gateway.getKv({ mount: config.kvMount, path });
+                if (existing.data["value"] !== input.value) {
+                  throw new SecretProviderClientError({
+                    code: "conflict",
+                    provider: "vault",
+                    operation: "putKv",
+                    message:
+                      `vault managed path '${config.kvMount}/${path}' already holds a different value`,
+                  });
+                }
                 version = existing.version;
               } catch (reReadErr) {
                 if (reReadErr instanceof SecretProviderClientError && reReadErr.code === "not_found") {
@@ -713,12 +841,39 @@ export function createVaultProvider(
             path,
             maxVersions: config.versionRetention,
           });
-          const { version } = await gateway.putKv({
-            mount,
-            path,
-            data: { value: input.value },
-            cas,
-          });
+          let version: number;
+          try {
+            ({ version } = await gateway.putKv({
+              mount,
+              path,
+              data: { value: input.value },
+              cas,
+            }));
+          } catch (err) {
+            if (err instanceof SecretProviderClientError && err.code === "conflict") {
+              // The CAS base (ctx.version - 1) is stale when a prior rotate's
+              // write committed but its response was lost (or a DB rollback
+              // left an orphaned version): Vault is ahead of Paperclip's
+              // latestVersion. Self-heal by re-reading the actual current
+              // version. If it already holds the value we are writing, this is
+              // an idempotent replay — adopt it. Otherwise write on top of the
+              // actual current version (a corrected CAS), so rotation never
+              // bricks permanently on a single lost response.
+              const existing = await gateway.getKv({ mount, path });
+              if (existing.data["value"] === input.value) {
+                version = existing.version;
+              } else {
+                ({ version } = await gateway.putKv({
+                  mount,
+                  path,
+                  data: { value: input.value },
+                  cas: existing.version,
+                }));
+              }
+            } else {
+              throw err;
+            }
+          }
           return {
             material: managedMaterial({ mount, path, version }),
             valueSha256,
@@ -732,7 +887,12 @@ export function createVaultProvider(
     async linkExternalSecret(input) {
       const config = resolveConfig(input.providerConfig);
       const parsed = parseExternalRef(input.externalRef);
-      assertNotManagedOverlap(config, parsed);
+      // Guard against the deployment-wide managed prefix (operator env or
+      // default), never the caller's own resolved config: a company that
+      // relocated its own prefix (when the operator opted in) must still be
+      // unable to link an external reference into another company's managed
+      // path under the deployment-wide prefix.
+      assertNotManagedOverlap(resolveDeploymentManagedPrefix(), parsed);
       const fingerprint = createHash("sha256")
         .update(`${parsed.mount}/${parsed.path}#${parsed.dataKey}`)
         .digest("hex");
@@ -868,10 +1028,12 @@ export function createVaultProvider(
         }
         await tokenManager.acquire();
         if (tokenManager.sourceMode === "token") {
-          const info = await gateway.lookupSelf();
-          details.tokenTtlSec = info.leaseDurationSec;
-          details.tokenRenewable = info.renewable;
-          details.policies = info.policies;
+          // Verify the bootstrap token is live (lookup-self). Do NOT expose
+          // its TTL, renewability, or policy names to company writers: health
+          // is company-scoped, and those fields disclose the deployment
+          // credential's auth posture. The probe still fails here on an
+          // invalid token, but the token's posture stays server-side.
+          await gateway.lookupSelf();
         }
       } catch (error) {
         warnings.push(`auth probe failed: ${(error as Error).message}`);
@@ -897,7 +1059,9 @@ export function createVaultProvider(
         if (missing.length > 0) {
           warnings.push(`missing vault capabilities on ${probePath}: ${missing.join(", ")}`);
         }
-        details.capabilities = granted;
+        // capabilities are not surfaced to company writers (health is
+        // company-scoped); the missing-capability warnings above are the only
+        // consumer-facing signal.
       } catch (error) {
         warnings.push(`capabilities probe failed: ${(error as Error).message}`);
       }
