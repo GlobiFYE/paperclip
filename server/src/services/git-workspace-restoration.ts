@@ -10,6 +10,7 @@ import type { GitRemoteAuthProvider } from "./git-credentials.js";
 import { isRuntimeOwnedGitBranch } from "./execution-workspace-branch-ownership.js";
 import { recordedIsolatedRemoteSource, verifiedRecordedIsolatedRemoteSource, materializeIsolatedRemoteWorkspaceSource } from "./isolated-remote-workspace-source.js";
 import { findRegenerableWorkspaceDirs } from "./workspace-compaction.js";
+import { PROJECT_REPOSITORIES_DIR } from "@paperclipai/adapter-utils/git-workspace-sync";
 
 const execFile = promisify(execFileCallback);
 const shaPattern = /^[a-f0-9]{40}$/;
@@ -170,7 +171,64 @@ export async function assertReproducibleBaseGitStorage(cwd: string, signal?: Abo
   for (const directory of ["objects", "refs", "logs"]) await walk(directory);
 }
 
-/** Inspect every untracked/ignored file. Only repository-ignored regenerable directories qualify. */
+/**
+ * Paperclip writes this file into the worktree on every Claude run (it merges
+ * its permission rules into whatever is there), so a terminal worktree's copy
+ * is regenerated when the task runs again.
+ */
+const PAPERCLIP_CLAUDE_SETTINGS_FILE = ".claude/settings.local.json";
+
+/**
+ * Lists the managed project checkouts under `.paperclip-repositories/` that
+ * hold nothing a fresh clone would not: workspace preparation re-clones a
+ * missing `<repo>-<hash>` checkout on the next run. A checkout qualifies only
+ * when it is its own repository with a clean tree (untracked files included),
+ * no stash, no in-progress operation, every local commit on a remote, and no
+ * ignored files beyond its own regenerable directories. Task repositories
+ * (`task-repo-*`) carry access receipts and are never listed.
+ */
+async function reproducibleManagedProjectCheckouts(cwd: string, signal?: AbortSignal): Promise<string[]> {
+  const root = path.join(cwd, PROJECT_REPOSITORIES_DIR);
+  const rootEntry = await fs.lstat(root).catch(() => null);
+  if (!rootEntry?.isDirectory()) return [];
+  const reproducible: string[] = [];
+  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
+    signal?.throwIfAborted();
+    if (!entry.isDirectory() || entry.name.startsWith("task-repo-") || entry.name.includes(".clone-")) continue;
+    const checkout = path.join(root, entry.name);
+    if (await isReproducibleManagedCheckout(checkout, signal)) reproducible.push(`${PROJECT_REPOSITORIES_DIR}/${entry.name}`);
+  }
+  return reproducible;
+}
+
+async function isReproducibleManagedCheckout(checkout: string, signal?: AbortSignal): Promise<boolean> {
+  const gitDir = await fs.lstat(path.join(checkout, ".git")).catch(() => null);
+  if (!gitDir?.isDirectory()) return false;
+  try {
+    if ((await gitCacheCommand(checkout, ["rev-parse", "--show-toplevel"], signal)).trim() !== await fs.realpath(checkout)) return false;
+    if ((await gitCacheCommand(checkout, ["status", "--porcelain=v1", "--untracked-files=all", "-z"], signal)).length) return false;
+    if ((await gitCacheCommand(checkout, ["for-each-ref", "--count=1", "refs/stash"], signal)).trim()) return false;
+    for (const name of ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG", "rebase-apply", "rebase-merge", "sequencer"]) {
+      if (await fs.lstat(path.join(checkout, ".git", name)).then(() => true, () => false)) return false;
+    }
+    // Every local commit (branches and a detached HEAD) must already be on a
+    // remote; a checkout with no remote fails here too.
+    if ((await gitCacheCommand(checkout, ["rev-list", "--max-count=1", "HEAD", "--branches", "--not", "--remotes"], signal)).trim()) return false;
+    if (!(await gitCacheCommand(checkout, ["for-each-ref", "--count=1", "refs/remotes"], signal)).trim()) return false;
+    const regenerable = await findRegenerableWorkspaceDirs(checkout, { signal });
+    const ignored = (await gitCacheCommand(checkout, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], signal)).split("\0").filter(Boolean);
+    return ignored.every(file => regenerable.some(dir => file.startsWith(`${dir}/`)));
+  } catch (error) {
+    if (signal?.aborted) throw error;
+    return false;
+  }
+}
+
+/**
+ * Inspect every untracked/ignored file. Only repository-ignored regenerable
+ * directories, Paperclip's Claude settings file, and reproducible managed
+ * project checkouts qualify.
+ */
 export async function assertReproducibleGitFiles(cwd: string, signal?: AbortSignal) {
   if ((await gitCacheCommand(cwd, ["status", "--porcelain=v1", "--untracked-files=all", "-z"], signal)).length) throw new Error("dirty_or_untracked_files");
   if ((await gitCacheCommand(cwd, ["ls-files", "-v"], signal)).split("\n").some(line => /^[a-zS] /.test(line))) throw new Error("unsupported_index_flags");
@@ -178,7 +236,14 @@ export async function assertReproducibleGitFiles(cwd: string, signal?: AbortSign
   if (localConfig.split("\n").filter(Boolean).some(key => !/^(core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode)|remote\.origin\.(url|fetch)|branch\.[^.]+\.(remote|merge))$/.test(key))) throw new Error("unsupported_local_git_config");
   const regenerable = await findRegenerableWorkspaceDirs(cwd, { signal });
   const ignored = (await gitCacheCommand(cwd, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], signal)).split("\0").filter(Boolean);
-  if (ignored.some(file => !regenerable.some(dir => file.startsWith(`${dir}/`)))) throw new Error("unique_ignored_files");
+  const unexplained = ignored.filter(file => file !== PAPERCLIP_CLAUDE_SETTINGS_FILE && !regenerable.some(dir => file.startsWith(`${dir}/`)));
+  if (unexplained.length) {
+    // Checkouts are inspected only when something else is unexplained, so the
+    // common case pays no extra Git processes.
+    const checkouts = unexplained.some(file => file.startsWith(`${PROJECT_REPOSITORIES_DIR}/`))
+      ? await reproducibleManagedProjectCheckouts(cwd, signal) : [];
+    if (unexplained.some(file => !checkouts.some(dir => file === `${dir}/` || file.startsWith(`${dir}/`)))) throw new Error("unique_ignored_files");
+  }
   const entries = await gitCacheCommand(cwd, ["ls-tree", "-r", "HEAD"], signal);
   if (/^160000 /m.test(entries)) throw new Error("unsupported_submodules");
   const gitDir = (await gitCacheCommand(cwd, ["rev-parse", "--absolute-git-dir"], signal)).trim();

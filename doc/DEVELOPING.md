@@ -2592,8 +2592,14 @@ Before deletion the worker fetches the exact commit into a fresh object store
 using the company's normal Git identity and commits a versioned restoration
 recipe to workspace metadata. Current runs, previews, pending reopening,
 unresolved recovery, dirty/untracked files, unknown ignored files, unproven
-ownership, and unsupported or unique Git state prevent deletion. Only the
-existing repository-ignored regenerable-output allowlist can be discarded.
+ownership, and unsupported or unique Git state prevent deletion. Ignored files
+can be discarded only when they are repository-ignored regenerable output,
+Paperclip's `.claude/settings.local.json` (rewritten on every Claude run), or a
+managed project checkout under `.paperclip-repositories/<repo>-<hash>` that the
+next run would re-clone. A checkout qualifies only when it is clean (untracked
+files included), has no stash or in-progress operation, has every local commit
+on a remote, and holds no ignored files beyond its own regenerable output. Task
+repositories (`task-repo-*`) always prevent deletion.
 Deletion first renames the worktree to recorded trash; restart and reopening
 finish that cleanup under the same source/lifecycle locks.
 
