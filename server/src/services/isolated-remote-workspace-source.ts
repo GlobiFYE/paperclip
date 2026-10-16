@@ -78,6 +78,14 @@ export async function verifiedRecordedIsolatedRemoteSource(input: Parameters<typ
   return cwd;
 }
 
+export const RESTRICTED_WORKSPACE_SOURCE_REASON = "workspace_source_restricted";
+
+/** The shared checkout holds a task workspace that the run's actor cannot read. */
+export function isRestrictedWorkspaceSourceDenial(error: unknown): boolean {
+  const denial = error as { status?: unknown; message?: unknown } | null;
+  return denial?.status === 403 && denial.message === "Task workspace access is no longer available";
+}
+
 export function canIsolateRemoteWorkspaceSource(input: {
   error: unknown;
   repoUrl: string | null;
@@ -88,11 +96,10 @@ export function canIsolateRemoteWorkspaceSource(input: {
   strategy: Record<string, unknown>;
   trustPresetKind: string;
 }): boolean {
-  const error = input.error as { status?: unknown; message?: unknown } | null;
   const branchTemplate = input.strategy.branchTemplate;
   const selectsFixedBranch = typeof branchTemplate === "string" && branchTemplate.length > 0
     && !/\{\{\s*(?:issue\.(?:id|identifier|title)|slug)\s*\}\}/.test(branchTemplate);
-  if (input.trustPresetKind !== "standard" || error?.status !== 403 || error.message !== "Task workspace access is no longer available"
+  if (input.trustPresetKind !== "standard" || !isRestrictedWorkspaceSourceDenial(input.error)
     || input.reuseExisting || input.hasExistingWorkspace || input.strategy.existingBranch || selectsFixedBranch
     || (input.selection && !["project", "task_default"].includes(input.selection.source))
     || (input.selectedProjectWorkspaceId && (input.selection?.selection.kind !== "configured_source"
