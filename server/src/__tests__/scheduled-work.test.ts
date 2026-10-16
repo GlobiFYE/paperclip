@@ -13,33 +13,35 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 
-function fixture(input: { routine?: number | null; monitor?: number | null; tickRoutines?: () => Promise<void> } = {}) {
+function fixture(input: { routine?: number | null; monitor?: number | null; tickTimers?: () => Promise<void>; tickRoutines?: () => Promise<void> } = {}) {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2020-01-01T00:00:00.000Z"));
   const dialect = new PgDialect();
   const deadlines = { routine: input.routine ?? null, monitor: input.monitor ?? null };
   let canRun = true;
+  let canReconcile = true;
   let failRead = false;
   const execute = vi.fn(async (query: any) => {
-    const text = dialect.sqlToQuery(query).sql;
+    const compiled = dialect.sqlToQuery(query);
+    const text = compiled.sql;
     if (text.includes("pg_current_xact_id")) return [{ xid: "42" }];
     if (failRead) throw new Error("database unavailable");
     const at = deadlines[text.includes("routine_triggers") ? "routine" : "monitor"];
-    return [{ next_at: at !== null && at > Date.now() ? new Date(at) : null }];
+    return [{ next_at: at !== null && at > Date.parse(String(compiled.params[0])) ? new Date(at) : null }];
   });
   const owner = installDatabaseWorkSignals({ execute, async transaction(callback: (tx: any) => Promise<any>) {
     return callback({ execute, transaction: owner.transaction });
   } });
   const errors = vi.fn();
-  const coordinator = createDeliveryWorkCoordinator({ owner, canRun: () => canRun, onError: errors });
+  const coordinator = createDeliveryWorkCoordinator({ owner, canRun: () => canRun, canReconcile: () => canReconcile, onError: errors });
   coordinators.push(coordinator);
-  const tickTimers = vi.fn(async () => {});
+  const tickTimers = vi.fn(input.tickTimers ?? (async () => {}));
   const tickRoutines = vi.fn(input.tickRoutines ?? (async () => {}));
   const workers = registerScheduledWork(coordinator, owner as unknown as Db,
     { retryMs: 60_000, tickTimers, tickRoutines });
   return { coordinator, workers, owner, deadlines, execute, tickTimers, tickRoutines, errors,
     ready: () => Promise.all([workers.routines.ready, workers.timers.ready]),
-    canRun: (value: boolean) => { canRun = value; }, failRead: (value: boolean) => { failRead = value; } };
+    canRun: (value: boolean) => { canRun = value; }, canReconcile: (value: boolean) => { canReconcile = value; }, failRead: (value: boolean) => { failRead = value; } };
 }
 
 describe("scheduled routine and monitor deadlines", () => {
@@ -62,6 +64,33 @@ describe("scheduled routine and monitor deadlines", () => {
     expect(idleWorkSnapshot().active).toBe(0);
     await vi.advanceTimersByTimeAsync(3_600_000);
     expect(f.execute).toHaveBeenCalledTimes(4);
+  });
+
+  it.each(["routine", "monitor"] as const)("rescans a %s deadline crossed during an earlier scan", async kind => {
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const tick = vi.fn().mockImplementationOnce(() => held).mockResolvedValue(undefined);
+    const now = Date.UTC(2020, 0, 1);
+    const f = fixture({ [kind]: now + 10_000,
+      ...(kind === "routine" ? { tickRoutines: tick } : { tickTimers: tick }) });
+    try {
+      await (kind === "routine" ? f.workers.timers.ready : f.workers.routines.ready);
+      await vi.advanceTimersByTimeAsync(12_000);
+    } finally { release(); await f.ready(); }
+    expect(f.coordinator.nextWakeAt()).toBe(Date.now());
+    await vi.advanceTimersByTimeAsync(1);
+    expect(tick).toHaveBeenCalledTimes(2);
+    expect(f.coordinator.nextWakeAt()).toBeNull();
+    expect(idleWorkSnapshot().active).toBe(0);
+  });
+
+  it("leaves work already overdue at scan start for bounded heartbeat recovery", async () => {
+    const f = fixture({ routine: Date.UTC(2020, 0, 1) - 10_000 });
+    await f.ready();
+    expect(f.coordinator.nextWakeAt()).toBeNull();
+    await vi.advanceTimersByTimeAsync(3_600_000);
+    expect(f.tickRoutines).toHaveBeenCalledTimes(1);
+    expect(idleWorkSnapshot().active).toBe(0);
   });
 
   it("rearms an earlier deadline only after the producer transaction settles", async () => {
@@ -107,6 +136,9 @@ describe("scheduled routine and monitor deadlines", () => {
     await vi.advanceTimersByTimeAsync(10_000);
     expect(f.tickRoutines).toHaveBeenCalledTimes(1);
     expect(idleWorkSnapshot().active).toBe(0);
+    f.canReconcile(false);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(f.execute).toHaveBeenCalledTimes(2);
     await f.coordinator.stop();
     f.canRun(true);
     await vi.advanceTimersByTimeAsync(3_600_000);

@@ -17,8 +17,9 @@ export function registerScheduledWork(
     return coordinator.register(queue, {
       retryMs: options.retryMs,
       run: async () => {
+        const cutoff = new Date();
         await work();
-        const [row] = await db.execute<{ next_at: Date | string | null }>(query(new Date()));
+        const [row] = await db.execute<{ next_at: Date | string | null }>(query(cutoff));
         if (!row || row.next_at === undefined) throw new Error("Scheduled deadline query returned no result");
         next = row.next_at === null ? null
           : row.next_at instanceof Date ? row.next_at.getTime() : Date.parse(row.next_at);

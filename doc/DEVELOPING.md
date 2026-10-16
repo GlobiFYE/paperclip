@@ -1451,7 +1451,10 @@ When a workspace service runs Paperclip for browser OAuth QA, configure its `exp
 Routine and issue-monitor dispatch uses saved future deadlines through
 `server/src/services/scheduled-work.ts` and the existing delivery coordinator.
 Startup restores the next deadline. Routine edits and monitor changes notify
-their worker after the enclosing database transaction settles. Each worker runs
+their worker after the enclosing database transaction settles, including native
+`set_task_monitor` writes. Deadlines crossed during a scan receive an immediate
+follow-up scan. Work already overdue at scan start retains heartbeat recovery.
+Each worker runs
 independently and retains the existing atomic claims and execution checks.
 The heartbeat interval still requests a recovery scan; it does not determine
 the dispatch time of a known future deadline. Failed scans retry at that same
