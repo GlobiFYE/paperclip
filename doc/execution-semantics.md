@@ -1451,6 +1451,8 @@ A fresh legacy conversation requires the recorded continuation policy and an
 undelivered user comment newer than the latest stopped run. Earlier comments
 still require an explicit user action. The execution-wait scan owns its retry
 timestamp; the general stranded-queue scan must not postpone that check.
+Closed-task execution waits remain held outside the general scan's bounded batch
+until the task reopens, so they cannot block unrelated queues.
 
 An explicit queued-message Interrupt also grants one scoped cleanup retry for
 the stopped run. Old ephemeral leases whose cleanup predates provider stop
