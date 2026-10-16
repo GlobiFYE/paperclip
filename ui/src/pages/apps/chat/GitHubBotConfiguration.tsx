@@ -564,6 +564,12 @@ export function GitHubPolicyEditor({
               checked={policy.allowRequestChanges}
               onChange={(value) => set("allowRequestChanges", value)}
             />
+            <GitHubToggle
+              label="Resolve fixed findings"
+              help="Lets the agent reply in and resolve its own inline finding threads after it checks the fix at the current head. It never resolves threads that people or other bots started."
+              checked={policy.resolveFixedFindings ?? false}
+              onChange={(value) => set("resolveFixedFindings", value)}
+            />
           </div>
         </GitHubSettingsDisclosure>
       </div>
