@@ -30,13 +30,8 @@ import { readNativeWorkspaceSyncReference, readNativeWorkspaceSyncLocalCwd } fro
 import { parseObject } from "../../adapters/utils.js";
 import { materializeNativeChatTaskRoot } from "../native-runtime/native-chat-workspace.js";
 import { materializeIsolatedTaskDirectory } from "../isolated-task-directory.js";
-import {
-  canIsolateRemoteWorkspaceSource,
-  isRestrictedWorkspaceSourceDenial,
-  materializeIsolatedRemoteWorkspaceSource,
-  RESTRICTED_WORKSPACE_SOURCE_REASON,
-  withIsolatedRepositorySourceLock,
-} from "../isolated-remote-workspace-source.js";
+import { canIsolateRemoteWorkspaceSource, materializeIsolatedRemoteWorkspaceSource, withIsolatedRepositorySourceLock } from "../isolated-remote-workspace-source.js";
+import { isRestrictedWorkspaceSourceDenial, RESTRICTED_WORKSPACE_SOURCE_REASON } from "../workspace-source-restriction.js";
 import { ConfigurationIncompleteFailure } from "./run-preparation.js";
 import {
   assertIsolatedWorkspaceSourceReadAccess,

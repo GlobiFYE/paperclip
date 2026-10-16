@@ -10,6 +10,7 @@ import type { GitRemoteAuthProvider } from "./git-credentials.js";
 import { resolvePaperclipInstanceRoot } from "../home-paths.js";
 import { materializeManagedProjectWorkspace } from "./managed-repository-checkout.js";
 import { measureRunPhase } from "./execution-preparation-timing.js";
+import { isRestrictedWorkspaceSourceDenial } from "./workspace-source-restriction.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -76,14 +77,6 @@ export async function verifiedRecordedIsolatedRemoteSource(input: Parameters<typ
   const cwd = recordedIsolatedRemoteSource(input);
   if (cwd) await assertRemoteSourceIdentity(cwd, input.repoUrl!);
   return cwd;
-}
-
-export const RESTRICTED_WORKSPACE_SOURCE_REASON = "workspace_source_restricted";
-
-/** The shared checkout holds a task workspace that the run's actor cannot read. */
-export function isRestrictedWorkspaceSourceDenial(error: unknown): boolean {
-  const denial = error as { status?: unknown; message?: unknown } | null;
-  return denial?.status === 403 && denial.message === "Task workspace access is no longer available";
 }
 
 export function canIsolateRemoteWorkspaceSource(input: {

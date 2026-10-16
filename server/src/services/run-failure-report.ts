@@ -14,7 +14,7 @@ import { isUnexpectedRunCancellation } from "./run-cancellation.js";
 import { readConnectionFailure, type ConnectionFailure } from "@paperclipai/adapter-utils/connection-failure";
 import { isAiConnectionConfigurationReason } from "./ai-connection-configuration-failure.js";
 import { readRunFailureReportingMode, type RunFailureReportingMode } from "../sentry-run-failure-policy.js";
-import { RESTRICTED_WORKSPACE_SOURCE_REASON } from "./isolated-remote-workspace-source.js";
+import { RESTRICTED_WORKSPACE_SOURCE_REASON } from "./workspace-source-restriction.js";
 
 type HeartbeatRun = typeof heartbeatRuns.$inferSelect;
 
