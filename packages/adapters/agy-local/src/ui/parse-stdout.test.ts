@@ -45,6 +45,7 @@ describe("parseAgyStdoutLine", () => {
     const activeLine = JSON.stringify({
       event: "step_update",
       step_update: {
+        conversation_id: "conv-123",
         step_index: 2,
         step_type: "tool",
         tool_name: "list_dir",
@@ -60,7 +61,7 @@ describe("parseAgyStdoutLine", () => {
         kind: "tool_call",
         ts,
         name: "list_dir",
-        toolUseId: "list_dir",
+        toolUseId: "conv-123:2",
         input: { DirectoryPath: "/app" },
       },
     ]);
@@ -68,6 +69,7 @@ describe("parseAgyStdoutLine", () => {
     const doneLine = JSON.stringify({
       event: "step_update",
       step_update: {
+        conversation_id: "conv-123",
         step_index: 2,
         step_type: "tool",
         tool_name: "list_dir",
@@ -84,17 +86,44 @@ describe("parseAgyStdoutLine", () => {
         kind: "tool_call",
         ts,
         name: "list_dir",
-        toolUseId: "list_dir",
+        toolUseId: "conv-123:2",
         input: { DirectoryPath: "/app" },
       },
       {
         kind: "tool_result",
         ts,
-        toolUseId: "list_dir",
+        toolUseId: "conv-123:2",
         content: "file1.txt\nfile2.txt",
         isError: false,
       },
     ]);
+  });
+
+  it("keeps repeated calls to the same tool separate via conversation and step index", () => {
+    const first = parseAgyStdoutLine(JSON.stringify({
+      event: "step_update",
+      step_update: {
+        conversation_id: "conv-9",
+        step_index: 2,
+        step_type: "tool",
+        tool_name: "view_file",
+        state: "ACTIVE",
+        tool_info: { parameters: { AbsolutePath: "/a.txt" } },
+      },
+    }), ts);
+    const second = parseAgyStdoutLine(JSON.stringify({
+      event: "step_update",
+      step_update: {
+        conversation_id: "conv-9",
+        step_index: 5,
+        step_type: "tool",
+        tool_name: "view_file",
+        state: "ACTIVE",
+        tool_info: { parameters: { AbsolutePath: "/b.txt" } },
+      },
+    }), ts);
+    expect(first[0]).toMatchObject({ kind: "tool_call", toolUseId: "conv-9:2" });
+    expect(second[0]).toMatchObject({ kind: "tool_call", toolUseId: "conv-9:5" });
   });
 
   it("handles result event", () => {

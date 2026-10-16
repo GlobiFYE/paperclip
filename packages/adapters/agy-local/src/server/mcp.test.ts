@@ -8,6 +8,7 @@ import {
   resolveUniqueMcpServerName,
   writePaperclipAgyMcpConfig,
   stageAgyMcpConfigForSync,
+  prepareAgyLocalRunMcpHome,
 } from "./mcp.js";
 
 describe("resolveAgyMcpConfigPath", () => {
@@ -211,19 +212,10 @@ describe("writePaperclipAgyMcpConfig", () => {
     await fs.mkdir(configDir, { recursive: true });
     const configPath = path.join(configDir, "mcp_config.json");
 
-    // Leftovers from a hard-killed run (stale token, dead suffixed variant),
-    // alongside a user server that shares the "Paperclip" prefix by name only
-    // in value shape — it has command/args, so it is not an injected entry.
+    // The user's own servers: a "Paperclip projects" that is command-shaped
+    // (not an injected entry) and an unrelated custom server.
     const initialConfig = {
       mcpServers: {
-        "Paperclip connections": {
-          url: "https://api.paperclip.test/mcp/connections",
-          headers: { Authorization: "Bearer stale-token" },
-        },
-        "Paperclip projects-conn-999": {
-          url: "https://api.paperclip.test/mcp/projects",
-          headers: { Authorization: "Bearer older-token" },
-        },
         "Paperclip projects": {
           command: "my-own-projects-server",
           args: ["serve"],
@@ -236,6 +228,27 @@ describe("writePaperclipAgyMcpConfig", () => {
     await fs.writeFile(configPath, JSON.stringify(initialConfig, null, 2), "utf8");
 
     try {
+      // A first run injects its servers and is then hard-killed, so its
+      // cleanup never runs. The writer records ownership of what it
+      // injected, and the next run may sweep exactly those entries.
+      await writePaperclipAgyMcpConfig({
+        homedir: tempDir,
+        servers: [
+          {
+            name: "Paperclip connections",
+            url: "https://api.paperclip.test/mcp/connections",
+            token: "stale-token",
+            connectionId: "conn-1",
+          },
+          {
+            name: "Paperclip projects",
+            url: "https://api.paperclip.test/mcp/projects",
+            token: "stale-projects-token",
+            connectionId: "conn-999",
+          },
+        ],
+      });
+
       const result = await writePaperclipAgyMcpConfig({
         homedir: tempDir,
         servers: [
@@ -248,7 +261,7 @@ describe("writePaperclipAgyMcpConfig", () => {
           {
             name: "Paperclip projects",
             url: "https://api.paperclip.test/mcp/projects",
-            token: "fresh-token",
+            token: "fresh-projects-token",
             connectionId: "conn-2",
           },
         ],
@@ -269,7 +282,7 @@ describe("writePaperclipAgyMcpConfig", () => {
       expect(content.mcpServers["Paperclip projects"]).toEqual(initialConfig.mcpServers["Paperclip projects"]);
       expect(content.mcpServers["Paperclip projects-conn-2"]).toEqual({
         url: "https://api.paperclip.test/mcp/projects",
-        headers: { Authorization: "Bearer fresh-token" },
+        headers: { Authorization: "Bearer fresh-projects-token" },
       });
       expect(content.mcpServers["Paperclip projects-conn-999"]).toBeUndefined();
       expect(content.mcpServers.custom_http).toEqual(initialConfig.mcpServers.custom_http);
@@ -343,6 +356,62 @@ describe("writePaperclipAgyMcpConfig", () => {
       await second.cleanup();
       const exists = await fs.stat(first.configPath).then(() => true).catch(() => false);
       expect(exists).toBe(false);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+  it("never sweeps a user-owned entry that merely matches the injected shape", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "agy-mcp-test-"));
+    const configDir = path.join(tempDir, ".gemini", "config");
+    await fs.mkdir(configDir, { recursive: true });
+    const configPath = path.join(configDir, "mcp_config.json");
+
+    // The user configured this server themselves. It has exactly the shape
+    // Paperclip injects (same name, url + bearer header), but Paperclip
+    // never wrote it, so no ownership record exists for it.
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({
+        mcpServers: {
+          "Paperclip connections": {
+            url: "https://api.paperclip.test/mcp/connections",
+            headers: { Authorization: "Bearer user-token" },
+          },
+        },
+      }),
+      "utf8",
+    );
+
+    try {
+      const result = await writePaperclipAgyMcpConfig({
+        homedir: tempDir,
+        servers: [
+          {
+            name: "Paperclip connections",
+            url: "https://api.paperclip.test/mcp/connections",
+            token: "run-token",
+            connectionId: "conn-1",
+          },
+        ],
+      });
+
+      expect(result.sweptStaleServerNames).toEqual([]);
+
+      const content = JSON.parse(await fs.readFile(configPath, "utf8"));
+      expect(content.mcpServers["Paperclip connections"]).toEqual({
+        url: "https://api.paperclip.test/mcp/connections",
+        headers: { Authorization: "Bearer user-token" },
+      });
+      expect(content.mcpServers["Paperclip connections-conn-1"]).toEqual({
+        url: "https://api.paperclip.test/mcp/connections",
+        headers: { Authorization: "Bearer run-token" },
+      });
+
+      // Cleanup removes only the run's own entry; the user's server stays.
+      await result.cleanup();
+      const after = JSON.parse(await fs.readFile(configPath, "utf8"));
+      expect(after.mcpServers["Paperclip connections"]).toBeDefined();
+      expect(after.mcpServers["Paperclip connections-conn-1"]).toBeUndefined();
     } finally {
       await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
@@ -423,5 +492,127 @@ describe("stageAgyMcpConfigForSync", () => {
         fs.rm(stagedDir, { recursive: true, force: true }).catch(() => undefined),
       ]);
     }
+  });
+
+  it("excludes servers other Paperclip runs injected into the host config", async () => {
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "agy-mcp-home-"));
+
+    // Another run injected its server into the shared host config, so an
+    // ownership record exists for it; the user also added a server by hand.
+    await writePaperclipAgyMcpConfig({
+      homedir: tempHome,
+      servers: [
+        {
+          name: "Paperclip connections",
+          url: "https://api.paperclip.test/mcp/connections",
+          token: "other-run-token",
+          connectionId: "conn-other",
+        },
+      ],
+    });
+    const hostConfigPath = path.join(tempHome, ".gemini", "config", "mcp_config.json");
+    const hostConfig = JSON.parse(await fs.readFile(hostConfigPath, "utf8"));
+    hostConfig.mcpServers.existing_tool = { url: "https://existing.tool/mcp" };
+    await fs.writeFile(hostConfigPath, JSON.stringify(hostConfig, null, 2), "utf8");
+
+    const stagedDir = await stageAgyMcpConfigForSync({
+      homedir: tempHome,
+      servers: [
+        {
+          name: "paperclip_tool",
+          url: "https://api.paperclip.test/mcp/tool",
+          token: "this-run-token",
+          connectionId: "conn-2",
+        },
+      ],
+      runId: "run-mcp-sync-3",
+    });
+
+    try {
+      const content = JSON.parse(await fs.readFile(path.join(stagedDir, "mcp_config.json"), "utf8"));
+      // The other run's credentials must not leak into this run's target.
+      expect(content.mcpServers["Paperclip connections"]).toBeUndefined();
+      expect(content.mcpServers.existing_tool).toEqual({ url: "https://existing.tool/mcp" });
+      expect(content.mcpServers.paperclip_tool).toEqual({
+        url: "https://api.paperclip.test/mcp/tool",
+        headers: { Authorization: "Bearer this-run-token" },
+      });
+    } finally {
+      await Promise.all([
+        fs.rm(tempHome, { recursive: true, force: true }).catch(() => undefined),
+        fs.rm(stagedDir, { recursive: true, force: true }).catch(() => undefined),
+      ]);
+    }
+  });
+});
+
+
+describe("prepareAgyLocalRunMcpHome", () => {
+  it("builds a private HOME with only the user's servers plus this run's", async () => {
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "agy-mcp-home-"));
+    const cliHome = path.join(tempHome, ".gemini", "antigravity-cli");
+    await fs.mkdir(cliHome, { recursive: true });
+
+    // Another run's injected server (ownership recorded) plus a user server.
+    await writePaperclipAgyMcpConfig({
+      homedir: tempHome,
+      servers: [
+        {
+          name: "Paperclip connections",
+          url: "https://api.paperclip.test/mcp/connections",
+          token: "other-run-token",
+          connectionId: "conn-other",
+        },
+      ],
+    });
+    const hostConfigPath = path.join(tempHome, ".gemini", "config", "mcp_config.json");
+    const hostConfig = JSON.parse(await fs.readFile(hostConfigPath, "utf8"));
+    hostConfig.mcpServers.existing_tool = { url: "https://existing.tool/mcp" };
+    await fs.writeFile(hostConfigPath, JSON.stringify(hostConfig, null, 2), "utf8");
+
+    const prepared = await prepareAgyLocalRunMcpHome({
+      homedir: tempHome,
+      env: { HOME: tempHome },
+      servers: [
+        {
+          name: "Paperclip projects",
+          url: "https://api.paperclip.test/mcp/projects",
+          token: "this-run-token",
+          connectionId: "conn-2",
+        },
+      ],
+      runId: "run-local-1",
+    });
+
+    try {
+      expect(prepared.homeDir).not.toBe(tempHome);
+      expect(prepared.injectedServerNames).toEqual(["Paperclip projects"]);
+
+      const content = JSON.parse(await fs.readFile(prepared.configPath, "utf8"));
+      expect(content.mcpServers["Paperclip connections"]).toBeUndefined();
+      expect(content.mcpServers.existing_tool).toEqual({ url: "https://existing.tool/mcp" });
+      expect(content.mcpServers["Paperclip projects"]).toEqual({
+        url: "https://api.paperclip.test/mcp/projects",
+        headers: { Authorization: "Bearer this-run-token" },
+      });
+
+      // Auth and conversation state stay shared with the host login: the
+      // real CLI home is linked into the per-run HOME.
+      const linkedCliHome = await fs.readlink(
+        path.join(prepared.homeDir, ".gemini", "antigravity-cli"),
+      );
+      expect(path.resolve(prepared.homeDir, ".gemini", linkedCliHome)).toBe(cliHome);
+
+      // Preparing the per-run HOME never modifies the host config.
+      const hostAfter = JSON.parse(await fs.readFile(hostConfigPath, "utf8"));
+      expect(hostAfter.mcpServers["Paperclip projects"]).toBeUndefined();
+      expect(hostAfter.mcpServers["Paperclip connections"]).toBeDefined();
+    } finally {
+      await prepared.cleanup();
+    }
+
+    const exists = await fs.stat(prepared.homeDir).then(() => true).catch(() => false);
+    expect(exists).toBe(false);
+    await fs.rm(tempHome, { recursive: true, force: true }).catch(() => undefined);
   });
 });

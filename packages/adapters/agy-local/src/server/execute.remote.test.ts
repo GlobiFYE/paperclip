@@ -154,6 +154,7 @@ describe("agy-local execute (remote execution)", () => {
               Buffer.from(
                 JSON.stringify({
                   access_token: "refreshed-sandbox-token",
+                  refresh_token: "shared-refresh-token",
                   expiry: new Date(Date.now() + 86400000).toISOString(),
                 }),
               ),
@@ -242,13 +243,13 @@ describe("agy-local execute (remote execution)", () => {
     expect(run.args).toContain("/remote/runtime/assets/skills");
     expect(run.args).toContain("/remote/workspace");
 
-    // Shell command materialized agy-home in sandbox
-    expect(runAdapterExecutionTargetShellCommand).toHaveBeenCalledWith(
-      "run-remote-1",
-      expect.objectContaining({ kind: "remote" }),
-      expect.stringContaining(".gemini/antigravity-cli"),
-      expect.anything(),
-    );
+    // The CLI home points at the staged asset directory itself; the remote
+    // user's own ~/.gemini/antigravity-cli is never deleted or replaced.
+    expect(run.options.env.ANTIGRAVITY_CLI_HOME).toBe("/remote/runtime/assets/agy-home");
+    expect(run.options.env.GEMINI_CLI_HOME).toBe("/remote/runtime/assets/agy-home");
+    const shellCommandCalls = vi.mocked(runAdapterExecutionTargetShellCommand).mock.calls as unknown as unknown[][];
+    const shellCommands = shellCommandCalls.map((call) => String(call[2]));
+    expect(shellCommands.some((command) => command.includes("rm -rf"))).toBe(false);
 
     // Workspace restoration ran on completion
     expect(restoreWorkspaceSpy).toHaveBeenCalled();
@@ -320,6 +321,7 @@ describe("agy-local execute (remote execution)", () => {
       hostTokenPath,
       JSON.stringify({
         access_token: "old-host-token",
+        refresh_token: "shared-refresh-token",
         expiry: new Date(Date.now() + 1000).toISOString(),
       }),
     );

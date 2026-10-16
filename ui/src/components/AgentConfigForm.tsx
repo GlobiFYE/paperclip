@@ -922,8 +922,13 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
   const connectionModels = useConnectionModels(isExternalBotRunner ? null : selectedCompanyId, isCreate ? undefined : aiConnectionBindingSchema.safeParse((overlay.runtime.runtimeConfig as Record<string, unknown> | undefined)?.aiConnection ?? runtimeConfig.aiConnection).data, aiRoutingHarness(adapterType, runnerProvider, eff("adapterConfig", "acpxAgent", config.acpxAgent)));
   // Fetch adapter models for the effective provider, including unsaved changes.
   const modelAdapterType = isCodexHarness ? harnessType : adapterType;
+  // ACPX providers host several agents (Claude, Grok, ...); the models route
+  // needs the selected agent or it defaults to Claude's catalog.
+  const modelAcpxAgent = adapterType === "paperclip_runner" && modelProvider === "acpx"
+    ? String(eff("adapterConfig", "acpxAgent", config.acpxAgent) ?? "").trim() || undefined
+    : undefined;
   const modelQueryKey = selectedCompanyId
-    ? queryKeys.agents.adapterModels(selectedCompanyId, modelAdapterType, currentDefaultEnvironmentId || null, modelProvider)
+    ? queryKeys.agents.adapterModels(selectedCompanyId, modelAdapterType, currentDefaultEnvironmentId || null, modelProvider, modelAcpxAgent)
     : ["agents", "none", "adapter-models", adapterType];
   const {
     data: fetchedModels,
@@ -934,6 +939,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     queryFn: () => agentsApi.adapterModels(selectedCompanyId!, modelAdapterType, {
       environmentId: currentDefaultEnvironmentId || null,
       provider: modelProvider,
+      acpxAgent: modelAcpxAgent,
     }),
     enabled: Boolean(selectedCompanyId) && !isExternalBotRunner && !connectionModels,
   });
@@ -1290,7 +1296,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     setRefreshingModels(true);
     setRefreshModelsError(null);
     try {
-      const refreshed = await agentsApi.adapterModels(selectedCompanyId, modelAdapterType, { refresh: true, environmentId: currentDefaultEnvironmentId || null, provider: modelProvider });
+      const refreshed = await agentsApi.adapterModels(selectedCompanyId, modelAdapterType, { refresh: true, environmentId: currentDefaultEnvironmentId || null, provider: modelProvider, acpxAgent: modelAcpxAgent });
       queryClient.setQueryData(modelQueryKey, refreshed);
     } catch (error) {
       setRefreshModelsError(error instanceof Error ? error.message : "Failed to refresh adapter models.");
@@ -4144,10 +4150,16 @@ function ThinkingEffortDropdown({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  // A stored effort the current model does not support is not in the option
+  // list; without an entry the select renders "Auto" while the unsupported
+  // value stays saved. Surface it explicitly so the operator can correct it.
+  const effectiveOptions = value && !options.some((option) => option.id === value)
+    ? [...options, { id: value, label: `${value} (unsupported)` }]
+    : options;
   return <Field label="Thinking effort" hint={help.thinkingEffort}>
     <SelectPopover aria-label="Thinking effort" value={value} onValueChange={onChange}
       open={open} onOpenChange={onOpenChange}
-      options={options.map(option => ({ value: option.id, label: option.label,
+      options={effectiveOptions.map(option => ({ value: option.id, label: option.label,
         suffix: option.id ? <span className="text-xs text-muted-foreground font-mono">{option.id}</span> : undefined,
       }))} />
   </Field>;

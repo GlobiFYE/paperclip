@@ -234,9 +234,76 @@ export function evaluateAgyCredentialReadiness(
   return { ready: false, authMode: "none", detail: "missing_credentials" };
 }
 
+function decodeJwtClaims(token: string): Record<string, unknown> | null {
+  const parts = token.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Best-effort account identity for a parsed Antigravity token: the id_token
+ * subject (or email) when present, else an account identifier carried in
+ * the token payload itself. Null when the token carries no identity claim.
+ */
+export function agyTokenAccountIdentity(
+  parsed: ReturnType<typeof parseAgyOAuthToken>,
+): string | null {
+  if (parsed.idToken) {
+    const claims = decodeJwtClaims(parsed.idToken);
+    const sub = claims?.sub;
+    if (typeof sub === "string" && sub.length > 0) return `sub:${sub}`;
+    const email = claims?.email;
+    if (typeof email === "string" && email.length > 0) return `email:${email.toLowerCase()}`;
+  }
+  const payload = parsed.payload;
+  if (payload && typeof payload === "object") {
+    const record = payload as Record<string, unknown>;
+    const tokenObj =
+      typeof record.token === "object" && record.token !== null
+        ? (record.token as Record<string, unknown>)
+        : record;
+    for (const key of ["account_id", "user_id", "sub", "email"]) {
+      const value = tokenObj[key];
+      if (typeof value === "string" && value.length > 0) return `${key}:${value}`;
+    }
+  }
+  return null;
+}
+
+/**
+ * True only when the source token provably belongs to the same account /
+ * grant as the destination token: matching account identity, or the same
+ * refresh token (a refresh of one grant keeps its refresh token; another
+ * account's grant cannot share it).
+ */
+export function isSameAgyAccount(
+  source: ReturnType<typeof parseAgyOAuthToken>,
+  dest: ReturnType<typeof parseAgyOAuthToken>,
+): boolean {
+  const sourceIdentity = agyTokenAccountIdentity(source);
+  const destIdentity = agyTokenAccountIdentity(dest);
+  if (sourceIdentity && destIdentity) return sourceIdentity === destIdentity;
+  if (source.refreshToken && dest.refreshToken) {
+    return source.refreshToken === dest.refreshToken;
+  }
+  return false;
+}
+
 /**
   * Exit code 10: Replace destination credential with source.
   * Exit code 20: Keep destination credential.
+  *
+  * The sandbox copy only wins when it is a verified refresh of the SAME
+  * account as the host credential: a later expiry alone proves nothing,
+  * and non-JSON token content carries no identity at all, so neither may
+  * replace a working host login.
   */
 export async function decideAgyAuthMerge(
   sourcePath: string,
@@ -256,6 +323,11 @@ export async function decideAgyAuthMerge(
 
     const dest = parseAgyOAuthToken(destContent);
     if (!dest.valid) return 10;
+
+    // parseAgyOAuthToken's non-JSON fallback yields a string payload; such
+    // content cannot prove which account it belongs to.
+    if (typeof source.payload === "string") return 20;
+    if (!isSameAgyAccount(source, dest)) return 20;
 
     if (source.expiryMs && dest.expiryMs) {
       if (source.expiryMs > dest.expiryMs) return 10;

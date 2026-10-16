@@ -1,0 +1,18 @@
+# syntax=docker/dockerfile:1.6
+ARG BASE_TAG=dev
+FROM paperclipai/agent-runtime-base:${BASE_TAG}
+
+USER root
+# Install Antigravity (agy) with the adapter's own sandbox install command
+# (packages/adapters/agy-local SANDBOX_INSTALL_COMMAND): the official
+# installer drops the binary in $HOME/.local/bin, so install as the runtime
+# user and link it onto the shared PATH for the shim's exec.LookPath.
+USER 1000:1000
+RUN curl -fsSL --compressed https://antigravity.google/cli/install.sh | bash
+USER root
+RUN ln -sf /home/paperclip/.local/bin/agy /usr/local/bin/agy
+
+USER 1000:1000
+
+# Verify the CLI is on PATH for the shim's exec.LookPath
+RUN command -v agy >/dev/null 2>&1 || (echo "agy not on PATH"; exit 1)

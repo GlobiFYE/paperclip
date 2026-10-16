@@ -63,7 +63,18 @@ export function parseAgyStdoutLine(line: string, ts: string): TranscriptEntry[] 
     if (stepType === "tool") {
       const toolName = asString(stepUpdate.tool_name, "tool");
       const toolInfo = asRecord(stepUpdate.tool_info) ?? {};
-      const toolCallId = asString(stepUpdate.tool_call_id || toolInfo.id || toolInfo.tool_use_id, toolName);
+      // agy identifies tool steps by conversation + step_index, not by the
+      // optional ID fields. Fall back to that pair so repeated calls to the
+      // same tool stay separate transcript rows instead of merging under the
+      // shared tool name.
+      const conversationId = asString(stepUpdate.conversation_id);
+      const stepIndex = asNumber(stepUpdate.step_index, -1);
+      const stepFallback = conversationId && stepIndex >= 0
+        ? `${conversationId}:${stepIndex}`
+        : stepIndex >= 0
+          ? `${toolName}:${stepIndex}`
+          : toolName;
+      const toolCallId = asString(stepUpdate.tool_call_id || toolInfo.id || toolInfo.tool_use_id, stepFallback);
       const params = asRecord(toolInfo.parameters || toolInfo.input || toolInfo.arguments) ?? {};
       const state = asString(stepUpdate.state);
 

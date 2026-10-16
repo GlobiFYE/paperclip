@@ -221,10 +221,74 @@ describe("decideAgyAuthMerge", () => {
     const now = Date.now();
     fs.writeFileSync(source, JSON.stringify({
       access_token: "tok2",
+      refresh_token: "shared-refresh-token",
       expiry: new Date(now + 7200000).toISOString(),
     }));
     fs.writeFileSync(dest, JSON.stringify({
       access_token: "tok1",
+      refresh_token: "shared-refresh-token",
+      expiry: new Date(now + 3600000).toISOString(),
+    }));
+
+    const { decideAgyAuthMerge } = await import("./credentials.js");
+    const decision = await decideAgyAuthMerge(source, dest);
+    expect(decision).toBe(10);
+  });
+
+  it("returns 20 when the newer source belongs to a different account", async () => {
+    const dir = makeTmpDir();
+    const source = path.join(dir, "source.json");
+    const dest = path.join(dir, "dest.json");
+    const now = Date.now();
+    fs.writeFileSync(source, JSON.stringify({
+      access_token: "other-account-token",
+      refresh_token: "other-refresh-token",
+      expiry: new Date(now + 7200000).toISOString(),
+    }));
+    fs.writeFileSync(dest, JSON.stringify({
+      access_token: "host-token",
+      refresh_token: "host-refresh-token",
+      expiry: new Date(now + 3600000).toISOString(),
+    }));
+
+    const { decideAgyAuthMerge } = await import("./credentials.js");
+    const decision = await decideAgyAuthMerge(source, dest);
+    expect(decision).toBe(20);
+  });
+
+  it("returns 20 when the source is non-JSON content with no verifiable identity", async () => {
+    const dir = makeTmpDir();
+    const source = path.join(dir, "source.json");
+    const dest = path.join(dir, "dest.json");
+    fs.writeFileSync(source, "some-opaque-token-string");
+    fs.writeFileSync(dest, JSON.stringify({
+      access_token: "host-token",
+      refresh_token: "host-refresh-token",
+      expiry: new Date(Date.now() + 3600000).toISOString(),
+    }));
+
+    const { decideAgyAuthMerge } = await import("./credentials.js");
+    const decision = await decideAgyAuthMerge(source, dest);
+    expect(decision).toBe(20);
+  });
+
+  it("returns 10 when identity matches via id_token subject despite a rotated refresh token", async () => {
+    const dir = makeTmpDir();
+    const source = path.join(dir, "source.json");
+    const dest = path.join(dir, "dest.json");
+    const now = Date.now();
+    const idToken = (sub: string) =>
+      `${Buffer.from(JSON.stringify({ alg: "none" })).toString("base64url")}.${Buffer.from(JSON.stringify({ sub })).toString("base64url")}.sig`;
+    fs.writeFileSync(source, JSON.stringify({
+      access_token: "refreshed-token",
+      refresh_token: "rotated-refresh-token",
+      id_token: idToken("user-123"),
+      expiry: new Date(now + 7200000).toISOString(),
+    }));
+    fs.writeFileSync(dest, JSON.stringify({
+      access_token: "host-token",
+      refresh_token: "original-refresh-token",
+      id_token: idToken("user-123"),
       expiry: new Date(now + 3600000).toISOString(),
     }));
 
@@ -333,6 +397,7 @@ describe("copyBackAgyAuth", () => {
       hostTokenPath,
       JSON.stringify({
         access_token: "old-host-token",
+        refresh_token: "shared-refresh-token",
         expiry: new Date(now + 1000).toISOString(),
       }),
     );
@@ -340,6 +405,7 @@ describe("copyBackAgyAuth", () => {
     const sandboxToken = Buffer.from(
       JSON.stringify({
         access_token: "new-sandbox-token",
+        refresh_token: "shared-refresh-token",
         expiry: new Date(now + 7200000).toISOString(),
       }),
     );

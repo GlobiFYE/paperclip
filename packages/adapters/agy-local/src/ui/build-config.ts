@@ -23,6 +23,7 @@ export function buildAgyConfig(v: CreateConfigValues): Record<string, unknown> {
   if (raw.addDirs) ac.addDirs = Array.isArray(raw.addDirs) ? raw.addDirs : parseCommaArgs(String(raw.addDirs));
   if (raw.project) ac.project = String(raw.project).trim();
   if (raw.printTimeout) ac.printTimeout = String(raw.printTimeout).trim();
+  if (raw.skillsRootPath) ac.skillsRootPath = String(raw.skillsRootPath).trim();
   if (typeof raw.disableSlashCommands === "boolean") ac.disableSlashCommands = raw.disableSlashCommands;
   ac.dangerouslySkipPermissions = Boolean(v.dangerouslySkipPermissions);
   ac.timeoutSec = 0;

@@ -118,6 +118,78 @@ async function writeAgyMcpConfigFileAtomic(configPath: string, config: AgyMcpCon
 }
 
 /**
+ * Ownership record for the entries Paperclip injected into the shared host
+ * config, kept next to the config file. A user's own HTTP server can have
+ * exactly the shape Paperclip injects ({ url, headers? }), so shape alone
+ * must never mark an entry as Paperclip-owned: only entries recorded here
+ * (and still byte-identical to what was written) may be swept or excluded
+ * as Paperclip-managed.
+ */
+export interface AgyMcpOwnershipRecord {
+  url: string;
+  headers?: Record<string, string>;
+}
+
+export type AgyMcpOwnership = Record<string, AgyMcpOwnershipRecord>;
+
+export function resolveAgyMcpOwnershipPath(configPath: string): string {
+  return `${configPath}.paperclip-ownership.json`;
+}
+
+async function readAgyMcpOwnership(configPath: string): Promise<AgyMcpOwnership> {
+  try {
+    const raw = await fs.readFile(resolveAgyMcpOwnershipPath(configPath), "utf8");
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const ownership: AgyMcpOwnership = {};
+    for (const [name, record] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!record || typeof record !== "object" || Array.isArray(record)) continue;
+      const { url, headers } = record as { url?: unknown; headers?: unknown };
+      if (typeof url !== "string") continue;
+      ownership[name] = {
+        url,
+        ...(headers && typeof headers === "object" && !Array.isArray(headers)
+          ? { headers: headers as Record<string, string> }
+          : {}),
+      };
+    }
+    return ownership;
+  } catch {
+    return {};
+  }
+}
+
+async function writeAgyMcpOwnership(configPath: string, ownership: AgyMcpOwnership): Promise<void> {
+  const ownershipPath = resolveAgyMcpOwnershipPath(configPath);
+  if (Object.keys(ownership).length === 0) {
+    await fs.rm(ownershipPath, { force: true }).catch(() => undefined);
+    return;
+  }
+  const tmpPath = `${ownershipPath}.tmp-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+  try {
+    await fs.writeFile(tmpPath, JSON.stringify(ownership, null, 2) + "\n", { mode: 0o600 });
+    await fs.rename(tmpPath, ownershipPath);
+  } catch (err) {
+    await fs.rm(tmpPath, { force: true }).catch(() => undefined);
+    throw err;
+  }
+}
+
+function ownershipRecordFor(entry: AgyMcpServerConfig): AgyMcpOwnershipRecord {
+  return {
+    url: entry.url,
+    ...(entry.headers ? { headers: entry.headers } : {}),
+  };
+}
+
+function ownedEntryMatches(entry: AgyMcpServerConfig, record: AgyMcpOwnershipRecord): boolean {
+  return (
+    entry.url === record.url &&
+    JSON.stringify(entry.headers ?? null) === JSON.stringify(record.headers ?? null)
+  );
+}
+
+/**
  * True when an existing entry has exactly the shape this writer injects
  * (a URL, optionally with headers) — used to tell Paperclip-managed entries
  * apart from the user's own servers, which may use command/args/env.
@@ -177,10 +249,11 @@ function extractServers(config: AgyMcpConfigFile): Record<string, AgyMcpServerCo
  * The file is global to the host, so the whole read-modify-write runs under a
  * lock and lands via an atomic rename. Before injecting, entries left behind
  * by earlier Paperclip runs (e.g. a run that was hard-killed before its
- * cleanup could run) are swept when they sit in a current server's naming
- * space and still carry the injected shape; the user's own servers are never
- * swept. If the existing file cannot be parsed, the write refuses to proceed
- * instead of discarding the user's configuration.
+ * cleanup could run) are swept when Paperclip's ownership record names them
+ * and they are still exactly what was written; the user's own servers are
+ * never swept, even on a name collision. If the existing file cannot be
+ * parsed, the write refuses to proceed instead of discarding the user's
+ * configuration.
  */
 export async function writePaperclipAgyMcpConfig(
   input: WriteAgyMcpConfigInput,
@@ -192,13 +265,19 @@ export async function writePaperclipAgyMcpConfig(
   return withAgyMcpConfigLock(configPath, async () => {
     const { config: parsedConfig } = await readAgyMcpConfig(configPath);
     const existingServers = extractServers(parsedConfig);
+    const ownership = await readAgyMcpOwnership(configPath);
 
     // Sweep leftovers from earlier Paperclip runs before injecting, so a
     // hard-killed run's token-bearing entries do not linger indefinitely or
     // force this run's servers onto suffixed names. An entry counts as a
-    // leftover only when its name belongs to one of the servers being
-    // injected now (exact name or the suffixed variants the unique-name
-    // resolver produces) and its value still has the injected shape.
+    // leftover only when BOTH hold: its name belongs to one of the servers
+    // being injected now (exact name or the suffixed variants the
+    // unique-name resolver produces — entries outside this namespace may
+    // belong to a run that is still alive), and Paperclip recorded
+    // ownership of it with the entry still exactly as written. A user's
+    // own server that merely shares a name (or the injected
+    // { url, headers } shape) is preserved; the incoming server then takes
+    // a suffixed name instead.
     const sweptStaleServerNames: string[] = [];
     const incomingBaseNames = input.servers
       .map((server) => server.name.trim() || "paperclip-tool")
@@ -207,8 +286,15 @@ export async function writePaperclipAgyMcpConfig(
       const inIncomingNamespace = incomingBaseNames.some(
         (base) => existingName === base || existingName.startsWith(`${base}-`),
       );
-      if (inIncomingNamespace && isPaperclipInjectedEntry(existingServers[existingName])) {
+      const record = ownership[existingName];
+      if (
+        inIncomingNamespace &&
+        record &&
+        isPaperclipInjectedEntry(existingServers[existingName]) &&
+        ownedEntryMatches(existingServers[existingName], record)
+      ) {
         delete existingServers[existingName];
+        delete ownership[existingName];
         sweptStaleServerNames.push(existingName);
       }
     }
@@ -228,6 +314,7 @@ export async function writePaperclipAgyMcpConfig(
       };
       existingServers[uniqueName] = serverConfig;
       injectedServers[uniqueName] = serverConfig;
+      ownership[uniqueName] = ownershipRecordFor(serverConfig);
     }
 
     const updatedConfig: AgyMcpConfigFile = {
@@ -236,6 +323,13 @@ export async function writePaperclipAgyMcpConfig(
     };
 
     await writeAgyMcpConfigFileAtomic(configPath, updatedConfig);
+    // Keep only records for entries that still exist, so the record cannot
+    // later claim ownership of a same-named server the user created.
+    const remainingOwnership: AgyMcpOwnership = {};
+    for (const name of Object.keys(existingServers)) {
+      if (ownership[name]) remainingOwnership[name] = ownership[name];
+    }
+    await writeAgyMcpOwnership(configPath, remainingOwnership);
 
     const cleanup = async (): Promise<void> => {
       try {
@@ -265,7 +359,8 @@ export async function writePaperclipAgyMcpConfig(
 
           const remainingServerKeys = Object.keys(currentServers);
           const onlyMcpServersKey = Object.keys(current.config).every((key) => key === "mcpServers");
-          if (remainingServerKeys.length === 0 && onlyMcpServersKey) {
+          const configDeleted = remainingServerKeys.length === 0 && onlyMcpServersKey;
+          if (configDeleted) {
             // Nothing left worth keeping: no servers, and no other settings
             // in the file. This also covers the file having been created by
             // an overlapping Paperclip run rather than this one.
@@ -277,6 +372,15 @@ export async function writePaperclipAgyMcpConfig(
             };
             await writeAgyMcpConfigFileAtomic(configPath, cleanedConfig);
           }
+          // Ownership records live and die with the entries they describe.
+          const currentOwnership = await readAgyMcpOwnership(configPath);
+          const remainingOwnership: AgyMcpOwnership = {};
+          if (!configDeleted) {
+            for (const name of remainingServerKeys) {
+              if (currentOwnership[name]) remainingOwnership[name] = currentOwnership[name];
+            }
+          }
+          await writeAgyMcpOwnership(configPath, remainingOwnership);
         });
       } catch {
         // Ignore cleanup errors on missing or inaccessible files
@@ -326,9 +430,16 @@ export async function stageAgyMcpConfigForSync(
     // Missing or invalid config on host; start fresh
   }
 
+  // Stage only servers authorized for this run: the user's own servers plus
+  // this run's managed servers. Entries other Paperclip runs injected into
+  // the shared host config carry those runs' credentials and must not leak
+  // into this target; the ownership record identifies them.
+  const ownership = await readAgyMcpOwnership(hostConfigPath);
   const existingServers: Record<string, AgyMcpServerConfig> =
     parsedConfig.mcpServers && typeof parsedConfig.mcpServers === "object" && !Array.isArray(parsedConfig.mcpServers)
-      ? { ...parsedConfig.mcpServers }
+      ? (Object.fromEntries(
+          Object.entries(parsedConfig.mcpServers).filter(([name]) => !ownership[name]),
+        ) as Record<string, AgyMcpServerConfig>)
       : {};
 
   const existingNames = new Set(Object.keys(existingServers));
@@ -356,4 +467,117 @@ export async function stageAgyMcpConfigForSync(
   );
 
   return stagedDir;
+}
+
+export interface PrepareAgyLocalRunMcpHomeInput {
+  homedir?: string;
+  env?: NodeJS.ProcessEnv;
+  servers: AdapterRuntimeMcpServer[];
+  runId?: string;
+}
+
+export interface PrepareAgyLocalRunMcpHomeResult {
+  /** Private per-run HOME the agy process should be spawned with. */
+  homeDir: string;
+  configPath: string;
+  injectedServerNames: string[];
+  cleanup: () => Promise<void>;
+}
+
+/**
+ * Builds a private per-run HOME for a local agy run so its MCP config is
+ * never the shared host file: concurrent runs from different companies
+ * must not be able to swap each other's tool credentials by rewriting
+ * $HOME/.gemini/config/mcp_config.json between write and process start.
+ *
+ * The per-run config starts from the user's own servers (entries other
+ * Paperclip runs injected into the host config are excluded via the
+ * ownership record) plus exactly this run's managed servers. The real
+ * Antigravity CLI home is linked in, so OAuth credentials, settings and
+ * conversation state stay shared with the host login; the rest of the
+ * user's .gemini/config entries are linked through untouched.
+ */
+export async function prepareAgyLocalRunMcpHome(
+  input: PrepareAgyLocalRunMcpHomeInput,
+): Promise<PrepareAgyLocalRunMcpHomeResult> {
+  const realHome = input.env?.HOME || input.homedir || process.env.HOME || os.homedir();
+  const hostConfigPath = resolveAgyMcpConfigPath(realHome, input.env);
+  // Strict read: an unparseable host config must not be silently dropped.
+  const { config: hostConfig } = await readAgyMcpConfig(hostConfigPath);
+  const ownership = await readAgyMcpOwnership(hostConfigPath);
+  const userServers = Object.fromEntries(
+    Object.entries(extractServers(hostConfig)).filter(([name]) => !ownership[name]),
+  ) as Record<string, AgyMcpServerConfig>;
+
+  const prefix = input.runId
+    ? `paperclip-agy-run-home-${input.runId}-`
+    : "paperclip-agy-run-home-";
+  const homeDir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  await fs.chmod(homeDir, 0o700).catch(() => {});
+
+  try {
+    const geminiDir = path.join(homeDir, ".gemini");
+    const configDir = path.join(geminiDir, "config");
+    await fs.mkdir(configDir, { recursive: true, mode: 0o700 });
+
+    // Share auth, settings and conversation state with the real CLI home.
+    const realCliHome = path.join(realHome, ".gemini", "antigravity-cli");
+    const realCliHomeIsDir = await fs
+      .stat(realCliHome)
+      .then((stat) => stat.isDirectory())
+      .catch(() => false);
+    if (realCliHomeIsDir) {
+      await fs
+        .symlink(
+          realCliHome,
+          path.join(geminiDir, "antigravity-cli"),
+          process.platform === "win32" ? "junction" : "dir",
+        )
+        .catch(() => undefined);
+    }
+
+    // Link the user's other .gemini/config entries through untouched; only
+    // mcp_config.json itself is per-run.
+    const realConfigDir = path.dirname(hostConfigPath);
+    const realConfigEntries = await fs.readdir(realConfigDir).catch(() => [] as string[]);
+    for (const entryName of realConfigEntries) {
+      if (entryName === "mcp_config.json" || entryName.startsWith("mcp_config.json.")) continue;
+      await fs
+        .symlink(
+          path.join(realConfigDir, entryName),
+          path.join(configDir, entryName),
+          process.platform === "win32" ? "junction" : undefined,
+        )
+        .catch(() => undefined);
+    }
+
+    const servers: Record<string, AgyMcpServerConfig> = { ...userServers };
+    const existingNames = new Set(Object.keys(servers));
+    const injectedServerNames: string[] = [];
+    for (const server of input.servers) {
+      const uniqueName = resolveUniqueMcpServerName(server, existingNames);
+      existingNames.add(uniqueName);
+      injectedServerNames.push(uniqueName);
+      servers[uniqueName] = {
+        url: server.url,
+        ...(server.token ? { headers: { Authorization: `Bearer ${server.token}` } } : {}),
+      };
+    }
+
+    const configPath = path.join(configDir, "mcp_config.json");
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({ ...hostConfig, mcpServers: servers }, null, 2) + "\n",
+      { mode: 0o600 },
+    );
+
+    const cleanup = async (): Promise<void> => {
+      await fs.rm(homeDir, { recursive: true, force: true }).catch(() => undefined);
+    };
+
+    return { homeDir, configPath, injectedServerNames, cleanup };
+  } catch (err) {
+    await fs.rm(homeDir, { recursive: true, force: true }).catch(() => undefined);
+    throw err;
+  }
 }

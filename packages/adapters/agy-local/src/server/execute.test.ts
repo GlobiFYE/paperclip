@@ -805,10 +805,10 @@ describe("agy-local execute run outcome", () => {
 
     try {
       const cleanupSpy = vi.fn(async () => {});
-      const writeMcpSpy = vi.spyOn(mcpModule, "writePaperclipAgyMcpConfig").mockResolvedValueOnce({
-        configPath: path.join(tempHome, ".gemini", "config", "mcp_config.json"),
+      const writeMcpSpy = vi.spyOn(mcpModule, "prepareAgyLocalRunMcpHome").mockResolvedValueOnce({
+        homeDir: path.join(tempHome, "run-home"),
+        configPath: path.join(tempHome, "run-home", ".gemini", "config", "mcp_config.json"),
         injectedServerNames: ["Paperclip connections"],
-        sweptStaleServerNames: [],
         cleanup: cleanupSpy,
       });
 
@@ -873,6 +873,8 @@ describe("agy-local execute run outcome", () => {
       const calls = vi.mocked(runChildProcess).mock.calls;
       const lastCallOptions = calls[calls.length - 1][3] as { env?: Record<string, string> };
       expect(lastCallOptions?.env?.PAPERCLIP_RUNTIME_TOOLS_TOKEN).toBe("tok-123");
+      // The process runs with the private per-run HOME, never the shared one.
+      expect(lastCallOptions?.env?.HOME).toBe(path.join(tempHome, "run-home"));
       expect(result.sessionParams?.mcpServerIdentity).toBeDefined();
 
       writeMcpSpy.mockRestore();
@@ -887,10 +889,10 @@ describe("agy-local execute run outcome", () => {
     const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "agy-exec-mcp-resume-"));
 
     try {
-      const writeMcpSpy = vi.spyOn(mcpModule, "writePaperclipAgyMcpConfig").mockResolvedValue({
-        configPath: path.join(tempHome, ".gemini", "config", "mcp_config.json"),
+      const writeMcpSpy = vi.spyOn(mcpModule, "prepareAgyLocalRunMcpHome").mockResolvedValue({
+        homeDir: path.join(tempHome, "run-home"),
+        configPath: path.join(tempHome, "run-home", ".gemini", "config", "mcp_config.json"),
         injectedServerNames: ["Paperclip connections"],
-        sweptStaleServerNames: [],
         cleanup: async () => {},
       });
 
@@ -971,7 +973,7 @@ describe("agy-local execute run outcome", () => {
 
   // Remote execution targets are covered in execute.remote.test.ts: remote
   // runs receive the managed MCP config via the staged sync, so the local
-  // writer is not used but the session does carry mcpServerIdentity.
+  // per-run home is not used but the session does carry mcpServerIdentity.
 });
 
 describe("discoverAgySessionArtifacts", () => {

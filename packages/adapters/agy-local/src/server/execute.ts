@@ -72,7 +72,7 @@ import {
   resolveAgyOAuthTokenPath,
   stageAgyHomeForSync,
 } from "./credentials.js";
-import { stageAgyMcpConfigForSync, writePaperclipAgyMcpConfig } from "./mcp.js";
+import { prepareAgyLocalRunMcpHome, stageAgyMcpConfigForSync } from "./mcp.js";
 import {
   DEFAULT_AGY_LOCAL_MODEL,
   resolveAgyModelEffort,
@@ -332,6 +332,23 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     runtimeMcpServers.map(({ name, url, connectionId }) => ({ name, url, connectionId })),
   );
 
+  // Remote setup stages credential-bearing temp directories on the
+  // controller before the run starts. Any failure after staging — during
+  // runtime preparation, command resolution, or bridge startup — must run
+  // the same teardown as a completed run, or those files leak and the
+  // remote workspace is never restored.
+  const cleanupRemoteSetupFailure = async (): Promise<void> => {
+    await Promise.allSettled([
+      restoreRemoteWorkspace?.(),
+      stagedAgyHomeDir
+        ? fs.rm(stagedAgyHomeDir, { recursive: true, force: true }).catch(() => undefined)
+        : Promise.resolve(),
+      stagedMcpConfigDir
+        ? fs.rm(stagedMcpConfigDir, { recursive: true, force: true }).catch(() => undefined)
+        : Promise.resolve(),
+    ]);
+  };
+
   if (executionTargetIsRemote) {
     try {
       const hostTokenPath =
@@ -442,17 +459,14 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           onLog,
         }));
 
-      if (remoteHomeDir && preparedExecutionTargetRuntime.assetDirs["agy-home"]) {
+      if (preparedExecutionTargetRuntime.assetDirs["agy-home"]) {
+        // Point the CLI home at the staged asset directory itself. The
+        // remote user's own ~/.gemini/antigravity-cli must never be
+        // deleted or replaced: on SSH targets it holds their real login,
+        // settings and conversation state.
         const stagedAgyHomeRemote = preparedExecutionTargetRuntime.assetDirs["agy-home"];
-        const targetAgyHome = path.posix.join(remoteHomeDir, ".gemini", "antigravity-cli");
-        await runAdapterExecutionTargetShellCommand(
-          runId,
-          executionTarget,
-          `mkdir -p ${JSON.stringify(path.posix.dirname(targetAgyHome))} && rm -rf ${JSON.stringify(targetAgyHome)} && (ln -s ${JSON.stringify(stagedAgyHomeRemote)} ${JSON.stringify(targetAgyHome)} || cp -a ${JSON.stringify(stagedAgyHomeRemote)} ${JSON.stringify(targetAgyHome)})`,
-          { cwd: effectiveExecutionCwd, env, timeoutSec, graceSec, onLog },
-        );
-        env.ANTIGRAVITY_CLI_HOME = targetAgyHome;
-        env.GEMINI_CLI_HOME = targetAgyHome;
+        env.ANTIGRAVITY_CLI_HOME = stagedAgyHomeRemote;
+        env.GEMINI_CLI_HOME = stagedAgyHomeRemote;
       }
 
       if (remoteHomeDir && preparedExecutionTargetRuntime.assetDirs["mcp-config"]) {
@@ -477,11 +491,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         ...(env.GEMINI_CLI_HOME ? { GEMINI_CLI_HOME: env.GEMINI_CLI_HOME } : {}),
       });
     } catch (error) {
-      await Promise.allSettled([
-        restoreRemoteWorkspace?.(),
-        stagedAgyHomeDir ? fs.rm(stagedAgyHomeDir, { recursive: true, force: true }).catch(() => undefined) : Promise.resolve(),
-        stagedMcpConfigDir ? fs.rm(stagedMcpConfigDir, { recursive: true, force: true }).catch(() => undefined) : Promise.resolve(),
-      ]);
+      await cleanupRemoteSetupFailure();
       throw error;
     }
   }
@@ -491,29 +501,37 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     effectiveExecutionCwd,
   );
 
-  await ensureAdapterExecutionTargetRuntimeCommandInstalled({
-    runId,
-    target: executionTarget,
-    installCommand: ctx.runtimeCommandSpec?.installCommand,
-    detectCommand: ctx.runtimeCommandSpec?.detectCommand,
-    cwd,
-    env: runtimeEnv,
-    timeoutSec,
-    graceSec,
-    onLog,
-  });
+  // Command setup runs after remote assets are staged, so it sits under
+  // the same cleanup guard as the staging block above.
+  let resolvedCommand: string;
+  try {
+    await ensureAdapterExecutionTargetRuntimeCommandInstalled({
+      runId,
+      target: executionTarget,
+      installCommand: ctx.runtimeCommandSpec?.installCommand,
+      detectCommand: ctx.runtimeCommandSpec?.detectCommand,
+      cwd,
+      env: runtimeEnv,
+      timeoutSec,
+      graceSec,
+      onLog,
+    });
 
-  await ensureAdapterExecutionTargetCommandResolvable(command, executionTarget, cwd, runtimeEnv, {
-    installCommand: SANDBOX_INSTALL_COMMAND,
-    timeoutSec,
-  });
+    await ensureAdapterExecutionTargetCommandResolvable(command, executionTarget, cwd, runtimeEnv, {
+      installCommand: SANDBOX_INSTALL_COMMAND,
+      timeoutSec,
+    });
 
-  const resolvedCommand = await resolveAdapterExecutionTargetCommandForLogs(
-    command,
-    executionTarget,
-    cwd,
-    runtimeEnv,
-  );
+    resolvedCommand = await resolveAdapterExecutionTargetCommandForLogs(
+      command,
+      executionTarget,
+      cwd,
+      runtimeEnv,
+    );
+  } catch (error) {
+    await cleanupRemoteSetupFailure();
+    throw error;
+  }
 
   let loggedEnv = buildInvocationEnvForLogs(env, {
     runtimeEnv,
@@ -522,17 +540,22 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   });
 
   if (executionTargetIsRemote && adapterExecutionTargetUsesPaperclipBridge(runtimeExecutionTarget)) {
-    paperclipBridge = await startAdapterExecutionTargetPaperclipBridge({
-      runId,
-      target: runtimeExecutionTarget,
-      enableSandboxDuplexBridge: adapterExecutionTargetEnablesSandboxDuplexBridge(runtimeExecutionTarget),
-      duplexObservabilityRecorder: adapterExecutionTargetDuplexObservabilityRecorder(runtimeExecutionTarget),
-      runtimeRootDir: remoteRuntimeRootDir,
-      adapterKey: "agy",
-      timeoutSec,
-      hostApiToken: env.PAPERCLIP_API_KEY,
-      onLog,
-    });
+    try {
+      paperclipBridge = await startAdapterExecutionTargetPaperclipBridge({
+        runId,
+        target: runtimeExecutionTarget,
+        enableSandboxDuplexBridge: adapterExecutionTargetEnablesSandboxDuplexBridge(runtimeExecutionTarget),
+        duplexObservabilityRecorder: adapterExecutionTargetDuplexObservabilityRecorder(runtimeExecutionTarget),
+        runtimeRootDir: remoteRuntimeRootDir,
+        adapterKey: "agy",
+        timeoutSec,
+        hostApiToken: env.PAPERCLIP_API_KEY,
+        onLog,
+      });
+    } catch (error) {
+      await cleanupRemoteSetupFailure();
+      throw error;
+    }
     if (paperclipBridge) {
       Object.assign(env, paperclipBridge.env);
       Object.assign(runtimeEnv, paperclipBridge.env);
@@ -621,36 +644,46 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     run: { id: runId, source: "on_demand" },
     context,
   };
-  const renderedBootstrapPrompt =
-    !sessionId && bootstrapPromptTemplate.trim().length > 0
-      ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
-      : "";
-  const wakePrompt = renderPaperclipWakePrompt(context.paperclipWake, {
-    resumedSession: Boolean(sessionId),
-  });
-  const shouldUseResumeDeltaPrompt = Boolean(sessionId) && wakePrompt.length > 0;
-  const renderedPrompt =
-    shouldUseResumeDeltaPrompt || isPaperclipRecoveryWakePayload(context.paperclipWake)
-      ? ""
-      : renderTemplate(promptTemplate, templateData);
   const sessionHandoffNote = asString(context.paperclipSessionHandoffMarkdown, "").trim();
-  const prompt = joinPromptSections([
-    instructionsPrefix,
-    renderedBootstrapPrompt,
-    wakePrompt,
-    sessionHandoffNote,
-    renderedPrompt,
-  ]);
-  const promptMetrics = {
-    promptChars: prompt.length,
-    instructionsChars: instructionsPrefix.length,
-    bootstrapPromptChars: renderedBootstrapPrompt.length,
-    wakePromptChars: wakePrompt.length,
-    sessionHandoffChars: sessionHandoffNote.length,
-    heartbeatPromptChars: renderedPrompt.length,
+  // The prompt depends on whether this attempt resumes a conversation:
+  // resumed attempts send only the wake delta, while a fresh session needs
+  // the bootstrap prompt and the full request. Build it per attempt so the
+  // fresh-session retry after an unknown-session failure does not reuse
+  // the resume-only prompt built for the saved conversation.
+  const buildPromptForAttempt = (resumeSessionId: string | null) => {
+    const renderedBootstrapPrompt =
+      !resumeSessionId && bootstrapPromptTemplate.trim().length > 0
+        ? renderTemplate(bootstrapPromptTemplate, templateData).trim()
+        : "";
+    const wakePrompt = renderPaperclipWakePrompt(context.paperclipWake, {
+      resumedSession: Boolean(resumeSessionId),
+    });
+    const shouldUseResumeDeltaPrompt = Boolean(resumeSessionId) && wakePrompt.length > 0;
+    const renderedPrompt =
+      shouldUseResumeDeltaPrompt || isPaperclipRecoveryWakePayload(context.paperclipWake)
+        ? ""
+        : renderTemplate(promptTemplate, templateData);
+    const attemptPrompt = joinPromptSections([
+      instructionsPrefix,
+      renderedBootstrapPrompt,
+      wakePrompt,
+      sessionHandoffNote,
+      renderedPrompt,
+    ]);
+    return {
+      prompt: attemptPrompt,
+      promptMetrics: {
+        promptChars: attemptPrompt.length,
+        instructionsChars: instructionsPrefix.length,
+        bootstrapPromptChars: renderedBootstrapPrompt.length,
+        wakePromptChars: wakePrompt.length,
+        sessionHandoffChars: sessionHandoffNote.length,
+        heartbeatPromptChars: renderedPrompt.length,
+      },
+    };
   };
 
-  const buildArgs = (resumeSessionId: string | null) => {
+  const buildArgs = (resumeSessionId: string | null, attemptPrompt: string) => {
     const initialCwd = executionTargetIsRemote ? effectiveExecutionCwd : cwd;
     const args = [
       "--output-format",
@@ -738,28 +771,30 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       args.push(...extraArgs);
     }
     if (!useStreamJsonInput) {
-      args.push("--print", prompt);
+      args.push("--print", attemptPrompt);
     }
     return args;
   };
 
   const runAttempt = async (resumeSessionId: string | null) => {
-    const args = buildArgs(resumeSessionId);
+    const { prompt: attemptPrompt, promptMetrics: attemptPromptMetrics } =
+      buildPromptForAttempt(resumeSessionId);
+    const args = buildArgs(resumeSessionId, attemptPrompt);
     if (onMeta) {
       await onMeta({
         adapterType: "agy_local",
         command: resolvedCommand,
         cwd: effectiveExecutionCwd,
-        commandArgs: args.map((arg) => (arg === prompt ? `<prompt ${prompt.length} chars>` : arg)),
+        commandArgs: args.map((arg) => (arg === attemptPrompt ? `<prompt ${attemptPrompt.length} chars>` : arg)),
         env: loggedEnv,
-        prompt,
-        promptMetrics,
+        prompt: attemptPrompt,
+        promptMetrics: attemptPromptMetrics,
         context,
       });
     }
 
     const stdin = useStreamJsonInput
-      ? JSON.stringify({ event: "user", message: { content: prompt } }) + "\n"
+      ? JSON.stringify({ event: "user", message: { content: attemptPrompt } }) + "\n"
       : undefined;
 
     const proc = await runAdapterExecutionTargetProcess(
@@ -923,12 +958,17 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
   let mcpCleanup: (() => Promise<void>) | null = null;
   if (runtimeMcpServers.length > 0 && !executionTargetIsRemote) {
     try {
-      const mcpResult = await writePaperclipAgyMcpConfig({
+      // Local runs get a private per-run HOME whose mcp_config.json holds
+      // exactly this run's servers (plus the user's own). Writing run-scoped
+      // bearer tokens into the shared host config would let a concurrent
+      // run replace them before this process reads the file.
+      const mcpResult = await prepareAgyLocalRunMcpHome({
         homedir: runtimeEnv.HOME || os.homedir(),
         env: runtimeEnv,
         servers: runtimeMcpServers,
         runId,
       });
+      runtimeEnv.HOME = mcpResult.homeDir;
       mcpCleanup = mcpResult.cleanup;
       await onLog(
         "stdout",

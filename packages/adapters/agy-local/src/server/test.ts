@@ -18,10 +18,8 @@ import {
   ensureAdapterExecutionTargetDirectory,
   maybeRunSandboxInstallCommand,
   prepareAdapterExecutionTargetRuntime,
-  readAdapterExecutionTargetHomeDir,
   resolveAdapterExecutionTargetCwd,
   runAdapterExecutionTargetProcess,
-  runAdapterExecutionTargetShellCommand,
 } from "@paperclipai/adapter-utils/execution-target";
 import fs from "node:fs";
 import os from "node:os";
@@ -205,27 +203,12 @@ export async function testEnvironment(
         if (managedRemoteHomeDir) {
           env.HOME = managedRemoteHomeDir;
         }
-        const remoteHomeDir =
-          managedRemoteHomeDir ??
-          (await readAdapterExecutionTargetHomeDir(runId, target, {
-            cwd,
-            env,
-            timeoutSec: 15,
-            graceSec: 5,
-            onLog: async () => {},
-          }));
-
-        if (remoteHomeDir && preparedRuntime.assetDirs["agy-home"]) {
+        if (preparedRuntime.assetDirs["agy-home"]) {
+          // Point the CLI home at the staged asset directory itself; never
+          // delete or replace the remote user's ~/.gemini/antigravity-cli.
           const stagedAgyHomeRemote = preparedRuntime.assetDirs["agy-home"];
-          const targetAgyHome = path.posix.join(remoteHomeDir, ".gemini", "antigravity-cli");
-          await runAdapterExecutionTargetShellCommand(
-            runId,
-            target,
-            `mkdir -p ${JSON.stringify(path.posix.dirname(targetAgyHome))} && rm -rf ${JSON.stringify(targetAgyHome)} && (ln -s ${JSON.stringify(stagedAgyHomeRemote)} ${JSON.stringify(targetAgyHome)} || cp -a ${JSON.stringify(stagedAgyHomeRemote)} ${JSON.stringify(targetAgyHome)})`,
-            { cwd, env, timeoutSec: 15, graceSec: 5, onLog: async () => {} },
-          );
-          env.ANTIGRAVITY_CLI_HOME = targetAgyHome;
-          env.GEMINI_CLI_HOME = targetAgyHome;
+          env.ANTIGRAVITY_CLI_HOME = stagedAgyHomeRemote;
+          env.GEMINI_CLI_HOME = stagedAgyHomeRemote;
         }
       }
 

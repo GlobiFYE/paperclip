@@ -523,14 +523,21 @@ export async function syncAgySkills(
 
   await fs.mkdir(root.skillsHome, { recursive: true });
 
-  // Remove links this adapter previously created for skills no longer desired
+  // Remove links this adapter previously created for skills no longer
+  // desired. A deselected skill also disappears from the configured runtime
+  // skill list, so current entries alone cannot identify its old link; the
+  // managed-links manifest recorded at each sync names the links this
+  // adapter created and where they point.
+  const previouslyManaged = await readManagedSkillsManifest(root);
   const installedBefore = await readInstalledSkillTargets(root.skillsHome);
-  const managedSources = new Set(availableEntries.map((entry) => entry.source));
   for (const [runtimeName, installedEntry] of installedBefore) {
     if (installedEntry.kind !== "symlink") continue;
-    if (!installedEntry.targetPath || !managedSources.has(installedEntry.targetPath)) continue;
+    if (!installedEntry.targetPath) continue;
     const entry = availableEntries.find((candidate) => candidate.runtimeName === runtimeName);
     if (entry && desiredSet.has(entry.key)) continue;
+    const isRecordedLink = previouslyManaged[runtimeName] === installedEntry.targetPath;
+    const isCurrentEntryLink = entry !== undefined && installedEntry.targetPath === entry.source;
+    if (!isRecordedLink && !isCurrentEntryLink) continue;
     await unlinkSkillDirectory(path.join(root.skillsHome, runtimeName)).catch(() => {});
   }
 
@@ -565,10 +572,65 @@ export async function syncAgySkills(
   }
 
   const installed = await readInstalledSkillTargets(root.skillsHome);
+  // Record exactly the managed links now in place so the next sync can
+  // prune a skill that has since been deselected (and dropped from the
+  // configured list), including when the next desired list is empty.
+  const managedLinks: Record<string, string> = {};
+  for (const entry of availableEntries) {
+    if (!desiredSet.has(entry.key)) continue;
+    const installedEntry = installed.get(entry.runtimeName);
+    if (installedEntry?.kind === "symlink" && installedEntry.targetPath === entry.source) {
+      managedLinks[entry.runtimeName] = entry.source;
+    }
+  }
+  await writeManagedSkillsManifest(root, managedLinks);
   return buildSnapshot({ availableEntries, desiredSkills, installed, root, warnings });
 }
 
 export const syncSkills = syncAgySkills;
+
+/** File (kept in the agent's add-dir root, outside the scanned skills tree)
+ * recording the links this adapter created, so a later sync can remove a
+ * link whose skill was deselected even after the skill disappears from the
+ * configured runtime skill list. */
+export const AGY_MANAGED_SKILLS_MANIFEST_FILENAME = ".paperclip-managed-skills.json";
+
+export function managedSkillsManifestPath(root: AgySkillRoot): string {
+  return path.join(root.addDir, AGY_MANAGED_SKILLS_MANIFEST_FILENAME);
+}
+
+async function readManagedSkillsManifest(root: AgySkillRoot): Promise<Record<string, string>> {
+  try {
+    const raw = await fs.readFile(managedSkillsManifestPath(root), "utf8");
+    const parsed = JSON.parse(raw) as { links?: unknown };
+    if (!parsed || typeof parsed !== "object" || !parsed.links || typeof parsed.links !== "object") {
+      return {};
+    }
+    const links: Record<string, string> = {};
+    for (const [runtimeName, target] of Object.entries(parsed.links as Record<string, unknown>)) {
+      if (typeof target === "string" && target.length > 0) links[runtimeName] = target;
+    }
+    return links;
+  } catch {
+    return {};
+  }
+}
+
+async function writeManagedSkillsManifest(
+  root: AgySkillRoot,
+  links: Record<string, string>,
+): Promise<void> {
+  try {
+    await fs.mkdir(root.addDir, { recursive: true });
+    await fs.writeFile(
+      managedSkillsManifestPath(root),
+      JSON.stringify({ version: 1, links }, null, 2) + "\n",
+    );
+  } catch {
+    // Best-effort: without a manifest the next sync falls back to matching
+    // links against the currently configured skill entries.
+  }
+}
 
 export interface RunSkillSync {
   root: AgySkillRoot;
@@ -594,7 +656,27 @@ export async function syncSkillsForRun(input: {
   const desiredSkills = resolveLegacyPaperclipDesiredSkillNames(config, availableEntries);
 
   if (desiredSkills.length === 0 && availableEntries.length === 0) {
-    return { root, snapshot: null, desiredSkills, warnings: root.warnings ? [...root.warnings] : [] };
+    // Nothing to deliver — but links managed by an earlier assignment may
+    // still be in place. Skip the sync only when none of those links are
+    // installed; otherwise fall through so syncAgySkills can prune links
+    // whose skills were deselected. User-installed skills in the same home
+    // do not count: they are not Paperclip's to prune.
+    const previouslyManaged = await readManagedSkillsManifest(root);
+    const installed = await readInstalledSkillTargets(root.skillsHome);
+    let hasManagedLink = false;
+    for (const [runtimeName, installedEntry] of installed) {
+      if (
+        installedEntry.kind === "symlink" &&
+        installedEntry.targetPath !== null &&
+        previouslyManaged[runtimeName] === installedEntry.targetPath
+      ) {
+        hasManagedLink = true;
+        break;
+      }
+    }
+    if (!hasManagedLink) {
+      return { root, snapshot: null, desiredSkills, warnings: root.warnings ? [...root.warnings] : [] };
+    }
   }
 
   const snapshot = await syncAgySkills(

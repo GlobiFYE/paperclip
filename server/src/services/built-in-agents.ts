@@ -1808,15 +1808,25 @@ export function builtInAgentService(db: Db) {
           patch.metadata = { ...patch.metadata, paperclipBuiltInSetupRequired: false };
         }
         if (existing.runtimeConfig?.aiConnection) {
-          const supportsAi = adapterSupportsAiConnections(adapterType);
           const aiBinding = aiConnectionBindingSchema.safeParse(existing.runtimeConfig.aiConnection).data;
           const finalConfig = (patch.adapterConfig ?? existing.adapterConfig) as Record<string, unknown> | undefined;
+          // Judge support against the FINAL adapter type and configuration:
+          // for paperclip_runner agents the provider/acpxAgent fields decide
+          // support, and a reconfigure may also have switched the adapter
+          // type itself. Checking the pre-patch type alone drops valid
+          // bindings (e.g. a runner agent whose provider was omitted here).
+          const finalAdapterType = patch.adapterType ?? existing.adapterType;
+          const supportsAi = adapterSupportsAiConnections(
+            finalAdapterType,
+            finalConfig?.provider,
+            finalConfig?.acpxAgent,
+          );
           const isCompatible = Boolean(
             supportsAi &&
             aiBinding &&
             isAiConnectionCompatible(
               aiBinding,
-              adapterType,
+              finalAdapterType,
               finalConfig?.model,
               finalConfig?.provider,
               finalConfig?.acpxAgent,
