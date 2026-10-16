@@ -183,6 +183,24 @@ describe("delivery work coordinator", () => {
     expect(s.coordinator.nextWakeAt()).toBeNull();
   });
 
+  it("preserves a future deadline while reconciling a write during idle drain", async () => {
+    const s = setup(), t = task();
+    const due = Date.now() + 1000;
+    let next: number | null = due;
+    await s.coordinator.register(DELIVERY_QUEUES.routineSchedules, { ...t, nextRunAt: () => next }).ready;
+    s.canRun.mockReturnValue(false);
+    s.canReconcile.mockReturnValue(true);
+    await s.enqueue(DELIVERY_QUEUES.routineSchedules);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(s.coordinator.nextWakeAt()).toBe(due);
+    expect(t.run).toHaveBeenCalledTimes(1);
+    next = null;
+    s.canRun.mockReturnValue(true);
+    await vi.advanceTimersByTimeAsync(999);
+    expect(t.run).toHaveBeenCalledTimes(2);
+    expect(idleWorkSnapshot().active).toBe(0);
+  });
+
   it("does not query during standby and resumes when admission opens", async () => {
     const s = setup(), t = task(); s.canRun.mockReturnValue(false);
     await s.coordinator.register(DELIVERY_QUEUES.toolAction, t).ready;

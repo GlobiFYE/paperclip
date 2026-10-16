@@ -1881,9 +1881,11 @@ async function startServerWithDatabaseTeardown(
     const startHeartbeatScheduler = () => {
       const scheduled = registerScheduledWork(deliveryWork, db, {
         retryMs: config.heartbeatSchedulerIntervalMs,
-        tickTimers: () => heartbeat.tickTimers(new Date()).then(result => {
+        tickTimers: async () => {
+          if ((await heartbeat.resolveSchedulingSuppression()).suppressed) return;
+          const result = await heartbeat.tickTimers(new Date());
           if (result.enqueued > 0) logger.info({ ...result }, "heartbeat timer tick enqueued runs");
-        }),
+        },
         tickRoutines: () => routines.tickScheduledTriggers(new Date()).then(result => {
           if (result.triggered > 0) logger.info({ ...result }, "routine scheduler tick enqueued runs");
         }),
