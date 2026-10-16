@@ -641,8 +641,9 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
       .innerJoin(companies, and(eq(companies.id, issues.companyId), eq(companies.status, "active")))
       // Ownership/cleanup waits need not create a recovery-action row. Revisit
       // their saved messages after the execution owner has released its lease.
+      // A human comment may be coalesced into a system-origin wake. The saved
+      // comment and its author, not the outer wake actor, authorize admission.
       .where(and(eq(agentWakeupRequests.status, "deferred_issue_execution"),
-        eq(agentWakeupRequests.requestedByActorType, "user"),
         sql`${agentWakeupRequests.payload}->'executionWait' is not null`,
         sql`${agentWakeupRequests.payload}->'queuedCommentInterrupt' is null`,
         lte(agentWakeupRequests.updatedAt, new Date(Date.now() - 30_000)),

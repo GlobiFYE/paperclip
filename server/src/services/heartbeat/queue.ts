@@ -1785,9 +1785,6 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
           sql`${agentWakeupRequests.payload} #> '{_paperclipWakeContext,wakeCommentIds}' <> '[]'::jsonb`,
         ), sql`${agentWakeupRequests.payload}->>'mutation' = 'interaction'`),
         sql`${agentWakeupRequests.payload}->'queuedCommentInterrupt' is null`,
-        // The execution-wait scan owns this cursor. Frequent queue scans must
-        // not postpone its 30-second check by refreshing the same timestamp.
-        sql`${agentWakeupRequests.payload}->'executionWait' is null`,
         cutoff ? gte(agentWakeupRequests.requestedAt, cutoff) : undefined))
       .orderBy(asc(agentWakeupRequests.updatedAt)).limit(50);
     for (const { wake } of strandedQueues) {
@@ -1797,9 +1794,14 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         eq(heartbeatRuns.companyId, wake.companyId), eq(heartbeatRuns.agentId, wake.agentId),
         sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${String(wake.payload?.issueId)}`,
       )).orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id)).limit(1);
-      await db.update(agentWakeupRequests).set({ updatedAt: new Date() }).where(and(
-        eq(agentWakeupRequests.id, wake.id), eq(agentWakeupRequests.status, "deferred_issue_execution"),
-      ));
+      // Keep the existing release/recovery paths for every stranded queue,
+      // including system-origin wakes with saved human input. Only the wait
+      // scan owns a wait's retry cursor; touching it here can starve that scan.
+      if (!wake.payload?.executionWait) {
+        await db.update(agentWakeupRequests).set({ updatedAt: new Date() }).where(and(
+          eq(agentWakeupRequests.id, wake.id), eq(agentWakeupRequests.status, "deferred_issue_execution"),
+        ));
+      }
       if (!latest || !isHeartbeatRunTerminalStatus(latest.status)) continue;
       if (latest.runtimeMode === "native" && typeof wake.payload?.dotAssignmentFollowUp === "string") {
         await releaseIssueExecutionAndPromote(latest, { suppressImmediateRecovery: true }).catch(err => {

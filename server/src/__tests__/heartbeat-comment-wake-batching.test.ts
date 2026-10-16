@@ -356,6 +356,11 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
     { name: "admits once across competing scans", postStop: true, paused: false, adapterType: "codex_local", delivers: true, concurrent: true },
     { name: "requires the recorded continuation policy", postStop: true, paused: false, adapterType: "codex_local", delivers: false, missingPolicy: true },
     { name: "keeps unsafe workspace recovery held", postStop: true, paused: false, adapterType: "codex_local", delivers: false, unsafeRestore: true },
+    { name: "delivers saved human input on a system-origin wake", postStop: true, paused: false, adapterType: "codex_local", delivers: true, systemOrigin: true },
+    { name: "admits system-origin input once across competing scans", postStop: true, paused: false, adapterType: "codex_local", delivers: true, systemOrigin: true, concurrent: true },
+    { name: "keeps system-origin input from before an operator Stop", postStop: false, paused: false, adapterType: "codex_local", delivers: false, systemOrigin: true },
+    { name: "respects a paused agent on a system-origin wake", postStop: true, paused: true, adapterType: "codex_local", delivers: false, systemOrigin: true },
+    { name: "does not use an agent comment as human authority", postStop: true, paused: false, adapterType: "codex_local", delivers: false, systemOrigin: true, agentComment: true },
     { name: "preserves sub-millisecond Stop ordering", postStop: false, paused: false, adapterType: "codex_local", delivers: false, preciseStop: true },
   ])("execution ownership wait: $name", async ({ postStop, paused, adapterType, delivers, ...options }) => {
     const companyId = randomUUID();
@@ -392,8 +397,10 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
           executionCancellation: { state: "acknowledged" },
           cancellation: { source: postStop ? "control_plane" : "operator", expected: true,
             initiator: { type: postStop ? "system" : "user" }, reason: "Stopped", recordedAt: finishedAt.toISOString() } } });
-      await db.insert(issueComments).values({ id: commentId, companyId, issueId, authorType: "user",
-        authorUserId: "responsible-user", body: "Continue with this follow-up", createdAt: commentAt });
+      const agentComment = "agentComment" in options && options.agentComment;
+      await db.insert(issueComments).values({ id: commentId, companyId, issueId,
+        authorType: agentComment ? "agent" : "user", authorAgentId: agentComment ? agentId : null,
+        authorUserId: agentComment ? null : "responsible-user", body: "Continue with this follow-up", createdAt: commentAt });
       if ("preciseStop" in options && options.preciseStop) {
         await db.update(heartbeatRuns).set({ finishedAt: sql`${finishedAt.toISOString()}::timestamptz + interval '900 microseconds'` })
           .where(eq(heartbeatRuns.id, sourceRunId));
@@ -401,8 +408,10 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
           .where(eq(issueComments.id, commentId));
       }
       await db.insert(agentWakeupRequests).values({ id: wakeId, companyId, agentId, source: "automation",
-        reason: "issue_commented", status: "deferred_issue_execution", requestedByActorType: "user",
-        requestedByActorId: "responsible-user", requestedAt: commentAt, updatedAt: staleAt,
+        reason: "issue_commented", status: "deferred_issue_execution",
+        requestedByActorType: "systemOrigin" in options && options.systemOrigin ? "system" : "user",
+        requestedByActorId: "systemOrigin" in options && options.systemOrigin ? "heartbeat" : "responsible-user",
+        requestedAt: commentAt, updatedAt: staleAt,
         payload: { issueId, commentId, mutation: "comment",
           executionWait: { reason: "execution_recovery", recoveryActionId: null },
           _paperclipWakeContext: { issueId, wakeReason: "issue_commented", wakeCommentId: commentId,
@@ -430,6 +439,9 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
       expect(successors).toHaveLength(delivers ? 1 : 0);
       if (delivers) {
         expect(successors[0]?.contextSnapshot).toMatchObject({ issueId, wakeCommentId: commentId });
+        const [dispatch] = await db.select().from(agentWakeupRequests)
+          .where(eq(agentWakeupRequests.id, successors[0]!.wakeupRequestId!));
+        expect(dispatch).toMatchObject({ requestedByActorType: "user", requestedByActorId: "responsible-user" });
         await heartbeat.resumeQueuedRuns();
         expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId))).toHaveLength(2);
       }

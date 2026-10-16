@@ -1445,6 +1445,8 @@ another agent's review participation keeps its independent recovery path.
 
 Execution-ownership waits can exist without a recovery-action row. The scheduler
 checks saved human comments in these waits after the old ownership gate clears.
+A human comment can belong to a system-origin queue; its saved author supplies
+the authority for admission, regardless of the outer wake actor.
 A fresh legacy conversation requires the recorded continuation policy and an
 undelivered user comment newer than the latest stopped run. Earlier comments
 still require an explicit user action. The execution-wait scan owns its retry
