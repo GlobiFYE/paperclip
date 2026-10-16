@@ -196,12 +196,10 @@ fn resource_lock(resource: &Path) -> McpResult<File> {
         ));
     }
     let identity = format!(
-        "{}:{}:{}:{}:{}",
+        "{}:{}:{}",
         resource.display(),
         metadata.dev(),
-        metadata.ino(),
-        metadata.ctime(),
-        metadata.ctime_nsec()
+        metadata.ino()
     );
     let digest = format!("{:x}", Sha256::digest(identity));
     let path = parent.join(format!(".paperclip-mcp-{digest}.lock"));
@@ -274,12 +272,7 @@ pub fn run_proxy(path: &Path, content_images: bool) -> McpResult<()> {
     binding.validate()?;
     let mut lock = resource_lock(&binding.serial_resource)?;
     let resource_metadata = fs::symlink_metadata(&binding.serial_resource)?;
-    let resource_identity = (
-        resource_metadata.dev(),
-        resource_metadata.ino(),
-        resource_metadata.ctime(),
-        resource_metadata.ctime_nsec(),
-    );
+    let resource_identity = (resource_metadata.dev(), resource_metadata.ino());
     let program = verify_executable_launch_artifact(
         &QualifiedLaunchArtifact {
             path: binding.command.clone(),
@@ -307,20 +300,23 @@ pub fn run_proxy(path: &Path, content_images: bool) -> McpResult<()> {
         let mut active: Option<Value> = None;
         let mut closing = false;
         let mut ids = BTreeSet::new();
+        let mut deferred = None;
         loop {
-            if active.is_none() && !queue.is_empty() {
+            let ready_event = deferred.take().or_else(|| rx.try_recv().ok());
+            if ready_event.is_none() && active.is_none() && !queue.is_empty() {
                 let current = fs::symlink_metadata(&binding.serial_resource)?;
-                if (
-                    current.dev(),
-                    current.ino(),
-                    current.ctime(),
-                    current.ctime_nsec(),
-                ) != resource_identity
+                if (current.dev(), current.ino()) != resource_identity
+                    || current.mode() & 0o077 != 0
                 {
                     return Err(invalid("assigned MCP socket changed; reopen the session"));
                 }
                 match lock.try_lock() {
                     Ok(()) => {
+                        if let Ok(event) = rx.try_recv() {
+                            lock.unlock()?;
+                            deferred = Some(event);
+                            continue;
+                        }
                         if lock.metadata()?.len() != 0 {
                             return Err(invalid("previous MCP operation has unknown outcome; restart the assigned resource before retrying"));
                         }
@@ -339,10 +335,13 @@ pub fn run_proxy(path: &Path, content_images: bool) -> McpResult<()> {
             if closing && active.is_none() {
                 return Ok(());
             }
-            let event = match rx.recv_timeout(Duration::from_millis(20)) {
-                Ok(event) => event,
-                Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(_) => return Err(invalid("stdio MCP transport disconnected")),
+            let event = match ready_event {
+                Some(event) => event,
+                None => match rx.recv_timeout(Duration::from_millis(20)) {
+                    Ok(event) => event,
+                    Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                    Err(_) => return Err(invalid("stdio MCP transport disconnected")),
+                },
             };
             match event {
                 Event::Client(line) => {

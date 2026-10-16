@@ -7,7 +7,10 @@ use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc, Arc,
+};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -36,13 +39,21 @@ impl Fixture {
         let command = fs::canonicalize(env!("CARGO_BIN_EXE_fake-stdio-mcp")).unwrap();
         let sha = format!("sha256:{:x}", Sha256::digest(fs::read(&command).unwrap()));
         json!({"name":"fixture","command":command,"args":[],"env":{
-            "FIXTURE_LOG":self.root.join("calls"),"FIXTURE_GATE":self.root.join("release")
+            "FIXTURE_LOG":self.root.join("calls"),"FIXTURE_GATE":self.root.join("release"),"FIXTURE_PING_READY":self.root.join("ping-ready")
         },"sha256":sha,"serialResource":self.root.join("resource.sock")})
     }
     fn spawn(&self, config: Value) -> Peer {
         self.spawn_options(config, false)
     }
     fn spawn_options(&self, config: Value, content_images: bool) -> Peer {
+        self.spawn_output_gate(config, content_images, Arc::new(AtomicBool::new(true)))
+    }
+    fn spawn_output_gate(
+        &self,
+        config: Value,
+        content_images: bool,
+        gate: Arc<AtomicBool>,
+    ) -> Peer {
         let path = self.root.join(format!("{}.json", uuid::Uuid::new_v4()));
         fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
         fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
@@ -61,6 +72,9 @@ impl Fixture {
         let (tx, rx) = mpsc::channel();
         let stdout = child.stdout.take().unwrap();
         thread::spawn(move || {
+            while !gate.load(Ordering::SeqCst) {
+                thread::sleep(Duration::from_millis(5));
+            }
             for line in BufReader::new(stdout).lines() {
                 let Ok(line) = line else {
                     break;
@@ -100,6 +114,19 @@ impl Peer {
             json!({"jsonrpc":"2.0","id":id,"method":method,"params":args})
         )
         .unwrap();
+    }
+    fn wait_exit(&mut self) -> std::process::ExitStatus {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = self.child.try_wait().unwrap() {
+                return status;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "relay did not reject invalid operation"
+            );
+            thread::sleep(Duration::from_millis(10));
+        }
     }
     fn response(&self, id: u64) -> Value {
         let value = self
@@ -179,7 +206,7 @@ fn rejects_hash_drift_before_starting_the_server() {
     let mut config = fixture.config();
     config["sha256"] = json!(format!("sha256:{}", "0".repeat(64)));
     let mut peer = fixture.spawn(config);
-    assert!(!peer.child.wait().unwrap().success());
+    assert!(!peer.wait_exit().success());
     assert_eq!(fixture.calls(), "");
 }
 
@@ -194,10 +221,20 @@ fn lost_acknowledgement_blocks_calls_until_socket_replacement() {
     );
     fixture.wait_begin();
     first.send(1, "ping", json!({}));
-    assert!(!first.child.wait().unwrap().success());
+    assert!(!first.wait_exit().success());
+    assert!(
+        fs::read_dir(&fixture.root).unwrap().any(|e| {
+            let e = e.unwrap();
+            e.file_name()
+                .to_string_lossy()
+                .starts_with(".paperclip-mcp-")
+                && fs::read(e.path()).unwrap() == b"pending"
+        }),
+        "unfinished marker missing"
+    );
     let mut second = fixture.spawn(fixture.config());
     second.send(2, "tools/call", json!({"name":"opaque","arguments":{}}));
-    assert!(!second.child.wait().unwrap().success());
+    assert!(!second.wait_exit().success());
     assert_eq!(fixture.calls(), "begin 1\n");
     fs::remove_file(fixture.root.join("resource.sock")).unwrap();
     let _next = UnixListener::bind(fixture.root.join("resource.sock")).unwrap();
@@ -264,4 +301,66 @@ fn cancellation_removes_queued_calls_and_fences_active_calls_until_ack() {
     first.response(1);
     second.response(3);
     assert_eq!(fixture.calls(), "begin 1\nend 1\nbegin 3\nend 3\n");
+}
+
+#[test]
+fn cancellation_waiting_behind_output_is_handled_before_new_dispatch() {
+    let fixture = Fixture::new();
+    let mut first = fixture.spawn(fixture.config());
+    first.send(
+        1,
+        "tools/call",
+        json!({"name":"opaque","arguments":{"block":true}}),
+    );
+    fixture.wait_begin();
+    let gate = Arc::new(AtomicBool::new(false));
+    let mut second = fixture.spawn_output_gate(fixture.config(), false, gate.clone());
+    second.send(4, "ping", json!({"padding":true}));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !fixture.root.join("ping-ready").exists() {
+        assert!(Instant::now() < deadline);
+        thread::sleep(Duration::from_millis(5));
+    }
+    thread::sleep(Duration::from_millis(50));
+    second.send(2, "tools/call", json!({"name":"opaque","arguments":{}}));
+    writeln!(
+        second.child.stdin.as_mut().unwrap(),
+        "{}",
+        json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":2}})
+    )
+    .unwrap();
+    fs::write(fixture.root.join("release"), "ready").unwrap();
+    first.response(1);
+    thread::sleep(Duration::from_millis(50));
+    gate.store(true, Ordering::SeqCst);
+    second.response(4);
+    let response = second.rx.recv_timeout(Duration::from_secs(5)).unwrap();
+    assert_eq!(
+        response["error"]["code"], -32800,
+        "cancelled call was dispatched: {response}"
+    );
+    assert_eq!(fixture.calls(), "begin 1\nend 1\n");
+}
+
+#[test]
+fn metadata_only_socket_changes_do_not_bypass_unknown_outcome() {
+    let fixture = Fixture::new();
+    let mut first = fixture.spawn(fixture.config());
+    first.send(
+        1,
+        "tools/call",
+        json!({"name":"opaque","arguments":{"block":true}}),
+    );
+    fixture.wait_begin();
+    first.send(1, "ping", json!({}));
+    assert!(!first.wait_exit().success());
+    fs::set_permissions(
+        fixture.root.join("resource.sock"),
+        fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    let mut second = fixture.spawn(fixture.config());
+    second.send(2, "tools/call", json!({"name":"opaque","arguments":{}}));
+    assert!(!second.wait_exit().success());
+    assert_eq!(fixture.calls(), "begin 1\n");
 }

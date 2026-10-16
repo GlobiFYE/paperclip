@@ -21,7 +21,12 @@ fn main() {
             let mut result = match message["method"].as_str().unwrap_or("") {
                 "initialize" => json!({"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"fixture","version":"1"}}),
                 "tools/list" => json!({"tools":[{"name":"opaque","inputSchema":{"type":"object","properties":{"original":{"type":"string"}}}}]}),
-                "ping" => json!({"secretLeaked":std::env::var_os("PAPERCLIP_RUNNER_BOOTSTRAP_TICKET").is_some()}),
+                "ping" => {
+                    if message.pointer("/params/padding") == Some(&json!(true)) {
+                        std::fs::write(std::env::var("FIXTURE_PING_READY").unwrap(), "ready").unwrap();
+                        json!({"padding":"x".repeat(1024*1024)})
+                    } else { json!({"secretLeaked":std::env::var_os("PAPERCLIP_RUNNER_BOOTSTRAP_TICKET").is_some()}) }
+                },
                 "tools/call" => {
                     let log = std::env::var("FIXTURE_LOG").unwrap();
                     let mut file = OpenOptions::new().create(true).append(true).open(log).unwrap();
