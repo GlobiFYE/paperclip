@@ -78,12 +78,16 @@ export function CompanySettings() {
     if (companyChanged || !generalDirty) {
       setCompanyName(selectedCompany.name);
       setDescription(selectedCompany.description ?? "");
-      setLogoUrl(selectedCompany.logoUrl ?? "");
-      setGovernance(selectedCompany.interactionResolverGovernance ?? {});
       setGeneralSyncedCompanyId(selectedCompany.id);
       setGeneralDirty(false);
     }
   }, [selectedCompany, generalSyncedCompanyId, generalDirty]);
+
+  useEffect(() => {
+    if (!selectedCompany) return;
+    setLogoUrl(selectedCompany.logoUrl ?? "");
+    setGovernance(selectedCompany.interactionResolverGovernance ?? {});
+  }, [selectedCompany?.id, selectedCompany?.logoUrl, selectedCompany?.interactionResolverGovernance]);
 
   useEffect(() => {
     if (!selectedCompany) return;
