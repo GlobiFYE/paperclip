@@ -60,6 +60,8 @@ function createDbState(input: {
         agentId: input.run.agentId,
         responsibleUserId: input.run.responsibleUserId ?? null,
         status: input.run.status ?? "running",
+        createdAt: new Date(Date.now() - 60_000),
+        finishedAt: ["cancelled", "failed", "succeeded", "interrupted", "timed_out"].includes(input.run.status ?? "running") ? new Date() : null,
         contextSnapshot: input.run.contextSnapshot ?? {},
         resultJson: input.run.resultJson ?? {},
       }

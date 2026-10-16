@@ -234,6 +234,13 @@ function collectDeploymentEnvRows(config: PaperclipConfig | null, configPath: st
       note: "Comma-separated auth origin allowlist (auto-derived from PAPERCLIP_PUBLIC_URL when possible)",
     },
     {
+      key: "PAPERCLIP_AGENT_JWT_TTL_BY_ADAPTER",
+      value: process.env.PAPERCLIP_AGENT_JWT_TTL_BY_ADAPTER ?? "{}",
+      source: process.env.PAPERCLIP_AGENT_JWT_TTL_BY_ADAPTER ? "env" : "default",
+      required: false,
+      note: "JSON adapter-to-seconds map; overrides global TTL; integer values 1–172800",
+    },
+    {
       key: "PAPERCLIP_AGENT_JWT_TTL_SECONDS",
       value: process.env.PAPERCLIP_AGENT_JWT_TTL_SECONDS ?? DEFAULT_AGENT_JWT_TTL_SECONDS,
       source: process.env.PAPERCLIP_AGENT_JWT_TTL_SECONDS ? "env" : "default",

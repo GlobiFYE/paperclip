@@ -232,3 +232,13 @@ Evidence: `source-only` — [routes](../../server/src/routes/grok-bot.ts), [shar
 Verification: `not-run` — deployed acceptance pending; focused protocol/authorization and actual Rust backend tests; run fresh/saved setup, assigned and proactive tasks, duplicate calls, stale sessions, restart, ambiguous delivery, stop and recovery through the real client on the serving managed candidate.
 
 Gaps: deployed two-way work and unattended first-time onboarding remain unqualified; remote termination, provider transcript streaming and usage accounting are unavailable.
+
+Run credential boundary: JWT authentication requires a matching live heartbeat run
+or the fixed five-minute terminal grace, and checks persistent credential
+revocation. Operator revocation and cleanup use
+`POST /api/companies/{companyId}/agent-jwt-revocations` and its `/cleanup` endpoint;
+both require instance-admin board authority and company access. Agents can request
+operator action through an issue but cannot call these endpoints as agents. Manual
+CLI DB keys retain their existing non-run authorization. See the
+[authentication contract](../../docs/api/authentication.md#run-credential-lifetime-and-revocation)
+and [database-backed regressions](../../server/src/__tests__/agent-jwt-revocations.test.ts).

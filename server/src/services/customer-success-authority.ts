@@ -1,15 +1,17 @@
 import { and, eq } from "drizzle-orm";
 import { agents, heartbeatRuns, type Db } from "@paperclipai/db";
-import type { RunAuthority } from "@paperclipai/shared";
+import { isUuidLike, type RunAuthority } from "@paperclipai/shared";
 import { verifyLocalAgentJwt } from "../agent-auth-jwt.js";
 import { agentRunWritesRevoked } from "../agent-run-cancellation.js";
+import { isAgentJwtRevoked } from "./agent-jwt-revocations.js";
 import { forbidden } from "../errors.js";
 import { agentIdentityService, supportsManagedAgentIdentity } from "./agent-identity.js";
 
 /** No actor/session resolution, key provisioning, or run identity capture. */
 export async function customerSuccessRunAuthority(db: Db, bearer: string): Promise<RunAuthority> {
   const claims = verifyLocalAgentJwt(bearer, { strictRunAuthority: true });
-  if (!claims) throw forbidden("A current managed-run credential is required");
+  if (!claims || !isUuidLike(claims.sub) || !isUuidLike(claims.company_id) || !isUuidLike(claims.run_id)
+    || await isAgentJwtRevoked(db, bearer, claims)) throw forbidden("A current managed-run credential is required");
   return db.transaction(
     async (tx) => {
       const [agent] = await tx

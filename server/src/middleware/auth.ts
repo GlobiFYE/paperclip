@@ -20,6 +20,8 @@ import {
   pickAvailableIssuePrefix,
   rekeyCompanyIssueIdentifiers,
 } from "../services/issue-prefix.js";
+import { agentRunAllowsJwt } from "../agent-run-auth.js";
+import { isAgentJwtRevoked } from "../services/agent-jwt-revocations.js";
 import { verifyLocalAgentJwt } from "../agent-auth-jwt.js";
 import { agentRunWritesRevoked } from "../agent-run-cancellation.js";
 import { isUuidLike, normalizeAgentApiKeyScope, type DeploymentMode } from "@paperclipai/shared";
@@ -329,6 +331,7 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
       return;
     }
 
+    req.actor = { type: "none", source: "none" };
     const token = authHeader!.slice("bearer".length).trim();
     if (!token) {
       next(unauthorized("Empty bearer token; provide valid agent credentials and retry"));
@@ -366,8 +369,13 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
 
     if (!key) {
       const claims = verifyLocalAgentJwt(token);
-      if (!claims) {
+      if (!claims || !isUuidLike(claims.sub) || !isUuidLike(claims.company_id) || !isUuidLike(claims.run_id)) {
         next(unauthorized(invalidAgentTokenMessage(token)));
+        return;
+      }
+
+      if (await isAgentJwtRevoked(db, token, claims)) {
+        next(unauthorized("Agent run credential has been revoked"));
         return;
       }
 
@@ -411,11 +419,15 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
         return;
       }
 
-      const [identityRun] = await db.select({ activeIdentityContextId: heartbeatRuns.activeIdentityContextId,
+      const [identityRun] = await db.select({ finishedAt: heartbeatRuns.finishedAt, createdAt: heartbeatRuns.createdAt, activeIdentityContextId: heartbeatRuns.activeIdentityContextId,
         responsibleUserId: heartbeatRuns.responsibleUserId, status: heartbeatRuns.status, resultJson: heartbeatRuns.resultJson,
         contextSnapshot: heartbeatRuns.contextSnapshot }).from(heartbeatRuns).where(and(
           eq(heartbeatRuns.id, claims.run_id), eq(heartbeatRuns.companyId, claims.company_id), eq(heartbeatRuns.agentId, claims.sub),
         ));
+      if (!agentRunAllowsJwt(identityRun)) {
+        next(unauthorized("Agent run is missing or no longer active"));
+        return;
+      }
       if (agentRunWritesRevoked(identityRun)
         && !["GET", "HEAD", "OPTIONS"].includes(req.method)) {
         const conversation = identityRun?.contextSnapshot?.conversationMode === true;
