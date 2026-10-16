@@ -5508,6 +5508,7 @@ export function toolAccessService(
     companyId: string,
     targetType: CreateToolProfileBindingForProfile["targetType"],
     targetId: string,
+    dbClient: ToolAccessMutationDb = db,
   ) {
     if (targetType === "company") {
       if (targetId !== companyId)
@@ -5517,7 +5518,7 @@ export function toolAccessService(
       return;
     }
     if (targetType === "agent") {
-      const [row] = await db
+      const [row] = await dbClient
         .select({ id: agents.id })
         .from(agents)
         .where(and(eq(agents.id, targetId), eq(agents.companyId, companyId)));
@@ -5528,7 +5529,7 @@ export function toolAccessService(
       return;
     }
     if (targetType === "project") {
-      const [row] = await db
+      const [row] = await dbClient
         .select({ id: projects.id })
         .from(projects)
         .where(
@@ -5541,7 +5542,7 @@ export function toolAccessService(
       return;
     }
     if (targetType === "routine") {
-      const [row] = await db
+      const [row] = await dbClient
         .select({ id: routines.id })
         .from(routines)
         .where(
@@ -5554,7 +5555,7 @@ export function toolAccessService(
       return;
     }
     if (targetType === "issue") {
-      const [row] = await db
+      const [row] = await dbClient
         .select({ id: issues.id })
         .from(issues)
         .where(and(eq(issues.id, targetId), eq(issues.companyId, companyId)));
@@ -5565,7 +5566,7 @@ export function toolAccessService(
       return;
     }
     if (targetType === "gateway") {
-      const [row] = await db
+      const [row] = await dbClient
         .select({ id: toolMcpGateways.id })
         .from(toolMcpGateways)
         .where(
@@ -6016,14 +6017,14 @@ export function toolAccessService(
     return created;
   }
 
-  async function getProfileRow(profileId: string, companyId?: string) {
+  async function getProfileRow(profileId: string, companyId?: string, dbClient: ToolAccessMutationDb = db) {
     const where = companyId
       ? and(
           eq(toolProfiles.id, profileId),
           eq(toolProfiles.companyId, companyId),
         )
       : eq(toolProfiles.id, profileId);
-    const [row] = await db.select().from(toolProfiles).where(where);
+    const [row] = await dbClient.select().from(toolProfiles).where(where);
     if (!row) throw notFound("Tool profile not found");
     return row;
   }
@@ -6031,8 +6032,9 @@ export function toolAccessService(
   async function profileDetails(
     profileId: string,
     companyId?: string,
+    dbClient: ToolAccessMutationDb = db,
   ): Promise<ToolProfileWithDetails> {
-    const profile = await getProfileRow(profileId, companyId);
+    const profile = await getProfileRow(profileId, companyId, dbClient);
     const [
       entries,
       bindings,
@@ -6041,7 +6043,7 @@ export function toolAccessService(
       applications,
       connections,
     ] = await Promise.all([
-      db
+      dbClient
         .select()
         .from(toolProfileEntries)
         .where(
@@ -6051,7 +6053,7 @@ export function toolAccessService(
           ),
         )
         .orderBy(asc(toolProfileEntries.createdAt)),
-      db
+      dbClient
         .select()
         .from(toolProfileBindings)
         .where(
@@ -6064,7 +6066,7 @@ export function toolAccessService(
           asc(toolProfileBindings.priority),
           asc(toolProfileBindings.createdAt),
         ),
-      db
+      dbClient
         .select()
         .from(toolCatalogEntries)
         .where(
@@ -6073,15 +6075,15 @@ export function toolAccessService(
             eq(toolCatalogEntries.status, "active"),
           ),
         ),
-      db
+      dbClient
         .select({ id: agents.id })
         .from(agents)
         .where(eq(agents.companyId, profile.companyId)),
-      db
+      dbClient
         .select()
         .from(toolApplications)
         .where(eq(toolApplications.companyId, profile.companyId)),
-      db
+      dbClient
         .select()
         .from(toolConnections)
         .where(eq(toolConnections.companyId, profile.companyId)),
@@ -19768,7 +19770,7 @@ export function toolAccessService(
       reassignedToProfileId: string | null;
       reassignedBindingCount: number;
     }> => db.transaction(async tx => {
-      const existing = await getProfileRow(profileId);
+      const existing = await getProfileRow(profileId, undefined, tx);
       const db = tx as unknown as Db;
       await tx.select({ id: toolProfiles.id }).from(toolProfiles)
         .where(and(eq(toolProfiles.companyId, existing.companyId), inArray(toolProfiles.id, [profileId, ...(input.reassignToProfileId ? [input.reassignToProfileId] : [])])))
@@ -19778,7 +19780,7 @@ export function toolAccessService(
           "Use either force or reassignToProfileId when deleting a tool profile, not both",
         );
       }
-      const details = await profileDetails(existing.id, existing.companyId);
+      const details = await profileDetails(existing.id, existing.companyId, tx);
       if (
         details.summary.isCompanyDefault &&
         !input.force &&
@@ -19800,6 +19802,7 @@ export function toolAccessService(
         const target = await getProfileRow(
           input.reassignToProfileId,
           existing.companyId,
+          tx,
         );
         if (target.status !== "active") {
           throw unprocessable(
@@ -19962,6 +19965,7 @@ export function toolAccessService(
         profile.companyId,
         input.targetType,
         input.targetId,
+        tx,
       );
       const [row] = await db
         .insert(toolProfileBindings)
@@ -19996,6 +20000,7 @@ export function toolAccessService(
         profile.companyId,
         input.targetType,
         input.targetId,
+        tx,
       );
       const rows = await db
         .delete(toolProfileBindings)

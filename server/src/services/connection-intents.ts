@@ -1034,7 +1034,7 @@ export function connectionIntentService(db: Db) {
           await tx.select({ id: agents.id }).from(agents)
             .where(and(eq(agents.companyId, loaded.issue.companyId), sql`${agents.status} NOT IN ('pending_approval', 'terminated')`))
             .orderBy(agents.id).for("no key update");
-          const [agent] = await tx.select().from(agents).where(and(eq(agents.id, payload.requestingAgentId), eq(agents.companyId, loaded.issue.companyId))).for("update");
+          const [agent] = await tx.select().from(agents).where(and(eq(agents.id, payload.requestingAgentId), eq(agents.companyId, loaded.issue.companyId))).for("no key update");
           if (!agent || agent.runtimeConfig.aiConnection || agent.updatedAt.getTime() !== options.validatedAdoption.agentUpdatedAt.getTime()) {
             throw conflict("The agent changed during validation. Reload the task and try again.");
           }
