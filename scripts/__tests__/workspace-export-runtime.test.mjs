@@ -29,6 +29,7 @@ const sourceExportPackages = [
   "packages/skills-catalog/package.json",
   "server/package.json",
 ];
+const staticExportSubpaths = new Set(["./ui-parser", "./gateway/ui-parser", "./package.json", "./catalog.json"]);
 
 function assertConditionalExport(value, label) {
   assert.equal(typeof value, "object", `${label} must use conditional exports`);
@@ -44,9 +45,8 @@ test("workspace production exports keep source development paths and compiled im
   for (const relativePath of sourceExportPackages) {
     const manifest = readJson(relativePath);
     for (const [subpath, value] of Object.entries(manifest.exports)) {
-      if (typeof value === "object" && value.types && value.development && value.import?.startsWith("./dist/")) {
-        assertConditionalExport(value, `${relativePath} ${subpath}`);
-      }
+      if (staticExportSubpaths.has(subpath)) continue;
+      assertConditionalExport(value, `${relativePath} ${subpath}`);
     }
   }
 });

@@ -387,9 +387,6 @@ function runVitest(args, label, testShard = null) {
   const env = {
     ...process.env,
     NODE_ENV: "test",
-    // Workspace packages expose TypeScript source under the development
-    // condition. Keep this scoped to test processes so Vitest and any child
-    // processes resolve source packages before dist/ exists.
     NODE_OPTIONS: [process.env.NODE_OPTIONS?.trim(), "--conditions=development"].filter(Boolean).join(" "),
     PAPERCLIP_TEST_HOST_HOME: process.env.PAPERCLIP_TEST_HOST_HOME
       ?? (process.env.PAPERCLIP_HOME?.trim() || path.join(os.homedir(), ".paperclip")),
