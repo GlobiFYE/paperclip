@@ -1,7 +1,7 @@
 # Native latency diagnostic — 2026-10-16
 
-Status: one explicit local-controller/real-Daytona experiment is prepared.
-No staging setting or production code changes are part of this branch.
+Status: the explicit local-controller/real-Daytona comparison passes.
+This branch also overlaps verified sandbox launch assets. PAP is unchanged.
 
 Use the existing Product E2E basic-response journey and its independent exact
 answer, run state, task state, runtime and environment checks. The new manual
@@ -58,3 +58,32 @@ behavior before introducing concurrency, then use barriers to verify overlap,
 wait-for-all failure handling and unsupported transport behavior. Compare one
 matched real-Daytona candidate against the saved baseline; provider variation
 must remain separate from the launch phase saving.
+
+
+## Candidate result
+
+On frozen source `e9404a585000`, the same model, Daytona image, Linux runner
+binary and local trace setup pass the exact answer and all result matchers.
+Cleanup passes. Launch material and immutable context both start at offset
+12,785 ms and remain sibling spans under `stage.sync`. Their transfer times are
+644 ms and 691 ms. Total staging falls from 1,552 ms to 1,017 ms (535 ms, 34.5%).
+Runner bootstrap falls from 4,761 ms to 4,207 ms.
+
+The active run falls from 22,878 ms to 20,157 ms. This larger difference is not
+attributed to staging: agent execution changes from 9,026 ms to 7,015 ms,
+settlement increases from 1,600 ms to 2,769 ms, and preparation also varies.
+Fresh-agent activation queue changes from 10,233 ms to 6,245 ms. This is one
+matched pair, not a statistical tail-latency or Slack acceptance result.
+
+Before extraction, all 736 existing executor cases pass. The serial extraction
+passes 741 cases. The concurrency assertion then fails on serial source as
+expected. The candidate passes 764 executor, staging and tracing cases; the
+12-case staging suite passes again after its fixture adds required process-result
+fields. Full repository typecheck and build pass on the candidate. The earlier
+server typecheck failed because that mock omitted signal, pid and startedAt;
+production contracts were unchanged. The first sandboxed regression attempt
+cannot start a loopback database and is interrupted; its authorized repetition
+passes. The broad pre-existing support-suite failures above remain recorded.
+
+No additional paid iteration or unchanged PAP message is needed for this slice.
+Complete final-branch CI and review before any PAP rollout.
