@@ -52,7 +52,7 @@ their existing transaction and data reads.
 To measure authentication query responses on disposable synthetic data:
 
 ```sh
-pnpm --filter @paperclipai/server exec tsx scripts/benchmark-agent-authentication.ts --baseline-ref=06689c1b3410000bcd65ff40cb469e600209c4db
+pnpm --filter @paperclipai/server exec tsx ../scripts/benchmark-agent-authentication.ts --baseline-ref=06689c1b3410000bcd65ff40cb469e600209c4db
 ```
 
 This compares the current query with the original query in that revision. It
