@@ -3073,6 +3073,19 @@ async function lockManagedAppPolicies(client: ToolAccessMutationDb, companyId: s
   )).orderBy(toolPolicies.id).for("no key update");
 }
 
+export async function lockToolConnectionRuntimeInputs(client: ToolAccessMutationDb, companyId: string, connectionId: string) {
+  await client.select({ id: toolApplications.id }).from(toolApplications)
+    .innerJoin(toolConnections, and(eq(toolConnections.applicationId, toolApplications.id), eq(toolConnections.companyId, toolApplications.companyId)))
+    .where(and(eq(toolConnections.id, connectionId), eq(toolConnections.companyId, companyId)))
+    .for("update", { of: toolApplications });
+  await client.select({ id: toolConnections.id }).from(toolConnections)
+    .where(and(eq(toolConnections.id, connectionId), eq(toolConnections.companyId, companyId))).for("update");
+  await client.select({ id: toolProfiles.id }).from(toolProfiles)
+    .where(and(eq(toolProfiles.companyId, companyId), eq(toolProfiles.profileKey, `app:${connectionId}`)))
+    .for("no key update");
+  await lockManagedAppPolicies(client, companyId, connectionId);
+}
+
 export function toolAccessService(
   db: Db,
   options: ToolAccessServiceOptions = {},
@@ -18847,6 +18860,7 @@ export function toolAccessService(
         profileId: string;
       }> = [];
       await db.transaction(async (tx) => {
+        await lockToolConnectionRuntimeInputs(tx, connection.companyId, connection.id);
         if (markMcpAccessConfigured) {
           // Preserve an explicit zero-agent selection through OAuth. Merge the
           // marker in SQL so concurrent credential/config changes are retained.
@@ -19753,8 +19767,12 @@ export function toolAccessService(
       summary: ToolProfileSummary;
       reassignedToProfileId: string | null;
       reassignedBindingCount: number;
-    }> => {
+    }> => db.transaction(async tx => {
       const existing = await getProfileRow(profileId);
+      const db = tx as unknown as Db;
+      await tx.select({ id: toolProfiles.id }).from(toolProfiles)
+        .where(and(eq(toolProfiles.companyId, existing.companyId), inArray(toolProfiles.id, [profileId, ...(input.reassignToProfileId ? [input.reassignToProfileId] : [])])))
+        .orderBy(toolProfiles.id).for("update");
       if (input.force && input.reassignToProfileId) {
         throw badRequest(
           "Use either force or reassignToProfileId when deleting a tool profile, not both",
@@ -19838,7 +19856,7 @@ export function toolAccessService(
         reassignedToProfileId: input.reassignToProfileId ?? null,
         reassignedBindingCount,
       };
-    },
+    }),
 
     addProfileEntry: async (
       profileId: string,
@@ -19936,8 +19954,10 @@ export function toolAccessService(
       profileId: string,
       input: CreateToolProfileBindingForProfile,
       actor?: ActorInfo,
-    ): Promise<ToolProfileBinding> => {
-      const profile = await getProfileRow(profileId);
+    ): Promise<ToolProfileBinding> => db.transaction(async tx => {
+      const db = tx as unknown as Db;
+      const [profile] = await tx.select().from(toolProfiles).where(eq(toolProfiles.id, profileId)).for("no key update");
+      if (!profile) throw notFound("Tool profile not found");
       await assertTargetExists(
         profile.companyId,
         input.targetType,
@@ -19963,13 +19983,15 @@ export function toolAccessService(
         .set({ updatedAt: new Date() })
         .where(eq(toolProfiles.id, profile.id));
       return toProfileBinding(row);
-    },
+    }),
 
     unbindProfile: async (
       profileId: string,
       input: UnbindToolProfileBinding,
-    ): Promise<{ unbound: number }> => {
-      const profile = await getProfileRow(profileId);
+    ): Promise<{ unbound: number }> => db.transaction(async tx => {
+      const db = tx as unknown as Db;
+      const [profile] = await tx.select().from(toolProfiles).where(eq(toolProfiles.id, profileId)).for("no key update");
+      if (!profile) throw notFound("Tool profile not found");
       await assertTargetExists(
         profile.companyId,
         input.targetType,
@@ -19993,7 +20015,7 @@ export function toolAccessService(
           .where(eq(toolProfiles.id, profile.id));
       }
       return { unbound: rows.length };
-    },
+    }),
 
     getEffectiveProfilesForAgent: async (
       companyId: string,
