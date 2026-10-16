@@ -1241,6 +1241,35 @@ describe("createVersion", () => {
     expect(gw.store.has("secret/paperclip/d/co/NEW")).toBe(false);
   });
 
+  it("rejects rotating a reference outside the managed prefix (external_reference secret)", async () => {
+    const gw = fakeVaultGateway();
+    const provider = createVaultProvider({
+      config: {
+        address: "https://v",
+        namespace: null,
+        kvMount: "secret",
+        kvPathPrefix: "paperclip",
+        auth: { method: "token", role: null, saTokenPath: "/dev/null" },
+        versionRetention: 10,
+      },
+      gateway: gw.impl,
+    });
+    process.env.VAULT_TOKEN = "static";
+    const ctx = { companyId: "co", deploymentId: "d", secretId: "s", secretKey: "K", secretName: "K", version: 2 } as const;
+    // An external_reference secret's ref lives outside the managed prefix; it
+    // is rotated via linkExternalSecret, not createVersion.
+    await expect(
+      provider.createVersion({
+        value: "v2",
+        context: ctx,
+        externalRef: "teams/platform/github-token",
+      }),
+    ).rejects.toMatchObject({
+      status: 422,
+      message: /outside the managed prefix/,
+    });
+  });
+
   it("maps CAS mismatch to SecretProviderClientError(code:conflict)", async () => {
     const gw = fakeVaultGateway();
     // Pre-seed three versions so the fake gateway's CAS check rejects

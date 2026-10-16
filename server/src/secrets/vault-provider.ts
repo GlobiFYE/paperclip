@@ -20,13 +20,12 @@ import {
   HttpVaultGateway,
   TOKEN_EXPIRY_SKEW_MS,
   TOKEN_RENEWAL_THRESHOLD,
-  VaultHttpGateway,
   VaultTokenManager,
   detectVaultAuthSource,
   resolveVaultHttpTimeoutMs,
   withVaultTokenRetry,
 } from "./vault-token.js";
-import type { VaultAuthSource } from "./vault-token.js";
+import type { VaultAuthSource, VaultHttpGateway } from "./vault-token.js";
 
 export {
   asString,
@@ -577,8 +576,11 @@ export function createVaultProvider(
       const rawConfig = (input?.providerConfig?.config ?? {}) as Record<string, unknown>;
       validateNoCredentialFields(rawConfig, warnings);
       validateAddress(rawConfig.address, warnings);
-      validateKvMount(rawConfig.kvMount, warnings);
-      validateKvPathPrefix(rawConfig.kvPathPrefix, warnings);
+      // Validate the effective mount/prefix — canonical mountPath/secretPathPrefix
+      // win, with kvMount/kvPathPrefix as legacy fallback — so an invalid
+      // canonical config is flagged here rather than only in resolveVaultConfig.
+      validateKvMount(rawConfig.mountPath ?? rawConfig.kvMount, warnings);
+      validateKvPathPrefix(rawConfig.secretPathPrefix ?? rawConfig.kvPathPrefix, warnings);
       validateAuthBlock(rawConfig.auth, warnings);
       validateVersionRetention(rawConfig.versionRetention, warnings);
       return { ok: warnings.length === 0, warnings };
@@ -678,6 +680,21 @@ export function createVaultProvider(
         });
       const valueSha256 = createHash("sha256").update(input.value).digest("hex");
 
+      // A managed secret's externalRef always points at the managed prefix in
+      // config.kvMount. If a reused reference points outside it (e.g. an
+      // external_reference secret whose value lives on an external path), we
+      // must not rotate it in place with the provider token — the service routes
+      // those through linkExternalSecret/updateExternalSecretValue. Guard it here
+      // so a stale or mis-typed ref cannot write into an external path.
+      const underManagedPrefix =
+        path === config.kvPathPrefix || path.startsWith(config.kvPathPrefix + "/");
+      if (input.externalRef && (mount !== config.kvMount || !underManagedPrefix)) {
+        throw unprocessable(
+          "vault createVersion can rotate only managed secrets; the recorded " +
+            `reference ${mount}/${path} is outside the managed prefix ` +
+            `${config.kvMount}/data/${config.kvPathPrefix}`,
+        );
+      }
       // CAS against the CURRENT Vault version (not the next Paperclip version).
       // Managed writes are version-aligned, so the current version is next-1.
       const cas = ctx.version > 1 ? ctx.version - 1 : undefined;
