@@ -355,7 +355,23 @@ export type IssueWakeDiagnosticEvent =
   | IssueWakeDiagnosticWakeRequest
   | IssueWakeDiagnosticActivityRecord;
 
+export interface IssuePendingWakeSummary {
+  version: 1;
+  complete: true;
+  scope: "all_age";
+  observedAt: string;
+  counts: {
+    queued: number;
+    claimed: number;
+    deferred_issue_execution: number;
+  };
+  total: number;
+  hasPending: boolean;
+}
+
 export interface IssueWakeDiagnosticsResponse {
+  /** Independent of bounded history; a point-in-time observation, not a lease. */
+  pendingWakeSummary: IssuePendingWakeSummary;
   issue: IssueBlockerDiagnosticIssueSummary;
   diagnosis: string | null;
   likelyReason: string | null;
