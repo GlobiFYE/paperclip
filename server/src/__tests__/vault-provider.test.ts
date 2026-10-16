@@ -259,9 +259,37 @@ describe("resolveVaultConfig", () => {
     expect(r.config?.auth.role).toBe("paperclip-server");
   });
 
-  it("vault config overrides env", () => {
+  it("operator env address wins over a per-vault config address, warning on the redirect", () => {
     const r = resolveVaultConfig({
       env: { PAPERCLIP_SECRETS_VAULT_ADDR: "https://from-env:8200" },
+      providerConfig: {
+        id: "v1",
+        provider: "vault",
+        status: "ready",
+        config: { address: "https://from-config:8200" },
+      },
+    });
+    expect(r.config?.address).toBe("https://from-env:8200");
+    expect(r.warnings.join(" ")).toMatch(/overridden by the operator/i);
+  });
+
+  it("accepts a per-vault config address that restates the operator env address without warning", () => {
+    const r = resolveVaultConfig({
+      env: { PAPERCLIP_SECRETS_VAULT_ADDR: "https://same-vault:8200" },
+      providerConfig: {
+        id: "v1",
+        provider: "vault",
+        status: "ready",
+        config: { address: "https://same-vault:8200" },
+      },
+    });
+    expect(r.config?.address).toBe("https://same-vault:8200");
+    expect(r.warnings).toHaveLength(0);
+  });
+
+  it("uses the per-vault config address only when no operator env address is set", () => {
+    const r = resolveVaultConfig({
+      env: {},
       providerConfig: {
         id: "v1",
         provider: "vault",

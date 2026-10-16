@@ -227,7 +227,10 @@ Per-provider `config` shapes:
   `kvPathPrefix`, `versionRetention`, and `auth` (`method` = `kubernetes` with
   `role`/`saTokenPath`, or token via the standard `VAULT_TOKEN` /
   `PAPERCLIP_SECRETS_VAULT_TOKEN_FILE`). `address` values with embedded
-  credentials, paths, query strings, or fragments are rejected. See
+  credentials, paths, query strings, or fragments are rejected. The `address`
+  is operator-pinned: the deployment's `PAPERCLIP_SECRETS_VAULT_ADDR`/`VAULT_ADDR`
+  env always wins, so a vault config `address` may restate it but cannot redirect
+  the deployment's Vault credential to a different host. See
   `doc/SECRETS-VAULT-PROVIDER.md` for the full config, policy, and auth options.
 
 `status` defaults to `ready` for providers with a runtime

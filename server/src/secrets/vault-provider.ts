@@ -152,6 +152,14 @@ function asString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+function safeUrlOrigin(raw: string): string {
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return raw;
+  }
+}
+
 function validateAddress(raw: unknown, warnings: string[]): URL | null {
   const value = asString(raw);
   if (!value) {
@@ -320,13 +328,32 @@ export function resolveVaultConfig(input: {
     return input.env[envKey];
   }
 
-  // Precedence: explicit per-vault config > PAPERCLIP-specific env > standard
-  // VAULT_ADDR (set natively by orchestrator Vault agents such as Nomad's).
+  // The address is the endpoint that receives the deployment's Vault bootstrap
+  // credential (env VAULT_TOKEN, the k8s SA token, or
+  // PAPERCLIP_SECRETS_VAULT_TOKEN_FILE), so — like the AWS provider's
+  // PAPERCLIP_SECRETS_AWS_ENDPOINT — it is operator-controlled. Operator env
+  // (PAPERCLIP_SECRETS_VAULT_ADDR, then the standard VAULT_ADDR set natively by
+  // orchestrator Vault agents such as Nomad's) wins over any per-vault config
+  // address: a company config may restate the operator address, or supply one
+  // only when the operator set none, but it must not redirect the deployment
+  // credential to a different host.
+  const operatorAddress =
+    input.env.PAPERCLIP_SECRETS_VAULT_ADDR ?? input.env.VAULT_ADDR;
+  const configAddress = asString(vaultConfig.address);
   const url = validateAddress(
-    fromConfigOrEnv("address", "PAPERCLIP_SECRETS_VAULT_ADDR") ??
-      input.env.VAULT_ADDR,
+    operatorAddress ?? configAddress ?? undefined,
     warnings,
   );
+  if (
+    operatorAddress !== undefined &&
+    configAddress !== null &&
+    safeUrlOrigin(operatorAddress) !== safeUrlOrigin(configAddress)
+  ) {
+    warnings.push(
+      "vault config address is overridden by the operator-deployed address; " +
+        "a per-vault vault address cannot redirect the deployment's Vault credential to a different host",
+    );
+  }
   const kvMount = validateKvMount(
     fromConfigOrEnv("kvMount", "PAPERCLIP_SECRETS_VAULT_KV_MOUNT"),
     warnings,

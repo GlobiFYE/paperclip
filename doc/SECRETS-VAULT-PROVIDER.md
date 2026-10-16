@@ -54,6 +54,14 @@ PAPERCLIP_SECRETS_VAULT_K8S_ROLE=paperclip-server   # (a) k8s ServiceAccount
 # PAPERCLIP_SECRETS_VAULT_TOKEN_FILE=/run/vault/token   # (c) agent-rotated token file
 ```
 
+A per-vault config may also carry an `address`, but the endpoint is
+**operator-pinned**: the operator-deployed address (env) always wins. A company
+vault config can restate the operator address — or supply one only when the
+operator set none — but it cannot redirect the deployment's Vault credential
+(`VAULT_TOKEN`, the k8s SA token, or the token file) to a different host. A
+per-vault address that differs from the operator address is ignored and
+surfaced as a config warning.
+
 **Auth options (pick one):**
 - **(a) Kubernetes ServiceAccount** — `auth.method = kubernetes` + `role`. The
   SA token is read from `PAPERCLIP_SECRETS_VAULT_SA_TOKEN_PATH` (default the
