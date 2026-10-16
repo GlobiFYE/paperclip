@@ -33,6 +33,7 @@ export const AI_PROVIDERS = [
   "openrouter",
   "xai",
   "google",
+  "opencode",
 ] as const;
 export const aiProviderSchema = z.enum(AI_PROVIDERS);
 export const aiAuthMethodSchema = z.enum(["subscription", "api_key"]);
@@ -103,6 +104,15 @@ export const AI_CONNECTION_CAPABILITIES: Record<
       api_key: { adapters: ["opencode_local"], envKey: "OPENROUTER_API_KEY" },
     },
   },
+  opencode: {
+    name: "OpenCode",
+    methods: {
+      api_key: {
+        adapters: ["opencode_local"],
+        envKey: "OPENCODE_API_KEY",
+      },
+    },
+  },
   xai: {
     name: "Grok",
     methods: {
@@ -128,6 +138,8 @@ export function isAiConnectionCompatible(
   const candidates = "mode" in requirement && requirement.mode === "responsible_user"
     ? Object.values(methods)
     : requirement.method ? [methods[requirement.method]] : [];
+  // Only OpenRouter namespaces its model IDs with a required prefix. OpenCode Go
+  // and the other BYO harnesses accept `opencode-go/<id>` or `provider/model`.
   return (
     candidates.some((method) => method?.adapters.includes(adapterType)) &&
     (requirement.provider !== "openrouter" ||

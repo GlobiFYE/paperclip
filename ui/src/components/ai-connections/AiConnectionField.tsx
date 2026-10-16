@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  AI_CONNECTION_CAPABILITIES,
   aiConnectionBindingSchema,
   isAiConnectionCompatible,
   type AiRuntimeConnectionBinding,
@@ -39,6 +40,16 @@ export function aiProviderForAdapter(
     } as Record<string, AiProvider>
   )[adapterType];
 }
+/**
+ * Every provider one harness can run. `opencode_local` reaches OpenRouter and
+ * the OpenCode Go gateway, so the field must consider both when it looks up an
+ * account instead of assuming OpenRouter.
+ */
+export function aiProvidersForAdapter(adapterType: string): AiProvider[] {
+  if (adapterType === "opencode_local") return ["openrouter", "opencode"];
+  const provider = aiProviderForAdapter(adapterType);
+  return provider ? [provider] : [];
+}
 export function AiConnectionField({
   companyId,
   agentId,
@@ -66,7 +77,8 @@ export function AiConnectionField({
   preferAdvanced?: boolean;
   routerAdapterType?: string;
 }) {
-  const provider = aiProviderForAdapter(adapterType);
+  const providers = aiProvidersForAdapter(adapterType);
+  const provider = providers[0];
   const returnFocus = useRef<HTMLElement | null>(null);
   const restoreFocus = (event: Event) => { event.preventDefault(); returnFocus.current?.focus(); };
   const [adopting, setAdopting] = useState(false);
@@ -86,7 +98,7 @@ export function AiConnectionField({
     queryFn: () => aiConnectionsApi.list(companyId, agentId),
     enabled: Boolean(provider),
   });
-  const personalDefault = accounts.data?.connections.find((account) => account.provider === provider && account.isDefault && account.ownership === "personal" && account.ownerUserId === accounts.data.currentUserId);
+  const personalDefault = accounts.data?.connections.find((account) => providers.includes(account.provider) && account.isDefault && account.ownership === "personal" && account.ownerUserId === accounts.data.currentUserId);
   const selectDefault = useMutation({
     mutationFn: async (result: NonNullable<typeof savedAccount>) => {
       // Reconnect retains the existing default and its access. A new account
@@ -103,15 +115,15 @@ export function AiConnectionField({
   const openConnection = (reconnect?: AiManagedConnectionSummary) => {
     returnFocus.current = document.activeElement as HTMLElement;
     setReconnecting(reconnect);
-    setAdvancedSetup(!reconnect && (preferAdvanced || provider === "openrouter"));
+    setAdvancedSetup(!reconnect && (preferAdvanced || providers.includes("openrouter")));
     setAllAgents(accounts.data?.canManageConnections ?? false);
     setSavedAccount(undefined);
     selectDefault.reset();
     setConnecting(true);
   };
   const method: AiAuthMethod = (value && value.mode !== "router" && value.mode !== "responsible_user" ? value.method : undefined)
-    ?? accounts.data?.connections.find((account) => account.provider === provider && account.isDefault)?.method
-    ?? (provider === "openrouter" || provider === "google" ? "api_key" : "subscription");
+    ?? accounts.data?.connections.find((account) => providers.includes(account.provider) && account.isDefault)?.method
+    ?? (providers.some((candidate) => AI_CONNECTION_CAPABILITIES[candidate].methods.subscription) ? "subscription" : "api_key");
   const compatiblePools = agentId ? accounts.data?.pools?.filter(pool => pool.enabled && pool.members.some(member => isAiConnectionCompatible(member.binding, routerAdapterType ?? adapterType, member.profile.model, member.profile.provider, member.profile.acpxAgent))) ?? [] : [];
   if (!provider) return null;
   if (legacy && !value && !adopting)
@@ -236,7 +248,7 @@ export function AiConnectionField({
             initialMethod={reconnecting?.method ?? method}
             fixedMethod={Boolean(reconnecting)}
             connectionId={reconnecting?.id}
-            name={reconnecting?.name ?? `My ${provider === "anthropic" ? "Claude" : provider === "openai" ? "OpenAI" : provider === "xai" ? "Grok" : provider === "google" ? "Gemini" : "OpenRouter"} ${method === "subscription" ? "subscription" : "API"}`}
+            name={reconnecting?.name ?? `My ${provider === "anthropic" ? "Claude" : provider === "openai" ? "OpenAI" : provider === "xai" ? "Grok" : provider === "google" ? "Gemini" : provider === "opencode" ? "OpenCode" : "OpenRouter"} ${method === "subscription" ? "subscription" : "API"}`}
             ownership="personal"
             agentIds={agentId ? [agentId] : []}
             allAgents={allAgents}
