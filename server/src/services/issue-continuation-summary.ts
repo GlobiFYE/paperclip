@@ -20,6 +20,7 @@ type IssueSummaryInput = {
   description: string | null;
   status: string;
   priority: string;
+  workMode?: string | null;
 };
 
 type RunSummaryInput = {
@@ -95,6 +96,7 @@ function extractPathCandidates(...texts: Array<string | null | undefined>) {
 
 function inferMode(issue: IssueSummaryInput, run: RunSummaryInput) {
   if (issue.status === "done" || issue.status === "in_review") return "review";
+  if (issue.workMode && issue.workMode !== "standard") return issue.workMode;
   if (run.status === "failed" || run.status === "timed_out" || run.status === "cancelled" || run.status === "interrupted") return "implementation";
   if (issue.status === "backlog" || issue.status === "todo") return "plan";
   return "implementation";
@@ -107,6 +109,9 @@ function inferNextAction(issue: IssueSummaryInput, run: RunSummaryInput, previou
     return "Inspect the failed run, fix the cause, and resume from the most recent concrete action above.";
   }
   if (run.status === "cancelled") return "Confirm the cancellation reason before starting another run.";
+  if (issue.workMode === "planning") {
+    return previousNextAction ?? "Resume planning from the acceptance criteria, latest comments, and this summary.";
+  }
   return previousNextAction ?? "Resume implementation from the acceptance criteria, latest comments, and this summary.";
 }
 
@@ -262,6 +267,7 @@ export async function refreshIssueContinuationSummary(input: {
         description: issues.description,
         status: issues.status,
         priority: issues.priority,
+        workMode: issues.workMode,
       })
       .from(issues)
       .where(eq(issues.id, issueId))
