@@ -3,7 +3,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 
 import type { AdapterConfigSchema, ConfigFieldSchema, CreateConfigValues } from "@paperclipai/adapter-utils";
 
-import type { AdapterConfigFieldsProps } from "./types";
+import type { AdapterConfigFieldsProps, AdapterConfigSection } from "./types";
 import {
   Field,
   DraftInput,
@@ -320,6 +320,15 @@ export function fieldMatchesVisibleWhen(
 // Component
 // ---------------------------------------------------------------------------
 
+const CONFIG_SECTIONS: readonly string[] = ["adapter", "configuration", "advanced", "runPolicy", "environment"];
+
+function fieldSection(field: ConfigFieldSchema): AdapterConfigSection {
+  const declared = field.meta?.section;
+  return typeof declared === "string" && CONFIG_SECTIONS.includes(declared)
+    ? (declared as AdapterConfigSection)
+    : schemaFieldSection(field.key);
+}
+
 export function SchemaConfigFields({
   section,
   hideModel,
@@ -414,7 +423,7 @@ export function SchemaConfigFields({
       {schema.fields
         .filter((field) => !excludeKeys?.includes(field.key))
         .filter((field) => !hideModel || field.key !== "model")
-        .filter((field) => !section || schemaFieldSection(field.key) === section)
+        .filter((field) => !section || fieldSection(field) === section)
         .filter((field) => !(field.type === "select" && /permissionMode/i.test(field.key) && (field.options?.length ?? 0) <= 1))
         .filter((field) => fieldMatchesVisibleWhen(field, readValue, schema))
         .map((field) => {
