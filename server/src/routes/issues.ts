@@ -18306,8 +18306,22 @@ export function issueRoutes(
       // misconfigured integration hears the contract rather than guessing why
       // nothing resumed. (`interrupt` is board-only below, so it needs no
       // gate here.)
+      //
+      // An approval-shaped body is the third way a comment stops being only a
+      // comment: on an `in_review` issue whose pending participant is the agent
+      // being spoken for, `shouldAutoApproveReviewComment` further down turns it
+      // into the `done` transition, decision record and wake. The access rules
+      // that unlock the run-less path include `allow_self`, so the reviewing
+      // agent's own service key would otherwise reach that transition — the
+      // comments-only contract has to be enforced on the body, not just on the
+      // flags. Test the body shape alone rather than the full auto-approval
+      // predicate: the issue row is re-read after this gate, so a state-aware
+      // check here could pass while the transition still fires, and an approval
+      // heading from a run-less integration has no legitimate use anyway.
       if (
-        (resumeRequested || (reopenRequested && (isClosed || isBlocked))) &&
+        (resumeRequested ||
+          (reopenRequested && (isClosed || isBlocked)) ||
+          isApprovalReviewComment(req.body.body)) &&
         req.actor.type === "agent" &&
         !req.actor.runId &&
         req.actor.keyScope?.kind === "service"

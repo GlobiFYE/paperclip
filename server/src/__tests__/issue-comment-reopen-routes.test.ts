@@ -2946,6 +2946,111 @@ describe("issue comment reopen routes", () => {
     expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
   });
 
+  it("rejects a run-less service-scoped approval comment that would auto-complete the task", async () => {
+    // The sharpest edge of the comments-only carve-out. An `in_review` issue
+    // whose pending participant is the reviewing agent turns `## Review:
+    // APPROVED` into the `done` transition via shouldAutoApproveReviewComment —
+    // and that agent's own service key passes comment authorization through
+    // allow_self, so the run-less path would otherwise reach a task-state
+    // change. Approving work is exactly what has to stay attributable to a run.
+    const reviewerAgentId = "33333333-3333-4333-8333-333333333333";
+    const policy = (await createAgentReviewPolicy(reviewerAgentId))!;
+    mockIssueService.getById.mockResolvedValue(
+      createReviewIssue(policy, reviewerAgentId),
+    );
+    mockAccessService.decide.mockImplementation(
+      async (input: { action?: string }) => ({
+        allowed:
+          input.action === "issue:read" || input.action === "issue:comment",
+        action: input.action,
+        reason: "allow_self",
+        explanation: "Agents may act on their own issues.",
+      }),
+    );
+
+    const res = await request(
+      await installActor(createApp(), {
+        type: "agent",
+        agentId: reviewerAgentId,
+        companyId: "company-1",
+        source: "agent_key",
+        keyId: "key-router-1",
+        keyScope: { kind: "service" },
+        runId: undefined,
+      }),
+    )
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "## Review: APPROVED" });
+
+    expect(res.status).toBe(403);
+    expect(res.body.details).toEqual({
+      code: "cross_issue_influence_run_context_required",
+    });
+    // Neither the comment nor the transition may land: a refused approval that
+    // still persisted its comment would read as a review that happened.
+    expect(mockIssueService.addComment).not.toHaveBeenCalled();
+    expect(mockIssueService.update).not.toHaveBeenCalled();
+    expect(mockObserveServiceKeyCrossIssueInfluence).not.toHaveBeenCalled();
+  });
+
+  it("still auto-approves the same approval comment when the service key sends a run", async () => {
+    // The positive control for the gate above: the carve-out is what is being
+    // withheld, not the review feature. With a run to attribute it to, the
+    // identical body from the identical key still approves.
+    const reviewerAgentId = "33333333-3333-4333-8333-333333333333";
+    const policy = (await createAgentReviewPolicy(reviewerAgentId))!;
+    const issue = createReviewIssue(policy, reviewerAgentId);
+    mockIssueService.getById.mockResolvedValue(issue);
+    mockIssueService.addComment.mockResolvedValue({
+      id: "comment-review-service-key",
+      issueId: issue.id,
+      companyId: issue.companyId,
+      body: "## Review: APPROVED",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      authorAgentId: reviewerAgentId,
+      authorUserId: null,
+    });
+    mockIssueService.update.mockImplementation(
+      async (_id: string, patch: Record<string, unknown>) => ({
+        ...issue,
+        ...patch,
+        status: "done",
+        completedAt: new Date(),
+        updatedAt: new Date(),
+      }),
+    );
+    mockAccessService.decide.mockImplementation(
+      async (input: { action?: string }) => ({
+        allowed:
+          input.action === "issue:read" || input.action === "issue:comment",
+        action: input.action,
+        reason: "allow_self",
+        explanation: "Agents may act on their own issues.",
+      }),
+    );
+
+    const res = await request(
+      await installActor(createApp(), {
+        type: "agent",
+        agentId: reviewerAgentId,
+        companyId: "company-1",
+        source: "agent_key",
+        keyId: "key-router-1",
+        keyScope: { kind: "service" },
+        runId: "run-service-key-approval",
+      }),
+    )
+      .post("/api/issues/11111111-1111-4111-8111-111111111111/comments")
+      .send({ body: "## Review: APPROVED" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockIssueService.update).toHaveBeenCalled();
+    // Charged to the run counter, not the key window — the run exists.
+    expect(mockObserveCrossIssueInfluence).toHaveBeenCalledTimes(1);
+    expect(mockObserveServiceKeyCrossIssueInfluence).not.toHaveBeenCalled();
+  });
+
   it("lets a run-less service-scoped comment through when reopen is a no-op on an open issue", async () => {
     // On an open issue the route never applies `reopen` for agent actors, so
     // the flag changes no task state and the comment stands on its own
