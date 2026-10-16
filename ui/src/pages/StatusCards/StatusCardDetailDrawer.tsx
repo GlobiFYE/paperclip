@@ -404,15 +404,6 @@ export function StatusCardDetailDrawer({
                           {update.model ? ` · ${update.model}` : ""}
                           {update.changes.length > 0 ? ` · ${update.changes.length} changes` : ""}
                         </p>
-                        {update.generationIssueId ? (
-                          <Link
-                            to={`/issues/${update.generationIssueId}`}
-                            className="mt-1 inline-flex items-center gap-1 text-xs font-medium text-foreground underline-offset-2 hover:underline"
-                          >
-                            <ExternalLink className="h-3.5 w-3.5" />
-                            View update task
-                          </Link>
-                        ) : null}
                         {update.error ? <p className="mt-1 text-xs text-destructive">{update.error}</p> : null}
                       </div>
                     ))}
