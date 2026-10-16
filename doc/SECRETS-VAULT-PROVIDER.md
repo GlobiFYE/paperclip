@@ -2,9 +2,11 @@
 
 Operational contract for the `vault` secret provider. The provider speaks the
 Vault HTTP API and works against both OpenBao (MPL-2.0 Linux Foundation fork)
-and HashiCorp Vault (BUSL-1.1). The Paperclip helm chart bundles OpenBao by
-default; operators with an existing Vault deployment use the same provider
-and point at their endpoint.
+and HashiCorp Vault (BUSL-1.1). The provider assumes only a reachable
+KV v2 endpoint and an auth source (kubernetes token or a
+`VAULT_TOKEN`/token-file); operators with an existing Vault deployment point
+at their endpoint. The provider does not assume a Helm chart, a specific
+unseal method, or a particular topology.
 
 ## Scope
 
@@ -55,12 +57,16 @@ PAPERCLIP_SECRETS_VAULT_K8S_ROLE=paperclip-server   # (a) k8s ServiceAccount
 ```
 
 A per-vault config may also carry an `address`, but the endpoint is
-**operator-pinned**: the operator-deployed address (env) always wins. A company
-vault config can restate the operator address — or supply one only when the
-operator set none — but it cannot redirect the deployment's Vault credential
-(`VAULT_TOKEN`, the k8s SA token, or the token file) to a different host. A
-per-vault address that differs from the operator address is ignored and
-surfaced as a config warning.
+**operator-pinned**: the operator-deployed address (env) always wins. A
+company vault config can restate the operator address, and — only when the
+operator has set neither `PAPERCLIP_SECRETS_VAULT_ADDR` nor `VAULT_ADDR` —
+supply one of its own **if the operator has explicitly opted in** with
+`PAPERCLIP_SECRETS_VAULT_ALLOW_CONFIG_ADDR=1`. Without that opt-in, a
+per-vault address is ignored and surfaced as a config warning, so a company
+writer cannot use it to redirect the deployment's Vault credential
+(`VAULT_TOKEN`, the k8s SA token, or the token file) to an endpoint they
+choose. A per-vault address that differs from the operator address is
+ignored and surfaced as a config warning.
 
 **Auth options (pick one):**
 - **(a) Kubernetes ServiceAccount** — `auth.method = kubernetes` + `role`. The
@@ -103,6 +109,36 @@ KV payload is `{ "value": "<plaintext>" }`. KV v2's native version counter
 is the version source of truth; `max_versions` (per vault config
 `versionRetention`) enforces retention server-side.
 
+## Security hardening
+
+- **Create is idempotent under a lost response.** `createSecret` writes with
+  `cas: 0` (create-only). If a response is lost and the client retries, the
+  second write hits a CAS conflict, the provider re-reads the existing version
+  instead of writing a second one, and the returned `version` matches what is
+  actually stored. This keeps the managed write version-aligned with
+  `createVersion`, which relies on `cas = next-1`. A genuine `400` from
+  create (the entry was not actually written) is rethrown, not swallowed.
+- **No path traversal in managed paths.** The KV path is
+  `<kvPathPrefix>/<deploymentId>/<companyId>/<secretKey>`. `secretKey` is
+  restricted to `[A-Za-z0-9_.-]`, and `buildManagedKvPath` rejects any `.` or
+  `..` segment, so a key named `..` cannot collapse the path out of the
+  managed prefix. `kvPathPrefix` is likewise rejected when it starts or ends
+  with `/`, contains `//`, or has a `.`/`..` segment.
+- **`saTokenPath` is operator-pinned like the address.** The `saTokenPath`
+  (the file read and sent as the kubernetes login JWT) is an
+  information-disclosure primitive: an operator may pin it via
+  `PAPERCLIP_SECRETS_VAULT_SA_TOKEN_PATH`, but a per-vault company config may
+  only set a custom path when the operator has set no pin **and** has opted
+  in with `PAPERCLIP_SECRETS_VAULT_ALLOW_CONFIG_ADDR=1` (the same flag that
+  gates the address). Without the opt-in a config `saTokenPath` is ignored
+  and surfaced as a warning, defaulting to the in-cluster path; a value
+  differing from an operator pin is overridden and warned.
+- **Network/timeout failures are typed.** `HttpVaultGateway` wraps connect
+  and `AbortSignal.timeout` failures in a `SecretProviderClientError` with
+  `code: provider_unavailable`, so a hung or unreachable Vault surfaces as a
+  provider-unavailable error (and drives the same retry/health logic as a
+  `5xx`) rather than an opaque fetch rejection.
+
 ## Required Vault Policy
 
 ```hcl
@@ -115,16 +151,20 @@ path "<mount>/metadata/<prefix>/*" { capabilities = ["read","list","update","del
 path "<mount>/data/+/*"            { capabilities = ["read"] }
 ```
 
-The default policy intentionally omits `destroy`. Hard-destroy is only
-reachable through `paperclipai secrets doctor --destroy <id> --confirm`,
-which requires a separately-attached emergency policy.
+The default policy intentionally omits `destroy`. Hard-destroy (which
+overwrites previous KV versions instead of retaining them) is only reachable
+by explicitly granting the `destroy` capability on the managed prefix, which
+the default policy does not — so a separate, separately-attached emergency
+policy is required to perform a hard-destroy.
 
-## Helm Chart (OpenBao Bundled)
+## OpenBao / Vault
 
-The Paperclip helm chart bundles OpenBao via dependency and pre-configures
-the Kubernetes auth method, the policy above, and the KV mount through a
-post-install Job. See `docs/deploy/secrets.md` for chart values, unseal
-options, and operator runbooks.
+Paperclip speaks to any Vault-compatible KV v2 endpoint (HashiCorp Vault or
+OpenBao). The provider does not assume a Helm chart, a specific unseal
+method, or a particular topology: bring your own Vault/OpenBao, point
+`PAPERCLIP_SECRETS_VAULT_ADDR` (or `VAULT_ADDR`) at it, and attach the policy
+and KV mount above. See `docs/deploy/secrets.md` for the full operator
+runbook (unseal, backup, incident response).
 
 ## Health Checks
 
@@ -142,9 +182,14 @@ Responses never include the Vault token, lease ids, or policy contents.
 
 ## Backup, Rotation, Incident Runbooks
 
-- **Token rotation:** the provider renews the Vault token proactively at
-  70% of TTL and re-logs-in on 403. Operators do not rotate tokens
-  manually; rotation happens automatically.
+- **Token rotation (k8s auth only):** in `kubernetes` auth mode the provider
+  renews the login token proactively at 70% of its TTL and re-logs-in on a
+  403, re-reading the projected SA token file on each login so on-disk SA
+  token rotation is picked up automatically. In token-file mode
+  (`PAPERCLIP_SECRETS_VAULT_TOKEN_FILE`) the file is re-read on every
+  operation, so an orchestrator (e.g. a Nomad Vault agent) rotates the token
+  in place with no restart. In plain `VAULT_TOKEN` env mode the token is used
+  as-is; rotate it by updating the env or switching to a token file.
 - **Unseal:** an unsealed Vault returns `sealed=true` from `sys/health` and
   the provider health check reports `warning`. Restart unseals via the
   configured auto-unseal mechanism (transit/awskms/gcpckms/...), or perform

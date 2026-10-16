@@ -9,6 +9,7 @@ import {
   VaultTokenManager,
   withVaultTokenRetry,
   type VaultAuthSource,
+  type VaultHttpGateway,
 } from "../secrets/vault-provider.js";
 import { SecretProviderClientError } from "../secrets/types.js";
 
@@ -287,9 +288,25 @@ describe("resolveVaultConfig", () => {
     expect(r.warnings).toHaveLength(0);
   });
 
-  it("uses the per-vault config address only when no operator env address is set", () => {
+  it("ignores the per-vault config address when no operator pin is set (no opt-in)", () => {
     const r = resolveVaultConfig({
       env: {},
+      providerConfig: {
+        id: "v1",
+        provider: "vault",
+        status: "ready",
+        config: { address: "https://from-config:8200" },
+      },
+    });
+    // No operator pin + no ALLOW_CONFIG_ADDR: the company address must not be
+    // used as the credential endpoint.
+    expect(r.config).toBeNull();
+    expect(r.warnings.join(" ")).toMatch(/operator-pinned/i);
+  });
+
+  it("uses the per-vault config address when the operator opts in (ALLOW_CONFIG_ADDR=1)", () => {
+    const r = resolveVaultConfig({
+      env: { PAPERCLIP_SECRETS_VAULT_ALLOW_CONFIG_ADDR: "1" },
       providerConfig: {
         id: "v1",
         provider: "vault",
@@ -323,6 +340,114 @@ describe("resolveVaultConfig", () => {
       providerConfig: null,
     });
     expect(r.config?.address).toBe("https://paperclip-vault:8200");
+  });
+
+  // --- saTokenPath is a file the server reads and sends as the k8s login JWT, ---
+  // --- so a company config choosing a custom path is an information-disclosure  ---
+  // --- primitive. Operator pins win; a config custom path needs the opt-in.     ---
+  it("ignores a custom config saTokenPath when no operator pin is set and no opt-in", () => {
+    const r = resolveVaultConfig({
+      env: { PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200" },
+      providerConfig: {
+        id: "v1",
+        provider: "vault",
+        status: "ready",
+        config: {
+          address: "https://v:8200",
+          auth: { method: "kubernetes", role: "paperclip-server", saTokenPath: "/etc/hostname" },
+        },
+      },
+    });
+    expect(r.config?.auth.method).toBe("kubernetes");
+    // Custom path is ignored; the in-cluster default is used.
+    expect(r.config?.auth.saTokenPath).toBe(
+      "/var/run/secrets/kubernetes.io/serviceaccount/token",
+    );
+    expect(r.warnings.join(" ")).toMatch(/saTokenPath is ignored/i);
+  });
+
+  it("honors a custom config saTokenPath when the operator opts in (ALLOW_CONFIG_ADDR=1)", () => {
+    const r = resolveVaultConfig({
+      env: {
+        PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200",
+        PAPERCLIP_SECRETS_VAULT_ALLOW_CONFIG_ADDR: "1",
+      },
+      providerConfig: {
+        id: "v1",
+        provider: "vault",
+        status: "ready",
+        config: {
+          address: "https://v:8200",
+          auth: { method: "kubernetes", role: "paperclip-server", saTokenPath: "/custom/jwt" },
+        },
+      },
+    });
+    expect(r.config?.auth.saTokenPath).toBe("/custom/jwt");
+    expect(r.warnings).toHaveLength(0);
+  });
+
+  it("operator-pinned PAPERCLIP_SECRETS_VAULT_SA_TOKEN_PATH wins over a config saTokenPath", () => {
+    const r = resolveVaultConfig({
+      env: {
+        PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200",
+        PAPERCLIP_SECRETS_VAULT_SA_TOKEN_PATH: "/operator/jwt",
+      },
+      providerConfig: {
+        id: "v1",
+        provider: "vault",
+        status: "ready",
+        config: {
+          address: "https://v:8200",
+          auth: { method: "kubernetes", role: "paperclip-server", saTokenPath: "/custom/jwt" },
+        },
+      },
+    });
+    expect(r.config?.auth.saTokenPath).toBe("/operator/jwt");
+    expect(r.warnings.join(" ")).toMatch(/saTokenPath is overridden by the operator/i);
+  });
+
+  it("does not warn when a config saTokenPath restates the operator pin", () => {
+    const r = resolveVaultConfig({
+      env: {
+        PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200",
+        PAPERCLIP_SECRETS_VAULT_SA_TOKEN_PATH: "/operator/jwt",
+      },
+      providerConfig: {
+        id: "v1",
+        provider: "vault",
+        status: "ready",
+        config: {
+          address: "https://v:8200",
+          auth: { method: "kubernetes", role: "paperclip-server", saTokenPath: "/operator/jwt" },
+        },
+      },
+    });
+    expect(r.config?.auth.saTokenPath).toBe("/operator/jwt");
+    expect(r.warnings).toHaveLength(0);
+  });
+
+  it("rejects a kvPathPrefix containing a '..' segment", () => {
+    const rr = resolveVaultConfig({
+      env: {
+        PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200",
+        PAPERCLIP_SECRETS_VAULT_KV_PATH_PREFIX: "a/../b",
+      },
+      providerConfig: null,
+    });
+    expect(rr.config).toBeNull();
+    expect(rr.warnings.join(" ")).toMatch(/must not contain '\.' or '\.\.'/);
+  });
+
+  it("rejects a kvPathPrefix with a trailing slash or '//'", () => {
+    const rr = resolveVaultConfig({
+      env: {
+        PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200",
+        PAPERCLIP_SECRETS_VAULT_KV_PATH_PREFIX: "paperclip/",
+      },
+      providerConfig: null,
+    });
+    expect(rr.config).toBeNull();
+    expect(rr.warnings.join(" ")).toMatch(/must not end with '\/' or contain '\/\//);
   });
 });
 
@@ -453,6 +578,23 @@ describe("buildManagedKvPath", () => {
     expect(path).toBe("team/secrets/d/c/k");
     expect(path.startsWith("kv/")).toBe(false);
     expect(path.includes("/data/")).toBe(false);
+  });
+
+  it("rejects a '.' or '..' segment so a key like '..' cannot escape the managed prefix", () => {
+    const config = {
+      address: "https://v",
+      namespace: null,
+      kvMount: "secret",
+      kvPathPrefix: "paperclip",
+      auth: { method: "token" as const, role: null, saTokenPath: "/dev/null" },
+      versionRetention: 10,
+    };
+    expect(() =>
+      buildManagedKvPath({ config, deploymentId: "d", companyId: "c", secretKey: ".." }),
+    ).toThrow(/must not be '\.' or '\.\.'/);
+    expect(() =>
+      buildManagedKvPath({ config, deploymentId: ".", companyId: "c", secretKey: "k" }),
+    ).toThrow(/must not be '\.' or '\.\.'/);
   });
 });
 
@@ -835,6 +977,84 @@ describe("createSecret", () => {
     expect(gw.maxVersions.get("secret/paperclip/prod-eu1/co-1/GH_TOKEN")).toBe(7);
   });
 
+  it("treats a create-only CAS conflict as a lost-response replay (does not write a second version)", async () => {
+    const gw = fakeVaultGateway();
+    const provider = createVaultProvider({
+      config: {
+        address: "https://v",
+        namespace: null,
+        kvMount: "secret",
+        kvPathPrefix: "paperclip",
+        auth: { method: "token", role: null, saTokenPath: "/dev/null" },
+        versionRetention: 7,
+      },
+      gateway: gw.impl,
+    });
+    process.env.VAULT_TOKEN = "static";
+    // Simulate a previous create that already wrote version 1 (a lost-response
+    // retry). A second createSecret must not write a second version.
+    const key = "secret/paperclip/prod-eu1/co-1/GH_TOKEN";
+    gw.store.set(key, { versions: [[JSON.stringify({ value: "first" })]] });
+
+    const result = await provider.createSecret({
+      value: "supersecret",
+      context: {
+        companyId: "co-1",
+        deploymentId: "prod-eu1",
+        secretId: "sec-1",
+        secretKey: "GH_TOKEN",
+        secretName: "GitHub Token",
+        version: 1,
+      } as never,
+    });
+
+    // Re-read the existing version instead of advancing it.
+    expect(result.providerVersionRef).toBe("1");
+    expect(gw.store.get(key)!.versions).toHaveLength(1);
+    expect(JSON.parse(gw.store.get(key)!.versions[0]![0])).toEqual({ value: "first" });
+  });
+
+  it("rethrows a genuine create 400 when the entry does not actually exist", async () => {
+    const gw = fakeVaultGateway();
+    // putKv throws a conflict even though nothing exists (a real 400, not a
+    // CAS replay). createSecret must surface it rather than swallow it.
+    const origPutKv = gw.impl.putKv.bind(gw.impl);
+    gw.impl.putKv = async (input) => {
+      throw new SecretProviderClientError({
+        code: "conflict",
+        provider: "vault",
+        operation: "putKv",
+        message: "real 400",
+      });
+    };
+    void origPutKv;
+    const provider = createVaultProvider({
+      config: {
+        address: "https://v",
+        namespace: null,
+        kvMount: "secret",
+        kvPathPrefix: "paperclip",
+        auth: { method: "token", role: null, saTokenPath: "/dev/null" },
+        versionRetention: 7,
+      },
+      gateway: gw.impl,
+    });
+    process.env.VAULT_TOKEN = "static";
+    await expect(
+      provider.createSecret({
+        value: "supersecret",
+        context: {
+          companyId: "co-1",
+          deploymentId: "prod-eu1",
+          secretId: "sec-1",
+          secretKey: "GH_TOKEN",
+          secretName: "GitHub Token",
+          version: 1,
+        } as never,
+      }),
+    ).rejects.toMatchObject({ code: "conflict", message: "real 400" });
+  });
+
   it("does not store plaintext in returned material", async () => {
     const gw = fakeVaultGateway();
     const provider = createVaultProvider({
@@ -946,6 +1166,50 @@ describe("withVaultTokenRetry", () => {
 describe("createVersion", () => {
   it("rotates with CAS = currentVersion and stores under same path", async () => {
     const gw = fakeVaultGateway();
+    const seenCas: (number | undefined)[] = [];
+    const provider = createVaultProvider({
+      config: {
+        address: "https://v",
+        namespace: null,
+        kvMount: "secret",
+        kvPathPrefix: "paperclip",
+        auth: { method: "token", role: null, saTokenPath: "/dev/null" },
+        versionRetention: 10,
+      },
+      gateway: {
+        ...gw.impl,
+        putKv: async (input) => {
+          seenCas.push(input.cas);
+          return gw.impl.putKv(input);
+        },
+      },
+    });
+    process.env.VAULT_TOKEN = "static";
+
+    // The service passes `version: nextVersion` (latestVersion + 1) in the
+    // write context, mirroring the real rotate path.
+    const ctx = { companyId: "co", deploymentId: "d", secretId: "s", secretKey: "K", secretName: "K", version: 2 } as const;
+    await provider.createSecret({ value: "v1", context: { ...ctx, version: 1 } });
+    const v2 = await provider.createVersion({
+      value: "v2",
+      context: ctx,
+      externalRef: "secret/paperclip/d/co/K",
+    });
+    expect(v2.providerVersionRef).toBe("2");
+    // The first write is createSecret, which now uses cas: 0 (create-only) so
+    // a lost-response retry cannot write a second version. The rotation uses
+    // CAS = the CURRENT stored version (1), not the next Paperclip version (2)
+    // — the first rotation previously sent cas:2 against a one-version key and
+    // got a spurious conflict.
+    expect(seenCas).toEqual([0, 1]);
+
+    const stored = gw.store.get("secret/paperclip/d/co/K");
+    expect(stored!.versions.length).toBe(2);
+    expect(JSON.parse(stored!.versions[1][0])).toEqual({ value: "v2" });
+  });
+
+  it("rotates the stored path, not a rebuilt path, after the secret is renamed", async () => {
+    const gw = fakeVaultGateway();
     const provider = createVaultProvider({
       config: {
         address: "https://v",
@@ -959,25 +1223,35 @@ describe("createVersion", () => {
     });
     process.env.VAULT_TOKEN = "static";
 
-    const ctx = { companyId: "co", deploymentId: "d", secretId: "s", secretKey: "K", secretName: "K", version: 1 } as const;
-    await provider.createSecret({ value: "v1", context: ctx });
+    const original = { companyId: "co", deploymentId: "d", secretId: "s", secretKey: "OLD", secretName: "OLD", version: 2 } as const;
+    const created = await provider.createSecret({ value: "v1", context: { ...original, version: 1 } });
+    expect(created.externalRef).toBe("secret/paperclip/d/co/OLD");
+
+    // Secret key renamed OLD -> NEW; the recorded externalRef still points at
+    // the OLD path where the value lives. Rotation must write there.
+    const renamedCtx = { ...original, secretKey: "NEW", secretName: "NEW" } as const;
     const v2 = await provider.createVersion({
       value: "v2",
-      context: ctx,
-      externalRef: "secret/paperclip/d/co/K",
+      context: renamedCtx,
+      externalRef: created.externalRef,
     });
     expect(v2.providerVersionRef).toBe("2");
-
-    const stored = gw.store.get("secret/paperclip/d/co/K");
-    expect(stored!.versions.length).toBe(2);
-    expect(JSON.parse(stored!.versions[1][0])).toEqual({ value: "v2" });
+    expect(gw.store.get("secret/paperclip/d/co/OLD")!.versions.length).toBe(2);
+    // A path rebuilt from the NEW key must not have been created.
+    expect(gw.store.has("secret/paperclip/d/co/NEW")).toBe(false);
   });
 
   it("maps CAS mismatch to SecretProviderClientError(code:conflict)", async () => {
     const gw = fakeVaultGateway();
-    // pre-seed two versions so the CAS check in fakeVaultGateway will reject our cas=1 update
+    // Pre-seed three versions so the fake gateway's CAS check rejects
+    // cas=2 (the current stored version is 3). The service-shaped context is
+    // `version: 3` (next), which the provider must convert to cas 2.
     gw.store.set("secret/paperclip/d/co/K", {
-      versions: [[JSON.stringify({ value: "v1" })], [JSON.stringify({ value: "v2-extra" })]],
+      versions: [
+        [JSON.stringify({ value: "v1" })],
+        [JSON.stringify({ value: "v2" })],
+        [JSON.stringify({ value: "v2-extra" })],
+      ],
     });
     const provider = createVaultProvider({
       config: {
@@ -1008,7 +1282,14 @@ describe("createVersion", () => {
     await expect(
       provider.createVersion({
         value: "v3",
-        context: { companyId: "co", deploymentId: "d", secretId: "s", secretKey: "K", secretName: "K", version: 1 },
+        context: {
+          companyId: "co",
+          deploymentId: "d",
+          secretId: "s",
+          secretKey: "K",
+          secretName: "K",
+          version: 3,
+        },
         externalRef: "secret/paperclip/d/co/K",
       }),
     ).rejects.toMatchObject({ code: "conflict" });
@@ -1457,6 +1738,35 @@ describe("HttpVaultGateway", () => {
       }),
     );
   });
+
+  it("bounds a stalled request with a timeout and lets the next request proceed", async () => {
+    // A server that accepts the connection but never responds: fetch returns a
+    // promise that never settles. The gateway must abandon it at the bounded
+    // lifetime (AbortSignal.timeout) instead of pinning the caller, and a
+    // later request must succeed once the server responds.
+    const fetchMock = vi.spyOn(globalThis, "fetch");
+    fetchMock
+      .mockImplementationOnce((url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          (init as { signal?: AbortSignal }).signal?.addEventListener("abort", () =>
+            reject(new Error("aborted")),
+          );
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ data: { data: { value: "v" }, metadata: { version: 1 } } }), { status: 200 }),
+      );
+    const gateway = new HttpVaultGateway({
+      address: "https://vault.example:8200",
+      namespace: null,
+      getToken: async () => "hvs.kube.1",
+      timeoutMs: 25,
+    });
+    await expect(gateway.getKv({ mount: "secret", path: "p/d/co/K" })).rejects.toThrow();
+    const second = await gateway.getKv({ mount: "secret", path: "p/d/co/K" });
+    expect(second).toEqual({ data: { value: "v" }, version: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
 
 describe("Greptile round-1 regressions", () => {
@@ -1535,5 +1845,52 @@ describe("Greptile round-1 regressions", () => {
       providerConfig: null,
     });
     expect(r.config?.versionRetention).toBe(7);
+  });
+});
+
+describe("HttpVaultGateway.call — network error mapping", () => {
+  const prevFetch = globalThis.fetch;
+  afterEach(() => {
+    globalThis.fetch = prevFetch;
+    vi.restoreAllMocks();
+  });
+
+  function makeGateway() {
+    return new HttpVaultGateway({
+      address: "https://v:8200",
+      namespace: null,
+      getToken: async () => "tok",
+      timeoutMs: 5000,
+    });
+  }
+
+  it("wraps a network (connect) failure in a provider_unavailable error", async () => {
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("ECONNREFUSED"));
+    const err = await makeGateway().health().catch((e) => e);
+    expect(err).toBeInstanceOf(SecretProviderClientError);
+    expect((err as SecretProviderClientError).code).toBe("provider_unavailable");
+    expect((err as SecretProviderClientError).message).toMatch(/failed/i);
+  });
+
+  it("wraps a timeout (AbortSignal) as provider_unavailable with a 'timed out' message", async () => {
+    const abortErr = new Error("The operation was aborted");
+    abortErr.name = "AbortError";
+    vi.spyOn(globalThis, "fetch").mockRejectedValue(abortErr);
+    const err = await makeGateway().health().catch((e) => e);
+    expect(err).toBeInstanceOf(SecretProviderClientError);
+    expect((err as SecretProviderClientError).code).toBe("provider_unavailable");
+    expect((err as SecretProviderClientError).message).toMatch(/timed out after 5000ms/);
+  });
+
+  it("still maps an HTTP status body (e.g. 503) to the status-derived code", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ errors: ["service unavailable"] }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const err = await makeGateway().health().catch((e) => e);
+    expect(err).toBeInstanceOf(SecretProviderClientError);
+    expect((err as SecretProviderClientError).code).toBe("provider_unavailable");
   });
 });

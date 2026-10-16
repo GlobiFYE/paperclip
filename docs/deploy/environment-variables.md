@@ -196,6 +196,8 @@ configuration fails closed.
 | `PAPERCLIP_SECRETS_VAULT_KV_PATH_PREFIX` | `paperclip` | Path prefix for managed secrets |
 | `PAPERCLIP_SECRETS_VAULT_VERSION_RETENTION` | `10` | KV `max_versions` retention |
 | `PAPERCLIP_SECRETS_VAULT_NAMESPACE` | (unset) | Vault Enterprise namespace |
+| `PAPERCLIP_SECRETS_VAULT_ALLOW_CONFIG_ADDR` | `0` | When `1` (and no operator pin is set), a per-vault config `address` may receive the deployment's Vault credential. Off by default so a company writer cannot redirect the credential to a self-chosen host |
+| `VAULT_HTTP_TIMEOUT_MS` | `30000` | Bounded lifetime for a single Vault HTTP request (including response body); `0`/invalid falls back to the default |
 | `VAULT_ADDR` | (unset) | Standard Vault address; honored as a fallback when `PAPERCLIP_SECRETS_VAULT_ADDR` is unset (set natively by Nomad/Docker/k8s) |
 | `VAULT_TOKEN` | (unset) | Standard Vault token; used for token auth |
 
