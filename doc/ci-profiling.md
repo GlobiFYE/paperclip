@@ -219,7 +219,47 @@ keeps its own temporary home, configuration and instance identity. Their combine
 Vitest worker limit stays within the detected CPU capacity or the explicit
 `VITEST_MAX_WORKERS` budget. A configured shared test database or a single worker
 keeps project execution serial. All projects finish before a failure is returned.
-The UI/CLI and database lanes retain their existing scheduling.
+The database lane retains its existing scheduling.
+
+Playwright compiles the UI through `scripts/build-e2e-ui.mjs`, which gives only
+the build subprocess `NODE_ENV=production`. The server keeps `NODE_ENV=test`
+and its existing provider fixtures. Previously the server's environment also
+made Vite bundle development-mode browser code. On the same checkout, the
+initial JavaScript fell from 9,084,030 to 6,971,848 bytes. A serial browser
+comparison retained all 25 provider/session cases, zero retries, fresh server
+and database instances, and the slow-CPU/service-worker checks. Test-built UI
+took 167.02 seconds, production-built UI 142.81 seconds, and the final test-built
+control 155.03 seconds: a 12.22-second (7.9%) saving against that control. These
+durations include server startup and cleanup, but exclude prior UI compilation
+and dependency setup. All exact case identities and outcomes matched. This is
+a local browser comparison, not a measured whole-workflow improvement.
+
+The PR and release workflows split the UI/CLI projects across eight jobs with
+Vitest's native file sharding. Each job runs both projects and its slice of each
+current file list. Local source `831ec89f2` passed the same 8,981 tests and 814
+files in 192.28 seconds with two jobs of two workers, and 140.23 seconds with
+eight jobs of one worker. This comparison uses more total capacity; it does not
+predict fleet queue time. Include the six added setup phases and runner-minutes
+in CI acceptance. The unsharded local command and two-shard callers stay valid.
+
+With `PAPERCLIP_ADAPTER_UTILS_FILE_SHARDS=true`, adapter-utils moves from
+workspace-B into four separate file jobs. Each job obtains the current project
+file list from Vitest, then applies the existing duration-based partition. The
+weights in `scripts/adapter-utils-shard-durations.json` are local planning data,
+not CI timings. New files receive the median weight. Invalid, duplicated, or
+foreign inventory fails the job. Cases inside a file remain serial in one
+isolated fork. Every job retains its private home, configuration, and scratch
+paths. There are no case-name filters or cached test results.
+
+Callers without that opt-in retain the complete workspace-B project list. On an
+older source head without `scripts/project-test-shard.mjs`, the trusted workflow
+omits the additional file jobs and the older workspace-B command still covers
+adapter-utils. A new source head must run every configured file job. Include the
+four extra setup phases and their runner-minutes in the eventual CI comparison.
+
+```sh
+PAPERCLIP_ADAPTER_UTILS_FILE_SHARDS=true node scripts/run-vitest-stable.mjs --mode general --group general-adapter-utils --shard-index 0 --shard-count 4
+```
 
 The PR and canonical release-verification workflows set `CARGO_PROFILE_DEV_DEBUG=0`
 before restoring the shared Rust cache. This omits debug symbols from the debug
@@ -274,12 +314,27 @@ probes. No lifecycle, network-isolation, lock-preservation or provider checks
 are skipped. Native ARM and Mac qualification keep their existing file installs.
 
 The Linux verifier also shares `PAPERCLIP_PUBLIC_INSTALL_NPM_CACHE` with the
-producer installs that prepare bundled dependencies. These run after the existing
-cache warm-up and reuse its downloaded archives instead of populating a second
-host cache. Each producer still installs into a separate empty directory, applies
+producer installs that prepare bundled dependencies. These share the background
+cache warm-up and reuse downloaded archives instead of populating a second host
+cache. Each producer still installs into a separate empty directory, applies
 the release patches, and packs fresh output. npm resolution and integrity checks
 remain enabled; cache misses download normally. Without an explicit shared cache,
 producer installs keep their normal npm cache configuration.
+
+The verifier waits for the optional cache warm-up immediately before its clean
+consumer install, after staging, packing, and registry metadata are complete.
+The remaining wait is recorded as `npm_cache_wait_ms`. Failed or incomplete
+warm-up still falls back to normal npm downloads after at most 180 seconds.
+Trusted workflows retain the earlier shell wait for older source checkouts
+without the helper. A native Linux ARM64 experiment with four CPUs, 6 GiB RAM,
+and an empty npm cache and consumer in each phase compared serial warm-up and
+packing against this overlap, then repeated the serial control. The overlap
+took 89.49 seconds versus the final control's 106.05 seconds, saving 16.55 seconds
+(15.6%). All 18 archive SHA-512s and the installed tree's 69,049 files, modes,
+and links matched in all three phases. The payload was a retained earlier
+public-install fixture, held constant across phases; this measures scheduling
+of warm-up, packing, and installation, excluding upstream build and bundled
+dependency staging. It does not establish current-head or complete CI speed.
 
 After the offline lifecycle finishes, Pi setup runs in its own download sandbox
 while the independent Codex/Grok probes run offline. Pi admission still waits

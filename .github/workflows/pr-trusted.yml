@@ -415,32 +415,61 @@ jobs:
             group_label: chat (3/3)
             shard_index: 2
             shard_count: 3
-          # workspaces-a was the slowest check in the fully-green PR run
-          # 31371439296 (2026-08-10) at 319s, with the ui project's single
-          # vitest invocation accounting for ~224s and the paperclipai CLI
-          # ~37s. Two shards use Vitest's native --shard on each project's
-          # file list (ui: 439 files, cli: 54), bringing each job to roughly
-          # half the suite time (~130s + setup) without a duration manifest.
           - group: general-workspaces-a
-            group_label: workspaces-a (1/2)
+            group_label: workspaces-a (1/8)
             shard_index: 0
-            shard_count: 2
+            shard_count: 8
           - group: general-workspaces-a
-            group_label: workspaces-a (2/2)
+            group_label: workspaces-a (2/8)
             shard_index: 1
-            shard_count: 2
-          # workspaces-b became the slowest check (499-593s) once the server
-          # shards were rebalanced: the db project alone was 168-250s of its
-          # 436-513s of vitest time (PR runs 38084171761, 38083084276 and
-          # 38083020834, 2026-10-10). The db project now runs as its own
-          # workspaces-c lane; the rest of workspaces-b is ~265-275s of
-          # vitest time, so both jobs land near 300-350s with setup.
+            shard_count: 8
+          - group: general-workspaces-a
+            group_label: workspaces-a (3/8)
+            shard_index: 2
+            shard_count: 8
+          - group: general-workspaces-a
+            group_label: workspaces-a (4/8)
+            shard_index: 3
+            shard_count: 8
+          - group: general-workspaces-a
+            group_label: workspaces-a (5/8)
+            shard_index: 4
+            shard_count: 8
+          - group: general-workspaces-a
+            group_label: workspaces-a (6/8)
+            shard_index: 5
+            shard_count: 8
+          - group: general-workspaces-a
+            group_label: workspaces-a (7/8)
+            shard_index: 6
+            shard_count: 8
+          - group: general-workspaces-a
+            group_label: workspaces-a (8/8)
+            shard_index: 7
+            shard_count: 8
           - group: general-workspaces-b
             group_label: workspaces-b
           - group: general-workspaces-c
             group_label: workspaces-c
+          - group: general-adapter-utils
+            group_label: adapter-utils (1/4)
+            shard_index: 0
+            shard_count: 4
+          - group: general-adapter-utils
+            group_label: adapter-utils (2/4)
+            shard_index: 1
+            shard_count: 4
+          - group: general-adapter-utils
+            group_label: adapter-utils (3/4)
+            shard_index: 2
+            shard_count: 4
+          - group: general-adapter-utils
+            group_label: adapter-utils (4/4)
+            shard_index: 3
+            shard_count: 4
 
     env:
+      PAPERCLIP_ADAPTER_UTILS_FILE_SHARDS: "true"
       PAPERCLIP_CI_PROFILE: ${{ needs.gate.outputs.profile_ci }}
       PAPERCLIP_CI_PROFILE_JOB: General tests (${{ matrix.group_label }})
 
@@ -506,6 +535,7 @@ jobs:
           fi
 
       - name: Run grouped general test suites
+        if: ${{ matrix.group != 'general-adapter-utils' || hashFiles('scripts/project-test-shard.mjs') != '' }}
         run: |
           if [ -n "${{ matrix.shard_count }}" ]; then
             pnpm test:run:general -- --group '${{ matrix.group }}' \
@@ -938,7 +968,7 @@ jobs:
       # That graph is fixed by source manifests, so this fetches it in the
       # background while the Rust restore, Evalbook and `pnpm build` run, about
       # 150s before the verifier installs anything. Only the cache is handed
-      # over, and the verify step waits for this first. A failed or partial
+      # over. New verifiers wait only before consumer installation. A failed or partial
       # warm-up leaves the verifier to fetch what is missing as before.
       - name: Start warming the public-install npm cache
         if: ${{ hashFiles('scripts/warm-public-install-npm-cache.mjs') != '' }}
@@ -1075,15 +1105,19 @@ jobs:
         run: |
           status="$RUNNER_TEMP/public-install-npm-cache.status"
           if [ -f "$RUNNER_TEMP/public-install-npm-cache.log" ]; then
-            # Normally finished long before this; never let it hold the lane.
-            for _ in $(seq 180); do [ -f "$status" ] && break; sleep 1; done
-            if [ "$(cat "$status" 2>/dev/null)" = 0 ]; then
-              tail -n 1 "$RUNNER_TEMP/public-install-npm-cache.log"
-            else
-              echo '::notice title=Public-install npm cache::warm-up did not finish cleanly; the verifier fetches what is missing'
-              tail -n 20 "$RUNNER_TEMP/public-install-npm-cache.log"
-            fi
             export PAPERCLIP_PUBLIC_INSTALL_NPM_CACHE="$RUNNER_TEMP/public-install-npm-cache"
+            if [ -f scripts/public-install-cache-warmup.mjs ]; then
+              export PAPERCLIP_PUBLIC_INSTALL_NPM_CACHE_STATUS="$status"
+              export PAPERCLIP_PUBLIC_INSTALL_NPM_CACHE_LOG="$RUNNER_TEMP/public-install-npm-cache.log"
+            else
+              for _ in $(seq 180); do [ -f "$status" ] && break; sleep 1; done
+              if [ "$(cat "$status" 2>/dev/null)" = 0 ]; then
+                tail -n 1 "$RUNNER_TEMP/public-install-npm-cache.log"
+              else
+                echo '::notice title=Public-install npm cache::warm-up did not finish cleanly; the verifier fetches what is missing'
+                tail -n 20 "$RUNNER_TEMP/public-install-npm-cache.log"
+              fi
+            fi
           fi
           node scripts/verify-grok-npm-install.mjs
 
