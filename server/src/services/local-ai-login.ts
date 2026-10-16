@@ -174,7 +174,7 @@ export function localAiLoginService(db: Db) {
         ...(!login && intent.provider !== "xai" && intent.provider !== "antigravity"
           ? { error: "The server restarted during sign-in. Start sign-in again." }
           : login?.outcome === "failure"
-            ? { error: "Sign-in ended before the account was connected. Start sign-in again." }
+            ? { error: login.error ?? "Sign-in ended before the account was connected. Start sign-in again." }
             : {}) };
     }
   }

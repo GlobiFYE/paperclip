@@ -122,6 +122,8 @@ vi.mock("@paperclipai/adapter-agy-local/server", async (importOriginal) => {
 });
 
 let currentActor: Record<string, unknown>;
+let agentRoutes: typeof import("../routes/agents.js").agentRoutes;
+let errorHandler: typeof import("../middleware/index.js").errorHandler;
 
 function boardActor(userId: string, companyIds: string[] = [COMPANY_1, OTHER_COMPANY]): Record<string, unknown> {
   return {
@@ -134,10 +136,6 @@ function boardActor(userId: string, companyIds: string[] = [COMPANY_1, OTHER_COM
 }
 
 async function createApp() {
-  const [{ agentRoutes }, { errorHandler }] = await Promise.all([
-    vi.importActual<typeof import("../routes/agents.js")>("../routes/agents.js"),
-    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
-  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -153,7 +151,7 @@ const authSignalPath = (companyId: string, type: string, environmentId?: string)
   `/api/companies/${companyId}/adapters/${type}/auth-signal${environmentId ? `?environmentId=${environmentId}` : ""}`;
 
 describe("adapter auth-signal route", () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules();
     vi.clearAllMocks();
     currentActor = boardActor(OWNER_A);
@@ -189,6 +187,12 @@ describe("adapter auth-signal route", () => {
       ready: false,
       authMode: "none",
     });
+    const [routes, middleware] = await Promise.all([
+      vi.importActual<typeof import("../routes/agents.js")>("../routes/agents.js"),
+      vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+    ]);
+    agentRoutes = routes.agentRoutes;
+    errorHandler = middleware.errorHandler;
   });
 
   afterEach(() => {
@@ -583,4 +587,10 @@ describe("adapter auth-signal route", () => {
     expect(mockEnvironmentRuntime.acquireRunLease).not.toHaveBeenCalled();
     expect(mockResolveEnvironmentExecutionTarget).not.toHaveBeenCalled();
   });
+});
+
+vi.mock("../services/agent-lifecycle.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../services/agent-lifecycle.js")>();
+  return { ...actual, createAgentLifecycle: () => ({
+  }) };
 });
