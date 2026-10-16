@@ -148,11 +148,10 @@ guarantee.
 
 ### Execution-host stdio assignments
 
-Native Codex and all ACPX adapters, including ACPX Codex, Claude and Pi, accept
-verified, session-local stdio servers from the execution host through the shared
-binding path. The transport uses each implementation's own
-schemas and responses. Each binding requires a private Unix socket to identify
-the shared resource whose calls are serialized. This is a separate binding
+Native Codex and all ACPX adapters accept verified, session-local stdio servers
+from the execution host through the shared binding path. The transport uses each
+implementation's own schemas and responses. Each binding requires a private Unix
+socket to identify the shared resource whose calls are serialized. This is a separate binding
 alongside the HTTP gateway; it does not create gateway/profile administration
 authority. Tasks cannot supply these reserved environment inputs. Read-only
 sessions omit them.

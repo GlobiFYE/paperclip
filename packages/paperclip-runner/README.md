@@ -810,7 +810,7 @@ replace the internal task server or gateway. Commands are verified against their
 assigned digest before execution. The backend receives only its assigned environment.
 
 Runner supplies these session-local bindings to native Codex and through the
-shared ACPX runtime to all ACPX adapters, including Codex, Claude and Pi.
+shared ACPX runtime to all ACPX adapters.
 User or project MCP files are never rewritten. Read-only sessions omit these
 bindings. Host assignment authorizes native Codex to use these local tools without
 a new per-call prompt, matching execution-host utilities available through shell.
