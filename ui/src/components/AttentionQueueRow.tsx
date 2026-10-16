@@ -342,7 +342,10 @@ export const AttentionQueueRow = memo(function AttentionQueueRow({
                     <MoreHorizontal className="h-4 w-4" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
+                {/* The menu is portaled but still a React child of the card
+                    body, so its padding and separators would bubble a click
+                    into the body's disclosure toggle. */}
+                <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
                   {onSnooze && <SnoozeSubmenu onSnooze={(iso) => onSnooze(item, iso)} />}
                   <DropdownMenuItem onClick={() => onDismiss(item)}>
                     <X className="h-4 w-4" />
