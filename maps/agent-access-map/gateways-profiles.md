@@ -149,9 +149,12 @@ guarantee.
 ### Execution-host stdio assignments
 
 Native Codex and isolated ACPX Claude also accept verified, session-local stdio
-servers from the execution host. This is a separate local binding, alongside the
-HTTP gateway; it does not create gateway/profile administration authority. Tasks
-cannot supply these reserved environment inputs. Read-only sessions omit them.
+servers from the execution host. The transport uses each implementation's own
+schemas and responses. Each binding requires a private Unix socket to identify
+the shared resource whose calls are serialized. This is a separate binding
+alongside the HTTP gateway; it does not create gateway/profile administration
+authority. Tasks cannot supply these reserved environment inputs. Read-only
+sessions omit them.
 Claude uses its applicable ACPX permission policy. Host-assigned native Codex
 tools run without a new per-call prompt, matching existing execution-host shell
 utilities. Explicit deny/prompt rules remain effective; requested approvals use

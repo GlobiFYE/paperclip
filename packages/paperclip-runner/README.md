@@ -789,12 +789,19 @@ qualification before this mode can be enabled for them.
 ## Assigned local MCP servers
 
 An execution host can assign local stdio MCP servers alongside the existing
-`PAPERCLIP_NATIVE_MCP_NAME` / `URL` / `TOKEN` HTTP gateway. Set
+`PAPERCLIP_NATIVE_MCP_NAME` / `URL` / `TOKEN` HTTP gateway. This is general transport
+support for local MCP implementations that satisfy the executable-verification
+and private Unix socket requirements below. Runner uses each server's own tool
+schemas and responses. Set
 `PAPERCLIP_NATIVE_MCP_STDIO` to a JSON array of bindings with these fields:
 
 ```json
-[{"name":"desktop","command":"/opt/desktop/bin/cua-driver","args":["mcp"],"env":{"HOME":"/home/agent"},"sha256":"sha256:<64 lowercase hex digits>","serialResource":"/home/agent/.local/state/desktop/runtime/cua.sock"}]
+[{"name":"local_tools","command":"/opt/local-tools/bin/mcp-server","args":[],"env":{"HOME":"/home/agent"},"sha256":"sha256:<64 lowercase hex digits>","serialResource":"/home/agent/.local/state/local-tools/runtime/service.sock"}]
 ```
+
+`serialResource` identifies the shared resource for cross-process call locking;
+the MCP transport itself uses stdio. It must name an existing private Unix socket
+with the ownership and path requirements below.
 
 Set `PAPERCLIP_NATIVE_MCP_PROXY` to the assigned Runner executable. These are
 execution-host inputs, excluded from configurable task environment and provider
@@ -815,8 +822,8 @@ Preconfigured Claude remains unattended and rejects approval requests.
 The relay forwards tool schemas and native MCP content. For Codex 0.160/0.162,
 image-bearing results put structured metadata in a text block instead of
 `structuredContent`, because those clients otherwise discard the image blocks.
-Claude receives the original response unchanged. There is no provider-native
-computer-tool translation.
+Claude receives the original response unchanged. Tool schemas and actions are
+forwarded without provider-specific translation.
 
 All `tools/call` requests for the same private Unix socket are serialized across
 sessions and processes, including reads. Metadata requests stay responsive.
