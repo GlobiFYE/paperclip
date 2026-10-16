@@ -12150,6 +12150,8 @@ export function issueService(db: Db) {
           .set({
             status: releaseStatus,
             assigneeAgentId: isTerminal ? existing.assigneeAgentId : null,
+            status: "todo",
+            assigneeAgentId: existing.originKind === "routine_execution" ? existing.assigneeAgentId : null,
             checkoutRunId: null,
             executionRunId: null,
             executionAgentNameKey: null,
