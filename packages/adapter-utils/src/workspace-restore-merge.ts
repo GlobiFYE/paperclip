@@ -495,10 +495,11 @@ export async function mergeDirectoryWithBaseline(input: {
   beforeApply?: () => Promise<void>;
   afterApply?: () => Promise<void>;
   /**
-   * Run-scoped operator cancellation. Checked before the apply and between
-   * copied entries so a cancelled SSH restore stops merging instead of
-   * holding the run `running` through a silent multi-GB apply. The merge
-   * lock itself is untouched.
+   * Run-scoped operator cancellation. Checked during source/current snapshots,
+   * after locking and before branch integration, between deletions and copied
+   * entries, and before successful completion. A cancelled SSH restore yields
+   * instead of holding the run `running` through a silent multi-GB apply. The
+   * merge lock itself is unchanged.
    */
   signal?: AbortSignal | null;
 }): Promise<void> {
