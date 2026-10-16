@@ -231,6 +231,8 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
   const { nativeInstructionWorkingCopy, collectStoppedInstructions, nativeInstructionReservation, releaseInstructionCopy } = input.instructions;
   const { providerTraceCapture, nativeRunnerPreparationSpans, attestedQuestionResponseAtMs, attemptStartedAtMs, environmentAcquireStartedAtMs, environmentRealizeEndedAtMs } = input.trace;
   const { executionControl, executionPhaseContext, dispatchResolvedInteractionContinuationWithAtomicGate } = input.control;
+  const dispatchWithTiming: HeartbeatRuntimeExecutionInput["control"]["dispatchResolvedInteractionContinuationWithAtomicGate"] = dispatch =>
+    measureRunPhase("execution.dispatch_admission", () => dispatchResolvedInteractionContinuationWithAtomicGate(dispatch));
   const { identityRedactor, appendIdentityRedactedLog, onLog, onAdapterEvent, onAdapterMeta } = input.output;
   const { executionWorkspacesSvc, instanceSettings, envOrchestrator, upsertTaskSession, getRun, cancelRunInternal, enqueueWakeup, persistRunProcessMetadata, recordCurrentHeartbeatRunRuntimeProgress, dispatchPendingNativeStatusWakeups } = input.services;
   const localAgentJwtScope =
@@ -481,7 +483,8 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
     adapterFinalizeOutcome = status;
   };
 
-  const usageRecorder = await createRunUsageRecorder(db, { companyId: run.companyId, runId: run.id, adapterType: agent.adapterType });
+  const usageRecorder = await measureRunPhase("execution.usage_startup", () =>
+    createRunUsageRecorder(db, { companyId: run.companyId, runId: run.id, adapterType: agent.adapterType }));
   input.effects.onUsageCaptureReady(usageRecorder.persistFailure);
   let adapterResult: AdapterExecutionResult;
   const runGoalControlRequestId = readNonEmptyString(
@@ -496,12 +499,12 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
         nativeExecution.runtimeContext.mcp.bindingId
           ? nativeExecution.runtimeContext.mcp.digest
           : null;
-      const nativeMcpServers = await buildPaperclipRuntimeMcpServers({
+      const nativeMcpServers = await measureRunPhase("execution.mcp_handoff", () => buildPaperclipRuntimeMcpServers({
         db,
         agent,
         runId: run.id,
         expectedAssignmentDigest: expectedNativeMcpDigest,
-      });
+      }));
       if ("runtimeContext" in nativeExecution) {
         if (nativeMcpServers.length > 1)
           throw new Error(
@@ -564,7 +567,7 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
         }),
       );
       const guardedDispatch =
-        await dispatchResolvedInteractionContinuationWithAtomicGate(
+        await dispatchWithTiming(
           (markDispatchStarted) => {
             return executePaperclipNativeSession({
               db,
@@ -772,19 +775,19 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
       if (runtimeTools && runtimeToolDelivery === "invocation_context") {
         adapterContext.paperclipRuntimeTools = runtimeTools;
       }
-      const managedMcpConfig = await createManagedMcpRunConfig({
+      const managedMcpConfig = await measureRunPhase("execution.mcp_handoff", () => createManagedMcpRunConfig({
         db,
         agent,
         runId: run.id,
         config: runtimeConfig,
         projectId: issueRef?.projectId ?? null,
         issueId: issueRef?.id ?? null,
-      });
+      }));
       if (managedMcpConfig) {
         adapterContext.paperclipManagedMcp = managedMcpConfig;
       }
       const guardedDispatch =
-        await dispatchResolvedInteractionContinuationWithAtomicGate(
+        await dispatchWithTiming(
           (markDispatchStarted) => {
             input.effects.onLegacyAdapterEntered();
             return withAdapterExecutionPhase(executionPhaseContext, "adapter_execution", () => adapter.execute({

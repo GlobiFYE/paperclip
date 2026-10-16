@@ -246,6 +246,13 @@ describe.skipIf(!support.supported)("heartbeat runtime execution boundary", () =
       }]);
       await provider.forceFlush();
       const spans = exporter.getFinishedSpans();
+      const attempt = spans.find(span => span.name === "task.execution_attempt")!;
+      expect(attempt).toBeDefined();
+      for (const name of ["execution.usage_startup", "execution.mcp_handoff", "execution.dispatch_admission"]) {
+        const startup = spans.filter(span => span.name === name);
+        expect(startup).toHaveLength(1);
+        expect(startup[0].parentSpanContext?.spanId).toBe(attempt.spanContext().spanId);
+      }
       const copyback = spans.filter(span => span.name === "execution.workspace_restore");
       const commit = spans.filter(span => span.name === "execution.workspace_commit");
       expect(copyback).toHaveLength(1);
@@ -254,6 +261,33 @@ describe.skipIf(!support.supported)("heartbeat runtime execution boundary", () =
       expect(finalization).toBeDefined();
       for (const child of [...copyback, ...commit]) expect(child.parentSpanContext?.spanId).toBe(finalization.spanContext().spanId);
     } finally {
+      vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint);
+      trace.disable();
+      await provider.shutdown();
+    }
+  });
+
+  it("ends admission timing while the admitted provider is still running", async () => {
+    const { input, run } = await fixture(true);
+    const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
+    vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.test");
+    const exporter = new InMemorySpanExporter();
+    const provider = new TracerProvider({ spanProcessors: [new SimpleSpanProcessor({ exporter })] });
+    expect(trace.setGlobalTracerProvider(provider)).toBe(true);
+    let release!: (result: Awaited<ReturnType<typeof executePaperclipNativeSession>>) => void;
+    const providerResult = new Promise<Awaited<ReturnType<typeof executePaperclipNativeSession>>>(resolve => { release = resolve; });
+    vi.mocked(executePaperclipNativeSession).mockReturnValueOnce(providerResult);
+    const running = withRunExecutionTiming(run.id, () => executeHeartbeatRuntime(db, input));
+    try {
+      await vi.waitFor(() => {
+        expect(exporter.getFinishedSpans().filter(span => span.name === "execution.dispatch_admission")).toHaveLength(1);
+      }, { timeout: 5_000 });
+      expect(executePaperclipNativeSession).toHaveBeenCalledOnce();
+      expect(exporter.getFinishedSpans().find(span => span.name === "task.execution_attempt")).toBeUndefined();
+      expect(await finalizations()).toHaveLength(0);
+    } finally {
+      release({ exitCode: 0, signal: null, timedOut: false });
+      await running;
       vi.stubEnv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint);
       trace.disable();
       await provider.shutdown();
