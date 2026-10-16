@@ -1,6 +1,6 @@
 import { trace } from "@opentelemetry/api";
 import { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } from "@opentelemetry/sdk-trace";
-import { configuredEnvironmentProjection } from "../../vendor/paperclip-runner/index.js";
+import { configuredEnvironment, configuredEnvironmentProjection } from "../../vendor/paperclip-runner/index.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { PgDialect } from "drizzle-orm/pg-core";
@@ -66,6 +66,7 @@ import {
   NativeSessionProtocolIntegrityError,
 } from "../../vendor/paperclip-runner/index.js";
 import * as issueServiceModule from "../issues.js";
+import * as runEventWriter from "../heartbeat-run-events.js";
 import { NativePermissionDeclinedError } from "./native-permission-decline.js";
 import { resolvePaperclipRunnerNativeProviderInput } from "./provider-profile.js";
 import {
@@ -1344,7 +1345,7 @@ describe("remote provider pack manifest", () => {
         claude:
           "sha256:9d73d1f0f121fb96cc8badb28c22d5bff02d8582eb2e40360a81c189e1b9422a",
         codex:
-          "sha256:c4538599d1ab767db5dff50934f13bb5ba313a59d9c4a83e993fac4617ea63d3",
+          "sha256:443491f4e814501a5dc47347e4510e84faeec9c9382e2d4e53bfe69386d5aabc",
       },
       artifacts: {
         grokLauncher: { path: "dist/providers/grok/launcher.cjs", sha256: digest(grokLauncher) },
@@ -1554,6 +1555,14 @@ describe("provider pack read diagnostics", () => {
 });
 
 describe("native harness persistence profiles", () => {
+  it("does not back up the external Codex home in preconfigured mode", () => {
+    const execution = { homeMode: "preconfigured", provider: { kind: "codex" }, session: {
+      driverKind: "codex_app_server", normalizedSessionId: "session", protocolVersion: 1,
+      lifecyclePolicy: { mode: "per_turn", idleTimeoutMs: null },
+    } } as unknown as NativeExecutionInputV1;
+    expect(resolveNativeHarnessPersistenceProfile(execution).directories.map(directory => directory.name)).toEqual(["runner"]);
+  });
+
   const profile = (provider: Record<string, unknown>, driverKind: string) =>
     resolveNativeHarnessPersistenceProfile({
       provider,
@@ -8306,6 +8315,19 @@ describe("native warm session supervision", () => {
 
   it.each(
     [
+      ...([[false, true], [true, false], [true, true]] as const).map(([firstDuplex, secondDuplex]) => ({
+        firstBroker: true, secondBroker: true, projectless: false, local: false, brokerReady: true,
+        firstMode: "managed", secondMode: "managed", managedGitHub: true, firstDuplex, secondDuplex,
+      })),
+      ...([[false, true], [true, false], [true, true]] as const).map(([firstDuplex, secondDuplex]) => ({
+        firstBroker: true, secondBroker: true, projectless: false, local: false, brokerReady: true,
+        firstMode: "managed", secondMode: "managed", managedGitHub: true, firstDuplex, secondDuplex, instructionFiles: true,
+      })),
+      ...[false, true].map(instructionFiles => ({
+        firstBroker: true, secondBroker: true, projectless: false, local: false, brokerReady: true,
+        firstMode: "managed", secondMode: "managed", managedGitHub: true, firstDuplex: true, secondDuplex: true,
+        instructionFiles, loseBridge: true,
+      })),
       ...[false, true].flatMap((local) => [true, false].map(brokerReady => ({
         firstBroker: true, secondBroker: true, projectless: false, local, brokerReady,
         firstMode: "managed", secondMode: "managed", managedGitHub: true,
@@ -8375,10 +8397,14 @@ describe("native warm session supervision", () => {
       checkpointContract: "valid",
       managedGitHub: false,
       brokerReady: true,
+      firstDuplex: false,
+      secondDuplex: false,
+      instructionFiles: false,
+      loseBridge: false,
       ...scenario,
     })),
   )(
-    "verifies a live warm owner before refreshing run authority (broker: $firstBroker -> $secondBroker, projectless: $projectless, local: $local, auth: $firstMode -> $secondMode, network: $firstNetwork -> $secondNetwork, checkpoint: $checkpointContract, managed access: $managedGitHub, broker ready: $brokerReady)",
+    "verifies a live warm owner before refreshing run authority (broker: $firstBroker -> $secondBroker, projectless: $projectless, local: $local, auth: $firstMode -> $secondMode, network: $firstNetwork -> $secondNetwork, checkpoint: $checkpointContract, managed access: $managedGitHub, broker ready: $brokerReady, duplex: $firstDuplex -> $secondDuplex, files: $instructionFiles, loss: $loseBridge)",
     async ({
       firstBroker,
       secondBroker,
@@ -8391,18 +8417,30 @@ describe("native warm session supervision", () => {
       checkpointContract,
       managedGitHub,
       brokerReady,
+      firstDuplex,
+      secondDuplex,
+      instructionFiles,
+      loseBridge,
     }) => {
-      githubAccess.create.mockReset().mockResolvedValue({
-        env: { PAPERCLIP_GITHUB_BROKER_TOKEN: "stable-session-capability" },
-        ready: brokerReady,
-        activate: githubAccess.activate.mockReset().mockImplementation(() => vi.fn()),
-        stop: githubAccess.stop.mockReset().mockResolvedValue(undefined),
+      let brokerLost = false;
+      const activate = githubAccess.activate.mockReset().mockImplementation(() => vi.fn());
+      const stop = githubAccess.stop.mockReset().mockResolvedValue(undefined);
+      githubAccess.create.mockReset().mockImplementation(async () => {
+        const creation = githubAccess.create.mock.calls.length;
+        return {
+          env: { PAPERCLIP_GITHUB_BROKER_TOKEN: "stable-session-capability" },
+          get ready() { return brokerReady && (creation !== 1 || !brokerLost); },
+          duplexRequested: creation === 1 ? firstDuplex : secondDuplex,
+          activate,
+          stop,
+        };
       });
       const replacesProvider =
         !brokerReady ||
         (!managedGitHub && (firstBroker || secondBroker)) ||
         firstMode !== secondMode ||
-        firstNetwork !== secondNetwork;
+        firstNetwork !== secondNetwork ||
+        firstDuplex !== secondDuplex || loseBridge;
       const stateBase = await mkdtemp(
         join(tmpdir(), "paperclip-runnerd-warm-authority-"),
       );
@@ -8410,7 +8448,13 @@ describe("native warm session supervision", () => {
       const previousPaperclipHome = process.env.PAPERCLIP_HOME;
       process.env.PAPERCLIP_RUNNER_STATE_DIR = stateBase;
       process.env.PAPERCLIP_HOME = stateBase;
-      const firstClose = vi.fn(async () => undefined);
+      let checkpointFirstRunner: (() => Promise<void>) | undefined;
+      const firstClose = vi.fn(async () => {
+        if (instructionFiles) {
+          if (!checkpointFirstRunner) throw new Error("fixture runner checkpoint unavailable");
+          await checkpointFirstRunner();
+        }
+      });
       const firstSession = { close: firstClose };
       const first = {
         ...execution,
@@ -8444,7 +8488,7 @@ describe("native warm session supervision", () => {
             : first.binding.executionWorkspaceId,
         },
       } as NativeExecutionInputV1;
-      const remoteTarget = (
+      const remoteTarget = (duplex: boolean) => (
         local
           ? {
               kind: "local" as const,
@@ -8455,9 +8499,13 @@ describe("native warm session supervision", () => {
               transport: "sandbox" as const,
               environmentId: "environment-runnerd-warm-authority",
               remoteCwd: "/home/daytona/paperclip-workspace",
+              enableSandboxDuplexBridge: duplex,
               runner: { execute: vi.fn() },
             }
       ) as never;
+      const firstCopy = { runId: first.binding.runId, root: first.workspace.cwd!, preparationKey: JSON.stringify({ duplex: firstDuplex }),
+        hasChanges: vi.fn(async () => false), collectStopped: vi.fn(async () => undefined) };
+      const secondCopy = { ...firstCopy, runId: second.binding.runId, preparationKey: JSON.stringify({ duplex: secondDuplex }) };
       const result = {
         result: { summary: "completed" },
         terminal: { runTerminalState: "succeeded" },
@@ -8528,7 +8576,8 @@ describe("native warm session supervision", () => {
           runnerInstanceId: "runner-runnerd-warm",
           useRunnerd: true,
           managedGitHub,
-          runnerExecutionTarget: remoteTarget,
+          runnerExecutionTarget: remoteTarget(firstDuplex),
+          instructionWorkingCopy: instructionFiles ? firstCopy : undefined,
         });
         if (projectless && replacesProvider) {
           // Also prove an upgrade can resume the old per-run workspace digest
@@ -8594,6 +8643,8 @@ describe("native warm session supervision", () => {
           join(durableRoot, "runner", "runner-state.json"),
           JSON.stringify(durableRunnerState(durableIdentity, "ready")),
         );
+        checkpointFirstRunner = () => writeFile(join(durableRoot, "runner", "runner-state.json"),
+          JSON.stringify(durableRunnerState(durableIdentity, "suspended")));
         const continuationDb = {
           ...leaseDb(second),
           select: () => ({
@@ -8610,6 +8661,14 @@ describe("native warm session supervision", () => {
             }),
           }),
         } as unknown as Db;
+        brokerLost = loseBridge;
+        const releasePreparation = instructionFiles ? await claimWarmNativeInstructionCopy({
+          priorExecution: first, companyId: first.binding.companyId, agentId: first.binding.agentId,
+          executionWorkspaceId: second.binding.executionWorkspaceId, workspace: second.workspace,
+          environmentId: "environment-runnerd-warm-authority", runId: second.binding.runId,
+          preparationKey: secondCopy.preparationKey, adopt: async () => secondCopy,
+        }) : null;
+        if (instructionFiles) expect(releasePreparation === null).toBe(replacesProvider);
         await executePaperclipNativeSession({
           db: continuationDb,
           execution: second,
@@ -8623,16 +8682,18 @@ describe("native warm session supervision", () => {
           runnerInstanceId: "runner-runnerd-warm",
           useRunnerd: true,
           managedGitHub,
-          runnerExecutionTarget: remoteTarget,
+          runnerExecutionTarget: remoteTarget(secondDuplex),
+          instructionWorkingCopy: instructionFiles ? secondCopy : undefined,
         });
+        await releasePreparation?.();
         if (managedGitHub) {
-          expect(state.execute.mock.calls[1]?.[0].existingSession).toBe(brokerReady ? firstSession : undefined);
-          expect(githubAccess.create).toHaveBeenCalledTimes(brokerReady ? 1 : 2);
+          expect(state.execute.mock.calls[1]?.[0].existingSession).toBe(replacesProvider ? undefined : firstSession);
+          expect(githubAccess.create).toHaveBeenCalledTimes(replacesProvider ? 2 : 1);
           expect(githubAccess.activate.mock.calls.map(([binding]) => binding.runId))
             .toEqual([first.binding.runId, second.binding.runId]);
           // Replacement fixture publishes no new provider handle: both the old
           // owner and the unclaimed replacement broker must be cleaned up.
-          expect(githubAccess.stop).toHaveBeenCalledTimes(brokerReady ? 0 : 2);
+          expect(githubAccess.stop).toHaveBeenCalledTimes(replacesProvider ? 2 : 0);
           for (const activation of githubAccess.activate.mock.results) {
             expect(activation.value).toHaveBeenCalledOnce();
           }
@@ -8640,7 +8701,7 @@ describe("native warm session supervision", () => {
         if (replacesProvider) {
           expect(firstClose).toHaveBeenCalledOnce();
           expect(firstClose).toHaveBeenCalledWith({
-            reason: "warm native session configuration changed",
+            reason: instructionFiles ? "warm instruction materialization changed before preparation" : "warm native session configuration changed",
           });
         } else {
           expect(firstClose).not.toHaveBeenCalled();
@@ -9618,12 +9679,24 @@ describe("native process ownership", () => {
       startedAt: "2026-08-18T18:00:00.000Z",
     };
     const onSpawn = vi.fn(async () => undefined);
+    const db = leaseDb(execution);
+    const admissionWriter = vi.spyOn(runEventWriter, "appendHeartbeatRunEvent").mockResolvedValueOnce({
+      row: {
+        id: 1, companyId: execution.binding.companyId, runId: execution.binding.runId,
+        agentId: execution.binding.agentId, seq: 1, eventType: "native.process_start_requested",
+        stream: "system", level: "info", color: null, message: null, payload: null,
+        sourceInstanceId: null, sourceEventId: null, sourceSeq: null,
+        sourcePayloadSha256: null, protocolSchemaVersion: null, createdAt: new Date(),
+      },
+      disposition: "committed", highestContiguousSourceSeq: 0,
+    });
     state.createBackend.mockClear();
     state.execute.mockReset().mockImplementation(async (options) => {
       await options.onSessionAdmission();
-      expect(updates).toContainEqual({ table: heartbeatRunEvents, values: expect.objectContaining({
+      expect(admissionWriter).toHaveBeenCalledWith(db, expect.objectContaining({
         eventType: "native.process_start_requested", runId: execution.binding.runId,
-      }) });
+        companyId: execution.binding.companyId, agentId: execution.binding.agentId,
+      }));
       await options.backend.onSpawn(processMetadata);
       return {
         result: { summary: "completed" },
@@ -9637,18 +9710,17 @@ describe("native process ownership", () => {
         highestContiguousSourceSeq: 1,
       };
     });
-    const updates: Array<{ table: unknown; values: Record<string, unknown> }> = [];
     state.createBackend.mockImplementationOnce((_input, options) => {
-      expect(updates.some(update => update.values.eventType === "native.process_start_requested")).toBe(false);
+      expect(admissionWriter).not.toHaveBeenCalled();
       return { kind: "test", onSpawn: options.onSpawn };
     });
 
-    await executePaperclipNativeSession({
-      db: leaseDb(execution, {}, {}, updates),
-      execution,
-      runnerInstanceId: "runner",
-      onSpawn,
-    });
+    try {
+      await executePaperclipNativeSession({ db, execution, runnerInstanceId: "runner", onSpawn });
+      expect(admissionWriter).toHaveBeenCalledOnce();
+    } finally {
+      admissionWriter.mockRestore();
+    }
 
     expect(state.createBackend).toHaveBeenCalledWith(
       execution,
@@ -12384,6 +12456,32 @@ describe("runnerd provider runtime wiring", () => {
     expect(state.createTransport.mock.calls[0]![0].runnerBinary).not.toBe(
       `${remoteCwd}/.paperclip-runtime/paperclip-runner/bin/paperclip-runnerd`,
     );
+  });
+
+  it("removes controller path bindings from the remote preconfigured environment manifest", async () => {
+    const paths = { CLAUDE_CONFIG_DIR: "/controller/claude", XDG_CONFIG_HOME: "/controller/config",
+      XDG_DATA_HOME: "/controller/data", XDG_CACHE_HOME: "/controller/cache" };
+    const runnerEnvironment = { ...configuredEnvironmentProjection({ ...paths, TASK_FLAG: "kept" }),
+      HOME: "/controller/home", CODEX_HOME: "/controller/codex", AMBIENT_FLAG: "not-task-bound" };
+    const remoteExecution = { ...execution, schema: "paperclip.native-execution-input.v7" as const,
+      homeMode: "preconfigured" as const, executionMode: "default" as const, planningContext: null,
+      provider: { kind: "codex" as const, model: null, approvalPolicy: "never" as const }, runtimeContext: nativeRuntimeContextFixture() };
+    const remoteExecute = vi.fn(async (command: { args?: string[] }) => ({
+      exitCode: 0, timedOut: false, stderr: "", stdout: command.args?.[1]?.includes("getent passwd") ? "/home/executor\n" : "",
+    }));
+    await createRunnerdBackend({ db: leaseDb(remoteExecution), execution: remoteExecution, runnerInstanceId: "remote-home-manifest",
+      runnerEnvironment, runnerIngressAuthorized: true, runnerExecutionTarget: {
+        kind: "remote", transport: "sandbox", remoteCwd: "/workspace", environmentId: "environment",
+        leaseId: "remote-home-manifest", providerKey: "daytona", effectiveCapabilities: { runnerWebSocketIngress: true },
+        runner: { execute: remoteExecute, syncIn: vi.fn(async () => undefined) },
+      } as never });
+    state.createBackend.mock.calls.at(-1)![1].codexTransportFactory!();
+    const environment = (state.createTransport.mock.calls.at(-1)![0] as RunnerTransportOptions & { environment: NodeJS.ProcessEnv }).environment;
+    expect(environment.HOME).toBe("/home/executor");
+    expect(environment.CODEX_HOME).toBeUndefined();
+    for (const key of Object.keys(paths)) expect(environment[key]).toBeUndefined();
+    expect(configuredEnvironment(environment)).toEqual({ TASK_FLAG: "kept", PAPERCLIP_CONFIGURED_ENV_KEYS: '["TASK_FLAG"]' });
+    expect(runnerEnvironment).toMatchObject(paths);
   });
 
   it("archives failover evidence with an explicitly replaced provider session", async () => {

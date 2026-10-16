@@ -1448,6 +1448,23 @@ When a workspace service runs Paperclip for browser OAuth QA, configure its `exp
 
 ## Heartbeat Service Extractions
 
+Routine and issue-monitor dispatch uses saved future deadlines through
+`server/src/services/scheduled-work.ts` and the existing delivery coordinator.
+Startup restores the next deadline. Routine edits and monitor changes notify
+their worker after the enclosing database transaction settles, including native
+`set_task_monitor` writes. Deadlines crossed during a scan receive an immediate
+follow-up scan. Work already overdue at scan start retains heartbeat recovery.
+Each worker runs
+independently and retains the existing atomic claims and execution checks.
+The heartbeat interval still requests a recovery scan; it does not determine
+the dispatch time of a known future deadline. Failed scans retry at that same
+interval. Future timers do not hold idle work open, and standby, idle drain and
+shutdown retain the coordinator's admission gates. During idle drain, expired
+deadlines retry at the recovery interval while dispatch is paused; future
+deadlines keep their original timer so a canceled drain does not delay them. External database writers
+rely on the periodic recovery scan. Sparse cron searches reuse one parsed
+expression and skip impossible UTC dates before localized formatting.
+
 Keep relevant heartbeat extractions and their focused tests in `server/src/services/heartbeat/`.
 Follow [Heartbeat execution boundaries](../rules/heartbeat-execution-boundaries.mdc)
 for state lifetime, admission, recovery ownership, cleanup ordering, and verification.
@@ -1488,6 +1505,12 @@ The executor receives credential ownership and failure-redaction updates as soon
 as they are available, so later setup failures still clean up acquired resources.
 Busy-account deferral returns explicitly before session/workspace preparation.
 Public-path tests are in `server/src/__tests__/heartbeat-execution-configuration.test.ts`.
+
+Concurrent skill preparations join the company inventory refresh before taking
+the version-cache lock. Each preparation then reads its actor's current skill
+visibility under that lock. Snapshot materialization and the durable run version
+pins stay in the same locked callback. Only the in-flight inventory work is
+shared; completed refreshes and permission results are not cached.
 
 Browser Use skill assignment first checks for an enabled, active Browser Use
 connection in the run's company. With none, it skips full tool discovery.
@@ -1793,6 +1816,17 @@ versions across directories. With these artifacts preinstalled, startup links
 and verifies them without uploading a binary or installing packages. Deploy
 the updated sandbox image with the matching runner qualification changes.
 
+### Remote GitHub launcher staging
+
+Managed GitHub launchers stage their nine text files in one bounded control
+command. Each file retains its content-hash check, process lock, upload check,
+and atomic rename. The command runs outside the persistent agent session and
+stops at the first failed file. Earlier files can remain after a later failure;
+the launcher environment is returned only after the whole command succeeds.
+The batch permits at most 16 files and 1 MiB of shell input. Launcher staging
+keeps its 15-second deadline. Run `packages/adapter-utils/src/github-launcher-environment.test.ts`
+and `packages/adapter-utils/src/sandbox-callback-bridge.test.ts` for these contracts.
+
 ### Native runner restart recovery
 
 Custom source-mode HTTP launchers should create their listener with
@@ -2021,6 +2055,11 @@ PostgreSQL lock across processes. Eligible directories are atomically renamed
 to unique managed `.trash-<UUID>` names. Deletion runs outside the preparation
 lock and resumes after a crash. Saved version and repository snapshot rows are
 retained, and normal runtime use restores missing caches without upstream access.
+
+Paperclip Runner preparation skips this lock when the effective selection has no
+skills or a saved selection is explicitly empty. It still records the empty
+version snapshot. Explicit skill references, selected versions, and the legacy
+operational skill keep their existing authorization and cache-lock requirements.
 
 The sweep also handles orphan version directories after explicit skill deletion,
 preserving captured run pins until they settle. Only recognized staging/trash
@@ -2497,6 +2536,9 @@ refs and files are verified reproducible. Shared project clones remain intact.
 Normal authorized reopening recreates a missing source and checks out the saved
 commit, even after upstream advances. Inaccessible upstream produces an explicit
 retryable restoration failure. It never substitutes the default branch.
+Reopening failures reject the consuming request with HTTP 409 before saving a
+comment or changing its task. The response preserves the restoration message, so
+the composer keeps an editable draft and permits retry after access is restored.
 
 Both enable switches default off. Rollback disables further expiration while
 leaving saved recipes and restoration support intact. Recovery archives, runner

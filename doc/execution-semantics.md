@@ -542,7 +542,9 @@ private manifest before handing it to the controller; ordinary snapshot disposal
 removes that worker's temporary directory. A failed capture removes its temporary
 state before releasing its worker slot. This scheduling boundary does not replace
 source authorization, warm-stamp validation, Git identity checks or restore
-conflict detection. Legacy adapter snapshots remain inline.
+conflict detection. Legacy adapter snapshots remain inline. Snapshot-only workers
+do not load the adapter process-launch helpers. The directory merge loads those
+helpers when it resolves its instance-scoped lock root.
 
 ### Remote Codex model compatibility
 
@@ -856,6 +858,14 @@ On startup and on the periodic recovery loop, Paperclip performs the following r
 4. scan silent active runs only for source-aware terminal folding and legacy cleanup; API reads classify ordinary output silence for the board UI
 
 The stranded-work pass closes the gap where issue state survives a crash but the wake/run path does not. The silent-run scan covers the separate case where a live process exists but has stopped producing observable output.
+
+Native finalization reconciliation (part of native recovery and the orphan
+reap) skips settled committed finalizations in unscoped passes: the run is
+succeeded, failed, cancelled or timed out, it finished more than an hour ago,
+and its decision has no pending or failed effect. Each unscoped pass still
+visits up to 10 settled rows in a rotating order, so presentation and evidence
+upkeep reaches every row over time. A pass scoped to explicit runs reconciles
+those runs whatever their state.
 
 Startup health (`/api/health`) reports `starting` until these recovery passes and
 the other startup steps that serving requests depends on finish. Housekeeping

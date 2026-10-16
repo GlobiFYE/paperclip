@@ -35,6 +35,33 @@ maintains as a dependency; once you install the packages below, they become
 normal dependencies of **your own** project, and your own Dependabot updates
 them.
 
+## Slack receipt reactions
+
+Slack stages its eyes reaction in the same transaction as the authorized task,
+comment, message link and wakeup intent. Transport starts after that commit,
+independently of attachment preparation, thread subscription and scheduler
+acceptance. Eyes acknowledge durable receipt; they do not certify agent startup.
+The existing action worker retains retries, credential fencing and exact-source
+cleanup when the final response is published.
+
+The Slack adapter also skips the SDK's two-second polling wait for optional link
+unfurls before message dispatch. Text, formatted content, link URLs and file
+download handles remain available. Paperclip does not consume that optional
+preview metadata for task admission.
+
+With an operator OTLP endpoint, the `paperclip.chat` tracer records
+`chat.slack.receipt` around each Slack reaction API attempt. Its closed attributes
+are `paperclip.chat.receipt.operation` (`add` or `remove`),
+`paperclip.chat.receipt.outcome` (`confirmed` or `failed`),
+`paperclip.chat.receipt.queue_ms` (action creation to transport), and
+`paperclip.chat.receipt.delivery_age_ms` (durable inbound receipt to provider
+confirmation or failure). `already_reacted` confirms an idempotent add.
+Delivery age excludes Slack-to-webhook transit and SDK parsing; the span duration
+measures provider I/O. A failed attempt is not an acknowledgement latency sample.
+No content, identifiers, credentials, URLs or exception text are added.
+Without the endpoint this instrumentation does no tracer lookup. Tracer errors
+cannot change reaction transport or settlement.
+
 ## Task detail loading
 
 `GET /api/issues/:id` returns `Server-Timing` with `paperclip_issue` for the
@@ -214,6 +241,14 @@ and warm-session release. These intervals can occur between the existing native
 preparation, execution and settlement spans. They are controller work, not model
 turn time, and carry only the existing run hash. Nested phases overlap their
 containing backend or lifecycle intervals; do not add both durations.
+
+Before provider dispatch, `execution.usage_startup` measures durable usage-recorder
+initialization. `execution.mcp_handoff` measures native MCP server resolution or
+legacy managed MCP configuration. `execution.dispatch_admission` measures the
+final admission gate, including its nested `execution.budget_reservation` span.
+The admission span ends after the provider promise is handed off, not after the
+provider turn finishes. These spans use only the existing run hash. They close
+gaps between preparation and execution; their nested intervals are not additive.
 
 All preparation timing uses the endpoint gate, even when another library has
 registered a tracer provider. Tracer lookup, callback, status or ending failures
