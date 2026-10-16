@@ -79,7 +79,12 @@ export default defineConfig({
       ...process.env,
       NODE_ENV: "test",
       PAPERCLIP_UI_DEV_MIDDLEWARE: "false",
-      NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${path.resolve(import.meta.dirname, "fixtures/agent-chat-github.mjs")} --import=${path.resolve(import.meta.dirname, "fixtures/ai-connection-provider.mjs")}`,
+      NODE_OPTIONS: [
+        process.env.NODE_OPTIONS?.trim(),
+        "--conditions=development",
+        `--import=${path.resolve(import.meta.dirname, "fixtures/agent-chat-github.mjs")}`,
+        `--import=${path.resolve(import.meta.dirname, "fixtures/ai-connection-provider.mjs")}`,
+      ].filter(Boolean).join(" "),
       PORT: String(PORT),
       PAPERCLIP_OPEN_ON_LISTEN: "false",
       PAPERCLIP_API_URL: BASE_URL,

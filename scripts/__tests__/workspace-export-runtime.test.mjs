@@ -92,3 +92,10 @@ test("development condition scripts are Windows-compatible", () => {
   assert.match(serverPackageJson.scripts.dev, /cross-env NODE_OPTIONS=/);
   assert.match(dbPackageJson.scripts.migrate, /cross-env NODE_OPTIONS=/);
 });
+
+test("test subprocess entrypoints select development workspace exports", () => {
+  const stableRunner = readFileSync(join(repoRoot, "scripts/run-vitest-stable.mjs"), "utf8");
+  const playwrightConfig = readFileSync(join(repoRoot, "tests/e2e/playwright.config.ts"), "utf8");
+  assert.match(stableRunner, /NODE_OPTIONS: \[process\.env\.NODE_OPTIONS\?\.trim\(\), "--conditions=development"\]/);
+  assert.match(playwrightConfig, /"--conditions=development"/);
+});
