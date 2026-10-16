@@ -52,4 +52,20 @@ describe("http adapter execute", () => {
     const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
     expect((init.headers as Record<string, string>)["x-paperclip-run-id"]).toBe("run-real-id");
   });
+
+  it("drops caller-supplied run-id headers regardless of case", async () => {
+    const ctx = makeCtx({
+      runId: "run-real-id",
+      config: {
+        url: "https://example.com/invoke",
+        headers: { "X-Paperclip-Run-Id": "spoofed-id", "x-other": "kept" },
+      },
+    });
+    await execute(ctx);
+
+    const [, init] = (fetch as ReturnType<typeof vi.fn>).mock.calls[0] as [string, RequestInit];
+    const sent = new Headers(init.headers);
+    expect(sent.get("x-paperclip-run-id")).toBe("run-real-id");
+    expect(sent.get("x-other")).toBe("kept");
+  });
 });

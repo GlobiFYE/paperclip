@@ -8,7 +8,13 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
 
   const method = asString(config.method, "POST");
   const timeoutMs = asNumber(config.timeoutMs, 0);
-  const headers = parseObject(config.headers) as Record<string, string>;
+  // Drop any caller-supplied run-id header (header names are case-insensitive)
+  // so the server-injected value below is the only one sent.
+  const headers = Object.fromEntries(
+    Object.entries(parseObject(config.headers) as Record<string, string>).filter(
+      ([name]) => name.toLowerCase() !== "x-paperclip-run-id",
+    ),
+  );
   const payloadTemplate = parseObject(config.payloadTemplate);
   const body = { ...payloadTemplate, agentId: agent.id, runId, context };
 
