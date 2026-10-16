@@ -627,8 +627,9 @@ export function GitHubAccessEditor({
   const reviewedAuthors = configuration.reviewedAuthors ?? [];
   const alreadyListed = (githubUserId: string) =>
     configuration.people.some((p) => p.githubUserId === githubUserId) ||
-    linkedAccounts.some((link) => link.githubUserId === githubUserId) ||
-    reviewedAuthors.some((author) => author.githubUserId === githubUserId);
+    reviewedAuthors.some((author) => author.githubUserId === githubUserId) ||
+    // A reviewed author may keep an identity link, for example to a viewer; a guest may not.
+    (dialog !== "reviewed" && linkedAccounts.some((link) => link.githubUserId === githubUserId));
   // Preserve configured members whose identity link was revoked; show why they cannot run.
   const memberRows = [
     ...configuration.people.filter((person) => person.kind === "member"),

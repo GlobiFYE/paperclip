@@ -2394,7 +2394,9 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         const automaticAdmission = automaticContext ? await githubAutomaticAdmission(tx, currentEndpoint, automaticContext) : null;
         if (automaticContext && !automaticAdmission?.allowed) currentPrincipalAuthorization.allowed = false;
         if (automaticAdmission?.allowed) currentPrincipalAuthorization.userId = automaticAdmission.responsibleUserId ?? null;
-        const reviewedAuthorReview = automaticAdmission?.allowed === true && automaticAdmission.reviewedAuthor === true;
+        // A reviewed author's review or comment keeps bot-only GitHub access, even with a linked identity.
+        const reviewedAuthorReview = (automaticAdmission?.allowed === true && automaticAdmission.reviewedAuthor === true) ||
+          currentPrincipalAuthorization.reviewedAuthor === true;
         if (reviewedAuthorReview) Object.assign(currentPrincipalAuthorization, { allowed: true, linkedDenied: false });
         const endpointStillAllowed =
           currentEndpoint.status === "verifying" ||
