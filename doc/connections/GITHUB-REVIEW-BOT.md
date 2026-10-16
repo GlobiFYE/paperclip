@@ -203,6 +203,12 @@ prevent merging when the repository's review rules require resolution. Keeping
 these off leaves scores, comments, and checks available while making formal
 review decisions opt-in. The controls include contextual tooltips.
 
+**Resolve fixed findings** is also off by default. When it is on, the agent can
+reply in, and then resolve, an inline thread that the bot itself started on the
+task's pull request, after it checks the fix at the current head. It cannot
+resolve threads started by people or other bots. A new push before the reply
+cancels the action.
+
 To enforce the rating at merge time, configure GitHub branch protection or a
 ruleset to require **Paperclip Review**, selecting this bot App as the source
 where supported. Paperclip does not change repository rules. GitHub account and
