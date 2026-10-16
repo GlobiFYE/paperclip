@@ -6713,8 +6713,12 @@ function isRoutineOriginatedIssueOriginKind(
 function isConversationThreadIssueCreate(data: {
   conversationAgentId?: string | null;
   conversationUserId?: string | null;
+  originKind?: string | null;
 }): boolean {
-  return data.conversationAgentId != null && data.conversationUserId != null;
+  return (
+    (data.conversationAgentId != null && data.conversationUserId != null) ||
+    data.originKind === "chat_channel"
+  );
 }
 
 function instantiateExecutionPolicyTemplate(
