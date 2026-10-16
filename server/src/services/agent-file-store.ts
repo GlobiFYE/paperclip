@@ -196,8 +196,9 @@ export function agentFileStore(db: Db) {
     },
     read: (companyId: string, agentId: string, relative: string, actor: AuthorizationActor) =>
       locked(companyId, agentId, actor, false, (_tx, _agent, root) => readAgentFile(root, instructionPath(relative))),
-    write: (input: { companyId: string; agentId: string; path: string; bytes: Buffer | null; baseHash: string | null }, actor: AuthorizationActor) =>
+    write: (input: { companyId: string; agentId: string; path: string; bytes: Buffer | null; baseHash: string | null; requireIdle?: boolean }, actor: AuthorizationActor) =>
       locked(input.companyId, input.agentId, actor, true, async (tx, agent, root, bound) => {
+        if (input.requireIdle && agent.status === "running") throw conflict("Wait for this agent's active run to finish before syncing files", { code: "AGENT_FILE_SYNC_RUNNING" });
         const relative = agentFilePath(input.path);
         if (input.bytes) assertFileSize(input.bytes.length, relative);
         const previous = await inspectAgentFile(root, relative);

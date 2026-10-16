@@ -82,6 +82,16 @@ remaining operations before qualifying the whole capability.
 Gaps: Actual plugin tool use exists; a contributed UI route alone does not prove that
 plugin's API/tool coverage.
 
+Instruction-file host RPC: `agents.instructions.read` and
+`agents.instructions.write` are operator-only during an authenticated human
+`performAction`. They require the corresponding manifest capabilities, matching
+company invocation and current native instruction permissions. Jobs, getData,
+agent/system actions and forged user parameters cannot confer this authority.
+Writes require a matching content hash and a non-running target. See the
+[contract](../../doc/plugins/AGENT_INSTRUCTION_FILES.md). Focused service,
+worker-registry and real-storage tests cover these boundaries; this is not a
+new ordinary-agent tool or automatic repository sync.
+
 ## `lifecycle`
 
 Review: `baseline`.

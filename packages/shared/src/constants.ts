@@ -1340,6 +1340,8 @@ export const PLUGIN_CAPABILITIES = [
   "approvals.read",
   "issue.documents.read",
   "agents.read",
+  "agents.instructions.read",
+  "agents.instructions.write",
   "agents.lifecycle.manage",
   "goals.read",
   "goals.create",

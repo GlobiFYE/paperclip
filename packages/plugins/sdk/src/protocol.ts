@@ -286,6 +286,7 @@ export type PluginRpcErrorCode =
  */
 export interface PluginInvocationScope {
   companyId: string;
+  actionUserId?: string;
 }
 
 /**
@@ -2116,6 +2117,14 @@ export interface WorkerToHostMethods {
   "agents.get": [
     params: { agentId: string; companyId: string },
     result: Agent | null,
+  ];
+  "agents.instructions.read": [
+    params: { agentId: string; companyId: string; path: string },
+    result: { path: string; content: string | null; contentHash: string | null },
+  ];
+  "agents.instructions.write": [
+    params: { agentId: string; companyId: string; path: string; content: string; baseHash: string | null },
+    result: { contentHash: string | null; changed: boolean },
   ];
 
   // Agents (write)

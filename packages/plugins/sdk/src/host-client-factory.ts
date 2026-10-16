@@ -272,6 +272,8 @@ export interface HostServices {
 
   /** Provides `agents.list`, `agents.get`, `agents.pause`, `agents.resume`, `agents.invoke`. */
   agents: {
+    instructionsRead(params: WorkerToHostMethods["agents.instructions.read"][0], context?: WorkerHostCallContext): Promise<WorkerToHostMethods["agents.instructions.read"][1]>;
+    instructionsWrite(params: WorkerToHostMethods["agents.instructions.write"][0], context?: WorkerHostCallContext): Promise<WorkerToHostMethods["agents.instructions.write"][1]>;
     list(params: WorkerToHostMethods["agents.list"][0]): Promise<WorkerToHostMethods["agents.list"][1]>;
     get(params: WorkerToHostMethods["agents.get"][0]): Promise<WorkerToHostMethods["agents.get"][1]>;
     pause(params: WorkerToHostMethods["agents.pause"][0]): Promise<WorkerToHostMethods["agents.pause"][1]>;
@@ -491,6 +493,8 @@ const METHOD_CAPABILITY_MAP: Record<WorkerToHostMethodName, PluginCapability | n
   // Agents
   "agents.list": "agents.read",
   "agents.get": "agents.read",
+  "agents.instructions.read": "agents.instructions.read",
+  "agents.instructions.write": "agents.instructions.write",
   "agents.pause": "agents.pause",
   "agents.resume": "agents.resume",
   "agents.invoke": "agents.invoke",
@@ -981,6 +985,12 @@ export function createHostClientHandlers(
     }),
     "agents.get": gated("agents.get", async (params) => {
       return services.agents.get(params);
+    }),
+    "agents.instructions.read": gated("agents.instructions.read", async (params, context) => {
+      return services.agents.instructionsRead(params, context);
+    }),
+    "agents.instructions.write": gated("agents.instructions.write", async (params, context) => {
+      return services.agents.instructionsWrite(params, context);
     }),
     "agents.pause": gated("agents.pause", async (params) => {
       return services.agents.pause(params);

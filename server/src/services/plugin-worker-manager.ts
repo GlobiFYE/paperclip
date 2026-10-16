@@ -1156,12 +1156,13 @@ export function createPluginWorkerHandle(
     if (!isRecord(params)) return null;
 
     const directCompanyId = readNonEmptyString(params.companyId);
-    if (directCompanyId) return { companyId: directCompanyId };
-
     if (method === "performAction" && isRecord(params.actorContext)) {
       const companyId = readNonEmptyString(params.actorContext.companyId);
-      return companyId ? { companyId } : null;
+      if (!companyId || (directCompanyId && directCompanyId !== companyId)) return null;
+      const userId = params.actorContext.type === "user" ? readNonEmptyString(params.actorContext.userId) : null;
+      return { companyId, ...(userId ? { actionUserId: userId } : {}) };
     }
+    if (directCompanyId) return { companyId: directCompanyId };
 
     if (method === "executeTool" && isRecord(params.runContext)) {
       const companyId = readNonEmptyString(params.runContext.companyId);
