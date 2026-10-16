@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { SecretPicker } from "./environment-variables-editor/SecretPicker";
 import {
   entriesToEnvironmentRows,
-  environmentRowNameIssue,
+  resolveEnvironmentRows,
   nextEnvironmentRowId,
   nextAvailableEnvKey,
   normalizeAccessMapKey,
@@ -53,25 +53,14 @@ export function AgentEnvironmentSecretAccessEditor({
     // A row whose name is invalid, duplicated or taken keeps its last saved
     // assignment, so it is neither dropped nor written over another binding.
     // Edits and removals in the other rows still reach the form.
-    const effectiveRows: EnvironmentSecretRow[] = [];
-    const saved = new Map<string, EnvironmentSecretRow>();
-    for (const row of nextRows) {
-      if (environmentRowNameIssue(row, nextRows, reserved)) {
-        const previous = savedRowsRef.current.get(row.id);
-        if (previous) {
-          effectiveRows.push(previous);
-          saved.set(row.id, previous);
-        }
-      } else {
-        effectiveRows.push(row);
-        saved.set(row.id, row);
-      }
-    }
-    savedRowsRef.current = saved;
+    const { effectiveRows } = resolveEnvironmentRows(nextRows, savedRowsRef.current, reserved);
+    savedRowsRef.current = new Map(effectiveRows.map((row) => [row.id, row]));
     const map = rowsToEnvMap(effectiveRows);
     lastEmittedKeyRef.current = normalizeAccessMapKey(map);
     onChange(map);
   }
+
+  const nameIssues = resolveEnvironmentRows(rows, savedRowsRef.current, reserved).issues;
 
   function patchRow(id: string, patch: Partial<EnvironmentSecretRow>) {
     emit(rows.map((row) => (row.id === id ? { ...row, ...patch } : row)));
@@ -93,7 +82,7 @@ export function AgentEnvironmentSecretAccessEditor({
         <div className="space-y-2">
           {rows.map((row) => {
             const selectedSecret = secrets.find((secret) => secret.id === row.secretId) ?? null;
-            const nameIssue = environmentRowNameIssue(row, rows, reserved);
+            const nameIssue = nameIssues.get(row.id) ?? null;
             return (
               <div key={row.id} className="grid grid-cols-(--gtc-65) items-start gap-1.5">
                 <div className="min-w-0">

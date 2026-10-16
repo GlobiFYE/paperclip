@@ -320,6 +320,37 @@ describe("AgentSecretAccessEditor component", () => {
     expect(emitted.at(-1)).toEqual({ GH_TOKEN: { type: "secret_ref", secretId: "s0", version: 1 } });
   });
 
+  it("keeps both assignments when a row takes the name an invalid row still holds", () => {
+    const emitted: Array<Record<string, EnvSecretRefBinding>> = [];
+    render(
+      <AgentSecretAccessEditor
+        config={{
+          env: {
+            A_TOKEN: { type: "secret_ref", secretId: "s0", version: 1 },
+            B_TOKEN: { type: "secret_ref", secretId: "s1", version: "latest" },
+          },
+        }}
+        secrets={secrets}
+        onEnvChange={(next) => emitted.push(next)}
+        onChange={() => {}}
+      />,
+    );
+    const [first, second] = [...container.querySelectorAll<HTMLInputElement>('input[aria-label="Environment variable name"]')];
+    const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!;
+    setter.call(first!, "A-TOKEN");
+    flushSync(() => first!.dispatchEvent(new Event("input", { bubbles: true })));
+    setter.call(second!, "A_TOKEN");
+    flushSync(() => second!.dispatchEvent(new Event("input", { bubbles: true })));
+
+    expect(emitted.at(-1)).toEqual({
+      A_TOKEN: { type: "secret_ref", secretId: "s0", version: 1 },
+      B_TOKEN: { type: "secret_ref", secretId: "s1", version: "latest" },
+    });
+    const alerts = [...container.querySelectorAll("[role=alert]")].map((node) => node.textContent);
+    expect(alerts).toHaveLength(2);
+    expect(alerts[1]).toContain("Another environment secret uses this name");
+  });
+
   it("shows user-secret environment bindings and edits their requirement", () => {
     const emitted: Array<Record<string, unknown>> = [];
     render(

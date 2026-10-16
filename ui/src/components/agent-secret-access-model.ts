@@ -164,6 +164,45 @@ export function environmentRowNameIssue(
   return null;
 }
 
+/**
+ * Name problems for every row, plus the rows to save. A row with a problem
+ * keeps its last saved version, and that saved name stays taken: a new name in
+ * another row that matches it is a duplicate too, so no saved assignment is
+ * dropped while a conflict is open.
+ */
+export function resolveEnvironmentRows(
+  rows: readonly EnvironmentSecretRow[],
+  savedById: ReadonlyMap<string, EnvironmentSecretRow>,
+  reservedNames: ReadonlySet<string>,
+): { issues: Map<string, string>; effectiveRows: EnvironmentSecretRow[] } {
+  const issues = new Map<string, string>();
+  for (const row of rows) {
+    const issue = environmentRowNameIssue(row, rows, reservedNames);
+    if (issue) issues.set(row.id, issue);
+  }
+  for (let changed = true; changed;) {
+    changed = false;
+    const retained = new Set(
+      rows.flatMap((row) => {
+        const name = issues.has(row.id) ? savedById.get(row.id)?.name.trim() : undefined;
+        return name ? [name] : [];
+      }),
+    );
+    for (const row of rows) {
+      if (!issues.has(row.id) && retained.has(row.name.trim())) {
+        issues.set(row.id, "Another environment secret uses this name");
+        changed = true;
+      }
+    }
+  }
+  const effectiveRows = rows.flatMap((row) => {
+    if (!issues.has(row.id)) return [row];
+    const saved = savedById.get(row.id);
+    return saved ? [saved] : [];
+  });
+  return { issues, effectiveRows };
+}
+
 /** Complete, valid API-access grants keyed by alias. */
 export function rowsToAccessMap(rows: readonly AccessRow[]): Record<string, EnvSecretRefBinding> {
   const map: Record<string, EnvSecretRefBinding> = {};
