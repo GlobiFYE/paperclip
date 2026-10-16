@@ -25,7 +25,7 @@ bootstrap paths:
 
 - In-cluster: Paperclip server pod's ServiceAccount JWT, validated by Vault
   through the Kubernetes auth method's `TokenReview` call.
-- Local development: `VAULT_TOKEN` env or `~/.vault-token` file.
+- Local development: the `VAULT_TOKEN` env, or a token file (e.g. `~/.vault-token`) selected via `PAPERCLIP_SECRETS_VAULT_TOKEN_FILE`.
 - An orchestrator secret store that boots the server with `VAULT_TOKEN`.
 
 Do not paste Vault tokens, AppRole role/secret-ids, or any other credential
