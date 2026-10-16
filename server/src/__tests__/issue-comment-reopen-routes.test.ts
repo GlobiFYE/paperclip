@@ -2665,7 +2665,8 @@ describe("issue comment reopen routes", () => {
     });
     mockAccessService.decide.mockImplementation(
       async (input: { action?: string }) => {
-        const allowed = input.action === "issue:comment";
+        const allowed =
+          input.action === "issue:read" || input.action === "issue:comment";
         return {
           allowed,
           action: input.action,
@@ -2713,7 +2714,8 @@ describe("issue comment reopen routes", () => {
     mockIssueService.getById.mockResolvedValue(makeIssue("todo"));
     mockAccessService.decide.mockImplementation(
       async (input: { action?: string }) => ({
-        allowed: input.action === "issue:comment",
+        allowed:
+          input.action === "issue:read" || input.action === "issue:comment",
         action: input.action,
         reason: "allow_visible_issue_write",
         explanation: "Allowed by the shared default-open visible-issue write rule.",
@@ -2745,7 +2747,8 @@ describe("issue comment reopen routes", () => {
     mockIssueService.getById.mockResolvedValue(makeIssue("todo"));
     mockAccessService.decide.mockImplementation(
       async (input: { action?: string }) => ({
-        allowed: input.action === "issue:comment",
+        allowed:
+          input.action === "issue:read" || input.action === "issue:comment",
         action: input.action,
         reason: "allow_issue_mention_grant",
         explanation: "Allowed by a mention-scoped issue comment grant.",
@@ -2783,12 +2786,20 @@ describe("issue comment reopen routes", () => {
 
   it("still denies a run-less service-scoped comment the issue authorization rejects", async () => {
     mockIssueService.getById.mockResolvedValue(makeIssue("todo"));
-    mockAccessService.decide.mockResolvedValue({
-      allowed: false,
-      action: "issue:comment",
-      reason: "deny_missing_grant",
-      explanation: "Missing permission.",
-    });
+    // The issue stays readable so this asserts the comment denial itself; a
+    // denied `issue:read` would hide the issue as a 404 and never reach the
+    // comment decision this test is about.
+    mockAccessService.decide.mockImplementation(
+      async (input: { action?: string }) => {
+        const allowed = input.action === "issue:read";
+        return {
+          allowed,
+          action: input.action,
+          reason: allowed ? "allow_visible_issue_read" : "deny_missing_grant",
+          explanation: allowed ? "Visible to the actor." : "Missing permission.",
+        };
+      },
+    );
 
     const res = await request(
       await installActor(createApp(), {
@@ -2996,7 +3007,8 @@ describe("issue comment reopen routes", () => {
     });
     mockAccessService.decide.mockImplementation(
       async (input: { action?: string }) => ({
-        allowed: input.action === "issue:comment",
+        allowed:
+          input.action === "issue:read" || input.action === "issue:comment",
         action: input.action,
         reason: "allow_issue_mention_grant",
         explanation: "Allowed by a mention-scoped issue comment grant.",
