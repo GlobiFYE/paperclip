@@ -102,6 +102,13 @@ exclusion and immutable version pinning. This changes no agent endpoint or grant
 the [configuration tests](../../server/src/__tests__/heartbeat-execution-configuration.test.ts)
 cover the held-lock boundary with real PostgreSQL.
 
+Concurrent preparations share only in-flight inventory reconciliation. After
+that work, each actor's visible skill rows are read again under the company cache
+lock. Snapshot delivery and durable run pins complete before the lock is released.
+No permission result is shared or kept between requests. The
+[concurrency tests](../../server/src/__tests__/company-skills-runtime-concurrency.test.ts)
+cover separate actors and project-access revocation; this adds no agent API.
+
 ## `policy`
 
 Review: `baseline`.
