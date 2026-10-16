@@ -154,8 +154,10 @@ task lock. Failed delivery, a newer message, queued work, monitors, dependencies
 and pending decisions prevent settlement. Reconciliation applies the same rule
 to existing answered threads without another model invocation. Channel identity,
 permissions, and the ability to execute work in the same thread are unchanged.
-Other providers keep their existing lifecycle. An explicit `/new` or `/close`,
-or a terminal task disposition, still starts a new Telegram task on the next message.
+Other providers keep their existing lifecycle. In Telegram direct messages and
+linear group chats, an explicit `/new` or `/close`, or a terminal task disposition,
+still starts a new task on the next message. A Telegram forum topic stays bound to
+one task; open a new forum topic to start a new task.
 
 ### `done`
 
