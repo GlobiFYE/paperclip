@@ -13,9 +13,21 @@
   },
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./telemetry": "./src/telemetry/index.ts",
-    "./*": "./src/*.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./telemetry": {
+      "types": "./src/telemetry/index.ts",
+      "development": "./src/telemetry/index.ts",
+      "import": "./dist/telemetry/index.js"
+    },
+    "./*": {
+      "types": "./src/*.ts",
+      "development": "./src/*.ts",
+      "import": "./dist/*.js"
+    }
   },
   "publishConfig": {
     "access": "public",
