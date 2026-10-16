@@ -376,7 +376,10 @@ export const runnerApiReference: Record<string, { section: string; description?:
           "selectedOptionIds": [
             "draft-report-march",
             "tmp-export-2025"
-          ]
+          ],
+          "bindingComment": {
+            "body": "Delete only the selected files."
+          }
         }
       }
     ]
@@ -387,7 +390,10 @@ export const runnerApiReference: Record<string, { section: string; description?:
     "examples": [
       {
         "body": {
-          "reason": "Keep the March draft; only delete tmp/export-2025.csv."
+          "reason": "Keep the March draft; only delete tmp/export-2025.csv.",
+          "bindingComment": {
+            "body": "Keep the March draft."
+          }
         }
       }
     ]

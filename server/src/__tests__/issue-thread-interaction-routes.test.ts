@@ -49,6 +49,9 @@ const mockHeartbeatService = vi.hoisted(() => ({
   wakeup: vi.fn(async () => undefined),
   cancelRun: vi.fn(async () => null),
 }));
+const mockPauseGate = vi.hoisted(() =>
+  vi.fn(async (): Promise<Record<string, unknown> | null> => null),
+);
 const mockRequestNativeQuestionRunCancellation = vi.hoisted(() =>
   vi.fn(async () => null as string | null)
 );
@@ -221,6 +224,9 @@ function registerModuleMocks() {
       getActiveForIssue: vi.fn(async () => null),
       listActiveForIssues: vi.fn(async () => new Map()),
     }),
+    issueTreeControlService: () => ({
+      getActivePauseHoldGate: mockPauseGate,
+    }),
     issueService: () => mockIssueService,
     issueThreadInteractionService: () => mockInteractionService,
     taskWatchdogService: () => ({
@@ -353,6 +359,7 @@ describe("issue thread interaction routes", () => {
     mockInteractionService.listForIssue.mockResolvedValue([]);
     mockInteractionService.expireRequestConfirmationsSupersededByHistoricalComments.mockResolvedValue([]);
     mockInteractionService.expirePendingInteractionsForTerminalIssue.mockResolvedValue([]);
+    mockPauseGate.mockResolvedValue(null);
     mockInteractionService.getForIssue.mockResolvedValue({
       id: "interaction-withdraw",
       kind: "ask_user_questions",
@@ -940,6 +947,50 @@ describe("issue thread interaction routes", () => {
       }),
     );
   });
+
+  it.each(["accept", "reject"] as const)(
+    "rejects a binding %s comment under an active pause before any mutation",
+    async (action) => {
+      const interaction = {
+        id: `interaction-binding-paused-${action}`,
+        companyId: "company-1",
+        issueId: ISSUE_ID,
+        kind: "request_confirmation",
+        status: "pending",
+        continuationPolicy: "wake_assignee",
+        requestedResolverPolicy: "anyone",
+        effectiveResolverPolicy: "anyone",
+        resolverPolicyProvenance: "default",
+        effectiveResolverPolicySource: "requested",
+        sourceCommentId: null,
+        sourceRunId: RUN_1,
+        payload: { version: 1, prompt: "Ship it?" },
+        result: null,
+      };
+      mockInteractionService.getForIssue.mockResolvedValueOnce(interaction);
+      mockPauseGate.mockResolvedValueOnce({
+        holdId: "hold-1",
+        rootIssueId: "parent-1",
+      });
+
+      const response = await request(await createApp())
+        .post(`/api/issues/${ISSUE_ID}/interactions/${interaction.id}/${action}`)
+        .send({
+          ...(action === "reject" ? { reason: "Revise timing." } : {}),
+          bindingComment: { body: "Do not deploy while paused." },
+        });
+
+      expect(response.status).toBe(409);
+      expect(response.body.error).toBe(
+        "Task is paused. Resume it before sending a message.",
+      );
+      expect(mockPauseGate).toHaveBeenCalledWith("company-1", ISSUE_ID);
+      expect(mockIssueService.addComment).not.toHaveBeenCalled();
+      expect(mockInteractionService.acceptInteraction).not.toHaveBeenCalled();
+      expect(mockInteractionService.rejectInteraction).not.toHaveBeenCalled();
+      expect(mockHeartbeatService.wakeup).not.toHaveBeenCalled();
+    },
+  );
 
   it("answers questions through the durable delivery service", async () => {
     const app = await createApp();

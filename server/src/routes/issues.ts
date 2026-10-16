@@ -16959,6 +16959,7 @@ export function issueRoutes(
             "Binding comments are supported only for ordinary confirmations",
           );
         }
+        if (!(await assertBoardCommentNotPaused(req, res, issue))) return;
       }
       if (
         current.kind === "request_confirmation" &&
@@ -17015,6 +17016,14 @@ export function issueRoutes(
                     skipInteractionSupersede: true,
                     sourceTrust: bindingCommentSourceTrust,
                   },
+                  tx as unknown as Db,
+                );
+                await issueReferencesSvc.syncComment(
+                  bindingComment.id,
+                  tx as unknown as Db,
+                );
+                await externalObjectsSvc.syncCommentSafely(
+                  bindingComment.id,
                   tx as unknown as Db,
                 );
               },
@@ -17175,6 +17184,33 @@ export function issueRoutes(
         }
       }
       const continuationWakeIssue = continuationIssue ?? issue;
+      const acceptedPlanTarget =
+        interaction.kind === "request_confirmation"
+          ? readAcceptedPlanConfirmationTarget(interaction.payload, issue.id)
+          : null;
+      const acceptedPlanConfirmation =
+        interaction.kind === "request_confirmation" &&
+        interaction.status === "accepted" &&
+        acceptedPlanTarget?.issueId === issue.id &&
+        acceptedPlanTarget.key === "plan";
+
+      // Once the composite transaction commits, no later indexing or activity
+      // side effect may prevent delivery of its decision and binding comment.
+      if (bindingComment) {
+        await queueResolvedInteractionContinuationWakeup({
+          db,
+          heartbeat,
+          issue: { ...continuationWakeIssue, companyId: issue.companyId },
+          interaction: continuationInteraction,
+          actor,
+          source: "issue.interaction.accept",
+          forceFreshSession: acceptedPlanConfirmation,
+          workspaceRefreshReason: acceptedPlanConfirmation
+            ? "accepted_plan_confirmation"
+            : null,
+          bindingCommentId: bindingComment.id,
+        });
+      }
 
       await logActivity(db, {
         companyId: issue.companyId,
@@ -17255,8 +17291,6 @@ export function issueRoutes(
       }
 
       if (bindingComment) {
-        await issueReferencesSvc.syncComment(bindingComment.id);
-        await externalObjectsSvc.syncCommentSafely(bindingComment.id);
         await logActivity(db, {
           companyId: issue.companyId,
           actorType: actor.actorType,
@@ -17278,28 +17312,20 @@ export function issueRoutes(
         });
       }
 
-      const acceptedPlanTarget =
-        interaction.kind === "request_confirmation"
-          ? readAcceptedPlanConfirmationTarget(interaction.payload, issue.id)
-          : null;
-      const acceptedPlanConfirmation =
-        interaction.kind === "request_confirmation" &&
-        interaction.status === "accepted" &&
-        acceptedPlanTarget?.issueId === issue.id &&
-        acceptedPlanTarget.key === "plan";
-      await queueResolvedInteractionContinuationWakeup({
-        db,
-        heartbeat,
-        issue: { ...continuationWakeIssue, companyId: issue.companyId },
-        interaction: continuationInteraction,
-        actor,
-        source: "issue.interaction.accept",
-        forceFreshSession: acceptedPlanConfirmation,
-        workspaceRefreshReason: acceptedPlanConfirmation
-          ? "accepted_plan_confirmation"
-          : null,
-        bindingCommentId: bindingComment?.id ?? null,
-      });
+      if (!bindingComment) {
+        await queueResolvedInteractionContinuationWakeup({
+          db,
+          heartbeat,
+          issue: { ...continuationWakeIssue, companyId: issue.companyId },
+          interaction: continuationInteraction,
+          actor,
+          source: "issue.interaction.accept",
+          forceFreshSession: acceptedPlanConfirmation,
+          workspaceRefreshReason: acceptedPlanConfirmation
+            ? "accepted_plan_confirmation"
+            : null,
+        });
+      }
 
       res.json(continuationInteraction);
     },
@@ -17352,6 +17378,7 @@ export function issueRoutes(
             "Binding comments are supported only for ordinary confirmations",
           );
         }
+        if (!(await assertBoardCommentNotPaused(req, res, issue))) return;
       }
       if (
         current.kind === "request_confirmation" &&
@@ -17405,6 +17432,14 @@ export function issueRoutes(
                   },
                   tx as unknown as Db,
                 );
+                await issueReferencesSvc.syncComment(
+                  bindingComment.id,
+                  tx as unknown as Db,
+                );
+                await externalObjectsSvc.syncCommentSafely(
+                  bindingComment.id,
+                  tx as unknown as Db,
+                );
               },
             },
           )
@@ -17414,6 +17449,20 @@ export function issueRoutes(
             req.body,
             resolutionActor,
           );
+
+      // The committed composite record is the source of truth. Queue its one
+      // continuation before post-commit audit work can fail independently.
+      if (bindingComment) {
+        await queueResolvedInteractionContinuationWakeup({
+          db,
+          heartbeat,
+          issue,
+          interaction,
+          actor,
+          source: "issue.interaction.reject",
+          bindingCommentId: bindingComment.id,
+        });
+      }
 
       await logActivity(db, {
         companyId: issue.companyId,
@@ -17450,8 +17499,6 @@ export function issueRoutes(
       });
 
       if (bindingComment) {
-        await issueReferencesSvc.syncComment(bindingComment.id);
-        await externalObjectsSvc.syncCommentSafely(bindingComment.id);
         await logActivity(db, {
           companyId: issue.companyId,
           actorType: actor.actorType,
@@ -17473,15 +17520,16 @@ export function issueRoutes(
         });
       }
 
-      await queueResolvedInteractionContinuationWakeup({
-        db,
-        heartbeat,
-        issue,
-        interaction,
-        actor,
-        source: "issue.interaction.reject",
-        bindingCommentId: bindingComment?.id ?? null,
-      });
+      if (!bindingComment) {
+        await queueResolvedInteractionContinuationWakeup({
+          db,
+          heartbeat,
+          issue,
+          interaction,
+          actor,
+          source: "issue.interaction.reject",
+        });
+      }
 
       res.json(interaction);
     },
