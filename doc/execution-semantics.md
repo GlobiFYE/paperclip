@@ -1443,6 +1443,13 @@ comments already delivered to the failed run. A plain operator Stop still
 requires a new user action. The successor guard is scoped to the same agent so
 another agent's review participation keeps its independent recovery path.
 
+Execution-ownership waits can exist without a recovery-action row. The scheduler
+checks saved human comments in these waits after the old ownership gate clears.
+A fresh legacy conversation requires the recorded continuation policy and an
+undelivered user comment newer than the latest stopped run. Earlier comments
+still require an explicit user action. The execution-wait scan owns its retry
+timestamp; the general stranded-queue scan must not postpone that check.
+
 An explicit queued-message Interrupt also grants one scoped cleanup retry for
 the stopped run. Old ephemeral leases whose cleanup predates provider stop
 receipts are rechecked through the recorded provider teardown path. Retained
