@@ -750,7 +750,9 @@ complete. A separator split between reads does not count against the frame limit
 Set `homeMode: "preconfigured"` in a `paperclip_runner` agent's adapter config
 (or the runnerd transport options) to use the execution account's existing home.
 The default is `"isolated"`. The initial supported providers are native Codex
-and ACPX Claude/Codex. An operator must select this mode on the agent/Runner
+and ACPX Claude. Preconfigured ACPX Codex fails before launch until its session
+permissions can enforce denial of Runner state; use native Codex or isolated mode.
+An operator must select this mode on the agent/Runner
 configuration. Task-level overrides are rejected, and agent credentials cannot
 set or inherit this option. Other providers reject this option. The internal ACPX task bridge uses a stable
 session name so an existing user MCP server named `paperclip` remains available.
@@ -762,7 +764,8 @@ and update their own metadata. Runner still supplies the requested
 model, task instructions, and its internal task/completion tools. Local permission
 rules and hooks apply. Native Codex tools can read and modify the execution home
 (read-only for planning); credentials in that home are not isolated from tools.
-Runner-owned protocol state remains separately denied. Execution is unattended: native Codex uses `never`, and
+Native Codex separately denies Runner-owned protocol state; ACPX Claude retains
+its existing provider trust boundary. Execution is unattended: native Codex uses `never`, and
 ACPX rejects requests for approval. The initial ACPX mode requires the Runner
 setting `acpxPermissionMode: "approve-all"` (its default); other Runner modes are
 unqualified here and fail before launch. Local permission rules still apply.

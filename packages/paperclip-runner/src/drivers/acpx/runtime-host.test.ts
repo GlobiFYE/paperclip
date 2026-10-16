@@ -201,6 +201,16 @@ afterEach(async () => {
 });
 
 describe("ACPX runtime host", () => {
+  it("rejects preconfigured Codex before admission resources or runtime launch", async () => {
+    const fixture = await hostFixture();
+    const openRuntime = vi.fn(), prepareSandbox = vi.fn();
+    await expect(AcpxRuntimeHost.open({ ...fixture.options, agent: "codex", permissionMode: "approve-all",
+      environment: { HOME: fixture.root, PAPERCLIP_RUNNER_HOME_MODE: "preconfigured" },
+    }, fixture.dependencies({ openRuntime, prepareSandbox }))).rejects.toThrow("cannot protect Runner state");
+    expect(prepareSandbox).not.toHaveBeenCalled();
+    expect(openRuntime).not.toHaveBeenCalled();
+  });
+
   it.each(["claude", "codex"] as const)("rejects preconfigured read-only %s before provider admission", async agent => {
     const fixture = await hostFixture();
     const openRuntime = vi.fn();
@@ -219,7 +229,7 @@ describe("ACPX runtime host", () => {
     expect(openRuntime).not.toHaveBeenCalled();
   });
 
-  it.each(["claude", "codex"] as const)("keeps a stable private bridge namespace without editing %s user MCP configuration", async agent => {
+  it.each(["claude"] as const)("keeps a stable private bridge namespace without editing %s user MCP configuration", async agent => {
     const fixture = await hostFixture();
     const home = join(fixture.root, "user-home");
     await mkdir(home);
@@ -269,27 +279,27 @@ describe("ACPX runtime host", () => {
     expect(openRuntime).not.toHaveBeenCalled();
   });
 
-  it("shares a preconfigured Codex home across sessions without staging or scrubbing credentials", async () => {
+  it("shares a preconfigured Claude home across sessions without staging or scrubbing credentials", async () => {
     const fixture = await hostFixture();
     const home = join(fixture.root, "user-home");
-    const codexHome = join(home, ".codex");
-    await mkdir(codexHome, { recursive: true });
-    const auth = join(codexHome, "auth.json");
+    const claudeHome = join(home, ".claude");
+    await mkdir(claudeHome, { recursive: true });
+    const auth = join(claudeHome, ".credentials.json");
     await writeFile(auth, '{"user_owned":true}');
     const stageCredential = vi.fn();
-    const options = { ...fixture.options, agent: "codex" as const, model: "gpt-5.6-sol", permissionMode: "approve-all" as const,
-      environment: { HOME: home, CODEX_HOME: codexHome, PAPERCLIP_RUNNER_HOME_MODE: "preconfigured" } };
+    const options = { ...fixture.options, agent: "claude" as const, model: "claude-sonnet-5", permissionMode: "approve-all" as const,
+      environment: { HOME: home, CLAUDE_CONFIG_DIR: claudeHome, PAPERCLIP_RUNNER_HOME_MODE: "preconfigured" } };
     const opened: AcpxRuntimeHost[] = [];
     try {
       for (const normalizedSessionId of ["session-one", "session-two"]) {
         opened.push(await AcpxRuntimeHost.open({ ...options, normalizedSessionId }, {
-          ...fixture.dependencies({ openRuntime: async () => runtimePort() }), stageCredential,
+          ...fixture.dependencies({ openRuntime: async () => runtimePort({ getStatus: async () => ({ models: { currentModelId: "claude-sonnet-5" } }) }) }), stageCredential,
         }));
       }
       expect(stageCredential).not.toHaveBeenCalled();
       expect(await readFile(auth, "utf8")).toBe('{"user_owned":true}');
       await expect(AcpxRuntimeHost.open({ ...options, normalizedSessionId: "session-one" },
-        fixture.dependencies({ openRuntime: async () => runtimePort() }))).rejects.toThrow();
+        fixture.dependencies({ openRuntime: async () => runtimePort({ getStatus: async () => ({ models: { currentModelId: "claude-sonnet-5" } }) }) }))).rejects.toThrow();
     } finally { await Promise.all(opened.map(host => host.close({ reason: "verified" }))); }
     expect(await readFile(auth, "utf8")).toBe('{"user_owned":true}');
   });

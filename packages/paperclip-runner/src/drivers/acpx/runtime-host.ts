@@ -338,6 +338,8 @@ export class AcpxRuntimeHost {
     if (preconfigured && options.providerPolicy?.readOnly) {
       throw new Error("preconfigured ACPX read-only execution is not supported; use isolated mode or native Codex");
     }
+    // shortcut: qualify session permissions that deny Runner state before enabling this provider.
+    if (preconfigured && options.agent === "codex") throw new Error("preconfigured ACPX Codex cannot protect Runner state; use native Codex or isolated mode");
     const nativeMcp = preconfigured ? null : nativeMcpLaunchBinding(options.environment);
     if (nativeMcp?.name === "paperclip") {
       throw new Error("assigned native MCP name conflicts with the task bridge");

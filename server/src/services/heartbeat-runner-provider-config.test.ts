@@ -30,17 +30,22 @@ describe("Paperclip Runner native provider configuration", () => {
     expect(resolvePaperclipRunnerNativeProviderInput({ backend: "codex_app_server",
       adapterConfig: { provider: "codex", model }, codexCliVersion })).toMatchObject({ model });
   });
-  it.each(["codex", "claude"])("admits preconfigured ACPX %s without changing the permission setting", acpxAgent => {
+  it.each(["claude"])("admits preconfigured ACPX %s without changing the permission setting", acpxAgent => {
     expect(resolvePaperclipRunnerNativeProviderInput({ backend: "acpx_runtime",
       adapterConfig: { provider: "acpx", acpxAgent, model: acpxAgent === "codex" ? "gpt-5.6-sol" : "claude-sonnet-5", homeMode: "preconfigured" },
     })).toMatchObject({ homeMode: "preconfigured", acpxPermissionMode: "approve-all" });
+  });
+  it("rejects preconfigured ACPX Codex until Runner-state protection is qualified", () => {
+    expect(() => resolvePaperclipRunnerNativeProviderInput({ backend: "acpx_runtime",
+      adapterConfig: { provider: "acpx", acpxAgent: "codex", model: "gpt-6.1-sol", homeMode: "preconfigured" },
+    })).toThrow("cannot protect Runner state");
   });
   it.each(["approve-reads", "approve-paperclip", "deny-all"])("rejects unqualified preconfigured Runner policy %s before launch", acpxPermissionMode => {
     expect(() => resolvePaperclipRunnerNativeProviderInput({ backend: "acpx_runtime",
       adapterConfig: { provider: "acpx", acpxAgent: "codex", model: "gpt-6.1-sol", homeMode: "preconfigured", acpxPermissionMode },
     })).toThrow("currently requires ACPX approve-all");
   });
-  it("limits the initial mode to qualified Codex and ACPX Claude/Codex providers", () => {
+  it("limits the initial mode to qualified native Codex and ACPX Claude providers", () => {
     expect(resolvePaperclipRunnerNativeProviderInput({ backend: "codex_app_server",
       adapterConfig: { provider: "codex", homeMode: "preconfigured" },
     })).toMatchObject({ homeMode: "preconfigured", codexApprovalPolicy: "never" });

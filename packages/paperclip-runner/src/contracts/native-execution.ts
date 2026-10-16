@@ -418,9 +418,12 @@ export function parseNativeExecutionInput(value: unknown): NativeExecutionInput 
     if (input.homeMode === "preconfigured" && selected.kind === "acpx" && selected.permissionMode !== "approve-all") {
       throw new NativeExecutionInputError("preconfigured home currently requires ACPX approve-all; local permission rules still apply");
     }
+    if (input.homeMode === "preconfigured" && selected.kind === "acpx" && selected.agent === "codex") {
+      throw new NativeExecutionInputError("preconfigured ACPX Codex cannot protect Runner state; use native Codex or isolated mode");
+    }
     if (input.homeMode === "preconfigured" && selected.kind !== "codex"
-      && !(selected.kind === "acpx" && (selected.agent === "claude" || selected.agent === "codex"))) {
-      throw new NativeExecutionInputError("preconfigured home supports Codex and ACPX Claude/Codex only");
+      && !(selected.kind === "acpx" && selected.agent === "claude")) {
+      throw new NativeExecutionInputError("preconfigured home supports native Codex and ACPX Claude only");
     }
   }
   const binding = record(input.binding, "input.binding");

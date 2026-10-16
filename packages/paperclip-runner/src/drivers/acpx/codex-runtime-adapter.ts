@@ -189,6 +189,7 @@ export async function openQualifiedAcpxRuntime(
   }
 
   const preconfigured = usesPreconfiguredHome(options.launchEnvironment);
+  if (preconfigured && options.profile.agent === "codex") throw new Error("preconfigured ACPX Codex cannot protect Runner state; use native Codex or isolated mode");
   const createRegistry = dependencies.createRegistry ?? createAgentRegistry;
   const createStore = dependencies.createStore ?? createRuntimeStore;
   const createRuntime = dependencies.createRuntime ?? createAcpRuntime;
@@ -493,7 +494,7 @@ export async function openQualifiedAcpxRuntime(
         },
       }),
     );
-  const sessionHandshake = (cursorInstructions || modeBinding
+  const handshake = (cursorInstructions || modeBinding
     ? ensuredSession.then(async (ensuredHandle) => {
         handle = ensuredHandle;
         options.signal?.throwIfAborted();
@@ -544,20 +545,6 @@ export async function openQualifiedAcpxRuntime(
     .catch((error: unknown) => {
       throw classifySessionEnsureFailure(error);
     });
-  const handshake = preconfigured && options.profile.agent === "codex"
-    ? sessionHandshake.then(async (ensuredHandle) => {
-        handle = ensuredHandle;
-        options.signal?.throwIfAborted();
-        if (!runtime.setMode) throw new Error("preconfigured_codex_unattended_mode_unavailable");
-        await children.verifyLifetimeOwnership();
-        await commandLaunches.refreshConsumedCommand?.();
-        await runtime.setMode({ handle: ensuredHandle, mode: "agent-full-access" });
-        options.signal?.throwIfAborted();
-        await children.verifyLifetimeOwnership();
-        await commandLaunches.refreshConsumedCommand?.();
-        return ensuredHandle;
-      })
-    : sessionHandshake;
   let lateCleanup: Promise<void> | null = null;
   try {
     const boundedHandshake = boundedSessionHandshake(

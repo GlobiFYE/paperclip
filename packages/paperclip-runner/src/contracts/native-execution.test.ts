@@ -116,9 +116,10 @@ describe("NativeExecutionInputV1", () => {
     for (const permissionMode of ["approve-reads", "approve-paperclip", "deny-all"]) {
       expect(() => parseNativeExecutionInput({ ...preconfigured, provider: { kind: "acpx", agent: "codex", permissionMode } })).toThrow("requires ACPX approve-all");
     }
+    expect(() => parseNativeExecutionInput({ ...preconfigured, provider: { kind: "acpx", agent: "codex", permissionMode: "approve-all" } })).toThrow("cannot protect Runner state");
     expect(buildNativeModelEnvelope(parseNativeExecutionInput(preconfigured)).schema).toBe("paperclip.native-model-envelope.v3");
     expect(() => parseNativeExecutionInput({ ...preconfigured, homeMode: "other" })).toThrow("homeMode");
-    expect(() => parseNativeExecutionInput({ ...preconfigured, provider: { kind: "opencode", model: "provider/model", permissionMode: "allow" } })).toThrow("supports Codex");
+    expect(() => parseNativeExecutionInput({ ...preconfigured, provider: { kind: "opencode", model: "provider/model", permissionMode: "allow" } })).toThrow("supports native Codex");
     expect(() => parseNativeExecutionInput({ ...preconfigured, schema: "paperclip.native-execution-input.v5" })).toThrow("homeMode");
     const parsed = parseNativeExecutionInput({
       ...input,

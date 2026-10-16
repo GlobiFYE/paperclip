@@ -571,10 +571,13 @@ export function resolvePaperclipRunnerNativeProviderInput(input: {
   }
   const preconfigured = config.homeMode === "preconfigured";
   if (preconfigured && profile.provider !== "codex" && !(profile.provider === "acpx" && ["claude", "codex"].includes(profile.acpxAgent))) {
-    throw new PaperclipRunnerProviderProfileError("paperclip_runner_home_mode_unsupported", "Preconfigured home supports Codex and ACPX Claude/Codex only");
+    throw new PaperclipRunnerProviderProfileError("paperclip_runner_home_mode_unsupported", "Preconfigured home supports native Codex and ACPX Claude only");
   }
   if (preconfigured && profile.provider === "acpx" && config.acpxPermissionMode !== undefined && config.acpxPermissionMode !== "approve-all") {
     throw new PaperclipRunnerProviderProfileError("paperclip_runner_home_permission_mode_unsupported", "Preconfigured home currently requires ACPX approve-all; local permission rules still apply");
+  }
+  if (preconfigured && profile.provider === "acpx" && profile.acpxAgent === "codex") {
+    throw new PaperclipRunnerProviderProfileError("paperclip_runner_home_state_boundary_unsupported", "preconfigured ACPX Codex cannot protect Runner state; use native Codex or isolated mode");
   }
   if (profile.backend !== input.backend) {
     throw new PaperclipRunnerProviderProfileError(

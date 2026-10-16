@@ -83,30 +83,12 @@ describe("Codex ACPX runtime adapter", () => {
     }
   }, 30_000);
 
-  it.each(["timeout", "cancel"] as const)("ends preconfigured Codex admission on %s while mode selection is stalled", async kind => {
-    const runtime = fakeRuntime();
-    let started!: () => void;
-    let settle!: () => void;
-    const modeStarted = new Promise<void>(resolve => { started = resolve; });
-    const modePending = new Promise<void>(resolve => { settle = resolve; });
-    runtime.setMode = vi.fn(async () => { started(); await modePending; });
+  it("rejects preconfigured Codex before creating a provider runtime", async () => {
+    const createRuntime = vi.fn();
     const options = openOptions(fakeCommand());
-    const controller = new AbortController();
-    options.signal = controller.signal;
-    options.permissionMode = "approve-all";
     options.launchEnvironment = { HOME: "/users/executor", PAPERCLIP_RUNNER_HOME_MODE: "preconfigured" };
-    const retained: Promise<unknown>[] = [];
-    const opening = openCodexAcpxRuntime(options, {
-      createRegistry: () => registry(), createStore: () => store(), createRuntime: () => runtime,
-      sessionHandshakeTimeoutMs: 25, retainCleanup: cleanup => { retained.push(cleanup); },
-    });
-    const rejection = expect(opening).rejects.toThrow(kind === "cancel" ? "mode admission cancelled" : "handshake");
-    await modeStarted;
-    if (kind === "cancel") controller.abort(new Error("mode admission cancelled"));
-    await rejection;
-    expect(runtime.close).toHaveBeenCalled();
-    settle();
-    await Promise.allSettled(retained);
+    await expect(openCodexAcpxRuntime(options, { createRuntime })).rejects.toThrow("cannot protect Runner state");
+    expect(createRuntime).not.toHaveBeenCalled();
   });
 
   it("installs per-connection policy authority only for Copilot and rejects native commands before a turn starts", async () => {
@@ -127,7 +109,7 @@ describe("Codex ACPX runtime adapter", () => {
       await port.close({ reason: "test complete" });
     }
   });
-  it.each(["claude", "codex"] as const)("rejects approvals without a workflow in preconfigured %s sessions", async (agent) => {
+  it.each(["claude"] as const)("rejects approvals without a workflow in preconfigured %s sessions", async (agent) => {
     const runtime = fakeRuntime();
     runtime.setMode = vi.fn().mockResolvedValue(undefined);
     let created!: AcpRuntimeOptions;
@@ -154,8 +136,7 @@ describe("Codex ACPX runtime adapter", () => {
     else expect(created.spawnEnvironment!().ANTHROPIC_CUSTOM_MODEL_OPTION).toBeUndefined();
     await expect(created.onPermissionRequest!({ sessionId: "backend-1", raw: {}, inferredKind: "execute" } as never,
       { signal: new AbortController().signal })).resolves.toEqual({ outcome: "reject_once" });
-    if (agent === "codex") expect(runtime.setMode).toHaveBeenCalledWith({ handle: HANDLE, mode: "agent-full-access" });
-    else expect(runtime.setMode).not.toHaveBeenCalled();
+    expect(runtime.setMode).not.toHaveBeenCalled();
     await port.close({ reason: "verified" });
   });
 

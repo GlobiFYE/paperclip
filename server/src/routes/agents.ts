@@ -4100,6 +4100,8 @@ export function agentRoutes(
       await assertSelectableAdapterType(rollbackAdapterType, rollbackAdapterConfig);
     }
     assertNoAgentAdapterConfigMutation(req, rollbackAdapterConfig);
+    if (req.actor.type === "agent" && rollbackAdapterConfig.homeMode !== asRecord(existing.adapterConfig)?.homeMode)
+      throw forbidden("Only an operator can configure Runner homeMode.");
     assertNoAgentLocalAdapterHostCommandMutation(req, rollbackAdapterType, rollbackAdapterConfig);
     assertNoAgentProcessAdapterMutation(
       req,
@@ -5318,6 +5320,8 @@ export function agentRoutes(
       if (requestedAdapterType === "paperclip_runner") {
         rawEffectiveAdapterConfig = normalizePaperclipRunnerAdapterConfig(requestedAdapterType, rawEffectiveAdapterConfig);
       }
+      if (req.actor.type === "agent" && rawEffectiveAdapterConfig.homeMode !== existingAdapterConfig.homeMode)
+        throw forbidden("Only an operator can configure Runner homeMode.");
       if (changingAdapterType || requestedAdapterConfig) {
         assertNoAgentLocalAdapterHostCommandMutation(
           req,
