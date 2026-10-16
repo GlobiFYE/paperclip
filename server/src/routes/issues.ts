@@ -14003,9 +14003,6 @@ export function issueRoutes(
         updateFields.executionPolicy !== undefined
           ? (updateFields.executionPolicy as NormalizedExecutionPolicy | null)
           : previousExecutionPolicy;
-      // Only a board actor may change or remove a policy that holds a user
-      // (board) participant in any stage. An agent may still change the
-      // monitor of such a policy; the gate itself stays locked.
       if (
         req.body.executionPolicy !== undefined &&
         req.actor.type !== "board" &&
@@ -14013,8 +14010,6 @@ export function issueRoutes(
           stage.participants?.some((participant) => participant.type === "user"),
         )
       ) {
-        // Participant ids are generated on normalization, so a client that
-        // resends the stages without them must still compare equal.
         const gateFingerprint = (policy: NormalizedExecutionPolicy | null) => {
           if (!policy) return "null";
           const { monitor: _monitor, ...gate } = policy;
@@ -14430,14 +14425,11 @@ export function issueRoutes(
       } = { value: null };
       const postCommitActivityPublications: ActivityPublication[] = [];
       const postCommitIssueActions: IssuePostCommitAction[] = [];
-      // A non-board policy write is bound to the policy that was authorized
-      // above, so a board edit that lands between the read and the locked
-      // write (for example one that adds a user participant) makes this
-      // request fail with execution_policy_changed instead of overwriting it.
       const lockedExpectedExecutionPolicy =
         expectedExecutionPolicy === undefined &&
         req.body.executionPolicy !== undefined &&
-        req.actor.type !== "board"
+        req.actor.type !== "board" &&
+        interruptedRunId === null
           ? (existing.executionPolicy ?? null)
           : expectedExecutionPolicy;
       const issueUpdateData = {
