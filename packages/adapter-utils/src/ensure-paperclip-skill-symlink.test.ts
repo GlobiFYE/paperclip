@@ -71,4 +71,48 @@ describe("ensurePaperclipSkillSymlink", () => {
     await expect(ensurePaperclipSkillSymlink(source, target)).resolves.toBe("repaired");
     expect(await linkedTarget()).toBe(source);
   });
+
+  it("serializes concurrent repairs of one link", async () => {
+    const previous = installSkill("2026.1005.0");
+    const source = installSkill("2026.1012.0");
+    await makeSkill(previous);
+    await makeSkill(source);
+    await fs.symlink(previous, target);
+
+    const results = await Promise.all(
+      Array.from({ length: 4 }, () => ensurePaperclipSkillSymlink(source, target)),
+    );
+
+    expect([...results].sort()).toEqual(["repaired", "skipped", "skipped", "skipped"]);
+    expect(await linkedTarget()).toBe(source);
+  });
+
+  it("accepts a link that another process pointed at the source first", async () => {
+    const previous = installSkill("2026.1005.0");
+    const source = installSkill("2026.1012.0");
+    await makeSkill(previous);
+    await makeSkill(source);
+    await fs.symlink(previous, target);
+    const raceLink = async (linkSource: string, linkTarget: string) => {
+      await fs.symlink(linkSource, linkTarget);
+      throw Object.assign(new Error("EEXIST: file already exists"), { code: "EEXIST" });
+    };
+
+    await expect(ensurePaperclipSkillSymlink(source, target, raceLink)).resolves.toBe("repaired");
+    expect(await linkedTarget()).toBe(source);
+  });
+
+  it("rejects a link that another process pointed elsewhere", async () => {
+    const other = installSkill("2026.1012.0", "paperclip-create-agent");
+    const source = installSkill("2026.1012.0");
+    await makeSkill(other);
+    await makeSkill(source);
+    const raceLink = async (_linkSource: string, linkTarget: string) => {
+      await fs.symlink(other, linkTarget);
+      throw Object.assign(new Error("EEXIST: file already exists"), { code: "EEXIST" });
+    };
+
+    await expect(ensurePaperclipSkillSymlink(source, target, raceLink)).rejects.toMatchObject({ code: "EEXIST" });
+    expect(await linkedTarget()).toBe(other);
+  });
 });

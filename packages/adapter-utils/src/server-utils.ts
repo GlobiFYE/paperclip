@@ -4343,8 +4343,6 @@ export function writePaperclipSkillSyncPreference(
   return next;
 }
 
-// The skill's path inside the @paperclipai package that ships it, e.g.
-// "@paperclipai/server/skills/paperclip", or null outside node_modules.
 function paperclipPackageSkillPath(candidate: string): string | null {
   const segments = path.resolve(candidate).split(/[\\/]+/);
   const nodeModules = segments.lastIndexOf("node_modules");
@@ -4355,25 +4353,43 @@ function paperclipPackageSkillPath(candidate: string): string | null {
   return packagePath.length > 2 ? packagePath.join("/") : null;
 }
 
-// An npm-managed upgrade keeps the previous install directory, so a link the
-// adapter made there still resolves. Treat the same packaged skill in another
-// install as stale rather than as another installation's skill.
 function isSamePaperclipPackageSkill(source: string, linkedPath: string): boolean {
   const sourceSkill = paperclipPackageSkillPath(source);
   return sourceSkill !== null && sourceSkill === paperclipPackageSkillPath(linkedPath);
 }
 
-export async function ensurePaperclipSkillSymlink(
+type SkillSymlinkOutcome = "created" | "repaired" | "skipped";
+type LinkSkill = (source: string, target: string) => Promise<void>;
+
+const skillSymlinkRepairs = new Map<string, Promise<SkillSymlinkOutcome>>();
+
+async function linkOrAcceptSkillSymlink(
   source: string,
   target: string,
-  linkSkill: (source: string, target: string) => Promise<void> = (
-    linkSource,
-    linkTarget,
-  ) => fs.symlink(linkSource, linkTarget),
-): Promise<"created" | "repaired" | "skipped"> {
+  linkSkill: LinkSkill,
+): Promise<void> {
+  try {
+    await linkSkill(source, target);
+  } catch (error) {
+    if ((error as { code?: string }).code !== "EEXIST") throw error;
+    const linkedPath = await fs.readlink(target).catch(() => null);
+    if (
+      !linkedPath ||
+      path.resolve(path.dirname(target), linkedPath) !== source
+    ) {
+      throw error;
+    }
+  }
+}
+
+async function repairPaperclipSkillSymlink(
+  source: string,
+  target: string,
+  linkSkill: LinkSkill,
+): Promise<SkillSymlinkOutcome> {
   const existing = await fs.lstat(target).catch(() => null);
   if (!existing) {
-    await linkSkill(source, target);
+    await linkOrAcceptSkillSymlink(source, target, linkSkill);
     return "created";
   }
 
@@ -4400,9 +4416,31 @@ export async function ensurePaperclipSkillSymlink(
     return "skipped";
   }
 
-  await fs.unlink(target);
-  await linkSkill(source, target);
+  await fs.unlink(target).catch((error: { code?: string }) => {
+    if (error.code !== "ENOENT") throw error;
+  });
+  await linkOrAcceptSkillSymlink(source, target, linkSkill);
   return "repaired";
+}
+
+export async function ensurePaperclipSkillSymlink(
+  source: string,
+  target: string,
+  linkSkill: LinkSkill = (linkSource, linkTarget) =>
+    fs.symlink(linkSource, linkTarget),
+): Promise<SkillSymlinkOutcome> {
+  const key = path.resolve(target);
+  const previous = skillSymlinkRepairs.get(key) ?? Promise.resolve();
+  const repair = () => repairPaperclipSkillSymlink(source, target, linkSkill);
+  const current = previous.then(repair, repair);
+  skillSymlinkRepairs.set(key, current);
+  try {
+    return await current;
+  } finally {
+    if (skillSymlinkRepairs.get(key) === current) {
+      skillSymlinkRepairs.delete(key);
+    }
+  }
 }
 
 async function hashSkillDirectory(root: string): Promise<string> {
