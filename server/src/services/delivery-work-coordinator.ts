@@ -56,7 +56,7 @@ export function createDeliveryWorkCoordinator(input: {
           if (pending || databaseWorkPending(input.owner, queue)) schedule(task.retryMs);
           else { finishIntent?.(); finishIntent = undefined; }
           const next = task.nextRunAt?.();
-          if (next != null) schedule(Math.max(0, next - Date.now()));
+          if (next != null) schedule(Math.max(input.canRun() ? 0 : task.retryMs, next - Date.now()));
         }).catch(error => {
           schedule(task.retryMs);
           // Logging must never turn a recoverable sweep failure into an

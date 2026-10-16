@@ -1456,7 +1456,8 @@ independently and retains the existing atomic claims and execution checks.
 The heartbeat interval still requests a recovery scan; it does not determine
 the dispatch time of a known future deadline. Failed scans retry at that same
 interval. Future timers do not hold idle work open, and standby, idle drain and
-shutdown retain the coordinator's admission gates. External database writers
+shutdown retain the coordinator's admission gates. During idle drain, expired
+deadlines retry at the recovery interval while dispatch is paused. External database writers
 rely on the periodic recovery scan. Sparse cron searches reuse one parsed
 expression and skip impossible UTC dates before localized formatting.
 
