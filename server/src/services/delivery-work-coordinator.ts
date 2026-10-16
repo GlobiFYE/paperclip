@@ -22,6 +22,8 @@ export function createDeliveryWorkCoordinator(input: {
       retryMs: number;
       run: (signal: AbortSignal) => Promise<unknown>;
       hasPending: () => Promise<boolean>;
+      // Scoped hints belong to the outer transaction, including uncertainty recovery.
+      onSettled?: (hints?: ReadonlySet<string>) => void;
       // Optional maintenance/retry deadline restored from durable state.
       nextRunAt?: () => number | null;
     }) {
@@ -54,7 +56,10 @@ export function createDeliveryWorkCoordinator(input: {
           if (pending || databaseWorkPending(input.owner, queue)) schedule(task.retryMs);
           else { finishIntent?.(); finishIntent = undefined; }
           const next = task.nextRunAt?.();
-          if (next != null) schedule(Math.max(0, next - Date.now()));
+          if (next != null) {
+            const delay = Math.max(0, next - Date.now());
+            schedule(delay === 0 && !input.canRun() ? task.retryMs : delay);
+          }
         }).catch(error => {
           schedule(task.retryMs);
           // Logging must never turn a recoverable sweep failure into an
@@ -72,7 +77,7 @@ export function createDeliveryWorkCoordinator(input: {
         dirty = true;
         if (!running) schedule(0);
       }
-      const unsubscribe = subscribeDatabaseWork(input.owner, queue, event => {
+      const unsubscribe = subscribeDatabaseWork(input.owner, queue, (event, hints) => {
         if (workerStopped) return;
         if (databaseWorkPending(input.owner, queue)) {
           finishIntent ??= beginIdleTrackedWork();
@@ -80,7 +85,7 @@ export function createDeliveryWorkCoordinator(input: {
           // replaces this deadline with an immediate wake on the normal path.
           if (!running) schedule(task.retryMs);
         }
-        if (event === "settled") wake();
+        if (event === "settled") { task.onSettled?.(hints); wake(); }
       });
       const worker = { wake, async stop() {
         workerStopped = true;
