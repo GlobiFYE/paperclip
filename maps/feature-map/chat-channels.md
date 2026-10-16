@@ -101,6 +101,12 @@ restart the instance, and verify publication resumes at its saved deadline
 without another inbound message. Revoked access and permanent rejections must
 stop retries. These recipes are separate from live provider proof.
 
+For GitHub fixed-finding resolution, turn on **Resolve fixed findings**, let the
+bot post an inline finding on a disposable PR, push a fix, and ask for a
+re-review. Expect one reply in the bot's thread and that thread resolved.
+Threads that people or other bots started must stay open. With the setting off,
+the tool must be refused.
+
 Configure optional project and workspace defaults at the connection and destination
 levels. Start a new conversation and inspect its task workspace. Verify that
 inheritance, an explicit selection, and clearing a default remain distinct.
