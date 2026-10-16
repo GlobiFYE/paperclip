@@ -37,7 +37,7 @@ function fixture(options: { transport?: "sandbox" | "ssh"; concurrent?: boolean 
   });
   const execute = vi.fn(async (_input: { command: string; args?: string[]; bypassSession?: boolean; timeoutMs?: number }) => {
     calls.push("mkdir:codex-home");
-    return { exitCode: 0, timedOut: false, stdout: "", stderr: "" };
+    return { exitCode: 0, signal: null, pid: null, startedAt: null, timedOut: false, stdout: "", stderr: "" };
   });
   const input: Parameters<typeof stageRemoteLaunchAssets>[0] = {
     root,
@@ -106,4 +106,76 @@ describe("remote launch asset staging", () => {
     expect(f.calls).toEqual([]);
   });
 
+  it("overlaps disjoint launch material and context only with verified sandbox concurrency", async () => {
+    const f = fixture({ concurrent: true });
+    const started = deferred(), release = deferred();
+    f.stageFile.mockImplementationOnce(async () => { started.resolve(); await release.promise; });
+    const pending = stageRemoteLaunchAssets(f.input);
+    await started.promise;
+    try {
+      expect(f.stageDirectory).toHaveBeenCalled();
+      expect(f.stageFile.mock.calls.some(([input]) => input.targetPath === "/session/bin/ca.pem")).toBe(false);
+    } finally { release.resolve(); await pending; }
+    expect(f.calls.at(-1)).toBe("file:/session/bin/ca.pem");
+  });
+
+  it.each([
+    { transport: "ssh" as const, concurrent: true },
+    { transport: "sandbox" as const, concurrent: false },
+    { transport: "sandbox" as const },
+  ])("keeps unsupported transports serial: %j", async (options) => {
+    const f = fixture(options);
+    const started = deferred(), release = deferred();
+    f.stageFile.mockImplementationOnce(async () => { started.resolve(); await release.promise; });
+    const pending = stageRemoteLaunchAssets(f.input);
+    await started.promise;
+    try { expect(f.stageDirectory).not.toHaveBeenCalled(); }
+    finally { release.resolve(); await pending; }
+    expect(f.stageDirectory).toHaveBeenCalledTimes(2);
+  });
+
+  it("settles the context transfer before exposing a launch-material failure", async () => {
+    const f = fixture({ concurrent: true });
+    const contextStarted = deferred(), releaseContext = deferred();
+    const failure = new Error("launch failed first");
+    f.stageFile.mockRejectedValueOnce(failure);
+    f.stageDirectory.mockImplementationOnce(async () => { contextStarted.resolve(); await releaseContext.promise; });
+    let settled = false;
+    let observed: unknown;
+    const pending = stageRemoteLaunchAssets(f.input).then(() => { settled = true; }, error => { settled = true; observed = error; });
+    await contextStarted.promise;
+    try {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(settled).toBe(false);
+    } finally { releaseContext.resolve(); await pending; }
+    expect(observed).toBe(failure);
+    expect(f.stageFile.mock.calls.some(([input]) => input.targetPath === "/session/bin/ca.pem")).toBe(false);
+  });
+
+  it("settles launch material before exposing a context failure", async () => {
+    const f = fixture({ concurrent: true });
+    const launchStarted = deferred(), releaseLaunch = deferred();
+    const failure = new Error("context failed first");
+    f.stageFile.mockImplementationOnce(async () => { launchStarted.resolve(); await releaseLaunch.promise; });
+    f.stageDirectory.mockRejectedValueOnce(failure);
+    let settled = false;
+    let observed: unknown;
+    const pending = stageRemoteLaunchAssets(f.input).then(() => { settled = true; }, error => { settled = true; observed = error; });
+    await launchStarted.promise;
+    try {
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(settled).toBe(false);
+    } finally { releaseLaunch.resolve(); await pending; }
+    expect(observed).toBe(failure);
+    expect(f.stageFile.mock.calls.some(([input]) => input.targetPath === "/session/bin/ca.pem")).toBe(false);
+  });
+
+  it("retains launch-material error priority when both parallel transfers fail", async () => {
+    const f = fixture({ concurrent: true });
+    const failure = new Error("launch priority");
+    f.stageFile.mockRejectedValueOnce(failure);
+    f.stageDirectory.mockRejectedValueOnce(new Error("context failure"));
+    await expect(stageRemoteLaunchAssets(f.input)).rejects.toBe(failure);
+    expect(f.stageDirectory).toHaveBeenCalledOnce();
+  });
 });

@@ -31,7 +31,7 @@ type LaunchAssetsInput = {
 };
 
 export async function stageRemoteLaunchAssets(input: LaunchAssetsInput): Promise<void> {
-  const measure = (name: string, operation: () => Promise<void>) =>
+  const measure = async (name: string, operation: () => Promise<void>) =>
     input.trace ? input.trace.measure(name, operation) : operation();
   const materializeLaunchState = () => measure("harness_state.launch_material", async () => {
     for (const directory of input.persistenceDirectories) {
@@ -80,8 +80,15 @@ export async function stageRemoteLaunchAssets(input: LaunchAssetsInput): Promise
       });
     });
   };
-  await materializeLaunchState();
-  await stageRuntimeContext();
+  if (input.transport === "sandbox" && input.runner.allowConcurrentSyncOperations === true) {
+    const outcomes = await Promise.allSettled([materializeLaunchState(), stageRuntimeContext()]);
+    for (const outcome of outcomes) {
+      if (outcome.status === "rejected") throw outcome.reason;
+    }
+  } else {
+    await materializeLaunchState();
+    await stageRuntimeContext();
+  }
   if (input.caBundleMapping) {
     const mapping = input.caBundleMapping;
     await measure("stage.asset.ca_bundle", () => input.stageFile({ ...mapping, mode: 0o600 }));
