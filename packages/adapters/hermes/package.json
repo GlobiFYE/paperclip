@@ -23,15 +23,47 @@
     "orchestration"
   ],
   "exports": {
-    ".": "./src/index.ts",
-    "./server": "./src/server/index.ts",
-    "./ui": "./src/ui/index.ts",
-    "./cli": "./src/cli/index.ts",
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./src/server/index.ts",
+      "development": "./src/server/index.ts",
+      "import": "./dist/server/index.js"
+    },
+    "./ui": {
+      "types": "./src/ui/index.ts",
+      "development": "./src/ui/index.ts",
+      "import": "./dist/ui/index.js"
+    },
+    "./cli": {
+      "types": "./src/cli/index.ts",
+      "development": "./src/cli/index.ts",
+      "import": "./dist/cli/index.js"
+    },
     "./ui-parser": "./ui-parser.cjs",
-    "./gateway": "./src/gateway/index.ts",
-    "./gateway/server": "./src/gateway/server/index.ts",
-    "./gateway/ui": "./src/gateway/ui/index.ts",
-    "./gateway/cli": "./src/gateway/cli/index.ts",
+    "./gateway": {
+      "types": "./src/gateway/index.ts",
+      "development": "./src/gateway/index.ts",
+      "import": "./dist/gateway/index.js"
+    },
+    "./gateway/server": {
+      "types": "./src/gateway/server/index.ts",
+      "development": "./src/gateway/server/index.ts",
+      "import": "./dist/gateway/server/index.js"
+    },
+    "./gateway/ui": {
+      "types": "./src/gateway/ui/index.ts",
+      "development": "./src/gateway/ui/index.ts",
+      "import": "./dist/gateway/ui/index.js"
+    },
+    "./gateway/cli": {
+      "types": "./src/gateway/cli/index.ts",
+      "development": "./src/gateway/cli/index.ts",
+      "import": "./dist/gateway/cli/index.js"
+    },
     "./gateway/ui-parser": "./gateway-ui-parser.cjs"
   },
   "paperclip": {

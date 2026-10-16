@@ -13,10 +13,22 @@
   },
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/src/index.js"
+    },
     "./package.json": "./package.json",
-    "./types": "./src/types.ts",
-    "./catalog.json": "./generated/catalog.json"
+    "./types": {
+      "types": "./src/types.ts",
+      "development": "./src/types.ts",
+      "import": "./dist/src/types.js"
+    },
+    "./catalog.json": {
+      "types": "./generated/catalog.json",
+      "development": "./generated/catalog.json",
+      "import": "./dist/generated/catalog.json"
+    }
   },
   "publishConfig": {
     "access": "public",
@@ -42,7 +54,7 @@
   ],
   "scripts": {
     "build": "pnpm run build:manifest && tsc -p tsconfig.json",
-    "build:manifest": "node ../../cli/node_modules/tsx/dist/cli.mjs scripts/build-catalog-manifest.ts",
+    "build:manifest": "cross-env NODE_OPTIONS=--conditions=production node ../../cli/node_modules/tsx/dist/cli.mjs scripts/build-catalog-manifest.ts",
     "clean": "rm -rf dist",
     "test": "pnpm -w exec vitest run --root packages/skills-catalog --config vitest.config.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",

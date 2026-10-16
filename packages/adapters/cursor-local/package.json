@@ -13,10 +13,26 @@
   },
   "type": "module",
   "exports": {
-    ".": "./src/index.ts",
-    "./server": "./src/server/index.ts",
-    "./ui": "./src/ui/index.ts",
-    "./cli": "./src/cli/index.ts"
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "import": "./dist/index.js"
+    },
+    "./server": {
+      "types": "./src/server/index.ts",
+      "development": "./src/server/index.ts",
+      "import": "./dist/server/index.js"
+    },
+    "./ui": {
+      "types": "./src/ui/index.ts",
+      "development": "./src/ui/index.ts",
+      "import": "./dist/ui/index.js"
+    },
+    "./cli": {
+      "types": "./src/cli/index.ts",
+      "development": "./src/cli/index.ts",
+      "import": "./dist/cli/index.js"
+    }
   },
   "publishConfig": {
     "access": "public",

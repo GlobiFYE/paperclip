@@ -388,6 +388,7 @@ async function runVitest(args, label, testShard = null) {
   const env = {
     ...process.env,
     NODE_ENV: "test",
+    NODE_OPTIONS: [process.env.NODE_OPTIONS?.trim(), "--conditions=development"].filter(Boolean).join(" "),
     PAPERCLIP_TEST_HOST_HOME: process.env.PAPERCLIP_TEST_HOST_HOME
       ?? (process.env.PAPERCLIP_HOME?.trim() || path.join(os.homedir(), ".paperclip")),
     PAPERCLIP_HOME: path.join(testRoot, "h"),

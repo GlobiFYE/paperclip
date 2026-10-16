@@ -33,6 +33,10 @@ describe("publishConfig publishes the duplex observability subpath", () => {
   });
 
   it("keeps the top-level wildcard export unchanged", () => {
-    expect(manifest.exports["./*"]).toBe("./src/*.ts");
+    expect(manifest.exports["./*"]).toEqual({
+      types: "./src/*.ts",
+      development: "./src/*.ts",
+      import: "./dist/*.js",
+    });
   });
 });

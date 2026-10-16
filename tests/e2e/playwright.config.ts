@@ -67,7 +67,7 @@ export default defineConfig({
     // service-worker-intercepted requests, before React can even start.
     // Build the server's first-choice static directory so a prior package build
     // cannot shadow the UI under test with stale server/ui-dist assets.
-    command: "pnpm --filter @paperclipai/ui build --outDir ../server/ui-dist --emptyOutDir && node cli/node_modules/tsx/dist/cli.mjs cli/src/index.ts onboard --yes --run",
+    command: "pnpm --filter @paperclipai/ui^... build && pnpm --filter @paperclipai/plugin-sdk build && pnpm --filter @paperclipai/ui build --outDir ../server/ui-dist --emptyOutDir && node --conditions=development cli/node_modules/tsx/dist/cli.mjs cli/src/index.ts onboard --yes --run",
     url: `${BASE_URL}/api/health`,
     // Always boot a dedicated throwaway instance for e2e so browser tests
     // never attach to the developer's active Paperclip home/server.
@@ -79,7 +79,12 @@ export default defineConfig({
       ...process.env,
       NODE_ENV: "test",
       PAPERCLIP_UI_DEV_MIDDLEWARE: "false",
-      NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${path.resolve(import.meta.dirname, "fixtures/agent-chat-github.mjs")} --import=${path.resolve(import.meta.dirname, "fixtures/ai-connection-provider.mjs")}`,
+      NODE_OPTIONS: [
+        process.env.NODE_OPTIONS?.trim(),
+        "--conditions=development",
+        `--import=${path.resolve(import.meta.dirname, "fixtures/agent-chat-github.mjs")}`,
+        `--import=${path.resolve(import.meta.dirname, "fixtures/ai-connection-provider.mjs")}`,
+      ].filter(Boolean).join(" "),
       PORT: String(PORT),
       PAPERCLIP_OPEN_ON_LISTEN: "false",
       PAPERCLIP_API_URL: BASE_URL,
