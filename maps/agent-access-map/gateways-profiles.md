@@ -148,11 +148,12 @@ guarantee.
 
 ### Execution-host stdio assignments
 
-Native Codex and all ACPX adapters accept verified, session-local stdio servers
-from the execution host through the shared binding path. The transport uses each
-implementation's own schemas and responses. Each binding requires a private Unix
-socket to identify the shared resource whose calls are serialized. This is a separate binding
-alongside the HTTP gateway; it does not create gateway/profile administration
+Runner registers verified, session-local stdio servers from the execution host
+with native Codex and through the shared ACPX runtime. ACPX clients must support
+stdio MCP assignments. The transport uses each implementation's own schemas and
+responses. Each binding requires a private Unix socket to identify the shared
+resource whose calls are serialized. This is a separate binding alongside the
+HTTP gateway; it does not create gateway/profile administration
 authority. Tasks cannot supply these reserved environment inputs. Read-only
 sessions omit them.
 ACPX adapters use their applicable ACPX permission policy. Host-assigned native
@@ -165,6 +166,6 @@ Local fixture coverage: [binding validation](../../packages/paperclip-runner/src
 [relay processes and cancellation](../../packages/paperclip-runner/runner/crates/runner-core/tests/stdio_mcp.rs),
 and [approval projection](../../packages/paperclip-runner/src/drivers/codex/codex-question-adapter.test.ts).
 Provider-client image and approval smoke tests used native Codex and Claude SDK;
-that coverage is separate from registration support for all ACPX adapters.
+that coverage is not an exhaustive adapter compatibility test.
 Vendor-client evidence belongs in the PR. These checks do not
 certify live external credentials, deployment isolation or gateway revocation.

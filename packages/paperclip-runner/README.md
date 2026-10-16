@@ -810,7 +810,7 @@ replace the internal task server or gateway. Commands are verified against their
 assigned digest before execution. The backend receives only its assigned environment.
 
 Runner supplies these session-local bindings to native Codex and through the
-shared ACPX runtime to all ACPX adapters.
+shared ACPX runtime. ACPX clients must support stdio MCP assignments.
 User or project MCP files are never rewritten. Read-only sessions omit these
 bindings. Host assignment authorizes native Codex to use these local tools without
 a new per-call prompt, matching execution-host utilities available through shell.
@@ -828,8 +828,8 @@ are forwarded without provider-specific translation.
 
 Provider-client smoke tests exercised native Codex 0.160.0 and Claude SDK
 0.3.286 with local MCP servers and loopback model APIs. This records the clients
-used to verify image delivery and approvals. Session-local stdio registration
-uses the shared path for all ACPX adapters.
+used to verify image delivery and approvals; it is not an exhaustive adapter
+compatibility test.
 
 All `tools/call` requests for the same private Unix socket are serialized across
 sessions and processes, including reads. Metadata requests stay responsive.
