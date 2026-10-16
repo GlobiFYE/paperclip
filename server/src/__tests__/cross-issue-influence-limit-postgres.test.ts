@@ -15,6 +15,8 @@ import {
 import {
   CROSS_ISSUE_INFLUENCE_ENFORCE_AT,
   CROSS_ISSUE_INFLUENCE_SERVICE_KEY_LIMIT,
+  CROSS_ISSUE_INFLUENCE_SERVICE_KEY_WINDOW_MS,
+  crossIssueInfluenceLimitError,
   observeCrossIssueInfluence,
   observeServiceKeyCrossIssueInfluence,
 } from "../services/cross-issue-influence-limit.js";
@@ -195,5 +197,68 @@ describeEmbeddedPostgres("cross-issue influence limit PostgreSQL serialization",
       .toHaveLength(CROSS_ISSUE_INFLUENCE_SERVICE_KEY_LIMIT + 1);
     expect(recorded.filter((row) => row.action === "issue.cross_issue_influence_cap_rejected"))
       .toHaveLength(2);
+  });
+
+  it("derives the retry hint from the oldest write still inside the window", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const targetIssueId = randomUUID();
+    const routerKeyId = randomUUID();
+    const now = new Date("2026-09-30T08:00:00.000Z");
+    // Spread the window's writes across it so `min(created_at)` has something to
+    // choose: only the oldest one leaving frees the next slot. The newest is
+    // deliberately the most recent, so a max/last-row bug would read 09:50.
+    const oldest = new Date("2026-09-30T07:12:00.000Z");
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `C${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      defaultResponsibleUserId: "board-user",
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "Inbox Router",
+      role: "integration",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(activityLog).values(
+      Array.from({ length: CROSS_ISSUE_INFLUENCE_SERVICE_KEY_LIMIT }, (_, index) => ({
+        companyId,
+        actorType: "agent" as const,
+        actorId: agentId,
+        agentId,
+        runId: null,
+        action: "issue.cross_issue_influence_observed",
+        entityType: "issue",
+        entityId: targetIssueId,
+        details: { serviceKeyId: routerKeyId },
+        createdAt: new Date(oldest.getTime() + index * 60_000),
+      })),
+    );
+
+    const decision = await observeServiceKeyCrossIssueInfluence(db, {
+      companyId,
+      agentId,
+      serviceKeyId: routerKeyId,
+      targetIssueId,
+      targetIssueIdentifier: "CAP-4",
+      kind: "comment",
+      now,
+    });
+
+    expect(decision).toMatchObject({
+      allowed: false,
+      windowMs: CROSS_ISSUE_INFLUENCE_SERVICE_KEY_WINDOW_MS,
+      retryAfter: "2026-09-30T08:12:00.000Z",
+    });
+    // An operator reading the 429 gets the timestamp, not "try again later".
+    expect(
+      crossIssueInfluenceLimitError(decision, { issueIdentifier: "CAP-4" }).error,
+    ).toContain("2026-09-30T08:12:00.000Z");
   });
 });

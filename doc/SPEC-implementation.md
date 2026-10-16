@@ -763,7 +763,12 @@ content may reply where it was invited, not on every issue it can see — so a
 run-less comment carried only by visibility still fails closed on the missing
 run. The carve-out covers comments only: issue updates and interaction
 resolutions from a `service` key still require a run, as does a comment sent
-through the issue PATCH route rather than the comment route. A `service` key that
+through the issue PATCH route rather than the comment route. "Comments only" is
+enforced on what the comment does, not merely on which route carried it: a
+run-less `service` key comment that asks to resume or reopen the issue, or whose
+body is shaped like a review approval and would therefore auto-approve and
+complete the task, fails closed on the missing run like any other state change.
+A `service` key that
 does send run context is charged the run cap like any other run. The scope widens
 nothing else; board users mint these keys explicitly and each key creation is
 logged.
@@ -774,9 +779,12 @@ rollout mode, and fails closed with the cap in the error once enforcement is
 active. Writes to the run's own source issue are not counted. A run-less
 `service` key has no run budget to charge, so it is counted against a rolling
 window instead — at most 60 comments per hour per key, recorded in the same
-activity trail with the same cap semantics and a 429 once exceeded. Every
-run-less attempt is charged; a service key has no source issue to write to for
-free. Assignee self-comments do not
+activity trail with the same cap semantics and a 429 once exceeded. Because that
+caller has no run, the 429 describes the window rather than the per-run budget:
+it names the rolling cap and the timestamp at which the oldest counted write ages
+out, so the advice is a retry time instead of a next heartbeat that will never
+come. Every run-less attempt is charged; a service key has no source issue to
+write to for free. Assignee self-comments do not
 wake the assignee, and a non-assignee comment cannot mint a mention grant.
 
 Agent @-mentions are context links only: they do not wake the mentioned agent,
