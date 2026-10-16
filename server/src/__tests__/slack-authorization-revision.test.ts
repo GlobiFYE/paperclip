@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/postgres-js";
 import {
   agents, chatEndpointResources, chatEndpoints, chatExternalPrincipals, chatIdentityLinks,
@@ -116,15 +116,40 @@ describeDatabase("Slack authorization revision", () => {
     expect(await f.revision()).toBe(before);
   });
 
-  it("is independent of database session timezone and row scan order", async () => {
+  it("is stable across timezone, physical row order, and scan plans", async () => {
     const f = await fixture();
+    const prefix = randomUUID().slice(0, -12);
+    const timestamp = new Date("2026-10-01T00:00:00.000Z");
+    const rows = [3, 1, 2].map(value => ({
+      id: `${prefix}${String(value).padStart(12, "0")}`,
+      companyId: f.company.id, profileId: f.profile.id,
+      selectorType: "tool_name" as const, effect: "include" as const,
+      toolName: `ordered_${value}`, createdAt: timestamp, updatedAt: timestamp,
+    }));
+    await db.insert(toolProfileEntries).values(rows);
     const before = await f.revision();
-    const after = await db.transaction(async tx => {
+    await db.transaction(async tx => {
       await tx.execute(sql`set local time zone 'America/New_York'`);
+      await tx.execute(sql`set local plan_cache_mode = force_custom_plan`);
       await tx.execute(sql`set local enable_indexscan = off`);
-      return f.revision(tx as unknown as typeof db);
+      await tx.execute(sql`set local enable_indexonlyscan = off`);
+      await tx.execute(sql`set local enable_bitmapscan = off`);
+      const heapBefore = await tx.select({ id: toolProfileEntries.id }).from(toolProfileEntries)
+        .where(eq(toolProfileEntries.companyId, f.company.id));
+      expect(await f.revision(tx as unknown as typeof db)).toBe(before);
+      await tx.delete(toolProfileEntries).where(inArray(toolProfileEntries.id, rows.map(row => row.id)));
+      await tx.insert(toolProfileEntries).values([...rows].reverse());
+      const heapAfter = await tx.select({ id: toolProfileEntries.id }).from(toolProfileEntries)
+        .where(eq(toolProfileEntries.companyId, f.company.id));
+      expect(heapAfter).not.toEqual(heapBefore);
+      expect(heapAfter.map(row => row.id).sort()).toEqual(heapBefore.map(row => row.id).sort());
+      expect(await f.revision(tx as unknown as typeof db)).toBe(before);
+      await tx.execute(sql`set local enable_indexscan = on`);
+      await tx.execute(sql`set local enable_indexonlyscan = on`);
+      await tx.execute(sql`set local enable_seqscan = off`);
+      expect(await f.revision(tx as unknown as typeof db)).toBe(before);
     });
-    expect(after).toBe(before);
+    expect(await f.revision()).toBe(before);
   });
 
   it("distinguishes null, empty, Unicode, and delimited authorization values", async () => {
