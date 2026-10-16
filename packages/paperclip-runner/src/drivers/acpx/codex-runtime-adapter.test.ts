@@ -78,7 +78,8 @@ describe("Codex ACPX runtime adapter", () => {
         else process.env.ACPX_CLAUDE_INCLUDE_USER_SETTINGS = priorSettingsFlag;
         api.closeAllConnections();
         await new Promise<void>(resolve => api.close(() => resolve()));
-        await rm(root, { recursive: true, force: true });
+        // Provider shutdown can flush metadata just after the ACP process exits.
+        await rm(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
       }
     }
   }, 30_000);
