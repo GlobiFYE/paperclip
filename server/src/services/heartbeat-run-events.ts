@@ -69,7 +69,7 @@ export async function appendHeartbeatRunEvent(
   input: AppendHeartbeatRunEventInput,
 ): Promise<AppendHeartbeatRunEventResult> {
   if (!input.nativeSource && !input.retryExhaustion) {
-    const allocated = db.$with("allocated_run_event").as(sql`
+    const allocated = db.$with("allocated_run_event", {}).as(sql`
       update ${heartbeatRuns}
       set next_event_seq = ${heartbeatRuns.nextEventSeq} + 1,
           updated_at = ${sql.param(new Date(), heartbeatRuns.updatedAt)}
@@ -78,7 +78,7 @@ export async function appendHeartbeatRunEvent(
         and ${heartbeatRuns.agentId} = ${input.agentId}
       returning company_id, id as run_id, agent_id, next_event_seq - 1 as seq
     `);
-    const appended = db.$with("appended_run_event").as(sql`
+    const appended = db.$with("appended_run_event", {}).as(sql`
       insert into ${heartbeatRunEvents}
         (company_id, run_id, agent_id, seq, event_type, stream, level, color, message, payload)
       select company_id, run_id, agent_id, seq,
