@@ -969,71 +969,9 @@ describe("agy-local execute run outcome", () => {
     }
   });
 
-  it("does not write MCP config or stamp an identity for remote execution targets", async () => {
-    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "agy-exec-mcp-remote-"));
-
-    try {
-      const writeMcpSpy = vi.spyOn(mcpModule, "writePaperclipAgyMcpConfig").mockResolvedValue({
-        configPath: path.join(tempHome, ".gemini", "config", "mcp_config.json"),
-        injectedServerNames: ["Paperclip connections"],
-        sweptStaleServerNames: [],
-        cleanup: async () => {},
-      });
-
-      const ctx: AdapterExecutionContext = {
-        runId: "run-mcp-3",
-        agent: {
-          id: "agent-1",
-          companyId: "company-1",
-          name: "Test Agent",
-          adapterType: "agy_local",
-          adapterConfig: {},
-        },
-        runtime: {
-          sessionId: null,
-          sessionParams: null,
-          sessionDisplayId: null,
-          taskKey: null,
-        },
-        config: {
-          env: {
-            HOME: tempHome,
-          },
-        },
-        context: {},
-        executionTransport: {
-          remoteExecution: {
-            transport: "ssh",
-            host: "remote.test",
-            port: 22,
-            username: "fixture",
-            remoteCwd: "/remote/workspace",
-          },
-        },
-        runtimeMcp: {
-          getServers: () => [
-            {
-              name: "Paperclip connections",
-              url: "https://api.paperclip.test/mcp/connections",
-              token: "tok-123",
-              connectionId: "conn-123",
-            },
-          ],
-        },
-        onLog: async () => {},
-        onMeta: async () => {},
-      };
-
-      const result = await execute(ctx);
-      expect(result.exitCode).toBe(0);
-      expect(writeMcpSpy).not.toHaveBeenCalled();
-      expect(result.sessionParams?.mcpServerIdentity).toBeUndefined();
-
-      writeMcpSpy.mockRestore();
-    } finally {
-      await fs.rm(tempHome, { recursive: true, force: true }).catch(() => undefined);
-    }
-  });
+  // Remote execution targets are covered in execute.remote.test.ts: remote
+  // runs receive the managed MCP config via the staged sync, so the local
+  // writer is not used but the session does carry mcpServerIdentity.
 });
 
 describe("discoverAgySessionArtifacts", () => {

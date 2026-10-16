@@ -143,6 +143,10 @@ async function readAgyMcpConfig(configPath: string): Promise<{ fileExisted: bool
     }
     throw err;
   }
+  if (raw.trim().length === 0) {
+    // An empty file has no contents to preserve; treat it as an empty config.
+    return { fileExisted: true, config: {} };
+  }
   let json: unknown;
   try {
     json = JSON.parse(raw);
@@ -286,4 +290,70 @@ export async function writePaperclipAgyMcpConfig(
       cleanup,
     };
   });
+}
+export interface StageAgyMcpConfigInput {
+  servers: AdapterRuntimeMcpServer[];
+  runId?: string;
+  homedir?: string;
+  env?: NodeJS.ProcessEnv;
+}
+
+/**
+ * Stages Paperclip-managed MCP configuration into a private temporary directory
+ * suitable for syncing into a sandbox execution target.
+ */
+export async function stageAgyMcpConfigForSync(
+  input: StageAgyMcpConfigInput,
+): Promise<string> {
+  const prefix = input.runId
+    ? `paperclip-agy-mcp-sync-${input.runId}-`
+    : "paperclip-agy-mcp-sync-";
+  const stagedDir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  await fs.chmod(stagedDir, 0o700).catch(() => {});
+
+  const hostConfigPath = resolveAgyMcpConfigPath(input.homedir, input.env);
+  let parsedConfig: AgyMcpConfigFile = {};
+
+  try {
+    const raw = await fs.readFile(hostConfigPath, "utf8");
+    if (raw.trim().length > 0) {
+      const json = JSON.parse(raw);
+      if (json && typeof json === "object" && !Array.isArray(json)) {
+        parsedConfig = json;
+      }
+    }
+  } catch {
+    // Missing or invalid config on host; start fresh
+  }
+
+  const existingServers: Record<string, AgyMcpServerConfig> =
+    parsedConfig.mcpServers && typeof parsedConfig.mcpServers === "object" && !Array.isArray(parsedConfig.mcpServers)
+      ? { ...parsedConfig.mcpServers }
+      : {};
+
+  const existingNames = new Set(Object.keys(existingServers));
+
+  for (const server of input.servers) {
+    const uniqueName = resolveUniqueMcpServerName(server, existingNames);
+    existingNames.add(uniqueName);
+
+    const serverConfig: AgyMcpServerConfig = {
+      url: server.url,
+      ...(server.token ? { headers: { Authorization: `Bearer ${server.token}` } } : {}),
+    };
+    existingServers[uniqueName] = serverConfig;
+  }
+
+  const updatedConfig: AgyMcpConfigFile = {
+    ...parsedConfig,
+    mcpServers: existingServers,
+  };
+
+  await fs.writeFile(
+    path.join(stagedDir, "mcp_config.json"),
+    JSON.stringify(updatedConfig, null, 2) + "\n",
+    { mode: 0o600 },
+  );
+
+  return stagedDir;
 }
