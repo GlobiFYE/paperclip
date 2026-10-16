@@ -272,7 +272,7 @@ describe("decideAgyAuthMerge", () => {
     expect(decision).toBe(20);
   });
 
-  it("returns 10 when identity matches via id_token subject despite a rotated refresh token", async () => {
+  it("returns 20 when only a forged id_token subject matches but the refresh token rotated", async () => {
     const dir = makeTmpDir();
     const source = path.join(dir, "source.json");
     const dest = path.join(dir, "dest.json");
@@ -294,7 +294,32 @@ describe("decideAgyAuthMerge", () => {
 
     const { decideAgyAuthMerge } = await import("./credentials.js");
     const decision = await decideAgyAuthMerge(source, dest);
-    expect(decision).toBe(10);
+    expect(decision).toBe(20);
+  });
+
+  it("returns 20 when payload identity fields match but the refresh token differs", async () => {
+    const dir = makeTmpDir();
+    const source = path.join(dir, "source.json");
+    const dest = path.join(dir, "dest.json");
+    const now = Date.now();
+    // Identity fields carried as plain payload data are as forgeable as
+    // decoded JWT claims: only the refresh token proves the same grant.
+    fs.writeFileSync(source, JSON.stringify({
+      access_token: "source-access",
+      refresh_token: "source-refresh",
+      account_id: "account-42",
+      expiry: new Date(now + 7200000).toISOString(),
+    }));
+    fs.writeFileSync(dest, JSON.stringify({
+      access_token: "dest-access",
+      refresh_token: "dest-refresh",
+      account_id: "account-42",
+      expiry: new Date(now + 3600000).toISOString(),
+    }));
+
+    const { decideAgyAuthMerge } = await import("./credentials.js");
+    const decision = await decideAgyAuthMerge(source, dest);
+    expect(decision).toBe(20);
   });
 
   it("returns 20 (keep destination) when source is invalid", async () => {
