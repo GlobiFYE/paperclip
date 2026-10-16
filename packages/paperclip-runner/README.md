@@ -785,3 +785,44 @@ The external provider history must still exist to resume a session after a remot
 machine is replaced. Missing history fails recovery rather than importing an
 isolated home. OpenCode and the remaining ACPX profiles require separate
 qualification before this mode can be enabled for them.
+
+## Assigned local MCP servers
+
+An execution host can assign local stdio MCP servers alongside the existing
+`PAPERCLIP_NATIVE_MCP_NAME` / `URL` / `TOKEN` HTTP gateway. Set
+`PAPERCLIP_NATIVE_MCP_STDIO` to a JSON array of bindings with these fields:
+
+```json
+[{"name":"desktop","command":"/opt/desktop/bin/cua-driver","args":["mcp"],"env":{"HOME":"/home/agent"},"sha256":"sha256:<64 lowercase hex digits>","serialResource":"/home/agent/.local/state/desktop/runtime/cua.sock"}]
+```
+
+Set `PAPERCLIP_NATIVE_MCP_PROXY` to the assigned Runner executable. These are
+execution-host inputs, excluded from configurable task environment and provider
+shell inheritance. Names use letters, digits, underscores or hyphens and cannot
+replace the internal task server or gateway. Commands are verified against their
+assigned digest before execution. The backend receives only its assigned environment.
+
+Native Codex and isolated ACPX Claude register the server for the current session.
+User or project MCP files are never rewritten. Read-only sessions omit these
+bindings. Registration grants no tool authority: Claude uses the existing ACPX
+permission policy; Codex routes each prompted tool approval through the existing
+PRP permission request, bound to the active thread and turn. Only one-time accept,
+decline or cancel decisions are accepted. Shell escalation stays disabled.
+Preconfigured Claude remains unattended and rejects approval requests. Existing
+Codex tool deny rules still apply.
+
+The relay forwards tool schemas and native MCP content. For Codex 0.160/0.162,
+image-bearing results put structured metadata in a text block instead of
+`structuredContent`, because those clients otherwise discard the image blocks.
+Claude receives the original response unchanged. There is no provider-native
+computer-tool translation.
+
+All `tools/call` requests for the same private Unix socket are serialized across
+sessions and processes, including reads. Metadata requests stay responsive.
+Cancelling a queued request prevents dispatch. An active request retains its fence
+until the backend acknowledges it; client cancellation cannot prove daemon work
+stopped. If a relay exits with an unacknowledged call, later calls fail closed until
+the host restarts that resource with a new socket. Do not remove its lock marker
+while daemon work might still be running. The socket and its parent must be private,
+canonical paths owned by the same account. Local stdio assignment requires Unix;
+other platforms retain the HTTP path.

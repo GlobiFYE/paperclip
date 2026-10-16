@@ -3453,9 +3453,25 @@ impl CodexCommandExecutor {
                 "cannot resolve a {provider_name} runtime request outside an active turn"
             )));
         }
+        if payload
+            .get("turnId")
+            .and_then(Value::as_str)
+            .is_some_and(|turn| {
+                self.event_identity
+                    .as_ref()
+                    .is_none_or(|identity| turn != identity.turn_id)
+            })
+        {
+            return Err(DurableRunnerError::invalid(
+                "Codex runtime response belongs to a stale turn",
+            ));
+        }
         let response = payload
             .get("response")
-            .ok_or_else(|| DurableRunnerError::invalid("request.resolve requires response"))?;
+            .or_else(|| payload.get("resolution"))
+            .ok_or_else(|| {
+                DurableRunnerError::invalid("request.resolve requires response or resolution")
+            })?;
         self.ensure_provider()?
             .resolve_runtime_request(request_id, response)
             .map_err(|error| {
@@ -4376,6 +4392,30 @@ impl CodexCommandExecutor {
                             },
                         );
                     }
+                }
+                CodexProviderEvent::McpPermissionRequest { request_id, params } => {
+                    let state = self
+                        .state
+                        .as_mut()
+                        .expect("Codex state remains available while polling");
+                    let event = NormalizedProviderEvent {
+                        event_type: "runtime_request.created".to_owned(),
+                        priority: EventPriority::P0,
+                        payload: json!({"request":{
+                            "schema":"paperclip.runtime_request.v2", "requestKind":"permission_approval", "type":"permission",
+                            "requestId":request_id, "status":"pending", "turnId":state.active_provider_turn_id,
+                            "prompt":params["message"],
+                            "choices":[{"key":"accept","label":"Allow once"},{"key":"decline","label":"Deny"},{"key":"cancel","label":"Cancel"}],
+                            "details":params,
+                            "origin":{"adapter":"codex-app-server","provider":"codex","method":"mcpServer/elicitation/request"}
+                        }}),
+                    };
+                    if receipt_limit_terminal_poll {
+                        state.push_receipt_limit_cleanup_event(event)?;
+                    } else {
+                        state.push_event(event)?;
+                    }
+                    self.save_state()?;
                 }
                 CodexProviderEvent::RuntimeRequest {
                     request_id,
