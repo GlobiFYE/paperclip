@@ -177,7 +177,7 @@ impl Drop for StdioMcpSession {
 }
 
 #[cfg(unix)]
-fn resource_lock(resource: &Path) -> McpResult<File> {
+fn resource_lock(resource: &Path) -> McpResult<(File, (u64, u64))> {
     let metadata = fs::symlink_metadata(resource)?;
     let parent = resource
         .parent()
@@ -214,7 +214,7 @@ fn resource_lock(resource: &Path) -> McpResult<File> {
     {
         return Err(invalid("invalid stdio MCP lock"));
     }
-    Ok(file)
+    Ok((file, (metadata.dev(), metadata.ino())))
 }
 
 enum Event {
@@ -270,9 +270,7 @@ pub fn run_proxy(path: &Path, content_images: bool) -> McpResult<()> {
     let binding: StdioMcpBinding = serde_json::from_slice(&fs::read(path)?)
         .map_err(|_| invalid("invalid stdio MCP configuration"))?;
     binding.validate()?;
-    let mut lock = resource_lock(&binding.serial_resource)?;
-    let resource_metadata = fs::symlink_metadata(&binding.serial_resource)?;
-    let resource_identity = (resource_metadata.dev(), resource_metadata.ino());
+    let (mut lock, resource_identity) = resource_lock(&binding.serial_resource)?;
     let program = verify_executable_launch_artifact(
         &QualifiedLaunchArtifact {
             path: binding.command.clone(),
@@ -514,6 +512,31 @@ pub(crate) fn tool_approval_response(resolution: &Value) -> Result<Value, LocalR
 mod approval_tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    #[cfg(unix)]
+    fn resource_lock_retains_the_socket_identity_it_locked() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::os::unix::net::UnixListener;
+        let root =
+            std::env::temp_dir().join(format!("lock-{}", &uuid::Uuid::new_v4().to_string()[..8]));
+        fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        let socket = root.join("resource.sock");
+        let original = UnixListener::bind(&socket).unwrap();
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        let before = fs::symlink_metadata(&socket).unwrap();
+        let (old_lock, old_identity) = resource_lock(&socket).unwrap();
+        fs::remove_file(&socket).unwrap();
+        let replacement = UnixListener::bind(&socket).unwrap();
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        let (new_lock, new_identity) = resource_lock(&socket).unwrap();
+        assert_eq!(old_identity, (before.dev(), before.ino()));
+        assert_ne!(old_identity, new_identity);
+        old_lock.lock().unwrap();
+        new_lock.try_lock().unwrap();
+        drop((old_lock, new_lock, original, replacement));
+        fs::remove_dir_all(root).unwrap();
+    }
     fn request() -> Value {
         json!({"serverName":"assigned", "mode":"form", "message":"Allow input?", "_meta":{"codex_approval_kind":"mcp_tool_call"},"requestedSchema":{"type":"object","properties":{}}})
     }
