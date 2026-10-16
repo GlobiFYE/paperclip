@@ -369,7 +369,7 @@ export const runnerApiReference: Record<string, { section: string; description?:
   },
   "POST /api/issues/{}/interactions/{}/accept": {
     "section": "Issues (Tasks)",
-    "description": "Accept suggested tasks or confirmation (body: `selectedClientKeys` for `suggest_tasks`; `selectedOptionIds` for `request_checkbox_confirmation`)",
+    "description": "Accept suggested tasks or confirmation (body: `selectedClientKeys` for `suggest_tasks`; `selectedOptionIds` for `request_checkbox_confirmation`; optional `bindingComment: { body }` for an ordinary board confirmation)",
     "examples": [
       {
         "body": {
@@ -383,7 +383,7 @@ export const runnerApiReference: Record<string, { section: string; description?:
   },
   "POST /api/issues/{}/interactions/{}/reject": {
     "section": "Issues (Tasks)",
-    "description": "Reject suggested tasks or confirmation",
+    "description": "Reject suggested tasks or confirmation; ordinary board confirmations may include `bindingComment: { body }`",
     "examples": [
       {
         "body": {
