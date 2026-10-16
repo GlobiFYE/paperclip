@@ -8,6 +8,7 @@ import { runAdapterExecutionTargetProcess, type AdapterExecutionTarget } from "@
 export async function prepareManagedModelImageInput(input: {
   runId: string; target: AdapterExecutionTarget | null | undefined; cwd: string;
   env: Record<string, string>; model: string; managed: boolean;
+  localEnvironment?: NodeJS.ProcessEnv;
 }): Promise<void> {
   if (!input.managed || !input.model.startsWith("paperclip/")) return;
   const baseUrl = input.env.PAPERCLIP_AI_PROVIDER_URL;
@@ -38,7 +39,7 @@ export async function prepareManagedModelImageInput(input: {
       if (result.stdout.slice(statusLine + 1) !== "200") return;
       imageInput = advertisedModelImageInput(JSON.parse(result.stdout.slice(0, statusLine)), model);
     } else {
-      imageInput = await discoverModelImageInput({ baseUrl, credential, model, environment: input.env });
+      imageInput = await discoverModelImageInput({ baseUrl, credential, model, environment: input.localEnvironment ?? input.env });
     }
     Object.assign(entry, modelImageModalities(imageInput));
     input.env.OPENCODE_CONFIG_CONTENT = JSON.stringify(config);

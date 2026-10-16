@@ -370,7 +370,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     if (!executionTargetIsRemote) {
       await prepareManagedModelImageInput({
         runId, target: executionTarget, cwd, env: preparedRuntimeConfig.env,
-        model, managed: Boolean(config.managedAiConnection),
+        model, managed: Boolean(config.managedAiConnection), localEnvironment: runtimeEnv,
       });
       Object.assign(runtimeEnv, preparedRuntimeConfig.env);
       await ensureOpenCodeModelConfiguredAndAvailable({
