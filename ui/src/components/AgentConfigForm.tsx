@@ -934,7 +934,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
     queryFn: () => agentsApi.adapterModels(selectedCompanyId!, modelAdapterType, {
       environmentId: currentDefaultEnvironmentId || null,
       provider: modelProvider,
-      acpxAgent: runnerAcpxAgent,
     }),
     enabled: Boolean(selectedCompanyId) && !isExternalBotRunner && !connectionModels,
   });
@@ -1342,59 +1341,6 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
         : adapterType === "opencode_local"
           ? eff("adapterConfig", "variant", String(config.variant ?? ""))
           : eff("adapterConfig", thinkingEffortKey, String(config[thinkingEffortKey] ?? ""));
-  const thinkingEffortOptions = useMemo(() => {
-    let opts: { id: string; label: string }[];
-    if (adapterType === "codex_local") {
-      opts = codexReasoningEffortOptions(currentModelId, "Auto").map((option) => ({
-        id: option.value,
-        label: option.label,
-      }));
-    } else if (adapterType === "cursor") {
-      opts = [...cursorModeOptions];
-    } else if (adapterType === "opencode_local") {
-      opts = [...openCodeThinkingEffortOptions];
-    } else if (adapterType === "kimi_local") {
-      opts = [...kimiThinkingEffortOptions];
-    } else if (adapterType === "pi_local") {
-      opts = [
-        { id: "", label: "Auto" },
-        ...["off", "minimal", "low", "medium", "high", "xhigh"].map((id) => ({ id, label: id })),
-      ];
-    } else if (
-      adapterType === "claude_local" ||
-      adapterType === "grok_local" ||
-      adapterType === "agy_local"
-    ) {
-      opts = [
-        { id: "", label: "Auto" },
-        ...setupEfforts(adapterType, currentModelId).map((id) => ({
-          id,
-          label: id === "xhigh" ? "X-High" : id[0].toUpperCase() + id.slice(1),
-        })),
-      ];
-    } else {
-      opts = [...claudeThinkingEffortOptions];
-    }
-
-    if (
-      currentThinkingEffort &&
-      !opts.some((option) => option.id === currentThinkingEffort)
-    ) {
-      const formatted =
-        currentThinkingEffort === "xhigh"
-          ? "X-High"
-          : currentThinkingEffort[0].toUpperCase() + currentThinkingEffort.slice(1);
-      opts = [
-        ...opts,
-        {
-          id: currentThinkingEffort,
-          label: `${formatted} (unsupported)`,
-        },
-      ];
-    }
-
-    return opts;
-  }, [adapterType, currentModelId, currentThinkingEffort]);
   const showThinkingEffort = adapterType !== "gemini_local"
     && adapterType !== "cursor_cloud"
     && (adapterType !== "paperclip_runner" || isCodexHarness);
@@ -1730,7 +1676,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                     // so the old adapter's values don't bleed through via eff()
                     const newSupportsAi = adapterSupportsAiConnections(t);
                     setOverlay((prev) => {
-                      const nextOverlay = {
+                      const nextOverlay: AgentConfigOverlay = {
                         ...prev,
                         adapterType: t,
                         runner: t === "codex_local" ? "auto" : undefined,
