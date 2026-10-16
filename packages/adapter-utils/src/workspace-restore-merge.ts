@@ -122,13 +122,19 @@ export function directorySnapshotSha256(snapshot: DirectorySnapshot): string {
     .digest("hex");
 }
 
-async function hashFile(filePath: string): Promise<string> {
+async function hashFile(filePath: string, signal?: AbortSignal | null): Promise<string> {
+  throwIfWorkspaceRestoreAborted(signal);
   return await new Promise((resolve, reject) => {
     const hash = createHash("sha256");
     const stream = createReadStream(filePath);
+    const onAbort = () => {
+      stream.destroy(workspaceRestoreCancelledError());
+    };
+    signal?.addEventListener("abort", onAbort, { once: true });
     stream.on("data", (chunk) => hash.update(chunk));
     stream.on("error", reject);
     stream.on("end", () => resolve(hash.digest("hex")));
+    stream.on("close", () => signal?.removeEventListener("abort", onAbort));
   });
 }
 
@@ -137,12 +143,15 @@ async function walkDirectory(
   exclude: readonly string[],
   relative = "",
   out: Map<string, SnapshotEntry> = new Map(),
+  signal?: AbortSignal | null,
 ): Promise<Map<string, SnapshotEntry>> {
+  throwIfWorkspaceRestoreAborted(signal);
   const current = relative ? path.join(root, relative) : root;
   const entries = await fs.readdir(current, { withFileTypes: true }).catch(() => []);
   entries.sort((left, right) => left.name.localeCompare(right.name));
 
   for (const entry of entries) {
+    throwIfWorkspaceRestoreAborted(signal);
     const nextRelative = relative ? path.posix.join(relative, entry.name) : entry.name;
     if (shouldExcludePath(nextRelative, exclude)) continue;
 
@@ -154,7 +163,7 @@ async function walkDirectory(
 
     if (stats.isDirectory()) {
       out.set(nextRelative, { kind: "dir" });
-      await walkDirectory(root, exclude, nextRelative, out);
+      await walkDirectory(root, exclude, nextRelative, out, signal);
       continue;
     }
 
@@ -169,7 +178,7 @@ async function walkDirectory(
     out.set(nextRelative, {
       kind: "file",
       mode: stats.mode,
-      hash: await hashFile(fullPath),
+      hash: await hashFile(fullPath, signal),
     });
   }
 
@@ -470,12 +479,12 @@ async function copySnapshotEntry(sourceDir: string, targetDir: string, relative:
 
 export async function captureDirectorySnapshot(
   rootDir: string,
-  options: { exclude?: string[] } = {},
+  options: { exclude?: string[]; signal?: AbortSignal | null } = {},
 ): Promise<DirectorySnapshot> {
   const exclude = [...new Set(options.exclude ?? [])];
   return {
     exclude,
-    entries: await walkDirectory(rootDir, exclude),
+    entries: await walkDirectory(rootDir, exclude, "", new Map(), options.signal),
   };
 }
 
@@ -494,17 +503,25 @@ export async function mergeDirectoryWithBaseline(input: {
   signal?: AbortSignal | null;
 }): Promise<void> {
   throwIfWorkspaceRestoreAborted(input.signal);
-  const source = await captureDirectorySnapshot(input.sourceDir, { exclude: input.baseline.exclude });
+  const source = await captureDirectorySnapshot(input.sourceDir, {
+    exclude: input.baseline.exclude,
+    signal: input.signal,
+  });
   throwIfWorkspaceRestoreAborted(input.signal);
   await withDirectoryMergeLock(input.targetDir, async (canonicalTargetDir) => {
+    throwIfWorkspaceRestoreAborted(input.signal);
     await input.beforeApply?.();
     throwIfWorkspaceRestoreAborted(input.signal);
-    const current = await captureDirectorySnapshot(canonicalTargetDir, { exclude: input.baseline.exclude });
+    const current = await captureDirectorySnapshot(canonicalTargetDir, {
+      exclude: input.baseline.exclude,
+      signal: input.signal,
+    });
     const deletedLeafEntries = [...input.baseline.entries.entries()]
       .filter(([relative, entry]) => entry.kind !== "dir" && !source.entries.has(relative))
       .sort(([left], [right]) => right.length - left.length);
 
     for (const [relative, baselineEntry] of deletedLeafEntries) {
+      throwIfWorkspaceRestoreAborted(input.signal);
       if (!entriesMatch(current.entries.get(relative), baselineEntry)) continue;
       await fs.rm(path.join(canonicalTargetDir, relative), { recursive: true, force: true }).catch(() => undefined);
     }
@@ -514,6 +531,7 @@ export async function mergeDirectoryWithBaseline(input: {
       .sort(([left], [right]) => right.length - left.length);
 
     for (const [relative] of deletedDirs) {
+      throwIfWorkspaceRestoreAborted(input.signal);
       await fs.rmdir(path.join(canonicalTargetDir, relative)).catch(() => undefined);
     }
 
@@ -526,6 +544,7 @@ export async function mergeDirectoryWithBaseline(input: {
       await copySnapshotEntry(input.sourceDir, canonicalTargetDir, relative, entry);
     }
 
+    throwIfWorkspaceRestoreAborted(input.signal);
     await input.afterApply?.();
   });
 }
