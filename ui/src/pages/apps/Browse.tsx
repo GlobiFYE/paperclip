@@ -46,6 +46,7 @@ import { useMemoryConnectorsEnabled } from "@/hooks/useMemoryConnectorsEnabled";
 import { appCopyFor } from "@/lib/app-gallery-copy";
 import { useCompany } from "@/context/CompanyContext";
 import { useBreadcrumbs } from "@/context/BreadcrumbContext";
+import { useTranslation } from "@/i18n";
 import { useToast } from "@/context/ToastContext";
 import { queryKeys } from "@/lib/queryKeys";
 import { aiConnectionPoolsApi } from "@/api/ai-connection-pools";
@@ -335,6 +336,7 @@ function accountActionHref(
  * account; unconnected providers retain the same catalog setup flows.
  */
 export function Browse({ renderAccountDetails = (connection) => connection.connectionPurpose === "ai" && !aiConnectionRouterPluginKey(connection) ? <ManagedAiConnectionRow connection={connection} /> : null }: { renderAccountDetails?: (connection: ToolConnection) => ReactNode } = {}) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const preselectedChatAgentId =
     typeof window === "undefined"
@@ -863,7 +865,7 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
   if (!selectedCompanyId) {
     return (
       <div className="p-6 text-sm text-muted-foreground">
-        Select an organization to manage connectors.
+        {t("apps.browse.selectOrg",{defaultValue:"Select an organization to manage connectors."})}
       </div>
     );
   }
@@ -889,8 +891,8 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
             type="search"
             value={query}
             onChange={(event) => changeQuery(event.target.value)}
-            placeholder="Search connectors…"
-            aria-label="Search connectors"
+            placeholder={t("apps.browse.searchPlaceholder",{defaultValue:"Search connectors…"})}
+            aria-label={t("apps.browse.searchAriaLabel",{defaultValue:"Search connectors"})}
             className="pl-9"
           />
         </div>
@@ -923,21 +925,21 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
         </div>
       ) : null}
 
-      {refreshAggregator.isError ? <p role="alert" className="text-sm text-destructive">Couldn’t refresh the gateway. Last known accounts are shown.</p> : null}
+      {refreshAggregator.isError ? <p role="alert" className="text-sm text-destructive">{t("apps.browse.refreshFailed",{defaultValue:"Couldn’t refresh the gateway. Last known accounts are shown."})}</p> : null}
 
       {loading ? (
-        <div className="space-y-3" aria-label="Loading connectors">
+        <div className="space-y-3" aria-label={t("apps.browse.loadingConnectors",{defaultValue:"Loading connectors"})}>
           {Array.from({ length: 6 }).map((_, index) => (
             <Skeleton key={index} className="h-24 w-full rounded-xl" />
           ))}
         </div>
       ) : nothingMatches ? (
         <div className="flex flex-col items-start gap-3 rounded-xl border border-dashed border-border bg-card px-4 py-6 text-sm text-muted-foreground">
-          <p className="flex items-center gap-2"><Link2 className="h-4 w-4" />No connectors match “{query.trim()}”.</p>
-          <Button variant="outline" size="sm" onClick={() => changeQuery("")}>Clear search</Button>
+          <p className="flex items-center gap-2"><Link2 className="h-4 w-4" />{t("apps.browse.noMatch",{defaultValue:"No connectors match \"{{query}}\".",query: query.trim()})}</p>
+          <Button variant="outline" size="sm" onClick={() => changeQuery("")}>{t("apps.browse.clearSearch",{defaultValue:"Clear search"})}</Button>
         </div>
       ) : (
-        <div className="space-y-3" role="list" aria-label="Connector list">
+        <div className="space-y-3" role="list" aria-label={t("apps.browse.connectorList",{defaultValue:"Connector list"})}>
           {showAssistantConnection && <AssistantConnectionCard onNavigate={navigate} />}
           {paginatedRows.map((row) => (
             <ConnectorCard
@@ -969,12 +971,12 @@ export function Browse({ renderAccountDetails = (connection) => connection.conne
 
       {accountLoadErrors.length ? <p role="alert" className="text-sm text-destructive">Couldn’t load {Array.from(new Set(accountLoadErrors)).join(" or ")} accounts. Use Refresh in the connection’s menu to try again.</p> : null}
 
-      {!loading && catalogRows.length > 0 ? <nav aria-label="Connector catalog pages" className="flex flex-wrap items-center justify-between gap-3 text-sm">
+      {!loading && catalogRows.length > 0 ? <nav aria-label={t("apps.browse.catalogPages",{defaultValue:"Connector catalog pages"})} className="flex flex-wrap items-center justify-between gap-3 text-sm">
         <p className="text-muted-foreground" role="status">{pageStart + 1}–{Math.min(pageStart + CATALOG_PAGE_SIZE, catalogRows.length)} of {catalogRows.length.toLocaleString()} connectors</p>
         <div className="flex items-center gap-2">
-          <Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => { setPage(currentPage - 1); catalogTop.current?.scrollIntoView?.({ block: "start" }); }}>Previous</Button>
+          <Button variant="outline" size="sm" disabled={currentPage === 1} onClick={() => { setPage(currentPage - 1); catalogTop.current?.scrollIntoView?.({ block: "start" }); }}>{t("apps.browse.previous",{defaultValue:"Previous"})}</Button>
           <span className="text-xs text-muted-foreground">Page {currentPage} of {pageCount}</span>
-          <Button variant="outline" size="sm" disabled={currentPage === pageCount} onClick={() => { setPage(currentPage + 1); catalogTop.current?.scrollIntoView?.({ block: "start" }); }}>Next</Button>
+          <Button variant="outline" size="sm" disabled={currentPage === pageCount} onClick={() => { setPage(currentPage + 1); catalogTop.current?.scrollIntoView?.({ block: "start" }); }}>{t("apps.browse.next",{defaultValue:"Next"})}</Button>
         </div>
       </nav> : null}
 
@@ -1466,6 +1468,7 @@ function CustomConnectorCard({
 }: {
   onNavigate: (href: string) => void;
 }) {
+  const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
 
   return (
@@ -1494,7 +1497,7 @@ function CustomConnectorCard({
           aria-controls="custom-connector-options"
           onClick={() => setExpanded((open) => !open)}
         >
-          {expanded ? "Close" : "Connect"}
+          {expanded ? t("apps.browse.customClose",{defaultValue:"Close"}) : t("apps.browse.customConnect",{defaultValue:"Connect"})}
         </Button>
       </div>
 
@@ -1505,14 +1508,14 @@ function CustomConnectorCard({
         >
           <CustomConnectorOption
             icon={ServerCog}
-            title="Connect your own MCP server"
-            description="Enter the URL for a custom or self-hosted MCP server."
+            title={t("apps.browse.customMcpServer",{defaultValue:"Connect your own MCP server"})}
+            description={t("apps.browse.customMcpServerDesc",{defaultValue:"Enter the URL for a custom or self-hosted MCP server."})}
             onClick={() => onNavigate("/apps/byo")}
           />
           <CustomConnectorOption
             icon={ClipboardPaste}
-            title="Paste a config"
-            description="Paste an existing setup snippet and connect it."
+            title={t("apps.browse.customPasteConfig",{defaultValue:"Paste a config"})}
+            description={t("apps.browse.customPasteConfigDesc",{defaultValue:"Paste an existing setup snippet and connect it."})}
             onClick={() => onNavigate("/apps/advanced/paste-config")}
           />
         </div>

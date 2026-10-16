@@ -35,6 +35,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useTranslation } from "@/i18n";
 import { PluginSlotMount, usePluginSlots } from "@/plugins/slots";
 import {
   getProjectSortModeStorageKey,
@@ -53,6 +54,14 @@ const PROJECT_SORT_CHOICES: SidebarSectionRadioChoice[] = [
   { value: "alphabetical", label: "Alphabetical" },
   { value: "recent", label: "Recent" },
 ];
+function useTranslatedProjectSortChoices(): SidebarSectionRadioChoice[] {
+  const { t } = useTranslation();
+  return [
+    { value: "top", label: t("sidebarProjects.top", { defaultValue: "Top" }) },
+    { value: "alphabetical", label: t("sidebarProjects.alphabetical", { defaultValue: "Alphabetical" }) },
+    { value: "recent", label: t("sidebarProjects.recent", { defaultValue: "Recent" }) },
+  ];
+}
 const REORDER_POINTER_MEDIA = "(hover: hover) and (pointer: fine)";
 
 type ProjectItemProps = {
@@ -123,6 +132,7 @@ function ProjectItem({
   leaving = false,
   isDragging = false,
 }: ProjectItemProps) {
+  const { t } = useTranslation();
   const routeRef = projectRouteRef(project);
   const { summary: externalObjectsSummary } = useProjectExternalObjectSummary(project.id);
 
@@ -197,7 +207,7 @@ function ProjectItem({
               disabled={leaving}
             >
               {leaving ? <Loader2 className="size-4 motion-safe:animate-spin" /> : <LogOut className="size-4" />}
-              <span>{leaving ? "Leaving..." : "Leave project"}</span>
+              <span>{leaving ? t("sidebarProjects.leaving", { defaultValue: "Leaving..." }) : t("sidebarProjects.leaveProject", { defaultValue: "Leave project" })}</span>
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -254,6 +264,7 @@ function SortableProjectItem(props: ProjectItemProps) {
 }
 
 export function SidebarProjects() {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(true);
   const { selectedCompany, selectedCompanyId } = useCompany();
   const { openNewProject } = useDialogActions();
@@ -391,6 +402,7 @@ export function SidebarProjects() {
       membershipMutation.variables.resourceId === project.id,
     [membershipMutation.isPending, membershipMutation.variables],
   );
+  const translatedSortChoices = useTranslatedProjectSortChoices();
 
   const renderProject = (project: Project) => (
     <ProjectItem
@@ -410,21 +422,21 @@ export function SidebarProjects() {
 
   return (
     <SidebarSection
-      label="Projects"
+      label={t("sidebarProjects.projects", { defaultValue: "Projects" })}
       collapsible={{ open, onOpenChange: setOpen }}
       headerAction={{
-        ariaLabel: "New project",
+        ariaLabel: t("sidebarProjects.newProject", { defaultValue: "New project" }),
         icon: Plus,
         onClick: openNewProject,
       }}
       menu={{
         ariaLabel: "Projects section actions",
         actions: [
-          { type: "item", label: "Browse projects", icon: FolderOpen, href: "/projects" },
+          { type: "item", label: t("sidebarProjects.browseProjects", { defaultValue: "Browse projects" }), icon: FolderOpen, href: "/projects" },
           { type: "separator" },
         ],
-        radioLabel: "Project sort",
-        radioChoices: PROJECT_SORT_CHOICES,
+        radioLabel: t("sidebarProjects.projectSort", { defaultValue: "Project sort" }),
+        radioChoices: translatedSortChoices,
         radioValue: sortMode,
         onRadioValueChange: persistSortMode,
       }}

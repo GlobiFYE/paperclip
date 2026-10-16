@@ -17,12 +17,14 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import { SkillImportProgress, type FoundSkill } from './skills/SkillImportProgress';
 import { SkillPackagePreview } from './skills/SkillPackagePreview';
 import { SkillSourceTree, type SkillTreeCandidate } from './skills/SkillSourceTree';
+import { useTranslation } from '@/i18n';
 import { timeAgo } from '@/lib/timeAgo';
 import { skillRoute } from '@/lib/company-skill-routes';
 import { consumeSkillSourceReturn, rememberSkillSourceReturn } from '@/lib/skill-source-connect-return';
 
 const sourceKey = (companyId: string) => queryKeys.skillSources.all(companyId);
 export function SkillSources() {
+  const { t } = useTranslation();
   const { selectedCompanyId, selectedCompany } = useCompany();
   const { sourceId } = useParams<{ sourceId: string }>();
   const navigate = useNavigate();
@@ -40,17 +42,17 @@ export function SkillSources() {
   }, onError: (error, id) => { setResults(prev => ({ ...prev, [id]: error.message })); void invalidate(); } });
   const disconnect = useMutation({ mutationFn: (id: string) => skillSourcesApi.disconnect(companyId, id), onSuccess: invalidate });
   const activeSource = query.data?.find(source => source.id === sourceId);
-  if (!companyId) return <p className="p-6 text-sm text-muted-foreground">Select a company to manage skill sources.</p>;
+  if (!companyId) return <p className="p-6 text-sm text-muted-foreground">{t("skillSources.selectCompany", { defaultValue: "Select a company to manage skill sources." })}</p>;
   return <div className="mx-auto flex w-full max-w-5xl flex-col gap-6 p-4 md:p-6">
     <header className="flex flex-wrap items-start justify-between gap-4">
-      <div><h1 className="text-xl font-semibold">Skill sources</h1><p className="mt-1 text-sm text-muted-foreground">Import skills from GitHub and refresh them when you’re ready.</p></div>
-      <Button onClick={() => navigate('/skills/sources/new')}><Plus className="size-4" />Import from GitHub</Button>
+      <div><h1 className="text-xl font-semibold">{t("skillSources.title", { defaultValue: "Skill sources" })}</h1><p className="mt-1 text-sm text-muted-foreground">{t("skillSources.subtitle", { defaultValue: "Import skills from GitHub and refresh them when you\u2019re ready." })}</p></div>
+      <Button onClick={() => navigate('/skills/sources/new')}><Plus className="size-4" />{t("skillSources.importFromGitHub", { defaultValue: "Import from GitHub" })}</Button>
     </header>
-    <Link to="/skills" className="text-sm text-muted-foreground hover:text-foreground">Installed skills</Link>
-    {query.isPending && <p role="status" className="text-sm text-muted-foreground">Loading sources…</p>}
-    {query.error && <p role="alert" className="text-sm text-destructive">{query.error.message} <Button variant="ghost" size="sm" onClick={() => void query.refetch()}>Try again</Button></p>}
+    <Link to="/skills" className="text-sm text-muted-foreground hover:text-foreground">{t("skillSources.installedSkills", { defaultValue: "Installed skills" })}</Link>
+    {query.isPending && <p role="status" className="text-sm text-muted-foreground">{t("skillSources.loadingSources", { defaultValue: "Loading sources\u2026" })}</p>}
+    {query.error && <p role="alert" className="text-sm text-destructive">{query.error.message} <Button variant="ghost" size="sm" onClick={() => void query.refetch()}>{t("skillSources.tryAgain", { defaultValue: "Try again" })}</Button></p>}
     {disconnect.error && <p role="alert" className="text-sm text-destructive">{disconnect.error.message}</p>}
-    {query.data?.length === 0 && <div className="flex flex-col items-start gap-3 py-8"><p className="text-sm text-muted-foreground">No repositories added yet. Import your skills to make them available in {selectedCompany?.name ?? 'this company'}.</p><Button variant="outline" onClick={() => navigate('/skills/sources/new')}>Import from GitHub</Button></div>}
+    {query.data?.length === 0 && <div className="flex flex-col items-start gap-3 py-8"><p className="text-sm text-muted-foreground">{t("skillSources.noRepos", { defaultValue: "No repositories added yet. Import your skills to make them available in {{company}}.", company: selectedCompany?.name ?? 'this company' })}</p><Button variant="outline" onClick={() => navigate('/skills/sources/new')}>{t("skillSources.importFromGitHub", { defaultValue: "Import from GitHub" })}</Button></div>}
     <div className="divide-y divide-border">
       {query.data?.map(source => {
         const installed = source.entries.filter(entry => entry.skillId);
@@ -59,22 +61,22 @@ export function SkillSources() {
           <div className="flex items-center gap-3">
             <div className="flex min-w-0 flex-1 items-center gap-3"><GithubIcon className="size-5 shrink-0 text-muted-foreground" /><div className="min-w-0">
               <a href={source.repositoryUrl} target="_blank" rel="noreferrer" title={source.fullName} className="block truncate rounded-sm text-sm font-medium hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">{source.fullName}</a>
-              {!source.enabled && <p className="text-xs text-muted-foreground">Disconnected</p>}
-              {refresh.isPending && refresh.variables === source.id && <p role="status" className="text-xs text-muted-foreground">Refreshing…</p>}
+              {!source.enabled && <p className="text-xs text-muted-foreground">{t("skillSources.disconnected", { defaultValue: "Disconnected" })}</p>}
+              {refresh.isPending && refresh.variables === source.id && <p role="status" className="text-xs text-muted-foreground">{t("skillSources.refreshing", { defaultValue: "Refreshing…" })}</p>}
               {newCount > 0 && <Link to={`/skills/sources/${source.id}`} className="text-xs underline">{newCount} new {newCount === 1 ? 'skill' : 'skills'} available</Link>}
             </div></div>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button size="icon-sm" variant="ghost" className="shrink-0" aria-label={`More actions for ${source.fullName}`}><MoreVertical className="size-4" /></Button>
+                <Button size="icon-sm" variant="ghost" className="shrink-0" aria-label={t("skillSources.moreActionsFor", { defaultValue: "More actions for {{name}}", name: source.fullName })}><MoreVertical className="size-4" /></Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
-                <DropdownMenuItem disabled={!source.enabled || refresh.isPending} onSelect={() => refresh.mutate(source.id)}>{refresh.isPending && refresh.variables === source.id ? 'Refreshing…' : 'Refresh'}</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => navigate(`/skills/sources/${source.id}`)}>Select skills</DropdownMenuItem>
-                <DropdownMenuItem variant="destructive" disabled={!source.enabled || disconnect.isPending} onSelect={() => disconnect.mutate(source.id)}>Disconnect source</DropdownMenuItem>
+                <DropdownMenuItem disabled={!source.enabled || refresh.isPending} onSelect={() => refresh.mutate(source.id)}>{refresh.isPending && refresh.variables === source.id ? t("skillSources.refreshing", { defaultValue: "Refreshing…" }) : t("skillSources.refresh", { defaultValue: "Refresh" })}</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => navigate(`/skills/sources/${source.id}`)}>{t("skillSources.selectSkills", { defaultValue: "Select skills" })}</DropdownMenuItem>
+                <DropdownMenuItem variant="destructive" disabled={!source.enabled || disconnect.isPending} onSelect={() => disconnect.mutate(source.id)}>{t("skillSources.disconnectSource", { defaultValue: "Disconnect source" })}</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          {installed.length > 0 && <ul className="ml-8 min-w-0" aria-label={`Installed skills from ${source.fullName}`}>
+          {installed.length > 0 && <ul className="ml-8 min-w-0" aria-label={t("skillSources.installedSkillsFrom", { defaultValue: "Installed skills from {{name}}", name: source.fullName })}>
             {installed.map(entry => <li key={entry.id}>
               <Link to={skillRoute(entry.skillId!)} title={entry.path} className="group flex min-w-0 items-center gap-2 rounded-sm py-1 text-sm hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
                 <FileText className="size-3.5 shrink-0 text-muted-foreground" />
@@ -85,15 +87,15 @@ export function SkillSources() {
           </ul>}
           {results[source.id] && <p role="status" className="text-xs text-muted-foreground">{results[source.id]}</p>}
           {source.lastError && source.lastAttemptAt && <p className="text-xs text-muted-foreground">Last attempt {timeAgo(source.lastAttemptAt)}</p>}
-          {source.lastError && <p role="alert" className="text-sm text-destructive">{source.lastError} <Link to={`/skills/sources/${source.id}`} className="underline">Review source</Link></p>}
-          {source.connectionId && <Link to={`/apps/${source.connectionId}/permissions`} className="text-xs text-muted-foreground hover:text-foreground">Manage GitHub connection</Link>}
+          {source.lastError && <p role="alert" className="text-sm text-destructive">{source.lastError} <Link to={`/skills/sources/${source.id}`} className="underline">{t("skillSources.reviewSource", { defaultValue: "Review source" })}</Link></p>}
+          {source.connectionId && <Link to={`/apps/${source.connectionId}/permissions`} className="text-xs text-muted-foreground hover:text-foreground">{t("skillSources.manageConnection", { defaultValue: "Manage GitHub connection" })}</Link>}
         </section>;
       })}
     </div>
     {sourceId && (sourceId === 'new' || activeSource) && <SourceDialog key={`${companyId}:${sourceId}`} companyId={companyId} source={activeSource} onClose={() => navigate('/skills/sources')} onSaved={async result => {
       setResults(prev => ({ ...prev, [result.source.id]: result.warnings.join(' · ') })); await invalidate(); navigate('/skills/sources');
     }} />}
-    {sourceId && sourceId !== 'new' && query.isSuccess && !activeSource && <p role="alert" className="text-sm text-destructive">Source not found.</p>}
+    {sourceId && sourceId !== 'new' && query.isSuccess && !activeSource && <p role="alert" className="text-sm text-destructive">{t("skillSources.sourceNotFound", { defaultValue: "Source not found." })}</p>}
   </div>;
 }
 

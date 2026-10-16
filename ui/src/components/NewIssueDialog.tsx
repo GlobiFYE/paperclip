@@ -45,6 +45,7 @@ import { useSidebar } from "../context/SidebarContext";
 import { InlineBanner } from "./InlineBanner";
 import { InlineEntitySelector, type InlineEntityOption } from "./InlineEntitySelector";
 import { getTrustPreset } from "../lib/trust-policy-ui";
+import { useTranslation } from "@/i18n";
 
 const DRAFT_KEY = "paperclip:issue-draft";
 const DEBOUNCE_MS = 800;
@@ -277,6 +278,7 @@ function isWorkModeEscapeShortcut(e: Pick<KeyboardEvent, "key" | "metaKey">) {
 }
 
 export function NewIssueDialog() {
+  const { t } = useTranslation();
   const { visible: workspaceIsolationControlsVisible } = useWorkspaceIsolationControls();
   const { newIssueOpen, newIssueDefaults, closeNewIssue } = useDialog();
   const visualViewportLayout = useVisualViewportLayout(newIssueOpen);
@@ -1136,7 +1138,7 @@ export function NewIssueDialog() {
           }
         }}
       >
-        <DialogTitle className="sr-only">{isSubIssueMode ? "New sub-task" : "New task"}</DialogTitle>
+        <DialogTitle className="sr-only">{isSubIssueMode ? t("dialogs.newIssue.subTaskTitle",{defaultValue:"New sub-task"}) : t("dialogs.newIssue.title",{defaultValue:"New task"})}</DialogTitle>
         <div
           ref={dialogBodyRef}
           className={cn("min-h-0 overflow-y-auto overscroll-contain", isFileDragOver && "bg-accent/20")}
@@ -1150,7 +1152,7 @@ export function NewIssueDialog() {
               workMode={workMode}
               onWorkModeChange={setWorkMode}
               disabled={createIssue.isPending || !effectiveCompanyId}
-              placeholder="Describe a task…"
+              placeholder={t("dialogs.newIssue.placeholder",{defaultValue:"Describe a task…"})}
               mobile={isMobile}
               mentions={mentionOptions}
               onImageUpload={async (file) => {

@@ -1,3 +1,4 @@
+import { useTranslation } from "@/i18n";
 import { interactionReadinessRefetchInterval } from "@/lib/issue-thread-interactions";
 import { SkillBinaryFile } from "../components/SkillBinaryFile";
 import { SkillSourceProvenance } from "../components/SkillSourceProvenance";
@@ -273,6 +274,7 @@ function useIsMobile() {
 // ---------------------------------------------------------------------------
 
 export function SkillStudio() {
+  const { t } = useTranslation();
   const { skillId = "" } = useParams<{ skillId: string }>();
   const location = useLocation();
   const [searchParams] = useSearchParams();
@@ -333,7 +335,7 @@ export function SkillStudio() {
   }, [skill?.id]);
 
   if (!companyId) {
-    return <StudioMessage message="Select an organization to open Skill Studio." />;
+    return <StudioMessage message={t("skillStudio.selectOrg", { defaultValue: "Select an organization to open Skill Studio." })} />;
   }
   if (isCreateMode) {
     return (
@@ -362,10 +364,10 @@ export function SkillStudio() {
     );
   }
   if (detailQuery.isLoading) {
-    return <StudioMessage message="Loading skill…" />;
+    return <StudioMessage message={t("skillStudio.loadingSkill", { defaultValue: "Loading skill\u2026" })} />;
   }
   if (detailQuery.isError || !detailQuery.data) {
-    return <StudioMessage message="Skill not found." />;
+    return <StudioMessage message={t("skillStudio.skillNotFound", { defaultValue: "Skill not found." })} />;
   }
 
   return (

@@ -24,6 +24,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { ArrowUpDown, Check, Hexagon, Plus } from "lucide-react";
 import { Lock } from "lucide-react";
+import { useTranslation } from "@/i18n";
 import { Card } from "@/components/ui/card";
 
 type ProjectSortField = "name" | "updated" | "created" | "targetDate";
@@ -78,6 +79,7 @@ function sortProjects(projects: Project[], sortField: ProjectSortField, sortDir:
 }
 
 export function Projects() {
+  const { t } = useTranslation();
   const { selectedCompanyId } = useCompany();
   const { openNewProject } = useDialogActions();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -85,7 +87,7 @@ export function Projects() {
   const [sortDir, setSortDir] = useState<ProjectSortDir>("asc");
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Projects" }]);
+    setBreadcrumbs([{ label: t("projectsPage.breadcrumb",{defaultValue:"Projects"}) }]);
   }, [setBreadcrumbs]);
 
   const { data: allProjects, isLoading, error } = useQuery({
@@ -120,7 +122,7 @@ export function Projects() {
   const sortLabel = PROJECT_SORT_OPTIONS.find((option) => option.field === sortField)?.label ?? "Name";
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={Hexagon} message="Select an organization to view projects." />;
+    return <EmptyState icon={Hexagon} message={t("projectsPage.selectOrg",{defaultValue:"Select an organization to view projects."})} />;
   }
 
   if (isLoading) {
@@ -132,9 +134,9 @@ export function Projects() {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <Popover>
           <PopoverTrigger asChild>
-            <Button variant="ghost" size="sm" className="w-fit text-xs" title="Sort">
+            <Button variant="ghost" size="sm" className="w-fit text-xs" title={t("projectsPage.sort",{defaultValue:"Sort"})}>
               <ArrowUpDown className="h-3.5 w-3.5 sm:h-3 sm:w-3 sm:mr-1" />
-              <span>Sort: {sortLabel}</span>
+              <span>{t("projectsPage.sortLabel",{defaultValue:"Sort: {{label}}",label:sortLabel})}</span>
             </Button>
           </PopoverTrigger>
           <PopoverContent align="start" className="w-44 p-0">
@@ -157,11 +159,11 @@ export function Projects() {
                     setSortDir(option.field === "name" || option.field === "targetDate" ? "asc" : "desc");
                   }}
                 >
-                  <span>{option.label}</span>
+                  <span>{t(`projectsPage.sortOptions.${option.field}`,{defaultValue:option.label})}</span>
                   {sortField === option.field ? (
                     <span className="flex items-center gap-1 text-xs text-muted-foreground">
                       <Check className="h-3 w-3" />
-                      {sortDir === "asc" ? "Asc" : "Desc"}
+                      {sortDir === "asc" ? t("projectsPage.asc",{defaultValue:"Asc"}) : t("projectsPage.desc",{defaultValue:"Desc"})}
                     </span>
                   ) : null}
                 </button>
@@ -171,7 +173,7 @@ export function Projects() {
         </Popover>
         <Button size="sm" variant="outline" onClick={openNewProject}>
           <Plus className="h-4 w-4 mr-1" />
-          Add Project
+          {t("projectsPage.addProject",{defaultValue:"Add Project"})}
         </Button>
       </div>
 
@@ -227,7 +229,7 @@ export function Projects() {
                               className="hidden text-xs text-muted-foreground tabular-nums sm:inline"
                               title={`${formatNumber(project.taskCount ?? 0)} task${(project.taskCount ?? 0) === 1 ? "" : "s"}`}
                             >
-                              {formatNumber(project.taskCount ?? 0)} task{(project.taskCount ?? 0) === 1 ? "" : "s"}
+                              {(project.taskCount ?? 0) === 1 ? t("projectsPage.taskCount_one",{defaultValue:"{{count}} task",count:project.taskCount ?? 0}) : t("projectsPage.taskCount_other",{defaultValue:"{{count}} tasks",count:project.taskCount ?? 0})}
                             </span>
                             {project.budget && (
                               <span className="hidden text-xs text-muted-foreground tabular-nums sm:inline">

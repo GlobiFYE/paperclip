@@ -36,6 +36,7 @@ import {
   Search,
 } from "lucide-react";
 import { Identity } from "./Identity";
+import { useTranslation } from "@/i18n";
 import { agentUrl, projectUrl } from "../lib/utils";
 import {
   SEARCH_OPERATOR_QUICK_FILTERS,
@@ -90,6 +91,7 @@ function scoreProjectMatch(name: string, description: string, q: string): number
 }
 
 export function CommandPalette() {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const navigate = useNavigate();
@@ -225,7 +227,7 @@ export function CommandPalette() {
         if (v && isMobile) setSidebarOpen(false);
       }}>
       <CommandInput
-        placeholder="Search tasks, agents, projects..."
+        placeholder={t("commandPalette.placeholder", { defaultValue: "Search tasks, agents, projects..." })}
         value={query}
         onValueChange={setQuery}
         onKeyDown={(event) => {
@@ -242,19 +244,13 @@ export function CommandPalette() {
       />
       <CommandList>
         <CommandEmpty>
-          {showSearchAll ? (
-            <span>
-              No quick task matches. Press{" "}
-              <kbd className="rounded border border-border bg-muted px-1 py-0.5 text-(length:--text-nano)">↵</kbd>{" "}
-              to <span className="font-medium">search all</span> or keep typing to refine.
-            </span>
-          ) : (
-            "No results found."
-          )}
+          {showSearchAll
+            ? t("commandPalette.noQuickMatches", { defaultValue: "No quick task matches. Press Enter to search all or keep typing to refine." })
+            : t("commandPalette.noResults", { defaultValue: "No results found." })}
         </CommandEmpty>
 
         {showSearchAll ? (
-          <CommandGroup heading="Search">
+          <CommandGroup heading={t("commandPalette.search", { defaultValue: "Search" })}>
             <CommandItem
               value={`${SEARCH_ALL_VALUE} ${searchQuery}`}
               onSelect={goFullSearch}
@@ -263,10 +259,10 @@ export function CommandPalette() {
             >
               <Search className="mr-2 h-4 w-4" />
               <span className="flex-1 truncate">
-                Search all for <span className="font-semibold">&ldquo;{searchQuery}&rdquo;</span>
+                {t("commandPalette.searchAllFor", { defaultValue: 'Search all for "{{query}}"', query: searchQuery })}
               </span>
               <span className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground">
-                <span>open full search</span>
+                <span>{t("commandPalette.openFullSearch", { defaultValue: "open full search" })}</span>
                 <kbd className="rounded border border-border bg-background px-1 py-0.5 text-(length:--text-nano)">↵</kbd>
               </span>
             </CommandItem>
@@ -275,7 +271,7 @@ export function CommandPalette() {
 
         {showSearchAll ? <CommandSeparator /> : null}
 
-        <CommandGroup heading="Quick filters">
+        <CommandGroup heading={t("commandPalette.quickFilters", { defaultValue: "Quick filters" })}>
           {SEARCH_OPERATOR_QUICK_FILTERS.map((chip) => (
             <CommandItem
               key={chip}
@@ -293,7 +289,7 @@ export function CommandPalette() {
 
         {showPromotedProjects && (
           <>
-            <CommandGroup heading="Projects">
+            <CommandGroup heading={t("commandPalette.projects", { defaultValue: "Projects" })}>
               {matchedProjects.map((project) => (
                 <CommandItem
                   key={project.id}
@@ -315,7 +311,7 @@ export function CommandPalette() {
           </>
         )}
 
-        <CommandGroup heading="Actions">
+        <CommandGroup heading={t("commandPalette.actions", { defaultValue: "Actions" })}>
           <CommandItem
             onSelect={() => {
               setOpen(false);
@@ -355,14 +351,14 @@ export function CommandPalette() {
 
         <CommandSeparator />
 
-        <CommandGroup heading="Pages">
+        <CommandGroup heading={t("commandPalette.pages", { defaultValue: "Pages" })}>
           <CommandItem onSelect={() => go("/dashboard")}>
             <LayoutDashboard className="mr-2 h-4 w-4" />
             Dashboard
           </CommandItem>
           <CommandItem onSelect={() => go(combinedInboxTasksEnabled ? "/issues?view=mine" : "/inbox")}>
             <Inbox className="mr-2 h-4 w-4" />
-            {combinedInboxTasksEnabled ? "My work" : "Inbox"}
+            {combinedInboxTasksEnabled ? t("commandPalette.myWork", { defaultValue: "My work" }) : t("commandPalette.inbox", { defaultValue: "Inbox" })}
           </CommandItem>
           <CommandItem onSelect={() => go("/issues")}>
             <CircleDot className="mr-2 h-4 w-4" />
@@ -393,7 +389,7 @@ export function CommandPalette() {
         {visibleIssues.length > 0 && (
           <>
             <CommandSeparator />
-            <CommandGroup heading="Tasks">
+            <CommandGroup heading={t("commandPalette.tasks", { defaultValue: "Tasks" })}>
               {visibleIssues.slice(0, taskLimit).map((issue) => (
                 <CommandItem
                   key={issue.id}
@@ -422,7 +418,7 @@ export function CommandPalette() {
         {agents.length > 0 && (
           <>
             <CommandSeparator />
-            <CommandGroup heading="Agents">
+            <CommandGroup heading={t("commandPalette.agents", { defaultValue: "Agents" })}>
               {agents.slice(0, 10).map((agent) => (
                 <CommandItem key={agent.id} onSelect={() => go(agentUrl(agent))}>
                   <Bot className="mr-2 h-4 w-4" />
@@ -437,7 +433,7 @@ export function CommandPalette() {
         {projects.length > 0 && !showSearchAll && (
           <>
             <CommandSeparator />
-            <CommandGroup heading="Projects">
+            <CommandGroup heading={t("commandPalette.projects", { defaultValue: "Projects" })}>
               {projects.slice(0, 10).map((project) => (
                 <CommandItem key={project.id} onSelect={() => go(projectUrl(project))}>
                   <Hexagon className="mr-2 h-4 w-4" />

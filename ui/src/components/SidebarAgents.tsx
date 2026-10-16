@@ -58,6 +58,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useTranslation } from "@/i18n";
 import type { Agent } from "@paperclipai/shared";
 
 /**
@@ -72,6 +73,14 @@ const AGENT_SORT_CHOICES: SidebarSectionRadioChoice[] = [
   { value: "alphabetical", label: "Alphabetical" },
   { value: "recent", label: "Recent" },
 ];
+function useTranslatedAgentSortChoices(): SidebarSectionRadioChoice[] {
+  const { t } = useTranslation();
+  return [
+    { value: "top", label: t("sidebarAgents.top", { defaultValue: "Top" }) },
+    { value: "alphabetical", label: t("sidebarAgents.alphabetical", { defaultValue: "Alphabetical" }) },
+    { value: "recent", label: t("sidebarAgents.recent", { defaultValue: "Recent" }) },
+  ];
+}
 
 function agentTimestamp(agent: Agent, field: "lastHeartbeatAt" | "updatedAt" | "createdAt"): number {
   const raw = agent[field];
@@ -123,6 +132,7 @@ function SidebarAgentItem({
   onToggleStar,
   starPending = false,
 }: {
+
   activeAgentId: string | null;
   activeTab: string | null;
   agent: Agent;
@@ -146,7 +156,8 @@ function SidebarAgentItem({
   const isPaused = agent.status === "paused";
   const isBudgetPaused = isPaused && agent.pauseReason === "budget";
   const hasInvalidOrgChain = agent.orgChainHealth?.status === "invalid_org_chain";
-  const pauseResumeLabel = isPaused ? "Resume agent" : "Pause agent";
+  const { t: tItem } = useTranslation();
+  const pauseResumeLabel = isPaused ? tItem("sidebarAgents.resumeAgent", { defaultValue: "Resume agent" }) : tItem("sidebarAgents.pauseAgent", { defaultValue: "Pause agent" });
   const pauseResumeDisabled = disabled || agent.status === "pending_approval" || isBudgetPaused || (isPaused && hasInvalidOrgChain);
   const pauseResumeDisabledLabel = disabled
     ? "Updating..."
@@ -249,7 +260,7 @@ function SidebarAgentItem({
                 ) : (
                   <Star className={cn("size-4", starred && "fill-amber-500 text-amber-500")} />
                 )}
-                <span>{starred ? "Remove from starred" : "Star agent"}</span>
+                <span>{starred ? tItem("sidebarAgents.removeFromStarred", { defaultValue: "Remove from starred" }) : tItem("sidebarAgents.starAgent", { defaultValue: "Star agent" })}</span>
               </DropdownMenuItem>
               <DropdownMenuSeparator />
             </>
@@ -262,7 +273,7 @@ function SidebarAgentItem({
               }}
             >
               <Pencil className="size-4" />
-              <span>Edit agent</span>
+              <span>{tItem("sidebarAgents.editAgent", { defaultValue: "Edit agent" })}</span>
             </Link>
           </DropdownMenuItem>
           <DropdownMenuSeparator />
@@ -286,7 +297,7 @@ function SidebarAgentItem({
             disabled={leaving}
           >
             {leaving ? <Loader2 className="size-4 motion-safe:animate-spin" /> : <LogOut className="size-4" />}
-            <span>{leaving ? "Leaving..." : "Leave agent"}</span>
+            <span>{leaving ? tItem("sidebarAgents.leaving", { defaultValue: "Leaving..." }) : tItem("sidebarAgents.leaveAgent", { defaultValue: "Leave agent" })}</span>
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -295,6 +306,7 @@ function SidebarAgentItem({
 }
 
 export function SidebarAgents({ streamlined = false }: { streamlined?: boolean } = {}) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(true);
   const [pendingAgentIds, setPendingAgentIds] = useState<Set<string>>(() => new Set());
   const [liveLingerVersion, setLiveLingerVersion] = useState(0);
@@ -405,6 +417,7 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
     () => new Set(sortedAgents.map((agent: Agent) => agent.id)),
     [sortedAgents],
   );
+  const translatedAgentSortChoices = useTranslatedAgentSortChoices();
 
   useEffect(() => {
     const now = Date.now();
@@ -637,21 +650,21 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
 
   return (
     <SidebarSection
-      label="Agents"
+      label={t("sidebarAgents.agents", { defaultValue: "Agents" })}
       collapsible={{ open, onOpenChange: setOpen }}
       headerAction={{
-        ariaLabel: "New agent",
+        ariaLabel: t("sidebarAgents.newAgent", { defaultValue: "New agent" }),
         icon: Plus,
         onClick: openNewAgent,
       }}
       menu={{
         ariaLabel: "Agents section actions",
         actions: [
-          { type: "item", label: "Browse agents", icon: Users, href: "/agents/all" },
+          { type: "item", label: t("sidebarAgents.browseAgents", { defaultValue: "Browse agents" }), icon: Users, href: "/agents/all" },
           { type: "separator" },
         ],
-        radioLabel: "Agent sort",
-        radioChoices: AGENT_SORT_CHOICES,
+        radioLabel: t("sidebarAgents.agentSort", { defaultValue: "Agent sort" }),
+        radioChoices: translatedAgentSortChoices,
         radioValue: sortMode,
         onRadioValueChange: persistSortMode,
       }}
@@ -668,20 +681,20 @@ export function SidebarAgents({ streamlined = false }: { streamlined?: boolean }
           <Link
             to="/agents/all"
             state={SIDEBAR_SCROLL_RESET_STATE}
-            aria-label={rail ? "See all agents" : undefined}
+            aria-label={rail ? t("sidebarAgents.seeAllAgents", { defaultValue: "See all agents" }) : undefined}
             onClick={() => {
               if (isMobile) setSidebarOpen(false);
             }}
             className="flex items-center gap-2.5 mx-2 rounded-lg px-2 py-1.5 pointer-coarse:py-1 text-(length:--text-compact) font-medium text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
           >
             <Users className="shrink-0 h-4 w-4" />
-            <span className={rail ? SIDEBAR_RAIL_HIDDEN_LABEL : undefined}>See all agents</span>
+            <span className={rail ? SIDEBAR_RAIL_HIDDEN_LABEL : undefined}>{t("sidebarAgents.seeAllAgents", { defaultValue: "See all agents" })}</span>
           </Link>
         );
         return rail ? (
           <Tooltip>
             <TooltipTrigger asChild>{seeAllLink}</TooltipTrigger>
-            <TooltipContent side="right">See all agents</TooltipContent>
+            <TooltipContent side="right">{t("sidebarAgents.seeAllAgents", { defaultValue: "See all agents" })}</TooltipContent>
           </Tooltip>
         ) : (
           seeAllLink

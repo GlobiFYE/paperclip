@@ -59,6 +59,7 @@ import { environmentDisplayLabel, isPlatformManagedEnvironment } from "@/lib/man
 import { queryKeys } from "@/lib/queryKeys";
 import { Link, useNavigate, useParams } from "@/lib/router";
 import { buildSameOriginWebSocketUrl } from "@/lib/websocket-url";
+import { useTranslation } from "@/i18n";
 import {
   Field,
   ToggleField,
@@ -1309,6 +1310,7 @@ export function CompanyEnvironments({ mode = "list" }: CompanyEnvironmentsProps)
   const [probeResults, setProbeResults] = useState<Record<string, EnvironmentProbeResult | null>>({});
   const [testingEnvironmentId, setTestingEnvironmentId] = useState<string | null>(null);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const { t } = useTranslation();
   // "" means "inherit the instance default", mirroring the agent config form's
   // environment override select.
   const [reassignEnvironmentTargetId, setReassignEnvironmentTargetId] = useState("");
@@ -1940,14 +1942,14 @@ export function CompanyEnvironments({ mode = "list" }: CompanyEnvironmentsProps)
   })();
 
   if (!selectedCompanyId) {
-    return <div className="text-sm text-muted-foreground">Select an organization context to manage environment secrets and bindings.</div>;
+    return <div className="text-sm text-muted-foreground">{t("companyEnvironments.selectOrg", { defaultValue: "Select an organization context to manage environment secrets and bindings." })}</div>;
   }
 
   if (!environmentsEnabled) {
     return (
       <div className="max-w-6xl space-y-4">
         <div className="text-sm text-muted-foreground">
-          Enable Environments in instance experimental settings to manage shared execution targets.
+          {t("companyEnvironments.enableEnvironments", { defaultValue: "Enable Environments in instance experimental settings to manage shared execution targets." })}
         </div>
       </div>
     );
@@ -1959,7 +1961,7 @@ export function CompanyEnvironments({ mode = "list" }: CompanyEnvironmentsProps)
       <div className="space-y-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <label className="flex flex-wrap items-center gap-3 text-sm font-medium">
-            <span>Default</span>
+            <span>{t("companyEnvironments.default", { defaultValue: "Default" })}</span>
             <span>
               <select
                 aria-label="Default environment"
@@ -2101,10 +2103,10 @@ export function CompanyEnvironments({ mode = "list" }: CompanyEnvironmentsProps)
 
       {isEnvironmentFormPage && mode === "edit" && environments !== undefined && !editingEnvironment ? (
         <div className="space-y-3 text-sm">
-          <div className="font-medium">Environment not found</div>
-          <div className="text-muted-foreground">The environment may have been removed or is not available in this organization.</div>
+          <div className="font-medium">{t("companyEnvironments.notFoundTitle", { defaultValue: "Environment not found" })}</div>
+          <div className="text-muted-foreground">{t("companyEnvironments.notFoundDesc", { defaultValue: "The environment may have been removed or is not available in this organization." })}</div>
           <Button size="sm" variant="outline" asChild>
-            <Link to={ENVIRONMENTS_PATH}>Back to environments</Link>
+            <Link to={ENVIRONMENTS_PATH}>{t("companyEnvironments.backToEnvironments", { defaultValue: "Back to environments" })}</Link>
           </Button>
         </div>
       ) : null}
@@ -2125,7 +2127,7 @@ export function CompanyEnvironments({ mode = "list" }: CompanyEnvironmentsProps)
               <h1 className="text-lg font-semibold">{editingEnvironment.name}</h1>
               <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
                 <Lock className="h-3 w-3" aria-hidden />
-                Managed by Paperclip
+                {t("companyEnvironments.managedByPaperclip", { defaultValue: "Managed by Paperclip" })}
               </span>
             </div>
             <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
@@ -2138,8 +2140,8 @@ export function CompanyEnvironments({ mode = "list" }: CompanyEnvironmentsProps)
           </div>
           <div className="py-4">
             <Field
-              label="Environment variables"
-              hint="Injected into runs that resolve through this environment. Use plain values or organization secrets."
+              label={t("companyEnvironments.envVars", { defaultValue: "Environment variables" })}
+              hint={t("companyEnvironments.envVarsHint", { defaultValue: "Injected into runs that resolve through this environment. Use plain values or organization secrets." })}
             >
               <EnvironmentVariablesEditor
                 ref={environmentVariablesEditorRef}
@@ -2165,13 +2167,13 @@ export function CompanyEnvironments({ mode = "list" }: CompanyEnvironmentsProps)
               onClick={closeEnvironmentForm}
               disabled={managedEnvironmentEnvVarsMutation.isPending}
             >
-              Cancel
+              {t("companyEnvironments.cancel", { defaultValue: "Cancel" })}
             </Button>
             <Button
               onClick={() => managedEnvironmentEnvVarsMutation.mutate(flushEnvironmentForm().envVars)}
               disabled={managedEnvironmentEnvVarsMutation.isPending}
             >
-              {managedEnvironmentEnvVarsMutation.isPending ? "Saving..." : "Save environment variables"}
+              {managedEnvironmentEnvVarsMutation.isPending ? t("companyEnvironments.saving", { defaultValue: "Saving..." }) : t("companyEnvironments.saveEnvVars", { defaultValue: "Save environment variables" })}
             </Button>
           </div>
         </div>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@paperclipai/shared";
 import { AgentIcon } from "@/components/AgentIconPicker";
+import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, CommandItem } from "@/components/ui/command";
@@ -18,12 +19,13 @@ export interface AgentChatPickerProps {
 }
 
 export function AgentChatPicker({ open, onOpenChange, ...props }: AgentChatPickerProps) {
+  const { t } = useTranslation();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent aria-describedby={undefined} className="gap-0 overflow-hidden p-0 sm:max-w-md">
         <div className="px-4 pt-4 pb-3">
-          <DialogTitle>Chat with an agent</DialogTitle>
-          {props.existingChatAgentIds && <p className="mt-2 text-sm text-muted-foreground">One conversation per agent. Pick up where you left off.</p>}
+          <DialogTitle>{t("agentChatPicker.title",{defaultValue:"Chat with an agent"})}</DialogTitle>
+          {props.existingChatAgentIds && <p className="mt-2 text-sm text-muted-foreground">{t("agentChatPicker.onePerAgent",{defaultValue:"One conversation per agent. Pick up where you left off."})}</p>}
         </div>
         {/* The dialog unmounts its content on close, so each search starts empty. */}
         <AgentChatPickerResults key={String(open)} {...props} onComplete={() => onOpenChange(false)} />
@@ -33,6 +35,7 @@ export function AgentChatPicker({ open, onOpenChange, ...props }: AgentChatPicke
 }
 
 function AgentChatPickerResults({ agents, onSelect, onComplete, loading, error, onRetry, existingChatAgentIds, renderAgentIcon }: Omit<AgentChatPickerProps, "open" | "onOpenChange"> & { onComplete: () => void }) {
+  const { t } = useTranslation();
   const mounted = useRef(false);
   const selection = useRef<AbortController | null>(null);
   useEffect(() => {
@@ -60,29 +63,29 @@ function AgentChatPickerResults({ agents, onSelect, onComplete, loading, error, 
   return (
     <Command>
       <CommandInput
-        aria-label="Search agents by name or role"
-        placeholder="Search by name or role…"
+        aria-label={t("agentChatPicker.searchAriaLabel",{defaultValue:"Search agents by name or role"})}
+        placeholder={t("agentChatPicker.searchPlaceholder",{defaultValue:"Search by name or role…"})}
         value={search}
         onValueChange={setSearch}
       />
       {selectionError && <p role="alert" className="px-4 py-3 text-sm text-destructive">{selectionError}</p>}
-      {openingId && <p role="status" className="sr-only">Opening conversation…</p>}
+      {openingId && <p role="status" className="sr-only">{t("agentChatPicker.openingConversation",{defaultValue:"Opening conversation…"})}</p>}
       {error ? (
         <div role="alert" className="flex flex-col items-start gap-2 p-4 text-sm">
-          <p>Couldn’t load agents. Try again.</p>
-          {onRetry && <Button variant="outline" size="sm" onClick={onRetry}>Retry</Button>}
+          <p>{t("agentChatPicker.loadFailed",{defaultValue:"Couldn’t load agents. Try again."})}</p>
+          {onRetry && <Button variant="outline" size="sm" onClick={onRetry}>{t("agentChatPicker.retry",{defaultValue:"Retry"})}</Button>}
         </div>
       ) : loading ? (
-        <p role="status" className="p-4 text-sm text-muted-foreground">Loading agents…</p>
+        <p role="status" className="p-4 text-sm text-muted-foreground">{t("agentChatPicker.loadingAgents",{defaultValue:"Loading agents…"})}</p>
       ) : (
         <CommandList>
           <CommandEmpty>
             <div className="flex flex-col items-center gap-2 px-4">
-              <span>{agents.length ? `No agents match “${search}”` : "No agents yet."}</span>
+              <span>{agents.length ? t("agentChatPicker.noMatch",{defaultValue:"No agents match “{{search}}”",search}) : t("agentChatPicker.noAgentsYet",{defaultValue:"No agents yet."})}</span>
               {agents.length ? <>
-                <span className="text-xs text-muted-foreground">Try another name or role.</span>
-                <Button variant="ghost" size="sm" onClick={() => setSearch("")}>Clear search</Button>
-              </> : <span className="text-xs text-muted-foreground">Create an agent from the Agents page to start chatting.</span>}
+                <span className="text-xs text-muted-foreground">{t("agentChatPicker.tryAnother",{defaultValue:"Try another name or role."})}</span>
+                <Button variant="ghost" size="sm" onClick={() => setSearch("")}>{t("agentChatPicker.clearSearch",{defaultValue:"Clear search"})}</Button>
+              </> : <span className="text-xs text-muted-foreground">{t("agentChatPicker.createHint",{defaultValue:"Create an agent from the Agents page to start chatting."})}</span>}
             </div>
           </CommandEmpty>
           <CommandGroup>

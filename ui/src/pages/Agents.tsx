@@ -34,6 +34,7 @@ import {
 } from "../hooks/useResourceMemberships";
 import { usePublishSharedQueryData, useSharedPollingQuery } from "../hooks/useSharedPolling";
 
+import { useTranslation } from "@/i18n";
 import { getAdapterLabel } from "../adapters/adapter-display-registry";
 
 const roleLabels = AGENT_ROLE_LABELS as Record<string, string>;
@@ -191,6 +192,7 @@ function filterOrgTree(nodes: OrgNode[], tab: FilterTab, builtInAgentIds: Set<st
 export type AgentsView = "list" | "org";
 
 export function Agents({ initialView = "list" }: { initialView?: AgentsView } = {}) {
+  const { t } = useTranslation();
   const agentChat = useAgentChatEnabled();
   const { selectedCompanyId } = useCompany();
   const { openNewAgent } = useDialogActions();
@@ -319,7 +321,7 @@ export function Agents({ initialView = "list" }: { initialView?: AgentsView } = 
   }, [agents, environmentsById, environmentCapabilities, instanceSettings?.defaultEnvironmentId]);
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Agents" }]);
+    setBreadcrumbs([{ label: t("agentsPage.breadcrumb",{defaultValue:"Agents"}) }]);
   }, [setBreadcrumbs]);
 
   useEffect(() => {
@@ -480,13 +482,13 @@ export function Agents({ initialView = "list" }: { initialView?: AgentsView } = 
           </div> : null}
           <Button size="sm" variant="outline" onClick={openNewAgent}>
             <Plus className="h-3.5 w-3.5 mr-1.5" />
-            New Agent
+            {t("agentsPage.newAgent",{defaultValue:"New Agent"})}
           </Button>
         </div>
       </div>
 
       {filtered.length > 0 && (
-        <p className="text-xs text-muted-foreground">{filtered.length} agent{filtered.length !== 1 ? "s" : ""}</p>
+        <p className="text-xs text-muted-foreground">{filtered.length === 1 ? t("agentsPage.count_one",{defaultValue:"{{count}} agent",count:filtered.length}) : t("agentsPage.count_other",{defaultValue:"{{count}} agents",count:filtered.length})}</p>
       )}
 
       {error && <p className="text-sm text-destructive">{error.message}</p>}

@@ -39,6 +39,7 @@ import { useDateRange, PRESET_KEYS, PRESET_LABELS } from "../hooks/useDateRange"
 import { retainQuotaWindows } from "../lib/quota-refresh";
 import { queryKeys } from "../lib/queryKeys";
 import { billingTypeDisplayName, cn, formatCents, formatTokens, providerDisplayName } from "../lib/utils";
+import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -546,6 +547,7 @@ export function Costs({
     ];
   }, [byProvider]);
 
+  // translated tab labels use t() at render time; keep memo structure
   const billerTabItems = useMemo(() => {
     const billerKeys = Array.from(byBiller.keys());
     const allTokens = billerKeys.reduce(
@@ -587,8 +589,9 @@ export function Costs({
     project: budgetPolicies.filter((policy) => policy.scopeType === "project"),
   }), [budgetPolicies]);
 
+  const { t } = useTranslation();
   if (!selectedCompanyId) {
-    return <EmptyState icon={DollarSign} message="Select an organization to view costs." />;
+    return <EmptyState icon={DollarSign} message={t("costsPage.selectOrg", { defaultValue: "Select an organization to view costs." })} />;
   }
 
   const showCustomPrompt = preset === "custom" && !customReady;
@@ -601,9 +604,9 @@ export function Costs({
           <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div>
               {embedded ? (
-                <h2 className="text-lg font-semibold text-foreground">Costs</h2>
+                <h2 className="text-lg font-semibold text-foreground">{t("costsPage.title", { defaultValue: "Costs" })}</h2>
               ) : (
-                <h1 className="text-3xl font-semibold tracking-tight">Costs</h1>
+                <h1 className="text-3xl font-semibold tracking-tight">{t("costsPage.title", { defaultValue: "Costs" })}</h1>
               )}
             </div>
 
@@ -630,7 +633,7 @@ export function Costs({
                 onChange={(event) => setCustomFrom(event.target.value)}
                 className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground"
               />
-              <span className="text-sm text-muted-foreground">to</span>
+              <span className="text-sm text-muted-foreground">{t("costsPage.dateTo", { defaultValue: "to" })}</span>
               <input
                 type="date"
                 value={customTo}
@@ -732,12 +735,12 @@ export function Costs({
         {!lockTab ? (
           <div className="max-w-full overflow-x-auto pb-2">
             <TabsList variant="line" className="justify-start">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              {!hideBudgetsTab ? <TabsTrigger value="budgets">Budgets</TabsTrigger> : null}
-              <TabsTrigger value="providers">Providers</TabsTrigger>
-              <TabsTrigger value="billers">Billers</TabsTrigger>
-              <TabsTrigger value="finance">Finance</TabsTrigger>
-              <TabsTrigger value="decisions">Decisions</TabsTrigger>
+              <TabsTrigger value="overview">{t("costsPage.tabs.overview", { defaultValue: "Overview" })}</TabsTrigger>
+              {!hideBudgetsTab ? <TabsTrigger value="budgets">{t("costsPage.tabs.budgets", { defaultValue: "Budgets" })}</TabsTrigger> : null}
+              <TabsTrigger value="providers">{t("costsPage.tabs.providers", { defaultValue: "Providers" })}</TabsTrigger>
+              <TabsTrigger value="billers">{t("costsPage.tabs.billers", { defaultValue: "Billers" })}</TabsTrigger>
+              <TabsTrigger value="finance">{t("costsPage.tabs.finance", { defaultValue: "Finance" })}</TabsTrigger>
+              <TabsTrigger value="decisions">{t("costsPage.tabs.decisions", { defaultValue: "Decisions" })}</TabsTrigger>
             </TabsList>
           </div>
         ) : null}

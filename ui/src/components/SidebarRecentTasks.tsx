@@ -28,6 +28,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
+import { useTranslation } from "@/i18n";
 import { SidebarSection } from "./SidebarSection";
 import { SidebarNavItem } from "./SidebarNavItem";
 
@@ -113,6 +114,7 @@ function RecentTasksList({
   const [renameEntry, setRenameEntry] = useState<RecentTaskEntry | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [pendingAction, setPendingAction] = useState<"rename" | "archive" | "pause" | null>(null);
+  const { t } = useTranslation();
   const restartRetryStorageKey = restartWakeRetryStorageKey(companyId, userId);
 
   if (entries.length === 0) return null;
@@ -145,10 +147,10 @@ function RecentTasksList({
       if (storageKey) updateRecentTaskSnapshots(storageKey, companyId, [updated]);
       await refreshIssueQueries(renameEntry.id);
       setRenameEntry(null);
-      toastActions?.pushToast({ title: "Task renamed", tone: "success" });
+      toastActions?.pushToast({ title: t("sidebarRecentTasks.taskRenamed", { defaultValue: "Task renamed" }), tone: "success" });
     } catch (error) {
       toastActions?.pushToast({
-        title: "Task rename failed",
+        title: t("sidebarRecentTasks.taskRenameFailed", { defaultValue: "Task rename failed" }),
         body: errorMessage(error, "Unable to rename this task."),
         tone: "error",
       });
@@ -165,10 +167,10 @@ function RecentTasksList({
       await queryClient.invalidateQueries({
         queryKey: queryKeys.sidebarBadges(companyId),
       });
-      toastActions?.pushToast({ title: "Task archived from inbox", tone: "success" });
+      toastActions?.pushToast({ title: t("sidebarRecentTasks.taskArchived", { defaultValue: "Task archived from inbox" }), tone: "success" });
     } catch (error) {
       toastActions?.pushToast({
-        title: "Task archive failed",
+        title: t("sidebarRecentTasks.taskArchiveFailed", { defaultValue: "Task archive failed" }),
         body: errorMessage(error, "Unable to archive this task from the inbox."),
         tone: "error",
       });
@@ -203,7 +205,7 @@ function RecentTasksList({
           }
         }
         setRestartWakeRetryPending(restartRetryStorageKey, entry.id, false);
-        toastActions?.pushToast({ title: "Task restarted", tone: "success" });
+        toastActions?.pushToast({ title: t("sidebarRecentTasks.taskRestarted", { defaultValue: "Task restarted" }), tone: "success" });
       } else if (state.activePauseHold) {
         throw new Error("This task is paused by a parent task. Restart it from the pause root.");
       } else if (readRestartWakeRetryIssueIds(restartRetryStorageKey).has(entry.id)) {
@@ -224,21 +226,21 @@ function RecentTasksList({
           }
         }
         setRestartWakeRetryPending(restartRetryStorageKey, entry.id, false);
-        toastActions?.pushToast({ title: "Task restarted", tone: "success" });
+        toastActions?.pushToast({ title: t("sidebarRecentTasks.taskRestarted", { defaultValue: "Task restarted" }), tone: "success" });
       } else {
         await issuesApi.createTreeHold(entry.id, {
           mode: "pause",
           reason: "Paused from Recent Tasks.",
           releasePolicy: { strategy: "manual" },
         });
-        toastActions?.pushToast({ title: "Task paused", tone: "success" });
+        toastActions?.pushToast({ title: t("sidebarRecentTasks.taskPaused", { defaultValue: "Task paused" }), tone: "success" });
       }
       await queryClient.invalidateQueries({
         queryKey: ["issues", "tree-control-state", entry.id],
       });
     } catch (error) {
       toastActions?.pushToast({
-        title: "Task pause update failed",
+        title: t("sidebarRecentTasks.taskPauseFailed", { defaultValue: "Task pause update failed" }),
         body: errorMessage(error, "Unable to pause or restart this task."),
         tone: "error",
       });
@@ -249,7 +251,7 @@ function RecentTasksList({
 
   return (
     <>
-      <SidebarSection label="Recent Tasks">
+      <SidebarSection label={t("sidebarRecentTasks.recentTasks", { defaultValue: "Recent Tasks" })}>
         {entries.map((entry) => (
           <div key={entry.id} className="sidebar-action-row group/recent-task relative">
             <SidebarNavItem
@@ -284,7 +286,7 @@ function RecentTasksList({
                     onSelect={() => beginRename(entry)}
                   >
                     <Pencil aria-hidden="true" />
-                    Rename
+                    {t("sidebarRecentTasks.rename", { defaultValue: "Rename" })}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     className={RECENT_TASK_MENU_ITEM_CLASS}
@@ -292,7 +294,7 @@ function RecentTasksList({
                     onSelect={() => void archiveTask(entry)}
                   >
                     <Archive aria-hidden="true" />
-                    Archive
+                    {t("sidebarRecentTasks.archive", { defaultValue: "Archive" })}
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     className={RECENT_TASK_MENU_ITEM_CLASS}
@@ -300,7 +302,7 @@ function RecentTasksList({
                     onSelect={() => void toggleTaskPause(entry)}
                   >
                     <RefreshCw aria-hidden="true" />
-                    Pause/Restart
+                    {t("sidebarRecentTasks.pauseRestart", { defaultValue: "Pause/Restart" })}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -318,12 +320,12 @@ function RecentTasksList({
         <DialogContent className="sm:max-w-md">
           <form className="grid gap-4" onSubmit={(event) => void submitRename(event)}>
             <DialogHeader>
-              <DialogTitle>Rename task</DialogTitle>
-              <DialogDescription>Choose a short, clear name for this task.</DialogDescription>
+              <DialogTitle>{t("sidebarRecentTasks.renameTitle", { defaultValue: "Rename task" })}</DialogTitle>
+              <DialogDescription>{t("sidebarRecentTasks.renameDesc", { defaultValue: "Choose a short, clear name for this task." })}</DialogDescription>
             </DialogHeader>
             <Input
               autoFocus
-              aria-label="Task name"
+              aria-label={t("sidebarRecentTasks.taskNameLabel", { defaultValue: "Task name" })}
               value={renameValue}
               disabled={pendingAction === "rename"}
               onChange={(event) => setRenameValue(event.target.value)}
@@ -335,13 +337,13 @@ function RecentTasksList({
                 disabled={pendingAction === "rename"}
                 onClick={() => setRenameEntry(null)}
               >
-                Cancel
+                {t("sidebarRecentTasks.cancel", { defaultValue: "Cancel" })}
               </Button>
               <Button
                 type="submit"
                 disabled={pendingAction === "rename" || !renameValue.trim()}
               >
-                {pendingAction === "rename" ? "Saving..." : "Save"}
+                {pendingAction === "rename" ? t("sidebarRecentTasks.saving", { defaultValue: "Saving..." }) : t("sidebarRecentTasks.save", { defaultValue: "Save" })}
               </Button>
             </DialogFooter>
           </form>

@@ -263,6 +263,7 @@ import {
 import { SourceTrustBadge } from "./SourceTrustBadge";
 import { CommentAttributionChip } from "./CommentAttributionChip";
 import { resolveCommentAttribution } from "../lib/comment-attribution";
+import { useTranslation } from "@/i18n";
 
 interface IssueChatMessageContext {
   feedbackDataSharingPreference: FeedbackDataSharingPreference;
@@ -4668,6 +4669,7 @@ const IssueChatComposer = forwardRef<
   },
   forwardedRef,
 ) {
+  const { t } = useTranslation();
   const stopControl = useComposerStop(onStop, stopPending);
   const restoredRecovery = useMemo(() => {
     const key = sharedDraftKey && loadDraftRecoveryKey(sharedDraftKey);
@@ -5468,7 +5470,7 @@ const IssueChatComposer = forwardRef<
         readOnly={!!uncertainSubmission}
         value={body}
         onChange={changeBody}
-        placeholder="Reply"
+        placeholder={t("commentThread.placeholder", { defaultValue: "Reply" })}
         mentions={mentions}
         onSubmit={handleSubmit}
         imageUploadHandler={
@@ -5617,16 +5619,16 @@ const IssueChatComposer = forwardRef<
             ref={reassignTriggerRef}
             value={reassignTarget}
             options={reassignOptions}
-            placeholder="Responsible"
-            noneLabel="No responsible"
-            searchPlaceholder="Search responsible..."
-            emptyMessage="No responsible found."
+            placeholder={t("commentThread.responsible", { defaultValue: "Responsible" })}
+            noneLabel={t("commentThread.noResponsible", { defaultValue: "No responsible" })}
+            searchPlaceholder={t("commentThread.searchResponsible", { defaultValue: "Search responsible..." })}
+            emptyMessage={t("commentThread.noResponsibleFound", { defaultValue: "No responsible found." })}
             onChange={setReassignTarget}
             className="h-8 text-xs"
             renderTriggerValue={(option) => {
               if (!option)
                 return (
-                  <span className="text-muted-foreground">Responsible</span>
+                  <span className="text-muted-foreground">{t("commentThread.responsible", { defaultValue: "Responsible" })}</span>
                 );
               const agentId = option.id.startsWith("agent:")
                 ? option.id.slice("agent:".length)

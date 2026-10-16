@@ -127,6 +127,7 @@ import { resolveIssueActiveRun, shouldTrackIssueActiveRun } from "../lib/issueAc
 import { extractIssueTimelineEvents } from "../lib/issue-timeline-events";
 import { applyLocalQueuedIssueCommentState, isQueuedIssueComment } from "../lib/optimistic-issue-comments";
 import type { IssueChatComment } from "../lib/issue-chat-messages";
+import { useTranslation } from "@/i18n";
 import { Badge } from "@/components/ui/badge";
 
 type PipelineConversationActionableInteraction =
@@ -833,6 +834,7 @@ function NewPipelineDialog({
   pending: boolean;
   error: string | null;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
 
@@ -855,16 +857,16 @@ function NewPipelineDialog({
       <DialogContent>
         <form onSubmit={submit} className="space-y-4">
           <DialogHeader>
-            <DialogTitle>New pipeline</DialogTitle>
-            <DialogDescription>Name the pipeline and add a short description.</DialogDescription>
+            <DialogTitle>{t("pipelines.newPipelineTitle", { defaultValue: "New pipeline" })}</DialogTitle>
+            <DialogDescription>{t("pipelines.newPipelineDesc", { defaultValue: "Name the pipeline and add a short description." })}</DialogDescription>
           </DialogHeader>
           <div className="space-y-3">
             <label className="block space-y-1.5 text-sm font-medium">
-              <span>Name</span>
+              <span>{t("pipelines.nameLabel", { defaultValue: "Name" })}</span>
               <Input value={name} onChange={(event) => setName(event.target.value)} autoFocus />
             </label>
             <label className="block space-y-1.5 text-sm font-medium">
-              <span>Description</span>
+              <span>{t("pipelines.descriptionLabel", { defaultValue: "Description" })}</span>
               <Textarea
                 value={description}
                 onChange={(event) => setDescription(event.target.value)}
@@ -875,10 +877,10 @@ function NewPipelineDialog({
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={pending}>
-              Cancel
+              {t("pipelines.cancel", { defaultValue: "Cancel" })}
             </Button>
             <Button type="submit" disabled={pending || !name.trim()}>
-              {pending ? "Creating..." : "Create pipeline"}
+              {pending ? t("pipelines.creating", { defaultValue: "Creating..." }) : t("pipelines.create", { defaultValue: "Create pipeline" })}
             </Button>
           </DialogFooter>
         </form>
@@ -898,6 +900,7 @@ export function pipelineKeyFromName(name: string) {
 }
 
 function PipelinesIndex() {
+  const { t } = useTranslation();
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const navigate = useNavigate();
@@ -906,7 +909,7 @@ function PipelinesIndex() {
   const [viewMode, setViewMode] = useState<PipelineViewMode>("nested");
   const [newPipelineOpen, setNewPipelineOpen] = useState(false);
 
-  useEffect(() => setBreadcrumbs([{ label: "Pipelines" }]), [setBreadcrumbs]);
+  useEffect(() => setBreadcrumbs([{ label: t("pipelines.title", { defaultValue: "Pipelines" }) }]), [t, setBreadcrumbs]);
 
   const pipelinesQuery = useQuery({
     queryKey: selectedCompanyId ? queryKeys.pipelines.list(selectedCompanyId) : ["pipelines", "missing-company"],
@@ -942,7 +945,7 @@ function PipelinesIndex() {
   });
 
   if (!selectedCompanyId) {
-    return <div className="mx-auto max-w-3xl py-10 text-sm text-muted-foreground">Select an organization to view pipelines.</div>;
+    return <div className="mx-auto max-w-3xl py-10 text-sm text-muted-foreground">{t("pipelines.selectOrg", { defaultValue: "Select an organization to view pipelines." })}</div>;
   }
   if (pipelinesQuery.isLoading) return <PageSkeleton />;
 
@@ -953,27 +956,27 @@ function PipelinesIndex() {
     <div className="w-full max-w-6xl px-6 py-8">
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">Work</p>
-          <h1 className="text-2xl font-semibold text-foreground">Pipelines</h1>
+          <p className="text-xs font-semibold uppercase tracking-(--tracking-eyebrow) text-muted-foreground">{t("pipelines.workLabel", { defaultValue: "Work" })}</p>
+          <h1 className="text-2xl font-semibold text-foreground">{t("pipelines.title", { defaultValue: "Pipelines" })}</h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            {formatNumber(pipelines.length)} pipeline{pipelines.length === 1 ? "" : "s"}. Connected ones are grouped from upstream work into downstream work.
+            {pipelines.length === 1 ? t("pipelines.subtitleCount_one", { defaultValue: "{{count}} pipeline. Connected ones are grouped from upstream work into downstream work.", count: pipelines.length }) : t("pipelines.subtitleCount_other", { defaultValue: "{{count}} pipelines. Connected ones are grouped from upstream work into downstream work.", count: pipelines.length })}
           </p>
         </div>
         <Button onClick={() => setNewPipelineOpen(true)}>
           <Plus className="mr-2 h-4 w-4" />
-          New pipeline
+          {t("pipelines.newPipeline", { defaultValue: "New pipeline" })}
         </Button>
       </div>
 
       {pipelinesQuery.error ? (
-        <p className="mb-4 text-sm text-destructive">Could not load pipelines.</p>
+        <p className="mb-4 text-sm text-destructive">{t("pipelines.couldNotLoad", { defaultValue: "Could not load pipelines." })}</p>
       ) : null}
 
       {pipelines.length === 0 && !pipelinesQuery.error ? (
         <EmptyState
           icon={Hexagon}
-          message="No pipelines yet."
-          action="New pipeline"
+          message={t("pipelines.noPipelinesYet", { defaultValue: "No pipelines yet." })}
+          action={t("pipelines.newPipeline", { defaultValue: "New pipeline" })}
           onAction={() => setNewPipelineOpen(true)}
         />
       ) : (
@@ -995,7 +998,7 @@ function PipelinesIndex() {
         }}
         onSubmit={(data) => createPipeline.mutate(data)}
         pending={createPipeline.isPending}
-        error={createPipeline.error ? "Could not create the pipeline. Try a different name." : null}
+        error={createPipeline.error ? t("pipelines.createError", { defaultValue: "Could not create the pipeline. Try a different name." }) : null}
       />
     </div>
   );

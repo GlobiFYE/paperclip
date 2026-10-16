@@ -15,6 +15,7 @@ import { heartbeatsApi } from "../api/heartbeats";
 import { agentsApi } from "../api/agents";
 import { projectsApi } from "../api/projects";
 import { accessApi } from "../api/access";
+import { useTranslation } from "@/i18n";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToastActions } from "../context/ToastContext";
@@ -120,6 +121,7 @@ function buildRoutineMutationPayload(input: RoutineEditDraft) {
 }
 
 export function RoutineDetail() {
+  const { t } = useTranslation();
   const { routineId, section: sectionParam } = useParams<{ routineId: string; section?: string }>();
   const [searchParams] = useSearchParams();
   const triggerSetup = sectionParam === "triggers" && searchParams.has("triggerSetup");
@@ -327,7 +329,7 @@ export function RoutineDetail() {
 
   useEffect(() => {
     if (!routine) return;
-    if (!triggerSetup) setBreadcrumbs([{ label: "Routines", href: "/routines" }, { label: routine.title }]);
+    if (!triggerSetup) setBreadcrumbs([{ label: t("routineDetail.breadcrumbRoutines",{defaultValue:"Routines"}), href: "/routines" }, { label: routine.title }]);
     if (!routineDefaults) return;
     const changedRoutine = hydratedRoutineIdRef.current !== routine.id;
     if (changedRoutine || !isEditDirty) {
@@ -653,7 +655,7 @@ export function RoutineDetail() {
   );
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={Repeat} message="Select an organization to view routines." />;
+    return <EmptyState icon={Repeat} message={t("routineDetail.selectOrg",{defaultValue:"Select an organization to view routines."})} />;
   }
 
   const legacyTab = new URLSearchParams(window.location.search).get("tab");
@@ -675,7 +677,7 @@ export function RoutineDetail() {
     return (
       <EmptyState
         icon={AlertCircle}
-        message={error instanceof Error ? error.message : "We couldn't load this routine."}
+        message={error instanceof Error ? error.message : t("routineDetail.weCouldNotLoad",{defaultValue:"We couldn't load this routine."})}
       />
     );
   }
@@ -806,7 +808,7 @@ export function RoutineDetail() {
                 ref={titleInputRef}
                 data-autosize-title
                 className="min-w-0 flex-1 resize-none overflow-hidden bg-transparent text-base font-semibold leading-7 outline-none placeholder:text-muted-foreground/50"
-                placeholder="Routine title"
+                placeholder={t("routineDetail.routineTitlePlaceholder",{defaultValue:"Routine title"})}
                 rows={1}
                 value={editDraft.title}
                 onChange={(event) => {

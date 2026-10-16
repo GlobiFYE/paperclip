@@ -621,15 +621,15 @@ export function OnboardingRoutePage() {
   }
 
   const title = matchedCompany
-    ? `Add another agent to ${matchedCompany.name}`
+    ? t("app.onboarding.addAnotherAgent", { company: matchedCompany.name, defaultValue: `Add another agent to ${matchedCompany.name}` })
     : companies.length > 0
-      ? "Create another organization"
-      : "Create your first organization";
+      ? t("app.onboarding.createAnotherOrg", { defaultValue: "Create another organization" })
+      : t("app.onboarding.createFirstOrg", { defaultValue: "Create your first organization" });
   const description = matchedCompany
-    ? "Run onboarding again to add an agent and a starter task for this organization."
+    ? t("app.onboarding.addAgentDescription", { defaultValue: "Run onboarding again to add an agent and a starter task for this organization." })
     : companies.length > 0
-      ? "Run onboarding again to create another organization and seed its first agent."
-      : "Get started by creating an organization and your first agent.";
+      ? t("app.onboarding.createAnotherDescription", { defaultValue: "Run onboarding again to create another organization and seed its first agent." })
+      : t("app.onboarding.createFirstDescription", { defaultValue: "Get started by creating an organization and your first agent." });
 
   return (
     <div className="mx-auto max-w-xl py-10">
@@ -667,7 +667,9 @@ export function OnboardingRoutePage() {
                     : openOnboarding()
               }
             >
-              {matchedCompany ? "Add Agent" : "Start Onboarding"}
+              {matchedCompany
+                ? t("app.onboarding.addAgent", { defaultValue: "Add Agent" })
+                : t("app.onboarding.startOnboarding", { defaultValue: "Start Onboarding" })}
             </Button>
           )}
         </div>

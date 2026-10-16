@@ -52,6 +52,7 @@ import type {
   UserSecretDefinition,
 } from "@paperclipai/shared";
 import { hidesCompanySection } from "@paperclipai/shared";
+import { useTranslation } from "@/i18n";
 import { useCompany } from "../context/CompanyContext";
 import { useHiddenSettings } from "../hooks/useHiddenSettings";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -650,6 +651,7 @@ export function getAwsManagedPathPreview(input: {
 }
 
 export function Secrets() {
+  const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
@@ -731,8 +733,8 @@ export function Secrets() {
   const [newFolderError, setNewFolderError] = useState<string | null>(null);
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Secrets" }]);
-  }, [setBreadcrumbs]);
+    setBreadcrumbs([{ label: t("secretsPage.title", { defaultValue: "Secrets" }) }]);
+  }, [setBreadcrumbs, t]);
 
   const secretsQuery = useQuery({
     queryKey: selectedCompanyId

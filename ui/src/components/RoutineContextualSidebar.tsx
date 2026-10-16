@@ -1,3 +1,4 @@
+import { useTranslation } from "@/i18n";
 import { useQuery } from "@tanstack/react-query";
 import {
   Activity,
@@ -35,6 +36,16 @@ export type RoutineContextualNavItem = {
   icon: LucideIcon;
 };
 
+export function useRoutineContextualNavItems(): readonly RoutineContextualNavItem[] {
+  const { t } = useTranslation();
+  return [
+    { view: "overview", label: t("routineContextualSidebar.overview",{defaultValue:"Overview"}), icon: LayoutDashboard },
+    { view: "triggers", label: t("routineContextualSidebar.triggers",{defaultValue:"Triggers"}), icon: CalendarClock },
+    { view: "variables", label: t("routineContextualSidebar.variables",{defaultValue:"Variables"}), icon: Braces },
+    { view: "delivery", label: t("routineContextualSidebar.delivery",{defaultValue:"Delivery"}), icon: Send },
+    { view: "secrets", label: t("routineContextualSidebar.secrets",{defaultValue:"Secrets"}), icon: KeyRound },
+  ];
+}
 export const ROUTINE_CONTEXTUAL_NAV_ITEMS: readonly RoutineContextualNavItem[] = [
   { view: "overview", label: "Overview", icon: LayoutDashboard },
   { view: "triggers", label: "Triggers", icon: CalendarClock },
@@ -76,7 +87,9 @@ export function RoutineContextualSidebar({
     queryFn: () => routinesApi.get(routineId),
     enabled: Boolean(routineId && !title),
   });
-  const frameTitle = title ?? routine?.title ?? "Routine";
+  const { t: tSidebar } = useTranslation();
+  const navItems = useRoutineContextualNavItems();
+  const frameTitle = title ?? routine?.title ?? tSidebar("routineContextualSidebar.routine",{defaultValue:"Routine"});
 
   return (
     <ContextualSidebarFrame
@@ -87,9 +100,9 @@ export function RoutineContextualSidebar({
       showHeader={false}
       className="border-r border-border bg-background"
     >
-      <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-2" aria-label="Routine navigation">
+      <nav className="min-h-0 flex-1 overflow-y-auto px-3 py-2" aria-label={tSidebar("routineContextualSidebar.routineNavigation",{defaultValue:"Routine navigation"})}>
         <div className="flex flex-col gap-0.5">
-          {ROUTINE_CONTEXTUAL_NAV_ITEMS.map((item) => (
+          {navItems.map((item) => (
             <SidebarNavItem
               key={item.view}
               to={routineDetailHref(routineId, item.view)}
@@ -101,17 +114,17 @@ export function RoutineContextualSidebar({
         </div>
 
         <p className="px-4 pb-1 pt-5 text-(length:--text-nano) font-mono font-medium uppercase tracking-widest text-muted-foreground/60">
-          Operate
+          {tSidebar("routineContextualSidebar.operate",{defaultValue:"Operate"})}
         </p>
         <div className="flex flex-col gap-0.5">
           <SidebarNavItem
             to={routineDetailHref(routineId, "runs")}
-            label="Runs"
+            label={tSidebar("routineContextualSidebar.runs",{defaultValue:"Runs"})}
             icon={Play}
           />
           <SidebarNavItem
             to={routineDetailHref(routineId, "activity")}
-            label="Activity"
+            label={tSidebar("routineContextualSidebar.activity",{defaultValue:"Activity"})}
             icon={Activity}
           />
         </div>

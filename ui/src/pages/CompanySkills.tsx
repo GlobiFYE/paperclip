@@ -1,3 +1,4 @@
+import { useTranslation } from "@/i18n";
 import { SkillBinaryFile } from "../components/SkillBinaryFile";
 import { SkillSourceProvenance } from "../components/SkillSourceProvenance";
 import { AgentIdentity } from "@/components/AgentIdentity";
@@ -1133,12 +1134,13 @@ export function DiscoveryGrid({
   /** Category/folder navigation stays available in production, but the Streamlined UI relies on search and scrolling. */
   showBrowseRails?: boolean;
 }) {
+  const { t } = useTranslation();
   const installedView = tab === "installed";
-  const viewTitle = installedView ? "Installed skills" : "Discover skills";
+  const viewTitle = installedView ? t("companySkills.discovery.installedTitle", { defaultValue: "Installed skills" }) : t("companySkills.discovery.discoverTitle", { defaultValue: "Discover skills" });
   const viewDescription = installedView
-    ? "Skills available to this organization."
-    : "Browse skills from every available source.";
-  const searchLabel = installedView ? "Search installed skills" : "Search discoverable skills";
+    ? t("companySkills.discovery.installedDesc", { defaultValue: "Skills available to this organization." })
+    : t("companySkills.discovery.discoverDesc", { defaultValue: "Browse skills from every available source." });
+  const searchLabel = installedView ? t("companySkills.discovery.searchInstalled", { defaultValue: "Search installed skills" }) : t("companySkills.discovery.searchDiscoverable", { defaultValue: "Search discoverable skills" });
   // Source filter (github / skills.sh / local / …) lives in the grid so it
   // narrows whatever the parent already filtered by tab/category/search (PAP-10907 E).
   const [sourceBadgeFilter, setSourceBadgeFilter] = useState<string>("all");
@@ -1431,23 +1433,23 @@ export function DiscoveryGrid({
                 message={
                   totalCount === 0
                     ? installedView
-                      ? "No installed skills yet. Discover a skill or create one."
-                      : "No skills are available to discover yet."
+                      ? t("companySkills.discovery.noInstalledYet", { defaultValue: "No installed skills yet. Discover a skill or create one." })
+                      : t("companySkills.discovery.noDiscoverableYet", { defaultValue: "No skills are available to discover yet." })
                     : search || activeCategory || sourceFilterActive
-                      ? "No skills match your filters."
-                      : "No skills in this view yet."
+                      ? t("companySkills.discovery.noMatchFilters", { defaultValue: "No skills match your filters." })
+                      : t("companySkills.discovery.noSkillsInView", { defaultValue: "No skills in this view yet." })
                 }
               />
               {totalCount === 0 ? (
                 <div className="mt-3 flex flex-col items-center gap-2">
                   {installedView ? (
                     <Button size="sm" onClick={onBrowseDiscover}>
-                      <Compass className="mr-1.5 h-3.5 w-3.5" /> Discover skills
+                      <Compass className="mr-1.5 h-3.5 w-3.5" /> {t("companySkills.discovery.discoverSkills", { defaultValue: "Discover skills" })}
                     </Button>
                   ) : null}
-                  <Button size="sm" variant="outline" asChild><Link to="/skills/sources/new">Import from GitHub</Link></Button>
+                  <Button size="sm" variant="outline" asChild><Link to="/skills/sources/new">{t("companySkills.discovery.importFromGitHub", { defaultValue: "Import from GitHub" })}</Link></Button>
                   <Button size="sm" variant="ghost" onClick={onCreate}>
-                    Create a skill
+                    {t("companySkills.discovery.createNewSkill", { defaultValue: "Create new skill" })}
                   </Button>
                 </div>
               ) : (search || activeCategory || sourceFilterActive) ? (
@@ -1461,7 +1463,7 @@ export function DiscoveryGrid({
                       setSourceBadgeFilter("all");
                     }}
                   >
-                    Clear filters
+                    {t("companySkills.discovery.clearFilters", { defaultValue: "Clear filters" })}
                   </Button>
                 </div>
               ) : null}

@@ -35,6 +35,7 @@ import { SidebarRecentTasks } from "./SidebarRecentTasks";
 import { useDialogActions } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
 import { useSidebar } from "../context/SidebarContext";
+import { useTranslation } from "@/i18n";
 import { attentionApi } from "../api/attention";
 import { heartbeatsApi } from "../api/heartbeats";
 import { instanceSettingsApi } from "../api/instanceSettings";
@@ -51,6 +52,7 @@ import { SidebarCompanyMenu } from "./SidebarCompanyMenu";
 import { primarySidebarStyles } from "./primary-sidebar-styles";
 
 export function Sidebar({ children }: { children?: ReactNode }) {
+  const { t } = useTranslation();
   const { openNewIssue } = useDialogActions();
   const { enabled: agentChatEnabled } = useAgentChatEnabled();
   // Every labeled section is collapsible (session-scoped, default open) —
@@ -151,19 +153,19 @@ export function Sidebar({ children }: { children?: ReactNode }) {
               <button
                 onClick={() => openNewIssue()}
                 data-slot="icon-button"
-                aria-label={rail ? "New Task" : undefined}
+                aria-label={rail ? t("sidebar.newTask", { defaultValue: "New Task" }) : undefined}
                 className={cn(
                   "flex items-center gap-2.5 mx-2 rounded-lg px-2 py-1.5 pointer-coarse:py-1 text-(length:--text-compact) font-medium text-foreground/80 transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                 )}
               >
                 <SquarePen className="h-4 w-4 shrink-0" />
-                <span className={rail ? SIDEBAR_RAIL_HIDDEN_LABEL : "truncate"}>New Task</span>
+                <span className={rail ? SIDEBAR_RAIL_HIDDEN_LABEL : "truncate"}>{t("sidebar.newTask", { defaultValue: "New Task" })}</span>
               </button>
             );
             return rail ? (
               <Tooltip>
                 <TooltipTrigger asChild>{newTaskButton}</TooltipTrigger>
-                <TooltipContent side="right">New Task</TooltipContent>
+                <TooltipContent side="right">{t("sidebar.newTask", { defaultValue: "New Task" })}</TooltipContent>
               </Tooltip>
             ) : (
               newTaskButton
@@ -173,12 +175,12 @@ export function Sidebar({ children }: { children?: ReactNode }) {
               width; a nav row also keeps search reachable from the
               collapsed rail, where the old header icon was dropped entirely.
               Cmd/Ctrl+K remains the keyboard path (command palette). */}
-          <SidebarNavItem to="/search" label="Search" icon={Search} />
-          <SidebarNavItem to="/dashboard" label="Dashboard" icon={LayoutDashboard} liveCount={liveRunCount} />
+          <SidebarNavItem to="/search" label={t("sidebar.search", { defaultValue: "Search" })} icon={Search} />
+          <SidebarNavItem to="/dashboard" label={t("sidebar.dashboard", { defaultValue: "Dashboard" })} icon={LayoutDashboard} liveCount={liveRunCount} />
           {!combinedInboxTasks ? (
             <SidebarNavItem
               to="/inbox"
-              label="Inbox"
+              label={t("sidebar.inbox", { defaultValue: "Inbox" })}
               icon={Inbox}
               badge={inboxBadge.inbox}
               badgeLabel="unread"
@@ -186,37 +188,37 @@ export function Sidebar({ children }: { children?: ReactNode }) {
               alert={inboxBadge.failedRuns > 0}
             />
           ) : null}
-          {agentChatEnabled && !chatRail ? <SidebarNavItem to="/chats" label="Chat" icon={MessageCircle} /> : null}
+          {agentChatEnabled && !chatRail ? <SidebarNavItem to="/chats" label={t("sidebar.chat", { defaultValue: "Chat" })} icon={MessageCircle} /> : null}
           {showDecisions ? (
             <SidebarNavItem
               to="/decisions"
-              label="Decisions"
+              label={t("sidebar.decisions", { defaultValue: "Decisions" })}
               icon={ListChecks}
               badge={attentionCount}
               badgeLabel="decisions"
             />
           ) : null}
           {showStatusCards ? (
-            <SidebarNavItem to="/status" label="Status" icon={LayoutGrid} textBadge="beta" />
+            <SidebarNavItem to="/status" label={t("sidebar.status", { defaultValue: "Status" })} icon={LayoutGrid} textBadge="beta" />
           ) : null}
           {conferenceRoomChatEnabled ? (
-            <SidebarNavItem to="/board-chat" label="Conference Room" icon={MessagesSquare} />
+            <SidebarNavItem to="/board-chat" label={t("sidebar.conferenceRoom", { defaultValue: "Conference Room" })} icon={MessagesSquare} />
           ) : null}
         </div>
 
-        <SidebarSection label="Work" collapsible={{ open: workOpen, onOpenChange: setWorkOpen }}>
+        <SidebarSection label={t("sidebar.work", { defaultValue: "Work" })} collapsible={{ open: workOpen, onOpenChange: setWorkOpen }}>
           {/* Agent Chat: Chat leads the Work group as a single row — the
               agents you talk to live in the Chat surface's own secondary rail
               (ChatContextualSidebar), not in the primary nav. */}
           {chatRail ? (
-            <SidebarNavItem to="/chats" label="Chat" icon={MessageCircle} />
+            <SidebarNavItem to="/chats" label={t("sidebar.chat", { defaultValue: "Chat" })} icon={MessageCircle} />
           ) : null}
           {/* Combined Inbox + Task List: Inbox is a view inside Tasks, so the
               unread/failed-run badge rides on Tasks. */}
           {combinedInboxTasks ? (
             <SidebarNavItem
               to="/issues"
-              label="Tasks"
+              label={t("sidebar.issues", { defaultValue: "Tasks" })}
               icon={CircleCheck}
               badge={inboxBadge.inbox}
               badgeLabel="unread"
@@ -224,24 +226,24 @@ export function Sidebar({ children }: { children?: ReactNode }) {
               alert={inboxBadge.failedRuns > 0}
             />
           ) : (
-            <SidebarNavItem to="/issues" label="Tasks" icon={CircleCheck} />
+            <SidebarNavItem to="/issues" label={t("sidebar.issues", { defaultValue: "Tasks" })} icon={CircleCheck} />
           )}
           {streamlinedUiEnabled ? (
             <>
-              <SidebarNavItem to="/projects" label="Projects" icon={FolderOpen} />
+              <SidebarNavItem to="/projects" label={t("sidebar.projects", { defaultValue: "Projects" })} icon={FolderOpen} />
               <SidebarStarredProjects />
             </>
           ) : null}
-          <SidebarNavItem to="/routines" label="Routines" icon={Repeat} />
-          <SidebarNavItem to="/artifacts" label="Artifacts" icon={Package} />
+          <SidebarNavItem to="/routines" label={t("sidebar.routines", { defaultValue: "Routines" })} icon={Repeat} />
+          <SidebarNavItem to="/artifacts" label={t("sidebar.artifacts", { defaultValue: "Artifacts" })} icon={Package} />
           {showCases ? (
-            <SidebarNavItem to="/cases" label="Cases" icon={Layers} textBadge="beta" />
+            <SidebarNavItem to="/cases" label={t("sidebar.cases", { defaultValue: "Cases" })} icon={Layers} textBadge="beta" />
           ) : null}
           {showPipelines ? (
-            <SidebarNavItem to="/pipelines" label="Pipelines" icon={GitBranch} />
+            <SidebarNavItem to="/pipelines" label={t("sidebar.pipelines", { defaultValue: "Pipelines" })} icon={GitBranch} />
           ) : null}
           {showGoalsLink ? (
-            <SidebarNavItem to="/goals" label="Goals" icon={Target} />
+            <SidebarNavItem to="/goals" label={t("sidebar.goals", { defaultValue: "Goals" })} icon={Target} />
           ) : goalsLinkPending ? (
             <div
               data-testid="sidebar-goals-placeholder"
@@ -250,7 +252,7 @@ export function Sidebar({ children }: { children?: ReactNode }) {
             />
           ) : null}
           {showWorkspacesLink ? (
-            <SidebarNavItem to="/workspaces" label="Workspaces" icon={GitBranch} />
+            <SidebarNavItem to="/workspaces" label={t("sidebar.workspaces", { defaultValue: "Workspaces" })} icon={GitBranch} />
           ) : null}
           <PluginSlotOutlet
             errorBehavior="hidden"
@@ -271,13 +273,13 @@ export function Sidebar({ children }: { children?: ReactNode }) {
 
         {streamlinedUiEnabled ? (
           <SidebarSection
-            label="Org"
+            label={t("sidebar.org", { defaultValue: "Org" })}
             collapsible={{ open: organizationOpen, onOpenChange: setOrganizationOpen }}
           >
-            <SidebarNavItem to="/agents" label="Agents" icon={Users} />
-            <SidebarNavItem to="/skills" label="Skills" icon={Boxes} />
-            <SidebarNavItem to="/apps" label="Connectors" icon={Unplug} />
-            <SidebarNavItem to="/activity" label="Audit" icon={History} />
+            <SidebarNavItem to="/agents" label={t("sidebar.agents", { defaultValue: "Agents" })} icon={Users} />
+            <SidebarNavItem to="/skills" label={t("sidebar.skills", { defaultValue: "Skills" })} icon={Boxes} />
+            <SidebarNavItem to="/apps" label={t("sidebar.connectors", { defaultValue: "Connectors" })} icon={Unplug} />
+            <SidebarNavItem to="/activity" label={t("sidebar.activity", { defaultValue: "Audit" })} icon={History} />
           </SidebarSection>
         ) : null}
 
@@ -290,15 +292,15 @@ export function Sidebar({ children }: { children?: ReactNode }) {
             <SidebarProjects />
             <SidebarAgents />
             <SidebarSection
-              label="Organization"
+              label={t("sidebar.organization", { defaultValue: "Organization" })}
               collapsible={{ open: organizationOpen, onOpenChange: setOrganizationOpen }}
             >
-              <SidebarNavItem to="/org" label="Org" icon={Network} />
-              <SidebarNavItem to="/apps" label="Connectors" icon={Unplug} />
-              <SidebarNavItem to="/timeline" label="Timeline" icon={GanttChartSquare} />
-              <SidebarNavItem to="/costs" label="Costs" icon={DollarSign} />
-              <SidebarNavItem to="/activity" label="Activity" icon={History} />
-              <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />
+              <SidebarNavItem to="/org" label={t("sidebar.org", { defaultValue: "Org" })} icon={Network} />
+              <SidebarNavItem to="/apps" label={t("sidebar.connectors", { defaultValue: "Connectors" })} icon={Unplug} />
+              <SidebarNavItem to="/timeline" label={t("sidebar.timeline", { defaultValue: "Timeline" })} icon={GanttChartSquare} />
+              <SidebarNavItem to="/costs" label={t("sidebar.costs", { defaultValue: "Costs" })} icon={DollarSign} />
+              <SidebarNavItem to="/activity" label={t("sidebar.activity", { defaultValue: "Activity" })} icon={History} />
+              <SidebarNavItem to="/company/settings" label={t("sidebar.settings", { defaultValue: "Settings" })} icon={Settings} />
             </SidebarSection>
           </>
         )}

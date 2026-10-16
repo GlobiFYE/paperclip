@@ -1,6 +1,7 @@
 import { Moon, Sun } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { useTranslation } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { useTheme } from "../context/ThemeContext";
 
@@ -27,7 +28,7 @@ interface ThemeToggleProps {
   onAfterToggle?: () => void;
 }
 
-const MENU_ACTION_DESCRIPTION = "Toggle the app appearance.";
+const MENU_ACTION_DESCRIPTION_FALLBACK = "Toggle the app appearance.";
 
 /**
  * Canonical theme-toggle widget. Both the signed-out `/auth` chrome and
@@ -36,9 +37,13 @@ const MENU_ACTION_DESCRIPTION = "Toggle the app appearance.";
  */
 export function ThemeToggle({ className, variant = "icon", onAfterToggle }: ThemeToggleProps) {
   const { theme, toggleTheme } = useTheme();
+  const { t } = useTranslation();
   const isDark = theme === "dark";
-  const label = isDark ? "Switch to light mode" : "Switch to dark mode";
+  const label = isDark
+    ? t("nav.themeLight", { defaultValue: "Switch to light mode" })
+    : t("nav.themeDark", { defaultValue: "Switch to dark mode" });
   const Icon = isDark ? Sun : Moon;
+  const menuDescription = t("theme.description", { defaultValue: MENU_ACTION_DESCRIPTION_FALLBACK });
 
   function handleClick() {
     toggleTheme();
@@ -80,7 +85,7 @@ export function ThemeToggle({ className, variant = "icon", onAfterToggle }: Them
         </span>
         <span className="min-w-0 flex-1">
           <span className="block text-sm font-medium text-foreground">{label}</span>
-          <span className="block text-xs text-muted-foreground">{MENU_ACTION_DESCRIPTION}</span>
+          <span className="block text-xs text-muted-foreground">{menuDescription}</span>
         </span>
       </button>
     );

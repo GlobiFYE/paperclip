@@ -10,6 +10,7 @@ import { projectsApi } from "../api/projects";
 import { issuesApi } from "../api/issues";
 import { heartbeatsApi } from "../api/heartbeats";
 import { accessApi } from "../api/access";
+import { useTranslation } from "@/i18n";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useToastActions } from "../context/ToastContext";
@@ -312,6 +313,7 @@ function RoutineSectionHeader({
 }
 
 export function Routines() {
+  const { t } = useTranslation();
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
@@ -365,8 +367,8 @@ export function Routines() {
   const folderSelection = normalizeFolderSelection(searchParams.get("folder"));
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Routines" }]);
-  }, [setBreadcrumbs]);
+    setBreadcrumbs([{ label: t("routines.breadcrumb",{defaultValue:"Routines"}) }]);
+  }, [setBreadcrumbs, t]);
 
   useEffect(() => {
     setRoutineViewState(getRoutineViewState(routineViewStateKey));
@@ -789,7 +791,7 @@ export function Routines() {
   }
 
   if (!selectedCompanyId) {
-    return <EmptyState icon={Repeat} message="Select an organization to view routines." />;
+    return <EmptyState icon={Repeat} message={t("routines.selectOrg",{defaultValue:"Select an organization to view routines."})} />;
   }
 
   if (streamlinedUiEnabled && legacyRunsRequested) {
@@ -805,9 +807,9 @@ export function Routines() {
       <div className="space-y-6">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div className="space-y-1">
-            <h1 className="text-2xl font-semibold tracking-tight">Routines</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">{t("routines.breadcrumb",{defaultValue:"Routines"})}</h1>
             <p className="text-sm text-muted-foreground">
-              Recurring work definitions that materialize into auditable execution tasks.
+              {t("routines.subtitle",{defaultValue:"Recurring work definitions that materialize into auditable execution tasks."})}
             </p>
           </div>
           <Button onClick={openCreateRoutine}>
@@ -845,9 +847,9 @@ export function Routines() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
-          <h1 className="text-xl font-bold">Routines</h1>
+          <h1 className="text-xl font-bold">{t("routines.breadcrumb",{defaultValue:"Routines"})}</h1>
           <p className="text-sm text-muted-foreground">
-            Recurring work definitions that materialize into auditable execution tasks.
+            {t("routines.subtitle",{defaultValue:"Recurring work definitions that materialize into auditable execution tasks."})}
           </p>
         </div>
         <div className="flex items-center gap-2">

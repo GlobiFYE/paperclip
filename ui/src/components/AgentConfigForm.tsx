@@ -109,6 +109,7 @@ import {
   paperclipRunnerTransitionConfig,
   type CreateConfigValues,
 } from "@paperclipai/adapter-utils";
+import { useTranslation } from "@/i18n";
 import { Badge } from "@/components/ui/badge";
 
 /* ---- Props ---- */
@@ -343,6 +344,7 @@ function ConfigSections({ order, className, children }: {
 export function AgentConfigForm(props: AgentConfigFormProps) {
   const { mode, adapterModels: externalModels } = props;
   const isCreate = mode === "create";
+  const { t } = useTranslation();
   const cards = props.sectionLayout === "cards";
   const showAdapterTypeField = props.showAdapterTypeField ?? true;
   const showAdapterTestEnvironmentButton = props.showAdapterTestEnvironmentButton ?? true;
@@ -596,6 +598,9 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
       props.onDirtyChange?.(false);
     };
   }, [isCreate, props.onDirtyChange, props.onSaveActionChange, props.onCancelActionChange]);
+
+  // ---- i18n headings (20 most visible labels) ----
+  // Use t() at render sites; keys: agentConfigForm.*
 
   // ---- Resolve values ----
   const config = !isCreate ? ((props.agent.adapterConfig ?? {}) as Record<string, unknown>) : {};

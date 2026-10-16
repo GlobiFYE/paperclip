@@ -1,3 +1,4 @@
+import { useTranslation } from "@/i18n";
 import { healthApi } from "@/api/health";
 import { LocalProviderLoginInstructions } from "./AdapterLoginChrome";
 import { useLocalAiLogin } from "./ai-connections/useLocalAiLogin";
@@ -474,6 +475,7 @@ function OnboardingWizardInner({
 }: {
   saved: Record<string, unknown> | null;
 }) {
+  const { t } = useTranslation();
   const {
     onboardingOpen,
     onboardingOptions,
@@ -1224,7 +1226,7 @@ function OnboardingWizardInner({
   */
   const connectCollapsed =
     connectPhase !== "idle" && connectPhase !== "unwindRow" && sourceSelected;
-  const connectProgress = adapterEnvLoading ? "Testing connection…" : loading ? "Connecting…" : null;
+  const connectProgress = adapterEnvLoading ? t("onboarding.steps.connect.testingConnection", { defaultValue: "Testing connection…" }) : loading ? t("onboarding.steps.connect.connecting", { defaultValue: "Connecting…" }) : null;
   const hasSavedSubscription = Boolean(savedSubscription || savedKeys.storedLogin.data ||
     (credentialMode !== "api" && managedBindingForStep()));
   const connectHasCard = credentialMode === "api" || connectStepNeedsLogin || connectStepHasNoSandbox || Boolean(connectProgress);
@@ -1369,27 +1371,27 @@ function OnboardingWizardInner({
   const connectSourceLabel = CONNECT_SOURCE_NAMES[adapterType] ?? adapterType;
   const connectCta: { label: string; icon: FooterPrimaryIcon; disabled: boolean } =
     connectProgress
-      ? { label: adapterEnvLoading ? "Testing…" : connectProgress, icon: "spinner", disabled: true }
+      ? { label: adapterEnvLoading ? t("onboarding.actions.testing", { defaultValue: "Testing…" }) : connectProgress, icon: "spinner", disabled: true }
       : connectPhase === "waiting"
-      ? { label: "Waiting for code", icon: "spinner", disabled: true }
+      ? { label: t("onboarding.actions.waitingForCode", { defaultValue: "Waiting for code" }), icon: "spinner", disabled: true }
       : connectPhase === "connecting"
-        ? { label: "Connecting", icon: "spinner", disabled: true }
+        ? { label: t("onboarding.actions.connecting", { defaultValue: "Connecting" }), icon: "spinner", disabled: true }
         : connectPhase === "ready"
           ? connectStepNeedsLogin
             ? {
-                label: `Sign in to ${connectSourceLabel}`,
+                label: t("onboarding.actions.signInTo", { defaultValue: "Sign in to {{provider}}", provider: connectSourceLabel }),
                 icon: "none",
                 disabled: !connectAuthUrl,
               }
             : {
-                label: "Connect",
+                label: t("onboarding.actions.connect", { defaultValue: "Connect" }),
                 icon: "arrow",
                 disabled:
                   !connectStepReady || (credentialMode === "api" && !apiKey.trim() && !selectedApiKey),
               }
           : // Nothing is chosen on arrival, and the row is what chooses. Until
             // it has been answered the button has nothing to do.
-            { label: "Next", icon: "arrow", disabled: true };
+            { label: t("onboarding.actions.next", { defaultValue: "Next" }), icon: "arrow", disabled: true };
 
   /**
    * Back, on the connect step, unwinds the sign-in before it leaves the step.
@@ -1696,7 +1698,7 @@ function OnboardingWizardInner({
 
   async function handleLaunchToDashboard() {
     if (!createdCompanyId || !createdAgentId) {
-      setError(INCOMPLETE_ONBOARDING_STATE_MESSAGE);
+      setError(t("onboarding.errors.incomplete", { defaultValue: INCOMPLETE_ONBOARDING_STATE_MESSAGE }));
       return;
     }
     setLoading(true);
@@ -2375,7 +2377,7 @@ function OnboardingWizardInner({
   const stepHandoff = beatDelay(1) > 0;
   const heroRoomTarget = step === 1 || !arrived ? heroRoomMotion.closed : arrival && lastStep.current === entryStep ? heroRoomArrival : heroRoomMotion.open;
   const capsuleTarget = step === 1 || !arrived ? capsuleRoomExit : step === 3 && stepHandoff && lastStep.current === 1 ? capsuleRoomEnter : capsuleHeroMotion.animate;
-  const visibleError = error ?? (launchStateIncomplete ? INCOMPLETE_ONBOARDING_STATE_MESSAGE : null);
+  const visibleError = error ?? (launchStateIncomplete ? t("onboarding.errors.incomplete", { defaultValue: INCOMPLETE_ONBOARDING_STATE_MESSAGE }) : null);
 
   return (
     <Dialog
@@ -2603,7 +2605,7 @@ function OnboardingWizardInner({
               {step === 1 && (
                 <motion.div key="step-1" {...stepContentMotion} exit={stepHandoff ? stepContentMotion.exit : undefined} className="mx-auto flex w-full flex-col gap-9">
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="onboarding-company-name">Name</Label>
+                    <Label htmlFor="onboarding-company-name">{t("onboarding.steps.org.label", { defaultValue: "Name" })}</Label>
                     <Input
                       id="onboarding-company-name"
                       className="h-(--sz-44px) rounded-lg border-transparent bg-muted shadow-none dark:bg-muted"
@@ -2631,7 +2633,7 @@ function OnboardingWizardInner({
               {step === 3 && (
                 <motion.div key="step-3" {...stepContentMotion} exit={stepHandoff ? stepContentMotion.exit : undefined} className="mx-auto flex w-full flex-col gap-9">
                   <div className="flex flex-col gap-2">
-                    <Label htmlFor="onboarding-agent-name">Agent name</Label>
+                    <Label htmlFor="onboarding-agent-name">{t("onboarding.steps.agent.label", { defaultValue: "Agent name" })}</Label>
                     {/*
                       Filled, not outlined, and the column's full width — the
                       same field the naming step before the hand-off draws.
@@ -2672,7 +2674,7 @@ function OnboardingWizardInner({
                         Picking one starts the sign-in now. The row is the
                         question, and answering it is what opens the card. */}
                     <ModelSourceTiles
-                      label="Model source"
+                      label={t("onboarding.steps.connect.modelSource", { defaultValue: "Model source" })}
                       sources={recommendedAdapters.map((opt) => ({
                         id: opt.type,
                         label: CONNECT_SOURCE_NAMES[opt.type] ?? opt.label,
@@ -2722,8 +2724,8 @@ function OnboardingWizardInner({
                     >
                       <div className="-ml-3 mt-1">
                         <CredentialModeLink mode={credentialMode} onChange={setCredentialMode} />
-                        {savedKeys.options.length > 0 && <p className="px-3 text-sm text-muted-foreground">{savedKeys.options.length} saved API {savedKeys.options.length === 1 ? "key available" : "keys available"}.</p>}
-                        {credentialMode === "subscription" && authSignalStatus === "present" && <p className="px-3 text-sm text-muted-foreground">An existing provider connection is available.</p>}
+                        {savedKeys.options.length > 0 && <p className="px-3 text-sm text-muted-foreground">{t(savedKeys.options.length===1?"onboarding.steps.connect.savedKeys_one":"onboarding.steps.connect.savedKeys_other", { defaultValue: savedKeys.options.length===1?"{{count}} saved API key available.":"{{count}} saved API keys available.", count: savedKeys.options.length })}</p>}
+                        {credentialMode === "subscription" && authSignalStatus === "present" && <p className="px-3 text-sm text-muted-foreground">{t("onboarding.steps.connect.existingConnection", { defaultValue: "An existing provider connection is available." })}</p>}
                       </div>
                     </motion.div>
                   </div>
@@ -2973,7 +2975,7 @@ function OnboardingWizardInner({
 
                       {adapterEnvResult && adapterEnvResult.status === "fail" && (
                         <div className="rounded-md border border-border/70 bg-muted/20 px-2.5 py-2 text-(length:--text-micro) space-y-1.5">
-                          <p className="font-medium">Manual debug</p>
+                          <p className="font-medium">{t("onboarding.steps.connect.manualDebug", { defaultValue: "Manual debug" })}</p>
                           <p className="text-muted-foreground font-mono break-all">
                             {adapterType === "cursor"
                               ? `${effectiveAdapterCommand} -p --mode ask --output-format json \"Respond with hello.\"`
@@ -2988,7 +2990,7 @@ function OnboardingWizardInner({
                               : `${effectiveAdapterCommand} --print - --output-format stream-json --verbose`}
                           </p>
                           <p className="text-muted-foreground">
-                            Prompt:{" "}
+                            {t("onboarding.steps.connect.prompt", { defaultValue: "Prompt:" })}{" "}
                             <span className="font-mono">Respond with hello.</span>
                           </p>
                           {adapterType === "claude_local" || adapterType === "codex_local" ? (
@@ -3023,7 +3025,7 @@ function OnboardingWizardInner({
                               .
                             </p>
                           ) : (
-                            <p className="text-muted-foreground">If login is required, connect the provider above and retry.</p>
+                            <p className="text-muted-foreground">{t("onboarding.steps.connect.authHintGeneric", { defaultValue: "If login is required, connect the provider above and retry." })}</p>
                           )}
                         </div>
                       )}

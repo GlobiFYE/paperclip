@@ -59,6 +59,7 @@ import {
   rememberContextualSidebarOrigin,
   type ContextualSidebarSurface,
 } from "../lib/shell-navigation";
+import { useTranslation } from "@/i18n";
 import { cn } from "../lib/utils";
 import { NotFoundPage } from "../pages/NotFound";
 import { PluginSlotMount, resolveRouteSidebarSlot, usePluginSlots } from "../plugins/slots";
@@ -82,6 +83,7 @@ const RESERVED_APP_SUBPATHS = new Set([
 ]);
 
 export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
+  const { t } = useTranslation();
   const {
     sidebarOpen,
     setSidebarOpen,
@@ -312,7 +314,7 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
     });
     if (bounce) {
       pushToast?.({
-        title: `${matchedCompany.name} is archived`,
+        title: t("layout.archivedTitle", { defaultValue: "{{name}} is archived", name: matchedCompany.name }),
         body: `Switched to ${bounce.name}.`,
         tone: "info",
         dedupeKey: `archived-company-bounce:${matchedCompany.id}`,
@@ -600,7 +602,7 @@ export function Layout({ sidebarSections }: { sidebarSections?: ReactNode }) {
             type="button"
             className="fixed inset-0 z-40 bg-black/50"
             onClick={() => setSidebarOpen(false)}
-            aria-label="Close sidebar"
+            aria-label={t("layout.closeSidebar", { defaultValue: "Close sidebar" })}
           />
         )}
 

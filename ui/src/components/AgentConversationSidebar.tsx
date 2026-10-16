@@ -3,6 +3,7 @@ import { Plus, Search, Users, X } from "lucide-react";
 import type { Agent } from "@paperclipai/shared";
 import { AgentChatPicker } from "@/components/AgentChatPicker";
 import { AgentAvatar } from "@/components/AgentAvatar";
+import { useTranslation } from "@/i18n";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Link, useNavigate } from "@/lib/router";
@@ -29,6 +30,7 @@ export interface AgentConversationSidebarProps {
 
 /** Searchable navigation for one conversation per agent. */
 export function AgentConversationSidebar({ agents, existingChatAgentIds, availableAgents = agents, activeId, previews = {}, loading = false, error, onRetry, initialSearch = "", onSelect, onBrowse, onAddChat, historyLoading, historyError, onRetryHistory }: AgentConversationSidebarProps) {
+  const { t } = useTranslation();
   const navigate = useNavigate();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [search, setSearch] = useState(initialSearch);
@@ -43,30 +45,30 @@ export function AgentConversationSidebar({ agents, existingChatAgentIds, availab
   return <aside aria-labelledby={headingId} className="flex h-full min-h-0 flex-col border-r border-border bg-background">
     <div className="flex shrink-0 flex-col gap-4 px-3 pb-4 pt-4">
       <div className="flex items-center justify-between gap-2">
-        <h2 id={headingId} className="text-sm font-semibold">Chat</h2>
-        <Button variant="outline" size="icon-sm" aria-label="Add chat" title="Add chat" onClick={() => setPickerOpen(true)}>
+        <h2 id={headingId} className="text-sm font-semibold">{t("agentConversationSidebar.heading",{defaultValue:"Chat"})}</h2>
+        <Button variant="outline" size="icon-sm" aria-label={t("agentConversationSidebar.addChat",{defaultValue:"Add chat"})} title={t("agentConversationSidebar.addChat",{defaultValue:"Add chat"})} onClick={() => setPickerOpen(true)}>
           <Plus className="size-4" />
         </Button>
       </div>
       <div className="relative">
         <Search aria-hidden="true" className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-        <Input ref={searchRef} aria-label="Search agents" placeholder="Find an agent" value={search} onChange={event => setSearch(event.target.value)}
+        <Input ref={searchRef} aria-label={t("agentConversationSidebar.searchAgentsAriaLabel",{defaultValue:"Search agents"})} placeholder={t("agentConversationSidebar.searchPlaceholder",{defaultValue:"Find an agent"})} value={search} onChange={event => setSearch(event.target.value)}
           onKeyDown={event => { if (event.key === "Escape") { event.stopPropagation(); setSearch(""); } }}
           className="h-8 pl-8 pr-8 text-xs md:text-xs" />
-        {search && <Button variant="ghost" size="icon-xs" aria-label="Clear search" className="absolute right-1 top-1/2 -translate-y-1/2" onClick={focusSearch}><X className="size-3" /></Button>}
+        {search && <Button variant="ghost" size="icon-xs" aria-label={t("agentConversationSidebar.clearSearch",{defaultValue:"Clear search"})} className="absolute right-1 top-1/2 -translate-y-1/2" onClick={focusSearch}><X className="size-3" /></Button>}
       </div>
     </div>
     <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto px-3 pb-3 scrollbar-auto-hide">
       <p className="px-2 text-(length:--text-micro) font-medium uppercase tracking-widest text-muted-foreground">
-        {query ? "Search results" : "Teammates"}
+        {query ? t("agentConversationSidebar.searchResults",{defaultValue:"Search results"}) : t("agentConversationSidebar.teammates",{defaultValue:"Teammates"})}
       </p>
       <span role="status" className="sr-only">{loading ? "Loading agents" : `${visible.length} ${visible.length === 1 ? "agent" : "agents"}`}</span>
-      {historyLoading && <p role="status" className="px-2 text-xs text-muted-foreground">Loading chat history…</p>}
+      {historyLoading && <p role="status" className="px-2 text-xs text-muted-foreground">{t("agentConversationSidebar.loadingHistory",{defaultValue:"Loading chat history…"})}</p>}
       {historyError && <div role="alert" className="flex flex-col items-start gap-2 px-2 py-3">
-        <p className="text-xs text-muted-foreground">Some chat history couldn’t load.</p>
-        <Button variant="outline" size="sm" onClick={onRetryHistory}>Retry chat history</Button>
+        <p className="text-xs text-muted-foreground">{t("agentConversationSidebar.historyFailed",{defaultValue:"Some chat history couldn’t load."})}</p>
+        <Button variant="outline" size="sm" onClick={onRetryHistory}>{t("agentConversationSidebar.retryHistory",{defaultValue:"Retry chat history"})}</Button>
       </div>}
-      {error ? <div role="alert" className="flex flex-col items-start gap-2 px-2 py-6"><p className="text-sm">Couldn’t load your chats.</p><Button variant="outline" size="sm" onClick={onRetry}>Try again</Button></div> : loading ? <div aria-hidden="true" className="flex flex-col gap-1">
+      {error ? <div role="alert" className="flex flex-col items-start gap-2 px-2 py-6"><p className="text-sm">{t("agentConversationSidebar.loadChatsFailed",{defaultValue:"Couldn’t load your chats."})}</p><Button variant="outline" size="sm" onClick={onRetry}>{t("agentConversationSidebar.tryAgain",{defaultValue:"Try again"})}</Button></div> : loading ? <div aria-hidden="true" className="flex flex-col gap-1">
         {[0, 1, 2, 3].map(index => <div key={index} className="flex items-center gap-3 rounded-md px-2 py-3 motion-safe:animate-pulse">
           <div className="size-8 shrink-0 rounded-lg bg-muted" />
           <div className="flex flex-1 flex-col gap-2"><div className="h-3 w-2/3 rounded-sm bg-muted" /><div className="h-2 w-full rounded-sm bg-muted" /></div>
@@ -80,19 +82,19 @@ export function AgentConversationSidebar({ agents, existingChatAgentIds, availab
           <AgentAvatar agent={agent} size={32} />
           <span className="flex min-w-0 flex-1 flex-col gap-0.5">
             <span className="truncate text-sm font-medium">{agent.name}</span>
-            <span className="truncate text-xs text-muted-foreground">{agent.status === "terminated" ? "Terminated" : agent.status === "paused" ? "Paused" : previews[agent.id] ?? agent.title ?? "Start a conversation"}</span>
+            <span className="truncate text-xs text-muted-foreground">{agent.status === "terminated" ? t("agentConversationSidebar.terminated",{defaultValue:"Terminated"}) : agent.status === "paused" ? t("agentConversationSidebar.paused",{defaultValue:"Paused"}) : previews[agent.id] ?? agent.title ?? t("agentConversationSidebar.startConversation",{defaultValue:"Start a conversation"})}</span>
           </span>
         </Link>)}
       </nav> : !agents.length && (historyLoading || historyError) ? null : <div className="flex flex-col items-start gap-2 px-2 py-6">
-        <p className="text-sm font-medium">{agents.length ? "No agents found" : "No chats yet"}</p>
-        <p className="text-xs leading-relaxed text-muted-foreground">{agents.length ? "Try another name or role." : "Choose an agent to start a conversation."}</p>
-        {!agents.length && <Button variant="outline" size="sm" onClick={() => setPickerOpen(true)}>Choose an agent</Button>}
-        {agents.length > 0 && <Button variant="outline" size="sm" onClick={focusSearch}>Clear search</Button>}
+        <p className="text-sm font-medium">{agents.length ? t("agentConversationSidebar.noAgentsFound",{defaultValue:"No agents found"}) : t("agentConversationSidebar.noChatsYet",{defaultValue:"No chats yet"})}</p>
+        <p className="text-xs leading-relaxed text-muted-foreground">{agents.length ? t("agentConversationSidebar.tryAnotherName",{defaultValue:"Try another name or role."}) : t("agentConversationSidebar.chooseAgentHint",{defaultValue:"Choose an agent to start a conversation."})}</p>
+        {!agents.length && <Button variant="outline" size="sm" onClick={() => setPickerOpen(true)}>{t("agentConversationSidebar.chooseAgent",{defaultValue:"Choose an agent"})}</Button>}
+        {agents.length > 0 && <Button variant="outline" size="sm" onClick={focusSearch}>{t("agentConversationSidebar.clearSearch",{defaultValue:"Clear search"})}</Button>}
       </div>}
     </div>
     <div className="shrink-0 px-3 py-4">
       <Button variant="ghost" size="sm" className="w-full justify-start gap-2 px-2 text-muted-foreground" asChild={!onBrowse} onClick={onBrowse}>
-        {onBrowse ? <><Users className="size-4" />Browse all agents</> : <Link to="/agents/all"><Users className="size-4" />Browse all agents</Link>}
+        {onBrowse ? <><Users className="size-4" />{t("agentConversationSidebar.browseAllAgents",{defaultValue:"Browse all agents"})}</> : <Link to="/agents/all"><Users className="size-4" />{t("agentConversationSidebar.browseAllAgents",{defaultValue:"Browse all agents"})}</Link>}
       </Button>
     </div>
     <AgentChatPicker agents={availableAgents} open={pickerOpen} onOpenChange={setPickerOpen}

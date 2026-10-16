@@ -45,6 +45,7 @@ import { SearchFilterSheet, SearchFilterSheetTrigger } from "../components/searc
 import { SearchSortMenu } from "../components/search/SearchSortMenu";
 import { ZeroResultsRecovery } from "../components/search/ZeroResultsRecovery";
 import { useSidebar } from "../context/SidebarContext";
+import { useTranslation } from "@/i18n";
 import {
   SORT_LABELS,
   countActiveFilters,
@@ -131,6 +132,7 @@ function shapeError(error: unknown): { message: string; status?: number } {
 }
 
 export function Search() {
+  const { t } = useTranslation();
   const { selectedCompanyId } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const { openNewIssue } = useDialogActions();
@@ -156,8 +158,8 @@ export function Search() {
   const [recentSearches, setRecentSearches] = useState<string[]>([]);
 
   useEffect(() => {
-    setBreadcrumbs([{ label: "Search" }]);
-  }, [setBreadcrumbs]);
+    setBreadcrumbs([{ label: t("search.breadcrumb",{defaultValue:"Search"}) }]);
+  }, [setBreadcrumbs, t]);
 
   useEffect(() => {
     if (!selectedCompanyId) return;
@@ -565,15 +567,15 @@ export function Search() {
                 }
               }
             }}
-            placeholder="Search tasks, comments, documents, artifacts, agents, projects…"
-            aria-label="Search query"
+            placeholder={t("search.placeholder",{defaultValue:"Search tasks, comments, documents, artifacts, agents, projects…"})}
+            aria-label={t("search.ariaLabel",{defaultValue:"Search query"})}
             className="h-10 pl-9 pr-20 text-sm"
           />
           {draftQuery.length > 0 ? (
             <button
               type="button"
               onClick={handleClear}
-              aria-label="Clear search"
+              aria-label={t("search.clearSearch",{defaultValue:"Clear search"})}
               className="absolute right-12 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground hover:bg-accent/50"
             >
               <X className="h-3.5 w-3.5" />
@@ -759,19 +761,20 @@ function SearchTabContent({
   isFetching,
   agentsById,
 }: SearchTabContentProps) {
+  const { t } = useTranslation();
   if (showInitialState) {
     return (
       <div className="mx-auto flex w-full max-w-2xl flex-col gap-4 px-4 py-10 sm:px-6">
         <div>
-          <h2 className="text-lg font-semibold">Type to search organization memory.</h2>
+          <h2 className="text-lg font-semibold">{t("search.initialTitle",{defaultValue:"Type to search organization memory."})}</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Tasks, comments, plan documents, artifacts, agents, projects — same surface, ranked by relevance.
+            {t("search.initialDesc",{defaultValue:"Tasks, comments, plan documents, artifacts, agents, projects — same surface, ranked by relevance."})}
           </p>
         </div>
         {recentSearches.length > 0 ? (
           <div>
             <div className="mb-2 text-(length:--text-micro) font-semibold uppercase tracking-wide text-muted-foreground">
-              Recent searches
+              {t("search.recentSearches",{defaultValue:"Recent searches"})}
             </div>
             <ul className="flex flex-col divide-y divide-border rounded-md border border-border">
               {recentSearches.map((entry) => (
@@ -812,7 +815,7 @@ function SearchTabContent({
     return (
       <div className="mx-auto flex w-full max-w-xl flex-col items-center justify-center gap-3 px-4 py-12 text-center">
         <AlertTriangle className="h-10 w-10 text-destructive" aria-hidden />
-        <div className="text-base font-semibold">Couldn’t run that search</div>
+        <div className="text-base font-semibold">{t("search.errorTitle",{defaultValue:"Couldn’t run that search"})}</div>
         <p className="text-sm text-muted-foreground">
           {status ? `The server returned ${status}.` : "The request failed."} Your input and filters are still here, so
           you can retry or fall back to the Tasks filter.
@@ -822,7 +825,7 @@ function SearchTabContent({
             Retry
           </Button>
           <Button onClick={navigateIssuesFallback} variant="outline" size="sm">
-            Open Tasks filter view
+            {t("search.openTasksFilter",{defaultValue:"Open Tasks filter view"})}
           </Button>
         </div>
       </div>
@@ -873,7 +876,7 @@ function SearchTabContent({
           ) : null}
           <Button onClick={openNewIssue} size="sm" variant="default">
             <Plus className="mr-1.5 h-4 w-4" />
-            Create task from this query
+            {t("search.createTaskFromQuery",{defaultValue:"Create task from this query"})}
           </Button>
           <Button onClick={navigateIssuesFallback} size="sm" variant="ghost">
             Open Tasks filter view
