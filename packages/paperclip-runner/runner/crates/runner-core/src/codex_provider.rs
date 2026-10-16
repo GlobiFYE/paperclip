@@ -2569,10 +2569,13 @@ impl CodexProvider {
             }
             if matches!(
                 method,
-                "item/tool/requestUserInput"
-                    | "mcpServer/elicitation/request"
-                    | OPENCODE_RUNTIME_REQUEST_METHOD
-            ) {
+                "item/tool/requestUserInput" | OPENCODE_RUNTIME_REQUEST_METHOD
+            ) || (method == "mcpServer/elicitation/request"
+                && message
+                    .pointer("/params/_meta/codex_approval_kind")
+                    .and_then(Value::as_str)
+                    == Some("mcp_tool_call"))
+            {
                 let params = message.get("params").cloned().unwrap_or(Value::Null);
                 if matches!(
                     method,
