@@ -3,15 +3,17 @@ ALTER TABLE "resource_lifecycle_events" DROP CONSTRAINT IF EXISTS "resource_life
 ALTER TABLE "resource_lifecycle_events" ADD CONSTRAINT "resource_lifecycle_events_resource_type_check" CHECK ("resource_lifecycle_events"."resource_type" IN ('agent', 'project', 'agent_runtime'));--> statement-breakpoint
 ALTER TABLE "resource_lifecycle_events" ADD CONSTRAINT "resource_lifecycle_events_action_check" CHECK (("resource_lifecycle_events"."resource_type" = 'agent_runtime' AND "resource_lifecycle_events"."action" IN ('update', 'delete')) OR "resource_lifecycle_events"."action" = 'create' OR ("resource_lifecycle_events"."resource_type" = 'project' AND "resource_lifecycle_events"."action" IN ('update', 'archive', 'delete')) OR ("resource_lifecycle_events"."resource_type" = 'agent' AND "resource_lifecycle_events"."action" IN ('pause', 'resume', 'terminate')));
 --> statement-breakpoint
-CREATE OR REPLACE FUNCTION paperclip_record_agent_runtime(p_company uuid, p_agent uuid) RETURNS void
+CREATE OR REPLACE FUNCTION paperclip_record_agent_runtime(p_company uuid, p_agent uuid) RETURNS bigint
 LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+DECLARE revision bigint;
 BEGIN
   PERFORM 1 FROM agents WHERE company_id = p_company AND id = p_agent
     AND status NOT IN ('pending_approval', 'terminated') FOR UPDATE;
   IF FOUND THEN
     INSERT INTO resource_lifecycle_events(company_id, resource_type, resource_id, action)
-      VALUES (p_company, 'agent_runtime', p_agent, 'update');
+      VALUES (p_company, 'agent_runtime', p_agent, 'update') RETURNING id INTO revision;
   END IF;
+  RETURN revision;
 END;
 $$;
 --> statement-breakpoint
@@ -42,17 +44,19 @@ CREATE TRIGGER paperclip_agent_runtime_changed AFTER INSERT OR UPDATE OR DELETE 
 --> statement-breakpoint
 CREATE OR REPLACE FUNCTION paperclip_agent_runtime_files_changed() RETURNS trigger
 LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
+DECLARE revision bigint;
 BEGIN
   IF NEW.entity_type = 'agent' AND NEW.action IN ('agent.files_updated', 'agent.instructions_path_updated',
     'agent.instructions_bundle_updated', 'agent.instructions_file_updated', 'agent.instructions_file_deleted', 'plugin.managed_agent.reset') THEN
-    PERFORM paperclip_record_agent_runtime(NEW.company_id, NEW.entity_id::uuid);
+    revision := paperclip_record_agent_runtime(NEW.company_id, NEW.entity_id::uuid);
+    NEW.details := coalesce(NEW.details, '{}'::jsonb) || jsonb_build_object('agentRuntimeRevision', revision::text);
   END IF;
   RETURN NEW;
 END;
 $$;
 --> statement-breakpoint
 DROP TRIGGER IF EXISTS paperclip_agent_runtime_files_changed ON activity_log;
-CREATE TRIGGER paperclip_agent_runtime_files_changed AFTER INSERT ON activity_log
+CREATE TRIGGER paperclip_agent_runtime_files_changed BEFORE INSERT ON activity_log
   FOR EACH ROW EXECUTE FUNCTION paperclip_agent_runtime_files_changed();
 --> statement-breakpoint
 CREATE OR REPLACE FUNCTION paperclip_notify_plugin_lifecycle() RETURNS trigger

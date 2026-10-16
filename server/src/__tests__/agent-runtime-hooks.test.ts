@@ -106,7 +106,30 @@ describeDatabase("agent runtime synchronization hooks", () => {
     expect(await save()).toMatchObject({ changed: false });
     expect(await events()).toHaveLength(before.length + 1);
     expect(await inbox.list(companyId, 100, undefined, ["agent_runtime"])).toEqual([expect.objectContaining({ resourceId: agentId, action: "update" })]);
+    const repaired = await events();
+    const audits = await db.select().from(activityLog).where(eq(activityLog.entityId, agentId)).orderBy(activityLog.id);
+    for (let replay = 0; replay < 5; replay++) expect(await save()).toMatchObject({ changed: false });
+    expect(await events()).toEqual(repaired);
+    expect(await db.select().from(activityLog).where(eq(activityLog.entityId, agentId)).orderBy(activityLog.id)).toEqual(audits);
     expect((await pluginAgentRuntimeState(db, pluginId, companyId, agentId))!.revision).toBe(String((await events()).at(-1)!.id));
+  });
+
+  it("repairs a failed save even when that content hash was recorded before an intervening change", async () => {
+    const actor = { type: "board" as const, userId: "local-board", source: "local_implicit" as const };
+    const store = agentFileStore(db);
+    const target = { companyId, agentId, path: "AGENTS.md" };
+    const first = await store.write({ ...target, bytes: Buffer.from("first"), baseHash: null }, actor);
+    const second = await store.write({ ...target, bytes: Buffer.from("second"), baseHash: first.contentHash }, actor);
+    await store.write({ ...target, bytes: Buffer.from("first"), baseHash: second.contentHash }, actor);
+    const before = (await events()).length;
+    const save = () => store.write({ ...target, bytes: Buffer.from("second"), baseHash: first.contentHash }, actor);
+    await db.execute(sql`ALTER TABLE resource_lifecycle_events ADD CONSTRAINT repeated_hash_failure CHECK (resource_type <> 'agent_runtime') NOT VALID`);
+    try { await expect(save()).rejects.toThrow(); }
+    finally { await db.execute(sql`ALTER TABLE resource_lifecycle_events DROP CONSTRAINT repeated_hash_failure`); }
+    expect(await save()).toMatchObject({ changed: false });
+    expect(await events()).toHaveLength(before + 1);
+    await save();
+    expect(await events()).toHaveLength(before + 1);
   });
 
   it("keeps old subscriptions isolated and replays runtime events in order until acknowledged", async () => {

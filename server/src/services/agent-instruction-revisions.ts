@@ -1,6 +1,6 @@
 import { updateAgentConfigurationInTransaction } from "./agent-configuration-transaction.js";
 import { createHash } from "node:crypto";
-import { adoptAgentFiles, agentFileToken } from "./agent-file-store.js";
+import { adoptAgentFiles, agentFileToken, isAgentFileSaveRecorded } from "./agent-file-store.js";
 import { and, desc, eq, getTableColumns, lt, or, sql } from "drizzle-orm";
 import {
   activityLog,
@@ -273,7 +273,7 @@ export function agentInstructionRevisionService(db: Db) {
       // An exact replay can safely return the durable receipt even after its base
       // advanced. Restore also deduplicates identical content, preserving history.
       if (current && current.contentBase64 === candidate.toString("base64")) {
-        await recordSave(current);
+        if (!await isAgentFileSaveRecorded(tx, state.agent, input.entryFile, current.contentHash)) await recordSave(current);
         await bindEntry();
         return { row: current, changed: false };
       }

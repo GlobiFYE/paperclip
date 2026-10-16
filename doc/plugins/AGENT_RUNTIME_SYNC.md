@@ -58,8 +58,10 @@ transaction. A failed managed write must be repaired through the same API before
 claiming synchronization. Upstream repository detection remains owned by the
 source integration.
 
-Successful file saves, including identical retries and already-applied deletions,
-record the current desired state. This repairs a missing journal event if a prior
-save published bytes before its database transaction failed. The file API still
+Successful file saves record the current desired state. Identical retries and
+already-applied deletions repair a missing journal event if a prior save published
+bytes before its database transaction failed. Audit rows carry their runtime
+revision, so repeated identical saves against that revision create no audit rows
+or events. Later runtime changes invalidate that deduplication. The file API still
 returns `changed: false` for identical content and keeps conditional-write checks.
 Consumers can skip rewriting content whose hash already matches.
