@@ -184,6 +184,7 @@ export function createChatInboundAuthority(db: Db, options: InboundAuthorityOpti
     linkedDenied: boolean;
     userId: string | null;
     sponsorUserId?: string | null;
+    reviewedAuthor?: boolean;
   }> {
     if (endpoint.provider === "speko") {
       const principal = await tx.select({ externalId: chatExternalPrincipals.externalId }).from(chatExternalPrincipals)
@@ -200,7 +201,7 @@ export function createChatInboundAuthority(db: Db, options: InboundAuthorityOpti
       if (githubAccess.allowed || !githubConversationId) return githubAccess;
       const commentAdmission = await githubReviewedAuthorCommentAdmission(tx, endpoint, principalId, githubConversationId);
       return commentAdmission?.allowed
-        ? { ...githubAccess, allowed: true, linkedDenied: false, userId: commentAdmission.responsibleUserId ?? null }
+        ? { ...githubAccess, allowed: true, linkedDenied: false, userId: commentAdmission.responsibleUserId ?? null, reviewedAuthor: true }
         : githubAccess;
     }
     // Link confirmation already uses this transaction-scoped identity key.
