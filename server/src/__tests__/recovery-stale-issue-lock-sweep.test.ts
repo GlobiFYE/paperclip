@@ -402,6 +402,78 @@ describeEmbeddedPostgres("recovery sweepStaleIssueLocks", () => {
     }
   });
 
+  it.each(["leases", "agents", "both"])(
+    "bounds the sweep teardown wait with many crashed runs and stalled %s hooks",
+    async (stalledHooks) => {
+      const { companyId, agentId, runningRunId } = await seed();
+      const runIds = [runningRunId, ...Array.from({ length: 119 }, () => randomUUID())];
+      await db.insert(heartbeatRuns).values(runIds.slice(1).map((id) => ({
+        id, companyId, agentId, status: "running", invocationSource: "manual", startedAt: new Date(),
+      })));
+      await db.update(heartbeatRuns).set({ processPid: 2_000_000_000 })
+        .where(eq(heartbeatRuns.companyId, companyId));
+      await db.insert(issues).values(runIds.map((runId) => ({
+        id: randomUUID(), companyId, title: "Crashed run with stalled teardown",
+        status: "in_progress", assigneeAgentId: agentId,
+        checkoutRunId: runId, executionRunId: runId, executionLockedAt: new Date(),
+      })));
+
+      let unblock!: () => void;
+      const stalled = new Promise<void>((resolve) => { unblock = resolve; });
+      let teardownStarted!: () => void;
+      const firstTeardown = new Promise<void>((resolve) => { teardownStarted = resolve; });
+      const releaseEnvironmentLeasesForRun = vi.fn(async () => {
+        teardownStarted();
+        if (stalledHooks !== "agents") await stalled;
+      });
+      const finalizeAgentStatus = vi.fn(async () => {
+        if (stalledHooks !== "leases") await stalled;
+      });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      let returned = false;
+      const sweep = recoveryService(db, {
+        enqueueWakeup: vi.fn(), releaseEnvironmentLeasesForRun, finalizeAgentStatus,
+      }).sweepStaleIssueLocks().then((result) => {
+        returned = true;
+        return result;
+      });
+      try {
+        await firstTeardown;
+        // All locks clear before any stalled teardown finishes; only eight
+        // workers start cleanup rather than launching every run at once.
+        expect(releaseEnvironmentLeasesForRun).toHaveBeenCalledTimes(8);
+        const locks = await db.select({
+          checkoutRunId: issues.checkoutRunId, executionRunId: issues.executionRunId,
+          executionLockedAt: issues.executionLockedAt,
+        }).from(issues).where(eq(issues.companyId, companyId));
+        expect(locks).toHaveLength(runIds.length);
+        expect(locks.every((lock) => lock.checkoutRunId === null
+          && lock.executionRunId === null && lock.executionLockedAt === null)).toBe(true);
+
+        await vi.advanceTimersByTimeAsync(59_999);
+        expect(returned).toBe(false);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(returned).toBe(true);
+        const result = await sweep;
+        expect(result.cleared).toBe(runIds.length);
+        expect(new Set(result.terminalizedRunIds)).toEqual(new Set(runIds));
+        expect(finalizeAgentStatus.mock.calls.length).toBeLessThan(runIds.length);
+
+        // The deadline releases startup without dropping queued cleanup.
+        unblock();
+        await vi.runAllTimersAsync();
+        expect(releaseEnvironmentLeasesForRun).toHaveBeenCalledTimes(runIds.length);
+        expect(finalizeAgentStatus).toHaveBeenCalledTimes(runIds.length);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        unblock();
+        await vi.runAllTimersAsync();
+        await sweep;
+        vi.useRealTimers();
+      }
+    },
+  );
+
   it("settles a process-gone run with the terminal issue outcome", async () => {
     const seeded = await seed();
     const issueId = await seedOrphanedRunIssue(seeded);

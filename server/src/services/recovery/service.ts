@@ -6354,13 +6354,35 @@ export function recoveryService(
     // bounded concurrency so one stalled provider cannot serialize startup.
     const TEARDOWN_CONCURRENCY = 8;
     let nextTeardown = 0;
-    await Promise.all(
-      Array.from({ length: Math.min(TEARDOWN_CONCURRENCY, deferredTeardowns.length) }, async () => {
-        while (nextTeardown < deferredTeardowns.length) {
-          await deferredTeardowns[nextTeardown++]!();
-        }
-      }),
-    );
+    if (deferredTeardowns.length > 0) {
+      const teardowns = Promise.all(
+        Array.from({ length: Math.min(TEARDOWN_CONCURRENCY, deferredTeardowns.length) }, async () => {
+          while (nextTeardown < deferredTeardowns.length) {
+            await deferredTeardowns[nextTeardown++]!();
+          }
+        }),
+      );
+      // Per-hook timeouts alone still make startup wait grow with the number
+      // of crashed runs. Cap the whole teardown wait; workers continue in the
+      // background, and the lease backstop still covers stranded leases.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await Promise.race([
+          teardowns,
+          new Promise<void>((resolve) => {
+            timer = setTimeout(() => {
+              logger.warn(
+                { teardownCount: deferredTeardowns.length },
+                "stale issue lock sweep teardown exceeded 60000ms; continuing in background",
+              );
+              resolve();
+            }, 60_000);
+          }),
+        ]);
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+    }
 
     if (result.cleared > 0 || result.terminalizedRunIds.length > 0) {
       logger.warn(
