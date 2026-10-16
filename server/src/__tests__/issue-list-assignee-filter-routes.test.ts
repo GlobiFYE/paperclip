@@ -201,6 +201,45 @@ describeEmbeddedPostgres("issue list routes assigneeAgentId filter", () => {
     expect(res.body.map((issue: { id: string }) => issue.id)).toEqual([assignedIssueId]);
   });
 
+  it("omits the unloaded execution fields from the list payload instead of sending them as null", async () => {
+    const companyId = randomUUID();
+    const gatedIssueId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: uniqueIssuePrefix(),
+      requireBoardApprovalForNewAgents: false,
+    });
+    await seedCloudTenantMember(companyId);
+    await db.insert(issues).values({
+      id: gatedIssueId,
+      companyId,
+      title: "QA: gated behind the board",
+      status: "todo",
+      priority: "medium",
+      executionPolicy: {
+        stages: [{ type: "approval", participants: [{ type: "user", userId: "local-board" }] }],
+      },
+    });
+
+    const app = createApp(companyId);
+    const res = await request(app)
+      .get(`/api/companies/${companyId}/issues`)
+      .query({ status: "todo", limit: "20" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.body).toHaveLength(1);
+    const row = res.body[0] as Record<string, unknown>;
+    expect(row.id).toBe(gatedIssueId);
+    // The list projection does not load these, and a null key cannot be told apart from
+    // "not set": an agent read `executionPolicy: null` here and concluded the QA approval
+    // gate had been dropped from an issue that had one (LAC-4464). Absent, not null.
+    expect("executionPolicy" in row).toBe(false);
+    expect("executionState" in row).toBe(false);
+    expect("executionWorkspaceSettings" in row).toBe(false);
+  });
+
   it("returns 422 for malformed assigneeAgentId filters", async () => {
     const companyId = randomUUID();
     await db.insert(companies).values({

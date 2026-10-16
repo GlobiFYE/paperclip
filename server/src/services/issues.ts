@@ -63,6 +63,7 @@ import {
   normalizeIssueIdentifier as normalizeIssueReferenceIdentifier,
 } from "@paperclipai/shared";
 import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
+import { blockedByIssueIdsFromRelations } from "./issue-list-projection.js";
 import { logger } from "../middleware/logger.js";
 import { parseObject } from "../adapters/utils.js";
 import {
@@ -2407,6 +2408,15 @@ async function listIssueBlockerAttentionMap(
   return attentionMap;
 }
 
+/**
+ * `executionPolicy`, `executionState` and `executionWorkspaceSettings` are selected as
+ * `null` here rather than read: they are large jsonb columns and no list view needs them.
+ * They are **not loaded**, which is not the same as not set, so they must never reach a
+ * caller as a null key. `omitUnloadedIssueListFields` drops them at the response
+ * boundary; a caller that read the null instead concluded a QA gate did not exist on an
+ * issue that had one (LAC-4464). Anything added here that is a placeholder rather than a
+ * value belongs in that omit list too.
+ */
 const issueListSelect = {
   id: issues.id,
   companyId: issues.companyId,
@@ -4217,17 +4227,21 @@ export function issueService(db: Db) {
     companyId: string,
     rows: T[],
     dbOrTx: DbReader = db,
-  ): Promise<Array<T & IssueRelationSummaryMap>> {
+  ): Promise<Array<T & IssueRelationSummaryMap & { blockedByIssueIds: string[] }>> {
     if (rows.length === 0) return [];
     const relationMap = await getIssueRelationSummaryMap(
       companyId,
       rows.map((row) => row.id),
       dbOrTx,
     );
-    return rows.map((row) => ({
-      ...row,
-      ...(relationMap.get(row.id) ?? { blockedBy: [], blocks: [] }),
-    }));
+    return rows.map((row) => {
+      const relations = relationMap.get(row.id) ?? { blockedBy: [], blocks: [] };
+      return {
+        ...row,
+        ...relations,
+        blockedByIssueIds: blockedByIssueIdsFromRelations(relations.blockedBy),
+      };
+    });
   }
 
   async function assertNoBlockingCycles(
