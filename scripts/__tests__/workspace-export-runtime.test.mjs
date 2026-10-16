@@ -10,6 +10,8 @@ const readJson = (relativePath) => JSON.parse(readFileSync(join(repoRoot, relati
 const packageJson = readJson("package.json");
 const serverPackageJson = readJson("server/package.json");
 const dbPackageJson = readJson("packages/db/package.json");
+const pluginSdkPackageJson = readJson("packages/plugins/sdk/package.json");
+const skillsCatalogPackageJson = readJson("packages/skills-catalog/package.json");
 
 const sourceExportPackages = [
   "packages/adapter-utils/package.json",
@@ -98,4 +100,9 @@ test("test subprocess entrypoints select development workspace exports", () => {
   const playwrightConfig = readFileSync(join(repoRoot, "tests/e2e/playwright.config.ts"), "utf8");
   assert.match(stableRunner, /NODE_OPTIONS: \[process\.env\.NODE_OPTIONS\?\.trim\(\), "--conditions=development"\]/);
   assert.match(playwrightConfig, /"--conditions=development"/);
+});
+
+test("production catalog builds override inherited development conditions without duplicate shared builds", () => {
+  assert.match(skillsCatalogPackageJson.scripts["build:manifest"], /cross-env NODE_OPTIONS=--conditions=production/);
+  assert.doesNotMatch(pluginSdkPackageJson.scripts.build, /@paperclipai\/shared build/);
 });
