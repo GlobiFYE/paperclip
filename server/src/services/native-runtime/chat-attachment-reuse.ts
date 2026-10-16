@@ -33,6 +33,7 @@ import { HttpError } from "../../errors.js";
 import { voiceSessionStore, type VoiceTransaction } from "../voice/voice-session-store.js";
 import { issueService } from "../issues.js";
 import { boundExternalChatProvider } from "./external-chat-provider.js";
+import { githubReviewedAuthorCommentAdmission } from "../chat-github-events.js";
 import { resolveExternalChatQuestionResponse } from "./external-chat-question-response.js";
 
 export const LIST_CHAT_ATTACHMENTS_TOOL_NAME = "list_chat_attachments";
@@ -329,6 +330,7 @@ async function principalAuthorized(
   endpoint: typeof chatEndpoints.$inferSelect,
   principalId: string,
   lockMode: AuthorizationLockMode = "blocking",
+  githubConversationId: string | null = null,
 ): Promise<boolean> {
   if (lockMode === "blocking") {
     await tx.execute(
@@ -411,11 +413,16 @@ async function principalAuthorized(
         : membershipQuery.for("update").limit(1));
     return membership?.status === "active" && membership.role !== "viewer";
   };
-  if (link?.status === "linked") {
-    return Boolean(link.userId && (await activeMember(link.userId)));
-  }
-  if (!endpoint.allowUnlinkedPeople) return false;
-  return endpoint.sponsorUserId ? activeMember(endpoint.sponsorUserId) : true;
+  const allowed =
+    link?.status === "linked"
+      ? Boolean(link.userId && (await activeMember(link.userId)))
+      : endpoint.allowUnlinkedPeople &&
+        (endpoint.sponsorUserId ? await activeMember(endpoint.sponsorUserId) : true);
+  if (allowed || endpoint.provider !== "github" || !githubConversationId) return allowed;
+  // GitHub reviewed authors are admitted per pull request conversation by the bot configuration.
+  return (
+    await githubReviewedAuthorCommentAdmission(tx, endpoint, principalId, githubConversationId)
+  )?.allowed === true;
 }
 
 /** Caller must independently verify the current run/issue execution owner. */
@@ -540,7 +547,7 @@ export async function authorizeChatConversationForBoundRun(
     throw new Error("paperclip_runner_chat_attachment_destination_denied");
   }
   for (const principalId of new Set(links.map((row) => row.principalId!))) {
-    if (!(await principalAuthorized(tx, endpoint, principalId, lockMode))) {
+    if (!(await principalAuthorized(tx, endpoint, principalId, lockMode, conversation.externalThreadId))) {
       throw new Error("paperclip_runner_chat_attachment_principal_denied");
     }
   }
