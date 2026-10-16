@@ -161,7 +161,7 @@ impl StdioMcpSession {
                 format!("{prefix}.args=[\"--stdio-mcp\",{path},\"--content-images\"]"),
                 format!("{prefix}.env={{}}"),
                 format!("{prefix}.env_vars=[]"),
-                format!("{prefix}.default_tools_approval_mode=\"prompt\""),
+                format!("{prefix}.default_tools_approval_mode=\"approve\""),
                 format!("{prefix}.required=true"),
             ] {
                 args.extend(["-c".into(), value]);

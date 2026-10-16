@@ -152,10 +152,11 @@ Native Codex and isolated ACPX Claude also accept verified, session-local stdio
 servers from the execution host. This is a separate local binding, alongside the
 HTTP gateway; it does not create gateway/profile administration authority. Tasks
 cannot supply these reserved environment inputs. Read-only sessions omit them.
-Claude uses its applicable ACPX permission policy. Codex routes prompted tool
-approvals through PRP with active thread/turn checks and one-time decisions;
-existing deny rules remain effective. Preconfigured Claude rejects interactive
-approval requests. See the [Runner contract](../../packages/paperclip-runner/README.md#assigned-local-mcp-servers).
+Claude uses its applicable ACPX permission policy. Host-assigned native Codex
+tools run without a new per-call prompt, matching existing execution-host shell
+utilities. Explicit deny/prompt rules remain effective; requested approvals use
+PRP with active thread/turn checks and one-time decisions. Preconfigured Claude
+rejects interactive approval requests. See the [Runner contract](../../packages/paperclip-runner/README.md#assigned-local-mcp-servers).
 
 Local fixture coverage: [binding validation](../../packages/paperclip-runner/src/drivers/stdio-mcp.test.ts),
 [relay processes and cancellation](../../packages/paperclip-runner/runner/crates/runner-core/tests/stdio_mcp.rs),

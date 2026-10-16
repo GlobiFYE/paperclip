@@ -804,12 +804,13 @@ assigned digest before execution. The backend receives only its assigned environ
 
 Native Codex and isolated ACPX Claude register the server for the current session.
 User or project MCP files are never rewritten. Read-only sessions omit these
-bindings. Registration grants no tool authority: Claude uses the existing ACPX
-permission policy; Codex routes each prompted tool approval through the existing
-PRP permission request, bound to the active thread and turn. Only one-time accept,
-decline or cancel decisions are accepted. Shell escalation stays disabled.
-Preconfigured Claude remains unattended and rejects approval requests. Existing
-Codex tool deny rules still apply.
+bindings. Host assignment authorizes native Codex to use these local tools without
+a new per-call prompt, matching execution-host utilities available through shell.
+Claude uses the existing ACPX permission policy. Explicit Codex tool deny/prompt
+rules remain effective; requested approvals use the existing PRP permission request,
+bound to the active thread and turn. Only one-time accept, decline or cancel
+decisions are accepted. Shell escalation stays disabled.
+Preconfigured Claude remains unattended and rejects approval requests.
 
 The relay forwards tool schemas and native MCP content. For Codex 0.160/0.162,
 image-bearing results put structured metadata in a text block instead of
