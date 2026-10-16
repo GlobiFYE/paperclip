@@ -1458,7 +1458,7 @@ the dispatch time of a known future deadline. Failed scans retry at that same
 interval. Future timers do not hold idle work open, and standby, idle drain and
 shutdown retain the coordinator's admission gates. External database writers
 rely on the periodic recovery scan. Sparse cron searches reuse one parsed
-expression so repeated parsing cannot block unrelated deadlines.
+expression and skip impossible UTC dates before localized formatting.
 
 Keep relevant heartbeat extractions and their focused tests in `server/src/services/heartbeat/`.
 Follow [Heartbeat execution boundaries](../rules/heartbeat-execution-boundaries.mdc)

@@ -20,6 +20,24 @@ describe("nextCronTickInTimeZone formatter caching", () => {
     expect(parses).toBe(1);
   });
 
+  it("skips impossible UTC dates before localized formatting", () => {
+    const format = Intl.DateTimeFormat.prototype.formatToParts;
+    let formats = 0;
+    vi.spyOn(Intl.DateTimeFormat.prototype, "formatToParts").mockImplementation(function(this: Intl.DateTimeFormat, date) {
+      formats++;
+      if (formats > 48) throw new Error("Sparse UTC schedules must skip impossible dates");
+      return format.call(this, date);
+    });
+    const next = nextCronTickInTimeZone("0 12 1 1 *", "UTC", new Date("2020-01-01T12:00:00Z"));
+    expect(next?.toISOString()).toBe("2021-01-01T12:00:00.000Z");
+    expect(formats).toBeLessThanOrEqual(48);
+  });
+
+  it.each(["UTC", "America/New_York"])("rejects invalid search dates in %s", timeZone => {
+    expect(() => nextCronTickInTimeZone("0 12 1 1 *", timeZone, new Date(Number.NaN)))
+      .toThrow(RangeError);
+  });
+
   it("computes the next occurrence of a sparse monthly cron correctly", () => {
     const next = nextCronTickInTimeZone(
       "30 6 1 * *",
