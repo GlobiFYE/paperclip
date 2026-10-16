@@ -13,9 +13,7 @@ import { captureDirectorySnapshot } from "./workspace-restore-merge.js";
 
 // A stand-in `ssh` that runs the remote command on this machine, so the real
 // tar/du pipelines of the SSH workspace sync run without an sshd. The remote
-// "host" is a local directory tree.
-// The login profile that SSH command scripts source resets PATH, so when
-// FAKE_REMOTE_PATH is set the stand-in puts that directory first again.
+// "host" is a local directory tree; remote login profiles are exercised as-is.
 const FAKE_SSH = `#!/bin/sh
 for last; do :; done
 printf '%s\\n---\\n' "$last" >> "$FAKE_SSH_LOG"
@@ -24,14 +22,12 @@ if [ -n "$FAKE_SSH_HOOK_MATCH" ] && printf '%s' "$last" | grep -q -F -- "$FAKE_S
   echo "injected ssh failure" >&2
   exit 1
 fi
-if [ -n "$FAKE_REMOTE_PATH" ]; then
-  last=$(printf '%s' "$last" | sed "s|exec sh -c '|exec sh -c 'PATH=$FAKE_REMOTE_PATH:\\$PATH; |")
-fi
 exec sh -c "$last"
 `;
 
 // A BSD-style du: it has no --exclude, and -I masks only match entry names.
 const FAKE_BSD_DU = `#!/bin/sh
+printf '%s\\n' "$*" >> "$FAKE_BSD_DU_LOG"
 for arg; do
   case "$arg" in --exclude=*) exit 64;; esac
 done
@@ -94,6 +90,7 @@ describe("ssh workspace sync staging", { timeout: 90_000 }, () => {
   let stagingRoot: string;
   let bin: string;
   let sshLog: string;
+  let bsdDuLog: string;
   let spec: SshRemoteExecutionSpec;
 
   beforeEach(async () => {
@@ -103,11 +100,13 @@ describe("ssh workspace sync staging", { timeout: 90_000 }, () => {
     stagingRoot = path.join(root, "tmp");
     bin = path.join(root, "bin");
     sshLog = path.join(root, "ssh.log");
+    bsdDuLog = path.join(root, "bsd-du.log");
     await Promise.all([localDir, remoteCwd, stagingRoot, bin].map((dir) => mkdir(dir, { recursive: true })));
     await writeFile(path.join(bin, "ssh"), FAKE_SSH, { mode: 0o755 });
     await writeFile(sshLog, "");
     vi.stubEnv("PATH", `${bin}${path.delimiter}${process.env.PATH ?? ""}`);
     vi.stubEnv("FAKE_SSH_LOG", sshLog);
+    vi.stubEnv("FAKE_BSD_DU_LOG", bsdDuLog);
     // Every staging directory the sync creates lands in stagingRoot.
     vi.stubEnv("TMPDIR", stagingRoot);
     spec = {
@@ -521,14 +520,35 @@ describe("ssh workspace sync staging", { timeout: 90_000 }, () => {
     // The remote's du cannot skip the nested worktrees, so its figure is an
     // overcount and must not refuse a restore that would fit.
     await writeFile(path.join(bin, "du"), FAKE_BSD_DU, { mode: 0o755 });
-    vi.stubEnv("FAKE_REMOTE_PATH", bin);
+    await writeFile(path.join(root, ".profile"), `export PATH="${bin}:$PATH"\n`);
+    vi.stubEnv("HOME", root);
     vi.spyOn(fsPromises, "statfs").mockResolvedValue({ bavail: 1024, bsize: 1024 } as Awaited<ReturnType<typeof fsPromises.statfs>>);
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 
     await prepared.restoreWorkspace();
 
     expect(await readFile(path.join(localDir, "src/app.ts"), "utf8")).toBe("export const app = 2;\n");
+    expect(await readFile(bsdDuLog, "utf8")).toMatch(/-sk -I/);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("free-space check skips 1 of 1 sizes"));
+  });
+
+  it("uses BSD du's supported masks when no nested worktree directories are excluded", async () => {
+    await writeTree(localDir, { "src/app.ts": "export const app = 1;\n" });
+    const prepared = await prepare({ nestedWorktreeDirs: [] });
+    await writeTree(prepared.workspaceRemoteDir, {
+      "src/app.ts": "export const app = 2;\n",
+      ".paperclip/worktrees/wt/large.bin": Buffer.alloc(24 * MB, 9),
+    });
+    await writeFile(path.join(bin, "du"), FAKE_BSD_DU, { mode: 0o755 });
+    await writeFile(path.join(root, ".profile"), `export PATH="${bin}:$PATH"\n`);
+    vi.stubEnv("HOME", root);
+    vi.spyOn(fsPromises, "statfs").mockResolvedValue({ bavail: 1024, bsize: 1024 } as Awaited<ReturnType<typeof fsPromises.statfs>>);
+
+    await expect(prepared.restoreWorkspace()).rejects.toMatchObject({ code: "ssh_sync_insufficient_staging_space" });
+
+    const calls = await readFile(bsdDuLog, "utf8");
+    expect(calls).toContain("-sk -I ._* -I .paperclip-runtime .");
+    expect(await exists(path.join(localDir, ".paperclip/worktrees/wt/large.bin"))).toBe(false);
   });
 
   it("keeps local nested worktrees at any depth when restoring without a baseline", async () => {
