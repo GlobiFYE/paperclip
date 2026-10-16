@@ -124,6 +124,11 @@ is the version source of truth; `max_versions` (per vault config
   `..` segment, so a key named `..` cannot collapse the path out of the
   managed prefix. `kvPathPrefix` is likewise rejected when it starts or ends
   with `/`, contains `//`, or has a `.`/`..` segment.
+- **`createVersion` rotates managed references only.** When reusing a stored
+  `externalRef` to rotate in place, the provider verifies the reference stays in
+  `kvMount` under `kvPathPrefix`. An `external_reference` secret (whose value
+  lives on an external path) is rejected here rather than rotated with the
+  provider token — those route through `linkExternalSecret` / `updateExternalSecretValue`.
 - **`saTokenPath` is operator-pinned like the address.** The `saTokenPath`
   (the file read and sent as the kubernetes login JWT) is an
   information-disclosure primitive: an operator may pin it via
