@@ -1448,6 +1448,23 @@ When a workspace service runs Paperclip for browser OAuth QA, configure its `exp
 
 ## Heartbeat Service Extractions
 
+Routine and issue-monitor dispatch uses saved future deadlines through
+`server/src/services/scheduled-work.ts` and the existing delivery coordinator.
+Startup restores the next deadline. Routine edits and monitor changes notify
+their worker after the enclosing database transaction settles, including native
+`set_task_monitor` writes. Deadlines crossed during a scan receive an immediate
+follow-up scan. Work already overdue at scan start retains heartbeat recovery.
+Each worker runs
+independently and retains the existing atomic claims and execution checks.
+The heartbeat interval still requests a recovery scan; it does not determine
+the dispatch time of a known future deadline. Failed scans retry at that same
+interval. Future timers do not hold idle work open, and standby, idle drain and
+shutdown retain the coordinator's admission gates. During idle drain, expired
+deadlines retry at the recovery interval while dispatch is paused; future
+deadlines keep their original timer so a canceled drain does not delay them. External database writers
+rely on the periodic recovery scan. Sparse cron searches reuse one parsed
+expression and skip impossible UTC dates before localized formatting.
+
 Keep relevant heartbeat extractions and their focused tests in `server/src/services/heartbeat/`.
 Follow [Heartbeat execution boundaries](../rules/heartbeat-execution-boundaries.mdc)
 for state lifetime, admission, recovery ownership, cleanup ordering, and verification.
@@ -1792,6 +1809,17 @@ normal adapters use. Discovery picks the first executable; it does not compare
 versions across directories. With these artifacts preinstalled, startup links
 and verifies them without uploading a binary or installing packages. Deploy
 the updated sandbox image with the matching runner qualification changes.
+
+### Remote GitHub launcher staging
+
+Managed GitHub launchers stage their nine text files in one bounded control
+command. Each file retains its content-hash check, process lock, upload check,
+and atomic rename. The command runs outside the persistent agent session and
+stops at the first failed file. Earlier files can remain after a later failure;
+the launcher environment is returned only after the whole command succeeds.
+The batch permits at most 16 files and 1 MiB of shell input. Launcher staging
+keeps its 15-second deadline. Run `packages/adapter-utils/src/github-launcher-environment.test.ts`
+and `packages/adapter-utils/src/sandbox-callback-bridge.test.ts` for these contracts.
 
 ### Native runner restart recovery
 
