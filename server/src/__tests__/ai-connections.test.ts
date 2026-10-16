@@ -869,7 +869,7 @@ console.log(JSON.stringify({ type: "result", subtype: "success", result: "hello"
       });
       expect(selected.grant.id).toBe(saved.grantId);
     } finally {
-      const restoreMigration = await readFile(new URL("../../../packages/db/src/migrations/0347_robust_mister_sinister.sql", import.meta.url), "utf8");
+      const restoreMigration = await readFile(new URL("../../../packages/db/src/migrations/0354_robust_mister_sinister.sql", import.meta.url), "utf8");
       await db.transaction(async (tx) => {
         for (const statement of restoreMigration.split("--> statement-breakpoint")) {
           if (statement.trim()) await tx.execute(sql.raw(statement));
