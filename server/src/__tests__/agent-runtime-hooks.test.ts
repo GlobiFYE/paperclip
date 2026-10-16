@@ -31,7 +31,7 @@ describeDatabase("agent runtime synchronization hooks", () => {
     home = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-agent-runtime-home-"));
   }, 90_000);
   afterAll(async () => { await database?.cleanup(); await fs.rm(home, { recursive: true, force: true }); });
-  afterEach(() => vi.unstubAllEnvs());
+  afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
   beforeEach(async () => {
     vi.stubEnv("PAPERCLIP_HOME", home);
     companyId = randomUUID(); pluginId = randomUUID(); agentId = randomUUID();
@@ -105,6 +105,17 @@ describeDatabase("agent runtime synchronization hooks", () => {
     const state = await pluginAgentRuntimeState(db, pluginId, companyId, agentId);
     expect(state).toMatchObject({ instructionsRootPath: root, instructionsEntryFile: "GUIDE.md" });
     expect(await fs.readFile(path.join(state!.instructionsRootPath!, state!.instructionsEntryFile), "utf8")).toBe("restored instructions");
+  });
+
+  it("resolves instructions without reading or hashing bundle contents", async () => {
+    const [agent] = await db.select().from(agents).where(eq(agents.id, agentId));
+    const root = resolveManagedInstructionsRoot(agent);
+    await fs.mkdir(root, { recursive: true });
+    await fs.writeFile(path.join(root, "AGENTS.md"), "instructions");
+    await fs.writeFile(path.join(root, "support.bin"), Buffer.alloc(1024 * 1024));
+    const read = vi.spyOn(fs, "readFile");
+    expect(await pluginAgentRuntimeState(db, pluginId, companyId, agentId)).toMatchObject({ instructionsRootPath: root, instructionsEntryFile: "AGENTS.md" });
+    expect(read.mock.calls.filter(([file]) => String(file).startsWith(`${root}${path.sep}`))).toEqual([]);
   });
 
   it("uses the company reporting graph for runtime health data", async () => {

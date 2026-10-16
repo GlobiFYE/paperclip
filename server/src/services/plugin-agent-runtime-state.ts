@@ -20,7 +20,7 @@ export async function pluginAgentRuntimeState(db: Db, pluginId: string, companyI
     const [latest] = await tx.select({ id: resourceLifecycleEvents.id }).from(resourceLifecycleEvents)
       .where(and(eq(resourceLifecycleEvents.companyId, companyId), eq(resourceLifecycleEvents.resourceType, "agent_runtime"), eq(resourceLifecycleEvents.resourceId, agentId)))
       .orderBy(desc(resourceLifecycleEvents.id)).limit(1);
-    const instructions = await agentInstructionsService().getBundle(agent);
+    const instructions = await agentInstructionsService().getBundleLocation(agent);
     const records = agentRecordQueries(tx as unknown as Db);
     const companyAgents = await records.listCompanyAgentRows(companyId);
     return {
