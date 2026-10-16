@@ -89,21 +89,6 @@ export function CompanySettings() {
     setGovernance(selectedCompany.interactionResolverGovernance ?? {});
   }, [selectedCompany?.id, selectedCompany?.logoUrl, selectedCompany?.interactionResolverGovernance]);
 
-  useEffect(() => {
-    if (!selectedCompany) return;
-    const companyChanged = selectedCompany.id !== defaultExecutionPolicySyncedCompanyId;
-    if (companyChanged || !defaultExecutionPolicyDirty) {
-      setDefaultExecutionPolicyText(
-        selectedCompany.defaultExecutionPolicy
-          ? JSON.stringify(selectedCompany.defaultExecutionPolicy, null, 2)
-          : ""
-      );
-      setDefaultExecutionPolicyError(null);
-      setDefaultExecutionPolicyDirty(false);
-      setDefaultExecutionPolicySyncedCompanyId(selectedCompany.id);
-    }
-  }, [selectedCompany, defaultExecutionPolicySyncedCompanyId, defaultExecutionPolicyDirty]);
-
   const generalMutation = useMutation({
     mutationFn: (data: {
       companyId: string;
@@ -203,6 +188,24 @@ export function CompanySettings() {
       setDefaultExecutionPolicyDirty(false);
     }
   });
+
+  useEffect(() => {
+    if (!selectedCompany) return;
+    const companyChanged = selectedCompany.id !== defaultExecutionPolicySyncedCompanyId;
+    if (companyChanged) {
+      defaultExecutionPolicyMutation.reset();
+    }
+    if (companyChanged || !defaultExecutionPolicyDirty) {
+      setDefaultExecutionPolicyText(
+        selectedCompany.defaultExecutionPolicy
+          ? JSON.stringify(selectedCompany.defaultExecutionPolicy, null, 2)
+          : ""
+      );
+      setDefaultExecutionPolicyError(null);
+      setDefaultExecutionPolicyDirty(false);
+      setDefaultExecutionPolicySyncedCompanyId(selectedCompany.id);
+    }
+  }, [selectedCompany, defaultExecutionPolicySyncedCompanyId, defaultExecutionPolicyDirty]);
 
   function handleSaveDefaultExecutionPolicy() {
     if (!selectedCompanyId) return;
