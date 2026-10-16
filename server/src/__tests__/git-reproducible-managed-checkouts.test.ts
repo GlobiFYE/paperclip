@@ -4,7 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { assertReproducibleGitFiles } from "../services/git-workspace-restoration.js";
+import {
+  assertReproducibleGitFiles,
+  assertReproducibleManagedCheckout,
+  type ManagedCheckoutProver,
+} from "../services/git-workspace-restoration.js";
 
 const execFile = promisify(execFileCallback);
 
@@ -19,35 +23,51 @@ async function write(file: string, content = "x\n") {
   await fs.writeFile(file, content);
 }
 
-// A bare upstream with one commit, ready to clone.
-async function upstream(root: string, name: string, files: Record<string, string>) {
-  const seed = path.join(root, `${name}-seed`);
-  await fs.mkdir(seed, { recursive: true });
-  await git(seed, "init", "-q");
-  for (const [file, content] of Object.entries(files)) await write(path.join(seed, file), content);
-  await git(seed, "add", "-A");
-  await git(seed, "commit", "-q", "-m", "seed");
-  const bare = path.join(root, `${name}.git`);
-  await execFile("git", ["clone", "-q", "--bare", seed, bare]);
-  return bare;
+async function commit(cwd: string, file: string, message: string) {
+  await write(path.join(cwd, file), `${message}\n`);
+  await git(cwd, "add", file);
+  await git(cwd, "commit", "-q", "-m", message);
+  // Committing leaves COMMIT_EDITMSG, which the storage check rejects on its
+  // own; remove it so these tests reach the history checks.
+  await fs.rm(path.join(cwd, ".git", "COMMIT_EDITMSG"), { force: true });
+  return (await git(cwd, "rev-parse", "HEAD")).trim();
 }
 
 describe("assertReproducibleGitFiles with Paperclip-managed files", () => {
   let root: string;
   let work: string;
+  let projectSeed: string;
   let projectRemote: string;
+  let prove: ManagedCheckoutProver;
+
+  // A bare upstream with one commit, plus the seed it was pushed from.
+  async function upstream(name: string, files: Record<string, string>) {
+    const seed = path.join(root, `${name}-seed`);
+    await fs.mkdir(seed, { recursive: true });
+    await git(seed, "init", "-q");
+    for (const [file, content] of Object.entries(files)) await write(path.join(seed, file), content);
+    await git(seed, "add", "-A");
+    await git(seed, "commit", "-q", "-m", "seed");
+    const bare = path.join(root, `${name}.git`);
+    await execFile("git", ["clone", "-q", "--bare", seed, bare]);
+    await git(seed, "remote", "add", "origin", bare);
+    return { seed, bare };
+  }
 
   beforeEach(async () => {
     root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-reproducible-")));
-    const mainRemote = await upstream(root, "main", {
+    const main = await upstream("main", {
       "README.md": "main\n",
       ".gitignore": "node_modules/\n.claude/settings.local.json\nsecret.txt\n",
     });
-    projectRemote = await upstream(root, "project", { "README.md": "project\n", ".gitignore": "node_modules/\n" });
+    ({ seed: projectSeed, bare: projectRemote } = await upstream("project", { "README.md": "project\n", ".gitignore": "node_modules/\n" }));
     work = path.join(root, "work");
-    await execFile("git", ["clone", "-q", mainRemote, work]);
+    await execFile("git", ["clone", "-q", main.bare, work]);
     // Workspace preparation excludes the managed namespace through info/exclude.
     await fs.appendFile(path.join(work, ".git", "info", "exclude"), "\n/.paperclip-repositories/\n");
+    prove = (checkout, _name, signal) => assertReproducibleManagedCheckout(checkout, {
+      repoUrl: projectRemote, resolveGitAuth: async () => null, signal,
+    });
   });
 
   afterEach(async () => {
@@ -61,68 +81,116 @@ describe("assertReproducibleGitFiles with Paperclip-managed files", () => {
     return checkout;
   }
 
-  const expectUnique = (promise: Promise<unknown>) => expect(promise).rejects.toThrow("unique_ignored_files");
+  const check = () => assertReproducibleGitFiles(work, undefined, { proveManagedCheckout: prove });
+  const expectAccepted = () => expect(check()).resolves.toBeDefined();
+  const expectRejected = (reason: string | RegExp) => expect(check()).rejects.toThrow(reason);
 
   it("accepts Paperclip's Claude settings file", async () => {
     await write(path.join(work, ".claude", "settings.local.json"), "{}\n");
-    await expect(assertReproducibleGitFiles(work)).resolves.toBeDefined();
+    await expectAccepted();
   });
 
   it("accepts a clean managed checkout, including its regenerable directories", async () => {
     const checkout = await managedCheckout();
     await write(path.join(checkout, "node_modules", "pkg", "index.js"));
     await write(path.join(work, "node_modules", "pkg", "index.js"));
-    await expect(assertReproducibleGitFiles(work)).resolves.toBeDefined();
+    await expectAccepted();
+  });
+
+  it("rejects managed checkouts unless the caller can prove them", async () => {
+    await managedCheckout();
+    await expect(assertReproducibleGitFiles(work)).rejects.toThrow("unique_ignored_files");
   });
 
   it("still rejects unknown ignored files", async () => {
     await write(path.join(work, "secret.txt"));
-    await expectUnique(assertReproducibleGitFiles(work));
+    await expectRejected("unique_ignored_files");
   });
 
-  it("rejects a managed checkout with changed or untracked files", async () => {
+  it("rejects changed, untracked, and flag-hidden edits", async () => {
     const checkout = await managedCheckout();
     await write(path.join(checkout, "README.md"), "edited\n");
-    await expectUnique(assertReproducibleGitFiles(work));
+    await expectRejected("dirty_or_untracked_files");
     await git(checkout, "checkout", "-q", "--", "README.md");
     await write(path.join(checkout, "notes.txt"));
-    await expectUnique(assertReproducibleGitFiles(work));
+    await expectRejected("dirty_or_untracked_files");
+    await fs.rm(path.join(checkout, "notes.txt"));
+    // skip-worktree hides this edit from `git status`.
+    await git(checkout, "update-index", "--skip-worktree", "README.md");
+    await write(path.join(checkout, "README.md"), "hidden edit\n");
+    await expectRejected("unsupported_index_flags");
   });
 
-  it("rejects a managed checkout with commits that are not on a remote", async () => {
+  it("rejects commits kept by a branch, a tag, or only the reflog", async () => {
     const checkout = await managedCheckout();
-    await write(path.join(checkout, "change.txt"));
-    await git(checkout, "add", "change.txt");
-    await git(checkout, "commit", "-q", "-m", "local work");
-    await expectUnique(assertReproducibleGitFiles(work));
-    // The same commit on a detached HEAD, with the branch moved back, is still unique.
-    await git(checkout, "checkout", "-q", "--detach");
-    await git(checkout, "branch", "-f", "main", "origin/main");
-    await expectUnique(assertReproducibleGitFiles(work));
+    await commit(checkout, "branch.txt", "branch work");
+    await expectRejected("unpushed_managed_checkout");
+    await git(checkout, "tag", "kept");
+    // Loose tag refs fail the storage check on their own; packed ones reach the history check.
+    await git(checkout, "pack-refs", "--all");
+    await git(checkout, "reset", "-q", "--hard", "origin/main");
+    // ORIG_HEAD alone would already reject; drop it to reach the history check.
+    await fs.rm(path.join(checkout, ".git", "ORIG_HEAD"), { force: true });
+    await git(checkout, "reflog", "expire", "--expire=now", "--all");
+    await expectRejected("unpushed_managed_checkout");
+    await git(checkout, "tag", "-d", "kept");
+    await commit(checkout, "amended.txt", "amended work");
+    await git(checkout, "reset", "-q", "--hard", "origin/main");
+    // ORIG_HEAD alone would already reject; drop it to reach the history checks.
+    await fs.rm(path.join(checkout, ".git", "ORIG_HEAD"), { force: true });
+    await expectRejected(/unique_reflog_commits|unpushed_managed_checkout/);
   });
 
-  it("rejects a managed checkout with a stash or an operation in progress", async () => {
+  it("does not trust a stale remote-tracking ref", async () => {
+    await git(projectSeed, "checkout", "-q", "-b", "feature");
+    await commit(projectSeed, "feature.txt", "feature work");
+    await git(projectSeed, "push", "-q", "origin", "feature");
+    await managedCheckout();
+    // The branch disappears upstream; the checkout's origin/feature is now the last copy.
+    await git(projectRemote, "branch", "-q", "-D", "feature");
+    await expectRejected("unpushed_managed_checkout");
+  });
+
+  it("rejects custom hooks, linked worktrees, stashes, and unreachable objects", async () => {
     const checkout = await managedCheckout();
+    await write(path.join(checkout, ".git", "hooks", "pre-commit"), "#!/bin/sh\nexit 0\n");
+    await expectRejected("custom_git_metadata");
+    await fs.rm(path.join(checkout, ".git", "hooks", "pre-commit"));
+
+    const linked = path.join(root, "linked");
+    await git(checkout, "worktree", "add", "-q", "--detach", linked);
+    await expectRejected("managed_checkout_has_worktrees");
+    await git(checkout, "worktree", "remove", "--force", linked);
+
     await write(path.join(checkout, "README.md"), "stashed\n");
     await git(checkout, "stash", "-q");
-    await expectUnique(assertReproducibleGitFiles(work));
-    await git(checkout, "stash", "drop", "-q");
-    await write(path.join(checkout, ".git", "MERGE_HEAD"), `${(await git(checkout, "rev-parse", "HEAD")).trim()}\n`);
-    await expectUnique(assertReproducibleGitFiles(work));
+    await expectRejected(/unsupported_local_git_state|unsupported_managed_checkout_refs/);
+    await git(checkout, "stash", "clear");
+
+    await write(path.join(root, "orphan.txt"), "only copy\n");
+    await git(checkout, "hash-object", "-w", path.join(root, "orphan.txt"));
+    await expectRejected("unreachable_managed_checkout_objects");
   });
 
-  it("rejects a managed checkout with unknown ignored files", async () => {
+  it("never runs a configured fsmonitor command while inspecting", async () => {
     const checkout = await managedCheckout();
-    await fs.appendFile(path.join(checkout, ".git", "info", "exclude"), "\nlocal.env\n");
-    await write(path.join(checkout, "local.env"));
-    await expectUnique(assertReproducibleGitFiles(work));
+    const marker = path.join(root, "fsmonitor-ran");
+    const hook = path.join(root, "fsmonitor.sh");
+    await write(hook, `#!/bin/sh\ntouch '${marker}'\nexit 1\n`);
+    await fs.chmod(hook, 0o755);
+    for (const repository of [checkout, work]) {
+      await git(repository, "config", "core.fsmonitor", hook);
+      await check().catch(() => undefined);
+      await git(repository, "config", "--unset", "core.fsmonitor");
+    }
+    await expect(fs.access(marker)).rejects.toThrow();
   });
 
   it("never treats task repositories or plain directories as reproducible", async () => {
     await managedCheckout("task-repo-0123456789abcdef01234567");
-    await expectUnique(assertReproducibleGitFiles(work));
+    await expectRejected("unique_ignored_files");
     await fs.rm(path.join(work, ".paperclip-repositories"), { recursive: true });
     await write(path.join(work, ".paperclip-repositories", "project-d051a9c4e671", "README.md"));
-    await expectUnique(assertReproducibleGitFiles(work));
+    await expectRejected("unproven_managed_checkout");
   });
 });

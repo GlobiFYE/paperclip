@@ -93,7 +93,10 @@ export function readGitCacheRestoration(workspace: Workspace): GitCacheRestorati
 }
 
 export async function gitCacheCommand(cwd: string, args: string[], signal?: AbortSignal) {
-  const result = await execFile("git", ["-C", cwd, ...args], {
+  // The inspected repositories are agent-writable. core.fsmonitor in their
+  // local config would make `git status` run an arbitrary command as the
+  // server; the command-line setting takes precedence over it.
+  const result = await execFile("git", ["-c", "core.fsmonitor=false", "-C", cwd, ...args], {
     timeout: 60_000, signal, maxBuffer: 16 * 1024 * 1024,
     env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_OPTIONAL_LOCKS: "0" },
   });
@@ -179,57 +182,77 @@ export async function assertReproducibleBaseGitStorage(cwd: string, signal?: Abo
 const PAPERCLIP_CLAUDE_SETTINGS_FILE = ".claude/settings.local.json";
 
 /**
- * Lists the managed project checkouts under `.paperclip-repositories/` that
- * hold nothing a fresh clone would not: workspace preparation re-clones a
- * missing `<repo>-<hash>` checkout on the next run. A checkout qualifies only
- * when it is its own repository with a clean tree (untracked files included),
- * no stash, no in-progress operation, every local commit on a remote, and no
- * ignored files beyond its own regenerable directories. Task repositories
- * (`task-repo-*`) carry access receipts and are never listed.
+ * Proves that a managed project checkout (`.paperclip-repositories/<name>`)
+ * holds nothing that re-cloning would not restore; throws otherwise. Only the
+ * expiration worker supplies one, because it can map the checkout back to its
+ * project repository and reach upstream.
  */
-async function reproducibleManagedProjectCheckouts(cwd: string, signal?: AbortSignal): Promise<string[]> {
-  const root = path.join(cwd, PROJECT_REPOSITORIES_DIR);
-  const rootEntry = await fs.lstat(root).catch(() => null);
-  if (!rootEntry?.isDirectory()) return [];
-  const reproducible: string[] = [];
-  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
-    signal?.throwIfAborted();
-    if (!entry.isDirectory() || entry.name.startsWith("task-repo-") || entry.name.includes(".clone-")) continue;
-    const checkout = path.join(root, entry.name);
-    if (await isReproducibleManagedCheckout(checkout, signal)) reproducible.push(`${PROJECT_REPOSITORIES_DIR}/${entry.name}`);
+export type ManagedCheckoutProver = (checkoutPath: string, name: string, signal?: AbortSignal) => Promise<void>;
+
+/**
+ * The proof for one managed checkout, against the repository URL recorded on
+ * its project workspace row (never the checkout's own, agent-writable config):
+ * the checkout's tree, index, config and Git storage hold nothing unique, it
+ * has no linked worktrees, and every commit reachable from its refs or
+ * reflogs is reachable from a current upstream branch or tag.
+ */
+export async function assertReproducibleManagedCheckout(checkout: string, input: {
+  repoUrl: string; resolveGitAuth: GitRemoteAuthProvider; signal?: AbortSignal;
+}) {
+  const { signal } = input;
+  const gitDir = await fs.lstat(path.join(checkout, ".git")).catch(() => null);
+  if (!gitDir?.isDirectory()) throw new Error("unproven_managed_checkout");
+  if ((await gitCacheCommand(checkout, ["rev-parse", "--show-toplevel"], signal)).trim() !== await fs.realpath(checkout)) {
+    throw new Error("unproven_managed_checkout");
   }
-  return reproducible;
+  const worktrees = (await gitCacheCommand(checkout, ["worktree", "list", "--porcelain"], signal))
+    .split("\n").filter(line => line.startsWith("worktree "));
+  if (worktrees.length !== 1) throw new Error("managed_checkout_has_worktrees");
+  // Tree, index flags, local config, ignored files and in-progress state, as
+  // for any worktree; nested managed checkouts are never accepted here.
+  await assertReproducibleGitFiles(checkout, signal);
+  // Hooks, info files and object/ref storage must be stock.
+  await assertReproducibleBaseGitStorage(checkout, signal);
+  const refs = (await gitCacheCommand(checkout, ["for-each-ref", "--format=%(refname)"], signal)).trim().split("\n").filter(Boolean);
+  if (refs.some(ref => !/^refs\/(heads|tags|remotes\/origin)\//.test(ref))) throw new Error("unsupported_managed_checkout_refs");
+  const upstream = await upstreamTips(input.repoUrl, input.resolveGitAuth, signal);
+  // Commit IDs are content addresses, so an upstream tip present locally has
+  // the same history here as upstream; local remote-tracking refs prove
+  // nothing on their own because they may be stale.
+  const present = [];
+  for (const tip of upstream) {
+    if (await gitCacheCommand(checkout, ["cat-file", "-e", `${tip}^{commit}`], signal).then(() => true, () => false)) present.push(tip);
+  }
+  const unique = await gitCacheCommand(checkout, ["rev-list", "--max-count=1", "--all", "--reflog", "--not", ...present], signal);
+  if (unique.trim()) throw new Error("unpushed_managed_checkout");
+  // Objects no ref or reflog reaches (a reset `git add`, a dropped stash) may
+  // be the only copy of some work.
+  const unreachable = await gitCacheCommand(checkout, ["fsck", "--connectivity-only", "--unreachable", "--no-progress"], signal);
+  if (unreachable.trim()) throw new Error("unreachable_managed_checkout_objects");
 }
 
-async function isReproducibleManagedCheckout(checkout: string, signal?: AbortSignal): Promise<boolean> {
-  const gitDir = await fs.lstat(path.join(checkout, ".git")).catch(() => null);
-  if (!gitDir?.isDirectory()) return false;
-  try {
-    if ((await gitCacheCommand(checkout, ["rev-parse", "--show-toplevel"], signal)).trim() !== await fs.realpath(checkout)) return false;
-    if ((await gitCacheCommand(checkout, ["status", "--porcelain=v1", "--untracked-files=all", "-z"], signal)).length) return false;
-    if ((await gitCacheCommand(checkout, ["for-each-ref", "--count=1", "refs/stash"], signal)).trim()) return false;
-    for (const name of ["MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "BISECT_LOG", "rebase-apply", "rebase-merge", "sequencer"]) {
-      if (await fs.lstat(path.join(checkout, ".git", name)).then(() => true, () => false)) return false;
-    }
-    // Every local commit (branches and a detached HEAD) must already be on a
-    // remote; a checkout with no remote fails here too.
-    if ((await gitCacheCommand(checkout, ["rev-list", "--max-count=1", "HEAD", "--branches", "--not", "--remotes"], signal)).trim()) return false;
-    if (!(await gitCacheCommand(checkout, ["for-each-ref", "--count=1", "refs/remotes"], signal)).trim()) return false;
-    const regenerable = await findRegenerableWorkspaceDirs(checkout, { signal });
-    const ignored = (await gitCacheCommand(checkout, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], signal)).split("\0").filter(Boolean);
-    return ignored.every(file => regenerable.some(dir => file.startsWith(`${dir}/`)));
-  } catch (error) {
-    if (signal?.aborted) throw error;
-    return false;
-  }
+/** Upper bound on upstream refs a proof will consider. */
+const MANAGED_CHECKOUT_UPSTREAM_REF_LIMIT = 5_000;
+
+/** Current branch and tag tips upstream, read with a fresh, config-free Git. */
+async function upstreamTips(repoUrl: string, resolveGitAuth: GitRemoteAuthProvider, signal?: AbortSignal) {
+  const auth = await resolveGitAuth(repoUrl);
+  const env = { ...process.env, ...auth?.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: os.devNull };
+  const result = await execFile("git", [...auth?.configArgs ?? [], "ls-remote", "--", repoUrl, "refs/heads/*", "refs/tags/*"],
+    { timeout: 60_000, signal, maxBuffer: 16 * 1024 * 1024, env, cwd: os.tmpdir() });
+  const tips = [...new Set(result.stdout.split("\n").map(line => line.split("\t")[0]!).filter(sha => shaPattern.test(sha)))];
+  if (tips.length > MANAGED_CHECKOUT_UPSTREAM_REF_LIMIT) throw new Error("managed_checkout_upstream_ref_budget");
+  return tips;
 }
 
 /**
  * Inspect every untracked/ignored file. Only repository-ignored regenerable
- * directories, Paperclip's Claude settings file, and reproducible managed
- * project checkouts qualify.
+ * directories, Paperclip's Claude settings file, and managed project checkouts
+ * that `proveManagedCheckout` accepts qualify.
  */
-export async function assertReproducibleGitFiles(cwd: string, signal?: AbortSignal) {
+export async function assertReproducibleGitFiles(cwd: string, signal?: AbortSignal, options: {
+  proveManagedCheckout?: ManagedCheckoutProver;
+} = {}) {
   if ((await gitCacheCommand(cwd, ["status", "--porcelain=v1", "--untracked-files=all", "-z"], signal)).length) throw new Error("dirty_or_untracked_files");
   if ((await gitCacheCommand(cwd, ["ls-files", "-v"], signal)).split("\n").some(line => /^[a-zS] /.test(line))) throw new Error("unsupported_index_flags");
   const localConfig = await gitCacheCommand(cwd, ["config", "--local", "--name-only", "--list"], signal);
@@ -237,12 +260,22 @@ export async function assertReproducibleGitFiles(cwd: string, signal?: AbortSign
   const regenerable = await findRegenerableWorkspaceDirs(cwd, { signal });
   const ignored = (await gitCacheCommand(cwd, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], signal)).split("\0").filter(Boolean);
   const unexplained = ignored.filter(file => file !== PAPERCLIP_CLAUDE_SETTINGS_FILE && !regenerable.some(dir => file.startsWith(`${dir}/`)));
-  if (unexplained.length) {
-    // Checkouts are inspected only when something else is unexplained, so the
-    // common case pays no extra Git processes.
-    const checkouts = unexplained.some(file => file.startsWith(`${PROJECT_REPOSITORIES_DIR}/`))
-      ? await reproducibleManagedProjectCheckouts(cwd, signal) : [];
-    if (unexplained.some(file => !checkouts.some(dir => file === `${dir}/` || file.startsWith(`${dir}/`)))) throw new Error("unique_ignored_files");
+  // Anything else unexplained must sit inside a managed project checkout that
+  // the caller can prove reproducible. Task repositories (`task-repo-*`) carry
+  // access receipts and staging clones (`*.clone-*`) are mid-publication, so
+  // neither ever qualifies.
+  const checkouts = new Set<string>();
+  for (const file of unexplained) {
+    const [namespace, name, rest] = file.split("/", 3);
+    if (namespace !== PROJECT_REPOSITORIES_DIR || !name || rest === undefined || !options.proveManagedCheckout
+      || name.startsWith("task-repo-") || name.includes(".clone-")) throw new Error("unique_ignored_files");
+    checkouts.add(name);
+  }
+  for (const name of checkouts) {
+    const checkout = path.join(cwd, PROJECT_REPOSITORIES_DIR, name);
+    const entry = await fs.lstat(checkout);
+    if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("unique_ignored_files");
+    await options.proveManagedCheckout!(checkout, name, signal);
   }
   const entries = await gitCacheCommand(cwd, ["ls-tree", "-r", "HEAD"], signal);
   if (/^160000 /m.test(entries)) throw new Error("unsupported_submodules");
@@ -287,7 +320,8 @@ export async function assertReproducibleGitFiles(cwd: string, signal?: AbortSign
   return regenerable;
 }
 
-export async function inspectGitCacheRecipe(workspace: Workspace, resolveGitAuth: GitRemoteAuthProvider, signal?: AbortSignal): Promise<GitCacheRestoration> {
+export async function inspectGitCacheRecipe(workspace: Workspace, resolveGitAuth: GitRemoteAuthProvider, signal?: AbortSignal,
+  options: { proveManagedCheckout?: ManagedCheckoutProver } = {}): Promise<GitCacheRestoration> {
   if (workspace.mode !== "isolated_workspace" || workspace.strategyType !== "git_worktree"
     || !isRuntimeOwnedGitBranch(workspace.metadata) || !workspace.sourceIssueId || !workspace.repoUrl
     || !workspace.cwd || !workspace.branchName || (workspace.providerRef && workspace.providerRef !== workspace.cwd)) throw new Error("unproven_workspace_ownership");
@@ -306,7 +340,7 @@ export async function inspectGitCacheRecipe(workspace: Workspace, resolveGitAuth
   if (!(await fs.lstat(path.join(workspace.cwd, ".git"))).isFile()) throw new Error("not_linked_worktree");
   if ((await gitCacheCommand(workspace.cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal)).trim() !== path.join(await fs.realpath(source), ".git")) throw new Error("source_identity_changed");
   if ((await gitCacheCommand(workspace.cwd, ["symbolic-ref", "--short", "HEAD"], signal)).trim() !== workspace.branchName) throw new Error("branch_identity_changed");
-  await assertReproducibleGitFiles(workspace.cwd, signal);
+  await assertReproducibleGitFiles(workspace.cwd, signal, options);
   const commit = (await gitCacheCommand(workspace.cwd, ["rev-parse", "HEAD"], signal)).trim();
   await verifyRemoteGitCommit(workspace.repoUrl, commit, resolveGitAuth, signal);
   return { schema: "paperclip.git-cache-restoration.v1", companyId: workspace.companyId, workspaceId: workspace.id,
