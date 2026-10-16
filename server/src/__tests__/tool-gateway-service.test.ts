@@ -1388,6 +1388,49 @@ describeEmbeddedPostgres("tool gateway service", () => {
     expect(requests).toEqual(["tools/call"]);
   });
 
+  it("treats a blank approvedActionRequestId as absent so the UUID audit column still records the completion", async () => {
+    const { company, agent, run } = await createRunFixture(db);
+    await createRemoteMcpToolFixture(db, company.id);
+    await db.insert(toolPolicies).values({
+      companyId: company.id,
+      name: "Allow read tools",
+      policyType: "allow",
+      selectors: { riskLevel: "read" },
+    });
+    const gateway = createTestToolGatewayService(db, {
+      remoteHttpRequest: async (_url, init) => {
+        const payload = JSON.parse(String(init.body)) as { method?: string; id?: string };
+        return Response.json({
+          jsonrpc: "2.0",
+          id: payload.id,
+          result: { content: [{ type: "text", text: "generic ok" }] },
+        });
+      },
+    });
+    const session = await gateway.createSession({ companyId: company.id, agentId: agent.id, runId: run.id });
+    const tool = (await gateway.listToolsForSession(session.token))
+      .find((candidate) => candidate.providerType === "mcp_remote_http");
+
+    const result = await gateway.executeTool({
+      sessionToken: session.token,
+      tool: tool!.name,
+      parameters: {},
+      approvedActionRequestId: "",
+    });
+
+    expect(result.status).toBe("completed");
+    const [invocation] = await db.select().from(toolInvocations);
+    expect(invocation).toMatchObject({ status: "succeeded" });
+    const [completedEvent] = await db.select().from(toolCallEvents).where(
+      and(
+        eq(toolCallEvents.invocationId, invocation.id),
+        eq(toolCallEvents.eventType, "call_completed"),
+      ),
+    );
+    expect(completedEvent).toBeDefined();
+    expect(completedEvent?.actionRequestId).toBeNull();
+  });
+
   it("hides cached Chat unread filters and blocks agent and board requests before provider dispatch", async () => {
     const { company, agent, run } = await createRunFixture(db);
     const { connection, catalogEntry } = await createRemoteMcpToolFixture(db, company.id);
