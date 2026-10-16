@@ -57,7 +57,7 @@ export {
   type PrepareAgyLocalRunMcpHomeInput,
   type PrepareAgyLocalRunMcpHomeResult,
 } from "./mcp.js";
-export { SANDBOX_INSTALL_COMMAND, ADAPTER_AUTH_MISSING_CHECK_CODE } from "../index.js";
+export { SANDBOX_INSTALL_COMMAND, AGY_INSTALLER_SHA256, ADAPTER_AUTH_MISSING_CHECK_CODE } from "../index.js";
 
 export const sessionCodec: AdapterSessionCodec = {
   deserialize(raw) {

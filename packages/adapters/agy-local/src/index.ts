@@ -7,8 +7,27 @@ export const DEFAULT_AGY_LOCAL_MODEL = "gemini-3.8-flash-high";
 export const DEFAULT_AGY_LOCAL_SUMMARIZER_MODEL = "gemini-3.8-flash-low";
 export const DEFAULT_AGY_LOCAL_ROUTINE_MODEL = DEFAULT_AGY_LOCAL_SUMMARIZER_MODEL;
 
+/**
+ * SHA256 of the official Antigravity installer served at
+ * https://antigravity.google/cli/install.sh. The sandbox bootstrap verifies
+ * the downloaded installer against this pin before executing it — the same
+ * pin docker/agent-runtime/Dockerfile.agy (AGY_INSTALLER_SHA256) verifies
+ * for the runtime image — and fails closed on any mismatch. Bump both
+ * together when Google publishes a new installer. The installer has no
+ * versioned URL, but it verifies the CLI binary's SHA512 against the
+ * vendor manifest before installing.
+ */
+export const AGY_INSTALLER_SHA256 =
+  "62966c07365423bd4dc209355060744058fb30d60f5323e2d360e39de64e5042";
+
 export const SANDBOX_INSTALL_COMMAND =
-  'curl -fsSL --compressed https://antigravity.google/cli/install.sh | bash && ' +
+  'agy_installer="$(mktemp)" && ' +
+  'curl -fsSL --compressed https://antigravity.google/cli/install.sh -o "$agy_installer" && ' +
+  `echo "${AGY_INSTALLER_SHA256}  $agy_installer" | sha256sum -c - && ` +
+  'bash "$agy_installer"; ' +
+  'agy_install_status=$?; ' +
+  'rm -f "$agy_installer"; ' +
+  'if [ "$agy_install_status" -ne 0 ]; then exit "$agy_install_status"; fi; ' +
   'if [ -x "$HOME/.local/bin/agy" ]; then ' +
   'if [ "$(id -u)" -eq 0 ]; then ' +
   'ln -sf "$HOME/.local/bin/agy" /usr/local/bin/agy; ' +

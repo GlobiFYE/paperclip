@@ -11,8 +11,10 @@ USER root
 # This image is pushed and cosign-signed, so the installer itself is pinned
 # by SHA256 and verified before it runs — never pipe a moving remote script
 # into bash. Bump AGY_INSTALLER_SHA256 deliberately when Google publishes a
-# new installer. The installer in turn verifies the CLI binary's SHA512
-# against the vendor manifest before installing it.
+# new installer, keeping it in sync with AGY_INSTALLER_SHA256 in
+# packages/adapters/agy-local/src/index.ts (the sandbox bootstrap pin). The
+# installer in turn verifies the CLI binary's SHA512 against the vendor
+# manifest before installing it.
 ARG AGY_INSTALLER_SHA256=62966c07365423bd4dc209355060744058fb30d60f5323e2d360e39de64e5042
 USER 1000:1000
 RUN curl -fsSL --compressed https://antigravity.google/cli/install.sh -o /tmp/agy-install.sh \
