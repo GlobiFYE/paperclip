@@ -1126,7 +1126,8 @@ export const runnerSuites: readonly RunnerSuiteFixture[] = [
       } };
     })()],
     environments: [daytonaWarmEnvironment],
-    tasks: runnerTasks.filter(task => task.id === "message-marker"),
+    tasks: runnerTasks.filter(task => task.id === "message-marker")
+      .map(task => ({ ...task, automaticRetryPolicy: "single_attempt" as const })),
     expectedMatrixSize: 1,
     definitionMetadata: { diagnostic: true, modelSource: "observed-staging-run", providerAuth: "api_key", stagingAuth: "subscription", companyData: "fresh-fixture", slackDelivery: false, maximumAutomaticRetries: 0 },
   },

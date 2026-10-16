@@ -23,7 +23,7 @@ failed seven cases: two catalog totals changed, one existing Pi version
 expectation differs from its source, and four installed-startup cases correctly
 reject pnpm's injected `NODE_PATH`. The affected catalog totals are updated.
 Direct Node invocation of the catalog, diagnostic, installed-startup and fixture
-checks passes 63 cases. The existing Pi version mismatch remains unchanged.
+checks passes 63 cases. The Pi mismatch is retained as a failed attempt and repaired separately below.
 No paid or live result is claimed by these checks.
 
 The local preparation-overlap candidate remains on a separate local branch.
@@ -87,3 +87,21 @@ passes. The broad pre-existing support-suite failures above remain recorded.
 
 No additional paid iteration or unchanged PAP message is needed for this slice.
 Complete final-branch CI and review before any PAP rollout.
+
+
+## Review corrections
+
+The first review identifies that diagnostic metadata alone does not enforce its
+single-attempt promise. The selected task now sets the existing `single_attempt`
+policy. A test through the effective retry-limit function fails before this fix
+and checks zero retries even when the command requests 99. The measured real
+cases already pass explicit `--max-automatic-retries 0`; none is retried.
+
+The Pi profile pin has a separate stale expectation from the already-merged
+preconfigured-home profile update. Update both metadata expectations from 22 to
+23. Recomputing the old suite with only profileVersion 22 reproduces the old
+pinned hash exactly; the new expected hash changes only that metadata value.
+All 72 Pi identity/control/evidence tests pass. The full authorized support run
+passes 2,763 cases before adding the retry regression. This does not rewrite the
+original failed support invocation. Native production source remains identical
+to the measured optimization.
