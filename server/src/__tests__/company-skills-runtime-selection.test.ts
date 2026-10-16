@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { agents, companies, companyMemberships, companySkillSources, createDb, projectAccessMembers, projects, projectSkillSources } from "@paperclipai/db";
+import { agents, companies, companyMemberships, companySkillSources, createDb, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, projectAccessMembers, projects, projectSkillSources } from "@paperclipai/db";
 import { and, eq } from "drizzle-orm";
 import { PAPERCLIP_FEEDBACK_SKILL_KEYS, PAPERCLIP_OPERATIONAL_SKILL_KEY } from "@paperclipai/adapter-utils/server-utils";
 import { companySkillService } from "../services/company-skills.js";
@@ -29,7 +29,7 @@ describeDatabase("selected runtime skill reconciliation", () => {
     process.env.PAPERCLIP_HOME = home;
     process.env.PAPERCLIP_ISSUE_PRIVACY_MODE = "enforce";
     await db.insert(companies).values({ id: companyId, name: "Runtime selection", issuePrefix: `RS${companyId.slice(0, 6)}` });
-  }, 20_000);
+  }, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS);
 
   afterAll(async () => {
     if (previousHome === undefined) delete process.env.PAPERCLIP_HOME;
