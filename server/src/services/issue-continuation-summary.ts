@@ -102,6 +102,11 @@ function inferMode(issue: IssueSummaryInput, run: RunSummaryInput) {
   return "implementation";
 }
 
+const DEFAULT_IMPLEMENTATION_NEXT_ACTION =
+  "Resume implementation from the acceptance criteria, latest comments, and this summary.";
+const DEFAULT_PLANNING_NEXT_ACTION =
+  "Resume planning from the acceptance criteria, latest comments, and this summary.";
+
 function inferNextAction(issue: IssueSummaryInput, run: RunSummaryInput, previousNextAction: string | null) {
   if (issue.status === "done") return "Review the completed issue output and close any remaining follow-up comments.";
   if (issue.status === "in_review") return "Wait for reviewer feedback or approval before continuing executor work.";
@@ -110,9 +115,15 @@ function inferNextAction(issue: IssueSummaryInput, run: RunSummaryInput, previou
   }
   if (run.status === "cancelled") return "Confirm the cancellation reason before starting another run.";
   if (issue.workMode === "planning") {
-    return previousNextAction ?? "Resume planning from the acceptance criteria, latest comments, and this summary.";
+    if (!previousNextAction || previousNextAction === DEFAULT_IMPLEMENTATION_NEXT_ACTION) {
+      return DEFAULT_PLANNING_NEXT_ACTION;
+    }
+    return previousNextAction;
   }
-  return previousNextAction ?? "Resume implementation from the acceptance criteria, latest comments, and this summary.";
+  if (previousNextAction === DEFAULT_PLANNING_NEXT_ACTION) {
+    return DEFAULT_IMPLEMENTATION_NEXT_ACTION;
+  }
+  return previousNextAction ?? DEFAULT_IMPLEMENTATION_NEXT_ACTION;
 }
 
 function bulletList(items: string[], empty: string) {
