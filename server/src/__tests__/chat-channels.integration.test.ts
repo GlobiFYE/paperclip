@@ -2795,8 +2795,8 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         providerUrl: "https://github.com/paperclipai/paperclip/pull/418#discussion_r41901",
       });
       const tools = await githubBotToolsForSession(db, f.session);
-      expect(tools).toHaveLength(7);
-      expect(new Set(tools.map(tool => tool.name)).size).toBe(7);
+      expect(tools).toHaveLength(8);
+      expect(new Set(tools.map(tool => tool.name)).size).toBe(8);
       expect(await githubBotToolsForSession(db, { ...f.session, issueId: randomUUID() })).toEqual([]);
       expect(await readChatConversationsByEndpointId(f.endpoint.id)).toHaveLength(2);
     });
@@ -5461,7 +5461,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         issueId: conversation.issueId,
         runId: run.id,
       };
-      expect(await githubBotToolsForSession(db, session)).toHaveLength(7);
+      expect(await githubBotToolsForSession(db, session)).toHaveLength(8);
       expect(
         await githubBotToolsForSession(db, { ...session, issueId: randomUUID() }),
       ).toHaveLength(0);

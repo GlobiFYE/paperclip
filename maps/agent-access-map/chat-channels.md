@@ -98,6 +98,18 @@ not task completion. Source:
 PostgreSQL-backed provider fixtures; this entry does not claim live provider
 qualification for the new retry path.
 
+GitHub fixed-finding resolution: the assigned agent's `resolve_finding` tool
+replies in, then resolves, an inline review thread whose first comment this bot
+App posted on the task's pull request. It is refused while the bot's
+`resolveFixedFindings` policy is off (the default), for threads that people or
+other bots started, and for a head other than the current one. Publication
+re-checks the policy, the head, and thread ownership before it writes, and the
+reply carries the publication marker so a retry does not post twice. Sources:
+[publication service](../../server/src/services/chat-github-reviews.ts) and
+[bot tools](../../server/src/services/chat-github-tools.ts). Verification uses
+PostgreSQL-backed provider fixtures; live GitHub resolution is not yet
+qualified.
+
 Speko browser sessions use `POST /api/companies/{companyId}/voice-sessions`,
 with GET inspection/notification and POST `/{sessionId}/end` operations below
 that collection. These routes require board identity; ordinary agent credentials
