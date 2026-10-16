@@ -4482,8 +4482,6 @@ export function recoveryService(
         if (!(await instanceSettingsService(db).getExperimental()).enableAgentChat) { result.skipped += 1; continue; }
         await deliverConversationComments(db, issue, deps.enqueueWakeup).catch((err) => {
           if (!isAgentNotInvokableConflict(err)) throw err;
-          // The comment stays undelivered; a later pass delivers it once the
-          // agent can run again. A paused agent must not abort recovery.
           logger.warn(
             { err, issueId: issue.id, agentId: issue.conversationAgentId },
             "conversation comment delivery deferred: agent is not invokable",

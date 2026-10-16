@@ -164,7 +164,6 @@ export function shouldCancelRunsForNonInvokableAgent(result: AgentInvokability) 
   return !result.invokable && (result.reason === "terminated" || result.invalidOrgChain);
 }
 
-/** The 409 that `enqueueWakeup` raises when the target agent is not invokable. */
 export function isAgentNotInvokableConflict(error: unknown): boolean {
   if (!(error instanceof HttpError) || error.status !== 409) return false;
   const details = error.details as { invalidOrgChain?: unknown } | null | undefined;
