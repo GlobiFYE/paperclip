@@ -521,19 +521,26 @@ export async function prepareAgyLocalRunMcpHome(
     await fs.mkdir(configDir, { recursive: true, mode: 0o700 });
 
     // Share auth, settings and conversation state with the real CLI home.
-    const realCliHome = path.join(realHome, ".gemini", "antigravity-cli");
-    const realCliHomeIsDir = await fs
-      .stat(realCliHome)
-      .then((stat) => stat.isDirectory())
-      .catch(() => false);
-    if (realCliHomeIsDir) {
-      await fs
-        .symlink(
-          realCliHome,
-          path.join(geminiDir, "antigravity-cli"),
-          process.platform === "win32" ? "junction" : "dir",
-        )
-        .catch(() => undefined);
+    // Two locations are supported (see resolveAgyOAuthTokenPath): the
+    // current ~/.gemini/antigravity-cli and the alternate
+    // ~/.gemini/antigravity, which also holds brain/ session transcripts.
+    // Link whichever exist so a login made through either stays usable
+    // under the per-run HOME.
+    for (const cliHomeName of ["antigravity-cli", "antigravity"]) {
+      const realCliHome = path.join(realHome, ".gemini", cliHomeName);
+      const realCliHomeIsDir = await fs
+        .stat(realCliHome)
+        .then((stat) => stat.isDirectory())
+        .catch(() => false);
+      if (realCliHomeIsDir) {
+        await fs
+          .symlink(
+            realCliHome,
+            path.join(geminiDir, cliHomeName),
+            process.platform === "win32" ? "junction" : "dir",
+          )
+          .catch(() => undefined);
+      }
     }
 
     // Link the user's other .gemini/config entries through untouched; only

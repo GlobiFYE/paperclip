@@ -552,6 +552,8 @@ describe("prepareAgyLocalRunMcpHome", () => {
     const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "agy-mcp-home-"));
     const cliHome = path.join(tempHome, ".gemini", "antigravity-cli");
     await fs.mkdir(cliHome, { recursive: true });
+    const altCliHome = path.join(tempHome, ".gemini", "antigravity");
+    await fs.mkdir(altCliHome, { recursive: true });
 
     // Another run's injected server (ownership recorded) plus a user server.
     await writePaperclipAgyMcpConfig({
@@ -596,12 +598,16 @@ describe("prepareAgyLocalRunMcpHome", () => {
         headers: { Authorization: "Bearer this-run-token" },
       });
 
-      // Auth and conversation state stay shared with the host login: the
-      // real CLI home is linked into the per-run HOME.
+      // Auth and conversation state stay shared with the host login: both
+      // supported CLI homes are linked into the per-run HOME.
       const linkedCliHome = await fs.readlink(
         path.join(prepared.homeDir, ".gemini", "antigravity-cli"),
       );
       expect(path.resolve(prepared.homeDir, ".gemini", linkedCliHome)).toBe(cliHome);
+      const linkedAltCliHome = await fs.readlink(
+        path.join(prepared.homeDir, ".gemini", "antigravity"),
+      );
+      expect(path.resolve(prepared.homeDir, ".gemini", linkedAltCliHome)).toBe(altCliHome);
 
       // Preparing the per-run HOME never modifies the host config.
       const hostAfter = JSON.parse(await fs.readFile(hostConfigPath, "utf8"));

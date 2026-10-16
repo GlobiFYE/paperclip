@@ -1328,7 +1328,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
             ? kimiThinkingEffortOptions
             : adapterType === "pi_local"
               ? [{ id: "", label: "Auto" }, ...["off", "minimal", "low", "medium", "high", "xhigh"].map(id => ({ id, label: id }))]
-              : adapterType === "claude_local" || adapterType === "grok_local"
+              : adapterType === "claude_local" || adapterType === "grok_local" || adapterType === "agy_local"
                 ? [{ id: "", label: "Auto" }, ...setupEfforts(adapterType, currentModelId).map((id) => ({
                     id,
                     label: id === "xhigh" ? "X-High" : id[0].toUpperCase() + id.slice(1),
@@ -4154,7 +4154,7 @@ function ThinkingEffortDropdown({
   // list; without an entry the select renders "Auto" while the unsupported
   // value stays saved. Surface it explicitly so the operator can correct it.
   const effectiveOptions = value && !options.some((option) => option.id === value)
-    ? [...options, { id: value, label: `${value} (unsupported)` }]
+    ? [...options, { id: value, label: `${value === "xhigh" ? "X-High" : value.charAt(0).toUpperCase() + value.slice(1)} (unsupported)` }]
     : options;
   return <Field label="Thinking effort" hint={help.thinkingEffort}>
     <SelectPopover aria-label="Thinking effort" value={value} onValueChange={onChange}
