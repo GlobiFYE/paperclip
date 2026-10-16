@@ -1893,4 +1893,25 @@ describe("HttpVaultGateway.call — network error mapping", () => {
     expect(err).toBeInstanceOf(SecretProviderClientError);
     expect((err as SecretProviderClientError).code).toBe("provider_unavailable");
   });
+
+  it("a timed-out call does not poison the next call (each request has its own deadline)", async () => {
+    const gateway = makeGateway();
+    const abortErr = new Error("The operation was aborted");
+    abortErr.name = "AbortError";
+    // First call times out; the second succeeds. A single spy: the first
+    // call consumes the `once` rejection, subsequent calls use the base impl.
+    const f = vi.spyOn(globalThis, "fetch");
+    f.mockRejectedValueOnce(abortErr);
+    f.mockResolvedValue(
+      new Response(JSON.stringify({ initialized: true, sealed: false, version: "1.0.0" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+    const first = await gateway.health().catch((e) => e);
+    expect(first).toBeInstanceOf(SecretProviderClientError);
+    expect((first as SecretProviderClientError).code).toBe("provider_unavailable");
+    const second = await gateway.health();
+    expect(second.initialized).toBe(true);
+  });
 });
