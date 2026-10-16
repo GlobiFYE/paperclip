@@ -23,25 +23,16 @@ import * as serverUtils from "@paperclipai/adapter-utils/server-utils";
 
 const SESSION_ID = "20261016_101500_a1b2c3";
 
-const EXIT_SUMMARY_EN = [
+const EXIT_SUMMARY = [
   "",
   "Resume this session with:",
   `  hermes --resume ${SESSION_ID} -p worker`,
+  '  hermes -c "Q3 cost 2026 review" -p worker',
   "",
   `Session:        ${SESSION_ID}`,
+  "Title:          Q3 cost 2026 review",
   "Duration:       2m 5s",
   "Messages:       12 (1 user, 9 tool calls)",
-  "",
-].join("\n");
-
-const EXIT_SUMMARY_DE = [
-  "",
-  "Diese Sitzung fortsetzen mit:",
-  `  hermes --resume ${SESSION_ID} -p worker`,
-  "",
-  `Sitzung:        ${SESSION_ID}`,
-  "Dauer:          2m 5s",
-  "Nachrichten:    12 (1 Benutzer, 9 Tool-Aufrufe)",
   "",
 ].join("\n");
 
@@ -55,11 +46,13 @@ const AGENT_PROSE = [
   "",
 ].join("\n");
 
-async function runWithOutput(stdout: string, stderr = "") {
+const COST_LINES = "Tokens: 1200 input, 340 output\nCost: $0.42\n";
+
+async function runWithOutput(stdout: string, stderr: string, timedOut: boolean) {
   vi.mocked(serverUtils.runChildProcess).mockResolvedValueOnce({
-    exitCode: 0,
-    signal: null,
-    timedOut: false,
+    exitCode: timedOut ? null : 0,
+    signal: timedOut ? "SIGTERM" : null,
+    timedOut,
     stdout,
     stderr,
     pid: null,
@@ -82,62 +75,26 @@ async function runWithOutput(stdout: string, stderr = "") {
   } as any);
 }
 
-describe("hermes-local adapter cost and usage parsing", () => {
+describe("hermes-local adapter cost and usage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it("does not book cost or usage from the prompt echo or the agent answer", async () => {
-    const result = await runWithOutput(AGENT_PROSE + EXIT_SUMMARY_EN);
-
-    expect(result.costUsd).toBeUndefined();
-    expect(result.usage).toBeUndefined();
-    expect(result.resultJson).toMatchObject({ cost_usd: null, usage: null });
-  });
-
-  it("does not book cost from a session title in the exit summary", async () => {
-    const summaryWithTitle = [
-      "",
-      "Resume this session with:",
-      `  hermes --resume ${SESSION_ID}`,
-      '  hermes -c "Q3 cost 2026 review"',
-      "",
-      `Session:        ${SESSION_ID}`,
-      "Title:          Q3 cost 2026 review",
-      "Duration:       41s",
-      "Messages:       3 (1 user, 1 tool calls)",
-      "",
-    ].join("\n");
-
-    const result = await runWithOutput("Done.\n" + summaryWithTitle);
-
-    expect(result.costUsd).toBeUndefined();
-  });
-
-  it("does not book cost from a quiet run that prints the session id on stderr", async () => {
-    const result = await runWithOutput(AGENT_PROSE, `\nsession_id: ${SESSION_ID}\n`);
-
-    expect(result.costUsd).toBeUndefined();
-    expect(result.usage).toBeUndefined();
-  });
-
-  it("ignores a resume command that the agent quotes before the real exit summary", async () => {
-    const quoted = "To continue, run:\n  hermes --resume 20250101_000000_ffffff\nCost: 99\n";
-
-    const result = await runWithOutput(quoted + EXIT_SUMMARY_EN);
-
-    expect(result.costUsd).toBeUndefined();
-  });
-
   it.each([
-    ["English", EXIT_SUMMARY_EN],
-    ["German", EXIT_SUMMARY_DE],
-  ])("reads cost and usage lines that follow the %s exit summary", async (_locale, summary) => {
-    const trailerLines = "Tokens: 1200 input, 340 output\nCost: $0.42\n";
+    ["the prompt echo and the agent answer", AGENT_PROSE + EXIT_SUMMARY, "", false],
+    ["the session title in the exit summary", "Done.\n" + EXIT_SUMMARY, "", false],
+    ["cost lines after the exit summary", AGENT_PROSE + EXIT_SUMMARY + COST_LINES, "", false],
+    ["a quoted exit summary in a run that timed out", AGENT_PROSE + EXIT_SUMMARY + COST_LINES, "", true],
+    ["a quoted resume command in a run that timed out", "Run:\n  hermes --resume x\n\nNote: x\nCost: 99\n", "", true],
+    ["a session_id line in the agent answer", `Log:\nsession_id: ${SESSION_ID}\n${COST_LINES}`, "", false],
+    ["cost lines after the quiet-mode session line", AGENT_PROSE, `\nsession_id: ${SESSION_ID}\n${COST_LINES}`, false],
+  ])("does not book cost or usage from %s", async (_source, stdout, stderr, timedOut) => {
+    const result = await runWithOutput(stdout, stderr, timedOut);
 
-    const result = await runWithOutput(AGENT_PROSE + summary + trailerLines);
-
-    expect(result.costUsd).toBe(0.42);
-    expect(result.usage).toEqual({ inputTokens: 1200, outputTokens: 340 });
+    expect(serverUtils.runChildProcess).toHaveBeenCalledTimes(1);
+    expect(result.costUsd).toBeUndefined();
+    expect(result.usage).toBeUndefined();
+    expect(result.resultJson).not.toHaveProperty("cost_usd");
+    expect(result.resultJson).not.toHaveProperty("usage");
   });
 });

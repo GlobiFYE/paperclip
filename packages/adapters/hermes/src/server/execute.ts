@@ -24,7 +24,6 @@ import path from "node:path";
 import type {
   AdapterExecutionContext,
   AdapterExecutionResult,
-  UsageSummary,
 } from "@paperclipai/adapter-utils";
 
 import {
@@ -231,20 +230,9 @@ const SESSION_ID_REGEX = /^session_id:\s*(\S+)/m;
 /** Regex for legacy session output format */
 const SESSION_ID_REGEX_LEGACY = /session[_ ](?:id|saved)[:\s]+([a-zA-Z0-9_-]+)/i;
 
-/** Regex to extract token usage from Hermes output. */
-const TOKEN_USAGE_REGEX =
-  /^[ \t]*tokens?[: \t]+(\d+)[ \t]*(?:input|in)\b[^\n]*?(\d+)[ \t]*(?:output|out)\b/im;
-
-/** Regex to extract cost from Hermes output. */
-const COST_REGEX = /^[ \t]*(?:total[ \t]+)?(?:cost|spent):[ \t]*\$?(\d+(?:\.\d+)?)[ \t]*$/im;
-
-const HERMES_TRAILER_START_REGEX = /^(?:session_id:|[ \t]*hermes --resume[ \t])/gm;
-
 interface ParsedOutput {
   sessionId?: string;
   response?: string;
-  usage?: UsageSummary;
-  costUsd?: number;
   errorMessage?: string;
 }
 
@@ -281,14 +269,6 @@ function cleanResponse(raw: string): string {
 // Output parsing
 // ---------------------------------------------------------------------------
 
-function hermesTrailer(output: string): string {
-  let start = -1;
-  for (const match of output.matchAll(HERMES_TRAILER_START_REGEX)) {
-    start = match.index;
-  }
-  return start < 0 ? "" : output.slice(start);
-}
-
 function parseHermesOutput(stdout: string, stderr: string): ParsedOutput {
   const combined = stdout + "\n" + stderr;
   const result: ParsedOutput = {};
@@ -317,23 +297,6 @@ function parseHermesOutput(stdout: string, stderr: string): ParsedOutput {
     if (cleaned.length > 0) {
       result.response = cleaned;
     }
-  }
-
-  const trailer = hermesTrailer(combined);
-
-  // Extract token usage
-  const usageMatch = trailer.match(TOKEN_USAGE_REGEX);
-  if (usageMatch) {
-    result.usage = {
-      inputTokens: parseInt(usageMatch[1], 10) || 0,
-      outputTokens: parseInt(usageMatch[2], 10) || 0,
-    };
-  }
-
-  // Extract cost
-  const costMatch = trailer.match(COST_REGEX);
-  if (costMatch?.[1]) {
-    result.costUsd = parseFloat(costMatch[1]);
   }
 
   // Check for error patterns in stderr
@@ -629,14 +592,6 @@ export async function execute(
     executionResult.errorMessage = `Hermes exited with code ${result.exitCode}`;
   }
 
-  if (parsed.usage) {
-    executionResult.usage = parsed.usage;
-  }
-
-  if (parsed.costUsd !== undefined) {
-    executionResult.costUsd = parsed.costUsd;
-  }
-
   // Summary from agent response
   if (parsed.response) {
     executionResult.summary = parsed.response.slice(0, 2000);
@@ -646,8 +601,6 @@ export async function execute(
   executionResult.resultJson = {
     result: parsed.response || "",
     session_id: parsed.sessionId || null,
-    usage: parsed.usage || null,
-    cost_usd: parsed.costUsd ?? null,
   };
 
   // Store session ID for next run
