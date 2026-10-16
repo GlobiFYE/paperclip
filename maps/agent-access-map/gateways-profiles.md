@@ -148,15 +148,16 @@ guarantee.
 
 ### Execution-host stdio assignments
 
-Native Codex and isolated ACPX Claude also accept verified, session-local stdio
-servers from the execution host. The transport uses each implementation's own
+Native Codex and all ACPX adapters, including ACPX Codex, Claude and Pi, accept
+verified, session-local stdio servers from the execution host through the shared
+binding path. The transport uses each implementation's own
 schemas and responses. Each binding requires a private Unix socket to identify
 the shared resource whose calls are serialized. This is a separate binding
 alongside the HTTP gateway; it does not create gateway/profile administration
 authority. Tasks cannot supply these reserved environment inputs. Read-only
 sessions omit them.
-Claude uses its applicable ACPX permission policy. Host-assigned native Codex
-tools run without a new per-call prompt, matching existing execution-host shell
+ACPX adapters use their applicable ACPX permission policy. Host-assigned native
+Codex tools run without a new per-call prompt, matching existing execution-host shell
 utilities. Explicit deny/prompt rules remain effective; requested approvals use
 PRP with active thread/turn checks and one-time decisions. Preconfigured Claude
 rejects interactive approval requests. See the [Runner contract](../../packages/paperclip-runner/README.md#assigned-local-mcp-servers).
@@ -164,5 +165,7 @@ rejects interactive approval requests. See the [Runner contract](../../packages/
 Local fixture coverage: [binding validation](../../packages/paperclip-runner/src/drivers/stdio-mcp.test.ts),
 [relay processes and cancellation](../../packages/paperclip-runner/runner/crates/runner-core/tests/stdio_mcp.rs),
 and [approval projection](../../packages/paperclip-runner/src/drivers/codex/codex-question-adapter.test.ts).
-Vendor-client image and approval evidence belongs in the PR. These checks do not
+Provider-client image and approval smoke tests used native Codex and Claude SDK;
+that coverage is separate from registration support for all ACPX adapters.
+Vendor-client evidence belongs in the PR. These checks do not
 certify live external credentials, deployment isolation or gateway revocation.

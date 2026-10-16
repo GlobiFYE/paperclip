@@ -809,21 +809,27 @@ shell inheritance. Names use letters, digits, underscores or hyphens and cannot
 replace the internal task server or gateway. Commands are verified against their
 assigned digest before execution. The backend receives only its assigned environment.
 
-Native Codex and isolated ACPX Claude register the server for the current session.
+Runner supplies these session-local bindings to native Codex and through the
+shared ACPX runtime to all ACPX adapters, including Codex, Claude and Pi.
 User or project MCP files are never rewritten. Read-only sessions omit these
 bindings. Host assignment authorizes native Codex to use these local tools without
 a new per-call prompt, matching execution-host utilities available through shell.
-Claude uses the existing ACPX permission policy. Explicit Codex tool deny/prompt
-rules remain effective; requested approvals use the existing PRP permission request,
-bound to the active thread and turn. Only one-time accept, decline or cancel
+ACPX adapters use the existing ACPX permission policy. Explicit native Codex tool
+deny/prompt rules remain effective; requested approvals use the existing PRP
+permission request, bound to the active thread and turn. Only one-time accept, decline or cancel
 decisions are accepted. Shell escalation stays disabled.
 Preconfigured Claude remains unattended and rejects approval requests.
 
-The relay forwards tool schemas and native MCP content. For Codex 0.160/0.162,
-image-bearing results put structured metadata in a text block instead of
+The relay forwards tool schemas and native MCP content. For native Codex
+0.160/0.162, image-bearing results put structured metadata in a text block instead of
 `structuredContent`, because those clients otherwise discard the image blocks.
-Claude receives the original response unchanged. Tool schemas and actions are
-forwarded without provider-specific translation.
+ACPX adapters receive the original response unchanged. Tool schemas and actions
+are forwarded without provider-specific translation.
+
+Provider-client smoke tests exercised native Codex 0.160.0 and Claude SDK
+0.3.286 with local MCP servers and loopback model APIs. This records the clients
+used to verify image delivery and approvals. Session-local stdio registration
+uses the shared path for all ACPX adapters.
 
 All `tools/call` requests for the same private Unix socket are serialized across
 sessions and processes, including reads. Metadata requests stay responsive.
