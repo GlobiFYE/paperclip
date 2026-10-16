@@ -19,7 +19,7 @@ export function pluginAgentInstructions(db: Db) {
       const actor = instructionActionActor(input.companyId, context);
       const relative = agentFilePath(input.path);
       return files.locked(input.companyId, input.agentId, actor, false, async (_tx, _agent, root) => {
-        const file = await inspectAgentFile(root, relative);
+        const file = await inspectAgentFile(root, relative, 1024 * 1024, true);
         if (file && !file.bytes) throw unprocessable("Plugin instruction files must be UTF-8 text no larger than 1 MiB");
         const bytes = file?.bytes ? instructionBytes(file.bytes) : null;
         if (bytes?.includes(0)) throw unprocessable("Plugin instruction files must be text");

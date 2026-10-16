@@ -4,7 +4,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { agents, companies, authUsers, companyMemberships, principalPermissionGrants, activityLog, createDb } from "@paperclipai/db";
+import { agents, companies, authUsers, companyMemberships, principalPermissionGrants, activityLog, heartbeatRuns, createDb } from "@paperclipai/db";
 import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { pluginAgentInstructions } from "../services/plugin-agent-instructions.js";
 
@@ -49,6 +49,13 @@ describe("user-bound plugin files through native authorization and storage", () 
     await db.update(agents).set({ status: "running" }).where(eq(agents.id, agentId));
     await expect(service.write({ companyId, agentId, path: "AGENTS.md", content: "not while running", baseHash: null }, context)).rejects.toMatchObject({ status: 409 });
     await db.update(agents).set({ status: "idle" }).where(eq(agents.id, agentId));
+    await db.update(agents).set({ status: "paused" }).where(eq(agents.id, agentId));
+    const [stopping] = await db.insert(heartbeatRuns).values({ companyId, agentId, status: "running" }).returning();
+    await expect(service.write({ companyId, agentId, path: "new.txt", content: "not while stopping", baseHash: null }, context)).rejects.toMatchObject({ status: 409 });
+    await db.update(heartbeatRuns).set({ status: "cancelled", finishedAt: new Date() }).where(eq(heartbeatRuns.id, stopping.id));
+    await db.update(heartbeatRuns).set({ resultJson: { executionCancellation: { state: "requested" } } }).where(eq(heartbeatRuns.id, stopping.id));
+    await expect(service.write({ companyId, agentId, path: "new.txt", content: "not before stop receipt", baseHash: null }, context)).rejects.toMatchObject({ status: 409 });
+    await db.update(heartbeatRuns).set({ resultJson: { executionCancellation: { state: "acknowledged" } } }).where(eq(heartbeatRuns.id, stopping.id));
     await db.delete(principalPermissionGrants).where(eq(principalPermissionGrants.principalId, userId));
     await expect(service.write({ companyId, agentId, path: "AGENTS.md", content: "unauthorized", baseHash: null }, context)).rejects.toMatchObject({ status: 403 });
     const audit = await db.select().from(activityLog).where(eq(activityLog.entityId, agentId));

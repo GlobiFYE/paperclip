@@ -40,5 +40,6 @@ describe("plugin instruction action boundary", () => {
     store.inspect.mockResolvedValue({ bytes: Buffer.from("instructions"), hash: "b".repeat(64) });
     await expect(pluginAgentInstructions({} as never).read(input, context)).resolves.toEqual({ path: "AGENTS.md", content: "instructions", contentHash: "b".repeat(64) });
     expect(store.locked).toHaveBeenCalledWith("company", "agent", { type: "board", userId: "user" }, false, expect.any(Function));
+    expect(store.inspect).toHaveBeenCalledWith("managed-root", "AGENTS.md", 1024 * 1024, true);
   });
 });
