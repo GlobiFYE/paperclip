@@ -1874,6 +1874,14 @@ versions across directories. With these artifacts preinstalled, startup links
 and verifies them without uploading a binary or installing packages. Deploy
 the updated sandbox image with the matching runner qualification changes.
 
+When the provider allows concurrent sync operations, native startup prepares the
+runner and the default image Codex harness together, with at most two operations
+in flight. It still verifies the runner contract, selected transport, executable
+hash, and final launch paths. Both preparations must settle before startup can
+return a failure. Providers without this capability, explicit harness uploads,
+and npm installs keep the serial path. See the
+[native artifact controls](../server/src/services/native-runtime/native-artifact-preparation.test.ts).
+
 ### Remote GitHub launcher staging
 
 Managed GitHub launchers stage their nine text files in one bounded control
