@@ -141,6 +141,14 @@ describe("assertReproducibleGitFiles with Paperclip-managed files", () => {
     await expectRejected(/unique_reflog_commits|unpushed_managed_checkout/);
   });
 
+  it("rejects a detached HEAD commit after its reflog expires", async () => {
+    const checkout = await managedCheckout();
+    await git(checkout, "checkout", "-q", "--detach");
+    await commit(checkout, "detached.txt", "detached work");
+    await git(checkout, "reflog", "expire", "--expire=now", "--all");
+    await expectRejected("unpushed_managed_checkout");
+  });
+
   it("accepts pushed history after upstream advances", async () => {
     await managedCheckout();
     // Upstream moves on after the clone; the checkout never fetches it.

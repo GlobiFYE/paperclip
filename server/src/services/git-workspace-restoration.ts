@@ -218,7 +218,10 @@ export async function assertReproducibleManagedCheckout(checkout: string, input:
   // Every commit a ref or reflog keeps must be on a current upstream branch or
   // tag. Local remote-tracking refs prove nothing on their own (they may be
   // stale), so the proof fetches upstream's refs fresh.
+  // HEAD is listed explicitly: a detached HEAD is not a named ref, and once
+  // its reflog expires nothing else would name its commits.
   const localTips = new Set([
+    ...(await gitCacheCommand(checkout, ["rev-parse", "--verify", "HEAD^{commit}"], signal)).split("\n"),
     ...(await gitCacheCommand(checkout, ["for-each-ref", "--format=%(objectname)"], signal)).split("\n"),
     ...(await gitCacheCommand(checkout, ["reflog", "show", "--all", "--format=%H"], signal).catch(() => "")).split("\n"),
   ].map(line => line.trim()).filter(sha => shaPattern.test(sha)));
