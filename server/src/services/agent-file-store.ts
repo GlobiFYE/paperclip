@@ -4,8 +4,8 @@ import { cachedAgentFileManifest, checkpointSnapshot, type AgentFileManifest } f
 import { constants } from "node:fs";
 import { Readable } from "node:stream";
 import path from "node:path";
-import { and, eq } from "drizzle-orm";
-import { agents, activityLog, agentInstructionHeads, agentInstructionRevisions, type Db } from "@paperclipai/db";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
+import { agents, activityLog, agentInstructionHeads, agentInstructionRevisions, heartbeatRuns, type Db } from "@paperclipai/db";
 import { captureDirectorySnapshot, mergeDirectoryWithBaseline, type DirectorySnapshot } from "@paperclipai/adapter-utils/workspace-restore-merge";
 import { HttpError, conflict, notFound, unprocessable } from "../errors.js";
 import { authorizeInstructionCommit, authorizeInstructionRead } from "./agent-instruction-authorization.js";
@@ -102,15 +102,17 @@ async function openAgentFile(root: string, relative: string) {
 }
 
 /** Hash large files incrementally. Only editor-sized content is retained in RAM. */
-export async function inspectAgentFile(root: string, relative: string, bufferLimit = MAX_INSTRUCTION_BYTES) {
+export async function inspectAgentFile(root: string, relative: string, bufferLimit = MAX_INSTRUCTION_BYTES, rejectOversize = false) {
   const opened = await openAgentFile(root, relative);
   if (!opened) return null;
   const hash = createHash("sha256");
   let chunks: Buffer[] | null = opened.size <= bufferLimit ? [] : null;
   let size = 0;
   try {
-    for await (const chunk of opened.handle.createReadStream()) {
+    if (rejectOversize && opened.size > bufferLimit) throw unprocessable("Plugin instruction files must be UTF-8 text no larger than 1 MiB");
+    for await (const chunk of opened.handle.createReadStream(rejectOversize ? { end: bufferLimit } : undefined)) {
       size += chunk.length;
+      if (rejectOversize && size > bufferLimit) throw unprocessable("Plugin instruction files must be UTF-8 text no larger than 1 MiB");
       assertFileSize(size, relative);
       hash.update(chunk);
       if (size > bufferLimit) chunks = null;
@@ -196,11 +198,17 @@ export function agentFileStore(db: Db) {
     },
     read: (companyId: string, agentId: string, relative: string, actor: AuthorizationActor) =>
       locked(companyId, agentId, actor, false, (_tx, _agent, root) => readAgentFile(root, instructionPath(relative))),
-    write: (input: { companyId: string; agentId: string; path: string; bytes: Buffer | null; baseHash: string | null }, actor: AuthorizationActor) =>
+    write: (input: { companyId: string; agentId: string; path: string; bytes: Buffer | null; baseHash: string | null; requireIdle?: boolean }, actor: AuthorizationActor) =>
       locked(input.companyId, input.agentId, actor, true, async (tx, agent, root, bound) => {
+        if (input.requireIdle) {
+          const active = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns)
+            .where(and(eq(heartbeatRuns.agentId, agent.id), or(inArray(heartbeatRuns.status, ["queued", "running"]),
+              sql`${heartbeatRuns.resultJson}->'executionCancellation'->>'state' = 'requested'`))).limit(1);
+          if (agent.status === "running" || active.length) throw conflict("Wait for this agent's active run to finish before syncing files", { code: "AGENT_FILE_SYNC_RUNNING" });
+        }
         const relative = agentFilePath(input.path);
         if (input.bytes) assertFileSize(input.bytes.length, relative);
-        const previous = await inspectAgentFile(root, relative);
+        const previous = await inspectAgentFile(root, relative, MAX_INSTRUCTION_BYTES, input.requireIdle);
         const currentHash = previous?.hash ?? null;
         const incomingHash = input.bytes === null ? null : fileHash(input.bytes);
         if (currentHash === incomingHash) return { contentHash: currentHash, changed: false };

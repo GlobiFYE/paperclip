@@ -9,6 +9,19 @@ import {
 import { PLUGIN_RPC_ERROR_CODES } from "../src/protocol.js";
 
 describe("createHostClientHandlers invocation company scope", () => {
+  it("gates instruction methods independently and forwards only host context", async () => {
+    const instructionsRead = vi.fn(async () => ({ path: "AGENTS.md", content: null, contentHash: null }));
+    const instructionsWrite = vi.fn(async () => ({ contentHash: "a".repeat(64), changed: true }));
+    const services = { agents: { instructionsRead, instructionsWrite } } as unknown as HostServices;
+    const context = { invocationScope: { companyId: "company-a", actionUserId: "user-a" } };
+    const input = { companyId: "company-a", agentId: "agent-a", path: "AGENTS.md" };
+    const handlers = createHostClientHandlers({ pluginId: "test", capabilities: ["agents.instructions.read"], services });
+    await handlers["agents.instructions.read"](input, context);
+    expect(instructionsRead).toHaveBeenCalledWith(input, context);
+    await expect(handlers["agents.instructions.write"]({ ...input, content: "new", baseHash: null }, context)).rejects.toBeInstanceOf(CapabilityDeniedError);
+    await expect(handlers["agents.instructions.read"]({ ...input, companyId: "company-b" }, context)).rejects.toBeInstanceOf(InvocationScopeDeniedError);
+    expect(instructionsWrite).not.toHaveBeenCalled();
+  });
   it("rejects worker-selected config and secret company ids without a host invocation scope", async () => {
     const configGet = vi.fn(async () => ({ apiKeyRef: "unreachable" }));
     const secretsResolve = vi.fn(async () => "unreachable");

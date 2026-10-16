@@ -1155,6 +1155,10 @@ export function startWorkerRpcHost(options: WorkerRpcHostOptions): WorkerRpcHost
       },
 
       agents: {
+        instructions: {
+          read: (input) => callHost("agents.instructions.read", input),
+          write: (input) => callHost("agents.instructions.write", input),
+        },
         async list(input) {
           return callHost("agents.list", {
             companyId: input.companyId,
