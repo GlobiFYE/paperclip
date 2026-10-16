@@ -562,6 +562,11 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     (executionTargetIsRemote
       ? path.posix.normalize(runtimeSessionCwd) === path.posix.normalize(effectiveExecutionCwd)
       : path.resolve(runtimeSessionCwd) === path.resolve(effectiveExecutionCwd));
+  const runtimeMcpServerIdentity = asString(runtimeSessionParams.mcpServerIdentity, "");
+  const hasMatchingMcpServers =
+    runtimeMcpServerIdentity.length === 0
+      ? runtimeMcpServers.length === 0
+      : runtimeMcpServerIdentity === runtimeMcpIdentity;
   const canResumeSession =
     runtimeSessionId.length > 0 &&
     sessionCwdsMatch &&
@@ -571,6 +576,16 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     await onLog(
       "stdout",
       `[paperclip] Antigravity session "${runtimeSessionId}" does not match the current remote execution identity and will not be resumed in "${effectiveExecutionCwd}". Starting a fresh remote session.\n`,
+    );
+  }
+  if (runtimeSessionId && canResumeSession && !hasMatchingMcpServers) {
+    // Each agy invocation loads mcp_config.json fresh, including resumed
+    // conversations, so a changed tool set does not invalidate the saved
+    // session (the same reasoning claude-local documents for --mcp-config).
+    // The identity is still stored per session so the change is observable.
+    await onLog(
+      "stdout",
+      `[paperclip] Antigravity runtime MCP server set changed; loading current tools when resuming session "${runtimeSessionId}".\n`,
     );
   }
 
@@ -832,6 +847,8 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           ...(workspaceId ? { workspaceId } : {}),
           ...(workspaceRepoUrl ? { repoUrl: workspaceRepoUrl } : {}),
           ...(workspaceRepoRef ? { repoRef: workspaceRepoRef } : {}),
+          // Stamped whenever managed servers exist: local runs write the
+          // config directly, remote runs receive it via the staged sync.
           ...(runtimeMcpServers.length > 0 ? { mcpServerIdentity: runtimeMcpIdentity } : {}),
           ...(executionTargetIsRemote
             ? {

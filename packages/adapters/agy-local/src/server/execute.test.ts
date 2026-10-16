@@ -808,6 +808,7 @@ describe("agy-local execute run outcome", () => {
       const writeMcpSpy = vi.spyOn(mcpModule, "writePaperclipAgyMcpConfig").mockResolvedValueOnce({
         configPath: path.join(tempHome, ".gemini", "config", "mcp_config.json"),
         injectedServerNames: ["Paperclip connections"],
+        sweptStaleServerNames: [],
         cleanup: cleanupSpy,
       });
 
@@ -879,6 +880,98 @@ describe("agy-local execute run outcome", () => {
       await fs.rm(tempHome, { recursive: true, force: true }).catch(() => undefined);
     }
   });
+
+  it("notes a changed MCP server set when resuming and stamps the current identity", async () => {
+    const logs: string[] = [];
+    let capturedMeta: AdapterInvocationMeta | null = null;
+    const tempHome = await fs.mkdtemp(path.join(os.tmpdir(), "agy-exec-mcp-resume-"));
+
+    try {
+      const writeMcpSpy = vi.spyOn(mcpModule, "writePaperclipAgyMcpConfig").mockResolvedValue({
+        configPath: path.join(tempHome, ".gemini", "config", "mcp_config.json"),
+        injectedServerNames: ["Paperclip connections"],
+        sweptStaleServerNames: [],
+        cleanup: async () => {},
+      });
+
+      const ctx: AdapterExecutionContext = {
+        runId: "run-mcp-2",
+        agent: {
+          id: "agent-1",
+          companyId: "company-1",
+          name: "Test Agent",
+          adapterType: "agy_local",
+          adapterConfig: {},
+        },
+        runtime: {
+          sessionId: "conv-prior-1",
+          sessionParams: {
+            sessionId: "conv-prior-1",
+            cwd: "/tmp/workspace",
+            mcpServerIdentity: JSON.stringify([
+              { name: "Paperclip connections", url: "https://old.example/mcp", connectionId: "conn-old" },
+            ]),
+          },
+          sessionDisplayId: "conv-prior-1",
+          taskKey: null,
+        },
+        config: {
+          env: {
+            HOME: tempHome,
+          },
+        },
+        context: {
+          paperclipWorkspace: {
+            cwd: "/tmp/workspace",
+          },
+        },
+        runtimeMcp: {
+          getServers: () => [
+            {
+              name: "Paperclip connections",
+              url: "https://api.paperclip.test/mcp/connections",
+              token: "tok-123",
+              connectionId: "conn-123",
+            },
+          ],
+        },
+        onLog: async (_stream, chunk) => {
+          logs.push(chunk);
+        },
+        onMeta: async (meta) => {
+          capturedMeta = meta;
+        },
+      };
+
+      const result = await execute(ctx);
+      expect(result.exitCode).toBe(0);
+
+      // The session still resumes: agy re-reads mcp_config.json on every
+      // invocation, so the changed tool set is loaded, not fatal.
+      const commandArgs = capturedMeta!.commandArgs as string[];
+      expect(commandArgs).toContain("--conversation");
+      expect(commandArgs[commandArgs.indexOf("--conversation") + 1]).toBe("conv-prior-1");
+      expect(logs.join("")).toContain("MCP server set changed");
+
+      expect(result.sessionParams?.mcpServerIdentity).toBe(
+        JSON.stringify([
+          {
+            name: "Paperclip connections",
+            url: "https://api.paperclip.test/mcp/connections",
+            connectionId: "conn-123",
+          },
+        ]),
+      );
+
+      writeMcpSpy.mockRestore();
+    } finally {
+      await fs.rm(tempHome, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  // Remote execution targets are covered in execute.remote.test.ts: remote
+  // runs receive the managed MCP config via the staged sync, so the local
+  // writer is not used but the session does carry mcpServerIdentity.
 });
 
 describe("discoverAgySessionArtifacts", () => {

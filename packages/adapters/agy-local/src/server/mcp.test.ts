@@ -161,6 +161,192 @@ describe("writePaperclipAgyMcpConfig", () => {
       await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
     }
   });
+
+  it("refuses to overwrite an unparseable existing config", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "agy-mcp-test-"));
+    const configDir = path.join(tempDir, ".gemini", "config");
+    await fs.mkdir(configDir, { recursive: true });
+    const configPath = path.join(configDir, "mcp_config.json");
+    await fs.writeFile(configPath, "{ not json", "utf8");
+
+    try {
+      await expect(
+        writePaperclipAgyMcpConfig({
+          homedir: tempDir,
+          servers: [{ name: "Paperclip connections", url: "https://api.paperclip.test/mcp", token: "", connectionId: "c1" }],
+        }),
+      ).rejects.toThrow(/not valid JSON/);
+
+      // The user's file is left byte-for-byte untouched.
+      expect(await fs.readFile(configPath, "utf8")).toBe("{ not json");
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("refuses to overwrite an existing config whose root is not an object", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "agy-mcp-test-"));
+    const configDir = path.join(tempDir, ".gemini", "config");
+    await fs.mkdir(configDir, { recursive: true });
+    const configPath = path.join(configDir, "mcp_config.json");
+    await fs.writeFile(configPath, "[1, 2, 3]\n", "utf8");
+
+    try {
+      await expect(
+        writePaperclipAgyMcpConfig({
+          homedir: tempDir,
+          servers: [{ name: "Paperclip connections", url: "https://api.paperclip.test/mcp", token: "", connectionId: "c1" }],
+        }),
+      ).rejects.toThrow(/not a JSON object/);
+
+      expect(await fs.readFile(configPath, "utf8")).toBe("[1, 2, 3]\n");
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("sweeps stale injected entries from earlier runs before injecting", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "agy-mcp-test-"));
+    const configDir = path.join(tempDir, ".gemini", "config");
+    await fs.mkdir(configDir, { recursive: true });
+    const configPath = path.join(configDir, "mcp_config.json");
+
+    // Leftovers from a hard-killed run (stale token, dead suffixed variant),
+    // alongside a user server that shares the "Paperclip" prefix by name only
+    // in value shape — it has command/args, so it is not an injected entry.
+    const initialConfig = {
+      mcpServers: {
+        "Paperclip connections": {
+          url: "https://api.paperclip.test/mcp/connections",
+          headers: { Authorization: "Bearer stale-token" },
+        },
+        "Paperclip projects-conn-999": {
+          url: "https://api.paperclip.test/mcp/projects",
+          headers: { Authorization: "Bearer older-token" },
+        },
+        "Paperclip projects": {
+          command: "my-own-projects-server",
+          args: ["serve"],
+        },
+        custom_http: {
+          url: "https://custom.tool/mcp",
+        },
+      },
+    };
+    await fs.writeFile(configPath, JSON.stringify(initialConfig, null, 2), "utf8");
+
+    try {
+      const result = await writePaperclipAgyMcpConfig({
+        homedir: tempDir,
+        servers: [
+          {
+            name: "Paperclip connections",
+            url: "https://api.paperclip.test/mcp/connections",
+            token: "fresh-token",
+            connectionId: "conn-1",
+          },
+          {
+            name: "Paperclip projects",
+            url: "https://api.paperclip.test/mcp/projects",
+            token: "fresh-token",
+            connectionId: "conn-2",
+          },
+        ],
+      });
+
+      expect(result.sweptStaleServerNames).toEqual(
+        expect.arrayContaining(["Paperclip connections", "Paperclip projects-conn-999"]),
+      );
+      expect(result.sweptStaleServerNames).not.toContain("Paperclip projects");
+
+      const content = JSON.parse(await fs.readFile(configPath, "utf8"));
+      expect(content.mcpServers["Paperclip connections"]).toEqual({
+        url: "https://api.paperclip.test/mcp/connections",
+        headers: { Authorization: "Bearer fresh-token" },
+      });
+      // The user's own "Paperclip projects" (command-shaped) survives, so the
+      // managed one lands on its connection-suffixed name.
+      expect(content.mcpServers["Paperclip projects"]).toEqual(initialConfig.mcpServers["Paperclip projects"]);
+      expect(content.mcpServers["Paperclip projects-conn-2"]).toEqual({
+        url: "https://api.paperclip.test/mcp/projects",
+        headers: { Authorization: "Bearer fresh-token" },
+      });
+      expect(content.mcpServers["Paperclip projects-conn-999"]).toBeUndefined();
+      expect(content.mcpServers.custom_http).toEqual(initialConfig.mcpServers.custom_http);
+
+      await result.cleanup();
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("serializes concurrent writes so neither run's servers are lost", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "agy-mcp-test-"));
+
+    try {
+      const [a, b] = await Promise.all([
+        writePaperclipAgyMcpConfig({
+          homedir: tempDir,
+          servers: [{ name: "Paperclip connections", url: "https://a.test/mcp", token: "tok-a", connectionId: "ca" }],
+          runId: "run-a",
+        }),
+        writePaperclipAgyMcpConfig({
+          homedir: tempDir,
+          servers: [{ name: "Paperclip projects", url: "https://b.test/mcp", token: "tok-b", connectionId: "cb" }],
+          runId: "run-b",
+        }),
+      ]);
+
+      const content = JSON.parse(await fs.readFile(a.configPath, "utf8"));
+      expect(content.mcpServers["Paperclip connections"]).toEqual({
+        url: "https://a.test/mcp",
+        headers: { Authorization: "Bearer tok-a" },
+      });
+      expect(content.mcpServers["Paperclip projects"]).toEqual({
+        url: "https://b.test/mcp",
+        headers: { Authorization: "Bearer tok-b" },
+      });
+
+      await a.cleanup();
+      await b.cleanup();
+
+      const exists = await fs.stat(a.configPath).then(() => true).catch(() => false);
+      expect(exists).toBe(false);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
+
+  it("cleanup leaves a same-named entry that a later run re-injected with a fresher token", async () => {
+    const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "agy-mcp-test-"));
+
+    try {
+      const first = await writePaperclipAgyMcpConfig({
+        homedir: tempDir,
+        servers: [{ name: "Paperclip connections", url: "https://api.paperclip.test/mcp", token: "tok-old", connectionId: "c1" }],
+        runId: "run-old",
+      });
+      const second = await writePaperclipAgyMcpConfig({
+        homedir: tempDir,
+        servers: [{ name: "Paperclip connections", url: "https://api.paperclip.test/mcp", token: "tok-new", connectionId: "c1" }],
+        runId: "run-new",
+      });
+
+      // The first run's cleanup must not delete the second run's live entry.
+      await first.cleanup();
+      const afterFirstCleanup = JSON.parse(await fs.readFile(first.configPath, "utf8"));
+      expect(afterFirstCleanup.mcpServers["Paperclip connections"]).toEqual({
+        url: "https://api.paperclip.test/mcp",
+        headers: { Authorization: "Bearer tok-new" },
+      });
+
+      await second.cleanup();
+      const exists = await fs.stat(first.configPath).then(() => true).catch(() => false);
+      expect(exists).toBe(false);
+    } finally {
+      await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  });
 });
 
 describe("stageAgyMcpConfigForSync", () => {
