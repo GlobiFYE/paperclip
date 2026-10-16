@@ -1,4 +1,5 @@
 import { Readable } from "node:stream";
+import { createHash } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import express from "express";
 import { vi } from "vitest";
@@ -123,23 +124,49 @@ export type TestStorageService = StorageService & {
       byteSize?: number;
       sha256?: string;
     };
+    /** Bytes the mock actually read off the streamed body of the last putFile. */
+    receivedBytes?: Buffer;
   };
 };
 
-export function createStorageService(body = Buffer.from("test")): TestStorageService {
+/** Read a streamed body to completion so the mock can size and hash what arrived. */
+async function drainStream(stream: Readable): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+  }
+  return Buffer.concat(chunks);
+}
+
+export function createStorageService(
+  body = Buffer.from("test"),
+  options: { putFileError?: Error } = {},
+): TestStorageService {
   const calls: TestStorageService["__calls"] = {};
   return {
     provider: "local_disk",
     __calls: calls,
     putFile: async (input) => {
       calls.putFile = input;
+      // A rejection before reading models storage validation (for example, the
+      // generated object key) failing before the body stream is touched.
+      if (options.putFileError) {
+        throw options.putFileError;
+      }
+      // Consume the streamed body exactly as a real provider would, so the test
+      // proves the whole file arrived rather than only that storage was called
+      // with a stream argument. `body.length` is undefined for a stream.
+      const received = Buffer.isBuffer(input.body)
+        ? input.body
+        : await drainStream(input.body);
+      calls.receivedBytes = received;
       return {
-      provider: "local_disk",
-      objectKey: `${input.namespace}/${input.originalFilename ?? "upload"}`,
-      contentType: input.contentType,
-      byteSize: input.body.length,
-      sha256: "sha256-sample",
-      originalFilename: input.originalFilename,
+        provider: "local_disk",
+        objectKey: `${input.namespace}/${input.originalFilename ?? "upload"}`,
+        contentType: input.contentType,
+        byteSize: received.length,
+        sha256: createHash("sha256").update(received).digest("hex"),
+        originalFilename: input.originalFilename,
       };
     },
     getObject: vi.fn(async (_companyId, _objectKey, options) => {

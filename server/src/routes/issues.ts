@@ -268,6 +268,7 @@ import {
   SVG_CONTENT_TYPE,
 } from "../attachment-types.js";
 import {
+  closeSpooledAttachmentStream,
   createAttachmentUploadSpooler,
   createSpooledAttachmentStream,
   hashSpooledAttachmentFile,
@@ -19412,6 +19413,12 @@ export function issueRoutes(
         throw err;
       }
 
+      // Storage can reject a streamed upload before it reads the body — for
+      // example when the generated object key fails validation. The reader would
+      // then stay open and pin the unlinked file's blocks, so hold it here and
+      // destroy it in the `finally` below on every exit path.
+      let spoolReadStream: ReturnType<typeof createSpooledAttachmentStream> | undefined;
+
       try {
         const file = (
           req as Request & {
@@ -19459,12 +19466,13 @@ export function issueRoutes(
         const sha256 = await hashSpooledAttachmentFile(file.path);
 
         const actor = getActorInfo(req);
+        spoolReadStream = createSpooledAttachmentStream(file.path);
         const stored = await storage.putFile({
           companyId,
           namespace: `issues/${issueId}`,
           originalFilename: file.originalname || null,
           contentType,
-          body: createSpooledAttachmentStream(file.path),
+          body: spoolReadStream,
           byteSize: file.size,
           sha256,
         });
@@ -19547,6 +19555,12 @@ export function issueRoutes(
         } = attachment;
         res.status(201).json(withContentPath(attachmentResponse));
       } finally {
+        // Close the reader before releasing the spool: the transfer may never
+        // have started if storage rejected the object key up front, and an open
+        // descriptor keeps the unlinked file's blocks on disk.
+        if (spoolReadStream) {
+          await closeSpooledAttachmentStream(spoolReadStream);
+        }
         await attachmentSpooler.release(req);
       }
     },

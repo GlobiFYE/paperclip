@@ -1,5 +1,6 @@
 import { Readable } from "node:stream";
 import { createHash } from "node:crypto";
+import type { ReadStream } from "node:fs";
 import { readdirSync } from "node:fs";
 import { promises as fs } from "node:fs";
 import os from "node:os";
@@ -138,9 +139,45 @@ describe("issue attachment large media", () => {
     // The digest comes from a disk read of the spool, not from the heap buffer.
     expect(putFileCall?.sha256).toBe(expectedSha);
 
+    // The mock read the streamed body to completion, so this proves the whole
+    // file arrived — not merely that storage was handed a stream argument.
+    const received = storage.__calls.receivedBytes;
+    expect(received?.length).toBe(bytes.length);
+    expect(createHash("sha256").update(received ?? Buffer.alloc(0)).digest("hex")).toBe(expectedSha);
+    // Storage's computed size and digest flow through to the attachment row.
+    expect(mockIssueService.createAttachment).toHaveBeenCalledWith(
+      expect.objectContaining({ byteSize: bytes.length, sha256: expectedSha }),
+    );
+
     // No spool directory survives the success path.
     expect(await waitForSpoolEmpty()).toEqual([]);
   }, 120_000);
+
+  it("closes the spool reader when storage rejects before reading the body", async () => {
+    // Storage can reject before it touches the stream — for example an invalid
+    // generated object key. The route must still destroy the reader, or the
+    // unlinked spool file's blocks stay pinned by the open descriptor.
+    const storage = createStorageService(Buffer.from("test"), {
+      putFileError: new Error("object key rejected before read"),
+    });
+    mockIssueService.createAttachment.mockResolvedValue(
+      makeAttachment("video/mp4", "a..b.mp4"),
+    );
+
+    const app = await createApp(storage);
+    const res = await request(app)
+      .post(`/api/companies/company-1/issues/${ISSUE_ID}/attachments`)
+      .attach("file", makeVideoBytes(64 * 1024), {
+        filename: "a..b.mp4",
+        contentType: "video/mp4",
+      });
+
+    expect(res.status).toBe(500);
+    const body = storage.__calls.putFile?.body as ReadStream | undefined;
+    expect(body).toBeDefined();
+    expect(body?.destroyed).toBe(true);
+    expect(await waitForSpoolEmpty()).toEqual([]);
+  });
 
   it("rejects an empty upload and leaves no spool", async () => {
     const storage = createStorageService();

@@ -3,7 +3,11 @@ import path from "node:path";
 import { promises as fs } from "node:fs";
 import type { Request } from "express";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createAttachmentUploadSpooler } from "../services/issue-attachment-uploads.js";
+import {
+  closeSpooledAttachmentStream,
+  createAttachmentUploadSpooler,
+  createSpooledAttachmentStream,
+} from "../services/issue-attachment-uploads.js";
 
 function fakeRequest(contentLength?: number): Request {
   return {
@@ -268,5 +272,43 @@ describe("attachment upload spool sweep liveness", () => {
 
     expect(await spooler.sweepOrphans()).toEqual([leftover]);
     expect(await fs.readdir(root)).toEqual([]);
+  });
+});
+
+describe("closeSpooledAttachmentStream", () => {
+  let root = "";
+
+  beforeEach(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-spool-close-"));
+  });
+
+  afterEach(async () => {
+    await fs.rm(root, { recursive: true, force: true });
+  });
+
+  it("destroys an unread reader and waits for its descriptor to close", async () => {
+    const filePath = path.join(root, "upload");
+    await fs.writeFile(filePath, "spooled bytes");
+    const stream = createSpooledAttachmentStream(filePath);
+
+    expect(stream.destroyed).toBe(false);
+    await closeSpooledAttachmentStream(stream);
+
+    // `close` fired, so the descriptor is released and the unlinked file's
+    // blocks are reclaimed even though nothing ever read the stream.
+    expect(stream.destroyed).toBe(true);
+    expect(stream.closed).toBe(true);
+  });
+
+  it("is a no-op on an already-consumed reader", async () => {
+    const filePath = path.join(root, "upload");
+    await fs.writeFile(filePath, "spooled bytes");
+    const stream = createSpooledAttachmentStream(filePath);
+    for await (const _chunk of stream) {
+      // drain
+    }
+
+    await expect(closeSpooledAttachmentStream(stream)).resolves.toBeUndefined();
+    expect(stream.destroyed).toBe(true);
   });
 });

@@ -321,6 +321,27 @@ export function createSpooledAttachmentStream(filePath: string): ReadStream {
 }
 
 /**
+ * Close a spooled-file read stream and wait for its descriptor to close.
+ *
+ * Storage can reject a streamed upload *before* it reads any of the body — for
+ * example when the generated object key fails validation. In that case the
+ * reader created by {@link createSpooledAttachmentStream} is still open, and on
+ * Linux unlinking an open file does not reclaim its blocks, so the route has to
+ * destroy the reader (and wait for the descriptor to close) before releasing the
+ * spool directory. Destroying an already-finished stream is a no-op, so the
+ * route can call this unconditionally in its `finally`.
+ */
+export function closeSpooledAttachmentStream(stream: ReadStream): Promise<void> {
+  if (stream.destroyed) return Promise.resolve();
+  return new Promise<void>((resolve) => {
+    const done = (): void => resolve();
+    stream.once("close", done);
+    stream.once("error", done);
+    stream.destroy();
+  });
+}
+
+/**
  * SHA-256 of a spooled file, computed from disk.
  *
  * `PutFileInput` requires an exact `byteSize` and `sha256` for a streamed body
