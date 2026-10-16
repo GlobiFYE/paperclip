@@ -856,19 +856,26 @@ export function createVaultProvider(
               // left an orphaned version): Vault is ahead of Paperclip's
               // latestVersion. Self-heal by re-reading the actual current
               // version. If it already holds the value we are writing, this is
-              // an idempotent replay — adopt it. Otherwise write on top of the
-              // actual current version (a corrected CAS), so rotation never
-              // bricks permanently on a single lost response.
+              // an idempotent replay — adopt it. Otherwise, only write on top
+              // when Vault is exactly one ahead (existing.version ===
+              // ctx.version, i.e. the slot Paperclip expected to write next);
+              // that is the orphaned-write case and rotation must not brick.
+              // If Vault is MORE than one ahead, a newer rotation has since
+              // committed a different value — rethrow the conflict rather than
+              // clobber it (a stale replay must not silently revert a newer
+              // value).
               const existing = await gateway.getKv({ mount, path });
               if (existing.data["value"] === input.value) {
                 version = existing.version;
-              } else {
+              } else if (existing.version === ctx.version) {
                 ({ version } = await gateway.putKv({
                   mount,
                   path,
                   data: { value: input.value },
                   cas: existing.version,
                 }));
+              } else {
+                throw err;
               }
             } else {
               throw err;

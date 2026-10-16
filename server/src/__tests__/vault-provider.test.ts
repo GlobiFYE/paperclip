@@ -1469,6 +1469,53 @@ describe("createVersion", () => {
     expect(gw.store.get("secret/paperclip/d/co/K")!.versions).toHaveLength(2);
   });
 
+  it("rethrows a CAS conflict when Vault is more than one ahead with a different value (stale replay must not clobber a newer rotation)", async () => {
+    const gw = fakeVaultGateway();
+    // Paperclip's latestVersion is 2, so the next version is 3 (cas=2). But a
+    // newer rotation has since committed versions 3 AND 4, leaving Vault two
+    // ahead of the recorded version. A stale replay of the old value must NOT
+    // overwrite the newer committed value; the conflict must propagate.
+    gw.store.set("secret/paperclip/d/co/K", {
+      versions: [
+        [JSON.stringify({ value: "v1" })],
+        [JSON.stringify({ value: "v2" })],
+        [JSON.stringify({ value: "v3-newer" })],
+        [JSON.stringify({ value: "v4-newer" })],
+      ],
+    });
+    const provider = createVaultProvider({
+      config: {
+        address: "https://v",
+        namespace: null,
+        kvMount: "secret",
+        kvPathPrefix: "paperclip",
+        auth: { method: "token", role: null, saTokenPath: "/dev/null" },
+        versionRetention: 10,
+      },
+      gateway: gw.impl,
+    });
+    process.env.VAULT_TOKEN = "static";
+
+    await expect(
+      provider.createVersion({
+        value: "v3-stale",
+        context: {
+          companyId: "co",
+          deploymentId: "d",
+          secretId: "s",
+          secretKey: "K",
+          secretName: "K",
+          version: 3,
+        },
+        externalRef: "secret/paperclip/d/co/K",
+      }),
+    ).rejects.toMatchObject({ code: "conflict" });
+    // No fifth version was written, and the newer committed value is intact.
+    const stored = gw.store.get("secret/paperclip/d/co/K")!;
+    expect(stored.versions).toHaveLength(4);
+    expect(JSON.parse(stored.versions[3][0])).toEqual({ value: "v4-newer" });
+  });
+
   it("applies max_versions on rotation (createVersion refreshes KV metadata)", async () => {
     const gw = fakeVaultGateway();
     // Seed one existing version directly (not via createSecret) so that any
