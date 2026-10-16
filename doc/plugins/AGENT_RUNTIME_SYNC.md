@@ -57,3 +57,9 @@ hooks. Filesystem publication and the database journal are not one filesystem
 transaction. A failed managed write must be repaired through the same API before
 claiming synchronization. Upstream repository detection remains owned by the
 source integration.
+
+Successful file saves, including identical retries and already-applied deletions,
+record the current desired state. This repairs a missing journal event if a prior
+save published bytes before its database transaction failed. The file API still
+returns `changed: false` for identical content and keeps conditional-write checks.
+Consumers can skip rewriting content whose hash already matches.

@@ -14,6 +14,7 @@ import { registerPluginLifecycleDelivery } from "../services/plugin-lifecycle-de
 import { createDeliveryWorkCoordinator } from "../services/delivery-work-coordinator.js";
 import { resolveManagedInstructionsRoot } from "../services/agent-instructions.js";
 import { agentFileStore } from "../services/agent-file-store.js";
+import { agentInstructionRevisionService } from "../services/agent-instruction-revisions.js";
 
 const support = await getEmbeddedPostgresTestSupport();
 const describeDatabase = support.supported ? describe : describe.skip;
@@ -83,6 +84,29 @@ describeDatabase("agent runtime synchronization hooks", () => {
     finally { await db.execute((await import("drizzle-orm")).sql`ALTER TABLE resource_lifecycle_events DROP CONSTRAINT runtime_fixture_failure`); }
     expect((await db.select().from(agents).where(eq(agents.id, agentId)))[0].name).toBe("Runtime agent");
     expect(await events()).toEqual(before);
+  });
+
+  it.each(["file-write", "file-delete", "instructions"])("repairs runtime delivery when %s is retried after journal failure", async writer => {
+    const actor = { type: "board" as const, userId: "local-board", source: "local_implicit" as const };
+    const instructions = agentInstructionRevisionService(db);
+    const initial = await instructions.commit({ companyId, agentId, entryFile: "AGENTS.md", content: "original", baseRevisionId: null, source: "api" }, actor);
+    const store = agentFileStore(db);
+    const saved = writer === "file-delete" ? await store.write({ companyId, agentId, path: "notes.txt", bytes: Buffer.from("notes"), baseHash: null }, actor) : null;
+    const save = () => writer === "instructions"
+      ? instructions.commit({ companyId, agentId, entryFile: "AGENTS.md", content: "changed", baseRevisionId: initial.revision.id, source: "api" }, actor)
+      : store.write({ companyId, agentId, path: saved ? "notes.txt" : "AGENTS.md", bytes: saved ? null : Buffer.from("changed"), baseHash: saved ? saved.contentHash : initial.revision.contentHash }, actor);
+    const inbox = pluginLifecycleInbox(db, pluginId);
+    for (const event of await events()) await inbox.acknowledge(companyId, String(event.id));
+    const before = await events();
+    await db.execute(sql`ALTER TABLE resource_lifecycle_events ADD CONSTRAINT file_runtime_failure CHECK (resource_type <> 'agent_runtime') NOT VALID`);
+    try { await expect(save()).rejects.toThrow(); }
+    finally { await db.execute(sql`ALTER TABLE resource_lifecycle_events DROP CONSTRAINT file_runtime_failure`); }
+    expect(await events()).toEqual(before);
+    expect(await store.read(companyId, agentId, saved ? "notes.txt" : "AGENTS.md", actor)).toEqual(saved ? null : Buffer.from("changed"));
+    expect(await save()).toMatchObject({ changed: false });
+    expect(await events()).toHaveLength(before.length + 1);
+    expect(await inbox.list(companyId, 100, undefined, ["agent_runtime"])).toEqual([expect.objectContaining({ resourceId: agentId, action: "update" })]);
+    expect((await pluginAgentRuntimeState(db, pluginId, companyId, agentId))!.revision).toBe(String((await events()).at(-1)!.id));
   });
 
   it("keeps old subscriptions isolated and replays runtime events in order until acknowledged", async () => {
