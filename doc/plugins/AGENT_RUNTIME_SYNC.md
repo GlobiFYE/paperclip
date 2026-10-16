@@ -94,3 +94,74 @@ Pinned assignments receive conservative content invalidations too. Their resolve
 version and bytes stay pinned when pin support is enabled. Consumers can compare
 versions or destination hashes and avoid rewriting unchanged trees. Task-only
 skill mentions and a running task's saved version selection remain task-owned.
+
+
+## MCP and connectors
+
+Migration 0354 records changes to connections, application settings, catalogs,
+installs, profile definitions/entries/bindings, policies, grants, delegation,
+company permissions, named gateway settings, and connector endpoint configuration.
+Referenced credential rotation and revocation also invalidate runtime state.
+Vault configuration and status changes invalidate companies whose connector
+credentials reference that vault; vault health checks do not.
+These events contain no credential values, phone numbers, or provider payloads.
+
+Connector changes conservatively invalidate eligible agents in the same company.
+A profile can inherit company, project, task, or gateway scope, so an agent-only
+binding lookup is not sufficient for invalidation. Old and new companies are
+covered if a mutation changes ownership. Statement-level transition tables batch
+bulk catalog changes: each company gets one fanout per transaction, regardless
+of the number of changed tools. The real catalog publisher writes chunks of
+500 tools, preserving IDs, first-seen timestamps, and review choices while
+staying within SQL parameter limits. Each catalog publication and default-profile
+sync locks its application and then connection before catalog/profile rows and
+runtime journal locks,
+matching action finalization while preserving per-chunk commits. Existing managed
+profiles and policies are locked before binding changes can lock agent runtimes.
+Policy reorder locks its non-trust rows in the same ID order before changing priorities.
+Empty statements, unchanged rediscovery,
+health results, and use/publication timestamps do not create work. Failure to
+record work rolls back the connector mutation.
+Unchanged grant audiences retain their existing rows after membership validation.
+User-scoped audiences can affect task-time access for any company agent, so changed
+audiences conservatively refresh the company once. Agent secret bindings instead
+invalidate only their owning agent, avoiding lock inversion with configuration
+saves that already hold that agent's row lock.
+Creating a personal grant delegation invalidates only its target agent. Creation
+locks the grant, connection reference, and target agent before inserting the delegation.
+Broader grant revocation and membership cleanup retain company invalidation.
+OAuth persistence and membership cleanup lock affected connections before
+credential/access mutations can lock agent runtimes. Existing grants are locked
+before applications and connections. App finalization and archival also lock their
+application before the connection. Install changes always take those locks too,
+including an uninstall after access was already configured. Email setup and
+connection-intent completion take the same locks in their outer transactions;
+completion locks existing grants first. Permission-only saves
+lock the membership before grants, matching role/status saves.
+Cleanup locks each affected set in ID order.
+Runtime journaling uses `FOR NO KEY UPDATE` on agent rows: writers remain
+serialized while foreign-key reference locks from gateway and assignment inserts
+can coexist. Trust-rule hit counts and last-hit timestamps are bookkeeping;
+changes to the rule itself still refresh runtimes.
+
+Managed feature overlays can change between server starts without a database
+write. Each delivery service therefore journals one baseline refresh per company
+when an enabled runtime subscriber is first admitted. This runs in background
+delivery, respects standby/idle admission, and also covers a subscriber enabled
+later. It conservatively refreshes unchanged inputs once per process; consumers
+can skip identical materialization. No recurring scan or persisted managed
+configuration is required.
+
+The owning runtime reader includes standing company/agent connection installs,
+active profile IDs, and effective public-MCP/chat feature flags. The database
+queries project only identity, name, transport, enabled/status fields, and profile
+IDs. They exclude credential references, arbitrary configuration, and tool schemas.
+The reader fails at 512 connection installs or 128 profiles rather than silently
+truncating its desired state. Revision and ownership are rechecked after reads.
+
+Standing assignments are preparation inputs, not authorization to use a tool.
+Task-scoped profile bindings, responsible-user consent, gateway sessions and
+credentials, automatic connector skill overlays, and connection instructions
+remain in the existing run preparation path. The invalidation covers their
+underlying configuration, but does not fabricate a run identity or activate a
+provider session. A transport consumer must preserve those runtime boundaries.

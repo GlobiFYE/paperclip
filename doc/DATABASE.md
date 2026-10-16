@@ -980,3 +980,16 @@ session-compatible database connection; do not enable it through a transaction
 pooler. Reconnection scans the durable journal. Existing process-local work
 signals continue to serve other delivery queues. See
 [the plugin contract](plugins/AGENT_RUNTIME_SYNC.md).
+
+
+Migrations 0348 and 0354 extend the runtime stream to installed skills and
+connector configuration. Skill content and source access target referencing
+agents. Company skill policy and connector configuration conservatively invalidate
+eligible agents within the company; agent secret bindings target their owner,
+and personal grant delegation creation targets the delegated agent.
+Connector triggers use statement transition tables and the real catalog publisher
+uses 500-tool chunks to avoid per-tool fanout. Referenced secret and vault
+configuration/status changes
+record only content-free invalidation. Neither secret material nor grant payloads
+enter the resource journal. Runtime counters and source polling bookkeeping stay
+outside the invalidation boundary.
