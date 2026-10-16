@@ -215,34 +215,50 @@ export async function assertReproducibleManagedCheckout(checkout: string, input:
   await assertReproducibleBaseGitStorage(checkout, signal);
   const refs = (await gitCacheCommand(checkout, ["for-each-ref", "--format=%(refname)"], signal)).trim().split("\n").filter(Boolean);
   if (refs.some(ref => !/^refs\/(heads|tags|remotes\/origin)\//.test(ref))) throw new Error("unsupported_managed_checkout_refs");
-  const upstream = await upstreamTips(input.repoUrl, input.resolveGitAuth, signal);
-  // Commit IDs are content addresses, so an upstream tip present locally has
-  // the same history here as upstream; local remote-tracking refs prove
-  // nothing on their own because they may be stale.
-  const present = [];
-  for (const tip of upstream) {
-    if (await gitCacheCommand(checkout, ["cat-file", "-e", `${tip}^{commit}`], signal).then(() => true, () => false)) present.push(tip);
+  // Every commit a ref or reflog keeps must be on a current upstream branch or
+  // tag. Local remote-tracking refs prove nothing on their own (they may be
+  // stale), so the proof fetches upstream's refs fresh.
+  const localTips = new Set([
+    ...(await gitCacheCommand(checkout, ["for-each-ref", "--format=%(objectname)"], signal)).split("\n"),
+    ...(await gitCacheCommand(checkout, ["reflog", "show", "--all", "--format=%H"], signal).catch(() => "")).split("\n"),
+  ].map(line => line.trim()).filter(sha => shaPattern.test(sha)));
+  if (localTips.size > MANAGED_CHECKOUT_LOCAL_TIP_LIMIT) throw new Error("managed_checkout_local_tip_budget");
+  if (localTips.size && await hasCommitsMissingUpstream(checkout, [...localTips], input.repoUrl, input.resolveGitAuth, signal)) {
+    throw new Error("unpushed_managed_checkout");
   }
-  const unique = await gitCacheCommand(checkout, ["rev-list", "--max-count=1", "--all", "--reflog", "--not", ...present], signal);
-  if (unique.trim()) throw new Error("unpushed_managed_checkout");
   // Objects no ref or reflog reaches (a reset `git add`, a dropped stash) may
   // be the only copy of some work.
   const unreachable = await gitCacheCommand(checkout, ["fsck", "--connectivity-only", "--unreachable", "--no-progress"], signal);
   if (unreachable.trim()) throw new Error("unreachable_managed_checkout_objects");
 }
 
-/** Upper bound on upstream refs a proof will consider. */
-const MANAGED_CHECKOUT_UPSTREAM_REF_LIMIT = 5_000;
+/** Upper bound on distinct ref and reflog commits a proof will consider. */
+const MANAGED_CHECKOUT_LOCAL_TIP_LIMIT = 5_000;
 
-/** Current branch and tag tips upstream, read with a fresh, config-free Git. */
-async function upstreamTips(repoUrl: string, resolveGitAuth: GitRemoteAuthProvider, signal?: AbortSignal) {
-  const auth = await resolveGitAuth(repoUrl);
-  const env = { ...process.env, ...auth?.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: os.devNull };
-  const result = await execFile("git", [...auth?.configArgs ?? [], "ls-remote", "--", repoUrl, "refs/heads/*", "refs/tags/*"],
-    { timeout: 60_000, signal, maxBuffer: 16 * 1024 * 1024, env, cwd: os.tmpdir() });
-  const tips = [...new Set(result.stdout.split("\n").map(line => line.split("\t")[0]!).filter(sha => shaPattern.test(sha)))];
-  if (tips.length > MANAGED_CHECKOUT_UPSTREAM_REF_LIMIT) throw new Error("managed_checkout_upstream_ref_budget");
-  return tips;
+/**
+ * Fetches upstream's current branches and tags into a throwaway proof store
+ * that borrows the checkout's objects (so only commits the checkout lacks are
+ * downloaded), then asks whether any local commit is unreachable from them.
+ * It is one fetch and one rev-list however many refs either side has. The
+ * fetch runs config-free with the company's Git identity, never the
+ * checkout's own config.
+ */
+async function hasCommitsMissingUpstream(checkout: string, localTips: string[], repoUrl: string,
+  resolveGitAuth: GitRemoteAuthProvider, signal?: AbortSignal) {
+  const store = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-git-checkout-proof-"));
+  try {
+    const auth = await resolveGitAuth(repoUrl);
+    const env = { ...process.env, ...auth?.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: os.devNull };
+    const options = { timeout: 120_000, signal, maxBuffer: 16 * 1024 * 1024, env, cwd: os.tmpdir() };
+    await execFile("git", ["init", "--bare", "--quiet", store], options);
+    await fs.writeFile(path.join(store, "objects", "info", "alternates"), `${path.join(await fs.realpath(checkout), ".git", "objects")}\n`);
+    await execFile("git", [...auth?.configArgs ?? [], "-C", store, "fetch", "--quiet", "--no-tags", "--no-recurse-submodules",
+      "--", repoUrl, "+refs/heads/*:refs/upstream/heads/*", "+refs/tags/*:refs/upstream/tags/*"], options);
+    const missing = await execFile("git", ["-C", store, "rev-list", "--max-count=1", ...localTips, "--not", "--glob=refs/upstream/*"], options);
+    return missing.stdout.trim() !== "";
+  } finally {
+    await fs.rm(store, { recursive: true, force: true });
+  }
 }
 
 /**

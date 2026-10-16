@@ -141,6 +141,14 @@ describe("assertReproducibleGitFiles with Paperclip-managed files", () => {
     await expectRejected(/unique_reflog_commits|unpushed_managed_checkout/);
   });
 
+  it("accepts pushed history after upstream advances", async () => {
+    await managedCheckout();
+    // Upstream moves on after the clone; the checkout never fetches it.
+    await commit(projectSeed, "later.txt", "later upstream work");
+    await git(projectSeed, "push", "-q", "origin", "main");
+    await expectAccepted();
+  });
+
   it("does not trust a stale remote-tracking ref", async () => {
     await git(projectSeed, "checkout", "-q", "-b", "feature");
     await commit(projectSeed, "feature.txt", "feature work");
