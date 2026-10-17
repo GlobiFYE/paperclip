@@ -34,8 +34,6 @@ const UNREACHABLE_SSH_SPEC = {
 } as const;
 let sshEnvLabUnsupportedReason: string | null = null;
 
-// True while the process exists and has not exited (a zombie waiting to be
-// reaped counts as gone).
 function processIsRunning(pid: number): boolean {
   try {
     process.kill(pid, 0);
@@ -306,9 +304,6 @@ describe("ssh env-lab fixture", () => {
     if (!started) return;
     const config = await buildSshEnvLabFixtureConfig(started);
 
-    // Without a pty, killing the local ssh client leaves the remote command
-    // running. The fixture's sshd is on this machine, so the remote pids can
-    // be checked directly.
     const result = await runChildProcess(
       `ssh-remote-stop-${process.pid}`,
       "sh",
@@ -325,8 +320,6 @@ describe("ssh env-lab fixture", () => {
     expect(result.timedOut).toBe(true);
     const pids = result.stdout.trim().split(/\s+/).map((value) => Number.parseInt(value, 10));
     expect(pids).toHaveLength(2);
-    // The run waits for the remote stop, so nothing is left running when it
-    // returns.
     expect(pids.filter(processIsRunning)).toEqual([]);
   }, SSH_FIXTURE_TEST_TIMEOUT_MS);
 
@@ -338,9 +331,6 @@ describe("ssh env-lab fixture", () => {
     if (!started) return;
     const config = await buildSshEnvLabFixtureConfig(started);
 
-    // The command starts a worker that keeps the output open and exits. The
-    // recorded process is gone when the run is stopped, so only the worker is
-    // left to stop.
     const result = await runChildProcess(
       `ssh-remote-stop-orphan-${process.pid}`,
       "sh",
@@ -401,8 +391,6 @@ describe("ssh env-lab fixture", () => {
       env: {},
     });
     try {
-      // The stop reaches the host before the original shell has recorded
-      // itself, which is what a cancel during a slow start looks like.
       await target.stopRemote(1);
       const exitCode = await new Promise<number | null>((resolve, reject) => {
         const child = spawn(target.command, target.args, { stdio: "ignore" });
@@ -424,8 +412,6 @@ describe("ssh env-lab fixture", () => {
     if (!started) return;
     const config = await buildSshEnvLabFixtureConfig(started);
 
-    // Stands in for work that the host started after the run's pid was
-    // released and handed out again.
     const bystander = spawn("sleep", ["60"], { stdio: "ignore", detached: true });
     const bystanderPid = bystander.pid;
     if (!bystanderPid) throw new Error("Failed to spawn the bystander process for this regression test.");
@@ -440,8 +426,6 @@ describe("ssh env-lab fixture", () => {
     const runsDir = path.join(process.env.HOME ?? os.homedir(), ".paperclip", "ssh-runs");
     await mkdir(runsDir, { recursive: true });
     try {
-      // A record whose process start time is not the bystander's: the pid and
-      // its group exist, but they are not the process the run recorded.
       await writeFile(path.join(runsDir, token), `${bystanderPid} ${bystanderPid} 1\n`);
       await target.stopRemote(1);
       expect(processIsRunning(bystanderPid)).toBe(true);
@@ -449,9 +433,7 @@ describe("ssh env-lab fixture", () => {
     } finally {
       try {
         process.kill(-bystanderPid, "SIGKILL");
-      } catch {
-        // already gone
-      }
+      } catch {}
       await rm(path.join(runsDir, `${token}.stop`), { force: true });
       await target.cleanup();
     }

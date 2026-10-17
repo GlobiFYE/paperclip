@@ -1340,10 +1340,6 @@ export async function runSshCommand(
   }
 }
 
-// Shell function shared by the launch and stop scripts: prints a value that
-// identifies a process and changes if the pid is reused (its start time), and
-// nothing for a process that is gone or a zombie. Linux hosts read /proc;
-// others fall back to `ps -o lstart`.
 const REMOTE_PROCESS_IDENT_FN = [
   "paperclip_ident() {",
   '  if [ -r "/proc/$1/stat" ]; then',
@@ -1354,9 +1350,6 @@ const REMOTE_PROCESS_IDENT_FN = [
   "}",
 ].join("\n");
 
-// Environment variable that carries a spawn's token into the remote command
-// and everything it starts. It lets the stop find the command's remaining
-// processes after the recorded one has exited.
 const REMOTE_RUN_TOKEN_ENV = "PAPERCLIP_SSH_RUN";
 
 export async function buildSshSpawnTarget(input: {
@@ -1378,20 +1371,9 @@ export async function buildSshSpawnTarget(input: {
   const auth = await createSshAuthArgs(input.spec);
   const sshArgs = [...auth.args];
   const envArgs = Object.entries(input.env)
-    // The run token's name is reserved: a caller's value would replace the
-    // generated one and hide the command's processes from the stop.
     .filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[0] !== REMOTE_RUN_TOKEN_ENV)
     .map(([key, value]) => `${key}=${shellQuote(value)}`);
   const remoteCommandParts = [shellQuote(input.command), ...input.args.map((arg) => shellQuote(arg))].join(" ");
-  // Killing the local ssh client does not stop the remote command: without a
-  // pty, sshd closes the channel and leaves it running. Record the remote
-  // pid, process group and process start time under a per-spawn token so
-  // stopRemote() can end them over a fresh connection. Recording never blocks
-  // the run. The record is written before the stop marker is checked, and
-  // stopRemote() writes the marker before it reads the record, so a stop that
-  // arrives while the command is still starting is seen by one side or the
-  // other: either the stop finds the record, or the launch finds the marker
-  // and exits without starting the command.
   const runToken = randomUUID();
   const runDir = '"$HOME/.paperclip/ssh-runs"';
   const recordRunStep = `{ ${REMOTE_PROCESS_IDENT_FN}
@@ -1438,28 +1420,6 @@ export async function buildSshSpawnTarget(input: {
   };
 }
 
-// Ends the remote command recorded under `runToken`: SIGTERM first, then
-// SIGKILL once the grace period has passed, and returns when the command is
-// gone or the signals have been sent.
-//
-// The stop marker is written first, so a launch that has not recorded itself
-// yet finds it and does not start the command.
-//
-// The grace period is shared by both, so the whole stop takes about that long.
-//
-// Two things are signalled, and neither is signalled without a check that it
-// belongs to this run:
-// - The recorded process group, while the recorded process still has the start
-//   time that was recorded with its pid, so a pid that the host has reused for
-//   other work is left alone. The group is signalled only while it has been
-//   seen alive since that check, and the later SIGKILL is sent only if that is
-//   still true immediately before it.
-// - Any process whose environment carries this spawn's token, which is a
-//   random value that no other work has. This finds the command's remaining
-//   processes after the recorded one has exited and left them running. Each
-//   round looks the processes up again, and SIGKILL goes only to processes
-//   found in the same round. It needs /proc; a host without it signals only
-//   the recorded group.
 async function stopSshRun(spec: SshConnectionConfig, runToken: string, graceSec: number): Promise<void> {
   const grace = Math.max(1, Math.min(60, Math.floor(Number(graceSec) || 1)));
   const script = [
@@ -1470,10 +1430,7 @@ async function stopSshRun(spec: SshConnectionConfig, runToken: string, graceSec:
     ': > "$f.stop" 2>/dev/null',
     'p=""; g=""; s=""',
     'if [ -f "$f" ]; then read p g s < "$f"; rm -f "$f"; fi',
-    // Processes that carry the token in their initial environment.
     `members() { grep -l -a "${REMOTE_RUN_TOKEN_ENV}=${runToken}" /proc/[0-9]*/environ 2>/dev/null | sed 's#^/proc/\\([0-9]*\\)/environ$#\\1#'; }`,
-    // The recorded process group, only while the recorded process is still the
-    // one that was recorded.
     'i=0',
     'case "$p" in ""|*[!0-9]*) p="";; esac',
     'if [ -n "$p" ] && [ -n "$s" ] && [ "$(paperclip_ident "$p")" = "$s" ]; then',
@@ -1488,7 +1445,6 @@ async function stopSshRun(spec: SshConnectionConfig, runToken: string, graceSec:
     '    sleep 1; i=$((i+1))',
     '  done',
     'fi',
-    // Whatever still carries the token.
     'm=$(members)',
     '[ -n "$m" ] || exit 0',
     'kill -TERM $m 2>/dev/null',
