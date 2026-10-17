@@ -2065,6 +2065,81 @@ export function routineService(
     return run;
   }
 
+  // ── positive per-tick heartbeat ────────────────────────────────────────────────────────
+  // "The tick ran and nothing was due" and "the tick never ran" used to be indistinguishable
+  // from outside the process: the tick logged only when it triggered something, and the
+  // scheduler interval that calls it could abort before reaching it without logging anything at
+  // all. That is what made the last scheduler stall (44 minutes of a dead routine scheduler) expensive
+  // to diagnose. Every tick now emits one structured heartbeat line, so the tick's age is
+  // observable from the service log even on a quiet tick.
+  let schedulerTickCount = 0;
+  let schedulerTickMetricsWarnedAt = 0;
+  const SCHEDULER_TICK_METRICS_WARN_INTERVAL_MS = 10 * 60 * 1000;
+
+  async function readSchedulerTickMetrics(): Promise<{
+    armedClaimable: number | null;
+    oldestOverdueS: number | null;
+  }> {
+    try {
+      const rows = await db
+        .select({
+          armedClaimable: sql<number>`count(*)::int`,
+          oldestNextRunAt: sql<Date | null>`min(${routineTriggers.nextRunAt})`,
+        })
+        .from(routineTriggers)
+        .innerJoin(routines, eq(routineTriggers.routineId, routines.id))
+        .where(
+          and(
+            eq(routineTriggers.kind, "schedule"),
+            eq(routineTriggers.enabled, true),
+            eq(routineTriggers.archived, false),
+            eq(routines.status, "active"),
+            isNotNull(routineTriggers.cronExpression),
+            isNotNull(routineTriggers.timezone),
+            isNotNull(routineTriggers.nextRunAt),
+          ),
+        );
+      const row = rows[0];
+      const armedClaimable = Number(row?.armedClaimable ?? 0);
+      const oldestNextRunAt = row?.oldestNextRunAt ?? null;
+      const oldestOverdueS = oldestNextRunAt
+        ? Math.max(0, Math.floor((Date.now() - new Date(oldestNextRunAt).getTime()) / 1000))
+        : 0;
+      return { armedClaimable, oldestOverdueS };
+    } catch (err) {
+      // Metrics are a convenience: a broken aggregate must never fail the tick that feeds them.
+      const nowMs = Date.now();
+      if (nowMs - schedulerTickMetricsWarnedAt >= SCHEDULER_TICK_METRICS_WARN_INTERVAL_MS) {
+        schedulerTickMetricsWarnedAt = nowMs;
+        logger.warn(
+          {
+            event: "routine_scheduler_tick_metrics_failed",
+            error: err instanceof Error ? err.message : String(err),
+          },
+          "routine scheduler tick metrics unavailable; heartbeat recorded without them",
+        );
+      }
+      return { armedClaimable: null, oldestOverdueS: null };
+    }
+  }
+
+  async function recordSchedulerTickHeartbeat(now: Date, dueCount: number, triggered: number) {
+    schedulerTickCount += 1;
+    const metrics = await readSchedulerTickMetrics();
+    logger.info(
+      {
+        event: "routine_scheduler_tick",
+        lastTickAt: now.toISOString(),
+        recordedAt: new Date().toISOString(),
+        ticks: schedulerTickCount,
+        due: dueCount,
+        triggered,
+        ...metrics,
+      },
+      "routine scheduler tick heartbeat",
+    );
+  }
+
   return {
     evaluateActivityGate,
     get: getRoutineById,
@@ -3313,6 +3388,8 @@ export function routineService(
           triggered += 1;
         }
       }
+
+      await recordSchedulerTickHeartbeat(now, due.length, triggered);
 
       return { triggered };
     },
