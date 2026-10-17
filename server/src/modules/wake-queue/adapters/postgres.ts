@@ -3,7 +3,7 @@ import { readRunCancellation } from "../../../services/run-cancellation.js";
 import { isCompletedOnboardingHandoffWake } from "../../../services/chat-completion-delivery.js";
 import { instanceSettingsService } from "../../../services/instance-settings.js";
 import { currentConversationCommentCondition } from "../../../services/agent-conversations.js";
-import { getExecutionBlocker } from "../../../services/execution-blocker.js";
+import { getExecutionBlocker, hasPendingRunCleanup } from "../../../services/execution-blocker.js";
 import { and, asc, eq, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { extractIssueReferenceIdentifiers, isUuidLike } from "@paperclipai/shared";
@@ -1089,6 +1089,9 @@ export function createPostgresWakeQueueAdapter(db: Db, deps: WakeQueuePostgresAd
               )).limit(1)
             : [];
           if (!finalized) return { outcome: { kind: "released" }, postCommitEffects: [], run: runSnapshot };
+        }
+        if (input.resumeStrandedQueue && await hasPendingRunCleanup(tx, input.companyId, run.id)) {
+          return { outcome: { kind: "released" }, postCommitEffects: [], run: runSnapshot };
         }
 
         const candidateIssues = await tx

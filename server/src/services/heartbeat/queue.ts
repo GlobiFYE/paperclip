@@ -30,7 +30,7 @@ import {
   undeliveredLegacyUserCommentIds,
 } from "../explicit-native-continuation.js";
 import { canRetryStoppedRun } from "../cancelled-native-startup.js";
-import { getExecutionBlocker } from "../execution-blocker.js";
+import { getExecutionBlocker, hasPendingRunCleanup } from "../execution-blocker.js";
 import { isConversationAdapter } from "../conversation-continuation.js";
 import { recordExecutionWait } from "../execution-wait.js";
 import {
@@ -77,7 +77,6 @@ import {
   chatEndpoints,
   companies,
   costEvents,
-  environmentLeases,
   executionWorkspaces,
   heartbeatRunEvents,
   heartbeatRuns,
@@ -85,7 +84,6 @@ import {
   issueRecoveryActions,
   issueRelations,
   issues,
-  nativeRunFinalizations,
 } from "@paperclipai/db";
 import {
   conflict,
@@ -1171,27 +1169,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
             liveRunExecutions.has(previousRunId)) {
           return { ownsIssue, blocked: true };
         }
-        const [pendingLease] = await tx.select({ id: environmentLeases.id })
-          .from(environmentLeases).where(and(
-            eq(environmentLeases.companyId, run.companyId),
-            eq(environmentLeases.heartbeatRunId, previousRunId),
-            or(and(isNull(environmentLeases.releasedAt),
-                // Warm release deliberately retains the sandbox. Its successful
-                // receipt settles the old run without destroying the resource.
-                sql`not coalesce(${environmentLeases.status} = 'retained'
-                  and ${environmentLeases.leasePolicy} = 'reuse_by_environment'
-                  and ${environmentLeases.cleanupStatus} = 'success', false)`),
-              eq(environmentLeases.status, "pending_cleanup"),
-              eq(environmentLeases.cleanupStatus, "failed")),
-          )).limit(1);
-        const [finalization] = await tx.select({
-          phase: nativeRunFinalizations.phase, leaseOwner: nativeRunFinalizations.leaseOwner,
-        }).from(nativeRunFinalizations).where(and(
-          eq(nativeRunFinalizations.companyId, run.companyId),
-          eq(nativeRunFinalizations.runId, previousRunId),
-        ));
-        if (pendingLease || (finalization && (finalization.leaseOwner ||
-            !["committed", "applied", "terminal_failure"].includes(finalization.phase)))) {
+        if (await hasPendingRunCleanup(tx, run.companyId, previousRunId)) {
           return { ownsIssue, blocked: true };
         }
       }

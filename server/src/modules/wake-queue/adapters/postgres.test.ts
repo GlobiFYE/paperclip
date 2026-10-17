@@ -277,6 +277,77 @@ describeEmbeddedPostgres("wake-queue postgres adapter", () => {
       .toMatchObject({ status: "deferred_issue_execution", runId: null });
   });
 
+  it.each(["active_lease", "pending_cleanup", "failed_cleanup", "unknown_cleanup", "cleanup_claim", "finalizer_owner", "workspace_owner"])(
+    "waits for native cleanup and finalizer ownership before recovering saved input (%s)", async kind => {
+      const companyId = await seedCompany(), agentId = await seedAgent({ companyId });
+      const issueId = await seedIssue({ companyId, status: "blocked", assigneeAgentId: agentId });
+      const runId = await seedRun({ companyId, agentId, status: "succeeded", contextSnapshot: { issueId } });
+      await db.update(heartbeatRuns).set({ runtimeMode: "native", nativeIssueId: issueId, finishedAt: new Date(),
+        ...(kind === "workspace_owner" ? { runnerProfileJson: { nativeWorkspaceFinalizationOwner: {
+          token: "copyback-owner", hostname: "previous-worker", pid: 123, processStartedAt: new Date(Date.now() - 1000).toISOString(),
+        } } } : {}),
+      }).where(eq(heartbeatRuns.id, runId));
+      await db.insert(nativeRunFinalizations).values({ companyId, issueId, runId, phase: "committed",
+        ...(kind === "finalizer_owner" ? { leaseOwner: "finalizer-worker", leaseExpiresAt: new Date(Date.now() - 1000) } : {}),
+      });
+      await db.update(issues).set({ executionRunId: runId, checkoutRunId: runId }).where(eq(issues.id, issueId));
+      const [lease] = ["finalizer_owner", "workspace_owner"].includes(kind) ? [] : await db.insert(environmentLeases).values({
+        companyId, heartbeatRunId: runId, provider: "local", status: kind === "active_lease" ? "active" : kind === "pending_cleanup" ? "pending_cleanup" : "released",
+        releasedAt: kind === "active_lease" ? null : new Date(),
+        cleanupStatus: kind === "failed_cleanup" ? "failed" : kind === "unknown_cleanup" ? null : "success",
+        metadata: kind === "cleanup_claim" ? { pendingCleanupInFlight: true } : {},
+      }).returning();
+      const [comment] = await db.insert(issueComments).values({ companyId, issueId, authorType: "user", authorUserId: "responsible-user", body: "Saved input after cleanup" }).returning();
+      const wakeId = await seedDeferredWake({ companyId, agentId, issueId, requestedByActorId: "responsible-user",
+        payload: { _paperclipWakeContext: { issueId, wakeReason: "issue_commented", wakeCommentIds: [comment.id] } },
+      });
+      const release = createReleaseIssueExecution({ issueLock: createPostgresWakeQueueAdapter(db, stubDeps),
+        recovery: { escalateStrandedAssignedIssue: async () => undefined, escalateStrandedRecoveryIssueInPlace: async () => undefined },
+      });
+      const input = { companyId, runId, now: new Date(), suppressImmediateRecovery: true, resumeStrandedQueue: true };
+      const held = await release(input);
+      expect(held).toMatchObject({ outcome: { kind: "released" }, postCommitEffects: [] });
+      expect((await db.select().from(issues).where(eq(issues.id, issueId)))[0])
+        .toMatchObject({ executionRunId: runId, checkoutRunId: runId });
+      expect((await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeId)))[0])
+        .toMatchObject({ status: "deferred_issue_execution", runId: null });
+      expect(await db.select().from(heartbeatRuns)).toHaveLength(1);
+      if (lease) await db.update(environmentLeases).set({ status: "released", cleanupStatus: "success", releasedAt: new Date(), metadata: {} }).where(eq(environmentLeases.id, lease.id));
+      if (kind === "finalizer_owner") await db.update(nativeRunFinalizations).set({ leaseOwner: null, leaseExpiresAt: null }).where(eq(nativeRunFinalizations.runId, runId));
+      if (kind === "workspace_owner") await db.update(heartbeatRuns).set({ runnerProfileJson: {} }).where(eq(heartbeatRuns.id, runId));
+      expect((await release(input)).outcome.kind).toBe("promoted");
+      await release(input);
+      expect(await db.select().from(heartbeatRuns)).toHaveLength(2);
+      expect((await db.select().from(issueComments).where(eq(issueComments.id, comment.id)))[0].body).toBe(comment.body);
+    },
+  );
+
+  it.each(["released", "retained", "unrelated_cleanup"])("allows native queue recovery after settled %s cleanup", async kind => {
+    const companyId = await seedCompany(), agentId = await seedAgent({ companyId });
+    const issueId = await seedIssue({ companyId, status: "blocked", assigneeAgentId: agentId });
+    const runId = await seedRun({ companyId, agentId, status: "succeeded", contextSnapshot: { issueId } });
+    await db.update(heartbeatRuns).set({ runtimeMode: "native", nativeIssueId: issueId, finishedAt: new Date() }).where(eq(heartbeatRuns.id, runId));
+    await db.insert(nativeRunFinalizations).values({ companyId, issueId, runId, phase: "committed" });
+    if (kind === "unrelated_cleanup") {
+      const foreignCompany = await seedCompany(), foreignAgent = await seedAgent({ companyId: foreignCompany });
+      const foreignRun = await seedRun({ companyId: foreignCompany, agentId: foreignAgent, status: "running" });
+      await db.insert(environmentLeases).values({ companyId: foreignCompany, heartbeatRunId: foreignRun, provider: "local", status: "pending_cleanup", cleanupStatus: "failed" });
+    } else {
+      await db.insert(environmentLeases).values({ companyId, heartbeatRunId: runId, provider: "local", status: kind,
+        leasePolicy: kind === "retained" ? "reuse_by_environment" : "ephemeral", cleanupStatus: "success",
+        releasedAt: kind === "retained" ? null : new Date(),
+      });
+    }
+    const [comment] = await db.insert(issueComments).values({ companyId, issueId, authorType: "user", authorUserId: "responsible-user", body: "Saved input for the next turn" }).returning();
+    await seedDeferredWake({ companyId, agentId, issueId, requestedByActorId: "responsible-user",
+      payload: { _paperclipWakeContext: { issueId, wakeReason: "issue_commented", wakeCommentIds: [comment.id] } },
+    });
+    const release = createReleaseIssueExecution({ issueLock: createPostgresWakeQueueAdapter(db, stubDeps),
+      recovery: { escalateStrandedAssignedIssue: async () => undefined, escalateStrandedRecoveryIssueInPlace: async () => undefined },
+    });
+    expect((await release({ companyId, runId, now: new Date(), suppressImmediateRecovery: true, resumeStrandedQueue: true })).outcome.kind).toBe("promoted");
+  });
+
   it.each([
     "completed", "multiple_comments", "repeated_reference", "parent_reference", "mixed_issue_references", "mixed_foreign_references", "mixed_unknown_references", "no_comments", "missing_comment",
     "human_comment", "other_run_comment", "foreign_comment", "other_issue_comment", "deleted_comment",
