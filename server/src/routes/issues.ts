@@ -17022,10 +17022,6 @@ export function issueRoutes(
                   bindingComment.id,
                   tx as unknown as Db,
                 );
-                await externalObjectsSvc.syncCommentSafely(
-                  bindingComment.id,
-                  tx as unknown as Db,
-                );
               },
             },
           )
@@ -17210,6 +17206,10 @@ export function issueRoutes(
             : null,
           bindingCommentId: bindingComment.id,
         });
+        // External-object indexing is best-effort and reads instance settings
+        // through the pooled db, so it runs after the decision commits rather
+        // than holding the transaction's connection while waiting for another.
+        await externalObjectsSvc.syncCommentSafely(bindingComment.id);
       }
 
       await logActivity(db, {
@@ -17436,10 +17436,6 @@ export function issueRoutes(
                   bindingComment.id,
                   tx as unknown as Db,
                 );
-                await externalObjectsSvc.syncCommentSafely(
-                  bindingComment.id,
-                  tx as unknown as Db,
-                );
               },
             },
           )
@@ -17462,6 +17458,10 @@ export function issueRoutes(
           source: "issue.interaction.reject",
           bindingCommentId: bindingComment.id,
         });
+        // External-object indexing is best-effort and reads instance settings
+        // through the pooled db, so it runs after the decision commits rather
+        // than holding the transaction's connection while waiting for another.
+        await externalObjectsSvc.syncCommentSafely(bindingComment.id);
       }
 
       await logActivity(db, {
