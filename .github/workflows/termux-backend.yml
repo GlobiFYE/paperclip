@@ -40,6 +40,7 @@ jobs:
           pnpm --filter @paperclipai/plugin-sdk build
           pnpm --filter @paperclipai/paperclip-runner build
           pnpm --filter @paperclipai/server build
+          pnpm --filter @paperclipai/adapter-utils build
           pnpm --filter @paperclipai/ui build
 
       - name: Package source and build outputs
