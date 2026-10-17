@@ -252,10 +252,12 @@ async function hasCommitsMissingUpstream(checkout: string, localTips: string[], 
   try {
     const options = { timeout: 120_000, signal, maxBuffer: 16 * 1024 * 1024, cwd: os.tmpdir(),
       env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: os.devNull } };
+    // Local setup stays outside the catch below: a local failure (a full
+    // disk, say) must not be reported as an upstream problem.
+    await execFile("git", ["init", "--bare", "--quiet", store], options);
+    await fs.writeFile(path.join(store, "objects", "info", "alternates"), `${path.join(await fs.realpath(checkout), ".git", "objects")}\n`);
     try {
       const auth = await resolveGitAuth(repoUrl);
-      await execFile("git", ["init", "--bare", "--quiet", store], options);
-      await fs.writeFile(path.join(store, "objects", "info", "alternates"), `${path.join(await fs.realpath(checkout), ".git", "objects")}\n`);
       await execFile("git", [...auth?.configArgs ?? [], "-C", store, "fetch", "--quiet", "--no-tags", "--no-recurse-submodules",
         "--", repoUrl, "+refs/heads/*:refs/upstream/heads/*", "+refs/tags/*:refs/upstream/tags/*"],
         { ...options, env: { ...options.env, ...auth?.env } });
