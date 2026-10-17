@@ -1057,11 +1057,8 @@ describeEmbeddedPostgres("attention service", () => {
       run(issueKeyedFailureId, workerId, "failed", { issueId: issueKeyedId }, failedAt),
       run(unkeyedHiddenFailureId, workerId, "failed", {}, failedAt),
       run(unkeyedKeptFailureId, reviewerId, "failed", {}, failedAt),
-      // Hides the task-keyed failure: same agent, same task.
       run(randomUUID(), workerId, "succeeded", { taskId: taskIssueId }, laterAt),
-      // Hides the worker's key-less failure: same agent, no issue.
       run(randomUUID(), workerId, "succeeded", { wakeReason: "timer" }, laterAt),
-      // None of these hide the issue-keyed failure or the reviewer's key-less one.
       run(randomUUID(), reviewerId, "succeeded", { issueId: issueKeyedId }, laterAt),
       run(randomUUID(), reviewerId, "succeeded", { issueId: otherIssueId }, laterAt),
       run(randomUUID(), workerId, "succeeded", { issueId: otherIssueId }, laterAt),
@@ -1070,8 +1067,6 @@ describeEmbeddedPostgres("attention service", () => {
       run(sameMillisecondRunId, workerId, "succeeded", { issueId: issueKeyedId }, failedAt),
       run(randomUUID(), workerId, "succeeded", { issueId: issueKeyedId }, new Date("2026-07-09T11:59:00.000Z")),
     ]);
-    // Stored times carry microseconds and a Date only milliseconds: a failed run is not its own newer run, and a run
-    // later within the same millisecond is not newer either.
     await db.execute(sql`update heartbeat_runs set created_at = created_at + interval '400 microseconds'
       where id in (${sql.join(failureIds.map((id) => sql`${id}::uuid`), sql`, `)})`);
     await db.execute(sql`update heartbeat_runs set created_at = created_at + interval '600 microseconds'
@@ -1095,8 +1090,6 @@ describeEmbeddedPostgres("attention service", () => {
   });
 
   it("checks more failed runs for a newer run than one statement can bind", async () => {
-    // Four parameters per failed run: past 16,383 runs a single probe statement
-    // would exceed the 65,534 parameters postgres.js accepts.
     const { companyId, workerId, reviewerId } = await seedCompany("ATB");
     const failedAt = new Date("2026-07-09T12:00:00.000Z");
     const laterAt = new Date("2026-07-09T12:01:00.000Z");
@@ -1106,7 +1099,6 @@ describeEmbeddedPostgres("attention service", () => {
       id, companyId, agentId, invocationSource: "automation", status: "failed", error: "adapter failed",
       contextSnapshot: {}, createdAt: failedAt, updatedAt: failedAt, finishedAt: failedAt,
     });
-    // The reviewer's failures sit between the worker's, so they fall in different batches.
     const failures = hiddenIds.map((id) => failure(id, workerId));
     keptIds.forEach((id, index) => failures.splice(index * 1_700, 0, failure(id, reviewerId)));
     for (let start = 0; start < failures.length; start += 1_000) {
@@ -1118,7 +1110,6 @@ describeEmbeddedPostgres("attention service", () => {
         createdAt: new Date("2026-07-09T12:00:01.000Z"),
       })));
     }
-    // Hides every key-less failure of the worker, none of the reviewer's.
     await db.insert(heartbeatRuns).values({
       id: randomUUID(), companyId, agentId: workerId, invocationSource: "automation", status: "succeeded",
       contextSnapshot: { wakeReason: "timer" }, createdAt: laterAt, updatedAt: laterAt, finishedAt: laterAt,

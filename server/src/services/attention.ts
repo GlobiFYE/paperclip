@@ -1099,16 +1099,8 @@ function readRunIssueId(contextSnapshot: Record<string, unknown> | null) {
   return typeof issueId === "string" && issueId.length > 0 ? issueId : null;
 }
 
-// A failed run stays in the feed until the same agent has a newer run on the
-// same issue (its issueId, else its taskId, as readRunIssueId reads them). Each
-// failed run asks the database whether such a run exists. The snapshot keys are
-// only ever index conditions here, answered by the (company_id, issueId/taskId,
-// created_at) indexes: reading a key's value from a row detoasts that run's
-// whole context snapshot.
 type FailedRunProbe = { id: string; agentId: string; issueId: string | null; createdAt: Date };
 
-// Each failed run binds four parameters, and postgres.js accepts at most 65,534
-// in one statement, so a company with many exhausted runs is asked in batches.
 const FAILED_RUN_PROBE_BATCH_SIZE = 1000;
 
 async function listFailedRunsWithNewerRun(db: Db, companyId: string, failedRuns: FailedRunProbe[]) {
@@ -1122,8 +1114,6 @@ async function listFailedRunsWithNewerRun(db: Db, companyId: string, failedRuns:
 
 async function listFailedRunBatchWithNewerRun(db: Db, companyId: string, failedRuns: FailedRunProbe[]) {
   if (failedRuns.length === 0) return [];
-  // Run times reach this code in whole milliseconds, so "newer" means at least
-  // one millisecond later, as comparing the two dates did.
   const failed = sql.join(
     failedRuns.map((run) => sql`(${run.id}::uuid, ${run.agentId}::uuid, ${run.issueId}::text, ${new Date(run.createdAt.getTime() + 1).toISOString()}::timestamptz)`),
     sql`, `,
