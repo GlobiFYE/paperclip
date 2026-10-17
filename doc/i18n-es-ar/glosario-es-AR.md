@@ -430,6 +430,59 @@ Lo que **no entró** de este lote y conviene no volver a intentar: `Branch`,
 `Commit`, `Pull request` y `Diff —` (términos de Git, §7), y `Chat`, `Error`,
 `Video`, `Markdown`, `PLAN`, `Tokens`, `CSV ·` (iguales en los dos idiomas).
 
+### Agregadas en CHA-31 (lote `skills`: 135 largas y 281 cortas)
+
+Son tres pantallas: la biblioteca de skills de la empresa, Skill Studio y los
+orígenes de skills (con el diálogo de importar desde un proyecto).
+
+| Inglés | es-AR | Nota |
+|---|---|---|
+| Skill | skill | **Femenino**: «la skill», «las skills instaladas». Queda en inglés (decisión del corte 1); acá se fija el género, que es lo que decide cada adjetivo de estas pantallas |
+| Skill Studio / Studio | Skill Studio / Studio | Nombre del producto: no se traduce |
+| Fork *(verbo)* | Copiar | «Fork skill» → «Copiar la skill». «Forkear» es jerga y «bifurcar» no se usa |
+| Fork *(badge)* | Copia | «Forked» → «Copia»; «Forked from» → «Copiada de» |
+| Make a copy | Hacer una copia | La misma acción que `Fork`, dicha más largo también en inglés |
+| Library | Biblioteca | «the organization library» → «la biblioteca de la empresa» |
+| Store | Tienda | «Back to store» → «Volver a la tienda» |
+| Source *(de skills)* | Origen | Ya venía de §2; «Skill sources» → «Orígenes de skills» |
+| Provenance | Procedencia | Para no chocar con «Origen», que ya es `Source` |
+| Bundled | De fábrica | Forma **sin género**: la misma cadena rotula skills, plugins y equipos |
+| Trust level «Safe» | Sin riesgo | Mismo criterio: evita elegir género en una etiqueta reusable |
+| Locally modified | Con cambios locales | Idem |
+| Up to date | Al día | |
+| Update available | Hay una actualización | Forma sin género: sirve para skill, equipo y recurso |
+| Read only | Solo lectura | |
+| Scan / Scanning | Explorar / Explorando | «Scan failed» → «Falló la exploración» |
+| Discovered skills | Skills encontradas | |
+| Snapshot | Foto | «Output snapshot» → «Foto de la salida»; «Saving skill snapshots» → «Guardando las fotos de las skills» |
+| Run template | Plantilla de ejecución | `Template` → «Plantilla» ya venía de §2 |
+| Placeholders *(de una plantilla)* | Variables | Es la etiqueta que lista `{{skillName}}` y compañía; «marcadores de posición» no entra |
+| Pin *(de una revisión)* | Fijado | «Pinned source revision» → «Revisión fijada del origen» |
+| Star / Starred / Unstar | Destacar / Destacada / Quitar de destacadas | |
+| Tagline | Lema | |
+| Tags | Etiquetas | Mismo término que `Label` (§2) |
+| Agent harness | harness de agentes | Queda en inglés (§7) |
+| Working tree | working tree | Término de Git (§7), igual que `worktree` |
+| Frontmatter / slug / hash / YAML | frontmatter / slug / hash / YAML | Quedan en inglés y **no entran al diccionario**: son iguales en los dos idiomas |
+
+Tres reglas que salieron de este lote:
+
+1. **Una etiqueta se mide contra todos sus sitios, no contra su pantalla.**
+   `All`, `Private` e `Installed ·` son cadenas del lote `skills`, pero se usan
+   en 13, 5 y 3 sitios, y el género del español cambia según la pantalla
+   («Todas» las tareas / «Todos» los agentes). Las tres quedaron afuera, con
+   archivo y línea en [CHA-31](CHA-31-lote-skills.md), y son las candidatas
+   nuevas a `tEs()` al lado de `Open`, `Run`, `Comment` y `Review`.
+2. **Cuando hay una forma sin género, se prefiere esa, aunque la pantalla de hoy
+   tenga un solo género.** `Bundled` → «De fábrica» y `Safe` → «Sin riesgo»
+   entraron así porque la misma cadena ya rotula skills, plugins y equipos. Es
+   la regla 2 de CHA-27 aplicada antes de que duela.
+3. **Un área nueva de diccionario cuesta dos líneas y ninguna edición de
+   upstream**: el `import` de `overlay.ts` y la entrada de `ES_AR_AREAS` en
+   `overlay.test.ts`. Conviene abrir archivo nuevo cuando un lote no cae en
+   ninguna área existente: `skills.json` nació así, con 371 entradas que en
+   `common.json` habrían dejado ilegible el diff del próximo lote.
+
 ## 8. Cadenas partidas y plurales contados
 
 Esto no es una regla de idioma: es cómo llega el texto al overlay, y define qué
