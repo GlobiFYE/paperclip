@@ -178,15 +178,11 @@ export async function appendHeartbeatRunEvent(
 }
 
 async function contiguousCursor(db: Db, runId: string, sourceInstanceId: string): Promise<number> {
-  // Runs append one event per streamed delta, so this is called thousands of times per run. Let the
-  // (run, source instance, source seq) unique index answer instead of loading every row of the run.
   const scope = and(
     eq(heartbeatRunEvents.runId, runId),
     eq(heartbeatRunEvents.sourceInstanceId, sourceInstanceId),
     sql`${heartbeatRunEvents.sourceSeq} >= 1`,
   );
-  // Source seqs are unique per run and source instance, so n of them at or above 1 whose largest is n
-  // are exactly 1..n. That is the usual in-order stream, and it needs only the count and the maximum.
   const [range] = await db
     .select({
       count: sql<number>`count(*)`.mapWith(Number),
@@ -202,7 +198,6 @@ async function contiguousCursor(db: Db, runId: string, sourceInstanceId: string)
     .where(and(scope, eq(heartbeatRunEvents.sourceSeq, 1)))
     .limit(1);
   if (!first) return 0;
-  // With a gap, the cursor is the smallest seq whose successor is missing.
   const [last] = await db
     .select({ sourceSeq: heartbeatRunEvents.sourceSeq })
     .from(heartbeatRunEvents)
