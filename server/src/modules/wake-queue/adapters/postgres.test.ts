@@ -277,7 +277,7 @@ describeEmbeddedPostgres("wake-queue postgres adapter", () => {
       .toMatchObject({ status: "deferred_issue_execution", runId: null });
   });
 
-  it.each(["active_lease", "pending_cleanup", "failed_cleanup", "unknown_cleanup", "local_provider_resource", "cleanup_claim", "finalizer_owner", "workspace_owner"])(
+  it.each(["active_lease", "pending_cleanup", "failed_cleanup", "unknown_cleanup", "local_provider_resource", "ssh_provider_mismatch", "cleanup_claim", "finalizer_owner", "workspace_owner"])(
     "waits for native cleanup and finalizer ownership before recovering saved input (%s)", async kind => {
       const companyId = await seedCompany(), agentId = await seedAgent({ companyId });
       const issueId = await seedIssue({ companyId, status: "blocked", assigneeAgentId: agentId });
@@ -292,11 +292,11 @@ describeEmbeddedPostgres("wake-queue postgres adapter", () => {
       });
       await db.update(issues).set({ executionRunId: runId, checkoutRunId: runId }).where(eq(issues.id, issueId));
       const [lease] = ["finalizer_owner", "workspace_owner"].includes(kind) ? [] : await db.insert(environmentLeases).values({
-        companyId, heartbeatRunId: runId, provider: kind === "unknown_cleanup" ? "daytona" : "local",
-        providerLeaseId: kind === "local_provider_resource" ? randomUUID() : null,
+        companyId, heartbeatRunId: runId, provider: kind === "unknown_cleanup" ? "daytona" : kind === "ssh_provider_mismatch" ? "ssh" : "local",
+        providerLeaseId: kind === "local_provider_resource" ? randomUUID() : kind === "ssh_provider_mismatch" ? "ssh://worker@example.invalid:22/workspace" : null,
         status: kind === "active_lease" ? "active" : kind === "pending_cleanup" ? "pending_cleanup" : "released",
         releasedAt: kind === "active_lease" ? null : new Date(),
-        cleanupStatus: kind === "failed_cleanup" ? "failed" : ["unknown_cleanup", "local_provider_resource"].includes(kind) ? null : "success",
+        cleanupStatus: kind === "failed_cleanup" ? "failed" : ["unknown_cleanup", "local_provider_resource", "ssh_provider_mismatch"].includes(kind) ? null : "success",
         metadata: kind === "cleanup_claim" ? { pendingCleanupInFlight: true } : {},
       }).returning();
       const [comment] = await db.insert(issueComments).values({ companyId, issueId, authorType: "user", authorUserId: "responsible-user", body: "Saved input after cleanup" }).returning();
@@ -324,7 +324,7 @@ describeEmbeddedPostgres("wake-queue postgres adapter", () => {
     },
   );
 
-  it.each(["released", "retained", "local_release", "unrelated_cleanup"])("allows native queue recovery after settled %s cleanup", async kind => {
+  it.each(["released", "retained", "local_release", "ssh_release", "unrelated_cleanup"])("allows native queue recovery after settled %s cleanup", async kind => {
     const companyId = await seedCompany(), agentId = await seedAgent({ companyId });
     const issueId = await seedIssue({ companyId, status: "blocked", assigneeAgentId: agentId });
     const runId = await seedRun({ companyId, agentId, status: "succeeded", contextSnapshot: { issueId } });
@@ -336,8 +336,11 @@ describeEmbeddedPostgres("wake-queue postgres adapter", () => {
       await db.insert(environmentLeases).values({ companyId: foreignCompany, heartbeatRunId: foreignRun, provider: "local", status: "pending_cleanup", cleanupStatus: "failed" });
     } else {
       await db.insert(environmentLeases).values({ companyId, heartbeatRunId: runId,
-        provider: kind === "local_release" ? "local" : "daytona", status: kind === "local_release" ? "released" : kind,
-        leasePolicy: kind === "retained" ? "reuse_by_environment" : "ephemeral", cleanupStatus: kind === "local_release" ? null : "success",
+        provider: kind === "local_release" ? "local" : kind === "ssh_release" ? "ssh" : "daytona",
+        providerLeaseId: kind === "ssh_release" ? "ssh://worker@example.invalid:22/workspace" : null,
+        metadata: kind === "ssh_release" ? { driver: "ssh" } : {},
+        status: ["local_release", "ssh_release"].includes(kind) ? "released" : kind,
+        leasePolicy: kind === "retained" ? "reuse_by_environment" : "ephemeral", cleanupStatus: ["local_release", "ssh_release"].includes(kind) ? null : "success",
         releasedAt: kind === "retained" ? null : new Date(),
       });
     }
