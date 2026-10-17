@@ -214,3 +214,46 @@ describe("single-writer guard", () => {
   });
 
 });
+
+describe("operator-added service environment", () => {
+  it("keeps custom launchd EnvironmentVariables when start re-renders the plist", async () => {
+    const userHome = await temporaryDirectory();
+    const runner: CommandRunner = async () => ({ stdout: "", stderr: "" });
+    const manager = new LaunchdServiceManager("default", runner, path.join(userHome, ".paperclip"), path.join(userHome, ".local/bin/paperclipai"), userHome);
+    await fs.mkdir(path.dirname(manager.definitionPath), { recursive: true });
+    const customized = manager.renderDefinition().replace(
+      "  </dict>\n  <key>RunAtLoad</key>",
+      "    <key>PATH</key><string>/opt/homebrew/bin:/usr/bin</string>\n    <key>ENABLE_CLAUDEAI_MCP_SERVERS</key><string>false</string>\n  </dict>\n  <key>RunAtLoad</key>",
+    );
+    await fs.writeFile(manager.definitionPath, customized, "utf8");
+
+    await manager.start();
+    await manager.restart();
+
+    const plist = await fs.readFile(manager.definitionPath, "utf8");
+    expect(plist).toContain("<key>PATH</key><string>/opt/homebrew/bin:/usr/bin</string>");
+    expect(plist).toContain("<key>ENABLE_CLAUDEAI_MCP_SERVERS</key><string>false</string>");
+    expect(plist.match(/<key>PAPERCLIP_HOME<\/key>/g)).toHaveLength(1);
+    expect(manager.renderDefinition(plist)).toBe(plist);
+  });
+
+  it("keeps custom systemd Environment= lines when restart re-renders the unit", async () => {
+    const userHome = await temporaryDirectory();
+    const runner: CommandRunner = async () => ({ stdout: "", stderr: "" });
+    const manager = new SystemdServiceManager("default", runner, path.join(userHome, ".paperclip"), path.join(userHome, ".local/bin/paperclipai"), userHome);
+    await fs.mkdir(path.dirname(manager.definitionPath), { recursive: true });
+    const customized = manager.renderDefinition().replace(
+      "WorkingDirectory=%h",
+      'Environment="PATH=/home/alice/.local/bin:/usr/bin"\nEnvironment=PAPERCLIP_TAILNET_BIND_HOST=100.64.0.1\nWorkingDirectory=%h',
+    );
+    await fs.writeFile(manager.definitionPath, customized, "utf8");
+
+    await manager.restart();
+
+    const unit = await fs.readFile(manager.definitionPath, "utf8");
+    expect(unit).toContain('Environment="PATH=/home/alice/.local/bin:/usr/bin"');
+    expect(unit).toContain('Environment="PAPERCLIP_TAILNET_BIND_HOST=100.64.0.1"');
+    expect(unit.match(/PAPERCLIP_HOME=/g)).toHaveLength(1);
+    expect(manager.renderDefinition(unit)).toBe(unit);
+  });
+});
