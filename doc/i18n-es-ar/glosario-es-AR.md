@@ -550,6 +550,77 @@ Tres reglas que salieron de estos lotes:
    `…`. `Checking...` → «Revisando…». Es una invariante de `overlay.test.ts` y
    es fácil leerla al revés.
 
+### Agregadas en CHA-33 (lotes `agentes` y `rutinas`: 497 cadenas)
+
+Dos lotes en una pasada. `agentes` es el detalle de un agente —instrucciones,
+revisiones, API keys, libro de ejecuciones y transcripción—, el alta de un
+agente nuevo, la lista de agentes, sus skills y sus canales; `rutinas` es la
+lista y el detalle de una rutina, sus disparadores, el editor de variables, el
+historial de revisiones y la barra de guardado.
+
+| Inglés | es-AR | Nota |
+|---|---|---|
+| Trigger *(sustantivo)* | Disparador | El término central de `rutinas`. El verbo ya estaba decidido («Last triggered» → «Se disparó por última vez»); acá se fija el sustantivo. «Trigger type» → «Tipo de disparador»; «Add trigger» → «Agregar un disparador» |
+| Fire *(sustantivo)* | Disparo | «Next 5 fires» → «Próximos 5 disparos»; «upcoming fires» → «los próximos disparos» |
+| Catch-up | Recuperación | La política de qué hacer con los disparos que se perdieron |
+| Schedule | Programación | Ya venía de CHA-30; acá se usa parejo: «Add schedule» → «Agregar una programación», «Schedule frequency» → «Frecuencia de la programación» |
+| Built-in | Incluido | Ya estaba en `common.json`. «Built-in agent» → «Agente incluido»; «Built-in variables» → «Variables incluidas» |
+| Payload | payload | Queda en inglés, como ya estaba en `connections.json`. «Payload URL» → «URL del payload» |
+| Webhook | webhook | Queda en inglés (§7). Es **masculino**: «este webhook», «los webhooks» |
+| Preserved edits | Ediciones conservadas | Las que sobreviven a un cambio del archivo de instrucciones; seis cadenas de `AgentDetail.tsx` tenían que decirlo igual |
+| Instructions bundle | Paquete de instrucciones | «Managed / External» → «Administrado / Externo» |
+| Entry file | Archivo de entrada | El que el agente lee primero |
+| Fold *(del audit del sistema)* | Plegado | Cerrar una ejecución como falso positivo porque la tarea de origen ya lo resolvió. Se mantiene la metáfora del inglés: «descartado» choca con `Dismiss` (§5), y el bloque entero es de auditoría, no de uso diario |
+| Escalation path | Vía de escalamiento | |
+| Reporting chain | Cadena de reporte | «its reporting chain is repaired» → «se repare su cadena de reporte» |
+| Direct reports | Reportes directos | Va con «Manager → Jefe» de CHA-27 |
+| Transcript | Transcripción | |
+| Streaming *(etiqueta en vivo)* | Transmitiendo | §2: `Stream` → Transmitir |
+| Requested / Effective *(modelo)* | Pedido / En uso | Son un par en la misma línea. «Efectivo» es literal y no dice nada |
+| Provider-reported | Lo informó el proveedor | Regla 1 de CHA-27 aplicada a un participio compuesto: esquiva el género |
+| Placeholder *(encabezado de columna)* | Variable | La columna lista `{{taskTitle}}` y compañía. Va con «Placeholders → Variables» de CHA-31 |
+| Variables *(etiqueta suelta)* | — | Igual en los dos idiomas: **no entra al diccionario** |
+
+Estados y etiquetas nuevas, en una forma **sin género** o verificadas contra
+todos sus sitios (§3):
+
+| Inglés | es-AR |
+|---|---|
+| Revoked | Revocada |
+| Restored | Restaurada |
+| Cached | En caché |
+| Managed | Administrado |
+| Changed: | Cambios: |
+| no tracked changes | sin cambios registrados |
+| Read-only | Solo lectura |
+
+Tres reglas que salieron de estos lotes:
+
+1. **Una etiqueta que termina en dos puntos y abre una lista no se traduce con
+   un verbo.** `Changed:` entró como «**Cambios:**», no como «Cambió:», porque
+   lo que sigue es una lista de largo variable y el verbo obliga a elegir
+   número («Cambiaron»). El sustantivo no concuerda con nada. Vale para
+   cualquier `X:` que encabece una enumeración.
+2. **Una palabra que es verbo en un sitio y sustantivo en otro no entra, aunque
+   los dos sitios estén en el mismo archivo.** `Type` es «Escribí» en
+   `RoutineVariablesEditor.tsx:305` y «Tipo» en la línea 119 del **mismo
+   archivo** y en nueve archivos más. Quedó afuera, con archivo y línea en
+   [CHA-33](CHA-33-lote-agentes-rutinas.md), y es el candidato a `tEs()` más
+   barato de todos los acumulados: un solo sitio hay que marcar.
+3. **Una cadena partida puede necesitar dos españoles por el sustantivo que
+   viene *después*, no por el suyo.** `Showing the first` es el mismo trozo en
+   `CsvPreview.tsx:23` (le siguen **filas**) y en `AgentDetail.tsx:4573` (le
+   siguen **KB**): «los primeros» y «las primeras» en el mismo literal. Es un
+   motivo nuevo para la lista de §7 y **sí** compite por el presupuesto de
+   `tEs(`, a diferencia de las dos de orden de CHA-32.
+
+Lo que **no entró** de estos lotes y conviene no volver a intentar: `Prompt`,
+`Harness / Runtime`, `Branch:`, `Error:` y `Worktree:` (términos de §7 o
+iguales en los dos idiomas), `Beta`, `Beta ·`, `ID`, `KB`, `TOOLS.md` y
+`Variables` (iguales), `OpenRouter`, `Paperclip Runner` y `GitHub` (nombres
+propios), y `PAPERCLIP_*`, `{{name}}`, `{{variable_name}}` y `⌘S`
+(identificadores y teclas).
+
 ## 8. Cadenas partidas y plurales contados
 
 Esto no es una regla de idioma: es cómo llega el texto al overlay, y define qué
