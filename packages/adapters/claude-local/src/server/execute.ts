@@ -221,7 +221,7 @@ async function buildClaudeRuntimeConfig(input: ClaudeExecutionInput): Promise<Cl
     executionTargetIsRemote,
     executionCwd: effectiveExecutionCwd,
   });
-  if (!executionTargetIsRemote) {
+  if (!executionTargetIsRemote || targetWorkspaceRealization?.mode !== "in_place") {
     await ensureAbsoluteDirectory(cwd, { createIfMissing: true });
   }
 
@@ -640,6 +640,18 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
             targetWorkspaceRealization?.mode === "in_place"
               ? targetWorkspaceRealization.authoritativeRoot
               : undefined,
+          ...(targetWorkspaceRealization?.mode === "in_place"
+            ? {
+                runtimeRootDir: path.posix.join(
+                  targetWorkspaceRealization.authoritativeRoot,
+                  ".paperclip-runtime",
+                  "runs",
+                  runId,
+                  "claude",
+                ),
+                removeRuntimeRootOnRestore: true,
+              }
+            : {}),
           syncWorkspace: targetWorkspaceRealization?.mode !== "in_place",
           installCommand: SANDBOX_INSTALL_COMMAND,
           detectCommand: command,
