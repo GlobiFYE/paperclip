@@ -43,7 +43,7 @@ describe.skipIf(!RUN)("vault provider — integration (PAPERCLIP_TEST_VAULT=1)",
     const v1 = await provider.createSecret({ value: "value-v1", context: ctx });
     const v2 = await provider.createVersion({
       value: "value-v2",
-      context: ctx,
+      context: { ...ctx, version: 2 },
       externalRef: v1.externalRef,
     });
     expect(v2.providerVersionRef).toBe("2");
@@ -96,7 +96,7 @@ describe.skipIf(!RUN)("vault provider — integration (PAPERCLIP_TEST_VAULT=1)",
     for (let i = 2; i <= 8; i += 1) {
       const r = await provider.createVersion({
         value: `v${i}`,
-        context: { ...ctx, version: i - 1 },
+        context: { ...ctx, version: i },
         externalRef: ref,
       });
       ref = r.externalRef;

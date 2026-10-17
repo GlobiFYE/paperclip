@@ -379,15 +379,11 @@ export const updateSecretProviderConfigSchema = z.object({
   if (value.config !== undefined) {
     rejectSensitiveProviderConfigKeys(value.config, ctx);
     rejectUnsafeVaultAddress(value.config.address, ctx);
-    const parsed = vaultProviderConfigSchema.safeParse(value.config);
-    if (!parsed.success) {
-      for (const issue of parsed.error.issues) {
-        ctx.addIssue({
-          ...issue,
-          path: ["config", ...issue.path],
-        });
-      }
-    }
+    // Provider-specific config validation is NOT done here: updates carry no
+    // `provider` field, so validating against one provider's schema would
+    // reject every other provider's config (e.g. an AWS `region` would fail
+    // the strict Vault schema). The service re-validates the merged config
+    // per provider via validateProviderConfigPayload.
   }
   if ((value.status === "coming_soon" || value.status === "disabled") && value.isDefault) {
     ctx.addIssue({

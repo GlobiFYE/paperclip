@@ -498,6 +498,34 @@ export function resolveVaultConfig(input: {
       auth = { ...auth, saTokenPath: DEFAULT_SA_TOKEN_PATH };
     }
   }
+  // The Kubernetes role selects which Vault auth/kubernetes role the server's
+  // login JWT is authenticated against, and different roles carry different
+  // policies, so a company writer must not be able to swap the deployment's
+  // login into a more privileged role. Operator env wins; a company-config role
+  // is honored only under the same opt-in flag that gates the address.
+  const operatorK8sRole = asString(input.env.PAPERCLIP_SECRETS_VAULT_K8S_ROLE) ?? undefined;
+  const configK8sRole = authRaw ? asString((authRaw as Record<string, unknown>).role) : null;
+  if (auth && auth.method === "kubernetes" && configK8sRole !== null) {
+    if (operatorK8sRole !== undefined) {
+      if (configK8sRole !== operatorK8sRole) {
+        warnings.push(
+          "vault auth.role is overridden by the operator-deployed Kubernetes role; " +
+            "a per-vault role cannot change which Vault auth role the deployment login uses",
+        );
+      }
+      auth = { ...auth, role: operatorK8sRole };
+    } else if (!allowConfigAddress) {
+      warnings.push(
+        "vault auth.role is ignored: no operator-pinned role is set " +
+          "(PAPERCLIP_SECRETS_VAULT_K8S_ROLE) and the operator has not set " +
+          "PAPERCLIP_SECRETS_VAULT_ALLOW_CONFIG_ADDR=1, so a company-config role may not " +
+          "choose which Vault auth role the deployment login uses",
+      );
+      // Kubernetes login requires a role; without an operator-approved role
+      // the auth block is unusable, so fail closed rather than guessing.
+      return { config: null, warnings };
+    }
+  }
 
   const versionRetentionRaw =
     vaultConfig.versionRetention !== undefined

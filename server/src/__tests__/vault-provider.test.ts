@@ -353,7 +353,10 @@ describe("resolveVaultConfig", () => {
   // --- primitive. Operator pins win; a config custom path needs the opt-in.     ---
   it("ignores a custom config saTokenPath when no operator pin is set and no opt-in", () => {
     const r = resolveVaultConfig({
-      env: { PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200" },
+      env: {
+        PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200",
+        PAPERCLIP_SECRETS_VAULT_K8S_ROLE: "paperclip-server",
+      },
       providerConfig: {
         id: "v1",
         provider: "vault",
@@ -396,6 +399,7 @@ describe("resolveVaultConfig", () => {
     const r = resolveVaultConfig({
       env: {
         PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200",
+        PAPERCLIP_SECRETS_VAULT_K8S_ROLE: "paperclip-server",
         PAPERCLIP_SECRETS_VAULT_SA_TOKEN_PATH: "/operator/jwt",
       },
       providerConfig: {
@@ -416,6 +420,7 @@ describe("resolveVaultConfig", () => {
     const r = resolveVaultConfig({
       env: {
         PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200",
+        PAPERCLIP_SECRETS_VAULT_K8S_ROLE: "paperclip-server",
         PAPERCLIP_SECRETS_VAULT_SA_TOKEN_PATH: "/operator/jwt",
       },
       providerConfig: {
@@ -430,6 +435,86 @@ describe("resolveVaultConfig", () => {
     });
     expect(r.config?.auth.saTokenPath).toBe("/operator/jwt");
     expect(r.warnings).toHaveLength(0);
+  });
+
+  // --- The kubernetes role selects which Vault auth role the server login  ---
+  // --- authenticates against; different roles carry different policies, so ---
+  // --- a company writer must not swap the deployment into a broader role.  ---
+  it("operator-pinned PAPERCLIP_SECRETS_VAULT_K8S_ROLE wins over a config auth.role", () => {
+    const r = resolveVaultConfig({
+      env: {
+        PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200",
+        PAPERCLIP_SECRETS_VAULT_K8S_ROLE: "paperclip-server",
+      },
+      providerConfig: {
+        id: "v1",
+        provider: "vault",
+        status: "ready",
+        config: {
+          address: "https://v:8200",
+          auth: { method: "kubernetes", role: "attacker-role" },
+        },
+      },
+    });
+    expect(r.config?.auth.role).toBe("paperclip-server");
+    expect(r.warnings.join(" ")).toMatch(/auth.role is overridden by the operator/i);
+  });
+
+  it("does not warn when a config auth.role restates the operator pin", () => {
+    const r = resolveVaultConfig({
+      env: {
+        PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200",
+        PAPERCLIP_SECRETS_VAULT_K8S_ROLE: "paperclip-server",
+      },
+      providerConfig: {
+        id: "v1",
+        provider: "vault",
+        status: "ready",
+        config: {
+          address: "https://v:8200",
+          auth: { method: "kubernetes", role: "paperclip-server" },
+        },
+      },
+    });
+    expect(r.config?.auth.role).toBe("paperclip-server");
+    expect(r.warnings).toHaveLength(0);
+  });
+
+  it("honors a config auth.role when the operator opts in (ALLOW_CONFIG_ADDR=1)", () => {
+    const r = resolveVaultConfig({
+      env: {
+        PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200",
+        PAPERCLIP_SECRETS_VAULT_ALLOW_CONFIG_ADDR: "1",
+      },
+      providerConfig: {
+        id: "v1",
+        provider: "vault",
+        status: "ready",
+        config: {
+          address: "https://v:8200",
+          auth: { method: "kubernetes", role: "custom-role" },
+        },
+      },
+    });
+    expect(r.config?.auth.role).toBe("custom-role");
+    expect(r.warnings).toHaveLength(0);
+  });
+
+  it("fails closed when a config auth.role has no operator pin and no opt-in", () => {
+    const r = resolveVaultConfig({
+      env: { PAPERCLIP_SECRETS_VAULT_ADDR: "https://v:8200" },
+      providerConfig: {
+        id: "v1",
+        provider: "vault",
+        status: "ready",
+        config: {
+          address: "https://v:8200",
+          auth: { method: "kubernetes", role: "attacker-role" },
+        },
+      },
+    });
+    expect(r.config).toBeNull();
+    expect(r.warnings.join(" ")).toMatch(/auth.role is ignored/i);
   });
 
   it("operator env kvMount wins over a per-vault config mountPath, warning on the redirect", () => {
