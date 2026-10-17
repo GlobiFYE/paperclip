@@ -1,6 +1,9 @@
 name: Termux Backend Build
 
 on:
+  push:
+    branches:
+      - fix/render-production-workspace-exports
   workflow_dispatch:
 
 permissions:
