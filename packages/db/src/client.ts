@@ -343,8 +343,19 @@ async function listJournalMigrationFiles(): Promise<string[]> {
   return entries.map((entry) => entry.fileName);
 }
 
+/**
+ * Journal hashes are SHA-256 of the published (LF) file content. A Windows
+ * checkout with core.autocrlf=true rewrites migrations to CRLF, which would
+ * change every hash and make applied migrations look pending, so hash and
+ * execute the LF form.
+ */
+export function normalizeMigrationContent(content: string): string {
+  return content.replace(/\r\n/g, "\n");
+}
+
 async function readMigrationFileContent(migrationFile: string): Promise<string> {
-  return readFile(new URL(`./migrations/${migrationFile}`, import.meta.url), "utf8");
+  const content = await readFile(new URL(`./migrations/${migrationFile}`, import.meta.url), "utf8");
+  return normalizeMigrationContent(content);
 }
 
 async function orderMigrationsByJournal(migrationFiles: string[]): Promise<string[]> {
