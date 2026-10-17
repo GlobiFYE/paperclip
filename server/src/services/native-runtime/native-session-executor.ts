@@ -11508,7 +11508,7 @@ async function createRunnerdBackendWithinSessionClaim(
   ]);
   if (preparedEnvironment.status === "rejected") throw preparedEnvironment.reason;
   if (preparedAssignedMcp.status === "rejected") throw preparedAssignedMcp.reason;
-  input = { ...input, runnerEnvironment: preparedEnvironment.value };
+  const runnerEnvironment = preparedEnvironment.value;
   const assignedMcpTools = preparedAssignedMcp.value;
   const dotAttachmentActor = input.execution.schema === "paperclip.native-execution-input.v6"
     ? await input.db.select({ config: agents.adapterConfig }).from(agents).where(and(
@@ -12743,8 +12743,8 @@ async function createRunnerdBackendWithinSessionClaim(
   const isGrok = input.execution.provider.kind === "acpx" && input.execution.provider.agent === "grok";
   let effectiveRunnerEnvironmentBase: NodeJS.ProcessEnv = {
     ...(isGrok
-      ? input.runnerEnvironment ?? {}
-      : resolveNativeProviderEnvironment(input.execution.provider, input.runnerEnvironment)),
+      ? runnerEnvironment ?? {}
+      : resolveNativeProviderEnvironment(input.execution.provider, runnerEnvironment)),
   };
   const grokCredential = isGrok ? await prepareGrokRunnerCredentials({
     companyId: input.execution.binding.companyId, environment: effectiveRunnerEnvironmentBase, remote: Boolean(remoteTarget),
@@ -13036,7 +13036,7 @@ async function createRunnerdBackendWithinSessionClaim(
         runnerBinary: controllerRunnerBinary,
         codexCommand: remoteCodexBinary ?? undefined,
         sourceCodexHome: remoteTarget
-          ? resolveSourceCodexHome(resolveNativeProviderEnvironment(input.execution.provider, input.runnerEnvironment))
+          ? resolveSourceCodexHome(resolveNativeProviderEnvironment(input.execution.provider, runnerEnvironment))
           : undefined,
         runnerReconnectGraceMs: remoteTarget ? 120_000 : undefined,
         environment: effectiveRunnerEnvironment,
