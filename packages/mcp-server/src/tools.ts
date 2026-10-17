@@ -688,8 +688,6 @@ export function createToolDefinitions(client: PaperclipApiClient): ToolDefinitio
       },
     ),
   ].map((tool) => {
-    // Preserve one context per call, including helpers that make multiple API
-    // requests. Never mutate shared startup config when calls overlap.
     const required = [
       "paperclipCreateIssue", "paperclipUpdateIssue",
       "paperclipAddComment", "paperclipCheckoutIssue",

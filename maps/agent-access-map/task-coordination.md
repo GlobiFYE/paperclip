@@ -43,6 +43,11 @@ It sends the UUID in the run header and does not use a startup fallback.
 [The package contract](../../packages/mcp-server/README.md#per-call-run-context)
 and [fake-API regressions](../../packages/mcp-server/src/run-context.test.ts)
 cover transport behavior. They do not qualify live delegation or backend access.
+The [watchdog scope guard](../../server/src/services/task-watchdog-scope.ts)
+requires the authenticated `agent_jwt` source before widening mutation access;
+API keys cannot activate a watchdog grant by selecting a run header.
+[Guard tests](../../server/src/services/task-watchdog-scope.test.ts) cover this
+credential boundary with a synthetic store; live authorization remains unverified.
 
 ## `dependencies`
 

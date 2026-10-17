@@ -28,7 +28,6 @@ describe("request-local Paperclip run context", () => {
       const headers = init.headers as Record<string, string>;
       const runId = headers["X-Paperclip-Run-Id"];
       seen.push({ url: String(url), method: init.method!, headers, body: init.body ? JSON.parse(String(init.body)) : null });
-      // A fake backend, not a replacement for Paperclip's real authorization.
       if (runId === OTHER_AGENT_RUN) return response({ error: "run belongs to another agent" }, 403);
       if (String(url).includes("/foreign-checkout") && runId !== R1) return response({ error: "checkout belongs to another run" }, 409);
       await new Promise(resolve => setTimeout(resolve, runId === R1 ? 5 : 0));
@@ -65,7 +64,7 @@ describe("request-local Paperclip run context", () => {
     expect(seen.map(x => x.headers["X-Paperclip-Run-Id"])).toEqual([R1, R2]);
     await update.execute({ issueId: ISSUE, status: "done" });
     expect(seen).toHaveLength(2);
-    expect(api.defaults.runId).toBe(STALE); // The shared configuration was never mutated.
+    expect(api.defaults.runId).toBe(STALE);
   });
   it("isolates parallel calls and cleans the context on completion", async () => {
     const api = client(), update = tool(api, "paperclipUpdateIssue");
@@ -74,6 +73,35 @@ describe("request-local Paperclip run context", () => {
     expect(seen.map(x => x.headers["X-Paperclip-Run-Id"])).toEqual([R1, R2, R1, R2]);
     await expect(api.requestJson("PATCH", "/issues/synthetic", { body: { status: "done" } })).rejects.toThrow(/run id/i);
     expect(seen).toHaveLength(4);
+  });
+  it("keeps each run ID after overlapping helpers await reads before writing", async () => {
+    const api = client(), control = tool(api, "paperclipControlIssueWorkspaceServices");
+    const pendingReads: Array<() => void> = [];
+    let bothReading!: () => void;
+    const readsStarted = new Promise<void>(resolve => { bothReading = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (url: string | URL, init: RequestInit) => {
+      const headers = init.headers as Record<string, string>;
+      seen.push({ url: String(url), method: init.method!, headers, body: init.body ? JSON.parse(String(init.body)) : null });
+      if (init.method === "GET") {
+        await new Promise<void>(resolve => {
+          pendingReads.push(resolve);
+          if (pendingReads.length === 2) bothReading();
+        });
+        return response({ currentExecutionWorkspace: { id: "synthetic-workspace", runtimeServices: [] } });
+      }
+      return response({ ok: true, runId: headers["X-Paperclip-Run-Id"] });
+    }));
+    const first = control.execute({ issueId: ISSUE, action: "restart", paperclipRunId: R1 });
+    const second = control.execute({ issueId: ISSUE, action: "restart", paperclipRunId: R2 });
+    await readsStarted;
+    expect(seen.map(x => x.method)).toEqual(["GET", "GET"]);
+    pendingReads[1]!();
+    expect(body(await second).runId).toBe(R2);
+    pendingReads[0]!();
+    expect(body(await first).runId).toBe(R1);
+    expect(seen.filter(x => x.method === "POST").map(x => x.headers["X-Paperclip-Run-Id"])).toEqual([R2, R1]);
+    expect(api.defaults.runId).toBe(STALE);
+    await expect(api.requestJson("PATCH", "/issues/synthetic", { body: {} })).rejects.toThrow(/run id/i);
   });
   it("does not let includeRunId=false bypass write validation", async () => {
     await expect(client().requestJson("POST", "/issues/synthetic", { body: {}, includeRunId: false })).rejects.toThrow(/run id/i);

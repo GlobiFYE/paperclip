@@ -119,3 +119,8 @@ checkout/run ownership checks remain authoritative.
 startup must pass the current run UUID explicitly on every write. The startup
 value is no longer used as a header fallback. This is an intentional breaking
 change for write callers; API authentication and read calls are unchanged.
+
+Task-watchdog mutation grants require a signed agent JWT whose `run_id` matches
+the request header. An agent API key with a caller-selected run ID cannot
+activate that grant. Ordinary run context does not authenticate a caller or
+prove that a run is still active; normal server authorization remains required.
