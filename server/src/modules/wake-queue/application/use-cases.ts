@@ -120,6 +120,12 @@ export type ReleaseIssueExecutionInput = {
   runId: string;
   now: Date;
   suppressImmediateRecovery?: boolean;
+  /**
+   * Sweep-context bypass for release early exits that skip the deferred-wake
+   * drain. Only `retryDeferredIssueExecutionWakes` sets this; see
+   * `IssueLockWriter.withIssueExecutionLock` for the safety argument.
+   */
+  forceDrainDeferredWakes?: boolean;
 };
 
 type PauseHoldFacts = Awaited<ReturnType<WakeQueueTransaction["getPauseHoldFacts"]>>;
@@ -968,7 +974,12 @@ export function createReleaseIssueExecution(deps: {
     input: ReleaseIssueExecutionInput,
   ): Promise<{ outcome: ReleaseOutcome; postCommitEffects: PostCommitEffect[] }> {
     const result = await deps.issueLock.withIssueExecutionLock(
-      { companyId: input.companyId, runId: input.runId, now: input.now },
+      {
+        companyId: input.companyId,
+        runId: input.runId,
+        now: input.now,
+        ...(input.forceDrainDeferredWakes ? { forceDrainDeferredWakes: true } : {}),
+      },
       (locked, ports) => runReleaseDrain(locked, ports, input),
     );
 

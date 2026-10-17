@@ -1654,6 +1654,23 @@ async function startServerWithDatabaseTeardown(
           logger.warn({ ...scanned }, "startup active-run output watchdog created review work");
         }
 
+        // Ordering matters: the deferred-wake retry must run BEFORE the
+        // stale-lock sweep. The sweep clears a terminal holder's lock columns
+        // without draining the deferred-wake queue, after which the retry no
+        // longer sees a holder to release and the parked wakes strand. Retry
+        // first so a failed holder's parked wakes are promoted through the
+        // standard release drain before the sweep can clear the evidence.
+        const retriedWakes = await heartbeat.retryDeferredIssueExecutionWakes();
+        if (
+          retriedWakes.staleLocksReleased > 0 ||
+          retriedWakes.staleHoldersCancelled > 0
+        ) {
+          logger.warn(
+            { ...retriedWakes },
+            "startup deferred-wake retry released stale issue execution locks",
+          );
+        }
+
         const swept = await heartbeat.sweepStaleIssueLocks();
         if (swept.cleared > 0) {
           logger.warn({ ...swept }, "startup stale-lock sweeper cleared issue locks");
@@ -1862,6 +1879,22 @@ async function startServerWithDatabaseTeardown(
               const scanned = await heartbeat.scanSilentActiveRuns();
               if (scanned.created > 0 || scanned.escalated > 0) {
                 logger.warn({ ...scanned }, "periodic active-run output watchdog created review work");
+              }
+            })
+            .then(async () => {
+              // Ordering matters: the deferred-wake retry must run BEFORE the
+              // stale-lock sweep (see the startup recovery sequence); the
+              // sweep clears terminal holders' locks without draining parked
+              // wakes, stranding them for the retry that would follow.
+              const retriedWakes = await heartbeat.retryDeferredIssueExecutionWakes();
+              if (
+                retriedWakes.staleLocksReleased > 0 ||
+                retriedWakes.staleHoldersCancelled > 0
+              ) {
+                logger.warn(
+                  { ...retriedWakes },
+                  "periodic deferred-wake retry released stale issue execution locks",
+                );
               }
             })
             .then(async () => {
