@@ -198,5 +198,11 @@
   "Couldn't load files": "No se pudieron cargar los archivos",
   "Download unavailable": "No se puede descargar",
   "File not found": "No se encontró el archivo",
-  "Image preview unavailable": "No hay vista previa de la imagen"
+  "Image preview unavailable": "No hay vista previa de la imagen",
+
+  "Last error": "Último error",
+  "Model unavailable.": "El modelo no está disponible.",
+  "No preview available": "No hay vista previa",
+  "Preview unavailable.": "No hay vista previa.",
+  "Video preview unavailable": "No hay vista previa del video"
 }

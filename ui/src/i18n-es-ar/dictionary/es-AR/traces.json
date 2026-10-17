@@ -91,5 +91,7 @@
   "Withheld paths:": "Rutas retenidas:",
   "· Observed": "· Observado",
 
-  "Additional provider output is available in Runner Inspector.": "Hay más salida del proveedor en el Inspector del runner."
+  "Additional provider output is available in Runner Inspector.": "Hay más salida del proveedor en el Inspector del runner.",
+
+  "Provider detail:": "Detalle del proveedor:"
 }
