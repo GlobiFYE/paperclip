@@ -76,5 +76,14 @@
   "New agent progress": "Avance del agente nuevo",
   "No agents match.": "Ningún agente coincide.",
   "No agents selected": "No elegiste ningún agente",
-  "No manager": "Sin jefe"
+  "No manager": "Sin jefe",
+
+  "Prompt Template": "Plantilla del prompt",
+  "Reports to": "Reporta a",
+  "Resume agent": "Reanudar el agente",
+  "Retry agent": "Reintentar el agente",
+  "Save instructions": "Guardar las instrucciones",
+  "Search agents": "Buscar agentes",
+  "Search agents…": "Buscar agentes…",
+  "Setup prompt": "Prompt de configuración"
 }

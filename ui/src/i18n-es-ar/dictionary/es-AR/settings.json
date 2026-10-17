@@ -331,5 +331,14 @@
   "KEY": "CLAVE",
   "key available": "clave disponible",
   "keys available": "claves disponibles",
-  "Loading saved access…": "Cargando el acceso guardado…"
+  "Loading saved access…": "Cargando el acceso guardado…",
+
+  "Proposed access": "Acceso propuesto",
+  "Resume permission": "Permiso para reanudar",
+  "Secret": "Secreto",
+  "Secret access": "Acceso al secreto",
+  "Secret binding": "Vínculo del secreto",
+  "Show secret": "Ver el secreto",
+  "Skip permissions": "Saltear los permisos",
+  "Source secret": "Secreto de origen"
 }

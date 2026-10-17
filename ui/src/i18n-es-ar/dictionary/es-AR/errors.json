@@ -161,5 +161,9 @@
   "File details unavailable": "No hay detalles del archivo",
   "It didn't work.": "No funcionó.",
   "Last attempt failed:": "El último intento falló:",
-  "Latest cause:": "Última causa:"
+  "Latest cause:": "Última causa:",
+
+  "Please try again.": "Probá de nuevo.",
+  "Plugin launchers unavailable:": "No hay lanzadores de plugins:",
+  "Retry unavailable.": "No se puede reintentar."
 }
