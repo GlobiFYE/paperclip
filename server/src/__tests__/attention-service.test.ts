@@ -1094,6 +1094,44 @@ describeEmbeddedPostgres("attention service", () => {
       .toEqual([issueKeyedFailureId, unkeyedKeptFailureId].sort());
   });
 
+  it("checks more failed runs for a newer run than one statement can bind", async () => {
+    // Four parameters per failed run: past 16,383 runs a single probe statement
+    // would exceed the 65,534 parameters postgres.js accepts.
+    const { companyId, workerId, reviewerId } = await seedCompany("ATB");
+    const failedAt = new Date("2026-07-09T12:00:00.000Z");
+    const laterAt = new Date("2026-07-09T12:01:00.000Z");
+    const hiddenIds = Array.from({ length: 16_390 }, () => randomUUID());
+    const keptIds = Array.from({ length: 10 }, () => randomUUID());
+    const failure = (id: string, agentId: string) => ({
+      id, companyId, agentId, invocationSource: "automation", status: "failed", error: "adapter failed",
+      contextSnapshot: {}, createdAt: failedAt, updatedAt: failedAt, finishedAt: failedAt,
+    });
+    // The reviewer's failures sit between the worker's, so they fall in different batches.
+    const failures = hiddenIds.map((id) => failure(id, workerId));
+    keptIds.forEach((id, index) => failures.splice(index * 1_700, 0, failure(id, reviewerId)));
+    for (let start = 0; start < failures.length; start += 1_000) {
+      const chunk = failures.slice(start, start + 1_000);
+      await db.insert(heartbeatRuns).values(chunk);
+      await db.insert(heartbeatRunEvents).values(chunk.map((run) => ({
+        companyId, runId: run.id, agentId: run.agentId, seq: 1, eventType: "lifecycle",
+        message: "Bounded retry exhausted after 4 scheduled attempts; no further automatic retry will be queued",
+        createdAt: new Date("2026-07-09T12:00:01.000Z"),
+      })));
+    }
+    // Hides every key-less failure of the worker, none of the reviewer's.
+    await db.insert(heartbeatRuns).values({
+      id: randomUUID(), companyId, agentId: workerId, invocationSource: "automation", status: "succeeded",
+      contextSnapshot: { wakeReason: "timer" }, createdAt: laterAt, updatedAt: laterAt, finishedAt: laterAt,
+    });
+
+    const feed = await attentionService(db).list(companyId, {
+      includeDismissed: true, all: true, allowUnscopedAll: true,
+    });
+
+    expect(feed.items.filter((item) => item.sourceKind === "failed_run").map((item) => item.subject.id).sort())
+      .toEqual([...keptIds].sort());
+  }, 180_000);
+
   it("enriches interaction details with project, workspace, plan metadata, and images", async () => {
     const { companyId, workerId } = await seedCompany("ATE");
     const projectId = randomUUID();

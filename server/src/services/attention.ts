@@ -1105,12 +1105,23 @@ function readRunIssueId(contextSnapshot: Record<string, unknown> | null) {
 // only ever index conditions here, answered by the (company_id, issueId/taskId,
 // created_at) indexes: reading a key's value from a row detoasts that run's
 // whole context snapshot.
-async function listFailedRunsWithNewerRun(
-  db: Db,
-  companyId: string,
-  failedRuns: Array<{ id: string; agentId: string; issueId: string | null; createdAt: Date }>,
-) {
-  if (failedRuns.length === 0) return new Set<string>();
+type FailedRunProbe = { id: string; agentId: string; issueId: string | null; createdAt: Date };
+
+// Each failed run binds four parameters, and postgres.js accepts at most 65,534
+// in one statement, so a company with many exhausted runs is asked in batches.
+const FAILED_RUN_PROBE_BATCH_SIZE = 1000;
+
+async function listFailedRunsWithNewerRun(db: Db, companyId: string, failedRuns: FailedRunProbe[]) {
+  const withNewerRun = new Set<string>();
+  for (let start = 0; start < failedRuns.length; start += FAILED_RUN_PROBE_BATCH_SIZE) {
+    const batch = failedRuns.slice(start, start + FAILED_RUN_PROBE_BATCH_SIZE);
+    for (const id of await listFailedRunBatchWithNewerRun(db, companyId, batch)) withNewerRun.add(id);
+  }
+  return withNewerRun;
+}
+
+async function listFailedRunBatchWithNewerRun(db: Db, companyId: string, failedRuns: FailedRunProbe[]) {
+  if (failedRuns.length === 0) return [];
   // Run times reach this code in whole milliseconds, so "newer" means at least
   // one millisecond later, as comparing the two dates did.
   const failed = sql.join(
@@ -1133,7 +1144,7 @@ async function listFailedRunsWithNewerRun(
       or ${newerRunExists(sql`${runTaskId} = failed.issue_id and ${runIssueId} is null`)}
       or (failed.issue_id is null and ${newerRunExists(sql`coalesce(${runIssueId}, ${runTaskId}, '') = ''`)})
   `) as unknown as Array<{ id: string }>;
-  return new Set(rows.map((row) => row.id));
+  return rows.map((row) => row.id);
 }
 
 export function attentionService(db: Db, serviceOptions: AttentionServiceOptions = {}) {
