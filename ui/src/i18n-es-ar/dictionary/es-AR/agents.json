@@ -85,5 +85,12 @@
   "Save instructions": "Guardar las instrucciones",
   "Search agents": "Buscar agentes",
   "Search agents…": "Buscar agentes…",
-  "Setup prompt": "Prompt de configuración"
+  "Setup prompt": "Prompt de configuración",
+
+  "Target agent": "Agente destino",
+  "Use agent default": "Usar el valor por defecto del agente",
+  "Wake": "Despertar",
+  "Wake on demand": "Despertar a pedido",
+  "· agent": "· agente",
+  "— qualification pending": "— falta calificar"
 }

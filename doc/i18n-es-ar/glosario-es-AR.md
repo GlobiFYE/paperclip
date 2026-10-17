@@ -312,6 +312,53 @@ Dos moldes que se repiten en Configuración:
   Sandbox, Host, Driver, Logo, Plugins): no entran al diccionario. Una entrada
   que no cambia nada es ruido y encima suma superficie de sobretraducción.
 
+### Agregadas en CHA-27 (lote compartido: las 494 largas y las 987 cortas)
+
+El lote compartido es el que toca dos o más de las doce pantallas del alcance,
+así que estos términos son los que más se repiten en toda la app.
+
+| Inglés | es-AR | Nota |
+|---|---|---|
+| Workspace | Espacio de trabajo | «Workspaces» solo, cuando no entra → «Espacios» (ya venía del corte 1) |
+| Worktree / branch / commit / diff | worktree / branch / commit / diff | Términos de Git: quedan en inglés (§7) |
+| Runner | runner | Queda en inglés; «Runner Inspector» → «Inspector del runner» |
+| Trace / frame | trace / frame | Quedan en inglés, igual que en CHA-25 |
+| Header *(HTTP)* | Encabezado | «header» suelto es jerga; en una etiqueta de formulario no comunica |
+| Timeout | Tiempo de espera | «Timeout seconds» → «Segundos de espera» |
+| Adapter | Adaptador | Ya venía de §2 |
+| Composer | Redactor | El cuadro donde se escribe el mensaje |
+| Claim *(sobre un worktree)* | Reserva | «Worktree claimed by» → «Worktree reservado por» |
+| Dirty changes | Cambios sin commitear | «sin guardar» es otra cosa: están guardados, no commiteados |
+| Break-glass | De emergencia | «Reconcile anyway (break-glass)» → «Reconciliar igual (de emergencia)» |
+| Preset | Preajuste | |
+| Raw | Crudo | «Raw frames» → «Frames crudos» |
+| Redacted | Censurado | «Exact unredacted frame» → «Frame exacto sin censurar» |
+| Parked | En reserva | Concuerda con «Reserva» de `backlog` (§3) y evita el género |
+| Running | En curso | Mismo criterio: sirve para ejecución, servicio y agente sin género |
+| Manager *(de un agente)* | Jefe | «No manager» → «Sin jefe»; «Reports to» → «Reporta a» |
+| Parent / child *(tareas)* | Padre / hija | «Enable parent-child nesting» → «Activar el anidado padre-hija» |
+
+Tres reglas que salieron de este lote y valen para todo lo que venga:
+
+1. **`X by` es un verbo en pasado, no un participio.** Es la regla que ya estaba
+   en «Invited by → Invitó» y acá se aplica parejo: «Approved by» → «Aprobó»,
+   «Rejected by» → «Rechazó», «Proposed by» → «Propuso», «Resolved by» →
+   «Resolvió», «Withdrawn by» → «Retiró», «Connected by» → «Conectó». Esquiva
+   el género del sujeto, que el overlay no puede saber.
+2. **Las etiquetas de estado van en masculino** (§3: concuerdan con «estado»), y
+   cuando hay una forma sin género disponible se prefiere esa: «Running» → «En
+   curso», «Disconnected» → «Sin conexión», «Unassigned» → «Sin asignar»,
+   «Unavailable» → «No disponible».
+3. **Una cadena inglesa que necesita dos españoles distintos según la pantalla no
+   entra.** El ADR 0001 revisión 2 pide resolverla **por sitio** y ese mecanismo
+   todavía no existe en esta rama: el marcado de ADR 0002 emite `__tEs(texto)`
+   sin ninguna identidad del sitio, y el único canal que distingue —`tEs(clave,
+   inglés)`— cuesta una edición de upstream, con presupuesto cero. Las tres que
+   quedaron afuera por esto son `Open`, `Run` y `Comment`, y el motivo de cada
+   una está en [CHA-27](CHA-27-lote-compartidos.md). `Review` sí entró, como
+   sustantivo («Revisión»), porque se miraron sus sitios y los tres son
+   sustantivo.
+
 ## 8. Cadenas partidas y plurales contados
 
 Esto no es una regla de idioma: es cómo llega el texto al overlay, y define qué

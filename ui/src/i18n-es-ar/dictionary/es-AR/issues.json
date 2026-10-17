@@ -248,5 +248,23 @@
   "Sub-tasks completion progress": "Avance de las subtareas",
   "Submit response": "Enviar la respuesta",
   "Submitted summary": "Resumen enviado",
-  "Subtree is paused.": "El subárbol está en pausa."
+  "Subtree is paused.": "El subárbol está en pausa.",
+
+  "Task": "Tarea",
+  "Task controls": "Controles de la tarea",
+  "Task is paused.": "La tarea está en pausa.",
+  "Task outputs": "Salidas de la tarea",
+  "Task owner": "Dueño de la tarea",
+  "the task": "la tarea",
+  "Type your answer": "Escribí tu respuesta",
+  "Ultimately waiting on": "En última instancia espera a",
+  "Unassigned": "Sin asignar",
+  "updated this task": "actualizó esta tarea",
+  "Waiting on blockers": "Esperando los bloqueos",
+  "Withdrawn": "Retirado",
+  "Withdrawn by": "Retiró",
+  "Write a comment…": "Escribí un comentario…",
+  "Write an answer": "Escribí una respuesta",
+  "Write your answer": "Escribí tu respuesta",
+  "· blocks completion": "· bloquea la finalización"
 }

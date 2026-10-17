@@ -340,5 +340,10 @@
   "Secret binding": "Vínculo del secreto",
   "Show secret": "Ver el secreto",
   "Skip permissions": "Saltear los permisos",
-  "Source secret": "Secreto de origen"
+  "Source secret": "Secreto de origen",
+
+  "Tool permissions": "Permisos de las herramientas",
+  "user-secret key": "clave del secreto de usuario",
+  "· Always allowed": "· Siempre permitido",
+  "· Kubernetes sandbox": "· Sandbox de Kubernetes"
 }

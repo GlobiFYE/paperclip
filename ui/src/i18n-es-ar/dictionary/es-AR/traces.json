@@ -85,5 +85,9 @@
   "server-redacted by default": "el servidor lo censura por defecto",
   "Show raw response": "Ver la respuesta cruda",
   "Source-resolved": "Resuelto desde el origen",
-  "Source-resolved watchdog fold": "Plegado del watchdog resuelto desde el origen"
+  "Source-resolved watchdog fold": "Plegado del watchdog resuelto desde el origen",
+
+  "Surface": "Superficie",
+  "Withheld paths:": "Rutas retenidas:",
+  "· Observed": "· Observado"
 }

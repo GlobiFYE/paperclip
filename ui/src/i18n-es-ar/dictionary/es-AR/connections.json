@@ -409,5 +409,24 @@
   "Sign-in method": "Método de inicio de sesión",
   "sign-in…": "inicio de sesión…",
   "Start sign-in again": "Volver a empezar el inicio de sesión",
-  "Subscription": "Suscripción"
+  "Subscription": "Suscripción",
+
+  "Terminal fallback (macOS/Linux)": "Respaldo por terminal (macOS/Linux)",
+  "Test details": "Detalles de la prueba",
+  "the connection": "la conexión",
+  "Thinking effort": "Esfuerzo de pensamiento",
+  "To:": "Para:",
+  "Unverified server": "Servidor sin verificar",
+  "Use Connections for": "Usar Conexiones para",
+  "Use manual model": "Usar un modelo a mano",
+  "Use pool": "Usar el pool",
+  "Use saved login": "Usar el login guardado",
+  "View connection": "Ver la conexión",
+  "Waiting for sign-in": "Esperando el inicio de sesión",
+  "Warm session": "Sesión caliente",
+  "Webhook URL": "URL del webhook",
+  "Working directory (deprecated)": "Directorio de trabajo (obsoleto)",
+  "Your OAuth app": "Tu app de OAuth",
+  "Zapier MCP URL": "URL de MCP de Zapier",
+  "· Experimental pool": "· Pool experimental"
 }
