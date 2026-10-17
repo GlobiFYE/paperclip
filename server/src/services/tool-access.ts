@@ -3073,6 +3073,16 @@ async function lockManagedAppPolicies(client: ToolAccessMutationDb, companyId: s
   )).orderBy(toolPolicies.id).for("no key update");
 }
 
+async function lockToolAssignmentAgents(client: ToolAccessMutationDb, companyId: string, targets: ReadonlyArray<{ targetType: string; targetId: string }>) {
+  const allAgents = targets.some(target => target.targetType === "company" && target.targetId === companyId);
+  const ids = targets.filter(target => target.targetType === "agent").map(target => target.targetId);
+  if (!allAgents && !ids.length) return;
+  await client.select({ id: agents.id }).from(agents)
+    .where(and(eq(agents.companyId, companyId), sql`${agents.status} NOT IN ('pending_approval', 'terminated')`,
+      allAgents ? undefined : inArray(agents.id, ids)))
+    .orderBy(agents.id).for("no key update");
+}
+
 export async function lockToolConnectionRuntimeInputs(client: ToolAccessMutationDb, companyId: string, connectionId: string) {
   await client.select({ id: toolApplications.id }).from(toolApplications)
     .innerJoin(toolConnections, and(eq(toolConnections.applicationId, toolApplications.id), eq(toolConnections.companyId, toolApplications.companyId)))
@@ -5675,6 +5685,7 @@ export function toolAccessService(
     await lockManagedAppPolicies(dbClient, input.connection.companyId, input.connection.id);
     const createdProfile = !profile;
     const resetToRecommendedDefaults = !profile || profile.status !== "active";
+    if (resetToRecommendedDefaults) await lockToolAssignmentAgents(dbClient, input.connection.companyId, [{ targetType: "company", targetId: input.connection.companyId }]);
     if (!profile) {
       const [sameName] = await dbClient
         .select({ id: toolProfiles.id })
@@ -14058,6 +14069,11 @@ export function toolAccessService(
         )
         .limit(1).for("no key update");
       await lockManagedAppPolicies(tx, companyId, connection.id);
+      const existingBindings = existingProfile ? await tx.select().from(toolProfileBindings)
+        .where(and(eq(toolProfileBindings.companyId, companyId), eq(toolProfileBindings.profileId, existingProfile.id))) : [];
+      const existingInstalls = await tx.select().from(toolConnectionInstalls)
+        .where(and(eq(toolConnectionInstalls.companyId, companyId), eq(toolConnectionInstalls.connectionId, connection.id)));
+      await lockToolAssignmentAgents(tx, companyId, [...existingBindings, ...bindingInputs, ...existingInstalls]);
       // A renamed connection can leave its old profile name in use. Resolve
       // names against profiles too, including when finalizing an installed draft.
       const otherProfiles = await tx
@@ -14074,11 +14090,7 @@ export function toolAccessService(
       let profileId: string;
       if (existingProfile) {
         if (input.preserveExistingAccess) {
-          const priorBindings = await tx
-            .select()
-            .from(toolProfileBindings)
-            .where(eq(toolProfileBindings.profileId, existingProfile.id));
-          for (const prior of priorBindings)
+          for (const prior of existingBindings)
             if (
               !bindingInputs.some(
                 (binding) =>
@@ -14202,9 +14214,6 @@ export function toolAccessService(
       // These connectors expose one agent-access choice. Commit installation
       // reach and permission bindings together, including an empty selection.
       if (isRemoteMcpConnectorMethod(connection.config.sourceTemplateKey, connection.config.connectionMethodKey)) {
-        const existingInstalls = await tx.select().from(toolConnectionInstalls).where(and(
-          eq(toolConnectionInstalls.companyId, companyId), eq(toolConnectionInstalls.connectionId, connection.id),
-        ));
         const desired = new Map(bindingInputs.flatMap((binding) => binding.targetType === "company" || binding.targetType === "agent"
           ? [[`${binding.targetType}:${binding.targetId}`, { targetType: binding.targetType, targetId: binding.targetId }] as const] : []));
         const removed = existingInstalls.filter((install) => !desired.has(`${install.targetType}:${install.targetId}`));
@@ -18889,6 +18898,10 @@ export function toolAccessService(
             (install) => `${install.targetType}:${install.targetId}`,
           ),
         );
+        const bindings = await tx.select({ targetType: toolProfileBindings.targetType, targetId: toolProfileBindings.targetId })
+          .from(toolProfileBindings).innerJoin(toolProfiles, eq(toolProfiles.id, toolProfileBindings.profileId))
+          .where(and(eq(toolProfileBindings.companyId, connection.companyId), eq(toolProfiles.companyId, connection.companyId), eq(toolProfiles.profileKey, `app:${connection.id}`)));
+        await lockToolAssignmentAgents(tx, connection.companyId, [...existing, ...requested.values(), ...bindings]);
         const removals = existing.filter(
           (install) =>
             !requested.has(`${install.targetType}:${install.targetId}`),
@@ -19775,6 +19788,7 @@ export function toolAccessService(
       await tx.select({ id: toolProfiles.id }).from(toolProfiles)
         .where(and(eq(toolProfiles.companyId, existing.companyId), inArray(toolProfiles.id, [profileId, ...(input.reassignToProfileId ? [input.reassignToProfileId] : [])])))
         .orderBy(toolProfiles.id).for("update");
+      await lockToolAssignmentAgents(tx, existing.companyId, [{ targetType: "company", targetId: existing.companyId }]);
       if (input.force && input.reassignToProfileId) {
         throw badRequest(
           "Use either force or reassignToProfileId when deleting a tool profile, not both",

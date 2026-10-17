@@ -105,11 +105,17 @@ agents' assignments and has no credential values, grant details, or tool schemas
 The owning-plugin checks for the runtime reader apply to this field too.
 
 Migration 0354 records committed changes to every stored field used by this
-snapshot. Connection installation and profile binding edits, connection metadata,
-profile activation or removal, and connector feature switches invalidate company
-agent runtimes. Empty writes and changes to health bookkeeping do not. Multiple
+snapshot. Agent-targeted installation and profile binding edits invalidate only
+their old and new target agents. Company-targeted assignments invalidate company
+agent runtimes. Project, routine, issue, and gateway bindings are outside this
+snapshot and do not invalidate it. Connection metadata, profile activation or
+removal, and connector feature switches still use conservative company-wide
+invalidation. Empty writes and changes to health bookkeeping do not. Multiple
 assignment statements in one transaction coalesce to one update per agent.
 Journal writes and their triggering changes commit or roll back together.
+Company-wide invalidation remains synchronous: it locks eligible company agents
+in order and journals one update per agent. Its work grows with company size;
+there is no fanout ceiling or cross-transaction mutation quota.
 
 The reader orders and deduplicates assignments. It rejects more than 512
 connections or 128 active profiles with status 422 instead of returning a partial
