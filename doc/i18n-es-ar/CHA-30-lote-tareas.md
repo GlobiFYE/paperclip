@@ -325,19 +325,25 @@ la config es-AR son esos dos archivos corriendo de verdad. Ninguna corrida
 necesitó `--no-file-parallelism`.
 
 **`tsc` da 0 errores, no los 777 de la línea base de CHA-27.** No es nuestro
-mérito ni nuestro cambio: en este worktree ahora existe `packages/shared/dist` y
-`ui/node_modules` se tocó a las 21:09 de hoy, o sea que alguien construyó los
-paquetes del workspace. Lo anoto porque **la nota de los «777 errores» quedó
-vieja** y porque un `tsc` limpio hace más fácil medir el próximo cambio.
+cambio: es [CHA-35](CHA-35-build-en-el-worktree.md), que construyó los paquetes
+del workspace en este worktree mientras corría esta tarea (`packages/shared/dist`
+existe y `ui/node_modules` se tocó a las 21:09). Lo anoto porque **la nota de los
+«777 errores» quedó vieja** y porque un `tsc` limpio hace más fácil medir el
+próximo cambio.
 
 ### Cero archivos de upstream
 
-```sh
-$ git diff --name-only 2a50d3489..HEAD
-doc/i18n-es-ar/CHA-30-lote-tareas.md
-doc/i18n-es-ar/glosario-es-AR.md
-ui/src/i18n-es-ar/dictionary/es-AR/*.json
-```
+Los cuatro commits de esta tarea, con sus archivos:
+
+| commit | archivos |
+| --- | --- |
+| `d479f5dac` | 5 JSON de `dictionary/es-AR/` |
+| `b96ca5b90` | 5 JSON de `dictionary/es-AR/` |
+| `a1be47d5d` | 6 JSON de `dictionary/es-AR/` |
+| `0201b5de2` | `issues.json`, `glosario-es-AR.md`, esta bitácora |
+
+Nada fuera de `ui/src/i18n-es-ar/dictionary/es-AR/` y `doc/i18n-es-ar/`.
+`500bd7604` (CHA-35) cayó en el medio y es de otro rol: no se tocó.
 
 `pnpm-lock.yaml` intacto. Presupuesto de ediciones de upstream: **12 archivos y
 36 `tEs(`, sin cambio. Gastado: 0.**
