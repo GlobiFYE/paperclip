@@ -310,5 +310,13 @@
   "When enabled, Paperclip persists a device key during onboarding so pairing approvals remain stable across runs.": "Cuando está activado, Paperclip guarda una clave de dispositivo durante el onboarding para que las aprobaciones de emparejamiento se mantengan estables entre ejecuciones.",
   "You can change this later in Settings > General.": "Esto lo podés cambiar después en Configuración > General.",
   "to keep this vote and future votes local.": "para que este voto y los próximos queden locales.",
-  "to share this vote and future voted AI outputs. Choose": "para compartir este voto y las próximas salidas de IA que votes. Elegí"
+  "to share this vote and future voted AI outputs. Choose": "para compartir este voto y las próximas salidas de IA que votes. Elegí",
+
+  "Allowed secrets": "Secretos permitidos",
+  "Approve binding": "Aprobar el vínculo",
+  "Bound to": "Vinculado a",
+  "Bypass sandbox": "Saltear el sandbox",
+  "Create & bind": "Crear y vincular",
+  "Create new secret": "Crear un secreto nuevo",
+  "Create secret": "Crear el secreto"
 }

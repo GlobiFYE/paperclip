@@ -29,5 +29,16 @@
   "This provider operation emitted no canonical PRP events.": "Esta operación del proveedor no emitió ningún evento canónico de PRP.",
   "in the raw response": "en la respuesta cruda",
   "more rows in the raw response": "más filas en la respuesta cruda",
-  "was model-authored tool payload data, not a Codex app-server event. It was normalized into a non-blocking verification caveat.": "era data del payload de herramienta escrita por el modelo, no un evento del app-server de Codex. Se normalizó como una advertencia de verificación que no bloquea."
+  "was model-authored tool payload data, not a Codex app-server event. It was normalized into a non-blocking verification caveat.": "era data del payload de herramienta escrita por el modelo, no un evento del app-server de Codex. Se normalizó como una advertencia de verificación que no bloquea.",
+
+  "All directions": "Todas las direcciones",
+  "All mappings": "Todos los mapeos",
+  "All native methods": "Todos los métodos nativos",
+  "All PRP types": "Todos los tipos de PRP",
+  "Canonical event JSON": "JSON del evento canónico",
+  "Canonical PRP events": "Eventos canónicos de PRP",
+  "capture was off": "la captura estaba apagada",
+  "Client → provider": "Cliente → proveedor",
+  "Collapse JSON value": "Contraer el valor del JSON",
+  "Delete trace": "Eliminar el trace"
 }

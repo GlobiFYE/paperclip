@@ -151,5 +151,9 @@
   "Paperclip couldn’t check the retained connection. The retained connection was not changed.": "Paperclip no pudo verificar la conexión retenida. La conexión retenida no se cambió.",
   "Paperclip couldn’t load the provider details needed to restore this connection. The retained connection was not changed.": "Paperclip no pudo cargar los datos del proveedor que hacen falta para restaurar esta conexión. La conexión retenida no se cambió.",
   "Unable to load task preview.": "No se pudo cargar la vista previa de la tarea.",
-  "Workspaces failed to load.": "No se pudieron cargar los espacios de trabajo."
+  "Workspaces failed to load.": "No se pudieron cargar los espacios de trabajo.",
+
+  "Agent resume failed": "No se pudo reanudar el agente",
+  "Couldn't reach": "No se pudo llegar a",
+  "Couldn't retry now": "No se pudo reintentar ahora"
 }

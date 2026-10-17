@@ -8,5 +8,8 @@
   "No actions match “": "Ninguna acción coincide con “",
   "Recorded by Paperclip — entries can't be edited. Sensitive values are never stored.": "Lo registra Paperclip — las entradas no se pueden editar. Los valores sensibles no se guardan nunca.",
   "The agent audit log gives you a searchable, exportable record of everything your agents did — every comment, task change, approval, and run — with the responsible person for each action. Ask an administrator to grant you the": "El registro de auditoría de agentes te da un historial buscable y exportable de todo lo que hicieron tus agentes —cada comentario, cambio de tarea, aprobación y ejecución— con la persona responsable de cada acción. Pedile a un administrador que te dé el",
-  "permission to view it.": "permiso para verlo."
+  "permission to view it.": "permiso para verlo.",
+
+  "Audit activity": "Actividad de la auditoría",
+  "Audit log": "Log de auditoría"
 }

@@ -43,5 +43,22 @@
   "What the badges mean": "Qué significan los badges",
   "and cannot be edited by the CE single-boundary editor.": "y no se puede editar con el editor de límite único de CE.",
   "e.g. VP of Engineering": "por ejemplo, VP de Ingeniería",
-  "in your roster, badged": "en tu plantel, con el badge"
+  "in your roster, badged": "en tu plantel, con el badge",
+
+  "Agent Actions": "Acciones del agente",
+  "Agent ID": "ID del agente",
+  "Agent instructions": "Instrucciones del agente",
+  "Agent instructions file": "Archivo de instrucciones del agente",
+  "Agent name": "Nombre del agente",
+  "Agent scoped": "Por agente",
+  "All agents": "Todos los agentes",
+  "Allowed agents": "Agentes permitidos",
+  "Any agent": "Cualquier agente",
+  "Ask user questions": "Hacerle preguntas al usuario",
+  "Bootstrap prompt (legacy)": "Prompt inicial (heredado)",
+  "Choose agents": "Elegí los agentes",
+  "Close agent setup": "Cerrar la configuración del agente",
+  "Configure agent": "Configurar el agente",
+  "Copy Agent ID": "Copiar el ID del agente",
+  "Delegated agents": "Agentes delegados"
 }
