@@ -1,4 +1,5 @@
 import type { InboxTab } from "./inbox";
+import { tEs } from "@/i18n-es-ar/overlay";
 
 /**
  * The single view registry behind the merged Tasks surface (PAP-670).
@@ -53,7 +54,7 @@ export const TASK_VIEW_GROUPS: TaskViewGroup[] = [
     views: [
       { key: "mine", label: "Mine", surface: "inbox", inboxTab: "mine", hint: "Assigned to you or waiting on you" },
       { key: "unread", label: "Unread", surface: "inbox", inboxTab: "unread", hint: "Tasks you touched with new activity" },
-      { key: "blocked", label: "Blocked", surface: "inbox", inboxTab: "blocked", hint: "Blocked tasks, grouped by blocker" },
+      { key: "blocked", label: tEs("navigation.taskViews.blocked", "Blocked"), surface: "inbox", inboxTab: "blocked", hint: "Blocked tasks, grouped by blocker" },
       { key: "recent", label: "Recent", surface: "inbox", inboxTab: "recent", hint: "Everything you touched lately" },
       { key: "everything", label: "Everything", surface: "inbox", inboxTab: "all", hint: "Tasks, approvals, failed runs and join requests" },
     ],
@@ -62,9 +63,9 @@ export const TASK_VIEW_GROUPS: TaskViewGroup[] = [
     label: "Organization",
     views: [
       { key: "all", label: "All tasks", surface: "issues", statuses: [], hint: "Every task in the organization" },
-      { key: "active", label: "Active", surface: "issues", statuses: ["todo", "in_progress", "in_review", "blocked"], hint: "Open tasks, running or not" },
+      { key: "active", label: tEs("navigation.taskViews.active", "Active"), surface: "issues", statuses: ["todo", "in_progress", "in_review", "blocked"], hint: "Open tasks, running or not" },
       { key: "backlog", label: "Backlog", surface: "issues", statuses: ["backlog"], hint: "Not started yet" },
-      { key: "done", label: "Done", surface: "issues", statuses: ["done", "cancelled"], hint: "Completed and cancelled" },
+      { key: "done", label: tEs("navigation.taskViews.done", "Done"), surface: "issues", statuses: ["done", "cancelled"], hint: "Completed and cancelled" },
     ],
   },
 ];

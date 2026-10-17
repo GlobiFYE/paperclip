@@ -1,0 +1,6 @@
+{
+  "Language": "Idioma",
+  "Interface language": "Idioma de la interfaz",
+  "Choose the language of the Paperclip interface. The page reloads so the new language reaches every screen.": "Elegí el idioma de la interfaz de Paperclip. La página se recarga para que el idioma nuevo llegue a todas las pantallas.",
+  "The interface as upstream ships it.": "La interfaz como la entrega upstream."
+}

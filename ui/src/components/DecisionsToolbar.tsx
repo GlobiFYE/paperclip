@@ -16,12 +16,13 @@ import { cn } from "../lib/utils";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
+import { tEs } from "@/i18n-es-ar/overlay";
 
 const SEVERITY_LABELS: Record<string, string> = {
-  critical: "Critical",
-  high: "High",
-  medium: "Medium",
-  low: "Low",
+  critical: tEs("issues.priority.critical", "Critical"),
+  high: tEs("issues.priority.high", "High"),
+  medium: tEs("issues.priority.medium", "Medium"),
+  low: tEs("issues.priority.low", "Low"),
 };
 
 interface DecisionsToolbarProps {

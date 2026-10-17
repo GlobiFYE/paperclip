@@ -8,6 +8,7 @@ import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { useCompany } from "../context/CompanyContext";
 import { queryKeys } from "../lib/queryKeys";
 import { InboxAgentPolicyControl } from "@/components/InboxAgentPolicyControl";
+import { LanguageSelector } from "@/i18n-es-ar/LanguageSelector";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -269,6 +270,8 @@ export function ProfileSettings() {
             </Button>
           </div>
         </form>
+
+        <LanguageSelector />
 
         <InboxAgentPolicyControl companyId={selectedCompanyId} />
       </section>

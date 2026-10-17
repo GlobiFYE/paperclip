@@ -1,0 +1,25 @@
+{
+  "navigation.sidebar.statusCards": "Tarjetas de estado",
+  "navigation.sidebar.orgSection": "Empresa",
+  "navigation.sidebar.orgChart": "Organigrama",
+
+  "navigation.taskViews.blocked": "Bloqueadas",
+  "navigation.taskViews.done": "Terminadas",
+  "navigation.taskViews.active": "Activas",
+
+  "issues.status.done": "Terminada",
+  "issues.status.blocked": "Bloqueada",
+
+  "issues.filter.all": "Todas",
+  "issues.filter.active": "Activas",
+  "issues.filter.done": "Terminadas",
+
+  "issues.priority.critical": "Crítica",
+  "issues.priority.high": "Alta",
+  "issues.priority.medium": "Media",
+  "issues.priority.low": "Baja",
+
+  "agents.filter.all": "Todos",
+  "agents.filter.active": "Activos",
+  "agents.filter.paused": "Pausados"
+}

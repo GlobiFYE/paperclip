@@ -1,4 +1,5 @@
 import type { DashboardRunActivityDay, HeartbeatRun } from "@paperclipai/shared";
+import { tEs } from "@/i18n-es-ar/overlay";
 
 /* ---- Utilities ---- */
 
@@ -240,8 +241,8 @@ const statusLabels: Record<string, string> = {
   todo: "To Do",
   in_progress: "In Progress",
   in_review: "In Review",
-  done: "Done",
-  blocked: "Blocked",
+  done: tEs("issues.status.done", "Done"),
+  blocked: tEs("issues.status.blocked", "Blocked"),
   cancelled: "Cancelled",
   backlog: "Backlog",
 };

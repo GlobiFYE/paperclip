@@ -4,12 +4,13 @@ import { cn } from "../lib/utils";
 import { priorityColor, priorityColorDefault } from "../lib/status-colors";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
+import { tEs } from "@/i18n-es-ar/overlay";
 
 const priorityConfig: Record<string, { icon: typeof ArrowUp; color: string; label: string }> = {
-  critical: { icon: AlertTriangle, color: priorityColor.critical ?? priorityColorDefault, label: "Critical" },
-  high: { icon: ArrowUp, color: priorityColor.high ?? priorityColorDefault, label: "High" },
-  medium: { icon: Minus, color: priorityColor.medium ?? priorityColorDefault, label: "Medium" },
-  low: { icon: ArrowDown, color: priorityColor.low ?? priorityColorDefault, label: "Low" },
+  critical: { icon: AlertTriangle, color: priorityColor.critical ?? priorityColorDefault, label: tEs("issues.priority.critical", "Critical") },
+  high: { icon: ArrowUp, color: priorityColor.high ?? priorityColorDefault, label: tEs("issues.priority.high", "High") },
+  medium: { icon: Minus, color: priorityColor.medium ?? priorityColorDefault, label: tEs("issues.priority.medium", "Medium") },
+  low: { icon: ArrowDown, color: priorityColor.low ?? priorityColorDefault, label: tEs("issues.priority.low", "Low") },
 };
 
 const allPriorities = ["critical", "high", "medium", "low"];

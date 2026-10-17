@@ -9,6 +9,7 @@ import type {
   AttentionSourceKind,
   AttentionWorkspaceRef,
 } from "@paperclipai/shared";
+import { tEs } from "@/i18n-es-ar/overlay";
 
 export type AttentionListOptions = AttentionFeedQuery;
 
@@ -74,10 +75,10 @@ interface SeverityStyle {
 }
 
 const SEVERITY_STYLE: Record<AttentionSeverity, SeverityStyle> = {
-  critical: { accent: "bg-red-500", dot: "bg-red-500", label: "Critical" },
-  high: { accent: "bg-orange-500", dot: "bg-orange-500", label: "High" },
-  medium: { accent: "bg-yellow-500", dot: "bg-yellow-500", label: "Medium" },
-  low: { accent: "bg-blue-500", dot: "bg-blue-500", label: "Low" },
+  critical: { accent: "bg-red-500", dot: "bg-red-500", label: tEs("issues.priority.critical", "Critical") },
+  high: { accent: "bg-orange-500", dot: "bg-orange-500", label: tEs("issues.priority.high", "High") },
+  medium: { accent: "bg-yellow-500", dot: "bg-yellow-500", label: tEs("issues.priority.medium", "Medium") },
+  low: { accent: "bg-blue-500", dot: "bg-blue-500", label: tEs("issues.priority.low", "Low") },
 };
 
 export function severityStyle(severity: AttentionSeverity): SeverityStyle {
@@ -834,10 +835,10 @@ export function attentionDateBucket(activityAt: string, now: number): DateBucket
 }
 
 const SEVERITY_LABEL: Record<AttentionSeverity, string> = {
-  critical: "Critical",
-  high: "High",
-  medium: "Medium",
-  low: "Low",
+  critical: tEs("issues.priority.critical", "Critical"),
+  high: tEs("issues.priority.high", "High"),
+  medium: tEs("issues.priority.medium", "Medium"),
+  low: tEs("issues.priority.low", "Low"),
 };
 
 /**
