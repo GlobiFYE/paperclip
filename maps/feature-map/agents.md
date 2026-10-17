@@ -48,7 +48,7 @@ Preconditions: follow the [baseline](./README.md#before-driving-a-journey). Use 
 
 Automated: [new agent page](../../ui/src/pages/NewAgent.test.tsx) and [configuration form](../../ui/src/components/AgentConfigForm.render.test.tsx) cover mocked UI behavior.
 
-Manual: Hire an agent with a distinct name and role. Complete any required approval, reload the roster, and open its configuration. Confirm manager, adapter, and model persisted; run a small task to prove execution readiness.
+Manual: Hire an agent with a distinct name and role. Complete any required approval, reload the roster, and open its configuration. Confirm manager, adapter, and model persisted; run a small task to prove execution readiness. On the creation screen, preparation and verification must show progress and keep task assignment disabled. After readiness, assignment becomes available. A failed verification must show its error and offer Retry. The task dialog must show setup progress instead of pause/resume guidance for a preparing or verifying agent.
 
 For a new Codex hire, choose the Codex harness. Automatic selection uses Paperclip
 Runner on a qualified selected target; Advanced offers an explicit Legacy runner
