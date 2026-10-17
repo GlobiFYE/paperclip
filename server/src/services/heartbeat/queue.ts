@@ -198,7 +198,7 @@ export interface HeartbeatQueueDependencies extends Pick<HeartbeatRetryDependenc
   getSchedulingSuppression: () => Promise<{ suppressed: boolean; reason: "worktree_instance" | "database_restore_in_progress" | "task_drain" | null }>;
   canStartNewExternalBotWork: (agent: typeof agents.$inferSelect) => Promise<boolean>;
   executeRun: (runId: string) => Promise<void>;
-  releaseIssueExecutionAndPromote: (run: Pick<HeartbeatRun, "id" | "companyId">, options?: { suppressImmediateRecovery?: boolean; deferredPostCommitEffects?: WakeQueuePostCommitEffect[] }) => Promise<unknown>;
+  releaseIssueExecutionAndPromote: (run: Pick<HeartbeatRun, "id" | "companyId">, options?: { suppressImmediateRecovery?: boolean; resumeStrandedQueue?: boolean; deferredPostCommitEffects?: WakeQueuePostCommitEffect[] }) => Promise<unknown>;
   applyWakeQueuePostCommitEffects: (effects: WakeQueuePostCommitEffect[]) => Promise<void>;
   publishRunLifecyclePluginEvent: (run: HeartbeatRun) => void;
   cancelRunInternal: (runId: string, reason?: string, options?: { errorCode?: string }) => Promise<unknown>;
@@ -1775,8 +1775,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
     const strandedQueues = await db.select({ wake: agentWakeupRequests })
       .from(agentWakeupRequests)
       .innerJoin(issues, and(eq(issues.companyId, agentWakeupRequests.companyId),
-        sql`${issues.id}::text = ${agentWakeupRequests.payload}->>'issueId'`,
-        eq(issues.assigneeAgentId, agentWakeupRequests.agentId)))
+        sql`${issues.id}::text = ${agentWakeupRequests.payload}->>'issueId'`))
       .innerJoin(companies, and(eq(companies.id, issues.companyId), eq(companies.status, "active")))
       .where(and(eq(agentWakeupRequests.status, "deferred_issue_execution"),
         isNull(issues.executionRunId),
@@ -1785,21 +1784,27 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
           sql`${agentWakeupRequests.payload} #> '{_paperclipWakeContext,wakeCommentIds}' <> '[]'::jsonb`,
         ), sql`${agentWakeupRequests.payload}->>'mutation' = 'interaction'`),
         sql`${agentWakeupRequests.payload}->'queuedCommentInterrupt' is null`,
+        sql`NOT EXISTS (SELECT 1 FROM heartbeat_runs live_issue_run
+          WHERE live_issue_run.company_id = ${issues.companyId}
+            AND (live_issue_run.context_snapshot->>'issueId' = ${issues.id}::text
+              OR live_issue_run.native_issue_id = ${issues.id})
+            AND live_issue_run.status IN ('queued', 'running', 'scheduled_retry'))`,
         cutoff ? gte(agentWakeupRequests.requestedAt, cutoff) : undefined))
       .orderBy(asc(agentWakeupRequests.updatedAt)).limit(50);
     for (const { wake } of strandedQueues) {
       if (!queuedCommentIdsFromWakePayload(wake.payload).length &&
           !await readQueuedInteractionResponse(db, wake.companyId, String(wake.payload?.issueId), wake.payload)) continue;
       const [latest] = await db.select().from(heartbeatRuns).where(and(
-        eq(heartbeatRuns.companyId, wake.companyId), eq(heartbeatRuns.agentId, wake.agentId),
+        eq(heartbeatRuns.companyId, wake.companyId),
         sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${String(wake.payload?.issueId)}`,
+        or(isNull(heartbeatRuns.nativeIssueId), sql`${heartbeatRuns.nativeIssueId}::text = ${String(wake.payload?.issueId)}`),
       )).orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id)).limit(1);
       await db.update(agentWakeupRequests).set({ updatedAt: new Date() }).where(and(
         eq(agentWakeupRequests.id, wake.id), eq(agentWakeupRequests.status, "deferred_issue_execution"),
       ));
-      if (!latest || !isHeartbeatRunTerminalStatus(latest.status)) continue;
+      if (!latest || !latest.finishedAt || !isHeartbeatRunTerminalStatus(latest.status)) continue;
       if (latest.runtimeMode === "native" && typeof wake.payload?.dotAssignmentFollowUp === "string") {
-        await releaseIssueExecutionAndPromote(latest, { suppressImmediateRecovery: true }).catch(err => {
+        await releaseIssueExecutionAndPromote(latest, { suppressImmediateRecovery: true, resumeStrandedQueue: true }).catch(err => {
           logger.warn({ err, queueId: wake.id }, "failed to promote unread Dot comment after recovery");
         });
         continue;
@@ -1812,7 +1817,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
           logger.warn({ err, queueId: wake.id }, "failed to deliver saved legacy comment after recovery stopped");
         });
       }
-      await releaseIssueExecutionAndPromote(latest, { suppressImmediateRecovery: true }).catch(err => {
+      await releaseIssueExecutionAndPromote(latest, { suppressImmediateRecovery: true, resumeStrandedQueue: true }).catch(err => {
         logger.warn({ err, queueId: wake.id }, "failed to promote stranded legacy comments");
       });
     }

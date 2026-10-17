@@ -175,6 +175,59 @@ describeEmbeddedPostgres("wake-queue postgres adapter", () => {
     return id;
   }
 
+  it.each(["queued", "running", "scheduled_retry", "cancelled"])("preserves a stranded queue when another agent has a newer %s turn", async status => {
+    const companyId = await seedCompany();
+    const agentId = await seedAgent({ companyId });
+    const otherAgentId = await seedAgent({ companyId });
+    const issueId = await seedIssue({ companyId, assigneeAgentId: agentId });
+    const runId = await seedRun({ companyId, agentId, status: "succeeded", contextSnapshot: { issueId } });
+    await db.update(heartbeatRuns).set({ finishedAt: new Date() }).where(eq(heartbeatRuns.id, runId));
+    await seedRun({ companyId, agentId: otherAgentId, status, contextSnapshot: { issueId } });
+    const wakeId = await seedDeferredWake({ companyId, agentId: otherAgentId, issueId });
+    let drained = false;
+    await createPostgresWakeQueueAdapter(db, stubDeps).withIssueExecutionLock(
+      { companyId, runId, now: new Date(), resumeStrandedQueue: true },
+      async () => { drained = true; return { outcome: { kind: "released" }, postCommitEffects: [] }; },
+    );
+    expect(drained).toBe(false);
+    expect((await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeId)))[0])
+      .toMatchObject({ status: "deferred_issue_execution", runId: null });
+  });
+
+  it("ignores a foreign company's run when rechecking a stranded queue", async () => {
+    const companyId = await seedCompany();
+    const foreignCompanyId = await seedCompany();
+    const agentId = await seedAgent({ companyId });
+    const foreignAgentId = await seedAgent({ companyId: foreignCompanyId });
+    const issueId = await seedIssue({ companyId, assigneeAgentId: agentId });
+    const runId = await seedRun({ companyId, agentId, status: "succeeded", contextSnapshot: { issueId } });
+    await db.update(heartbeatRuns).set({ finishedAt: new Date() }).where(eq(heartbeatRuns.id, runId));
+    await seedRun({ companyId: foreignCompanyId, agentId: foreignAgentId, status: "running", contextSnapshot: { issueId } });
+    let drained = false;
+    await createPostgresWakeQueueAdapter(db, stubDeps).withIssueExecutionLock(
+      { companyId, runId, now: new Date(), resumeStrandedQueue: true },
+      async () => { drained = true; return { outcome: { kind: "released" }, postCommitEffects: [] }; },
+    );
+    expect(drained).toBe(true);
+  });
+
+  it.each(["unfinished", "running"])("does not drain a stranded queue through an %s source", async kind => {
+    const companyId = await seedCompany();
+    const agentId = await seedAgent({ companyId });
+    const issueId = await seedIssue({ companyId, assigneeAgentId: agentId });
+    const runId = await seedRun({ companyId, agentId, status: kind === "running" ? "running" : "succeeded", contextSnapshot: { issueId } });
+    if (kind === "running") await db.update(heartbeatRuns).set({ finishedAt: new Date() }).where(eq(heartbeatRuns.id, runId));
+    const wakeId = await seedDeferredWake({ companyId, agentId, issueId });
+    let drained = false;
+    await createPostgresWakeQueueAdapter(db, stubDeps).withIssueExecutionLock(
+      { companyId, runId, now: new Date(), resumeStrandedQueue: true },
+      async () => { drained = true; return { outcome: { kind: "released" }, postCommitEffects: [] }; },
+    );
+    expect(drained).toBe(false);
+    expect((await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeId)))[0])
+      .toMatchObject({ status: "deferred_issue_execution", runId: null });
+  });
+
   it.each([
     "completed", "multiple_comments", "repeated_reference", "parent_reference", "mixed_issue_references", "mixed_foreign_references", "mixed_unknown_references", "no_comments", "missing_comment",
     "human_comment", "other_run_comment", "foreign_comment", "other_issue_comment", "deleted_comment",

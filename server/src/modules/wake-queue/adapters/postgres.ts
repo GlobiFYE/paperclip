@@ -1051,6 +1051,9 @@ export function createPostgresWakeQueueAdapter(db: Db, deps: WakeQueuePostgresAd
           throw new Error(`wake-queue: run ${input.runId} was not found while releasing issue execution`);
         }
         const runSnapshot = toRunSnapshot(run);
+        if (input.resumeStrandedQueue && (!run.finishedAt || !["succeeded", "failed", "cancelled", "timed_out", "interrupted"].includes(run.status))) {
+          return { outcome: { kind: "released" }, postCommitEffects: [], run: runSnapshot };
+        }
         const contextIssueId = readNonEmptyString(parseObject(run.contextSnapshot).issueId);
 
         // Lock the context issue (if any) and every issue that still references this
@@ -1159,11 +1162,14 @@ export function createPostgresWakeQueueAdapter(db: Db, deps: WakeQueuePostgresAd
         // agent's review participation retains its separate recovery path.
         const [successor] = await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(and(
           eq(heartbeatRuns.companyId, input.companyId),
-          eq(heartbeatRuns.agentId, run.agentId),
-          sql`${heartbeatRuns.id} <> ${run.id}`,
+          input.resumeStrandedQueue ? undefined : eq(heartbeatRuns.agentId, run.agentId),
+          input.resumeStrandedQueue ? undefined : sql`${heartbeatRuns.id} <> ${run.id}`,
           or(eq(heartbeatRuns.nativeIssueId, issueRow.id),
             sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${issueRow.id}`),
-          inArray(heartbeatRuns.status, ["queued", "running", "scheduled_retry"]),
+          or(inArray(heartbeatRuns.status, ["queued", "running", "scheduled_retry"]),
+            input.resumeStrandedQueue ? sql`(${heartbeatRuns.createdAt}, ${heartbeatRuns.id}) > (
+              SELECT source.created_at, source.id FROM heartbeat_runs source
+              WHERE source.company_id = ${input.companyId} AND source.id = ${run.id})` : undefined),
         )).limit(1);
         if (successor) return { outcome: { kind: "released" }, postCommitEffects: [], run: runSnapshot };
 
