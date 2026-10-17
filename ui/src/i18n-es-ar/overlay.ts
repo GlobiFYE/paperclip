@@ -38,6 +38,8 @@ type Dict = Record<string, string>;
 interface Layer {
   /** Cadena inglesa exacta → traducción. */
   literals: Map<string, string>;
+  /** Forma estática con huecos (`"Invite people to {0}"`) → traducción (§7.5). */
+  formats: Map<string, string>;
   /** Clave punteada → traducción (el escape de §7.5). */
   explicit: Map<string, string>;
   patterns: readonly Pattern[];
@@ -45,15 +47,24 @@ interface Layer {
   memo: Map<string, string>;
 }
 
+/** Una clave es de formato si tiene un hueco numerado (ADR 0002 §7.5). */
+const FORMAT_KEY = /\{\d+\}/;
+
 function layer(areas: readonly Dict[], explicit: Dict, patterns: readonly Pattern[]): Layer {
   const literals = new Map<string, string>();
+  const formats = new Map<string, string>();
   for (const area of areas) {
     for (const [english, translated] of Object.entries(area)) {
-      literals.set(english, translated);
+      // Los formatos viven en los mismos archivos de área que los literales, así
+      // que no hay archivo nuevo ni forma nueva para el Traductor: se separan
+      // acá, por la clave.
+      if (FORMAT_KEY.test(english)) formats.set(english, translated);
+      else literals.set(english, translated);
     }
   }
   return {
     literals,
+    formats,
     explicit: new Map(Object.entries(explicit)),
     patterns,
     memo: new Map(),
@@ -175,8 +186,9 @@ let cached: Active | undefined;
  * cualquiera con el navegador en español —y sin selector para volver, porque
  * el selector también se esconde cuando el overlay no está.
  *
- * El "apagado" no se cachea: en los tests el shim se importa después del
- * overlay, y cachear ahí dejaría el idioma clavado en inglés.
+ * El "apagado" no se cachea: en los tests `markOverlayInstalled()` se llama
+ * después de importar el overlay, y cachear ahí dejaría el idioma clavado en
+ * inglés.
  */
 function active(): Active {
   if (cached) return cached;
@@ -192,13 +204,46 @@ export function activeUiLocale(): UiLocale {
 }
 
 /**
- * Lo que llama el shim de JSX para cada cadena que está a punto de llegar al
- * DOM. En inglés es la identidad y no cuesta una sola búsqueda.
+ * Lo que el marcado deja en cada sitio de texto del código fuente (ADR 0002).
+ * En inglés es la identidad y no cuesta una sola búsqueda.
+ *
+ * Acepta cualquier valor y devuelve lo que no sea cadena sin tocar: el canal de
+ * declaraciones envuelve retornos, que pueden no ser cadenas —`statusLabel`
+ * devuelve un `.replace()` y `environmentDeleteBlockMessage` devuelve `null`.
  */
-export function translate(value: string): string {
+export function translate<T>(value: T): T {
+  if (typeof value !== "string") return value;
   const { locale, chain } = active();
   if (chain.length === 0) return value;
-  return lookup(value, locale);
+  return lookup(value, locale) as unknown as T;
+}
+
+/**
+ * Formatos (ADR 0002 §7.5). La clave es la **forma estática** de la plantilla,
+ * que es lo único que el compilador vio escrito; los valores interpolados se
+ * pegan después y **nunca** pasan por el diccionario.
+ *
+ * ```tsx
+ * <p>{`Invite people to ${company}`}</p>
+ * // marcado:  __tEsFmt(["Invite people to ", ""], [company])
+ * // clave:    "Invite people to {0}"  →  "Invitar gente a {0}"
+ * ```
+ *
+ * Es lo que reemplaza a `patterns.ts`: un patrón anclado que corre contra
+ * cualquier cadena del runtime vuelve traducibles infinitas cadenas de usuario;
+ * un formato sólo puede pegar donde el código escribió esa plantilla.
+ */
+export function formatted(shape: readonly string[], values: readonly unknown[]): string {
+  const raw = () =>
+    shape.map((s, i) => s + (i < values.length ? String(values[i]) : "")).join("");
+  const { chain } = active();
+  if (chain.length === 0) return raw();
+  const key = shape.map((s, i) => (i < shape.length - 1 ? `${s}{${i}}` : s)).join("");
+  for (const locale of chain) {
+    const tpl = LAYERS[locale].formats.get(key);
+    if (tpl !== undefined) return tpl.replace(/\{(\d+)\}/g, (_, i) => String(values[Number(i)] ?? ""));
+  }
+  return raw();
 }
 
 /**
@@ -216,11 +261,9 @@ export function tEs(key: string, english: string): string {
 }
 
 /**
- * Lo llama `jsx-runtime.ts` al cargarse. Ese módulo sólo se carga cuando el
- * plugin de Vite redirige `react/jsx-runtime`, o sea en el build es-AR.
- *
- * La bandera de build ya alcanza en el navegador; esto además cubre los tests,
- * donde el shim se importa a mano sin pasar por el plugin.
+ * Enciende el overlay a mano. La bandera de build alcanza en el navegador y en
+ * cualquier build que pase por el plugin; **su único llamador son los tests**,
+ * que corren sin plugin (antes era el shim de JSX, que ADR 0002 borró).
  */
 export function markOverlayInstalled(): void {
   installed = true;
@@ -228,7 +271,7 @@ export function markOverlayInstalled(): void {
 
 /**
  * Si el overlay está en el bundle. El selector de idioma se esconde cuando no
- * lo está, para no ofrecer un control muerto en el build en inglés.
+ * lo está, para no ofrecer un control muerto en el build de upstream.
  */
 export function isOverlayInstalled(): boolean {
   return OVERLAY_IN_BUNDLE || installed;
@@ -241,12 +284,18 @@ export function clearOverlayMemo(): void {
   }
 }
 
-/** Sólo para los tests: las entradas crudas de una capa. */
+/** Sólo para los tests y el reporte de §8/fase 3: las entradas crudas de una capa. */
 export function layerEntries(locale: OverlayLocale): {
   literals: ReadonlyMap<string, string>;
+  formats: ReadonlyMap<string, string>;
   explicit: ReadonlyMap<string, string>;
   patterns: readonly Pattern[];
 } {
   const target = LAYERS[locale];
-  return { literals: target.literals, explicit: target.explicit, patterns: target.patterns };
+  return {
+    literals: target.literals,
+    formats: target.formats,
+    explicit: target.explicit,
+    patterns: target.patterns,
+  };
 }

@@ -10,22 +10,27 @@
  * una recarga del navegador.
  */
 
-import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { STORAGE_KEY } from "./language";
 
 type Overlay = typeof import("./overlay");
-type Shim = typeof import("./jsx-runtime");
 
 interface Reloaded {
   overlay: Overlay;
-  shim: Shim;
   taskViews: typeof import("@/lib/task-views");
   issueFilters: typeof import("@/lib/issue-filters");
 }
 
-/** Simula una carga de página: estado del navegador + módulos frescos. */
+/**
+ * Simula una carga de página: estado del navegador + módulos frescos.
+ *
+ * `markOverlayInstalled()` se llama **antes** de importar los módulos de
+ * upstream, porque sus mapas de etiquetas llaman a `tEs` en el cuerpo del
+ * módulo. Antes de ADR 0002 lo encendía el shim de JSX al cargarse; el shim se
+ * borró, así que acá se enciende a mano. En el navegador y en cualquier build
+ * que pase por el plugin lo enciende la bandera de build.
+ */
 async function reload(options: {
   stored?: string | null;
   languages?: readonly string[];
@@ -40,9 +45,10 @@ async function reload(options: {
   window.history.replaceState({}, "", `/${search}`);
 
   vi.resetModules();
+  const overlay = await import("./overlay");
+  overlay.markOverlayInstalled();
   return {
-    overlay: await import("./overlay"),
-    shim: await import("./jsx-runtime"),
+    overlay,
     taskViews: await import("@/lib/task-views"),
     issueFilters: await import("@/lib/issue-filters"),
   };
@@ -53,36 +59,66 @@ afterEach(() => {
   window.localStorage.clear();
 });
 
-describe("el shim traduce lo que llega al DOM", () => {
-  it("traduce texto, arrays de texto y atributos de texto", async () => {
-    const { shim } = await reload({ stored: "es-AR" });
-    const { jsx, jsxs } = shim;
-
-    const tree = jsxs("div", {
-      title: "Save",
-      children: [
-        jsx("h1", { children: "Dashboard" }),
-        jsx("input", { placeholder: "Search tasks..." }),
-        jsx("span", { children: "Cancel" }),
-        jsx("code", { children: "in_review" }),
-      ],
-    });
-
-    const html = renderToStaticMarkup(tree as React.ReactElement);
-    expect(html).toContain('title="Guardar"');
-    expect(html).toContain("<h1>Panel</h1>");
-    expect(html).toContain('placeholder="Buscar tareas…"');
-    expect(html).toContain("<span>Cancelar</span>");
-    // El identificador técnico dentro de <code> queda intacto.
-    expect(html).toContain("<code>in_review</code>");
+/**
+ * Lo que acá probaba el shim —que una cadena de texto, un array de texto y un
+ * atributo de texto salieran traducidos al DOM— ya no vive en un shim: vive en
+ * el marcado. Se prueba en dos archivos, y más fuerte que antes:
+ *
+ * - `mark-text.test.ts`: qué literal del código fuente es un sitio de texto y
+ *   qué no, sobre los 1.268 archivos reales;
+ * - `real-components.es-ar.test.tsx`: componentes reales de upstream, marcados
+ *   por el plugin, rindiendo en es-AR con datos que colisionan a propósito.
+ *
+ * Lo que queda acá es lo que no depende del marcado: la búsqueda, el
+ * interruptor, la cadena de respaldo y los formatos.
+ */
+describe("la búsqueda sobre lo que el marcado deja en el código", () => {
+  it("traduce la cadena marcada y no toca el identificador técnico", async () => {
+    const { overlay } = await reload({ stored: "es-AR" });
+    expect(overlay.translate("Dashboard")).toBe("Panel");
+    expect(overlay.translate("Save")).toBe("Guardar");
+    expect(overlay.translate("Search tasks...")).toBe("Buscar tareas…");
+    // `in_review` sólo aparece dentro de `<code>`, que el transform no marca: no
+    // llega nunca a esta función. Y si llegara, el diccionario no lo tiene.
+    expect(overlay.translate("in_review")).toBe("in_review");
   });
 
   it("en inglés no toca nada", async () => {
-    const { shim } = await reload({ stored: "en" });
-    const html = renderToStaticMarkup(
-      shim.jsx("h1", { children: "Dashboard" }) as React.ReactElement,
+    const { overlay } = await reload({ stored: "en" });
+    expect(overlay.translate("Dashboard")).toBe("Dashboard");
+  });
+});
+
+describe("formatos con el overlay puesto (ADR 0002 §7.5)", () => {
+  it("sin formato en el diccionario vuelve a armar el inglés", async () => {
+    const { overlay } = await reload({ stored: "es-AR" });
+    expect(overlay.formatted(["Invite people to ", ""], ["Acme"])).toBe("Invite people to Acme");
+  });
+
+  it("el valor interpolado no pasa por el diccionario, ni si es una entrada", async () => {
+    const { overlay } = await reload({ stored: "es-AR" });
+    // El agente se llama "Search", que es una entrada del diccionario. Sale tal
+    // como se escribió: es la invariante de §4 en el camino de los formatos.
+    expect(overlay.formatted(["Invite people to ", ""], ["Search"])).toBe(
+      "Invite people to Search",
     );
-    expect(html).toBe("<h1>Dashboard</h1>");
+    expect(overlay.translate("Search")).toBe("Buscar");
+  });
+
+  // Los formatos los carga el Traductor (§10.2). Mientras el diccionario no
+  // tenga ninguno, el caso se saltea en vez de pasar en falso recorriendo una
+  // lista de cero, igual que el de la capa neutra.
+  it("un formato cargado gana, con los valores pegados sin traducir", async () => {
+    const { overlay } = await reload({ stored: "es-AR" });
+    const formats = overlay.layerEntries("es-AR").formats;
+    if (formats.size === 0) return;
+    for (const [key, translation] of formats) {
+      const shape = key.split(/\{\d+\}/);
+      const values = shape.slice(0, -1).map((_, i) => `Search${i}`);
+      expect(overlay.formatted(shape, values), key).toBe(
+        translation.replace(/\{(\d+)\}/g, (_, i) => values[Number(i)] ?? ""),
+      );
+    }
   });
 });
 
@@ -141,7 +177,8 @@ describe("detección del idioma del navegador", () => {
     vi.spyOn(window.navigator, "languages", "get").mockReturnValue(["es-AR", "es"]);
     vi.resetModules();
 
-    // A propósito **no** se importa `./jsx-runtime`: así es el build de upstream.
+    // A propósito **no** se llama a `markOverlayInstalled()`: así es el build de
+    // upstream, donde el plugin no corre y la bandera queda en `false`.
     const overlay = await import("./overlay");
     const taskViews = await import("@/lib/task-views");
 
@@ -245,14 +282,14 @@ describe("los homógrafos quedan con la traducción de su sentido", () => {
 });
 
 describe("el selector de idioma", () => {
-  it("se esconde si el shim no está en el bundle", async () => {
+  it("se esconde si el overlay no está en el bundle", async () => {
     vi.resetModules();
     const overlay = await import("./overlay");
-    // Sin importar `./jsx-runtime`, nadie llamó a markOverlayInstalled().
+    // Nadie encendió la bandera: es el build de upstream.
     expect(overlay.isOverlayInstalled()).toBe(false);
   });
 
-  it("aparece cuando el shim está cargado", async () => {
+  it("aparece cuando el overlay está puesto", async () => {
     const { overlay } = await reload({ stored: "es-AR" });
     expect(overlay.isOverlayInstalled()).toBe(true);
   });

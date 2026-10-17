@@ -7,7 +7,7 @@ import {
   OVERLAY_LOCALES,
   parseUiLocale,
 } from "./language";
-import { clearOverlayMemo, layerEntries, lookup, tEs, translate } from "./overlay";
+import { clearOverlayMemo, formatted, layerEntries, lookup, tEs, translate } from "./overlay";
 import { PATTERNS } from "./patterns";
 
 import agentsEsAr from "./dictionary/es-AR/agents.json";
@@ -164,6 +164,82 @@ describe("fuera del navegador", () => {
     expect(translate("Cancel")).toBe("Cancel");
     expect(tEs("issues.status.done", "Done")).toBe("Done");
   });
+
+  it("formatted vuelve a armar el inglés con los valores en su lugar", () => {
+    expect(formatted(["Invite people to ", ""], ["Acme"])).toBe("Invite people to Acme");
+    expect(formatted(["", " weeks"], [2])).toBe("2 weeks");
+  });
+});
+
+describe("translate acepta lo que no es una cadena (ADR 0002 §8/4)", () => {
+  it("devuelve sin tocar cualquier valor que no sea cadena", () => {
+    // El canal de declaraciones envuelve **retornos**: `statusLabel` devuelve un
+    // `.replace()` y `environmentDeleteBlockMessage` devuelve `null`. Si esto no
+    // pasara sin tocar, el marcado rompería esos componentes.
+    expect(translate(null)).toBe(null);
+    expect(translate(undefined)).toBe(undefined);
+    expect(translate(7)).toBe(7);
+    const object = { a: 1 };
+    expect(translate(object)).toBe(object);
+  });
+});
+
+describe("formatos (ADR 0002 §7.5)", () => {
+  const formats = layerEntries("es-AR").formats;
+
+  it("una clave con hueco numerado va a formats y no a literals", () => {
+    for (const key of formats.keys()) {
+      expect(key, key).toMatch(/\{\d+\}/);
+      expect(layerEntries("es-AR").literals.has(key), key).toBe(false);
+    }
+    for (const key of layerEntries("es-AR").literals.keys()) {
+      expect(/\{\d+\}/.test(key), key).toBe(false);
+    }
+  });
+
+  it("sin formato cargado vuelve a armar el inglés, y el valor no pasa por el diccionario", () => {
+    // El agente se llama "Search": interpolado, tiene que salir tal como se
+    // escribió incluso si es una entrada del diccionario.
+    expect(formatted(["Invite people to ", ""], ["Search"])).toBe("Invite people to Search");
+    expect(formatted(["", " item", " found."], [1, ""])).toBe("1 item found.");
+  });
+
+  it("la clave es la forma estática, con los huecos numerados en orden", () => {
+    // Lo que el Traductor va a ver en el archivo de área. Se afirma acá porque
+    // es el contrato entre el transform y el diccionario.
+    const key = (shape: readonly string[]) =>
+      shape.map((s, i) => (i < shape.length - 1 ? `${s}{${i}}` : s)).join("");
+    expect(key(["Invite people to ", ""])).toBe("Invite people to {0}");
+    expect(key(["", " item", " found."])).toBe("{0} item{1} found.");
+  });
+
+  /**
+   * La validación que pide §7.5: **los huecos de la traducción tienen que ser un
+   * subconjunto de los de la clave**.
+   *
+   * No alcanza con la regla vieja de "todo placeholder igual al inglés": un
+   * formato como `"{0} item{1} found."` se traduce reusando el hueco
+   * (`"{0} ítem{1} encontrado{1}"`), porque el español concuerda el plural en
+   * más de un lugar. Lo que no puede pasar es que la traducción pida un hueco
+   * que la clave no tiene: ahí `formatted` pegaría una cadena vacía.
+   *
+   * Hoy pasa en vacío —el diccionario no tiene formatos todavía (§10.2)— y se
+   * queda como guarda de lo que cargue el Traductor.
+   */
+  it("ninguna traducción de formato usa un hueco que la clave no tiene", () => {
+    const holes = (value: string) => new Set(value.match(/\{\d+\}/g) ?? []);
+    const offenders: string[] = [];
+    for (const [key, translation] of formats) {
+      const allowed = holes(key);
+      for (const hole of holes(translation)) {
+        if (!allowed.has(hole)) offenders.push(`"${key}" → "${translation}" (${hole} de más)`);
+      }
+      if (allowed.size > 0 && holes(translation).size === 0) {
+        offenders.push(`"${key}" → "${translation}" (perdió todos los huecos)`);
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
 });
 
 describe("integridad del diccionario", () => {
@@ -296,6 +372,11 @@ describe("reglas del glosario sobre los valores traducidos", () => {
     const offenders: string[] = [];
     for (const [file, dict] of Object.entries(ES_AR_AREAS)) {
       for (const [english, translated] of Object.entries(dict)) {
+        // Los formatos de ADR 0002 §7.5 llevan su propia regla, más laxa a
+        // propósito: la traducción puede **reusar** un hueco para concordar el
+        // plural. La valida "ninguna traducción de formato usa un hueco que la
+        // clave no tiene", más arriba.
+        if (/\{\d+\}/.test(english)) continue;
         const from = placeholders(english);
         const to = placeholders(translated);
         if (from.join(",") !== to.join(",")) {

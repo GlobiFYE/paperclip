@@ -177,6 +177,118 @@ sesión, `$GH_CONFIG_DIR` (`/paperclip/.config/gh`) no existe y
 Sin pushear hoy: `b0f9aa46f` en `es-ar/corte2` y `9c6910526` en
 `es-ar/entrega-master`.
 
+## Estado al 2026-10-17 08:00 — ADR 0002 implementado (CHA-23, Dev UX/UI)
+
+Las tres fases de §8, entregadas. **La máquina está puesta y el dato ya no puede
+traducirse**: el diccionario puede volver a crecer.
+
+### Qué entró
+
+| Archivo | Qué es |
+| --- | --- |
+| `ui/src/i18n-es-ar/text-sites.ts` | nuevo. Las cuatro listas de §7.2, seedeadas como las entrega §8/1, sin inventar un nombre |
+| `ui/src/i18n-es-ar/mark-text.ts` | nuevo. El transform: `markText(code, lang, file?)`, edición por rangos, saltos de línea conservados |
+| `ui/src/i18n-es-ar/vite-plugin.ts` | cambia. `paperclipEsArTextMarking()`, sin `resolveId`, con el marcado en el `transform` |
+| `ui/src/i18n-es-ar/overlay.ts` | cambia. `translate<T>` pasa lo que no es cadena, `formatted()` nuevo, `layer()` separa formatos por la clave |
+| `ui/src/i18n-es-ar/jsx-runtime.ts` | **borrado**, con su hack de `resolveId` y su guarda de recursión |
+| `ui/src/i18n-es-ar/tools/report-text-sites.ts` | nuevo. El reporte de la fase 3, con los cinco listados |
+| `ui/src/i18n-es-ar/mark-text.test.ts` | nuevo. 41 casos: §7.2, §7.3, §7.4, entidades, saltos de línea, y los 1.269 archivos reales |
+| `overlay.test.ts`, `overlay.dom.test.tsx`, `real-components.es-ar.test.tsx` | crecen o cambian (ver abajo) |
+
+Las medidas del ADR se reprodujeron sobre el código implementado: **737 archivos
+con ediciones, 19.552 sitios marcados, 0 fallos de reparseo, 0 corrimientos de
+línea, 0 textos salteados por una entidad, 104 marcas bloqueadas por §7.4 en 75
+cadenas distintas**. Las dos primeras y las dos últimas son los números de §6.4 y
+§6.8 clavados; las 19.552 son 5 más que las 19.547 de §6.4 (0,03 %), por tres
+formas de sitio que el prototipo del ADR no contaba —claves de objeto escritas
+entre comillas y plantillas sin interpolación dentro de una declaración.
+
+### Fase 2: el reporte lista exactamente las 11 de §10
+
+**613 de 624 entradas cubiertas.** Las 11, tal como las lista el reporte, con el
+canal que el propio reporte les encuentra:
+
+| # | Entrada | §10 | Lo que dice el reporte |
+| --- | --- | --- | --- |
+| 1 | `Failed to fetch` | §10.4 | en `src/api/auth.ts`, sin sitio: es el mensaje del navegador |
+| 2 | `Couldn’t open My Skills` | §10.1 | **no aparece en `ui/src`** (es el duplicado con apóstrofo tipográfico) |
+| 3 | `The company spending limit was reached.` | §10.1 | sólo en un test |
+| 4 | `This cannot be undone.` | §10.1 | en 6 archivos de producción, siempre dentro de una oración más larga |
+| 5 | `Main company nav` | §10.1 | sólo en un test |
+| 6 | `Not ready` | §10.3 | **atributo `value`** (producción) |
+| 7 | `Setup required` | §10.3 | **atributo `value`** (producción) |
+| 8–11 | `2 weeks`, `4 weeks`, `3 months`, `6 months` | §10.2 | no existen como literal; el transform emite `{0} weeks` y `{0} months` |
+
+Ni una más, ni una menos, y ninguna pide tocar un archivo de upstream. Las cuatro
+de §10.1 y las cuatro de §10.2 son trabajo del Traductor.
+
+### El nombre del plugin, para el cruce con `es-ar/entrega-master`
+
+El nombre **cambió**: `paperclip-es-ar-overlay-jsx-runtime` →
+**`paperclip-es-ar-marcado-de-texto`**, y la función exportada
+`localeOverlayJsxRuntime()` → `paperclipEsArTextMarking()`. `build-channel.test.ts`
+de la otra rama afirma el nombre viejo y va a fallar cuando converjan. No se tocó
+el otro worktree: el ajuste es del Lead.
+
+### Hallazgo: las etiquetas derivadas que §10.5 no alcanza
+
+El ADR recupera por `TEXT_DECLS` las tres funciones que CHA-9 fotografió
+(`statusLabel` ×2 y `statusLabels`). Pero **la misma forma aparece en unos 50
+sitios de producción más**, en archivos que `TEXT_DECLS` no lista, y el reporte
+de la fase 3 **no puede verlos**: mide cobertura por *entrada del diccionario*, y
+esas entradas están cubiertas por otros sitios marcados. O sea: la fase 2 pasa
+limpia y la regresión existe igual.
+
+Tres casos confirmados, afirmados como tales en
+`real-components.es-ar.test.tsx` para que queden a la vista:
+
+- `IssueStatusBadge` (`StatusBadge.tsx:20`, `sentenceCaseStatus`) → *In review*
+  en inglés. Se usa en `UserProfile`, `StatusCardDetailDrawer` y `DesignGuide`;
+  **las pantallas principales de tareas usan `StatusIcon`, que sí está cubierto**.
+- `StatusBadge` sin `label` → deriva del valor técnico, queda en inglés.
+- `blockedAttentionLabel` (`StatusIcon.tsx:46`, **el mismo archivo** que
+  `statusLabel`) → el `aria-label`/`title` del glifo de una tarea bloqueada queda
+  en inglés mientras la etiqueta visible dice *Bloqueada*.
+
+**No se decidió nada ni se agregó un nombre**: §8/fase 2 dice que la fase 2 no es
+agregar nombres. Recuperarlos cuesta una línea por archivo en `text-sites.ts` y
+cero ediciones de upstream. Queda para el Lead.
+
+### Dos reconciliaciones del texto del ADR, sin cambiar el diseño
+
+1. **La firma de `markText`.** §8/2 la define `markText(code, lang)` y §8/3 la
+   llama igual, pero el canal de declaraciones necesita saber qué archivo es.
+   Quedó `markText(code, lang, file?)`: sin el tercer argumento es la función pura
+   de §8/2 (y así la usan los tests), y el plugin le pasa la ruta relativa a
+   `ui/`. El comportamiento es el de §8 sin un cambio.
+2. **`real-components.es-ar.test.tsx` cambió de contrato, no sólo creció.** El
+   archivo de test **no se marca** (§8/3: los tests son datos), así que un
+   literal que el test pasa por props es, por construcción, un dato y ya no se
+   traduce. Cinco afirmaciones del corte 1 decían lo contrario; se dieron vuelta,
+   que es exactamente lo que el ADR quiere que pase. Ahora el archivo monta la
+   invariante de §4 en vez de afirmarla: un agente llamado **Search** y una tarea
+   titulada **Save** salen como se escribieron, **en el mismo render** donde
+   `Agente` y `Listo` salen en español.
+
+### Verificación (§8), corrida en este estado
+
+```sh
+cd /paperclip/workspaces/es-ar-corte2/ui
+./node_modules/.bin/vitest run src/i18n-es-ar src/i18n/locale-validation.test.ts   # 104 pasan, 13 skipped
+./node_modules/.bin/vitest run src/i18n/locale-validation.test.ts                   # 7 pasan
+./node_modules/.bin/vitest run --config vitest.config.es-ar.ts                      # 12 pasan
+./node_modules/.bin/tsc --noEmit -p tsconfig.json                                   # 777 errores, los mismos 777 de la línea base
+node src/i18n-es-ar/tools/report-text-sites.ts                                      # 613/624, 11 sin cubrir
+```
+
+Los 13 skipped son los 12 de `real-components.es-ar.test.tsx` —que se saltea
+cuando corre bajo la config de upstream, sin plugin— más el de la capa `es`, que
+está vacía. Los 777 errores de `tsc` son de `storybook/` y de tipos de
+`@paperclipai/shared` sin construir: **se midieron antes y después y son los
+mismos**; en `ui/src/i18n-es-ar/` no hay ninguno.
+
+Presupuesto de upstream: **12 archivos y 36 `tEs(`, intactos. Gastado: 0.**
+
 ## Línea base verificada antes de delegar (2026-10-17)
 
 ```sh

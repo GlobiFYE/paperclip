@@ -1,7 +1,7 @@
 import { defineConfig, type UserConfig, type UserConfigFnObject } from "vite";
 
 import base from "./vite.config";
-import { localeOverlayJsxRuntime } from "./src/i18n-es-ar/vite-plugin";
+import { paperclipEsArTextMarking } from "./src/i18n-es-ar/vite-plugin";
 
 /**
  * La config del fork en es-AR: la de upstream más el plugin del overlay.
@@ -18,6 +18,6 @@ export default defineConfig(async (env) => {
   const resolved = (await (base as unknown as UserConfigFnObject)(env)) as UserConfig;
   return {
     ...resolved,
-    plugins: [localeOverlayJsxRuntime(), ...(resolved.plugins ?? [])],
+    plugins: [paperclipEsArTextMarking(), ...(resolved.plugins ?? [])],
   };
 });
