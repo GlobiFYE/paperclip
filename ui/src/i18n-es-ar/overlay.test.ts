@@ -11,15 +11,20 @@ import { clearOverlayMemo, formatted, layerEntries, lookup, tEs, translate } fro
 import { PATTERNS } from "./patterns";
 
 import agentsEsAr from "./dictionary/es-AR/agents.json";
+import artifactsEsAr from "./dictionary/es-AR/artifacts.json";
 import auditEsAr from "./dictionary/es-AR/audit.json";
 import commonEsAr from "./dictionary/es-AR/common.json";
 import connectionsEsAr from "./dictionary/es-AR/connections.json";
+import dashboardEsAr from "./dictionary/es-AR/dashboard.json";
 import errorsEsAr from "./dictionary/es-AR/errors.json";
+import inboxEsAr from "./dictionary/es-AR/inbox.json";
 import issuesEsAr from "./dictionary/es-AR/issues.json";
 import navigationEsAr from "./dictionary/es-AR/navigation.json";
 import onboardingEsAr from "./dictionary/es-AR/onboarding.json";
 import projectsEsAr from "./dictionary/es-AR/projects.json";
 import routinesEsAr from "./dictionary/es-AR/routines.json";
+import searchEsAr from "./dictionary/es-AR/search.json";
+import secretsEsAr from "./dictionary/es-AR/secrets.json";
 import settingsEsAr from "./dictionary/es-AR/settings.json";
 import skillsEsAr from "./dictionary/es-AR/skills.json";
 import tracesEsAr from "./dictionary/es-AR/traces.json";
@@ -38,6 +43,11 @@ const ES_AR_AREAS: Record<string, Record<string, string>> = {
   "traces.json": tracesEsAr,
   "skills.json": skillsEsAr,
   "routines.json": routinesEsAr,
+  "search.json": searchEsAr,
+  "dashboard.json": dashboardEsAr,
+  "inbox.json": inboxEsAr,
+  "artifacts.json": artifactsEsAr,
+  "secrets.json": secretsEsAr,
 };
 
 beforeEach(() => {

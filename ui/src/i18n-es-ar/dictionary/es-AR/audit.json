@@ -13,5 +13,18 @@
   "Audit activity": "Actividad de la auditoría",
   "Audit log": "Log de auditoría",
 
-  "Refreshing audit access…": "Actualizando el acceso a la auditoría…"
+  "Refreshing audit access…": "Actualizando el acceso a la auditoría…",
+
+  "All statuses": "Todos los estados",
+  "Executions created by this routine, newest first.": "Las ejecuciones que creó esta rutina, de la más nueva a la más vieja.",
+  "Failed to load routine activity.": "No se pudo cargar la actividad de la rutina.",
+  "Failed to load runs.": "No se pudieron cargar las ejecuciones.",
+  "Loading routine activity…": "Cargando la actividad de la rutina…",
+  "Loading routine runs…": "Cargando las ejecuciones de la rutina…",
+  "No runs match these filters.": "Ninguna ejecución coincide con estos filtros.",
+  "Recent agent executions across the organization. Open a run to inspect its transcript, output, and task context.": "Las últimas ejecuciones de agentes de toda la empresa. Abrí una ejecución para ver su transcripción, su salida y el contexto de la tarea.",
+  "Routine activity": "Actividad de la rutina",
+  "Routine runs": "Ejecuciones de la rutina",
+  "most recent routine runs.": "ejecuciones de rutina más recientes.",
+  "most recent runs.": "ejecuciones más recientes."
 }

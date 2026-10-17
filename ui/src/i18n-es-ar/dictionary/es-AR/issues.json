@@ -694,5 +694,25 @@
   "Show raw {0}": "Ver el {0} crudo",
   "Rendered {0}": "{0} renderizado",
   "Raw {0}": "{0} crudo",
-  "{0} preview mode": "Modo de vista previa de {0}"
+  "{0} preview mode": "Modo de vista previa de {0}",
+
+  ". You can resume it from the task page after creating the task.": ". Lo podés reanudar desde la página de la tarea, después de crearla.",
+  "Assigning implies executable intent - leave status as": "Asignar implica que se puede ejecutar: dejá el estado en",
+  "Couldn't check the selected worktree. Retry in Worktrees or choose New worktree.": "No se pudo revisar el worktree elegido. Reintentá en Worktrees o elegí uno nuevo.",
+  "Couldn't load worktrees.": "No se pudieron cargar los worktrees.",
+  "Describe a task…": "Describí una tarea…",
+  "Documents": "Documentos",
+  "Loading existing worktrees…": "Cargando los worktrees que ya existen…",
+  "Low-trust review agent. It can only act inside its assigned review boundary; task, project, or run policy defines the concrete scope.": "Agente de revisión de confianza baja. Solo puede actuar dentro del límite de revisión que tiene asignado; el alcance concreto lo define la política de la tarea, del proyecto o de la ejecución.",
+  "New sub-task": "Nueva subtarea",
+  "New task": "Nueva tarea",
+  "Remove attachment": "Quitar el adjunto",
+  "Remove document": "Quitar el documento",
+  "Sub-task of": "Subtarea de",
+  "Task title": "Título de la tarea",
+  "The selected worktree is no longer available. Choose another worktree or start a new one.": "El worktree elegido ya no está disponible. Elegí otro o arrancá uno nuevo.",
+  "This sub-task will no longer use the parent task workspace": "Esta subtarea ya no va a usar el espacio de trabajo de la tarea padre",
+  "is paused and will not start work on this task until it is resumed": "está en pausa y no va a arrancar con esta tarea hasta que lo reanudes",
+  "only to deliberately park this. The assignee will not be woken until status moves to": "solo si querés frenarla a propósito. A quien la tenga asignada no se le va a avisar hasta que el estado pase a",
+  "— it arrived paused from an organization import": "— llegó en pausa de una importación de empresa"
 }

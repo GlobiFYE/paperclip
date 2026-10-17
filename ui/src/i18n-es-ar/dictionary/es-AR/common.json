@@ -587,5 +587,14 @@
   "Previous item": "Ítem anterior",
   "Removing…": "Quitando…",
   "Show fewer items": "Ver menos ítems",
-  "Show fewer results": "Ver menos resultados"
+  "Show fewer results": "Ver menos resultados",
+
+  "Last 14 days": "Últimos 14 días",
+  "blocked": "con bloqueo",
+  "errors": "errores",
+  "or": "o",
+  "paused": "en pausa",
+  "result": "resultado",
+  "results": "resultados",
+  "running": "en curso"
 }
