@@ -216,15 +216,16 @@ describeEmbeddedPostgres("heartbeat stale queued-run invalidation", () => {
     return { companyId, agentId };
   }
 
-  it("delivers an accepted non-assignee queue after its issue owner finished", async () => {
+  it.each(["legacy", "native"])("delivers an accepted non-assignee queue after its %s owner finished", async runtimeMode => {
     const { companyId, agentId } = await seedCompanyAndAgent();
     const [recipient] = await db.insert(agents).values({ companyId, name: "Saved feedback recipient", role: "engineer",
       status: "idle", adapterType: "codex_local", adapterConfig: {}, runtimeConfig: { heartbeat: { wakeOnDemand: true } }, permissions: {},
     }).returning();
     const [issue] = await db.insert(issues).values({ companyId, title: "Existing accepted feedback", status: "in_progress", assigneeAgentId: agentId }).returning();
     const [owner] = await db.insert(heartbeatRuns).values({ companyId, agentId, invocationSource: "assignment", status: "succeeded",
-      runtimeMode: "legacy", startedAt: new Date(), finishedAt: new Date(), contextSnapshot: { issueId: issue.id },
+      runtimeMode, nativeIssueId: runtimeMode === "native" ? issue.id : null, startedAt: new Date(), finishedAt: new Date(), contextSnapshot: { issueId: issue.id },
     }).returning();
+    if (runtimeMode === "native") await db.insert(nativeRunFinalizations).values({ runId: owner.id, companyId, issueId: issue.id, phase: "committed" });
     const [comment] = await db.insert(issueComments).values({ companyId, issueId: issue.id, body: "Saved feedback for the recipient",
       authorAgentId: agentId, createdByRunId: owner.id,
     }).returning();

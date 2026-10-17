@@ -201,7 +201,7 @@ async function runReleaseDrain(
       !candidate.preservesIndependentContinuation && candidate.queuedCommentIds.length > 0 &&
       ["issue_commented", "issue_reopened_via_comment"].includes(candidate.wakeReason ?? candidate.reason ?? "");
     if (ordinaryTaskComment && candidate.agentId !== issue.assigneeAgentId) {
-      if (run.agentId !== issue.assigneeAgentId) {
+      if (input.resumeStrandedQueue || run.agentId !== issue.assigneeAgentId) {
         // The old owner can release before assignment admission adopts these
         // exact IDs. Leave its receipt intact, skip it for this drain, and let
         // a current-assignee wake behind it proceed.

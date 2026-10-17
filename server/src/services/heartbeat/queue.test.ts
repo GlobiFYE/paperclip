@@ -151,9 +151,10 @@ describe.skipIf(!support.supported)("heartbeat queue database wiring", () => {
     return { company, agent, issue, wake, run };
   }
 
-  async function strandedMention() {
+  async function strandedMention(runtimeMode = "legacy") {
     const seeded = await fixture("succeeded");
-    await db.update(heartbeatRuns).set({ runtimeMode: "legacy", finishedAt: new Date() }).where(eq(heartbeatRuns.id, seeded.run.id));
+    await db.update(heartbeatRuns).set({ runtimeMode, nativeIssueId: runtimeMode === "native" ? seeded.issue.id : null, finishedAt: new Date() }).where(eq(heartbeatRuns.id, seeded.run.id));
+    if (runtimeMode === "native") await db.insert(nativeRunFinalizations).values({ runId: seeded.run.id, companyId: seeded.company.id, issueId: seeded.issue.id, phase: "committed" });
     await db.update(issues).set({ executionRunId: null, checkoutRunId: null }).where(eq(issues.id, seeded.issue.id));
     const [recipient] = await db.insert(agents).values({ companyId: seeded.company.id, name: "Mention recipient", role: "engineer", status: "idle", adapterType: "process", adapterConfig: {} }).returning();
     const [comment] = await db.insert(issueComments).values({ companyId: seeded.company.id, issueId: seeded.issue.id, body: "Saved feedback", authorAgentId: seeded.agent.id }).returning();
@@ -164,8 +165,8 @@ describe.skipIf(!support.supported)("heartbeat queue database wiring", () => {
     return { ...seeded, recipient, pending };
   }
 
-  it("resumes an accepted non-assignee queue through the finishing issue owner", async () => {
-    const { run, pending } = await strandedMention();
+  it.each(["legacy", "native"])("resumes an accepted non-assignee queue through its %s owner", async runtimeMode => {
+    const { run, pending } = await strandedMention(runtimeMode);
     const deps = callbacks(db);
     await createHeartbeatQueue(db, deps).resumeQueuedRuns();
     expect(deps.releaseIssueExecutionAndPromote).toHaveBeenCalledExactlyOnceWith(
@@ -174,6 +175,20 @@ describe.skipIf(!support.supported)("heartbeat queue database wiring", () => {
     expect((await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, pending.id)))[0]).toMatchObject({
       status: "deferred_issue_execution", runId: null, payload: pending.payload,
     });
+    expect(deps.executeRun).not.toHaveBeenCalled();
+  });
+
+  it("preserves a former owner's ordinary messages for the assignment handoff", async () => {
+    const { pending } = await strandedMention();
+    const payload = { ...pending.payload, _paperclipWakeContext: {
+      ...(pending.payload!._paperclipWakeContext as Record<string, unknown>), wakeReason: "issue_commented",
+    } };
+    await db.update(agentWakeupRequests).set({ payload }).where(eq(agentWakeupRequests.id, pending.id));
+    const deps = callbacks(db);
+    await createHeartbeatQueue(db, deps).resumeQueuedRuns();
+    expect(deps.releaseIssueExecutionAndPromote).not.toHaveBeenCalled();
+    expect((await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, pending.id)))[0])
+      .toMatchObject({ status: "deferred_issue_execution", runId: null, payload });
     expect(deps.executeRun).not.toHaveBeenCalled();
   });
 

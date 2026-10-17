@@ -1775,7 +1775,9 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
     const strandedQueues = await db.select({ wake: agentWakeupRequests })
       .from(agentWakeupRequests)
       .innerJoin(issues, and(eq(issues.companyId, agentWakeupRequests.companyId),
-        sql`${issues.id}::text = ${agentWakeupRequests.payload}->>'issueId'`))
+        sql`${issues.id}::text = ${agentWakeupRequests.payload}->>'issueId'`,
+        or(eq(issues.assigneeAgentId, agentWakeupRequests.agentId),
+          sql`${agentWakeupRequests.payload} #>> '{_paperclipWakeContext,wakeReason}' = 'issue_comment_mentioned'`)))
       .innerJoin(companies, and(eq(companies.id, issues.companyId), eq(companies.status, "active")))
       .where(and(eq(agentWakeupRequests.status, "deferred_issue_execution"),
         isNull(issues.executionRunId),
@@ -1803,22 +1805,18 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         eq(agentWakeupRequests.id, wake.id), eq(agentWakeupRequests.status, "deferred_issue_execution"),
       ));
       if (!latest || !latest.finishedAt || !isHeartbeatRunTerminalStatus(latest.status)) continue;
-      if (latest.runtimeMode === "native" && typeof wake.payload?.dotAssignmentFollowUp === "string") {
-        await releaseIssueExecutionAndPromote(latest, { suppressImmediateRecovery: true, resumeStrandedQueue: true }).catch(err => {
-          logger.warn({ err, queueId: wake.id }, "failed to promote unread Dot comment after recovery");
-        });
-        continue;
-      }
-      if (latest.runtimeMode !== "legacy") continue;
-      const cancelledAdmission = latest.status === "cancelled" && !latest.startedAt &&
-        latest.errorCode === "execution_reconciliation_required";
-      if ((latest.status !== "cancelled" || cancelledAdmission) && await getExecutionBlocker(db, wake.companyId, String(wake.payload?.issueId))) {
-        await resumeSavedLegacyComments(wake.companyId, wake.id).catch(err => {
-          logger.warn({ err, queueId: wake.id }, "failed to deliver saved legacy comment after recovery stopped");
-        });
+      if (latest.runtimeMode !== "legacy" && latest.runtimeMode !== "native") continue;
+      if (latest.runtimeMode === "legacy") {
+        const cancelledAdmission = latest.status === "cancelled" && !latest.startedAt &&
+          latest.errorCode === "execution_reconciliation_required";
+        if ((latest.status !== "cancelled" || cancelledAdmission) && await getExecutionBlocker(db, wake.companyId, String(wake.payload?.issueId))) {
+          await resumeSavedLegacyComments(wake.companyId, wake.id).catch(err => {
+            logger.warn({ err, queueId: wake.id }, "failed to deliver saved legacy comment after recovery stopped");
+          });
+        }
       }
       await releaseIssueExecutionAndPromote(latest, { suppressImmediateRecovery: true, resumeStrandedQueue: true }).catch(err => {
-        logger.warn({ err, queueId: wake.id }, "failed to promote stranded legacy comments");
+        logger.warn({ err, queueId: wake.id }, "failed to promote stranded comments");
       });
     }
 

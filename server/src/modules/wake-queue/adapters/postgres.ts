@@ -1081,6 +1081,16 @@ export function createPostgresWakeQueueAdapter(db: Db, deps: WakeQueuePostgresAd
               `,
         );
 
+        if (input.resumeStrandedQueue && run.runtimeMode === "native") {
+          const [finalized] = contextIssueId && run.nativeIssueId === contextIssueId
+            ? await tx.select({ runId: nativeRunFinalizations.runId }).from(nativeRunFinalizations).where(and(
+                eq(nativeRunFinalizations.companyId, input.companyId), eq(nativeRunFinalizations.runId, run.id),
+                eq(nativeRunFinalizations.issueId, run.nativeIssueId), eq(nativeRunFinalizations.phase, "committed"),
+              )).limit(1)
+            : [];
+          if (!finalized) return { outcome: { kind: "released" }, postCommitEffects: [], run: runSnapshot };
+        }
+
         const candidateIssues = await tx
           .select()
           .from(issues)
