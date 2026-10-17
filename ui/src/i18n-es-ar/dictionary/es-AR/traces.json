@@ -89,5 +89,7 @@
 
   "Surface": "Superficie",
   "Withheld paths:": "Rutas retenidas:",
-  "· Observed": "· Observado"
+  "· Observed": "· Observado",
+
+  "Additional provider output is available in Runner Inspector.": "Hay más salida del proveedor en el Inspector del runner."
 }

@@ -428,5 +428,7 @@
   "Working directory (deprecated)": "Directorio de trabajo (obsoleto)",
   "Your OAuth app": "Tu app de OAuth",
   "Zapier MCP URL": "URL de MCP de Zapier",
-  "· Experimental pool": "· Pool experimental"
+  "· Experimental pool": "· Pool experimental",
+
+  "Connection": "Conexión"
 }

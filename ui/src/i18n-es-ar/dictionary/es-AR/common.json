@@ -556,5 +556,11 @@
   "· expires": "· vence",
   "· reused workspace": "· espacio de trabajo reusado",
   "· Updated": "· Actualizado",
-  "→ Returns to:": "→ Vuelve a:"
+  "→ Returns to:": "→ Vuelve a:",
+
+  "(disabled)": "(desactivado)",
+  "(optional)": "(opcional)",
+  "Content": "Contenido",
+  "Copied link": "Link copiado",
+  "Filter options": "Opciones del filtro"
 }
