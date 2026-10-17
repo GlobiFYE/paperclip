@@ -19,6 +19,9 @@
  *  2. A failing step cannot starve the steps that follow it. The failure is logged and the remaining
  *     steps still run, so one broken sweep can no longer take the routine tick down with it.
  *
+ * This module owns the interval's step sequencing; the heartbeat modules under
+ * `services/heartbeat/` own the work each step performs, and its focused test sits beside it.
+ *
  * Ordering is preserved: steps run in array order, free-running steps are registered with the
  * tracker (so shutdown still drains them) and `await: true` steps are awaited before the next one
  * starts.
@@ -134,4 +137,29 @@ export const runHeartbeatSchedulerSteps = async (
   }
 
   return { ran, failed, stopped: false };
+};
+
+/**
+ * Bounds optional work that must never hold the scheduler.
+ *
+ * The routine tick is the only driver of the routine scheduler: the delivery-work worker cannot
+ * start the next run until the current one returns. Optional decoration on the tick (for example the
+ * metrics aggregate behind the heartbeat line) is therefore bounded rather than awaited without a
+ * limit. Resolves `{ timedOut: true }` once `timeoutMs` passes; rejects only if the work itself
+ * rejects before the bound.
+ */
+export const boundSchedulerWork = async <T>(
+  work: Promise<T>,
+  timeoutMs: number,
+): Promise<{ value: T } | { timedOut: true }> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timedOut = new Promise<{ timedOut: true }>((resolve) => {
+      timer = setTimeout(() => resolve({ timedOut: true }), timeoutMs);
+      timer.unref?.();
+    });
+    return await Promise.race([work.then((value) => ({ value })), timedOut]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 };

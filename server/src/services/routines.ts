@@ -1,4 +1,5 @@
 import { DELIVERY_QUEUES, notifyDeliveryWork } from "./delivery-work-notifications.js";
+import { boundSchedulerWork } from "./heartbeat/scheduler-steps.js";
 import { verifyAppWebhook } from "./app-webhook.js";
 import crypto from "node:crypto";
 import { verifyFirefliesWebhook } from "./fireflies-webhook.js";
@@ -2075,50 +2076,75 @@ export function routineService(
   let schedulerTickCount = 0;
   let schedulerTickMetricsWarnedAt = 0;
   const SCHEDULER_TICK_METRICS_WARN_INTERVAL_MS = 10 * 60 * 1000;
+  // The metrics aggregate is optional decoration on the heartbeat. The tick is the routine queue's
+  // only driver, so it must not wait on a slow aggregate: the delivery-work worker cannot start the
+  // next run until this one returns. Bound it and report the tick without metrics when it is slow.
+  const SCHEDULER_TICK_METRICS_TIMEOUT_MS = 250;
 
+  function warnSchedulerTickMetricsUnavailable(err: unknown, timedOut: boolean) {
+    const nowMs = Date.now();
+    if (nowMs - schedulerTickMetricsWarnedAt < SCHEDULER_TICK_METRICS_WARN_INTERVAL_MS) return;
+    schedulerTickMetricsWarnedAt = nowMs;
+    logger.warn(
+      {
+        event: "routine_scheduler_tick_metrics_failed",
+        error: timedOut
+          ? `metrics query exceeded ${SCHEDULER_TICK_METRICS_TIMEOUT_MS}ms`
+          : err instanceof Error ? err.message : String(err),
+      },
+      "routine scheduler tick metrics unavailable; heartbeat recorded without them",
+    );
+  }
+
+  async function loadSchedulerTickMetrics(): Promise<{ armedClaimable: number; oldestOverdueS: number }> {
+    const rows = await db
+      .select({
+        armedClaimable: sql<number>`count(*)::int`,
+        oldestNextRunAt: sql<Date | null>`min(${routineTriggers.nextRunAt})`,
+      })
+      .from(routineTriggers)
+      .innerJoin(routines, eq(routineTriggers.routineId, routines.id))
+      .where(
+        and(
+          eq(routineTriggers.kind, "schedule"),
+          eq(routineTriggers.enabled, true),
+          eq(routineTriggers.archived, false),
+          eq(routines.status, "active"),
+          isNotNull(routineTriggers.cronExpression),
+          isNotNull(routineTriggers.timezone),
+          isNotNull(routineTriggers.nextRunAt),
+        ),
+      );
+    const row = rows[0];
+    const armedClaimable = Number(row?.armedClaimable ?? 0);
+    const oldestNextRunAt = row?.oldestNextRunAt ?? null;
+    const oldestOverdueS = oldestNextRunAt
+      ? Math.max(0, Math.floor((Date.now() - new Date(oldestNextRunAt).getTime()) / 1000))
+      : 0;
+    return { armedClaimable, oldestOverdueS };
+  }
+
+  /**
+   * Reads the tick metrics without letting them hold the tick. A slow aggregate resolves as
+   * `timedOut` after `SCHEDULER_TICK_METRICS_TIMEOUT_MS`; the tick continues without the fields.
+   */
   async function readSchedulerTickMetrics(): Promise<{
     armedClaimable: number | null;
     oldestOverdueS: number | null;
   }> {
     try {
-      const rows = await db
-        .select({
-          armedClaimable: sql<number>`count(*)::int`,
-          oldestNextRunAt: sql<Date | null>`min(${routineTriggers.nextRunAt})`,
-        })
-        .from(routineTriggers)
-        .innerJoin(routines, eq(routineTriggers.routineId, routines.id))
-        .where(
-          and(
-            eq(routineTriggers.kind, "schedule"),
-            eq(routineTriggers.enabled, true),
-            eq(routineTriggers.archived, false),
-            eq(routines.status, "active"),
-            isNotNull(routineTriggers.cronExpression),
-            isNotNull(routineTriggers.timezone),
-            isNotNull(routineTriggers.nextRunAt),
-          ),
-        );
-      const row = rows[0];
-      const armedClaimable = Number(row?.armedClaimable ?? 0);
-      const oldestNextRunAt = row?.oldestNextRunAt ?? null;
-      const oldestOverdueS = oldestNextRunAt
-        ? Math.max(0, Math.floor((Date.now() - new Date(oldestNextRunAt).getTime()) / 1000))
-        : 0;
-      return { armedClaimable, oldestOverdueS };
+      const outcome = await boundSchedulerWork(
+        loadSchedulerTickMetrics(),
+        SCHEDULER_TICK_METRICS_TIMEOUT_MS,
+      );
+      if ("timedOut" in outcome) {
+        warnSchedulerTickMetricsUnavailable(null, true);
+        return { armedClaimable: null, oldestOverdueS: null };
+      }
+      return outcome.value;
     } catch (err) {
       // Metrics are a convenience: a broken aggregate must never fail the tick that feeds them.
-      const nowMs = Date.now();
-      if (nowMs - schedulerTickMetricsWarnedAt >= SCHEDULER_TICK_METRICS_WARN_INTERVAL_MS) {
-        schedulerTickMetricsWarnedAt = nowMs;
-        logger.warn(
-          {
-            event: "routine_scheduler_tick_metrics_failed",
-            error: err instanceof Error ? err.message : String(err),
-          },
-          "routine scheduler tick metrics unavailable; heartbeat recorded without them",
-        );
-      }
+      warnSchedulerTickMetricsUnavailable(err, false);
       return { armedClaimable: null, oldestOverdueS: null };
     }
   }

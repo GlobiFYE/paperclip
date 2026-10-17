@@ -12,7 +12,7 @@ import {
   createHeartbeatSchedulerWorkTracker,
   runHeartbeatSchedulerSteps,
   type HeartbeatSchedulerStep,
-} from "./services/heartbeat-scheduler.js";
+} from "./services/heartbeat/scheduler-steps.js";
 import type { createDeliveryWorkCoordinator } from "./services/delivery-work-coordinator.js";
 import { registerTerminalWorkspaceWork, TERMINAL_WORKSPACE_RETRY_MS } from "./services/terminal-workspace-work.js";
 import { isIdleTaskDrainActive, beginIdleTrackedWork, trackIdleWork } from "./services/task-admission.js";

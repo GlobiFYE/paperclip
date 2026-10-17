@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  boundSchedulerWork,
   createHeartbeatSchedulerWorkTracker,
   runHeartbeatSchedulerSteps,
   type HeartbeatSchedulerStep,
-} from "../services/heartbeat-scheduler.js";
+} from "./scheduler-steps.js";
 
 /**
  * Regression tests for the heartbeat-scheduler interval.
+ *
+ * Colocated with the module they exercise, per the heartbeat execution-boundaries rule: only
+ * assembled-service tests belong in `server/src/__tests__/`.
  *
  * The failure mode these lock down is the silent routine-scheduler stall: the interval body ran
  * inside `Promise.resolve(work).then(() => undefined, () => undefined)`, so a throw in any step
@@ -140,5 +144,27 @@ describe("heartbeat scheduler interval", () => {
     expect(outcome.ran).toEqual([]);
     expect(routineTick).not.toHaveBeenCalled();
     expect(errorCalls(logger)).toHaveLength(0);
+  });
+});
+
+describe("heartbeat scheduler optional work", () => {
+  it("stops waiting for optional work at the bound instead of holding the tick", async () => {
+    const never = new Promise<string>(() => {});
+    const started = Date.now();
+    const outcome = await boundSchedulerWork(never, 20);
+
+    expect(outcome).toEqual({ timedOut: true });
+    // The bound is what keeps a slow aggregate from delaying the next routine run.
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  it("returns the value when the work settles inside the bound", async () => {
+    await expect(boundSchedulerWork(Promise.resolve(7), 1_000)).resolves.toEqual({ value: 7 });
+  });
+
+  it("still reports a failure that happens before the bound", async () => {
+    await expect(boundSchedulerWork(Promise.reject(new Error("metrics exploded")), 1_000)).rejects.toThrow(
+      "metrics exploded",
+    );
   });
 });
