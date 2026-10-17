@@ -37,6 +37,13 @@ remaining operations before qualifying the whole capability.
 Gaps: Parent/child and provenance paths exist; same-company assignment does not remove
 protected task/resource policy.
 
+MCP transport update in this change: the optional stdio package requires a
+per-call `paperclipRunId` UUID for create, update, comment, and checkout tools.
+It sends the UUID in the run header and does not use a startup fallback.
+[The package contract](../../packages/mcp-server/README.md#per-call-run-context)
+and [fake-API regressions](../../packages/mcp-server/src/run-context.test.ts)
+cover transport behavior. They do not qualify live delegation or backend access.
+
 ## `dependencies`
 
 Review: `baseline`.
