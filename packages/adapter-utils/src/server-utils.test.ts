@@ -714,10 +714,6 @@ describe("runChildProcess", () => {
     },
   );
 
-  // A process that left the run's process group (its own session here; a shared
-  // ssh connection's master in production) survives the group kill and holds
-  // the stdout pipe, so "close" never fires on its own. A stopped run must still
-  // settle shortly after the child it started has exited.
   const ESCAPED_HOLDER_SOURCE = [
     "const { spawn } = require('node:child_process');",
     "const holder = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 60000)'], { detached: true, stdio: ['ignore', 'inherit', 'inherit'] });",
@@ -725,14 +721,10 @@ describe("runChildProcess", () => {
     "process.stdout.write('holder:' + holder.pid + '\\n');",
   ];
 
-  // Runs `childSource` with an escaped holder on its stdout. The pid arrives
-  // through onLog, so the holder is killed in `finally` even when the run never
-  // settles; the wait is bounded below the test timeout so `finally` always runs.
   async function runWithEscapedHolder(input: {
     childSource: string[];
     options?: Partial<Parameters<typeof runChildProcess>[3]>;
     afterHolderStarted?: (runId: string) => void | Promise<void>;
-    // A line the child prints once it is ready for `afterHolderStarted`.
     readyMarker?: string;
     settleBoundMs?: number;
   }) {
@@ -770,7 +762,6 @@ describe("runChildProcess", () => {
         new Promise<"hung">((resolve) => setTimeout(() => resolve("hung"), input.settleBoundMs ?? 20_000)),
       ]);
       expect(outcome, "the run settled without waiting for the escaped process").not.toBe("hung");
-      // The escaped process is still alive: the run did not wait for it.
       expect(isPidAlive(holderPid)).toBe(true);
       return { result: outcome as Awaited<typeof resultPromise>, elapsedMs: Date.now() - startedAt };
     } finally {
@@ -812,8 +803,6 @@ describe("runChildProcess", () => {
 
     it("settles when an outside stop signals a child that catches it and exits normally", async () => {
       const { result } = await runWithEscapedHolder({
-        // The handler is installed before the child reports that it is ready,
-        // and the signal is sent only after that report.
         childSource: [
           "process.on('SIGTERM', () => process.exit(0));",
           "process.stdout.write('ready\\n');",

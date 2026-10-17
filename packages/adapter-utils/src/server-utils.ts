@@ -91,10 +91,6 @@ interface RunningProcess {
   child: ChildProcess;
   graceSec: number;
   processGroupId: number | null;
-  // Tells the run that something outside it is stopping the child (a cancel,
-  // watchdog or shutdown). The run then settles even when a process outside the
-  // child's group keeps its output open. Callers that stop a registered
-  // process by pid call this first; `signalRunningProcess` calls it itself.
   markStopRequested?: () => void;
 }
 
@@ -4779,13 +4775,6 @@ export async function runChildProcess(
                 })
             : Promise.resolve();
 
-        // A stopped run (timeout, cancel, watchdog, terminal-result cleanup)
-        // must end even when a process outside its group keeps stdout/stderr
-        // open: "close" waits for every holder of the pipes, and the group kill
-        // does not reach a process that left the group. Once a stop has been
-        // requested and the child has exited, whichever came last, close the
-        // pipes if "close" has not arrived after the grace period plus five
-        // seconds. A run that ends on its own is not bounded.
         let stopRequested = false;
         let childExited = false;
         let closed = false;
@@ -4968,7 +4957,6 @@ export async function runChildProcess(
         child.on("exit", (_code: number | null, signal: NodeJS.Signals | null) => {
           maybeArmTerminalResultCleanup();
           childExited = true;
-          // A child that a signal ended was stopped from outside.
           if (signal !== null) stopRequested = true;
           armCloseBound();
         });
