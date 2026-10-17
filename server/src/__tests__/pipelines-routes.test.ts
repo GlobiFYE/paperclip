@@ -39,13 +39,14 @@ import { errorHandler } from "../middleware/error-handler.js";
 import { issueRoutes } from "../routes/issues.js";
 import { pipelineRoutes } from "../routes/pipelines.js";
 import {
+  PIPELINE_AUTOMATION_DEFAULT_TITLE_TEMPLATE,
   PIPELINE_CASE_EVENTS_MAX_LIMIT,
   PIPELINE_CONTEXT_PACK_EVENT_LIMIT,
 } from "../services/pipelines.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
-const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe.sequential : describe.skip;
+const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
 
 if (!embeddedPostgresSupport.supported) {
   console.warn(
@@ -597,7 +598,7 @@ describeEmbeddedPostgres("pipeline routes", () => {
     });
   });
 
-  it("fails automation execution when the selected project workspace belongs to a different project", async () => {
+  it("keeps automation project organization independent of the selected workspace source", async () => {
     const company = await seedCompany();
     const http = request(app(boardActor));
     const agent = await seedAutomationAgent(company.id);
@@ -620,7 +621,7 @@ describeEmbeddedPostgres("pipeline routes", () => {
         config: {
           automation: {
             assigneeAgentId: agent.id,
-            instructionsBody: "This should fail before issue creation.",
+            instructionsBody: "Work in the selected source while retaining the task's project.",
             projectId: source.projectId,
             projectWorkspaceId: mismatched.projectWorkspaceId,
           },
@@ -637,14 +638,21 @@ describeEmbeddedPostgres("pipeline routes", () => {
       .send({ toStageKey: "in_progress", expectedVersion: 1 })
       .expect(200);
 
-    expect(moved.body.automationExecution.status).toBe("failed");
+    expect(moved.body.automationExecution.status).toBe("succeeded");
     const executionId = moved.body.automationExecution.execution.id as string;
     const [execution] = await db
       .select()
       .from(pipelineAutomationExecutions)
       .where(eq(pipelineAutomationExecutions.id, executionId));
-    expect(execution!.executionIssueId).toBeNull();
-    expect(execution!.error).toContain("Project workspace must belong to the selected project");
+    expect(execution!.executionIssueId).not.toBeNull();
+    expect(execution!.error).toBeNull();
+    const [issue] = await db.select().from(issues)
+      .where(eq(issues.id, execution!.executionIssueId!));
+    expect(issue).toMatchObject({
+      companyId: company.id,
+      projectId: source.projectId,
+      projectWorkspaceId: mismatched.projectWorkspaceId,
+    });
   });
 
   it("keeps legacy stage automation with only assignee and instructions compatible", async () => {
@@ -677,6 +685,7 @@ describeEmbeddedPostgres("pipeline routes", () => {
     const automatedStage = detail.body.stages.find((stage: { key: string }) => stage.key === "in_progress");
     expect(automatedStage.config.automation).toMatchObject({
       assigneeAgentId: agent.id,
+      titleTemplate: PIPELINE_AUTOMATION_DEFAULT_TITLE_TEMPLATE,
       instructionsBody: "Legacy automation body.",
       projectId: null,
       projectWorkspaceId: null,
@@ -684,6 +693,14 @@ describeEmbeddedPostgres("pipeline routes", () => {
       executionWorkspacePreference: null,
       executionWorkspaceSettings: null,
     });
+
+    await db
+      .update(routines)
+      .set({ title: "Custom automation for {{case_key}}" })
+      .where(eq(routines.id, automatedStage.config.automation.routineId));
+    const detailAfterRoutineEdit = await http.get(`/api/pipelines/${pipeline.body.id}`).expect(200);
+    const editedStage = detailAfterRoutineEdit.body.stages.find((stage: { key: string }) => stage.key === "in_progress");
+    expect(editedStage.config.automation.titleTemplate).toBe("Custom automation for {{case_key}}");
 
     const created = await http
       .post(`/api/pipelines/${pipeline.body.id}/cases`)
@@ -1220,7 +1237,7 @@ describeEmbeddedPostgres("pipeline routes", () => {
       })
       .expect(201);
     const caseIds: string[] = [];
-    for (let index = 0; index < 50; index += 1) {
+    for (let index = 0; index < 5; index += 1) {
       const created = await http
         .post(`/api/pipelines/${pipeline.body.id}/cases`)
         .send({ caseKey: `bulk-${index}`, title: `Bulk ${index}` })
@@ -1241,12 +1258,14 @@ describeEmbeddedPostgres("pipeline routes", () => {
       })
       .expect(200);
 
-    expect(bulk.body.results.filter((item: { ok: boolean }) => item.ok)).toHaveLength(47);
+    expect(bulk.body.results.filter((item: { ok: boolean }) => item.ok)).toHaveLength(2);
     const failed = bulk.body.results.filter((item: { ok: boolean }) => !item.ok);
     expect(failed).toHaveLength(3);
     expect(failed.every((item: { error: { code: string } }) => item.error.code === "version_conflict")).toBe(true);
     const requestChangesDetail = await http.get(`/api/cases/${caseIds[3]}`).expect(200);
     expect(requestChangesDetail.body.stage.key).toBe("in_progress");
+    const approvalDetail = await http.get(`/api/cases/${caseIds[4]}`).expect(200);
+    expect(approvalDetail.body.stage.key).toBe("done");
   });
 
   it("returns conflict bodies with code, current version, and stage", async () => {

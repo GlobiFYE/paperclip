@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { pluginOperationIssueOriginKind } from "@paperclipai/shared";
+import { createIssueThreadInteractionSchema, pluginOperationIssueOriginKind } from "@paperclipai/shared";
 import type {
   PaperclipPluginManifestV1,
   PluginCapability,
@@ -16,10 +16,11 @@ import type {
   Issue,
   IssueComment,
   IssueThreadInteraction,
-  CreateIssueThreadInteraction,
+  IssueAttachment,
   IssueDocument,
   Agent,
   Goal,
+  Approval,
 } from "@paperclipai/shared";
 import type {
   EventFilter,
@@ -29,6 +30,7 @@ import type {
   PluginJobContext,
   PluginLauncherRegistration,
   PluginEvent,
+  ResourceLifecycleEvent,
   ScopeKey,
   ToolResult,
   ToolRunContext,
@@ -43,20 +45,33 @@ import type {
   PermissionKey,
   PrincipalType,
 } from "./types.js";
+import { NOOP_PLUGIN_TRACER } from "./types.js";
 import type {
   PluginEnvironmentValidateConfigParams,
   PluginEnvironmentValidationResult,
   PluginEnvironmentProbeParams,
   PluginEnvironmentProbeResult,
   PluginEnvironmentLease,
+  PluginEnvironmentInspectLeaseParams,
+  PluginEnvironmentLeaseObservation,
   PluginEnvironmentAcquireLeaseParams,
   PluginEnvironmentResumeLeaseParams,
   PluginEnvironmentReleaseLeaseParams,
+  PluginEnvironmentTerminationReceipt,
   PluginEnvironmentDestroyLeaseParams,
   PluginEnvironmentRealizeWorkspaceParams,
   PluginEnvironmentRealizeWorkspaceResult,
   PluginEnvironmentExecuteParams,
   PluginEnvironmentExecuteResult,
+  PluginEnvironmentStartInteractiveSetupParams,
+  PluginEnvironmentInteractiveSetupSession,
+  PluginEnvironmentGetInteractiveSetupParams,
+  PluginEnvironmentCaptureTemplateParams,
+  PluginEnvironmentCaptureTemplateResult,
+  PluginEnvironmentCancelInteractiveSetupParams,
+  PluginEnvironmentCancelInteractiveSetupResult,
+  PluginEnvironmentDeleteTemplateParams,
+  PluginEnvironmentDeleteTemplateResult,
   PluginPerformActionActorContext,
   PluginPerformActionContext,
 } from "./protocol.js";
@@ -66,7 +81,7 @@ export interface TestHarnessOptions {
   manifest: PaperclipPluginManifestV1;
   /** Optional capability override. Defaults to `manifest.capabilities`. */
   capabilities?: PluginCapability[];
-  /** Initial config returned by `ctx.config.get()`. */
+  /** Initial config returned by `ctx.config.get(companyId)`. */
   config?: Record<string, unknown>;
 }
 
@@ -96,9 +111,13 @@ export interface TestHarness {
   /** Seed host entities for `ctx.companies/projects/issues/agents/goals/access/authorization` reads. */
   seed(input: {
     companies?: Company[];
+    lifecycleEvents?: ResourceLifecycleEvent[];
     projects?: Project[];
     issues?: Issue[];
     issueComments?: IssueComment[];
+    issueInteractions?: IssueThreadInteraction[];
+    issueAttachments?: Array<IssueAttachment & { contentBase64?: string }>;
+    approvals?: Approval[];
     agents?: Agent[];
     goals?: Goal[];
     projectWorkspaces?: PluginWorkspace[];
@@ -145,9 +164,16 @@ export interface EnvironmentEventRecord {
     | "acquireLease"
     | "resumeLease"
     | "releaseLease"
+    | "stopLease"
+    | "inspectLease"
     | "destroyLease"
     | "realizeWorkspace"
-    | "execute";
+    | "execute"
+    | "startInteractiveSetup"
+    | "getInteractiveSetup"
+    | "captureTemplate"
+    | "cancelInteractiveSetup"
+    | "deleteTemplate";
   driverKey: string;
   environmentId: string;
   timestamp: string;
@@ -165,10 +191,17 @@ export interface EnvironmentTestHarnessOptions extends TestHarnessOptions {
     onProbe?: (params: PluginEnvironmentProbeParams) => Promise<PluginEnvironmentProbeResult>;
     onAcquireLease?: (params: PluginEnvironmentAcquireLeaseParams) => Promise<PluginEnvironmentLease>;
     onResumeLease?: (params: PluginEnvironmentResumeLeaseParams) => Promise<PluginEnvironmentLease>;
-    onReleaseLease?: (params: PluginEnvironmentReleaseLeaseParams) => Promise<void>;
-    onDestroyLease?: (params: PluginEnvironmentDestroyLeaseParams) => Promise<void>;
+    onReleaseLease?: (params: PluginEnvironmentReleaseLeaseParams) => Promise<PluginEnvironmentTerminationReceipt | void>;
+    onStopLease?: (params: PluginEnvironmentReleaseLeaseParams) => Promise<PluginEnvironmentTerminationReceipt>;
+    onInspectLease?: (params: PluginEnvironmentInspectLeaseParams) => Promise<PluginEnvironmentLeaseObservation>;
+    onDestroyLease?: (params: PluginEnvironmentDestroyLeaseParams) => Promise<PluginEnvironmentTerminationReceipt | void>;
     onRealizeWorkspace?: (params: PluginEnvironmentRealizeWorkspaceParams) => Promise<PluginEnvironmentRealizeWorkspaceResult>;
     onExecute?: (params: PluginEnvironmentExecuteParams) => Promise<PluginEnvironmentExecuteResult>;
+    onStartInteractiveSetup?: (params: PluginEnvironmentStartInteractiveSetupParams) => Promise<PluginEnvironmentInteractiveSetupSession>;
+    onGetInteractiveSetup?: (params: PluginEnvironmentGetInteractiveSetupParams) => Promise<PluginEnvironmentInteractiveSetupSession>;
+    onCaptureTemplate?: (params: PluginEnvironmentCaptureTemplateParams) => Promise<PluginEnvironmentCaptureTemplateResult>;
+    onCancelInteractiveSetup?: (params: PluginEnvironmentCancelInteractiveSetupParams) => Promise<PluginEnvironmentCancelInteractiveSetupResult>;
+    onDeleteTemplate?: (params: PluginEnvironmentDeleteTemplateParams) => Promise<PluginEnvironmentDeleteTemplateResult>;
   };
 }
 
@@ -185,13 +218,27 @@ export interface EnvironmentTestHarness extends TestHarness {
   /** Invoke the environment driver's resumeLease hook. */
   resumeLease(params: PluginEnvironmentResumeLeaseParams): Promise<PluginEnvironmentLease>;
   /** Invoke the environment driver's releaseLease hook. */
-  releaseLease(params: PluginEnvironmentReleaseLeaseParams): Promise<void>;
+  releaseLease(params: PluginEnvironmentReleaseLeaseParams): Promise<PluginEnvironmentTerminationReceipt | void>;
+  /** Stop and preserve an allocation independently of its release policy. */
+  stopLease(params: PluginEnvironmentReleaseLeaseParams): Promise<PluginEnvironmentTerminationReceipt>;
+  /** Observe an allocation without starting or modifying it. */
+  inspectLease(params: PluginEnvironmentInspectLeaseParams): Promise<PluginEnvironmentLeaseObservation | undefined>;
   /** Invoke the environment driver's destroyLease hook. */
-  destroyLease(params: PluginEnvironmentDestroyLeaseParams): Promise<void>;
+  destroyLease(params: PluginEnvironmentDestroyLeaseParams): Promise<PluginEnvironmentTerminationReceipt | void>;
   /** Invoke the environment driver's realizeWorkspace hook. */
   realizeWorkspace(params: PluginEnvironmentRealizeWorkspaceParams): Promise<PluginEnvironmentRealizeWorkspaceResult>;
   /** Invoke the environment driver's execute hook. */
   execute(params: PluginEnvironmentExecuteParams): Promise<PluginEnvironmentExecuteResult>;
+  /** Invoke the environment driver's interactive setup start hook. */
+  startInteractiveSetup(params: PluginEnvironmentStartInteractiveSetupParams): Promise<PluginEnvironmentInteractiveSetupSession>;
+  /** Invoke the environment driver's interactive setup status hook. */
+  getInteractiveSetup(params: PluginEnvironmentGetInteractiveSetupParams): Promise<PluginEnvironmentInteractiveSetupSession>;
+  /** Invoke the environment driver's template capture hook. */
+  captureTemplate(params: PluginEnvironmentCaptureTemplateParams): Promise<PluginEnvironmentCaptureTemplateResult>;
+  /** Invoke the environment driver's interactive setup cancel hook. */
+  cancelInteractiveSetup(params: PluginEnvironmentCancelInteractiveSetupParams): Promise<PluginEnvironmentCancelInteractiveSetupResult>;
+  /** Invoke the environment driver's optional template delete hook. */
+  deleteTemplate(params: PluginEnvironmentDeleteTemplateParams): Promise<PluginEnvironmentDeleteTemplateResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -456,6 +503,8 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
   const entities = new Map<string, PluginEntityRecord>();
   const entityExternalIndex = new Map<string, string>();
   const companies = new Map<string, Company>();
+  const lifecycleEvents = new Map<string, ResourceLifecycleEvent>();
+  const lifecycleAcknowledgments = new Set<string>();
   const projects = new Map<string, Project>();
   const routines = new Map<string, Routine>();
   const routineRuns = new Map<string, RoutineRun>();
@@ -463,6 +512,9 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
   const blockedByIssueIds = new Map<string, string[]>();
   const issueComments = new Map<string, IssueComment[]>();
   const issueInteractions = new Map<string, IssueThreadInteraction[]>();
+  const issueAttachments = new Map<string, IssueAttachment[]>();
+  const attachmentContentById = new Map<string, string>();
+  const approvals = new Map<string, Approval>();
   const issueDocuments = new Map<string, IssueDocument>();
   const agents = new Map<string, Agent>();
   const goals = new Map<string, Goal>();
@@ -498,6 +550,31 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
       accessMembers.set(member.id, { ...member, grants: stamped, updatedAt: new Date().toISOString() });
     }
     return stamped;
+  }
+
+  /**
+   * Mirror the host's `requireActiveHumanMember` write bar so the harness
+   * rejects the same forged/over-privileged attributions production does: the
+   * actor must be an active `user` member of the company whose `membershipRole`
+   * is not the read-only `viewer` role (the web app 403s viewers on these same
+   * board write-routes). Keeps the harness a faithful mirror so a plugin test
+   * cannot pass an attribution production would reject. Seed members via
+   * `createTestPluginHost({ accessMembers: [...] })`.
+   */
+  function assertActiveHumanMemberCanWrite(companyId: string, actorUserId: string) {
+    const member = [...accessMembers.values()].find(
+      (entry) =>
+        entry.companyId === companyId
+        && entry.principalType === "user"
+        && entry.principalId === actorUserId
+        && entry.status === "active",
+    );
+    if (!member) {
+      throw new Error(`actorUserId "${actorUserId}" is not an active human member of this company`);
+    }
+    if (member.membershipRole === "viewer") {
+      throw new Error(`actorUserId "${actorUserId}" has viewer (read-only) access and cannot take this write action`);
+    }
   }
   const projectWorkspaces = new Map<string, PluginWorkspace[]>();
   const executionWorkspaces = new Map<string, PluginExecutionWorkspaceMetadata>();
@@ -795,6 +872,34 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
       },
     },
     events: {
+      async listLifecycle(companyId, limit = 50, afterId) {
+        requireCapability(manifest, capabilitySet, "events.subscribe");
+        requireCompanyId(companyId);
+        if (!Number.isInteger(limit) || limit < 1 || limit > 100) throw new Error("limit must be an integer from 1 to 100");
+        if (afterId !== undefined && (typeof afterId !== "string" || !/^[1-9]\d*$/.test(afterId) || !Number.isSafeInteger(Number(afterId)))) throw new Error("Invalid lifecycle page id");
+        const pending = [...lifecycleEvents.values()].filter(event => event.companyId === companyId && !lifecycleAcknowledgments.has(event.id))
+          .sort((a, b) => (a.action === "create" ? 0 : 1) - (b.action === "create" ? 0 : 1) || Number(a.id) - Number(b.id));
+        const resources = new Set<string>();
+        return pending.filter(event => {
+          const key = `${event.resourceType}:${event.resourceId}`;
+          if (resources.has(key)) return false;
+          resources.add(key);
+          return true;
+        }).filter(event => afterId === undefined || Number(event.id) > Number(afterId))
+          .sort((a, b) => Number(a.id) - Number(b.id)).slice(0, limit);
+      },
+      async acknowledgeLifecycle(companyId, eventId) {
+        requireCapability(manifest, capabilitySet, "events.subscribe");
+        requireCompanyId(companyId);
+        const event = lifecycleEvents.get(eventId);
+        if (!event || event.companyId !== companyId) throw new Error("Lifecycle event not found");
+        const earlier = [...lifecycleEvents.values()].some(other => other.companyId === companyId
+          && other.resourceType === event.resourceType && other.resourceId === event.resourceId
+          && event.action !== "create" && (other.action === "create" || Number(other.id) < Number(event.id))
+          && !lifecycleAcknowledgments.has(other.id));
+        if (earlier) throw new Error("Acknowledge earlier lifecycle events for this resource first");
+        lifecycleAcknowledgments.add(eventId);
+      },
       on(name: PluginEventType | `plugin.${string}`, filterOrFn: EventFilter | ((event: PluginEvent) => Promise<void>), maybeFn?: (event: PluginEvent) => Promise<void>): () => void {
         requireCapability(manifest, capabilitySet, "events.subscribe");
         let registration: EventRegistration;
@@ -1177,11 +1282,14 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
             parentIssueId: null,
             title: declaration.title,
             description: declaration.description ?? null,
+            responsibleUserId: null,
             assigneeAgentId,
             priority: declaration.priority ?? "medium",
             status: declaration.status ?? (assigneeAgentId ? "active" : "paused"),
             concurrencyPolicy: declaration.concurrencyPolicy ?? "coalesce_if_active",
             catchUpPolicy: declaration.catchUpPolicy ?? "skip_missed",
+            activityGatePolicy: declaration.activityGatePolicy ?? "always",
+            activityGateScope: declaration.activityGateScope ?? "company",
             variables: declaration.variables ?? [],
             latestRevisionId: null,
             latestRevisionNumber: 1,
@@ -1532,11 +1640,14 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           projectWorkspaceId: null,
           goalId: input.goalId ?? null,
           parentId: input.parentId ?? null,
+          visibility: "open",
+          privacyRootIssueId: null,
           title: input.title,
           description: input.description ?? null,
           status: input.status ?? "todo",
           workMode: "standard",
           priority: input.priority ?? "medium",
+          reviewPolicy: null,
           assigneeAgentId: input.assigneeAgentId ?? null,
           assigneeUserId: input.assigneeUserId ?? null,
           checkoutRunId: null,
@@ -1545,6 +1656,7 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
           executionLockedAt: null,
           createdByAgentId: null,
           createdByUserId: null,
+          responsibleUserId: null,
           issueNumber: null,
           identifier: null,
           originKind,
@@ -1642,18 +1754,25 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
       },
       async createComment(issueId, body, companyId, options) {
         requireCapability(manifest, capabilitySet, "issue.comments.create");
+        if (options?.actorUserId) {
+          requireCapability(manifest, capabilitySet, "issue.comments.create_human_attributed");
+        }
         const parentIssue = issues.get(issueId);
         if (!isInCompany(parentIssue, companyId)) {
           throw new Error(`Issue not found: ${issueId}`);
+        }
+        if (options?.actorUserId) {
+          assertActiveHumanMemberCanWrite(companyId, options.actorUserId);
         }
         const now = new Date();
         const comment: IssueComment = {
           id: randomUUID(),
           companyId: parentIssue.companyId,
           issueId,
-          authorType: options?.authorAgentId ? "agent" : "system",
-          authorAgentId: options?.authorAgentId ?? null,
-          authorUserId: null,
+          authorType: options?.actorUserId ? "user" : options?.authorAgentId ? "agent" : "system",
+          authorAgentId: options?.actorUserId ? null : options?.authorAgentId ?? null,
+          authorUserId: options?.actorUserId ?? null,
+          onBehalfOfUserId: null,
           body,
           presentation: null,
           metadata: null,
@@ -1670,6 +1789,9 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         const parentIssue = issues.get(issueId);
         if (!isInCompany(parentIssue, companyId)) {
           throw new Error(`Issue not found: ${issueId}`);
+        }
+        if (interaction.kind === "ask_user_questions") {
+          interaction = createIssueThreadInteractionSchema.parse(interaction);
         }
         const now = new Date();
         const current = issueInteractions.get(issueId) ?? [];
@@ -1711,6 +1833,66 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
       },
       async requestCheckboxConfirmation(issueId, interaction, companyId, options) {
         return this.createInteraction(issueId, { ...interaction, kind: "request_checkbox_confirmation" }, companyId, options) as Promise<any>;
+      },
+      async listInteractions(issueId, companyId) {
+        requireCapability(manifest, capabilitySet, "issue.interactions.read");
+        if (!isInCompany(issues.get(issueId), companyId)) return [];
+        return issueInteractions.get(issueId) ?? [];
+      },
+      async respondInteraction(issueId, interactionId, input, companyId) {
+        requireCapability(manifest, capabilitySet, "issue.interactions.respond");
+        const parentIssue = issues.get(issueId);
+        if (!isInCompany(parentIssue, companyId)) {
+          throw new Error(`Issue not found: ${issueId}`);
+        }
+        if (!input.actorUserId) {
+          throw new Error("actorUserId is required to respond to an interaction on behalf of a board user");
+        }
+        const actorUserId = input.actorUserId;
+        // Mirror the host's active-human-member write re-verification.
+        assertActiveHumanMemberCanWrite(companyId, actorUserId);
+        const list = issueInteractions.get(issueId) ?? [];
+        const current = list.find((entry) => entry.id === interactionId);
+        if (!current) {
+          throw new Error(`Interaction not found: ${interactionId}`);
+        }
+        if (current.status !== "pending") {
+          return { interaction: current, applied: false };
+        }
+        const resolved: IssueThreadInteraction = {
+          ...current,
+          status: input.action === "accept" ? "accepted" : "rejected",
+          updatedAt: new Date(),
+        } as IssueThreadInteraction;
+        const index = list.indexOf(current);
+        list[index] = resolved;
+        issueInteractions.set(issueId, list);
+        return { interaction: resolved, applied: true };
+      },
+      async listAttachments(issueId, companyId) {
+        requireCapability(manifest, capabilitySet, "issue.attachments.read");
+        if (!isInCompany(issues.get(issueId), companyId)) return [];
+        return issueAttachments.get(issueId) ?? [];
+      },
+      async getAttachmentContent(attachmentId, companyId, options) {
+        requireCapability(manifest, capabilitySet, "issue.attachments.read");
+        const attachment = [...issueAttachments.values()]
+          .flat()
+          .find((entry) => entry.id === attachmentId);
+        if (!attachment || attachment.companyId !== companyId) return null;
+        const maxBytes = typeof options?.maxBytes === "number" && options.maxBytes > 0 ? options.maxBytes : null;
+        if (maxBytes !== null && attachment.byteSize > maxBytes) {
+          throw new Error(`attachment ${attachment.id} is ${attachment.byteSize} bytes, over the ${maxBytes}-byte cap`);
+        }
+        const contentBase64 = attachmentContentById.get(attachment.id) ?? "";
+        return {
+          attachmentId: attachment.id,
+          contentType: attachment.contentType,
+          byteSize: attachment.byteSize,
+          sha256: attachment.sha256,
+          originalFilename: attachment.originalFilename ?? null,
+          contentBase64,
+        };
       },
       documents: {
         async list(issueId, companyId) {
@@ -1863,7 +2045,52 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         },
       },
     },
+    approvals: {
+      async list(input) {
+        requireCapability(manifest, capabilitySet, "approvals.read");
+        return [...approvals.values()].filter(
+          (approval) =>
+            approval.companyId === input.companyId
+            && (!input.status || approval.status === input.status),
+        );
+      },
+      async get(approvalId, companyId) {
+        requireCapability(manifest, capabilitySet, "approvals.read");
+        const approval = approvals.get(approvalId);
+        if (!approval || approval.companyId !== companyId) return null;
+        return approval;
+      },
+      async decide(approvalId, input, companyId) {
+        requireCapability(manifest, capabilitySet, "approvals.respond");
+        const approval = approvals.get(approvalId);
+        if (!approval || approval.companyId !== companyId) {
+          throw new Error(`Approval not found: ${approvalId}`);
+        }
+        if (!input.actorUserId) {
+          throw new Error("actorUserId is required to decide an approval on behalf of a board user");
+        }
+        const actorUserId = input.actorUserId;
+        assertActiveHumanMemberCanWrite(companyId, actorUserId);
+        if (approval.status !== "pending") {
+          return { approval, applied: false };
+        }
+        const decided: Approval = {
+          ...approval,
+          status: input.action === "approve" ? "approved" : "rejected",
+          decisionNote: input.decisionNote ?? null,
+          decidedByUserId: actorUserId,
+          decidedAt: new Date(),
+          updatedAt: new Date(),
+        };
+        approvals.set(approvalId, decided);
+        return { approval: decided, applied: true };
+      },
+    },
     agents: {
+      async getRuntime() {
+        requireCapability(manifest, capabilitySet, "agents.lifecycle.manage");
+        throw new Error("Agent runtime state requires a host service fixture");
+      },
       async list(input) {
         requireCapability(manifest, capabilitySet, "agents.read");
         const companyId = requireCompanyId(input?.companyId);
@@ -2297,6 +2524,27 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         },
       };
     })(),
+    execution: {
+      log(_stream: "stdout" | "stderr", _chunk: string) {
+        // No-op in test harness — the host runner log sink is not wired here.
+      },
+    },
+    loginPty: {
+      output(_hostRouteId: string, _workerSessionId: string, _chunk: string) {
+        // No-op in test harness — the host login route is not wired here.
+      },
+      exit(_hostRouteId: string, _workerSessionId: string, _exitCode: number | null) {
+        // No-op in test harness — the host login route is not wired here.
+      },
+    },
+    duplexChannel: {
+      data(_hostRouteId: string, _workerSessionId: string, _chunk: Uint8Array) {
+        // No-op in test harness — the host duplex route is not wired here.
+      },
+      exit(_hostRouteId: string, _workerSessionId: string, _exitCode: number | null) {
+        // No-op in test harness — the host duplex route is not wired here.
+      },
+    },
     tools: {
       register(name, _decl, fn) {
         requireCapability(manifest, capabilitySet, "agent.tools.register");
@@ -2329,11 +2577,13 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         logs.push({ level: "debug", message, meta });
       },
     },
+    tracer: NOOP_PLUGIN_TRACER,
   };
 
   const harness: TestHarness = {
     ctx,
     seed(input) {
+      for (const row of input.lifecycleEvents ?? []) lifecycleEvents.set(row.id, row);
       for (const row of input.companies ?? []) companies.set(row.id, row);
       for (const row of input.projects ?? []) projects.set(row.id, row);
       for (const row of input.issues ?? []) {
@@ -2347,6 +2597,19 @@ export function createTestHarness(options: TestHarnessOptions): TestHarness {
         list.push(row);
         issueComments.set(row.issueId, list);
       }
+      for (const row of input.issueInteractions ?? []) {
+        const list = issueInteractions.get(row.issueId) ?? [];
+        list.push(row);
+        issueInteractions.set(row.issueId, list);
+      }
+      for (const row of input.issueAttachments ?? []) {
+        const { contentBase64, ...attachment } = row;
+        const list = issueAttachments.get(attachment.issueId) ?? [];
+        list.push(attachment);
+        issueAttachments.set(attachment.issueId, list);
+        attachmentContentById.set(attachment.id, contentBase64 ?? "");
+      }
+      for (const row of input.approvals ?? []) approvals.set(row.id, row);
       for (const row of input.agents ?? []) agents.set(row.id, row);
       for (const row of input.goals ?? []) goals.set(row.id, row);
       for (const row of input.projectWorkspaces ?? []) {
@@ -2515,6 +2778,12 @@ export function createEnvironmentTestHarness(options: EnvironmentTestHarnessOpti
     async releaseLease(params) {
       return callHook("releaseLease", driver.onReleaseLease, params, "onReleaseLease");
     },
+    async stopLease(params) {
+      return callHook("stopLease", driver.onStopLease, params, "onStopLease");
+    },
+    async inspectLease(params) {
+      return callHook("inspectLease", driver.onInspectLease, params, "onInspectLease");
+    },
     async destroyLease(params) {
       return callHook("destroyLease", driver.onDestroyLease, params, "onDestroyLease");
     },
@@ -2523,6 +2792,46 @@ export function createEnvironmentTestHarness(options: EnvironmentTestHarnessOpti
     },
     async execute(params) {
       return callHook("execute", driver.onExecute, params, "onExecute");
+    },
+    async startInteractiveSetup(params) {
+      return callHook(
+        "startInteractiveSetup",
+        driver.onStartInteractiveSetup,
+        params,
+        "onStartInteractiveSetup",
+      );
+    },
+    async getInteractiveSetup(params) {
+      return callHook(
+        "getInteractiveSetup",
+        driver.onGetInteractiveSetup,
+        params,
+        "onGetInteractiveSetup",
+      );
+    },
+    async captureTemplate(params) {
+      return callHook(
+        "captureTemplate",
+        driver.onCaptureTemplate,
+        params,
+        "onCaptureTemplate",
+      );
+    },
+    async cancelInteractiveSetup(params) {
+      return callHook(
+        "cancelInteractiveSetup",
+        driver.onCancelInteractiveSetup,
+        params,
+        "onCancelInteractiveSetup",
+      );
+    },
+    async deleteTemplate(params) {
+      return callHook(
+        "deleteTemplate",
+        driver.onDeleteTemplate,
+        params,
+        "onDeleteTemplate",
+      );
     },
   };
 
