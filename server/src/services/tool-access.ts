@@ -14048,8 +14048,8 @@ export function toolAccessService(
       await tx.select({ id: toolApplications.id }).from(toolApplications)
         .where(and(eq(toolApplications.id, connection.applicationId), eq(toolApplications.companyId, companyId)))
         .for("update");
-      await tx
-        .select({ id: toolConnections.id })
+      const [lockedConnection] = await tx
+        .select({ id: toolConnections.id, status: toolConnections.status, enabled: toolConnections.enabled })
         .from(toolConnections)
         .where(
           and(
@@ -14058,6 +14058,7 @@ export function toolAccessService(
           ),
         )
         .for("update");
+      if (!lockedConnection) throw notFound("Tool connection not found");
       const [existingProfile] = await tx
         .select()
         .from(toolProfiles)
@@ -14073,7 +14074,9 @@ export function toolAccessService(
         .where(and(eq(toolProfileBindings.companyId, companyId), eq(toolProfileBindings.profileId, existingProfile.id))) : [];
       const existingInstalls = await tx.select().from(toolConnectionInstalls)
         .where(and(eq(toolConnectionInstalls.companyId, companyId), eq(toolConnectionInstalls.connectionId, connection.id)));
-      await lockToolAssignmentAgents(tx, companyId, [...existingBindings, ...bindingInputs, ...existingInstalls]);
+      const companyTargets = lockedConnection.status !== "active" || !lockedConnection.enabled || (existingProfile && existingProfile.status !== "active")
+        ? [{ targetType: "company", targetId: companyId }] : [];
+      await lockToolAssignmentAgents(tx, companyId, [...existingBindings, ...bindingInputs, ...existingInstalls, ...companyTargets]);
       // A renamed connection can leave its old profile name in use. Resolve
       // names against profiles too, including when finalizing an installed draft.
       const otherProfiles = await tx

@@ -328,13 +328,13 @@ describeDatabase("connection assignment synchronization", () => {
     } finally { release?.(); await rm(home, { recursive: true, force: true }); }
   }, 20000);
 
-  it.each(["installs", "finish", "reassign"] as const)("orders %s replacement before scoped and company runtime locks", async change => {
+  it.each(["installs", "finish", "activate", "enable", "revive", "reassign"] as const)("orders %s replacement before scoped and company runtime locks", async change => {
     const [lower, higher] = [agentId, peerId].sort();
     await db.update(toolConnections).set({ config: { url: "https://mcp.example.test/mcp" } }).where(eq(toolConnections.id, connectionId));
     const [app] = await db.insert(toolApplications).values({ companyId, name: "Replacement app", type: "mcp_http" }).returning();
-    const [connection] = await db.insert(toolConnections).values({ companyId, applicationId: app.id, name: "Replacement connection", uid: randomUUID(), transport: "mcp_remote", status: "active" }).returning();
+    const [connection] = await db.insert(toolConnections).values({ companyId, applicationId: app.id, name: "Replacement connection", uid: randomUUID(), transport: "mcp_remote", status: change === "activate" ? "draft" : "active", enabled: change !== "enable" }).returning();
     const [source, target] = await db.insert(toolProfiles).values([
-      { companyId, profileKey: `app:${connection.id}`, name: "Replacement source" },
+      { companyId, profileKey: `app:${connection.id}`, name: "Replacement source", status: change === "revive" ? "archived" : "active" },
       { companyId, profileKey: "replacement-target", name: "Replacement target" },
     ]).returning();
     await db.insert(toolProfileBindings).values({ companyId, profileId: source.id, targetType: "agent", targetId: higher });
@@ -365,13 +365,18 @@ describeDatabase("connection assignment synchronization", () => {
       await waitForLock(0);
       replacement = Promise.allSettled([run(service => change === "installs"
         ? service.putConnectionInstalls(connection.id, { installs: [{ targetType: "agent", targetId: lower }] })
-        : change === "finish" ? service.finishGalleryAppConnection(companyId, connection.id, { enabledCatalogEntryIds: [], askFirstCatalogEntryIds: [], access: { agentIds: [lower] } })
-          : service.deleteProfile(source.id, { reassignToProfileId: target.id }))]);
+        : change === "reassign" ? service.deleteProfile(source.id, { reassignToProfileId: target.id })
+          : service.finishGalleryAppConnection(companyId, connection.id, { enabledCatalogEntryIds: [], askFirstCatalogEntryIds: [], access: { agentIds: [change === "finish" ? lower : higher] } }))]);
       await waitForLock(1);
     } finally { release(); await blocker; }
     for (const result of [...await settings, ...await replacement!]) if (result.status === "rejected") throw result.reason;
     if (change === "installs") expect(await toolAccessService(db).listConnectionInstalls(connection.id, companyId)).toEqual([expect.objectContaining({ targetType: "agent", targetId: lower })]);
-    else expect(await db.select().from(toolProfileBindings).where(eq(toolProfileBindings.profileId, change === "finish" ? source.id : target.id))).toEqual([expect.objectContaining({ targetType: "agent", targetId: change === "finish" ? lower : higher })]);
+    else expect(await db.select().from(toolProfileBindings).where(eq(toolProfileBindings.profileId, change === "reassign" ? target.id : source.id))).toEqual([expect.objectContaining({ targetType: "agent", targetId: change === "finish" ? lower : higher })]);
+    if (change === "activate" || change === "enable" || change === "revive") {
+      expect((await db.select().from(toolConnections).where(eq(toolConnections.id, connection.id)))[0].status).toBe("active");
+      expect((await db.select().from(toolConnections).where(eq(toolConnections.id, connection.id)))[0].enabled).toBe(true);
+      expect((await db.select().from(toolProfiles).where(eq(toolProfiles.id, source.id)))[0].status).toBe("active");
+    }
   }, 15000);
 
 });
