@@ -157,6 +157,18 @@ describe("assertReproducibleGitFiles with Paperclip-managed files", () => {
     await expectAccepted();
   });
 
+  it("keeps a checkout whose upstream cannot be reached or authenticated", async () => {
+    await managedCheckout();
+    prove = (checkout, _name, signal) => assertReproducibleManagedCheckout(checkout, {
+      repoUrl: path.join(root, "missing.git"), resolveGitAuth: async () => null, signal,
+    });
+    await expectRejected("managed_checkout_upstream_unavailable");
+    prove = (checkout, _name, signal) => assertReproducibleManagedCheckout(checkout, {
+      repoUrl: projectRemote, resolveGitAuth: async () => { throw new Error("credentials refused"); }, signal,
+    });
+    await expectRejected("managed_checkout_upstream_unavailable");
+  });
+
   it("does not trust a stale remote-tracking ref", async () => {
     await git(projectSeed, "checkout", "-q", "-b", "feature");
     await commit(projectSeed, "feature.txt", "feature work");
