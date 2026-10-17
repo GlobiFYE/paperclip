@@ -1118,8 +1118,11 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
           // them (every other cancel path already calls it); without it those wakes
           // stay parked indefinitely while still looking live. A "deferred" outcome
           // keeps the run and its queue, so it must not drain.
+          // claimQueuedRun can run under the agent start lock, so defer the
+          // promoted dispatch until the caller releases that lock.
           await releaseIssueExecutionAndPromote(run, {
             suppressImmediateRecovery: true,
+            deferredPostCommitEffects,
           });
         }
         logger.info(

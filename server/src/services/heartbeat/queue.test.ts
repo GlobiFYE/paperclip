@@ -256,12 +256,15 @@ describe.skipIf(!support.supported)("heartbeat queue database wiring", () => {
     await db.update(issues).set({ status: "done" }).where(eq(issues.id, issue.id));
     const deps = callbacks(db);
     deps.getAgent.mockResolvedValue(agent);
-    expect(await createHeartbeatQueue(db, deps).claimQueuedRun(run)).toBeNull();
+    // claimQueuedRun runs under the agent start lock on the batch path, so the
+    // promoted dispatch must be deferred to the caller's post-lock effects.
+    const deferredPostCommitEffects: Parameters<HeartbeatQueueDependencies["applyWakeQueuePostCommitEffects"]>[0] = [];
+    expect(await createHeartbeatQueue(db, deps).claimQueuedRun(run, undefined, deferredPostCommitEffects)).toBeNull();
     const [cancelled] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id));
     expect(cancelled.status).toBe("cancelled");
     expect(deps.releaseIssueExecutionAndPromote).toHaveBeenCalledWith(
       expect.objectContaining({ id: run.id }),
-      { suppressImmediateRecovery: true },
+      { suppressImmediateRecovery: true, deferredPostCommitEffects },
     );
     expect(deps.executeRun).not.toHaveBeenCalled();
   });

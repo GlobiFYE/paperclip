@@ -2147,11 +2147,6 @@ export function heartbeatService(
           });
           if (staleness.outcome === "cancelled") {
             applyRunDispatchPostCommitEffects(staleness.postCommitEffects);
-            // Same drain obligation as the queued-run gate in heartbeat/queue.ts:
-            // release the issue so wakes parked behind this run are promoted.
-            await releaseIssueExecutionAndPromote(run, {
-              suppressImmediateRecovery: true,
-            });
             return;
           }
           throw error;

@@ -904,6 +904,13 @@ export function createPostgresRunDispatchAdapter(
             timeoutConfigured: false,
             timeoutSource: "stale_queued_run_gate",
             timeoutFired: false,
+            // Same rule as setRunStatus: cancelling a queued run that never
+            // acquired provider execution is positive bootstrap evidence. Without
+            // it, the release drain treats this run as needing reconciliation and
+            // holds the wakes parked behind it.
+            ...(run.status === "queued" && run.runtimeMode !== "native" && !run.startedAt && !run.processPid
+              ? { executionRecovery: { kind: "bootstrap", providerWorkStarted: false } }
+              : {}),
           },
           updatedAt: now,
         })
