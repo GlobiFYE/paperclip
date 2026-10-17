@@ -152,9 +152,6 @@ export async function reconcileAbandonedExecutionControl(
               .where(eq(nativeRunFinalizations.runId, run.id));
             return true;
           }
-          // A live legacy controller still owns finalization: it renews its
-          // lease until the run settles, which can outlast the deadline. Check
-          // again once that lease could have lapsed.
           if (await hasLiveLegacyController(tx as unknown as Db, run)) {
             await tx
               .update(heartbeatRuns)

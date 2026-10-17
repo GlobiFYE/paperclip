@@ -112,10 +112,8 @@ describeEmbeddedPostgres("reconcileAbandonedExecutionControl reports a genuine f
     const [owned] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, runId));
     expect(owned?.status).toBe("running");
     expect(owned?.errorCode).toBeNull();
-    // Re-checked once the lease could lapse, rather than dropped.
     expect(owned?.executionControlDeadlineAt?.getTime()).toBe(leaseExpiresAt.getTime());
 
-    // The controller stops renewing (process lost): the next sweep fails the run.
     await db
       .update(heartbeatRuns)
       .set({ controllerLeaseExpiresAt: new Date(Date.now() - 1_000), executionControlDeadlineAt: new Date(Date.now() - 1_000) })
