@@ -483,6 +483,73 @@ Tres reglas que salieron de este lote:
    ninguna área existente: `skills.json` nació así, con 371 entradas que en
    `common.json` habrían dejado ilegible el diff del próximo lote.
 
+### Agregadas en CHA-32 (lotes `conectores` y `proyectos`: 440 cadenas)
+
+Dos lotes en una pasada. `conectores` son Conectores, el detalle de una app
+conectada, el flujo de conexión, los gateways, los pools de IA y el alta de
+email con AgentMail; `proyectos` son las propiedades de un proyecto, su base de
+código, los espacios de trabajo de ejecución, el presupuesto y el resumen.
+
+| Inglés | es-AR | Nota |
+|---|---|---|
+| Connector | Conector | Ya venía de §2; «Connector catalog pages» → «Páginas del catálogo de conectores» |
+| Connection pool / pool | pool de conexiones / pool | Queda en inglés y es **masculino**: «este pool», «los pools». Ya venía de las 419 entradas que `connections.json` tenía |
+| Identity | Identidad | Ya venía; «Revoke identity» → «Revocar la identidad» |
+| Grant *(sustantivo)* | Permiso otorgado | «Remove grant» → «Quitar el permiso otorgado». «Concesión» no se usa |
+| Authorization | Autorización | |
+| Allowlist | Lista de permitidos | «Set up allowlists ↗» → «Configurar listas de permitidos ↗» |
+| Inbox *(de email)* | Bandeja de entrada | «Bandeja» sola cuando no entra, que en estas pantallas es casi siempre |
+| Gateway | gateway | Queda en inglés, como ya estaba en `connections.json` |
+| Work boundary | Límite de trabajo | El par es «Configure work boundary» → «Configurar el límite de trabajo» |
+| Trust *(nivel)* | Confianza | «Low trust» → «confianza baja»; «Review trust settings» → «Revisar la configuración de confianza» |
+| Overage | Exceso | La fila de uso que pasa el límite |
+| Checkout *(de Git)* | checkout | Término de Git (§7), igual que `worktree` y `branch`. Es el término central de `proyectos`: «los checkouts aislados por tarea» |
+| Codebase | Base de código | Es la sección del proyecto donde se define el repo y la carpeta local. «Código base» dice otra cosa |
+| Provision / Teardown | Aprovisionamiento / Desmontaje | El par de comandos del worktree derivado |
+| Runtime service | Servicio de runtime | `runtime` queda en inglés (§7) |
+| Dirty tracked files | Archivos con cambios sin commitear | §7: «sin guardar» es otra cosa |
+| Untracked files | Archivos sin seguimiento | |
+| Ahead / behind | Adelante / atrás | |
+| Summarizer | Summarizer | Nombre del agente que viene con Paperclip: no se traduce (§7) |
+| Snapshot | Foto | Ya venía de CHA-31 |
+| Soft alert | Aviso | «Soft alert at {n}%» → «Aviso en {n} %»: preserva el orden, y el matiz de «soft» ya lo da el corte duro que está al lado |
+| Budget hard stop | Corte duro de presupuesto | |
+
+Estados y etiquetas nuevas, todas **sin género** o en masculino (§3):
+
+| Inglés | es-AR |
+|---|---|
+| Failed *(etiqueta suelta)* | Falló |
+| Needs attention | Necesita atención |
+| Not verified | Sin verificar |
+| Enabled / Disabled | Activado / Desactivado |
+| Observed | Observado |
+| Remaining | Restante |
+| Unlimited | Sin límite |
+| Connection retired | Conexión retirada |
+| Close is blocked | El cierre está bloqueado |
+
+Tres reglas que salieron de estos lotes:
+
+1. **Los roles en singular se dicen con «quien», no con un sustantivo.** Un rol
+   en castellano obliga a elegir género («el encargado de conexiones»), y el
+   overlay no sabe de quién habla. Así que `connection manager` → «quien
+   administra las conexiones», y lo mismo resolvió `credential owner` y
+   `authorization owner`. Es la regla 2 de CHA-27 llevada de las etiquetas de
+   estado a los roles.
+2. **Una cadena inglesa que necesita dos españoles puede necesitarlos por
+   *orden*, no por género — y ahí `tEs()` no alcanza.** Las dos que quedaron
+   afuera de este lote (`connection?` y `’s email address`) no se arreglan
+   eligiendo por sitio: se arreglan con la clave punteada de §7.5, porque lo
+   que hay que mover es el lugar del nombre dentro de la oración. Conviene
+   separar los dos motivos cuando se cuenta el presupuesto de `tEs(`: estas
+   **no** compiten por él.
+3. **La clave copia el código, pero el valor usa siempre `…`.** `...` y `…` son
+   dos claves distintas para el overlay (§6), así que la clave se escribe como
+   esté en el `.tsx`; la **traducción**, en cambio, lleva siempre el carácter
+   `…`. `Checking...` → «Revisando…». Es una invariante de `overlay.test.ts` y
+   es fácil leerla al revés.
+
 ## 8. Cadenas partidas y plurales contados
 
 Esto no es una regla de idioma: es cómo llega el texto al overlay, y define qué
