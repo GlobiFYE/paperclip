@@ -9,9 +9,12 @@
 # Prints the time to listen and the time to ready, stops the server, and exits
 # non-zero if it never became ready, with the server log on stderr.
 #
-# Runs from a scratch working directory so no developer .env or
-# .paperclip/config.json is picked up. Relative command arguments are resolved
-# against the repository root.
+# The server runs with a cleared environment (only PATH and a scratch HOME),
+# from a scratch working directory, with its config path pointed into the
+# scratch directory, so no DATABASE_URL, config file or .env from the caller
+# can point it at a real instance. It listens on a free port chosen at start,
+# and a healthy response counts only after the child logs that it bound that
+# port. Relative command arguments are resolved against the repository root.
 set -euo pipefail
 
 if [ "$#" -eq 0 ]; then
@@ -20,7 +23,7 @@ if [ "$#" -eq 0 ]; then
 fi
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-port="${SMOKE_PORT:-3197}"
+port="${SMOKE_PORT:-$(node -e 'const s=require("node:net").createServer().listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close();})')}"
 timeout_seconds="${SMOKE_TIMEOUT_SECONDS:-180}"
 scratch="$(mktemp -d "${TMPDIR:-/tmp}/paperclip-boot-smoke.XXXXXX")"
 log="$scratch/server.log"
@@ -44,8 +47,11 @@ trap cleanup EXIT
 started_ms=$(node -e 'console.log(Date.now())')
 (
   cd "$scratch"
-  exec env \
+  exec env -i \
+    PATH="$PATH" \
+    HOME="$scratch" \
     NODE_ENV=production \
+    PAPERCLIP_CONFIG="$scratch/config.json" \
     PAPERCLIP_HOME="$scratch/home" \
     PAPERCLIP_INSTANCE_ID=boot-smoke \
     PAPERCLIP_DEPLOYMENT_MODE=local_trusted \
@@ -65,6 +71,8 @@ while [ "$(date +%s)" -lt "$deadline" ]; do
     cat "$log" >&2
     exit 1
   fi
+  # Only trust the port once this child has bound it.
+  if ! grep -q "listener bound on 127.0.0.1:$port" "$log" 2>/dev/null; then sleep 0.5; continue; fi
   body="$(curl -fsS --max-time 2 "http://127.0.0.1:$port/api/health" 2>/dev/null || true)"
   if [ -n "$body" ] && [ -z "$listen_ms" ]; then
     listen_ms=$(node -e 'console.log(Date.now())')
