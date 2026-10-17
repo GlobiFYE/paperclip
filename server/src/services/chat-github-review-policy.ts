@@ -83,10 +83,6 @@ export function githubReviewLineIsInPatch(
   return false;
 }
 
-/**
- * Names the inline findings GitHub cannot anchor to the current diff, so the reviewer can move exactly
- * those into the summary instead of guessing which one was rejected.
- */
 export function githubReviewFindingsOutsidePatch(
   findings: readonly Pick<GitHubReviewAssessment["findings"][number], "path" | "line" | "side">[],
   patchFor: (path: string) => string | undefined,
