@@ -11,7 +11,7 @@ describe("resolveDevBuildDepsTimeoutMs", () => {
   });
 
   it("ignores invalid overrides", () => {
-    for (const value of ["", "abc", "0", "-5"]) {
+    for (const value of ["", "abc", "0", "-5", "1500000.5"]) {
       expect(resolveDevBuildDepsTimeoutMs({ PAPERCLIP_DEV_BUILD_TIMEOUT_MS: value })).toBe(20 * 60_000);
     }
   });

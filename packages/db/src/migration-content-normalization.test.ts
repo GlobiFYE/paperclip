@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { normalizeMigrationContent } from "./client.js";
+import { migrationContentHashes, normalizeMigrationContent } from "./client.js";
 
 const sha256 = (content: string) => createHash("sha256").update(content).digest("hex");
 
@@ -22,6 +22,23 @@ describe("normalizeMigrationContent", () => {
     const crlfCheckout = published.replace(/\n/g, "\r\n");
     expect(sha256(crlfCheckout)).not.toBe(sha256(published));
     expect(sha256(normalizeMigrationContent(crlfCheckout))).toBe(sha256(published));
+  });
+
+  it("recognises both the LF hash and the legacy CRLF journal hash", () => {
+    const published = readPublishedMigration("0001_fast_northstar.sql");
+    const legacyCrlfHash = sha256(published.replace(/\n/g, "\r\n"));
+
+    const hashes = migrationContentHashes(published);
+
+    // New journal entries record the LF hash, so it comes first.
+    expect(hashes[0]).toBe(sha256(published));
+    expect(hashes).toContain(legacyCrlfHash);
+    // Reading a CRLF checkout yields the same set, so either journal form matches.
+    expect(migrationContentHashes(published.replace(/\n/g, "\r\n"))).toEqual(hashes);
+  });
+
+  it("returns a single hash for a migration without line breaks", () => {
+    expect(migrationContentHashes('ALTER TABLE "a" ADD COLUMN "b" text;')).toHaveLength(1);
   });
 
   it("keeps statement breakpoints intact after normalisation", () => {

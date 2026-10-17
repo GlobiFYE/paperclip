@@ -203,7 +203,8 @@ export function resolveDevBuildDepsTimeoutMs(env: NodeJS.ProcessEnv = process.en
   const raw = env.PAPERCLIP_DEV_BUILD_TIMEOUT_MS?.trim();
   if (!raw) return DEFAULT_DEV_BUILD_DEPS_TIMEOUT_MS;
   const parsed = Number(raw);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_DEV_BUILD_DEPS_TIMEOUT_MS;
+  // spawnSync requires an unsigned integer; fractions would throw ERR_OUT_OF_RANGE.
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : DEFAULT_DEV_BUILD_DEPS_TIMEOUT_MS;
 }
 
 function ensureDevWorkspaceBuildDeps(projectRoot: string): void {
