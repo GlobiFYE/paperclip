@@ -1,1 +1,4 @@
 patches/*.patch whitespace=-space-before-tab
+# Migration journal hashes are computed over raw file bytes; a CRLF checkout
+# breaks hash matching and makes applied migrations look pending.
+packages/db/src/migrations/*.sql eol=lf
