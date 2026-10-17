@@ -1183,22 +1183,25 @@ export function createHeartbeatScheduling(
         const policy = parseHeartbeatPolicy(agent);
         if (!policy.enabled || policy.intervalSec <= 0) continue;
 
-        if (cutoff) {
-          const eligibleIssue = await db
-            .select({ id: issues.id })
-            .from(issues)
-            .where(
-              and(
-                eq(issues.companyId, agent.companyId),
-                eq(issues.assigneeAgentId, agent.id),
-                inArray(issues.status, ["todo", "in_progress"]),
-                gte(issues.createdAt, cutoff),
-              ),
-            )
-            .limit(1)
-            .then((rows) => rows[0] ?? null);
-          if (!eligibleIssue) continue;
-        }
+        // Select the issue this timer wake is for so the run is issue-scoped.
+        // Without a source issue, `observeCrossIssueInfluence` treats every
+        // subsequent PATCH/comment on the agent's own assigned issue as a
+        // cross-issue write and fails closed, stranding the run's results.
+        // The worktree cutoff still gates which agents get a timer wake.
+        const eligibleIssue = await db
+          .select({ id: issues.id })
+          .from(issues)
+          .where(
+            and(
+              eq(issues.companyId, agent.companyId),
+              eq(issues.assigneeAgentId, agent.id),
+              inArray(issues.status, ["todo", "in_progress"]),
+              ...(cutoff ? [gte(issues.createdAt, cutoff)] : []),
+            ),
+          )
+          .limit(1)
+          .then((rows) => rows[0] ?? null);
+        if (cutoff && !eligibleIssue) continue;
 
         checked += 1;
         const baseline = new Date(
@@ -1224,6 +1227,8 @@ export function createHeartbeatScheduling(
             reason: "interval_elapsed",
             now: now.toISOString(),
             timerClaimWasFirstHeartbeat: timerClaim.wasFirstHeartbeat,
+            issueId: eligibleIssue?.id,
+            taskId: eligibleIssue?.id,
           },
         });
         if (run) enqueued += 1;
