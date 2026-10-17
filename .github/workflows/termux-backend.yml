@@ -12,7 +12,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout Paperclip
@@ -41,3 +41,19 @@ jobs:
           pnpm --filter @paperclipai/plugin-sdk build
           pnpm --filter @paperclipai/paperclip-runner build
           pnpm --filter @paperclipai/server build
+
+      - name: Package application
+        run: |
+          tar -czf paperclip-termux-bundle.tar.gz \
+            --exclude='.git' \
+            --exclude='node_modules' \
+            --exclude='**/node_modules' \
+            .
+
+      - name: Upload downloadable bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: paperclip-termux-bundle
+          path: paperclip-termux-bundle.tar.gz
+          if-no-files-found: error
+          retention-days: 3
