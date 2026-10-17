@@ -163,3 +163,29 @@ export const boundSchedulerWork = async <T>(
     if (timer) clearTimeout(timer);
   }
 };
+
+/**
+ * Keeps at most one instance of optional scheduler work in flight.
+ *
+ * A bounded wait stops the tick from *waiting* on slow work, but it does not stop the work. Without
+ * this, every tick would start another query against the same pool while the previous one is still
+ * running, and the pile-up would be what delays routine runs. Callers that time out keep sharing the
+ * pending attempt, and the next call starts a fresh attempt only after the previous one settles.
+ */
+export const createSchedulerSingleFlight = <T>(start: () => Promise<T>) => {
+  let inFlight: Promise<T> | null = null;
+
+  const run = (): Promise<T> => {
+    if (inFlight) return inFlight;
+    const pending = start();
+    inFlight = pending;
+    // Handle both outcomes here so a late rejection is never unhandled, and clear the slot.
+    pending.then(
+      () => { if (inFlight === pending) inFlight = null; },
+      () => { if (inFlight === pending) inFlight = null; },
+    );
+    return pending;
+  };
+
+  return { run, pending: () => inFlight !== null };
+};

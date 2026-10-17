@@ -1,5 +1,5 @@
 import { DELIVERY_QUEUES, notifyDeliveryWork } from "./delivery-work-notifications.js";
-import { boundSchedulerWork } from "./heartbeat/scheduler-steps.js";
+import { boundSchedulerWork, createSchedulerSingleFlight } from "./heartbeat/scheduler-steps.js";
 import { verifyAppWebhook } from "./app-webhook.js";
 import crypto from "node:crypto";
 import { verifyFirefliesWebhook } from "./fireflies-webhook.js";
@@ -2124,9 +2124,14 @@ export function routineService(
     return { armedClaimable, oldestOverdueS };
   }
 
+  // One metrics attempt at a time: ticks that time out share the pending attempt instead of starting
+  // another query while the previous one is still running against the same pool.
+  const schedulerTickMetrics = createSchedulerSingleFlight(loadSchedulerTickMetrics);
+
   /**
    * Reads the tick metrics without letting them hold the tick. A slow aggregate resolves as
-   * `timedOut` after `SCHEDULER_TICK_METRICS_TIMEOUT_MS`; the tick continues without the fields.
+   * `timedOut` after `SCHEDULER_TICK_METRICS_TIMEOUT_MS` and the tick continues without the fields;
+   * the pending attempt is shared, so repeated ticks cannot pile up queries.
    */
   async function readSchedulerTickMetrics(): Promise<{
     armedClaimable: number | null;
@@ -2134,7 +2139,7 @@ export function routineService(
   }> {
     try {
       const outcome = await boundSchedulerWork(
-        loadSchedulerTickMetrics(),
+        schedulerTickMetrics.run(),
         SCHEDULER_TICK_METRICS_TIMEOUT_MS,
       );
       if ("timedOut" in outcome) {

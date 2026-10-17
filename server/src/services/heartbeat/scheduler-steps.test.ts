@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   boundSchedulerWork,
   createHeartbeatSchedulerWorkTracker,
+  createSchedulerSingleFlight,
   runHeartbeatSchedulerSteps,
   type HeartbeatSchedulerStep,
 } from "./scheduler-steps.js";
@@ -166,5 +167,50 @@ describe("heartbeat scheduler optional work", () => {
     await expect(boundSchedulerWork(Promise.reject(new Error("metrics exploded")), 1_000)).rejects.toThrow(
       "metrics exploded",
     );
+  });
+});
+
+describe("heartbeat scheduler single-flight optional work", () => {
+  it("starts one attempt while the previous one is still pending", async () => {
+    let started = 0;
+    let release: (value: string) => void = () => {};
+    const gate = new Promise<string>((resolve) => { release = resolve; });
+    const single = createSchedulerSingleFlight(async () => {
+      started += 1;
+      return gate;
+    });
+
+    const first = single.run();
+    const second = single.run();
+    expect(started).toBe(1);
+
+    // A tick that timed out keeps sharing the pending attempt, so repeated ticks cannot pile up.
+    const timedOut = await boundSchedulerWork(single.run(), 10);
+    expect(timedOut).toEqual({ timedOut: true });
+    expect(started).toBe(1);
+    expect(single.pending()).toBe(true);
+
+    release("done");
+    await expect(first).resolves.toBe("done");
+    await expect(second).resolves.toBe("done");
+    expect(single.pending()).toBe(false);
+
+    // Once it settles, the next tick starts a fresh attempt.
+    single.run();
+    expect(started).toBe(2);
+  });
+
+  it("clears the slot after a failed attempt and does not raise an unhandled rejection", async () => {
+    let started = 0;
+    const single = createSchedulerSingleFlight(async () => {
+      started += 1;
+      throw new Error("metrics exploded");
+    });
+
+    await expect(single.run()).rejects.toThrow("metrics exploded");
+    await Promise.resolve();
+    expect(single.pending()).toBe(false);
+    await expect(single.run()).rejects.toThrow("metrics exploded");
+    expect(started).toBe(2);
   });
 });
