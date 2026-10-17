@@ -1,4 +1,5 @@
 import fs from "node:fs/promises";
+import syncFs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -85,6 +86,34 @@ describe("claude_local model catalog override", () => {
 
     expect(models).toEqual(claudeFallbackModels);
     expect(warnSpy).toHaveBeenCalled();
+  });
+
+  it("retries a transient read error on the next lookup, without caching it by mtime", async () => {
+    const file = await makeOverrideFile(JSON.stringify({
+      version: 1,
+      direct: [{ id: "claude-operator-model", label: "Operator Model" }],
+      bedrock: [],
+    }));
+    dirsToClean.push(path.dirname(file));
+    process.env.PAPERCLIP_CLAUDE_MODEL_CATALOG_FILE = file;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const readSpy = vi.spyOn(syncFs, "readFileSync").mockImplementationOnce(() => {
+      throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+    });
+
+    const first = await listClaudeModels();
+    expect(first).toEqual(claudeFallbackModels);
+    expect(warnSpy).toHaveBeenCalledWith(
+      "[paperclip] Claude model catalog override unreadable, using bundled defaults",
+      expect.objectContaining({ path: file }),
+    );
+
+    readSpy.mockRestore();
+
+    // Same file, same mtime (it never changed) — still recovers because a read
+    // error isn't cached the way a parse/validation error is.
+    const second = await listClaudeModels();
+    expect(second).toEqual([{ id: "claude-operator-model", label: "Operator Model" }]);
   });
 
   it("re-reads the override file only after its mtime changes", async () => {

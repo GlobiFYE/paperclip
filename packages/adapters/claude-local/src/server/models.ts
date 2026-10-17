@@ -51,8 +51,21 @@ function loadModelCatalog(): ClaudeModelCatalog {
   if (catalogCache && catalogCache.path === overridePath && catalogCache.mtimeMs === stat.mtimeMs) {
     return catalogCache.kind === "parsed" ? catalogCache.catalog : DEFAULT_CLAUDE_MODEL_CATALOG;
   }
+  let raw: string;
   try {
-    const raw = fs.readFileSync(overridePath, "utf8");
+    raw = fs.readFileSync(overridePath, "utf8");
+  } catch (error) {
+    console.warn("[paperclip] Claude model catalog override unreadable, using bundled defaults", {
+      path: overridePath,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    // Not cached: a read error (e.g. a permissions problem) doesn't change mtimeMs, so
+    // caching it by mtime would keep returning the bundled default even after the
+    // underlying problem is fixed. Every lookup retries the read instead.
+    return DEFAULT_CLAUDE_MODEL_CATALOG;
+  }
+
+  try {
     const parsed = claudeModelCatalogSchema.parse(JSON.parse(raw));
     catalogCache = { path: overridePath, mtimeMs: stat.mtimeMs, kind: "parsed", catalog: parsed };
     return parsed;
@@ -61,8 +74,8 @@ function loadModelCatalog(): ClaudeModelCatalog {
       path: overridePath,
       error: error instanceof Error ? error.message : String(error),
     });
-    // Cached by (path, mtime) so a still-broken file doesn't re-read/re-parse/re-warn on
-    // every lookup; it retries only once the file's mtime actually changes.
+    // Cached by (path, mtime) so a still-malformed file doesn't re-read/re-parse/re-warn on
+    // every lookup; it retries only once the file's content (and thus mtime) actually changes.
     catalogCache = { path: overridePath, mtimeMs: stat.mtimeMs, kind: "invalid" };
     return DEFAULT_CLAUDE_MODEL_CATALOG;
   }
