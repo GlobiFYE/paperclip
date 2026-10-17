@@ -21,7 +21,9 @@ export async function hasPendingRunCleanup(db: Db, companyId: string, runId: str
           OR COALESCE(${environmentLeases.metadata}->>'pendingCleanupInFlight', 'false') <> 'false'
           OR (${heartbeatRuns.runtimeMode} = 'native' AND NOT COALESCE(
             (${environmentLeases.status} IN ('released', 'expired', 'failed')
-              AND ${environmentLeases.releasedAt} IS NOT NULL AND ${environmentLeases.cleanupStatus} = 'success')
+              AND ${environmentLeases.releasedAt} IS NOT NULL AND (${environmentLeases.cleanupStatus} = 'success'
+                OR (${environmentLeases.provider} = 'local' AND ${environmentLeases.providerLeaseId} IS NULL
+                  AND ${environmentLeases.cleanupStatus} IS NULL)))
             OR (${environmentLeases.status} = 'retained' AND ${environmentLeases.leasePolicy} = 'reuse_by_environment'
               AND ${environmentLeases.cleanupStatus} = 'success'), false))))
     OR EXISTS (SELECT 1 FROM ${nativeRunFinalizations}
