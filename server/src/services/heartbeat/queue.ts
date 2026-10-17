@@ -1,3 +1,10 @@
+import {
+  createAgentScheduler,
+  checkAgentCapacityWithinClaimTransaction,
+  listAgentSchedulerResumeCandidates,
+  readAgentParallelExecutionAllowed,
+  resolveEffectiveAgentCapacity,
+} from "../../modules/agent-scheduler/index.js";
 import { isAgentAwaitingSetup } from "../../modules/agent-lifecycle/index.js";
 import { normalizeAgentNameKey } from "./retries.js";
 import { publishActiveDotComment } from "../dot-assignment-follow-up.js";
@@ -673,8 +680,8 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
     return issuesSvc.listDependencyReadiness(companyId, issueIds);
   }
 
-  async function countRunningRunsForAgent(agentId: string) {
-    const [{ count }] = await db
+  async function countRunningRunsForAgent(agentId: string, conn: Db = db) {
+    const [{ count }] = await conn
       .select({ count: sql<number>`count(*)` })
       .from(heartbeatRuns)
       .where(
@@ -684,6 +691,148 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         ),
       );
     return Number(count ?? 0);
+  }
+
+  const agentScheduler = createAgentScheduler(db, {
+    countRunningRunsForAgent,
+    appendSchedulerEvent: async (input) => {
+      await logActivity(db, {
+        companyId: input.companyId,
+        actorType: "system",
+        actorId: "agent-scheduler",
+        agentId: input.agentId,
+        action: "agent.scheduler",
+        entityType: "agent",
+        entityId: input.agentId,
+        details: {
+          wakeRequestId: input.wakeRequestId,
+          issueId: input.issueId,
+          kind: input.kind,
+          reason: input.reason,
+          queueDepth: input.queueDepth,
+          effectiveCapacity: input.effectiveCapacity,
+        },
+      });
+    },
+  });
+
+  async function isAgentRunnableSchedulerEnabled() {
+    return (await instanceSettings.getExperimental()).enableAgentRunnableScheduler === true;
+  }
+
+  async function maybeParkWakeAtAgentScheduler(input: {
+    agent: typeof agents.$inferSelect;
+    policy: ReturnType<typeof parseHeartbeatPolicy>;
+    wakeRequestId: string;
+    issueId: string | null;
+    enrichedContextSnapshot: Record<string, unknown>;
+    sessionIdBefore: string | null;
+    continuationAttempt: number;
+    responsibleUserId: string;
+    schedulerEnabled: boolean;
+    tx: Db;
+  }): Promise<boolean> {
+    if (!input.schedulerEnabled) return false;
+    // Admission already holds an agent row lock. A second connection checkout
+    // can deadlock a saturated pool; keep the read on this transaction too.
+    const runningRunCount = await countRunningRunsForAgent(input.agent.id, input.tx);
+    const schedulerDb = input.tx;
+    const admission = await agentScheduler.evaluateAdmissionForDb(schedulerDb)({
+      schedulerEnabled: true,
+      allowParallelExecution: readAgentParallelExecutionAllowed(input.agent.runtimeConfig),
+      configuredMaxConcurrentRuns: input.policy.maxConcurrentRuns,
+      runningRunCount,
+      companyId: input.agent.companyId,
+      agentId: input.agent.id,
+      wakeRequestId: input.wakeRequestId,
+      issueId: input.issueId,
+    });
+    if (admission.action !== "park") return false;
+    const updated = await schedulerDb
+      .update(agentWakeupRequests)
+      .set({
+        payload: sql`coalesce(${agentWakeupRequests.payload}, '{}'::jsonb) || ${JSON.stringify({
+          _agentScheduler: {
+            enrichedContextSnapshot: input.enrichedContextSnapshot,
+            sessionIdBefore: input.sessionIdBefore,
+            continuationAttempt: input.continuationAttempt,
+            responsibleUserId: input.responsibleUserId,
+          },
+        })}::jsonb || jsonb_build_object('_agentScheduler',
+          coalesce(${agentWakeupRequests.payload}->'_agentScheduler', '{}'::jsonb) ||
+          ${JSON.stringify({
+            enrichedContextSnapshot: input.enrichedContextSnapshot,
+            sessionIdBefore: input.sessionIdBefore,
+            continuationAttempt: input.continuationAttempt,
+            responsibleUserId: input.responsibleUserId,
+          })}::jsonb)`,
+        updatedAt: new Date(),
+      })
+      .where(eq(agentWakeupRequests.id, input.wakeRequestId))
+      .returning({ id: agentWakeupRequests.id });
+    return updated.length > 0;
+  }
+
+  async function promoteAgentRunnableWorkForAgent(
+    agent: typeof agents.$inferSelect,
+    policy: ReturnType<typeof parseHeartbeatPolicy>,
+    cutoff?: Date | null,
+  ) {
+    if (!(await isAgentRunnableSchedulerEnabled())) return;
+    const result = await agentScheduler.promoteRunnableWork({
+      schedulerEnabled: true,
+      allowParallelExecution: readAgentParallelExecutionAllowed(agent.runtimeConfig),
+      configuredMaxConcurrentRuns: policy.maxConcurrentRuns,
+      agentId: agent.id,
+      companyId: agent.companyId,
+      requestedAtOrAfter: cutoff ?? undefined,
+      createRunForWake: async (wake, tx) => {
+        const payload = parseObject(wake.payload);
+        const scheduler = parseObject(payload._agentScheduler);
+        const savedContext = parseObject(scheduler.enrichedContextSnapshot);
+        const enrichedContextSnapshot = Object.keys(savedContext).length ? savedContext : payload;
+        const sessionIdBefore = readNonEmptyString(scheduler.sessionIdBefore);
+        const continuationAttempt = asNumber(scheduler.continuationAttempt, 0);
+        const issueId = readNonEmptyString(enrichedContextSnapshot.issueId)
+          ?? readNonEmptyString(payload.issueId);
+        const [newRun] = await tx
+          .insert(heartbeatRuns)
+          .values({
+            companyId: agent.companyId,
+            agentId: agent.id,
+            scopeKind: issueId ? "issue" : "company",
+            issueId,
+            invocationSource: wake.source as typeof heartbeatRuns.$inferInsert.invocationSource,
+            triggerDetail: wake.triggerDetail,
+            status: "queued",
+            responsibleUserId: (() => {
+              const responsibleUserId = readNonEmptyString(scheduler.responsibleUserId);
+              if (!responsibleUserId) throw new Error("scheduler_missing_responsible_user");
+              return responsibleUserId;
+            })(),
+            wakeupRequestId: wake.id,
+            contextSnapshot: enrichedContextSnapshot,
+            sessionIdBefore,
+            continuationAttempt,
+          })
+          .returning();
+        if (!newRun) return null;
+        return newRun.id;
+      },
+    });
+    // The transaction has committed both run and wake. A publication failure
+    // cannot cause the database-only callback to run again.
+    for (const runId of result.runIds) {
+      const [run] = await db.select().from(heartbeatRuns).where(and(
+        eq(heartbeatRuns.id, runId), eq(heartbeatRuns.companyId, agent.companyId),
+        eq(heartbeatRuns.agentId, agent.id),
+      )).limit(1);
+      if (run) publishLiveEvent({
+        companyId: run.companyId, type: "heartbeat.run.queued",
+        payload: { runId: run.id, agentId: run.agentId, invocationSource: run.invocationSource,
+          triggerDetail: run.triggerDetail, wakeupRequestId: run.wakeupRequestId },
+      });
+    }
   }
 
   async function withChatControlRecoveryGate(
@@ -1137,6 +1286,13 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         responsibleUserId: null,
       },
     });
+    const schedulerClaimPolicy = {
+      companyId: run.companyId,
+      agentId: run.agentId,
+      schedulerEnabled: await isAgentRunnableSchedulerEnabled(),
+      allowParallelExecution: readAgentParallelExecutionAllowed(agent.runtimeConfig),
+      configuredMaxConcurrentRuns: parseHeartbeatPolicy(agent).maxConcurrentRuns,
+    };
     // All ordinary and comment claims use the same company-scoped issue
     // lock. A batch may claim several runs before executeRun tracks any owner.
     async function lockIssueExecutionClaim(tx: Db) {
@@ -1194,6 +1350,9 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
             !["committed", "applied", "terminal_failure"].includes(finalization.phase)))) {
           return { ownsIssue, blocked: true };
         }
+      }
+      if (!await checkAgentCapacityWithinClaimTransaction(tx, schedulerClaimPolicy)) {
+        return { ownsIssue, blocked: true };
       }
       return { ownsIssue, blocked: false };
     }
@@ -1542,9 +1701,12 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
               const predecessor = await lockIssueExecutionClaim(tx);
               if (predecessor.blocked) return null;
             }
-            return claimQueuedNativeReviewRun(tx, {
-              run, claimedAt, claimValues,
-              agentNameKey: normalizeAgentNameKey(agent.name),
+            return tx.transaction(async (reviewTx) => {
+              if (!await checkAgentCapacityWithinClaimTransaction(reviewTx as unknown as Db, schedulerClaimPolicy)) return null;
+              return claimQueuedNativeReviewRun(reviewTx as unknown as Db, {
+                run, claimedAt, claimValues,
+                agentNameKey: normalizeAgentNameKey(agent.name),
+              });
             });
           }
           return tx.transaction(async (claimTx) => {
@@ -1854,7 +2016,10 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         ),
       );
 
-    const agentIds = [...new Set(queuedRuns.map((r) => r.agentId))];
+    const runnableAgents = (await isAgentRunnableSchedulerEnabled())
+      ? await listAgentSchedulerResumeCandidates(db, cutoff)
+      : [];
+    const agentIds = [...new Set([...queuedRuns, ...runnableAgents].map((r) => r.agentId))];
     for (const agentId of agentIds) {
       await startNextQueuedRunForAgent(agentId);
     }
@@ -1919,11 +2084,15 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         return [];
       }
       const policy = parseHeartbeatPolicy(agent);
+      await promoteAgentRunnableWorkForAgent(agent, policy, cutoff);
       const runningCount = await countRunningRunsForAgent(agentId);
-      const availableSlots = Math.max(
-        0,
-        policy.maxConcurrentRuns - runningCount,
-      );
+      const effectiveCapacity = resolveEffectiveAgentCapacity({
+        schedulerEnabled: await isAgentRunnableSchedulerEnabled(),
+        allowParallelExecution: readAgentParallelExecutionAllowed(agent.runtimeConfig),
+        configuredMaxConcurrentRuns: policy.maxConcurrentRuns,
+        runningRunCount: runningCount,
+      });
+      const availableSlots = Math.max(0, effectiveCapacity - runningCount);
       if (availableSlots <= 0) return [];
 
       const queuedRuns = await db
@@ -2129,6 +2298,8 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
 
     let agent = await getAgent(agentId);
     if (!agent) throw notFound("Agent not found");
+    // Resolve settings before acquiring enqueue transaction/agent locks.
+    const schedulerEnabledForEnqueue = await isAgentRunnableSchedulerEnabled();
     // Mentions only annotate comments. Ignore legacy callers before creating
     // a run or deferred request; assignment and review have their own wakes.
     if (reason === "issue_comment_mentioned" || enrichedContextSnapshot.wakeReason === "issue_comment_mentioned") return null;
@@ -4025,6 +4196,17 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
             adoptedCommentIds = await undeliveredLegacyUserCommentIds(tx as unknown as Db,
               agent.companyId, issueId, agentId, adoptedCommentIds);
           }
+          if (!durableRequest && !explicitContinuation && !failedChatRetry &&
+              !opts.failedRunId && !automaticParentRunId && !reconciledSourceRunId &&
+              reconciledRestoreRetryCount === null && adoptedComments.length === 0 &&
+              await maybeParkWakeAtAgentScheduler({
+                agent, policy, wakeRequestId: wakeupRequest.id, issueId: issue.id,
+                enrichedContextSnapshot, sessionIdBefore: sessionBefore, continuationAttempt,
+                responsibleUserId: await resolveQueuedResponsibleUserId(),
+                schedulerEnabled: schedulerEnabledForEnqueue, tx: tx as unknown as Db,
+              })) {
+            return { kind: "agent_runnable_parked" as const };
+          }
           const newRun = await tx
             .insert(heartbeatRuns)
             .values({
@@ -4114,6 +4296,11 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
 
       if (outcome.kind === "durable") {
         return outcome.receipt.runId ? getRun(outcome.receipt.runId) : null;
+      }
+      if (outcome.kind === "agent_runnable_parked") {
+        // Covers run-finished-before-park-commit without an agent timer.
+        await startNextQueuedRunForAgent(agent.id);
+        return null;
       }
       if (outcome.kind === "deferred" || outcome.kind === "skipped") {
         return null;
@@ -4301,6 +4488,14 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         .returning()
         .then((rows) => rows[0]);
 
+      if (await maybeParkWakeAtAgentScheduler({
+        agent, policy, wakeRequestId: wakeupRequest.id,
+        issueId: readNonEmptyString(enrichedContextSnapshot.issueId),
+        enrichedContextSnapshot, sessionIdBefore: sessionBefore, continuationAttempt,
+        responsibleUserId: await resolveQueuedResponsibleUserId(),
+                schedulerEnabled: schedulerEnabledForEnqueue, tx: tx as unknown as Db,
+      })) return { kind: "agent_runnable_parked" as const };
+
       const newRun = await tx
         .insert(heartbeatRuns)
         .values({
@@ -4331,6 +4526,10 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
       return { kind: "queued" as const, run: newRun };
     });
 
+    if (queueOutcome.kind === "agent_runnable_parked") {
+      await startNextQueuedRunForAgent(agent.id);
+      return null;
+    }
     if (queueOutcome.kind === "skipped") return null;
     const newRun = queueOutcome.run;
 

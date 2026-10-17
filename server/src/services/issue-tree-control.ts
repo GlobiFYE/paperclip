@@ -1189,7 +1189,7 @@ export function issueTreeControlService(db: Db) {
       .where(
         and(
           eq(agentWakeupRequests.companyId, companyId),
-          inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
+          inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution", "agent_runnable"]),
           isNull(agentWakeupRequests.runId),
           inArray(sql<string | null>`${agentWakeupRequests.payload} ->> 'issueId'`, issueIds),
         ),

@@ -7,6 +7,17 @@ import {
 } from "../services/instance-settings.js";
 
 describe("instance settings service", () => {
+  it("keeps the runnable scheduler opt-in across old settings and round-trip patches", () => {
+    for (const value of [undefined, {}, { enableApps: true }]) {
+      expect(normalizeExperimentalSettings(value).enableAgentRunnableScheduler).toBe(false);
+    }
+    const enabled = applyExperimentalSettingsPatch({}, { enableAgentRunnableScheduler: true });
+    expect(normalizeExperimentalSettings(JSON.parse(JSON.stringify(enabled))).enableAgentRunnableScheduler).toBe(true);
+    expect(applyExperimentalSettingsPatch(enabled, { enableAgentRunnableScheduler: false })).toMatchObject({
+      enableAgentRunnableScheduler: false, enableApps: true,
+    });
+  });
+
   it("keeps OpenAI Dot opt-in and persists its setting independently of its prerequisites", () => {
     expect(normalizeExperimentalSettings({}).enableOpenAiDot).toBe(false);
     const enabled = applyExperimentalSettingsPatch({}, { enableOpenAiDot: true });
@@ -47,6 +58,7 @@ describe("instance settings service", () => {
       enableWorkspaceDirtyQuarantineRepair: false,
       enableNewestFirstIssueThread: true,
     })).toEqual({
+      enableAgentRunnableScheduler: false,
       enableEnvironments: true,
       enableNativeRunner: false,
       enableAiConnectionRouters: false,

@@ -1,0 +1,112 @@
+name: Journey scheduler validation
+
+on:
+  push:
+    branches: [journey/jou-39-agent-runnable-scheduler]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: journey-scheduler-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  isolated-scheduler-tests:
+    if: github.repository == 'wallynm/paperclip'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          version: 9.15.4
+      - name: Install exact workspace lockfile without lifecycle scripts
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verify workspace links
+        run: pnpm run preflight:workspace-links
+      - name: Build the canonical SDK and evaluation prerequisites
+        run: |
+          pnpm --filter @paperclipai/plugin-sdk ensure-build-deps
+          pnpm --filter @paperclipai/paperclip-eval-kernel build
+      - name: Enforce repository module boundaries
+        run: node scripts/check-module-boundaries.mjs
+      - name: Run real isolated PostgreSQL and heartbeat regressions
+        working-directory: server
+        run: |
+          set -euo pipefail
+          node --version
+          pnpm exec vitest --version
+          pnpm exec vitest run src/modules/agent-scheduler/ src/__tests__/heartbeat-agent-runnable-scheduler.test.ts src/__tests__/heartbeat-agent-scheduler-pool.test.ts src/__tests__/heartbeat-start-lock.test.ts src/__tests__/heartbeat-agent-scheduler-controls.test.ts src/__tests__/instance-settings-service.test.ts src/services/issue-dependency-wakeups.test.ts --maxWorkers=1 --reporter=default --reporter=json --outputFile=scheduler-tests.json
+      - name: Reject skipped or incomplete PostgreSQL evidence
+        working-directory: server
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const report = JSON.parse(fs.readFileSync('scheduler-tests.json', 'utf8'));
+          if (!report.success || report.numFailedTests || report.numPendingTests || report.numTodoTests || !report.numTotalTests) {
+            throw new Error('Scheduler evidence incomplete, failed, or skipped');
+          }
+          const required = [
+            'agent-scheduler/application/use-cases.test.ts',
+            'agent-scheduler/application/transaction-host.test.ts',
+            'agent-scheduler/domain/policy.test.ts',
+            'agent-scheduler/adapters/postgres.test.ts',
+            'heartbeat-agent-runnable-scheduler.test.ts',
+            'heartbeat-agent-scheduler-pool.test.ts',
+            'heartbeat-start-lock.test.ts',
+            'heartbeat-agent-scheduler-controls.test.ts',
+            'instance-settings-service.test.ts',
+            'issue-dependency-wakeups.test.ts',
+          ];
+          for (const suffix of required) {
+            const suite = report.testResults.find(test => test.name.endsWith(suffix));
+            if (!suite || suite.status !== 'passed' || !suite.assertionResults?.length ||
+                suite.assertionResults.some(test => test.status !== 'passed')) {
+              throw new Error(`Required suite missing, failed or skipped: ${suffix}`);
+            }
+          }
+          console.log(JSON.stringify({sha:process.env.GITHUB_SHA,passed:report.numPassedTests,skipped:report.numPendingTests}));
+          JS
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: scheduler-tests-${{ github.sha }}
+          path: server/scheduler-tests.json
+          if-no-files-found: warn
+          retention-days: 14
+
+  server-typecheck-build:
+    if: github.repository == 'wallynm/paperclip'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      NODE_OPTIONS: --max-old-space-size=6144
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+        with:
+          version: 9.15.4
+      - name: Install exact workspace lockfile
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Verify workspace links
+        run: pnpm run preflight:workspace-links
+      - name: Check the complete server using the canonical script
+        run: pnpm --filter @paperclipai/server typecheck
+      - name: Build the complete server using the canonical script
+        run: pnpm --filter @paperclipai/server build
+      - name: Check UI consumers of shared instance-settings types
+        run: pnpm --filter @paperclipai/ui typecheck

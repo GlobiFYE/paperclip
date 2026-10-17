@@ -75,6 +75,7 @@ const PAPERCLIP_RUNNER_TOGGLE_SELECTOR =
 
 function defaultExperimentalSettings(): InstanceExperimentalSettingsPayload {
   return {
+    enableAgentRunnableScheduler: false,
     enableEnvironments: false,
     enableNativeRunner: false,
     enableAiConnectionRouters: false,

@@ -784,10 +784,7 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
       .where(
         and(
           eq(agentWakeupRequests.companyId, companyId),
-          inArray(agentWakeupRequests.status, [
-            "queued",
-            "deferred_issue_execution",
-          ]),
+          inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution", "agent_runnable"]),
           sql`${agentWakeupRequests.runId} is null`,
           sql`${effectiveProjectId} = ${projectId}`,
         ),
@@ -810,10 +807,7 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
           .where(
             and(
               eq(agentWakeupRequests.companyId, scope.companyId),
-              inArray(agentWakeupRequests.status, [
-                "queued",
-                "deferred_issue_execution",
-              ]),
+              inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution", "agent_runnable"]),
               sql`${agentWakeupRequests.runId} is null`,
             ),
           )
@@ -826,10 +820,7 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
             and(
               eq(agentWakeupRequests.companyId, scope.companyId),
               eq(agentWakeupRequests.agentId, scope.scopeId),
-              inArray(agentWakeupRequests.status, [
-                "queued",
-                "deferred_issue_execution",
-              ]),
+              inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution", "agent_runnable"]),
               sql`${agentWakeupRequests.runId} is null`,
             ),
           )
@@ -854,7 +845,7 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
         })
         .where(and(
           inArray(agentWakeupRequests.id, wakeupIds),
-          inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
+          inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution", "agent_runnable"]),
           isNull(agentWakeupRequests.runId),
           scope.createdBefore ? lt(agentWakeupRequests.createdAt, scope.createdBefore) : undefined,
         ));
@@ -1246,10 +1237,7 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
       .where(
         and(
           inArray(agentWakeupRequests.agentId, uniqueAgentIds),
-          inArray(agentWakeupRequests.status, [
-            "queued",
-            "deferred_issue_execution",
-          ]),
+          inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution", "agent_runnable"]),
           sql`${agentWakeupRequests.runId} is null`,
         ),
       )
@@ -1257,7 +1245,7 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
 
     if (wakeupIds.length === 0) return 0;
 
-    await db
+    const cancelled = await db
       .update(agentWakeupRequests)
       .set({
         status: "cancelled",
@@ -1265,9 +1253,17 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
         error: reason,
         updatedAt: now,
       })
-      .where(inArray(agentWakeupRequests.id, wakeupIds));
+      .where(and(
+        inArray(agentWakeupRequests.id, wakeupIds),
+        inArray(agentWakeupRequests.agentId, uniqueAgentIds),
+        inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution", "agent_runnable"]),
+        isNull(agentWakeupRequests.runId),
+      ))
+      .returning({ id: agentWakeupRequests.id });
 
-    return wakeupIds.length;
+    // Promotion can win after the initial selection. Report only durable
+    // cancellations, not candidates skipped by the guarded UPDATE.
+    return cancelled.length;
   }
 
   async function cancelInvocationsForAgentsInternal(

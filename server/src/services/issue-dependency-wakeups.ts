@@ -44,6 +44,7 @@ export function shouldWakeOnRestoredBlockedDependency(input: {
 const IDEMPOTENT_DEPENDENCY_WAKE_STATUSES = [
   "queued",
   "deferred_issue_execution",
+  "agent_runnable",
   "claimed",
   "completed",
 ] as const;
@@ -56,6 +57,7 @@ const IDEMPOTENT_DEPENDENCY_WAKE_STATUSES = [
 const IN_FLIGHT_DEPENDENCY_WAKE_STATUSES = [
   "queued",
   "deferred_issue_execution",
+  "agent_runnable",
   "claimed",
 ] as const;
 
