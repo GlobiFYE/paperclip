@@ -224,10 +224,12 @@ task no longer matches that run, for example when the task is done or has a new
 owner. Nobody asked to stop the work that waits behind that run. So when the gate
 cancels a run, Paperclip releases the task lock through the normal release path,
 and wakes that wait in `deferred_issue_execution` go through normal promotion and
-all current gates. A cancelled queued run that never started records bootstrap
-evidence, as any cancelled queued run does, so the release does not hold those wakes
-for execution reconciliation. If the gate defers the run instead of cancelling it,
-the run and its waiting wakes stay in place.
+all current gates. A run that the gate cancels before dispatch (no runtime
+selection, start, process, controller, or execution stage) counts as a verified
+pre-dispatch cancellation, so the release does not hold those wakes for execution
+reconciliation. Retained execution events, leases, or finalization records still
+keep the hold. If the gate defers the run instead of cancelling it, the run and its
+waiting wakes stay in place.
 
 ### Known execution waits at admission
 

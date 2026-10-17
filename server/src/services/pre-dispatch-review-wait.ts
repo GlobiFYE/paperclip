@@ -9,16 +9,21 @@ type DispatchFields = "startedAt" | "runtimeModeResolvedAt" | "processPid" | "pr
   "controllerBootId" | "controllerLeaseExpiresAt" | "executionStage" | "contextSnapshot";
 
 /** The queued-run gate owns this receipt before execution authority is claimed.
- * A deliberate review or connection response wait has no provider actions to reconcile. The error code
- * alone is not proof; missing or conflicting dispatch evidence retains the hold. */
+ * A deliberate review or connection response wait has no provider actions to reconcile. So does
+ * any other stale-gate cancellation of a run that never reached dispatch: no runtime selection,
+ * start, process, controller, or execution stage. The error code alone is not proof; missing or
+ * conflicting dispatch evidence retains the hold, and the verified check below still rejects
+ * retained execution events, leases, or finalization records. */
 export function isPreDispatchReviewWait(
   run: Pick<Run, "runtimeMode" | "status" | "errorCode" | "resultJson"> & Partial<Pick<Run, DispatchFields>>,
 ): boolean {
+  const neverDispatched = run.startedAt === null && run.runtimeModeResolvedAt === null &&
+    run.controllerBootId === null && run.controllerLeaseExpiresAt === null && run.executionStage === null;
   const finalResponseWait = run.errorCode === "issue_waiting_for_response" &&
     (run.resultJson?.preDispatchResponseWait as { version?: number; providerWorkStarted?: boolean } | undefined)?.version === 1 &&
     (run.resultJson?.preDispatchResponseWait as { providerWorkStarted?: boolean } | undefined)?.providerWorkStarted === false;
   return run.runtimeMode === "legacy" && run.status === "cancelled" &&
-    (run.errorCode === "issue_continuation_waiting_on_review" ||
+    (run.errorCode === "issue_continuation_waiting_on_review" || neverDispatched ||
       (run.errorCode === "issue_waiting_for_response" &&
         run.contextSnapshot?.connectionIntentResolution === "existing_connection" &&
         run.contextSnapshot?.source === "connection_intent.resolved" &&
