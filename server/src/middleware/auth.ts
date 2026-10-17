@@ -375,8 +375,6 @@ export function actorMiddleware(db: Db, opts: ActorMiddlewareOptions): RequestHa
     if (!key) {
       const claims = verifyLocalAgentJwt(token);
       if (!claims) {
-        // A lapsed board key falls through to here; name it instead of blaming
-        // agent credentials (#16600). Only failed requests pay for this lookup.
         const lapsedBoardKey = await boardAuth.findLapsedBoardApiKeyByToken(token);
         next(unauthorized(lapsedBoardKey ? lapsedBoardKeyMessage(lapsedBoardKey) : invalidAgentTokenMessage(token)));
         return;

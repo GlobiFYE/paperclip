@@ -162,20 +162,19 @@ export function boardAuthService(db: Db) {
       .then((rows) => rows.find((row) => !row.expiresAt || row.expiresAt.getTime() > now.getTime()) ?? null);
   }
 
-  /**
-   * For a token that matched no usable board key: say whether it is a board key
-   * that has expired or been revoked, so the caller can get a message that
-   * names the real cause instead of an agent-token failure (#16600).
-   */
   async function findLapsedBoardApiKeyByToken(token: string): Promise<
     { status: "expired" | "revoked"; at: Date } | null
   > {
     const tokenHash = hashBearerToken(token);
     const nowMs = Date.now();
-    const rows = await db
-      .select({ expiresAt: boardApiKeys.expiresAt, revokedAt: boardApiKeys.revokedAt })
+    const rows = (await db
+      .select({
+        keyHash: boardApiKeys.keyHash,
+        expiresAt: boardApiKeys.expiresAt,
+        revokedAt: boardApiKeys.revokedAt,
+      })
       .from(boardApiKeys)
-      .where(eq(boardApiKeys.keyHash, tokenHash));
+      .where(eq(boardApiKeys.keyHash, tokenHash))).filter((row) => row.keyHash === tokenHash);
     const isActive = (row: { expiresAt: Date | null; revokedAt: Date | null }) =>
       !row.revokedAt && (!row.expiresAt || row.expiresAt.getTime() > nowMs);
     if (rows.length === 0 || rows.some(isActive)) return null;
