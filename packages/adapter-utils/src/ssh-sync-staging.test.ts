@@ -6,9 +6,10 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { prepareRemoteManagedRuntime } from "./remote-managed-runtime.js";
+import { prepareAdapterExecutionTargetRuntime } from "./execution-target.js";
 import { resolveNestedWorktreeExcludes } from "./exclude-patterns.js";
 import { GIT_ARCHIVE_EXCLUDES } from "./git-workspace-sync.js";
-import { restoreWorkspaceFromSshExecution, type SshRemoteExecutionSpec } from "./ssh.js";
+import { restoreWorkspaceFromSshExecution, syncDirectoryToSsh, type SshRemoteExecutionSpec } from "./ssh.js";
 import { captureDirectorySnapshot } from "./workspace-restore-merge.js";
 
 // A stand-in `ssh` that runs the remote command on this machine, so the real
@@ -677,6 +678,170 @@ describe("ssh workspace sync staging", { timeout: 90_000 }, () => {
     expect(await readFile(path.join(localDir, "packages/a/.claude/worktrees/wt/f.txt"), "utf8")).toBe("local worktree\n");
     expect(await readFile(path.join(localDir, "packages/a/x.ts"), "utf8")).toBe("local\n");
     expect(await readFile(path.join(localDir, "other.txt"), "utf8")).toBe("local\n");
+  });
+
+  it("does not restore remote-made nested worktrees in a no-baseline git restore", async () => {
+    await writeTree(localDir, { "src/app.ts": "export const app = 1;\n" });
+    await git(localDir, ["init", "-q", "-b", "main"]);
+    await git(localDir, ["add", "-A"]);
+    await git(localDir, ["commit", "-q", "-m", "init"]);
+    // Untracked locally, so only the staged-tree exclude keeps the remote's
+    // worktrees out of the kept local worktree.
+    await writeTree(localDir, { ".claude/worktrees/wt/local.txt": "local worktree\n" });
+    const prepared = await prepare();
+    const remote = prepared.workspaceRemoteDir;
+
+    // The remote run commits one tracked file and leaves worktrees of its own
+    // untracked; only the tracked file may come back.
+    await writeTree(remote, {
+      "fresh.txt": "fresh\n",
+      ".claude/worktrees/wt/remote-made.txt": "remote worktree\n",
+      ".claude/worktrees/other/file.txt": "remote worktree\n",
+    });
+    await git(remote, ["add", "fresh.txt"]);
+    await git(remote, ["commit", "-q", "-m", "remote work"]);
+
+    await restoreWorkspaceFromSshExecution({ spec, localDir, remoteDir: remote });
+
+    expect(await readFile(path.join(localDir, "fresh.txt"), "utf8")).toBe("fresh\n");
+    expect(await readFile(path.join(localDir, ".claude/worktrees/wt/local.txt"), "utf8")).toBe("local worktree\n");
+    expect(await exists(path.join(localDir, ".claude/worktrees/wt/remote-made.txt"))).toBe(false);
+    expect(await exists(path.join(localDir, ".claude/worktrees/other"))).toBe(false);
+  });
+
+  it("forwards nestedWorktreeDirs from the adapter entrypoint", async () => {
+    await writeTree(localDir, {
+      "src/app.ts": "export const app = 1;\n",
+      ".claude/worktrees/wt/file.txt": "wt\n",
+    });
+
+    const prepared = await prepareAdapterExecutionTargetRuntime({
+      runId: "run-1",
+      target: { kind: "remote" as const, transport: "ssh" as const, remoteCwd, spec },
+      adapterKey: "test",
+      workspaceLocalDir: localDir,
+      // Empty: nested worktrees sync like ordinary files.
+      nestedWorktreeDirs: [],
+    });
+
+    expect(prepared.workspaceRemoteDir).not.toBeNull();
+    expect(await readFile(path.join(prepared.workspaceRemoteDir!, ".claude/worktrees/wt/file.txt"), "utf8")).toBe("wt\n");
+    await prepared.restoreWorkspace();
+    expect(await readFile(path.join(localDir, ".claude/worktrees/wt/file.txt"), "utf8")).toBe("wt\n");
+  });
+
+  itWithGnuDu("does not count excluded nested worktrees when sizing repository trees", async () => {
+    const repositoryDir = ".paperclip-repositories/app";
+    await writeTree(localDir, {
+      "src/app.ts": "export const app = 1;\n",
+      [`${repositoryDir}/README.md`]: "repository\n",
+    });
+    const rootExclude = [".paperclip-repositories", ...resolveNestedWorktreeExcludes({}), ...GIT_ARCHIVE_EXCLUDES];
+    const repositoryExclude = [...resolveNestedWorktreeExcludes({}), ...GIT_ARCHIVE_EXCLUDES];
+    const remote = path.join(remoteCwd, "ws");
+    await writeTree(remote, {
+      "src/app.ts": "export const app = 2;\n",
+      "data/blob.bin": Buffer.alloc(1024, 7),
+      [`${repositoryDir}/README.md`]: "repository, edited remotely\n",
+      [`${repositoryDir}/blob.bin`]: Buffer.alloc(1024, 5),
+      // Excluded from the restore, so it must not count towards the estimate.
+      [`${repositoryDir}/.claude/worktrees/x/big.bin`]: Buffer.alloc(10 * MB, 9),
+    });
+    // 64 KiB covers 2x the small trees but not 2x the 10 MiB worktree on disk.
+    vi.spyOn(fsPromises, "statfs").mockResolvedValue({ bavail: 64, bsize: 1024 } as Awaited<ReturnType<typeof fsPromises.statfs>>);
+
+    await restoreWorkspaceFromSshExecution({
+      spec,
+      localDir,
+      remoteDir: remote,
+      baselineSnapshot: await captureDirectorySnapshot(localDir, { exclude: rootExclude }),
+      repositories: [{
+        path: repositoryDir,
+        baselineSnapshot: await captureDirectorySnapshot(path.join(localDir, repositoryDir), { exclude: repositoryExclude }),
+      }],
+    });
+
+    expect(await readFile(path.join(localDir, "src/app.ts"), "utf8")).toBe("export const app = 2;\n");
+    expect(await readFile(path.join(localDir, `${repositoryDir}/README.md`), "utf8")).toBe("repository, edited remotely\n");
+    expect(await exists(path.join(localDir, `${repositoryDir}/.claude/worktrees`))).toBe(false);
+  });
+
+  itWithGnuDu("does not count excluded nested worktrees in a plain no-baseline restore probe", async () => {
+    await writeTree(localDir, { "src/app.ts": "local\n" });
+    const remote = path.join(remoteCwd, "ws");
+    await writeTree(remote, {
+      "src/app.ts": "remote\n",
+      ".claude/worktrees/x/big.bin": Buffer.alloc(10 * MB, 7),
+    });
+    // 64 KiB covers 2x the small restore but not 2x the 10 MiB on disk.
+    vi.spyOn(fsPromises, "statfs").mockResolvedValue({ bavail: 64, bsize: 1024 } as Awaited<ReturnType<typeof fsPromises.statfs>>);
+
+    await restoreWorkspaceFromSshExecution({ spec, localDir, remoteDir: remote });
+
+    expect(await readFile(path.join(localDir, "src/app.ts"), "utf8")).toBe("remote\n");
+    expect(await exists(path.join(localDir, ".claude/worktrees"))).toBe(false);
+  });
+
+  itWithGnuDu("counts the remote git history in a no-baseline git restore", async () => {
+    await writeTree(localDir, { "src/app.ts": "export const app = 1;\n" });
+    await git(localDir, ["init", "-q", "-b", "main"]);
+    await git(localDir, ["add", "-A"]);
+    await git(localDir, ["commit", "-q", "-m", "init"]);
+    const initialHead = await gitOutput(localDir, ["rev-parse", "main"]);
+    const prepared = await prepare();
+    const remote = prepared.workspaceRemoteDir;
+    await writeTree(remote, { "fresh.txt": "fresh\n" });
+    await git(remote, ["add", "-A"]);
+    await git(remote, ["commit", "-q", "-m", "remote work"]);
+    // The working tree is tiny; the history bundle is not.
+    await mkdir(path.join(remote, ".git/objects/pack"), { recursive: true });
+    await writeFile(path.join(remote, ".git/objects/pack/pack-1.pack"), Buffer.alloc(4 * MB, 3));
+    // 1 MiB covers 2x the tiny tree but not tree + 4 MiB history + largest.
+    vi.spyOn(fsPromises, "statfs").mockResolvedValue({ bavail: 1024, bsize: 1024 } as Awaited<ReturnType<typeof fsPromises.statfs>>);
+
+    await expect(restoreWorkspaceFromSshExecution({ spec, localDir, remoteDir: remote }))
+      .rejects.toMatchObject({ code: "ssh_sync_insufficient_staging_space" });
+
+    // The refusal lands before the export, so the branch tip and files are untouched.
+    expect(await gitOutput(localDir, ["rev-parse", "main"])).toBe(initialHead);
+    expect(await exists(path.join(localDir, "fresh.txt"))).toBe(false);
+  });
+
+  it("excludes deep nested worktrees from the upload size estimate", async () => {
+    await writeTree(localDir, {
+      "src/app.ts": "export const app = 1;\n",
+      "packages/a/.claude/worktrees/wt/big.bin": Buffer.alloc(5 * MB, 9),
+    });
+    const lines: string[] = [];
+    const remote = path.join(remoteCwd, "ws");
+
+    await syncDirectoryToSsh({
+      spec,
+      localDir,
+      remoteDir: remote,
+      exclude: [".paperclip-runtime", ...resolveNestedWorktreeExcludes({})],
+      onProgress: (line) => { lines.push(line); },
+      progressLabel: "workspace",
+    });
+
+    expect(await readFile(path.join(remote, "src/app.ts"), "utf8")).toBe("export const app = 1;\n");
+    expect(await exists(path.join(remote, "packages/a/.claude/worktrees"))).toBe(false);
+    // The terminal line reports the estimated total: bytes, not megabytes.
+    const done = lines.filter((line) => line.includes("100%"));
+    expect(done.length).toBeGreaterThan(0);
+    expect(done[done.length - 1]).toContain("/0.0 MB");
+  });
+
+  itWithGnuDu("reports a percent total on a baseline restore when the remote size is known", async () => {
+    await writeTree(localDir, { "src/app.ts": "export const app = 1;\n" });
+    const prepared = await prepare();
+    await writeTree(prepared.workspaceRemoteDir, { "src/app.ts": "export const app = 2;\n" });
+    const lines: string[] = [];
+
+    await prepared.restoreWorkspace(async (line) => { lines.push(line); });
+
+    expect(await readFile(path.join(localDir, "src/app.ts"), "utf8")).toBe("export const app = 2;\n");
+    expect(lines.some((line) => line.includes("%"))).toBe(true);
   });
 
   it("normalizes the configured directories and rejects patterns tar and the baseline would read differently", () => {
