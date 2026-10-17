@@ -42,9 +42,9 @@ jobs:
           pnpm --filter @paperclipai/paperclip-runner build
           pnpm --filter @paperclipai/server build
 
-      - name: Package application
+            - name: Package application
         run: |
-          tar -czf paperclip-termux-bundle.tar.gz \
+          tar -czf "$RUNNER_TEMP/paperclip-termux-bundle.tar.gz" \
             --exclude='.git' \
             --exclude='node_modules' \
             --exclude='**/node_modules' \
@@ -54,6 +54,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: paperclip-termux-bundle
-          path: paperclip-termux-bundle.tar.gz
+          path: ${{ runner.temp }}/paperclip-termux-bundle.tar.gz
           if-no-files-found: error
           retention-days: 3
