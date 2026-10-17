@@ -1228,10 +1228,6 @@ function createSshEnvironmentDriver(db: Db): EnvironmentRuntimeDriver {
     },
 
     async retryPendingSandboxTeardown({ lease }) {
-      // A restart can strand an SSH bookkeeping lease after its run ends, as it
-      // can a local one. Its id names only the host and workspace root, so there
-      // is no sandbox to destroy: releasing it never touches the host or its
-      // workspace. Never treat another provider's resource as an SSH no-op.
       if (lease.provider !== "ssh") {
         throw new Error("SSH lease cleanup cannot release another provider's resource.");
       }

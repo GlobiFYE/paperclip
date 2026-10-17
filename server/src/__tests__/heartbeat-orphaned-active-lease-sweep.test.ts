@@ -421,8 +421,6 @@ describeEmbeddedPostgres("heartbeat sweepOrphanedActiveLeases", () => {
       .update(environments)
       .set({ name: "Build Host", driver: "ssh", config: {} })
       .where(eq(environments.id, environmentId));
-    // Every SSH lease on one host carries the same id: the host and the
-    // workspace root.
     const sharedHostLeaseId = "ssh://agent@build-host:22/srv/work";
     const cancelledRunId = await insertHeartbeatRun({ companyId, agentId, status: "cancelled" });
     const failedRunId = await insertHeartbeatRun({ companyId, agentId, status: "failed" });
