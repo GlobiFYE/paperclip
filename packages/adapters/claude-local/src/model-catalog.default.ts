@@ -26,7 +26,7 @@ export const DEFAULT_CLAUDE_MODEL_CATALOG: ClaudeModelCatalog = {
     { id: "claude-mythos-5", label: "Claude Mythos 5" },
     { id: "claude-opus-5-5", label: "Claude Opus 5.5", efforts: FULL_EFFORTS },
     { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", efforts: FULL_EFFORTS },
-    { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", efforts: [] },
+    { id: "claude-haiku-5-5", label: "Claude Haiku 5.5" },
     { id: "claude-fable-5", label: "Claude Fable 5", efforts: FULL_EFFORTS },
     { id: "claude-opus-5", label: "Claude Opus 5", efforts: FULL_EFFORTS },
     { id: "claude-opus-4-8", label: "Claude Opus 4.8", efforts: FULL_EFFORTS },
@@ -35,6 +35,7 @@ export const DEFAULT_CLAUDE_MODEL_CATALOG: ClaudeModelCatalog = {
     { id: "claude-sonnet-5", label: "Claude Sonnet 5", efforts: FULL_EFFORTS },
     { id: "claude-sonnet-4-6", label: "Claude Sonnet 4.6", efforts: MAX_EFFORTS },
     { id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5" },
+    { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", efforts: [] },
   ],
   // AWS Bedrock model IDs: region-qualified identifiers required by the Bedrock API.
   bedrock: [
@@ -43,7 +44,8 @@ export const DEFAULT_CLAUDE_MODEL_CATALOG: ClaudeModelCatalog = {
     { id: "us.anthropic.claude-opus-5-5", label: "Bedrock Opus 5.5" },
     // Sonnet 5.5's documented Bedrock ID is dateless, like Fable 5.1 and Opus 5.5.
     { id: "us.anthropic.claude-sonnet-5-5", label: "Bedrock Sonnet 5.5" },
-    { id: "us.anthropic.claude-haiku-4-5-20251001-v1:0", label: "Bedrock Haiku 4.5" },
+    // Haiku 5.5's documented Bedrock ID is dateless too, like the other 5.5 releases.
+    { id: "us.anthropic.claude-haiku-5-5", label: "Bedrock Haiku 5.5" },
     { id: "us.anthropic.claude-fable-5", label: "Bedrock Fable 5" },
     { id: "us.anthropic.claude-opus-5", label: "Bedrock Opus 5" },
     { id: "us.anthropic.claude-opus-4-8", label: "Bedrock Opus 4.8" },
@@ -52,5 +54,6 @@ export const DEFAULT_CLAUDE_MODEL_CATALOG: ClaudeModelCatalog = {
     { id: "us.anthropic.claude-sonnet-5", label: "Bedrock Sonnet 5" },
     { id: "us.anthropic.claude-sonnet-4-6", label: "Bedrock Sonnet 4.6" },
     { id: "us.anthropic.claude-sonnet-4-5-20250929-v2:0", label: "Bedrock Sonnet 4.5" },
+    { id: "us.anthropic.claude-haiku-4-5-20251001-v1:0", label: "Bedrock Haiku 4.5" },
   ],
 };
