@@ -3,7 +3,7 @@ import { runningProcesses } from "../adapters/index.js";
 import { randomUUID } from "node:crypto";
 import express from "express";
 import request from "supertest";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   agentRuntimeState,
@@ -866,6 +866,60 @@ describeEmbeddedPostgres("issue queued-comment routes", () => {
     expect(successor.contextSnapshot?.wakeCommentIds).toEqual(seeded.commentIds);
     await heartbeatService(db).resumeQueuedRuns();
     expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.companyId, seeded.companyId))).toHaveLength(3);
+  });
+
+  it.each(["done", "cancelled"])("keeps 50 execution waits on %s tasks from starving an unrelated queue", async (closedStatus) => {
+    const seeded = await seedQueue();
+    await db.update(agents).set({ adapterType: "claude_local",
+      runtimeConfig: { heartbeat: { maxConcurrentRuns: 1 } },
+    }).where(eq(agents.id, seeded.agentId));
+    await db.update(heartbeatRuns).set({ runtimeMode: "legacy", status: "succeeded",
+      finishedAt: new Date("2026-08-22T15:03:00.000Z"),
+    }).where(eq(heartbeatRuns.id, seeded.runId));
+    await db.update(issues).set({ executionRunId: null }).where(eq(issues.id, seeded.issueId));
+    // Keep the admitted successor queued, without starting any provider work.
+    await db.insert(heartbeatRuns).values({ companyId: seeded.companyId, agentId: seeded.agentId,
+      status: "running", contextSnapshot: { issueId: randomUUID() },
+    });
+    await db.update(agentWakeupRequests).set({ updatedAt: new Date(1) })
+      .where(eq(agentWakeupRequests.id, seeded.wakeId));
+    const held = Array.from({ length: 50 }, () => ({ issueId: randomUUID(), runId: randomUUID(),
+      wakeId: randomUUID(), commentId: randomUUID() }));
+    await db.insert(issues).values(held.map(row => ({ id: row.issueId, companyId: seeded.companyId,
+      title: "Closed task with a retained wait", status: closedStatus, assigneeAgentId: seeded.agentId,
+    })));
+    await db.insert(heartbeatRuns).values(held.map(row => ({ id: row.runId, companyId: seeded.companyId,
+      agentId: seeded.agentId, status: "cancelled", runtimeMode: "legacy",
+      startedAt: new Date(0), finishedAt: new Date(1), contextSnapshot: { issueId: row.issueId },
+      resultJson: { executionCancellation: { state: "acknowledged" },
+        conversationContinuation: "continue_conversation_v1" },
+    })));
+    await db.insert(issueComments).values(held.map(row => ({ id: row.commentId, companyId: seeded.companyId,
+      issueId: row.issueId, authorType: "user", authorUserId: "queue-owner", body: "Saved input",
+    })));
+    await db.insert(agentWakeupRequests).values(held.map(row => ({ id: row.wakeId,
+      companyId: seeded.companyId, agentId: seeded.agentId, source: "issue_comment",
+      status: "deferred_issue_execution", requestedByActorType: "user", requestedByActorId: "queue-owner",
+      updatedAt: new Date(0), payload: { issueId: row.issueId,
+        executionWait: { reason: "execution_recovery", recoveryActionId: null },
+        _paperclipWakeContext: { wakeCommentIds: [row.commentId] } },
+    })));
+
+    await heartbeatService(db).resumeQueuedRuns();
+    const [delivered] = await db.select().from(agentWakeupRequests)
+      .where(eq(agentWakeupRequests.id, seeded.wakeId));
+    expect(delivered.status).toBe("queued");
+    const [successor] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, delivered.runId!));
+    expect(successor.contextSnapshot?.wakeCommentIds).toEqual(seeded.commentIds);
+    await heartbeatService(db).resumeQueuedRuns();
+    const remaining = await db.select().from(agentWakeupRequests).where(and(
+      eq(agentWakeupRequests.companyId, seeded.companyId),
+      eq(agentWakeupRequests.status, "deferred_issue_execution"),
+    ));
+    expect(remaining).toHaveLength(50);
+    expect(remaining.every(wake => wake.updatedAt.getTime() === 0)).toBe(true);
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.companyId, seeded.companyId)))
+      .toHaveLength(53);
   });
 
   async function promoteQueue(seeded: Awaited<ReturnType<typeof seedQueue>>) {

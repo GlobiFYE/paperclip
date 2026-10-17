@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { createServer } from "node:http";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { WebSocketServer } from "ws";
@@ -345,6 +347,111 @@ describeEmbeddedPostgres("heartbeat comment wake batching", () => {
     }
     return wake as Record<string, unknown>;
   }
+
+  it.each([
+    { name: "delivers fresh input after cleanup", postStop: true, paused: false, adapterType: "codex_local", delivers: true },
+    { name: "keeps messages predating an operator Stop", postStop: false, paused: false, adapterType: "codex_local", delivers: false },
+    { name: "respects a paused agent after cleanup", postStop: true, paused: true, adapterType: "codex_local", delivers: false },
+    { name: "does not replay a process adapter", postStop: true, paused: false, adapterType: "process", delivers: false },
+    { name: "admits once across competing scans", postStop: true, paused: false, adapterType: "codex_local", delivers: true, concurrent: true },
+    { name: "requires the recorded continuation policy", postStop: true, paused: false, adapterType: "codex_local", delivers: false, missingPolicy: true },
+    { name: "keeps unsafe workspace recovery held", postStop: true, paused: false, adapterType: "codex_local", delivers: false, unsafeRestore: true },
+    { name: "delivers saved human input on a system-origin wake", postStop: true, paused: false, adapterType: "codex_local", delivers: true, systemOrigin: true },
+    { name: "admits system-origin input once across competing scans", postStop: true, paused: false, adapterType: "codex_local", delivers: true, systemOrigin: true, concurrent: true },
+    { name: "keeps system-origin input from before an operator Stop", postStop: false, paused: false, adapterType: "codex_local", delivers: false, systemOrigin: true },
+    { name: "respects a paused agent on a system-origin wake", postStop: true, paused: true, adapterType: "codex_local", delivers: false, systemOrigin: true },
+    { name: "does not use an agent comment as human authority", postStop: true, paused: false, adapterType: "codex_local", delivers: false, systemOrigin: true, agentComment: true },
+    { name: "preserves sub-millisecond Stop ordering", postStop: false, paused: false, adapterType: "codex_local", delivers: false, preciseStop: true },
+  ])("execution ownership wait: $name", async ({ postStop, paused, adapterType, delivers, ...options }) => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const issueId = randomUUID();
+    const sourceRunId = randomUUID();
+    const wakeId = randomUUID();
+    const commentId = randomUUID();
+    const heartbeat = heartbeatService(db, { runtimeEnv: {} });
+    const finishedAt = new Date(Date.now() - 60_000);
+    const staleAt = new Date(Date.now() - 45_000);
+    const commentAt = new Date(finishedAt.getTime() + (postStop ? 1000 : -1000));
+    const child = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore" });
+    await once(child, "spawn");
+    try {
+      await db.insert(companies).values({ id: companyId, name: "Execution wait regression",
+        issuePrefix: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+        defaultResponsibleUserId: "responsible-user", requireBoardApprovalForNewAgents: false });
+      await db.insert(agents).values({ id: agentId, companyId, name: "Conversation worker", role: "engineer",
+        status: paused ? "paused" : "idle", adapterType,
+        // A deterministic no-op CLI: this test must never call a model provider.
+        adapterConfig: { engine: "cli", command: "/usr/bin/true" },
+        runtimeConfig: { heartbeat: { enabled: false, wakeOnDemand: true, maxConcurrentRuns: 1 } }, permissions: {} });
+      await db.insert(issues).values({ id: issueId, companyId, title: "Saved message after retry cancellation",
+        status: "todo", assigneeAgentId: agentId, responsibleUserId: "responsible-user", issueNumber: 1,
+        identifier: `T${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}-1` });
+      await db.insert(heartbeatRuns).values({ id: sourceRunId, companyId, agentId, status: "cancelled",
+        runtimeMode: "legacy", runtimeModeResolvedAt: finishedAt,
+        startedAt: new Date(finishedAt.getTime() - 1000), finishedAt,
+        createdAt: new Date(finishedAt.getTime() - 2000), responsibleUserId: "responsible-user",
+        processPid: child.pid, contextSnapshot: { issueId },
+        resultJson: { ...("missingPolicy" in options && options.missingPolicy ? {} : { conversationContinuation: "continue_conversation_v1" }),
+          ...("unsafeRestore" in options && options.unsafeRestore ? { workspaceRestoreFailure: "restore_unsafe_archive" } : {}),
+          executionCancellation: { state: "acknowledged" },
+          cancellation: { source: postStop ? "control_plane" : "operator", expected: true,
+            initiator: { type: postStop ? "system" : "user" }, reason: "Stopped", recordedAt: finishedAt.toISOString() } } });
+      const agentComment = "agentComment" in options && options.agentComment;
+      await db.insert(issueComments).values({ id: commentId, companyId, issueId,
+        authorType: agentComment ? "agent" : "user", authorAgentId: agentComment ? agentId : null,
+        authorUserId: agentComment ? null : "responsible-user", body: "Continue with this follow-up", createdAt: commentAt });
+      if ("preciseStop" in options && options.preciseStop) {
+        await db.update(heartbeatRuns).set({ finishedAt: sql`${finishedAt.toISOString()}::timestamptz + interval '900 microseconds'` })
+          .where(eq(heartbeatRuns.id, sourceRunId));
+        await db.update(issueComments).set({ createdAt: sql`${finishedAt.toISOString()}::timestamptz + interval '100 microseconds'` })
+          .where(eq(issueComments.id, commentId));
+      }
+      await db.insert(agentWakeupRequests).values({ id: wakeId, companyId, agentId, source: "automation",
+        reason: "issue_commented", status: "deferred_issue_execution",
+        requestedByActorType: "systemOrigin" in options && options.systemOrigin ? "system" : "user",
+        requestedByActorId: "systemOrigin" in options && options.systemOrigin ? "heartbeat" : "responsible-user",
+        requestedAt: commentAt, updatedAt: staleAt,
+        payload: { issueId, commentId, mutation: "comment",
+          executionWait: { reason: "execution_recovery", recoveryActionId: null },
+          _paperclipWakeContext: { issueId, wakeReason: "issue_commented", wakeCommentId: commentId,
+            wakeCommentIds: [commentId] } } });
+
+      await heartbeat.resumeQueuedRuns();
+      const [held] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeId));
+      expect(held?.status).toBe("deferred_issue_execution");
+      expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId))).toHaveLength(1);
+      // Frequent ordinary queue sweeps must not keep resetting the wait cursor.
+      await heartbeat.resumeQueuedRuns();
+      const [stillHeld] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, wakeId));
+      expect(stillHeld?.updatedAt.getTime()).toBe(held?.updatedAt.getTime());
+
+      child.kill();
+      await once(child, "exit");
+      await db.update(agentWakeupRequests).set({ updatedAt: staleAt }).where(eq(agentWakeupRequests.id, wakeId));
+      if ("concurrent" in options && options.concurrent) {
+        await Promise.all([heartbeat.resumeQueuedRuns(), heartbeatService(db, { runtimeEnv: {} }).resumeQueuedRuns()]);
+      } else {
+        await heartbeat.resumeQueuedRuns();
+      }
+      const runs = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId));
+      const successors = runs.filter(run => run.id !== sourceRunId);
+      expect(successors).toHaveLength(delivers ? 1 : 0);
+      if (delivers) {
+        expect(successors[0]?.contextSnapshot).toMatchObject({ issueId, wakeCommentId: commentId });
+        const [dispatch] = await db.select().from(agentWakeupRequests)
+          .where(eq(agentWakeupRequests.id, successors[0]!.wakeupRequestId!));
+        expect(dispatch).toMatchObject({ requestedByActorType: "user", requestedByActorId: "responsible-user" });
+        await heartbeat.resumeQueuedRuns();
+        expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, agentId))).toHaveLength(2);
+      }
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill();
+        await once(child, "exit");
+      }
+    }
+  }, 30_000);
 
   it("defers approval-approved wakes for a running issue so the assignee resumes after the run", async () => {
     const companyId = randomUUID();

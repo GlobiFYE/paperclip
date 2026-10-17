@@ -1780,6 +1780,10 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
       .innerJoin(companies, and(eq(companies.id, issues.companyId), eq(companies.status, "active")))
       .where(and(eq(agentWakeupRequests.status, "deferred_issue_execution"),
         isNull(issues.executionRunId),
+        // Closed execution waits are held until the task is reopened. Neither
+        // scan advances them, so they must not occupy this bounded batch.
+        or(sql`${agentWakeupRequests.payload}->'executionWait' is null`,
+          notInArray(issues.status, ["done", "cancelled"])),
         or(and(
           sql`jsonb_typeof(${agentWakeupRequests.payload} #> '{_paperclipWakeContext,wakeCommentIds}') = 'array'`,
           sql`${agentWakeupRequests.payload} #> '{_paperclipWakeContext,wakeCommentIds}' <> '[]'::jsonb`,
@@ -1794,9 +1798,14 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         eq(heartbeatRuns.companyId, wake.companyId), eq(heartbeatRuns.agentId, wake.agentId),
         sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${String(wake.payload?.issueId)}`,
       )).orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id)).limit(1);
-      await db.update(agentWakeupRequests).set({ updatedAt: new Date() }).where(and(
-        eq(agentWakeupRequests.id, wake.id), eq(agentWakeupRequests.status, "deferred_issue_execution"),
-      ));
+      // Keep the existing release/recovery paths for every stranded queue,
+      // including system-origin wakes with saved human input. Only the wait
+      // scan owns a wait's retry cursor; touching it here can starve that scan.
+      if (!wake.payload?.executionWait) {
+        await db.update(agentWakeupRequests).set({ updatedAt: new Date() }).where(and(
+          eq(agentWakeupRequests.id, wake.id), eq(agentWakeupRequests.status, "deferred_issue_execution"),
+        ));
+      }
       if (!latest || !isHeartbeatRunTerminalStatus(latest.status)) continue;
       if (latest.runtimeMode === "native" && typeof wake.payload?.dotAssignmentFollowUp === "string") {
         await releaseIssueExecutionAndPromote(latest, { suppressImmediateRecovery: true }).catch(err => {

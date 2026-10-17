@@ -32,14 +32,12 @@ import {
   undeliveredLegacyUserCommentIds,
 } from "../explicit-native-continuation.js";
 import { isCancelledNativeStartup } from "../cancelled-native-startup.js";
-import {
-  executionBlockerPredicate,
-  getExecutionBlocker,
-} from "../execution-blocker.js";
+import { getExecutionBlocker } from "../execution-blocker.js";
 import {
   CONVERSATION_CONTINUATION_POLICY,
   runUsedConversationAdapter,
   hasConversationContinuationPolicy,
+  isConversationAdapter,
 } from "../conversation-continuation.js";
 import {
   adapterExecutionControls,
@@ -55,7 +53,6 @@ import {
   asc,
   desc,
   eq,
-  exists,
   gt,
   inArray,
   isNull,
@@ -77,7 +74,6 @@ import {
   environmentLeases,
   heartbeatRuns,
   issueComments,
-  issueRecoveryActions,
   issues,
   nativeRunFinalizations,
 } from "@paperclipai/db";
@@ -643,11 +639,11 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
         sql`${issues.id}::text = ${agentWakeupRequests.payload}->>'issueId'`,
         eq(issues.assigneeAgentId, agentWakeupRequests.agentId)))
       .innerJoin(companies, and(eq(companies.id, issues.companyId), eq(companies.status, "active")))
-      .where(and(exists(db.select({ id: issueRecoveryActions.id }).from(issueRecoveryActions).where(and(
-        eq(issueRecoveryActions.companyId, issues.companyId), eq(issueRecoveryActions.sourceIssueId, issues.id),
-        executionBlockerPredicate(),
-      ))), eq(agentWakeupRequests.status, "deferred_issue_execution"),
-        eq(agentWakeupRequests.requestedByActorType, "user"),
+      // Ownership/cleanup waits need not create a recovery-action row. Revisit
+      // their saved messages after the execution owner has released its lease.
+      // A human comment may be coalesced into a system-origin wake. The saved
+      // comment and its author, not the outer wake actor, authorize admission.
+      .where(and(eq(agentWakeupRequests.status, "deferred_issue_execution"),
         sql`${agentWakeupRequests.payload}->'executionWait' is not null`,
         sql`${agentWakeupRequests.payload}->'queuedCommentInterrupt' is null`,
         lte(agentWakeupRequests.updatedAt, new Date(Date.now() - 30_000)),
@@ -669,7 +665,39 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
       // Match normal admission's deterministic current blocker selection. An
       // arbitrary historical action must not choose the retry's source run.
       const blocker = await getExecutionBlocker(db, wake.companyId, issueId);
-      const sourceId = blocker?.runId;
+      if (!blocker) {
+        const currentAgent = await getAgent(wake.agentId);
+        if (!currentAgent || currentAgent.companyId !== wake.companyId ||
+            !isConversationAdapter(currentAgent.adapterType)) continue;
+        const [settled] = await db.select().from(heartbeatRuns).where(and(
+          eq(heartbeatRuns.companyId, wake.companyId), eq(heartbeatRuns.agentId, wake.agentId),
+          sql`${heartbeatRuns.contextSnapshot}->>'issueId' = ${issueId}`,
+        )).orderBy(desc(heartbeatRuns.createdAt), desc(heartbeatRuns.id)).limit(1);
+        // A new user turn can use ordinary admission once legacy ownership has
+        // settled. Never replay an old turn or revive input predating a Stop.
+        if (!settled || settled.runtimeMode !== "legacy" || !settled.finishedAt ||
+            !isHeartbeatRunTerminalStatus(settled.status) ||
+            !hasConversationContinuationPolicy(settled.resultJson) ||
+            activeRunExecutions.has(settled.id) || adapterExecutionControls.has(settled.id)) continue;
+        const ids = await undeliveredLegacyUserCommentIds(db, wake.companyId, issueId, wake.agentId,
+          queuedCommentIdsFromWakePayload(wake.payload));
+        const commentId = ids.at(-1);
+        if (!commentId) continue;
+        const [comment] = await db.select({ id: issueComments.id }).from(issueComments).where(and(
+          eq(issueComments.companyId, wake.companyId), eq(issueComments.issueId, issueId),
+          eq(issueComments.id, commentId), eq(issueComments.authorType, "user"),
+          isNull(issueComments.deletedAt), isNull(issueComments.createdByRunId),
+          // Retain PostgreSQL's timestamp precision across the Stop boundary.
+          sql`${issueComments.createdAt} > (select stopped.finished_at from heartbeat_runs stopped
+            where stopped.company_id = ${wake.companyId} and stopped.id = ${settled.id})`,
+        )).limit(1);
+        if (!comment) continue;
+        await resumeSavedLegacyComments(wake.companyId, wake.id).catch(err => {
+          logger.warn({ err, queueId: wake.id }, "failed to deliver saved message after execution ownership settled");
+        });
+        continue;
+      }
+      const sourceId = blocker.runId;
       if (!sourceId || !isUuidLike(sourceId)) continue;
       const run = await getRun(sourceId, { includeExecutionEvidence: true });
       if (!run || run.companyId !== wake.companyId || run.agentId !== wake.agentId) continue;
