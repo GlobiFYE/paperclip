@@ -607,7 +607,10 @@ async function removeLocalEntry(entryPath: string, signal?: AbortSignal | null):
     await removeLocalEntry(path.join(entryPath, entry), signal);
   }
   throwIfWorkspaceRestoreAborted(signal);
-  await fs.rm(entryPath, { recursive: false });
+  // The directory was just emptied above: remove it as a directory. fs.rm
+  // without `recursive` rejects directories with ERR_FS_EISDIR even when
+  // empty, which would fail the restore after it already deleted contents.
+  await fs.rmdir(entryPath);
 }
 
 async function clearLocalDirectory(
@@ -644,7 +647,11 @@ async function copyLocalEntry(
     return;
   }
 
-  await fs.mkdir(targetPath, { recursive: true, mode: stat.mode });
+  // Keep the destination writable while its children are copied: creating it
+  // with the source mode first would make a read-only source directory (e.g.
+  // 0555) reject every child write with EACCES. The source mode is applied
+  // after the children below.
+  await fs.mkdir(targetPath, { recursive: true });
   for (const entry of await fs.readdir(sourcePath)) {
     await copyLocalEntry(path.join(sourcePath, entry), path.join(targetPath, entry), signal);
   }

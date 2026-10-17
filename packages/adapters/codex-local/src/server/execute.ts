@@ -1676,9 +1676,12 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
               ),
             ).catch(() => undefined);
             // Cancellation belongs to the existing operator-stop path, not
-            // provider failure classification. Other restore errors remain
-            // fatal after otherwise successful provider work.
-            if (!restoreCancelled && executionError === null) throw error;
+            // provider failure classification: a cancelled restore always
+            // reaches the heartbeat's error path so a successful provider
+            // result can never be recorded (and workspace_finalize marked
+            // succeeded) against an incomplete checkout. Other restore errors
+            // remain fatal after otherwise successful provider work.
+            if (restoreCancelled || executionError === null) throw error;
           }
         }
       }
