@@ -130,5 +130,8 @@
   "Untracked files": "Archivos sin seguimiento",
   "Warnings": "Advertencias",
   "Workspace path:": "Ruta del espacio de trabajo:",
-  "Worktree parent dir": "Carpeta madre del worktree"
+  "Worktree parent dir": "Carpeta madre del worktree",
+
+  "Execution is paused for this project until the budget block is resolved.": "La ejecución de este proyecto está en pausa hasta que se resuelva el bloqueo de presupuesto.",
+  "Heartbeats are paused for this scope until the budget block is resolved.": "Los ciclos de actividad de este alcance están en pausa hasta que se resuelva el bloqueo de presupuesto."
 }
