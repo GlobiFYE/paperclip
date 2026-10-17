@@ -621,6 +621,75 @@ iguales en los dos idiomas), `Beta`, `Beta ·`, `ID`, `KB`, `TOOLS.md` y
 propios), y `PAPERCLIP_*`, `{{name}}`, `{{variable_name}}` y `⌘S`
 (identificadores y teclas).
 
+### Agregadas en CHA-34 (los seis lotes chicos: 167 cadenas)
+
+Las seis pantallas que cierran el alcance del corte 2: Búsqueda, Panel, Nueva
+tarea, Bandeja, Auditoría y Artefactos.
+
+| Inglés | es-AR | Nota |
+|---|---|---|
+| Scope *(de la búsqueda)* | Ámbito | «Search all scopes» → «Buscar en todos los ámbitos». `Scope` suelto ya es «Alcance» en `common.json`, pero sus seis sitios son aprobaciones, gateways y skills: ninguno es la búsqueda, así que las dos palabras no se cruzan en pantalla |
+| Query | Consulta | «Search query» → «Consulta de búsqueda»; «Create task from this query» → «Crear una tarea con esta consulta» |
+| Clear *(un campo o un filtro)* | Borrar | «Clear search» → «Borrar la búsqueda»; «Clear all» → «Borrar todo». `Clear` suelto ya era «Limpiar» en `common.json`: son dos claves y el verbo cambia porque acá el objeto es texto escrito, no una lista |
+| Loosen *(un filtro)* | Aflojar | «Loosen a filter» → «Aflojar un filtro» |
+| Command palette | Paleta de comandos | |
+| Identifier lookup | Búsqueda por identificador | |
+| Stack *(de artefactos)* | stack | Queda en inglés y es **masculino**: «todos los stacks». Es el montón de artefactos de una tarea; mismo criterio que `pool` y `gateway` (§7) |
+| Group by | Agrupar por | `Group` → «Agrupar» ya venía de §5 |
+| Spend *(del mes)* | Gasto | «Month Spend» → «Gasto del mes». §2 ya fijaba «costo», no «coste» |
+| Success rate | Tasa de éxito | |
+| Budget override | Excepción de presupuesto | No es «Reemplazo» (que es `Override` del modelo, CHA-30): acá es el pedido de pasarse del presupuesto |
+| Budget incident | Incidente de presupuesto | |
+| Utilization | Uso | «92 % utilization this month» → «92 % de uso este mes». «Utilización» es más largo y no agrega nada |
+| Smoke *(prueba)* | Smoke | Queda en inglés: `Smoke Lab` es nombre de producto y traducir «smoke» en la tarjeta que manda a esa pestaña dejaría dos palabras para lo mismo. «Integration smoke» → «Smoke de integración» |
+| Stopped *(trabajo)* | Frenado | «No work is stopped.» → «No hay nada frenado.» Forma **sin género**, y no choca con `Blocked` → «Bloqueada», que es el estado de una tarea |
+| Mark as read | Marcar como leído | Ya estaba en singular femenino para una tarea («Marcar como leída»); «Mark all as read» → «Marcar todo como leído», que con «todo» no concuerda con nada |
+| User secret | Secreto de usuario | |
+| External reference | Referencia externa | La que apunta a la credencial en el proveedor, en vez de guardar el valor |
+| Assignee | Quien la tenga asignada | §2 ya tenía «Responsable» para el encabezado; en texto corrido el rol en singular se dice con «quien» (regla 1 de CHA-32) |
+| Park *(un trabajo)* | Frenar | «leave status as Backlog only to deliberately park this» → «…solo si querés frenarla a propósito». «Estacionar» quedó para `parked work` (CHA-25) y acá choca con que `Backlog` sigue en inglés |
+
+Estados y etiquetas nuevas, en una forma **sin género** o verificadas contra
+todos sus sitios (§3):
+
+| Inglés | es-AR |
+|---|---|
+| Archived | En archivo |
+| Earlier *(grupo de ítems viejos)* | Anteriores |
+| Failed run | Falló la ejecución |
+| Unlimited budget | Presupuesto sin límite |
+| Awaiting board review | Esperando la revisión del directorio |
+| Scheduled heartbeat | Ciclo de actividad programado |
+| No linked task | Sin tarea vinculada |
+| blocked *(contado)* | con bloqueo |
+
+Tres reglas que salieron de estos lotes:
+
+1. **Un formato puede tirar un hueco, y con eso se descarta la morfología que
+   el español no necesita.** `{0} imported agent{1} paused and will not run.`
+   lleva en `{1}` el `" is"`/`"s are"` del inglés; `formatted()` reemplaza por
+   índice, así que una traducción que no menciona `{1}` lo descarta. La guarda
+   de `overlay.test.ts` sólo pide no usar un hueco que la clave no tiene y no
+   perder **todos** los huecos. Quedó «Agentes importados en pausa: {0}. No van
+   a correr.», que además esquiva el número. **Las cadenas partidas no tienen
+   esta salida**: ahí los trozos se concatenan siempre, y una `s` suelta de
+   plural inglés queda pegada al sustantivo equivocado.
+2. **Una palabra de una letra se decide por la cuenta de sitios, no por lo que
+   parece.** `has`, `have`, `it` y `them` tienen **un solo sitio cada una**
+   (`MissingUserSecretsBanner.tsx`), así que entraron y arreglaron una oración
+   entera; `s` tiene **31** y es intocable. La diferencia no se ve leyendo la
+   cadena: hay que correr `markText` sobre todo `ui/src`.
+3. **Cuando la cadena hermana de la misma pantalla no está en ningún lote,
+   conviene no traducir la propia.** `All stacks` quedó «Todos los stacks»
+   porque `No artifact stacks yet.` se queda en inglés: «Todas las pilas» al
+   lado de «stacks» es peor que las dos en inglés. La coherencia de la pantalla
+   manda sobre la traducción de la cadena.
+
+Lo que **no entró** de estos lotes: `Backlog` (decisión 9.3 del diccionario,
+escalada al dueño; hay un test que la fija — ver [CHA-15](CHA-15-nombres-de-estado.md)),
+`Worktrees` y `Worktrees ·` (término de Git, §7) y `⌘K` y `⌘K:` (teclas, igual
+que `⌘S` en CHA-33).
+
 ## 8. Cadenas partidas y plurales contados
 
 Esto no es una regla de idioma: es cómo llega el texto al overlay, y define qué
