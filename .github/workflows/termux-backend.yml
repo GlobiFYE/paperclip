@@ -1,4 +1,4 @@
-name: Termux Backend Build
+name: Paperclip Backend Bundle
 
 on:
   push:
@@ -15,20 +15,19 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - name: Checkout Paperclip
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          ref: fix/render-production-workspace-exports
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
           version: 9.15.4
 
-      - name: Setup Node.js
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: 24
+          cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile --ignore-scripts
@@ -41,19 +40,27 @@ jobs:
           pnpm --filter @paperclipai/plugin-sdk build
           pnpm --filter @paperclipai/paperclip-runner build
           pnpm --filter @paperclipai/server build
+          pnpm --filter @paperclipai/ui build
 
-      - name: Package application
+      - name: Package source and build outputs
         run: |
-          tar -czf "$RUNNER_TEMP/paperclip-termux-bundle.tar.gz" \
+          mkdir -p "$RUNNER_TEMP/paperclip-bundle"
+          tar -czf "$RUNNER_TEMP/paperclip-source.tar.gz" \
             --exclude='.git' \
             --exclude='node_modules' \
             --exclude='**/node_modules' \
+            --exclude='**/target' \
             .
 
-      - name: Upload downloadable bundle
+          cp "$RUNNER_TEMP/paperclip-source.tar.gz" "$RUNNER_TEMP/paperclip-bundle/"
+
+          mkdir -p "$RUNNER_TEMP/paperclip-bundle/server-dist"
+          cp -R server/dist "$RUNNER_TEMP/paperclip-bundle/server-dist/"
+          cp -R packages/paperclip-runner/dist "$RUNNER_TEMP/paperclip-bundle/runner-dist/"
+
+      - name: Upload bundle
         uses: actions/upload-artifact@v4
         with:
           name: paperclip-termux-bundle
-          path: ${{ runner.temp }}/paperclip-termux-bundle.tar.gz
-          if-no-files-found: error
+          path: ${{ runner.temp }}/paperclip-bundle/
           retention-days: 3
