@@ -318,5 +318,18 @@
   "Bypass sandbox": "Saltear el sandbox",
   "Create & bind": "Crear y vincular",
   "Create new secret": "Crear un secreto nuevo",
-  "Create secret": "Crear el secreto"
+  "Create secret": "Crear el secreto",
+
+  "Deployment default": "Por defecto del despliegue",
+  "Env var": "Variable de entorno",
+  "Environment override": "Override del entorno",
+  "Environment:": "Entorno:",
+  "Grant": "Conceder",
+  "Grant access": "Dar acceso",
+  "Granting access…": "Dando acceso…",
+  "Hide secret": "Ocultar el secreto",
+  "KEY": "CLAVE",
+  "key available": "clave disponible",
+  "keys available": "claves disponibles",
+  "Loading saved access…": "Cargando el acceso guardado…"
 }

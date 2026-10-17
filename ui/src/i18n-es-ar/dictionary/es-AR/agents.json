@@ -60,5 +60,21 @@
   "Close agent setup": "Cerrar la configuración del agente",
   "Configure agent": "Configurar el agente",
   "Copy Agent ID": "Copiar el ID del agente",
-  "Delegated agents": "Agentes delegados"
+  "Delegated agents": "Agentes delegados",
+
+  "Duplicate Agent": "Duplicar el agente",
+  "Edit instructions": "Editar las instrucciones",
+  "Enter instructions.": "Escribí las instrucciones.",
+  "Filter agents": "Filtrar agentes",
+  "for this agent.": "para este agente.",
+  "Hand off to": "Pasarle el trabajo a",
+  "Heartbeat on interval": "Ciclo de actividad por intervalo",
+  "Instructions": "Instrucciones",
+  "Instructions text": "Texto de las instrucciones",
+  "Loading agent permissions…": "Cargando los permisos del agente…",
+  "Loading agents…": "Cargando agentes…",
+  "New agent progress": "Avance del agente nuevo",
+  "No agents match.": "Ningún agente coincide.",
+  "No agents selected": "No elegiste ningún agente",
+  "No manager": "Sin jefe"
 }

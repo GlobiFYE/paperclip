@@ -40,5 +40,21 @@
   "capture was off": "la captura estaba apagada",
   "Client → provider": "Cliente → proveedor",
   "Collapse JSON value": "Contraer el valor del JSON",
-  "Delete trace": "Eliminar el trace"
+  "Delete trace": "Eliminar el trace",
+
+  "Direction": "Dirección",
+  "Download exact trace": "Descargar el trace exacto",
+  "Exact unredacted frame": "Frame exacto sin censurar",
+  "Expand JSON value": "Expandir el valor del JSON",
+  "Expected · recorded": "Esperado · registrado",
+  "Hide raw response": "Ocultar la respuesta cruda",
+  "Interpretation outcomes": "Resultados de la interpretación",
+  "Interpretation stages": "Etapas de la interpretación",
+  "JSON path copied": "Se copió la ruta del JSON",
+  "Mapping": "Mapeo",
+  "mapping stage": "etapa de mapeo",
+  "Mappings": "Mapeos",
+  "Native method": "Método nativo",
+  "no exact bytes": "no hay bytes exactos",
+  "No production event": "No hay evento de producción"
 }

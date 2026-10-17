@@ -155,5 +155,11 @@
 
   "Agent resume failed": "No se pudo reanudar el agente",
   "Couldn't reach": "No se pudo llegar a",
-  "Couldn't retry now": "No se pudo reintentar ahora"
+  "Couldn't retry now": "No se pudo reintentar ahora",
+
+  "Error code": "Código de error",
+  "File details unavailable": "No hay detalles del archivo",
+  "It didn't work.": "No funcionó.",
+  "Last attempt failed:": "El último intento falló:",
+  "Latest cause:": "Última causa:"
 }
