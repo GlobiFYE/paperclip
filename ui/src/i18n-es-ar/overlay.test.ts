@@ -20,6 +20,7 @@ import navigationEsAr from "./dictionary/es-AR/navigation.json";
 import onboardingEsAr from "./dictionary/es-AR/onboarding.json";
 import projectsEsAr from "./dictionary/es-AR/projects.json";
 import settingsEsAr from "./dictionary/es-AR/settings.json";
+import skillsEsAr from "./dictionary/es-AR/skills.json";
 import tracesEsAr from "./dictionary/es-AR/traces.json";
 
 const ES_AR_AREAS: Record<string, Record<string, string>> = {
@@ -34,6 +35,7 @@ const ES_AR_AREAS: Record<string, Record<string, string>> = {
   "onboarding.json": onboardingEsAr,
   "audit.json": auditEsAr,
   "traces.json": tracesEsAr,
+  "skills.json": skillsEsAr,
 };
 
 beforeEach(() => {
