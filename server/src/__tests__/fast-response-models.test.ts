@@ -17,3 +17,9 @@ it("uses only a routed connection's configured model IDs", () => {
   const models = [{ id: "us.anthropic.custom", label: "Configured model" }];
   expect(fastResponseCatalogModels({ provider: "anthropic", routing: { ...routing, models } })).toEqual(models);
 });
+
+it("returns antigravity catalog models for antigravity provider", () => {
+  const models = fastResponseCatalogModels({ provider: "antigravity" });
+  expect(models.length).toBeGreaterThan(0);
+});
+
