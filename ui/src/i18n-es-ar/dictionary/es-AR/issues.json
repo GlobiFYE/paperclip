@@ -688,5 +688,11 @@
   "most recent artifacts.": "artefactos de este agente.",
   "no url": "sin url",
   "not shown": "sin mostrar",
-  "requested access to": "pidió acceso a"
+  "requested access to": "pidió acceso a",
+
+  "Show rendered {0}": "Ver el {0} renderizado",
+  "Show raw {0}": "Ver el {0} crudo",
+  "Rendered {0}": "{0} renderizado",
+  "Raw {0}": "{0} crudo",
+  "{0} preview mode": "Modo de vista previa de {0}"
 }

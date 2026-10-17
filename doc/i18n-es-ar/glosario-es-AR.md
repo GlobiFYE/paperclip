@@ -359,6 +359,77 @@ Tres reglas que salieron de este lote y valen para todo lo que venga:
    sustantivo («Revisión»), porque se miraron sus sitios y los tres son
    sustantivo.
 
+   **Corrección de CHA-30:** `Review` tiene **17 archivos** con sitio marcado,
+   no tres, y en `IssueRunLedger.tsx:750` es **verbo** («Review {ID} for
+   recovery context.»), donde «Revisión» se lee mal. La entrada no se tocó
+   —cambiarla rompe los sitios donde sí es sustantivo— y queda como cuarto
+   candidato a `tEs()`, al lado de `Open`, `Run` y `Comment`. La lección es de
+   método: los sitios se cuentan corriendo `markText` sobre todo `ui/src`, no
+   grepeando a ojo.
+
+### Agregadas en CHA-30 (lote `tareas`: 154 largas y 386 cortas)
+
+Es la pantalla más cargada del alcance: el detalle de una tarea, su chat, el
+visor de archivos, el panel lateral y el libro de ejecuciones.
+
+| Inglés | es-AR | Nota |
+|---|---|---|
+| Watchdog | Centinela | «Watchdog task» → «Tarea centinela»; «Watchdog agent» → «Agente centinela». «Perro guardián» no entra en una etiqueta |
+| Watch / watched | Vigilar / vigilado | «the watched task tree» → «el árbol de tareas vigilado» |
+| Goal | Objetivo | Ya venía de §2 |
+| Objective | Consigna | Para no escribir «Objetivo del objetivo»: «Goal objective» → «Consigna del objetivo» |
+| Steer / steering | Redirigir | «Continued after steering ·» → «Siguió después de redirigir ·» |
+| Override *(de modelo)* | Reemplazo | El par del carril es «Primary / Override» → «Principal / Reemplazo» |
+| Lane | Carril | «Model lane» → «Carril del modelo» |
+| Run ledger | Libro de ejecuciones | |
+| Runtime *(duración)* | Tiempo de ejecución | `Runtime {duración}` en el resumen de costos; no es el «runtime» de sistemas |
+| Monitor *(sección)* | Monitoreo | Es el sustantivo de la sección, no el verbo |
+| Triage | Clasificación | |
+| Handoff | Traspaso | «Task handoff» → «Traspaso de la tarea» |
+| Subtree | Subárbol | |
+| Jobs | Trabajos | Los comandos del espacio de trabajo, no las tareas |
+| Schedule *(cron)* | Programación | |
+| Lock / Unlock *(documento)* | Bloquear / Desbloquear | |
+| Idempotent claim | Reserva idempotente | §7: Claim → Reserva |
+| Raw / Rendered | Crudo / Renderizado | |
+| Elapsed | Transcurrido | |
+| Requester | Quién pidió | Misma forma que «Inviter → Quién invitó» |
+| Approvers / Reviewers | Aprobadores / Revisores | |
+| Originating | Origen | Encabezado de fila: «Originating» → «Origen», no «Originante» |
+| Old / New *(badges de diff)* | Anterior / Nuevo | Ver abajo |
+| Hidden follow-up | Seguimiento oculto | |
+
+Estados nuevos, todos en una forma **sin género** o en masculino (§3):
+
+| Inglés | es-AR |
+|---|---|
+| Queued | En cola |
+| In flight | En tránsito |
+| Interrupted | Interrumpido |
+| Completed | Completado |
+| Exhausted | Agotado |
+| Unhealthy | Con problemas |
+| Out of date | Desactualizado |
+| Working now | Trabajando ahora |
+| Browsing / Watching | Navegando / Vigilando |
+
+Dos reglas que salieron de este lote:
+
+1. **`Old` / `New` van «Anterior» / «Nuevo», no «Anterior» / «Nueva».** `New` es
+   botón en un lugar («Nuevo documento», acortado a «Nuevo» en mobile) y badge
+   de diff en cuatro más; «Nuevo» sirve en los dos y «Nueva» sólo en el badge.
+   Con «Anterior» el par del diff se lee como se lee un diff en castellano.
+2. **Las cadenas que el código arma con una plantilla van por formato, no por
+   literal.** El visor de archivos escribe `` `Show rendered ${previewLabel}` ``,
+   así que la entrada correcta es la clave `Show rendered {0}`, no
+   `Show rendered Markdown`. La medición entrega el literal expandido porque lo
+   vio en pantalla; el diccionario tiene que entrar por donde el compilador lo
+   vio escrito (ADR 0002 §7.5).
+
+Lo que **no entró** de este lote y conviene no volver a intentar: `Branch`,
+`Commit`, `Pull request` y `Diff —` (términos de Git, §7), y `Chat`, `Error`,
+`Video`, `Markdown`, `PLAN`, `Tokens`, `CSV ·` (iguales en los dos idiomas).
+
 ## 8. Cadenas partidas y plurales contados
 
 Esto no es una regla de idioma: es cómo llega el texto al overlay, y define qué
