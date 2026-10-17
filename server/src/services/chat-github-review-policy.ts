@@ -188,8 +188,6 @@ export function githubReviewSchedulingDecision(input: {
   };
 }
 
-// Some models send the whole numbers of a tool call as text ("5", "12"). A string of digits only is read as that
-// number before the schema check, so the review is not refused over quoting; anything else is left to the schema.
 function wholeNumberFromText(value: unknown): unknown {
   return typeof value === "string" && /^[0-9]{1,9}$/.test(value.trim()) ? Number(value.trim()) : value;
 }
