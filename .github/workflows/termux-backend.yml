@@ -42,7 +42,7 @@ jobs:
           pnpm --filter @paperclipai/paperclip-runner build
           pnpm --filter @paperclipai/server build
 
-            - name: Package application
+      - name: Package application
         run: |
           tar -czf "$RUNNER_TEMP/paperclip-termux-bundle.tar.gz" \
             --exclude='.git' \
