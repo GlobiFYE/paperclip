@@ -1,4 +1,4 @@
-import { isPreDispatchReviewWait } from "./pre-dispatch-review-wait.js";
+import { isPreDispatchReviewWait, isPreDispatchStaleCancel } from "./pre-dispatch-review-wait.js";
 import { expect, it } from "vitest";
 import { legacyExecutionNeedsReconciliation } from "./legacy-execution-recovery.js";
 
@@ -114,12 +114,14 @@ it("recognizes any stale-gate cancellation of a run that never reached dispatch"
     processStartedAt: null, nativeIssueId: null, nativeSessionId: null, sessionIdAfter: null,
     controllerBootId: null, controllerLeaseExpiresAt: null, executionStage: null,
     resultJson: { stopReason: "issue_assignee_changed", timeoutSource: "stale_queued_run_gate" } };
-  expect(isPreDispatchReviewWait(run)).toBe(true);
+  expect(isPreDispatchStaleCancel(run)).toBe(true);
+  // The review-wait notice keeps its narrower meaning.
+  expect(isPreDispatchReviewWait(run)).toBe(false);
   for (const patch of [
     { startedAt: new Date() }, { runtimeModeResolvedAt: new Date() }, { processPid: 123 },
     { controllerBootId: "live-controller" }, { executionStage: "preparing" }, { nativeSessionId: "provider-session" },
     { runtimeMode: "native" }, { status: "failed" },
     { resultJson: { ...run.resultJson, timeoutSource: "dependency_gate" } },
     { resultJson: { ...run.resultJson, stopReason: "cancelled" } },
-  ]) expect(isPreDispatchReviewWait({ ...run, ...patch })).toBe(false);
+  ]) expect(isPreDispatchStaleCancel({ ...run, ...patch })).toBe(false);
 });
