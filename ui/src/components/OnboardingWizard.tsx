@@ -1091,6 +1091,12 @@ function OnboardingWizardInner({
   const authSignalStatus = authSignalQuery.data?.status ?? null;
   const showAdapterLoginPanel =
     canShowAdapterLogin && (authSignalStatus === "absent" || authSignalStatus === "unknown");
+  // A host Antigravity login detected on this machine satisfies the
+  // subscription by itself: local runs execute with the host HOME, so the
+  // hire must not detour through the separate managed login home (whose
+  // credential check would fail against an empty directory) and no sign-in
+  // attempt needs to be prepared.
+  const hostAgyLoginPresent = adapterType === "agy_local" && authSignalStatus === "present";
 
   // Persist wizard state to localStorage on every change
   useEffect(() => {
@@ -1124,7 +1130,8 @@ function OnboardingWizardInner({
     name: `My ${CONNECT_SOURCE_NAMES[adapterType] ?? managedProvider} subscription`,
     ownership: "personal", agentIds: [], allAgents: true,
   }, effectiveOnboardingOpen && step === 4 && canUseLocalLogin && credentialMode !== "api" &&
-    Boolean(managedProvider) && !savedSubscription && !savedKeys.storedLogin.data && !managedBindingForStep(),
+    Boolean(managedProvider) && !savedSubscription && !savedKeys.storedLogin.data && !managedBindingForStep() &&
+    !hostAgyLoginPresent,
   );
   // A result from a previous selection must not hire or advance this wizard.
   // Environment query updates are not user navigation: the test resolves its
@@ -1311,7 +1318,7 @@ function OnboardingWizardInner({
     connectPhase !== "idle" && connectPhase !== "unwindRow" && sourceSelected;
   const connectProgress = adapterEnvLoading ? "Testing connection…" : loading ? "Connecting…" : null;
   const hasSavedSubscription = Boolean(savedSubscription || savedKeys.storedLogin.data ||
-    (adapterType === "agy_local" && authSignalStatus === "present") ||
+    hostAgyLoginPresent ||
     (credentialMode !== "api" && managedBindingForStep()));
   const connectHasCard = credentialMode === "api" || connectStepNeedsLogin || connectStepHasNoSandbox || Boolean(connectProgress);
   const connectCardLive =
@@ -2266,7 +2273,7 @@ function OnboardingWizardInner({
         apiKeyStored = await storeApiKeyUserSecret(createdCompanyId);
         if (!apiKeyStored || !isCurrent()) return;
       }
-      if (credentialMode !== "api" && canUseLocalLogin && managedProvider && !managedBindingForStep() && !savedSubscription && !savedKeys.storedLogin.data) {
+      if (credentialMode !== "api" && canUseLocalLogin && managedProvider && !managedBindingForStep() && !savedSubscription && !savedKeys.storedLogin.data && !hostAgyLoginPresent) {
         await localLogin.connect();
         if (!isCurrent()) return;
         managedSubscriptionRef.current = { companyId: createdCompanyId, binding: { provider: managedProvider, method: "subscription", mode: "responsible_user" } };

@@ -95,6 +95,9 @@ export async function prepareAgyRemoteRun(
   let stagedAgyHomeDir: string | null = null;
   let stagedMcpConfigDir: string | null = null;
   let effectiveExecutionCwd = input.effectiveExecutionCwd;
+  // Assigned by the MCP link step once the remote home is known; the
+  // mcp-config asset's restore callback delegates to it during teardown.
+  let restoreRemoteMcpConfig: (() => Promise<void>) | null = null;
 
   // Remote setup stages credential-bearing temp directories on the
   // controller before the run starts. Any failure after staging — during
@@ -177,6 +180,9 @@ export async function prepareAgyRemoteRun(
                 key: "mcp-config",
                 localDir: stagedMcpConfigDir,
                 followSymlinks: true,
+                restore: async () => {
+                  await restoreRemoteMcpConfig?.();
+                },
               },
             ]
           : []),
@@ -236,10 +242,25 @@ export async function prepareAgyRemoteRun(
       const stagedMcpConfigRemote = preparedExecutionTargetRuntime.assetDirs["mcp-config"];
       const targetMcpConfig = path.posix.join(remoteHomeDir, ".gemini", "config", "mcp_config.json");
       const stagedMcpFile = path.posix.join(stagedMcpConfigRemote, "mcp_config.json");
+      const backupMcpConfig = `${targetMcpConfig}.paperclip-backup`;
+      // The link below replaces the remote user's own mcp_config.json (on
+      // SSH targets remoteHomeDir is their real home, not a private one).
+      // Preserve a pre-existing file first and put it back during workspace
+      // restore, so servers configured only on the remote machine survive
+      // the run. The restore is registered before the link runs, so a
+      // setup failure after this point restores it too.
+      restoreRemoteMcpConfig = async () => {
+        await runAdapterExecutionTargetShellCommand(
+          runId,
+          executionTarget,
+          `if [ -e ${JSON.stringify(backupMcpConfig)} ] || [ -L ${JSON.stringify(backupMcpConfig)} ]; then rm -f ${JSON.stringify(targetMcpConfig)}; mv ${JSON.stringify(backupMcpConfig)} ${JSON.stringify(targetMcpConfig)}; elif [ -L ${JSON.stringify(targetMcpConfig)} ] && [ "$(readlink ${JSON.stringify(targetMcpConfig)})" = ${JSON.stringify(stagedMcpFile)} ]; then rm -f ${JSON.stringify(targetMcpConfig)}; elif [ -f ${JSON.stringify(targetMcpConfig)} ] && cmp -s ${JSON.stringify(targetMcpConfig)} ${JSON.stringify(stagedMcpFile)}; then rm -f ${JSON.stringify(targetMcpConfig)}; fi`,
+          { cwd: effectiveExecutionCwd, env, timeoutSec, graceSec, onLog },
+        ).catch(() => undefined);
+      };
       await runAdapterExecutionTargetShellCommand(
         runId,
         executionTarget,
-        `mkdir -p ${JSON.stringify(path.posix.dirname(targetMcpConfig))} && rm -f ${JSON.stringify(targetMcpConfig)} && (ln -s ${JSON.stringify(stagedMcpFile)} ${JSON.stringify(targetMcpConfig)} || cp -a ${JSON.stringify(stagedMcpFile)} ${JSON.stringify(targetMcpConfig)})`,
+        `mkdir -p ${JSON.stringify(path.posix.dirname(targetMcpConfig))}; if [ -L ${JSON.stringify(targetMcpConfig)} ] && [ "$(readlink ${JSON.stringify(targetMcpConfig)})" = ${JSON.stringify(stagedMcpFile)} ]; then rm -f ${JSON.stringify(targetMcpConfig)}; elif [ -e ${JSON.stringify(targetMcpConfig)} ] || [ -L ${JSON.stringify(targetMcpConfig)} ]; then if [ ! -e ${JSON.stringify(backupMcpConfig)} ] && [ ! -L ${JSON.stringify(backupMcpConfig)} ]; then cp -a ${JSON.stringify(targetMcpConfig)} ${JSON.stringify(backupMcpConfig)}; fi; rm -f ${JSON.stringify(targetMcpConfig)}; fi; ln -s ${JSON.stringify(stagedMcpFile)} ${JSON.stringify(targetMcpConfig)} || cp -a ${JSON.stringify(stagedMcpFile)} ${JSON.stringify(targetMcpConfig)}`,
         { cwd: effectiveExecutionCwd, env, timeoutSec, graceSec, onLog },
       );
       await onLog(

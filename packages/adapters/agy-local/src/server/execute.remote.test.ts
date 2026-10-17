@@ -517,4 +517,82 @@ describe("agy-local execute (remote execution)", () => {
       }),
     );
   });
+  it("backs up a pre-existing remote mcp_config.json and restores it on teardown", async () => {
+    const rootDir = await makeTmpDir();
+    const workspaceDir = path.join(rootDir, "workspace");
+    await fs.mkdir(workspaceDir, { recursive: true });
+
+    const ctx: AdapterExecutionContext = {
+      runId: "run-remote-mcp-restore",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Remote Agent",
+        adapterType: "agy_local",
+        adapterConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      runtimeMcp: {
+        getServers: () => [
+          {
+            name: "Paperclip tools",
+            url: "https://api.paperclip.test/mcp/tools",
+            token: "test-mcp-token",
+            connectionId: "conn-mcp-1",
+          },
+        ],
+      },
+      config: {},
+      context: {
+        paperclipWorkspace: {
+          cwd: workspaceDir,
+        },
+      },
+      executionTarget: makeSandboxTarget(),
+      onLog: async () => {},
+    };
+
+    await execute(ctx);
+
+    // The link step preserves any pre-existing remote file as a backup
+    // before replacing it, instead of deleting it outright.
+    const shellCommands = (vi.mocked(runAdapterExecutionTargetShellCommand).mock.calls as unknown as unknown[][])
+      .map((call) => String(call[2]));
+    const linkCommand = shellCommands.find(
+      (command) => command.includes("ln -s") && command.includes("mcp_config.json"),
+    );
+    expect(linkCommand).toBeDefined();
+    expect(linkCommand).toContain("mcp_config.json.paperclip-backup");
+    expect(linkCommand).toContain("cp -a");
+
+    // The mcp-config asset carries a restore that moves the backup back
+    // into place during workspace teardown.
+    type CapturedAsset = {
+      key: string;
+      restore?: (ctx: { assetDir: string; readFile: (p: string) => Promise<Buffer> }) => Promise<void>;
+    };
+    const prepareCalls = vi.mocked(prepareAdapterExecutionTargetRuntime).mock.calls as unknown as Array<[{ assets?: CapturedAsset[] }]>;
+    const mcpAsset = prepareCalls
+      .flatMap((call) => call[0].assets ?? [])
+      .find((asset) => asset.key === "mcp-config");
+    expect(mcpAsset?.restore).toBeTypeOf("function");
+
+    vi.mocked(runAdapterExecutionTargetShellCommand).mockClear();
+    await mcpAsset!.restore!({
+      assetDir: "/remote/runtime/mcp-config",
+      readFile: async () => Buffer.from(""),
+    });
+    const restoreCommands = (vi.mocked(runAdapterExecutionTargetShellCommand).mock.calls as unknown as unknown[][])
+      .map((call) => String(call[2]));
+    expect(
+      restoreCommands.some(
+        (command) => command.includes("mv") && command.includes("mcp_config.json.paperclip-backup"),
+      ),
+    ).toBe(true);
+  });
 });
