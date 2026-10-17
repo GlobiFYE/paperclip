@@ -4,10 +4,10 @@ import path from "node:path";
 import type { AdapterModel } from "@paperclipai/adapter-utils";
 import {
   claudeModelCatalogSchema,
-  DEFAULT_CLAUDE_REASONING_EFFORTS,
   type ClaudeModelCatalog,
 } from "@paperclipai/shared/claude-model-catalog";
 import { resolveDefaultModelCatalogDir } from "@paperclipai/shared/home-paths";
+import { claudeLocalReasoningEffortsForModel } from "../index.js";
 import { parseClaudeModelId, sameClaudeModelRelease } from "../model-id.js";
 import { DEFAULT_CLAUDE_MODEL_CATALOG } from "../model-catalog.default.js";
 import { sortClaudeModels } from "./model-order.js";
@@ -18,8 +18,13 @@ const ANTHROPIC_MODELS_CACHE_TTL_MS = 60_000;
 const ANTHROPIC_API_VERSION = "2023-06-01";
 const MODEL_CATALOG_OVERRIDE_FILENAME = "claude.json";
 
-let cached: { keyFingerprint: string; baseUrl: string; expiresAt: number; models: AdapterModel[] } | null = null;
-let catalogCache: { path: string; mtimeMs: number; catalog: ClaudeModelCatalog } | null = null;
+// Caches only the raw Anthropic-discovered id/label list; the catalog is merged in fresh on
+// every call so an on-disk catalog edit is reflected immediately, not after the TTL expires.
+let discoveryCache: { keyFingerprint: string; baseUrl: string; expiresAt: number; models: AdapterModel[] } | null = null;
+type CatalogCacheEntry =
+  | { path: string; mtimeMs: number; kind: "parsed"; catalog: ClaudeModelCatalog }
+  | { path: string; mtimeMs: number; kind: "invalid" };
+let catalogCache: CatalogCacheEntry | null = null;
 
 function resolveModelCatalogOverridePath(): string {
   const configured = process.env.PAPERCLIP_CLAUDE_MODEL_CATALOG_FILE?.trim();
@@ -44,19 +49,21 @@ function loadModelCatalog(): ClaudeModelCatalog {
     return DEFAULT_CLAUDE_MODEL_CATALOG;
   }
   if (catalogCache && catalogCache.path === overridePath && catalogCache.mtimeMs === stat.mtimeMs) {
-    return catalogCache.catalog;
+    return catalogCache.kind === "parsed" ? catalogCache.catalog : DEFAULT_CLAUDE_MODEL_CATALOG;
   }
   try {
     const raw = fs.readFileSync(overridePath, "utf8");
     const parsed = claudeModelCatalogSchema.parse(JSON.parse(raw));
-    catalogCache = { path: overridePath, mtimeMs: stat.mtimeMs, catalog: parsed };
+    catalogCache = { path: overridePath, mtimeMs: stat.mtimeMs, kind: "parsed", catalog: parsed };
     return parsed;
   } catch (error) {
     console.warn("[paperclip] Claude model catalog override invalid, using bundled defaults", {
       path: overridePath,
       error: error instanceof Error ? error.message : String(error),
     });
-    catalogCache = null;
+    // Cached by (path, mtime) so a still-broken file doesn't re-read/re-parse/re-warn on
+    // every lookup; it retries only once the file's mtime actually changes.
+    catalogCache = { path: overridePath, mtimeMs: stat.mtimeMs, kind: "invalid" };
     return DEFAULT_CLAUDE_MODEL_CATALOG;
   }
 }
@@ -182,28 +189,32 @@ async function loadClaudeModels(options?: { forceRefresh?: boolean }): Promise<A
   const keyFingerprint = fingerprint(apiKey);
   if (
     options?.forceRefresh !== true &&
-    cached &&
-    cached.keyFingerprint === keyFingerprint &&
-    cached.baseUrl === baseUrl &&
-    cached.expiresAt > now
+    discoveryCache &&
+    discoveryCache.keyFingerprint === keyFingerprint &&
+    discoveryCache.baseUrl === baseUrl &&
+    discoveryCache.expiresAt > now
   ) {
-    return cached.models;
+    return mergedWithFallback(discoveryCache.models);
   }
 
   const fetched = await fetchAnthropicModels(apiKey, baseUrl);
   if (fetched.length > 0) {
-    const merged = mergedWithFallback(fetched);
-    cached = {
+    discoveryCache = {
       keyFingerprint,
       baseUrl,
       expiresAt: now + ANTHROPIC_MODELS_CACHE_TTL_MS,
-      models: merged,
+      models: fetched,
     };
-    return merged;
+    return mergedWithFallback(fetched);
   }
 
-  if (cached && cached.keyFingerprint === keyFingerprint && cached.baseUrl === baseUrl && cached.models.length > 0) {
-    return cached.models;
+  if (
+    discoveryCache &&
+    discoveryCache.keyFingerprint === keyFingerprint &&
+    discoveryCache.baseUrl === baseUrl &&
+    discoveryCache.models.length > 0
+  ) {
+    return mergedWithFallback(discoveryCache.models);
   }
 
   return fallback;
@@ -223,7 +234,7 @@ export async function refreshClaudeModels(): Promise<AdapterModel[]> {
 }
 
 export function resetClaudeModelsCacheForTests() {
-  cached = null;
+  discoveryCache = null;
   catalogCache = null;
 }
 
@@ -240,17 +251,32 @@ export function isBedrockModelId(model: string): boolean {
  * the picker. Used by server-side validation paths (AI connection pool
  * routing, the public MCP agent-config surface) that run in Node and can
  * read the override synchronously.
+ *
+ * Looks up the exact catalog id first, so a pinned/dated entry's own
+ * `efforts` always win over an earlier, differently-pinned alias of the
+ * same release. Only falls back to release-based matching (ignoring
+ * snapshot/pin) for an id that isn't itself in the catalog. When the
+ * matched entry omits `efforts` (e.g. a bundled Bedrock id, or an override
+ * that only relabels a model), falls back to the same bundled-catalog
+ * release lookup the picker uses, instead of the generic default, so the
+ * two stay in agreement.
  */
 export function resolveClaudeReasoningEfforts(model: string): readonly string[] {
-  const key = parseClaudeModelId(model);
-  if (!key) return DEFAULT_CLAUDE_REASONING_EFFORTS;
   const catalog = loadModelCatalog();
   const pool = isBedrockModelId(model) ? catalog.bedrock : catalog.direct;
-  for (const entry of pool) {
-    const entryKey = parseClaudeModelId(entry.id);
-    if (entryKey && sameClaudeModelRelease(key, entryKey)) {
-      return entry.efforts ?? DEFAULT_CLAUDE_REASONING_EFFORTS;
+  const trimmed = model.trim().toLowerCase();
+
+  const exact = pool.find((entry) => entry.id.trim().toLowerCase() === trimmed);
+  if (exact) return exact.efforts ?? claudeLocalReasoningEffortsForModel(model);
+
+  const key = parseClaudeModelId(model);
+  if (key) {
+    for (const entry of pool) {
+      const entryKey = parseClaudeModelId(entry.id);
+      if (entryKey && sameClaudeModelRelease(key, entryKey)) {
+        return entry.efforts ?? claudeLocalReasoningEffortsForModel(model);
+      }
     }
   }
-  return DEFAULT_CLAUDE_REASONING_EFFORTS;
+  return claudeLocalReasoningEffortsForModel(model);
 }
