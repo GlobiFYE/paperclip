@@ -279,21 +279,7 @@ function cleanResponse(raw: string): string {
 // Output parsing
 // ---------------------------------------------------------------------------
 
-/**
- * True when stderr carries a genuine exception signature.
- *
- * A Traceback block only counts as a real crash if an exception line follows.
- * When code_execution_tool's RPC socket closes at run teardown, Python prints a
- * Traceback through socket.accept with no exception line at all -- that is
- * normal shutdown, not a fault.
- */
 function hasRealException(stderrText: string): boolean {
-  // Teardown noise first. code_execution_tool's RPC socket closes at run end and
-  // prints a Traceback whose last line is
-  //   OSError: [Errno 9] Bad file descriptor
-  // That is normal shutdown, not a fault. Measured 2026-07-15: this put CTO and
-  // Product Manager into `error` four times, each time straight after a healthy
-  // run, so clean shutdowns were recorded as failures.
   const onlyTeardown = /code_execution_tool\.py/.test(stderrText) &&
                        /Bad file descriptor/.test(stderrText);
   if (onlyTeardown) return false;
@@ -303,24 +289,6 @@ function hasRealException(stderrText: string): boolean {
          /thread '.*' panicked at/.test(stderrText);
 }
 
-/**
- * True when stderr carries a real fault that is NOT code_execution_tool teardown.
- *
- * 2026-07-15: teardown prints
- *   OSError: [Errno 9] Bad file descriptor
- * through socket.accept with nothing wrong. Counting that as a failure put CTO,
- * Product Manager, Marketing Lead and Coder into `error` on runs that had
- * already produced work.
- *
- * Teardown detection and fault detection are kept apart on purpose. Asking
- * hasRealException() "is this clean?" cannot also answer "is there a SECOND
- * fault here?", because it returns false as soon as it sees both teardown
- * markers -- which masked a real MemoryError appearing in the same stderr.
- * These cases are why, and they are covered by a unit test:
- *   teardown + ValueError   -> must fail
- *   teardown + MemoryError  -> must fail
- *   teardown + heap OOM     -> must fail
- */
 export function realFaultBeyondTeardown(stderr: string): boolean {
   const withoutTeardown = stderr
     .replace(/File "[^"]*code_execution_tool\.py"[^\n]*\n?/g, "")
@@ -333,12 +301,9 @@ export function realFaultBeyondTeardown(stderr: string): boolean {
   ) {
     return true;
   }
-  const idx = withoutTeardown.search(/Traceback \(most recent call last\)/);
-  if (idx === -1) return false;
-  const after = withoutTeardown
-    .slice(idx)
-    .replace(/^OSError: \[Errno 9\] Bad file descriptor\s*$/gm, "");
-  return /^(?:[A-Za-z_][\w.]*)?(?:Error|Exception|Interrupt)\b\s*:/m.test(after);
+  return /^(?:[A-Za-z_][\w.]*)?(?:Error|Exception|Interrupt)\b\s*(?::|$)/m.test(
+    withoutTeardown,
+  );
 }
 
 function parseHermesOutput(stdout: string, stderr: string): ParsedOutput {
@@ -391,18 +356,10 @@ function parseHermesOutput(stdout: string, stderr: string): ParsedOutput {
     const errorLines = stderr
       .split("\n")
       .filter((line) => {
-        // Hermes logs its own progress to stderr in a fixed shape:
-        //   03:37:02 - root - DEBUG [20261012_033637_c33314] - Tool result...
-        //   05:31:26 - agent.tool_executor - WARNING [id] - Tool terminal...
-        // These are diagnostics and tool wrappers, not run failures. Matching
-        // them promoted healthy runs into `error` (JUS-1156 follow-up).
         if (/^\d{2}:\d{2}:\d{2}\s+-\s+[\w.]+\s+-\s+(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL)\b/.test(line))
           return false;
-        // Teardown noise: a bare Traceback with no exception line is a socket
-        // closing at run end, not a crash.
         if (/^Traceback \(most recent call last\)/.test(line) && !hasRealException(stderr))
           return false;
-        // Real crash signatures only.
         return (
           /^(?:Error|Exception|FatalError|SystemExit)\b/.test(line) ||
           /^\w+(?:Error|Exception)\b\s*:/.test(line) ||
@@ -692,14 +649,6 @@ export async function execute(
     model,
   };
 
-  // 2026-07-15: a non-zero exit alone must not fail a run whose stderr was only
-  // code_execution_tool's RPC socket closing at teardown. Hermes can exit
-  // non-zero after a successful run, and this branch used the exit code without
-  // consulting stderr, so the earlier hasRealException() fix could never help --
-  // Marketing Lead and Coder stayed in `error` after it.
-  //
-  // Teardown and fault detection are deliberately SEPARATE; see
-  // realFaultBeyondTeardown for why reusing hasRealException() was wrong.
   const stderrText = result.stderr || "";
   const sawTeardown =
     /code_execution_tool\.py/.test(stderrText) &&
@@ -707,16 +656,6 @@ export async function execute(
   const stderrWasTeardownOnly =
     sawTeardown && !realFaultBeyondTeardown(stderrText);
 
-  // `parsed.errorMessage` and the teardown guard below are computed from the SAME
-  // stderr, but parseHermesOutput's line filter keeps traceback BODY lines
-  // (`/^\s*File "/`) even when the "Traceback (...)" header is dropped as noise.
-  // The teardown-only case therefore survived into errorMessage, and because the
-  // branch order takes `parsed.errorMessage` FIRST, a clean exit-0 run whose only
-  // stderr was the RPC socket closing was still recorded as adapter_failed.
-  // Measured 2026-10-16: 1 of 24 post-restart runs (run 75544c9d, exit 0).
-  // realFaultBeyondTeardown() already separates "teardown only" from
-  // "teardown AND a real fault", so reusing it here keeps the fault-preservation
-  // behaviour intact instead of blanket-suppressing teardown-shaped stderr.
   if (parsed.errorMessage && !stderrWasTeardownOnly) {
     executionResult.errorMessage = parsed.errorMessage;
   } else if (
@@ -731,6 +670,7 @@ export async function execute(
       "stdout",
       `[hermes] ignoring exit code ${result.exitCode}: RPC socket teardown only\n`,
     );
+    executionResult.exitCode = 0;
   }
 
   if (parsed.usage) {

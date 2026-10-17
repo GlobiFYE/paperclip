@@ -227,15 +227,6 @@ describe("hermes-local adapter onSpawn forwarding", () => {
   });
 });
 
-/**
- * Regression coverage for the code_execution_tool RPC-socket teardown shape.
- *
- * Hermes closes the RPC socket at the end of a run and Python prints a
- * Traceback whose only line is
- *   OSError: [Errno 9] Bad file descriptor
- * That is normal shutdown. It was being counted as an adapter failure, which
- * put agents into `error` on runs that had already produced work.
- */
 const TEARDOWN_STDERR = [
   'Traceback (most recent call last):',
   '  File "/opt/hermes/tools/code_execution_tool.py", line 673, in accept',
@@ -251,9 +242,6 @@ describe("realFaultBeyondTeardown", () => {
   });
 
   it("still reports a fault that appears alongside teardown", () => {
-    // The reason this helper exists instead of reusing hasRealException():
-    // hasRealException() returns false as soon as it sees the teardown markers,
-    // which masked these second faults appearing in the same stderr.
     expect(
       realFaultBeyondTeardown(
         `${TEARDOWN_STDERR}\nValueError: could not parse tool arguments`,
@@ -274,6 +262,20 @@ describe("realFaultBeyondTeardown", () => {
   it("reports a bare OSError that is not the teardown errno", () => {
     expect(
       realFaultBeyondTeardown("Traceback (most recent call last):\nOSError: [Errno 2] No such file or directory"),
+    ).toBe(true);
+  });
+
+  it("reports a traceback whose final exception line has no message", () => {
+    expect(
+      realFaultBeyondTeardown(`${TEARDOWN_STDERR}\nValueError`),
+    ).toBe(true);
+  });
+
+  it("reports a fault that appears before the teardown traceback", () => {
+    expect(
+      realFaultBeyondTeardown(
+        `Error: provider unavailable\n${TEARDOWN_STDERR}`,
+      ),
     ).toBe(true);
   });
 });
@@ -303,6 +305,14 @@ describe("teardown-only stderr does not fail a run", () => {
     expect(result.errorMessage).toBeUndefined();
   });
 
+  it("reports the exit code the run completion path uses for a teardown-only exit", async () => {
+    const result = await runWith(TEARDOWN_STDERR, 1);
+    expect(result.errorMessage).toBeUndefined();
+    expect(result.exitCode).toBe(0);
+    expect(result.signal ?? null).toBeNull();
+    expect(result.timedOut).toBe(false);
+  });
+
   it("still fails when a real fault accompanies the teardown", async () => {
     const result = await runWith(
       `${TEARDOWN_STDERR}\nValueError: tool arguments were malformed`,
@@ -314,5 +324,13 @@ describe("teardown-only stderr does not fail a run", () => {
   it("still reports a plain non-zero exit with no teardown", async () => {
     const result = await runWith("", 130);
     expect(result.errorMessage).toBe("Hermes exited with code 130");
+  });
+
+  it("keeps the real exit code when a fault accompanies the teardown", async () => {
+    const result = await runWith(
+      `${TEARDOWN_STDERR}\nValueError: tool arguments were malformed`,
+      1,
+    );
+    expect(result.exitCode).toBe(1);
   });
 });
