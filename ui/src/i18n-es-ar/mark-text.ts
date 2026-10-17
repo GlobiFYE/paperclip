@@ -29,6 +29,7 @@
 
 import { parseAst } from "vite";
 
+import { claveDeArchivo, hayEntradaPorSitio } from "./por-sitio";
 import {
   ENTITIES, OPAQUE_ELEMENTS, TEXT_ATTRS, TEXT_CALLS, TEXT_DECLS, TEXT_KEYS,
 } from "./text-sites";
@@ -364,9 +365,10 @@ interface Context {
  * Marca el texto de interfaz de `code`. Devuelve `null` si no hubo nada que
  * marcar, así el archivo le llega a Vite sin una sola diferencia.
  *
- * `file` es la ruta relativa a `ui/` y sólo se usa para el canal de
- * declaraciones (`TEXT_DECLS`); sin ella el transform es puro y los otros tres
- * sitios funcionan igual, que es como lo usan los tests.
+ * `file` es la ruta relativa a `ui/` y la usan dos cosas: el canal de
+ * declaraciones (`TEXT_DECLS`) y el mapa por sitio de §14.2. Sin ella el
+ * transform es puro, los otros tres sitios funcionan igual y el mapa por sitio
+ * no se consulta, que es como lo usan los tests.
  */
 export function markText(
   code: string,
@@ -392,6 +394,10 @@ export function markTextWithReport(
   const ast = parseAst(code, { lang }) as unknown as Node;
   const compared = comparedStrings(ast);
   const plan = file ? declPlan(ast, file) : { regions: new Set<Node>(), returns: [] };
+  // La clave del mapa por sitio: la ruta relativa a `ui/src/` (§14.2). Sin
+  // `file` el transform es puro y el mapa simplemente no se consulta, que es
+  // como lo usan los tests del marcado.
+  const sitio = file === undefined ? undefined : claveDeArchivo(file);
 
   /** Una edición por rango. Un rango ya editado no se vuelve a editar. */
   const edits = new Map<string, Edit>();
@@ -421,10 +427,24 @@ export function markTextWithReport(
     return true;
   }
 
+  /**
+   * La llamada que se escribe en un sitio de texto.
+   *
+   * El sitio se le pasa a `__tEs` **sólo** donde el mapa por sitio tiene algo
+   * que decir (§14.2). Donde no, la llamada sale igual que antes: así agregar
+   * el mapa no cambia un solo byte de la salida en los otros ~8.000 sitios, y
+   * el conteo de posiciones que reciben algo que no es literal no se mueve.
+   */
+  function llamada(value: string): string {
+    return sitio !== undefined && hayEntradaPorSitio(sitio, value)
+      ? `__tEs(${JSON.stringify(value)}, ${JSON.stringify(sitio)})`
+      : `__tEs(${JSON.stringify(value)})`;
+  }
+
   function markLiteral(node: Node, value: string, kind: SiteKind, braces: boolean): void {
     if (edits.has(rangeKey(node.start, node.end))) return;
     if (value === "" || blocked(value)) return;
-    const call = `__tEs(${JSON.stringify(value)})`;
+    const call = llamada(value);
     edit(node.start, node.end, braces ? `{${call}}` : call);
     report.sites.push({ kind, key: value });
   }
@@ -645,7 +665,7 @@ export function markTextWithReport(
         return;
       }
       if (blocked(decoded)) return;
-      edit(node.start, node.end, `{__tEs(${JSON.stringify(decoded)})}`);
+      edit(node.start, node.end, `{${llamada(decoded)}}`);
       report.sites.push({ kind: "jsx-text", key: decoded });
       return;
     }

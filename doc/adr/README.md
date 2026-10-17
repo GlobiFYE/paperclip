@@ -14,6 +14,6 @@ se contribuyen a upstream.
 
 | ADR | Título | Estado |
 | --- | --- | --- |
-| [0001](0001-traduccion-es-ar-por-overlay-en-jsx.md) | Traducción a es-AR por overlay en la frontera de JSX | Aceptado |
+| [0001](0001-traduccion-es-ar-por-overlay-en-jsx.md) | Traducción a es-AR por overlay en la frontera de JSX | Aceptado · revisión 2 (§12+) |
 | [0002](0002-marcado-del-texto-de-interfaz-en-compilacion.md) | Marcar el texto de la interfaz en tiempo de compilación | Aceptado |
 | [0003](0003-la-capa-es-ar-fuera-del-build-de-upstream.md) | La capa es-AR no entra al build de upstream | Aceptado |

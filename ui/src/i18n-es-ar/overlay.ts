@@ -18,6 +18,7 @@ import {
   type UiLocale,
 } from "./language";
 import { PATTERNS, type Pattern } from "./patterns";
+import { buscarPorSitio } from "./por-sitio";
 
 import agentsEsAr from "./dictionary/es-AR/agents.json";
 import artifactsEsAr from "./dictionary/es-AR/artifacts.json";
@@ -169,6 +170,27 @@ export function lookup(value: string, locale: UiLocale = "es-AR"): string {
 }
 
 /**
+ * Igual que `lookup`, pero mirando primero el mapa por sitio del archivo
+ * `archivo` (ADR 0001 revisión 2 §14.2).
+ *
+ * El archivo viene relativo a `ui/src/`, ya normalizado por el marcado. Si ese
+ * archivo no tiene entrada para `value`, cae al diccionario global: es el mismo
+ * resultado que `lookup`, y por eso el memo global sigue siendo válido —el
+ * español global de una cadena no depende del archivo.
+ *
+ * Puro y exportado para los tests: no mira el interruptor.
+ */
+export function lookupPorSitio(value: string, archivo: string, locale: UiLocale = "es-AR"): string {
+  const chain = localeChain(locale);
+  if (chain.length === 0) return value;
+  for (const overlay of chain) {
+    const hit = buscarPorSitio(overlay, archivo, value);
+    if (hit !== undefined) return hit;
+  }
+  return lookup(value, locale);
+}
+
+/**
  * Si el overlay forma parte de **este** bundle.
  *
  * Queda en `false` en el árbol de fuentes y el plugin de Vite la reescribe a
@@ -228,11 +250,16 @@ export function activeUiLocale(): UiLocale {
  * Acepta cualquier valor y devuelve lo que no sea cadena sin tocar: el canal de
  * declaraciones envuelve retornos, que pueden no ser cadenas —`statusLabel`
  * devuelve un `.replace()` y `environmentDeleteBlockMessage` devuelve `null`.
+ *
+ * `archivo` es el sitio (ruta relativa a `ui/src/`) y el marcado **sólo** lo
+ * pasa donde el mapa por sitio tiene una entrada (§14.2). En todos los demás
+ * sitios la llamada queda idéntica a la de antes, de una sola posición.
  */
-export function translate<T>(value: T): T {
+export function translate<T>(value: T, archivo?: string): T {
   if (typeof value !== "string") return value;
   const { locale, chain } = active();
   if (chain.length === 0) return value;
+  if (archivo !== undefined) return lookupPorSitio(value, archivo, locale) as unknown as T;
   return lookup(value, locale) as unknown as T;
 }
 
