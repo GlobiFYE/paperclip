@@ -42,9 +42,7 @@
   "Authenticated private mode requires sign-in and is intended for LAN, VPN, or other private-network deployments.": "El modo privado autenticado pide iniciar sesión y está pensado para despliegues en LAN, VPN u otras redes privadas.",
   "Auth readiness": "Estado de la autenticación",
   "Ready": "Listo",
-  "Not ready": "No está listo",
   "Bootstrap status": "Estado del arranque",
-  "Setup required": "Falta configurar",
   "Bootstrap invite": "Invitación de arranque",
   "Censor username in logs": "Censurar el nombre de usuario en los logs",
   "Hide the username segment in home-directory paths and similar operator-visible log output. Standalone username mentions outside of paths are not yet masked in the live transcript view. This is off by default.": "Esconde el tramo del nombre de usuario en las rutas del directorio personal y en salidas de log parecidas que ve el operador. Las menciones del nombre de usuario sueltas, fuera de una ruta, todavía no se tapan en la vista de transcripción en vivo. Viene desactivado.",
@@ -56,11 +54,7 @@
   "Monthly": "Mensual",
   "days": "días",
   "1 week": "1 semana",
-  "2 weeks": "2 semanas",
-  "4 weeks": "4 semanas",
   "1 month": "1 mes",
-  "3 months": "3 meses",
-  "6 months": "6 meses",
   "AI feedback sharing": "Compartir los votos sobre la IA",
   "Control whether thumbs up and thumbs down votes can send the voted AI output to Paperclip Labs. Votes are always saved locally.": "Controlá si los votos a favor y en contra pueden mandarle a Paperclip Labs la salida de la IA que votaste. Los votos siempre se guardan localmente.",
   "Read our terms of service": "Leé nuestros términos del servicio",
@@ -345,5 +339,8 @@
   "Tool permissions": "Permisos de las herramientas",
   "user-secret key": "clave del secreto de usuario",
   "· Always allowed": "· Siempre permitido",
-  "· Kubernetes sandbox": "· Sandbox de Kubernetes"
+  "· Kubernetes sandbox": "· Sandbox de Kubernetes",
+
+  "{0} weeks": "{0} semanas",
+  "{0} months": "{0} meses"
 }

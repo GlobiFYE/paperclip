@@ -69,7 +69,6 @@
 
   "Failed to save": "No se pudo guardar",
   "Failed to create skill.": "No se pudo crear la skill.",
-  "Failed to fetch": "No se pudo conectar",
   "Failed to update routine": "No se pudo actualizar la rutina",
   "Failed to approve": "No se pudo aprobar",
   "Failed to reject": "No se pudo rechazar",
@@ -93,7 +92,6 @@
 
   "Couldn’t open chat. Try again.": "No se pudo abrir el chat. Probá de nuevo.",
   "Couldn't open My Skills": "No se pudo abrir Mis skills",
-  "Couldn’t open My Skills": "No se pudo abrir Mis skills",
 
   "Something went wrong.": "Algo salió mal.",
   "Something went wrong loading workspace files.": "Algo salió mal al cargar los archivos del espacio de trabajo.",
@@ -101,7 +99,6 @@
   "We couldn’t check your access to this instance. Try again, or contact your instance administrator if this continues.": "No pudimos verificar tu acceso a esta instancia. Probá de nuevo o, si sigue pasando, hablá con quien administra la instancia.",
   "The model provider has reached its current usage limit. Try again after the limit resets.": "El proveedor del modelo llegó a su límite de uso. Probá de nuevo cuando se reinicie el límite.",
   "Paperclip is limiting workspace scans to keep the server responsive. Try again in a moment.": "Paperclip está limitando los escaneos del espacio de trabajo para que el servidor siga respondiendo. Probá de nuevo en un momento.",
-  "The company spending limit was reached.": "Se alcanzó el límite de gasto de la empresa.",
   "Invalid reporting chain": "Cadena de reporte inválida",
   "Unsaved changes": "Cambios sin guardar",
 
@@ -114,7 +111,6 @@
 
   "Delete this raw trace immediately? This cannot be undone.": "¿Eliminar este trace crudo ahora? Esto no se puede deshacer.",
   "Delete this disapproved agent? This cannot be undone.": "¿Eliminar este agente rechazado? Esto no se puede deshacer.",
-  "This cannot be undone.": "Esto no se puede deshacer.",
   "Discard unsaved edits and switch files?": "¿Descartar los cambios sin guardar y cambiar de archivo?",
   "Discard unsaved changes to this input?": "¿Descartar los cambios sin guardar de este campo?",
   "This exact provider frame may contain prompts, tool arguments, secrets, or reasoning. Reveal it now?": "Este frame del proveedor puede contener prompts, argumentos de herramientas, secretos o razonamiento. ¿Mostrarlo ahora?",
