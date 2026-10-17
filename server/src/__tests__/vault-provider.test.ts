@@ -581,7 +581,9 @@ describe("resolveVaultConfig", () => {
       providerConfig: null,
     });
     expect(r.warnings.join(" ")).toMatch(/namespace/i);
-    expect(r.config?.namespace).toBeNull();
+    // A supplied-but-invalid namespace must not silently fall back to root:
+    // the gateway would omit x-vault-namespace and target root. Fail closed.
+    expect(r.config).toBeNull();
   });
 
   it("rejects a kvPathPrefix containing a '..' segment", () => {
@@ -1920,6 +1922,40 @@ describe("healthCheck", () => {
     expect(details.tokenRenewable).toBeUndefined();
     expect(details.policies).toBeUndefined();
     expect(details.capabilities).toBeUndefined();
+  });
+
+  it("surfaces an ignored company setting as a warning instead of looking healthy", async () => {
+    const prev = {
+      ADDR: process.env.PAPERCLIP_SECRETS_VAULT_ADDR,
+      PREFIX: process.env.PAPERCLIP_SECRETS_VAULT_KV_PATH_PREFIX,
+      ALLOW: process.env.PAPERCLIP_SECRETS_VAULT_ALLOW_CONFIG_ADDR,
+      VAULT_TOKEN: process.env.VAULT_TOKEN,
+    };
+    try {
+      // Operator pins the address but not the prefix and does not opt in, so a
+      // company-config secretPathPrefix is ignored. That warning must reach
+      // the health response rather than being dropped as a "healthy" result.
+      process.env.PAPERCLIP_SECRETS_VAULT_ADDR = "https://v:8200";
+      delete process.env.PAPERCLIP_SECRETS_VAULT_KV_PATH_PREFIX;
+      delete process.env.PAPERCLIP_SECRETS_VAULT_ALLOW_CONFIG_ADDR;
+      process.env.VAULT_TOKEN = "static";
+      const provider = createVaultProvider({ gateway: gwWith({}) });
+      const r = await provider.healthCheck({
+        providerConfig: {
+          id: "v1",
+          provider: "vault",
+          status: "ready",
+          config: { address: "https://v:8200", secretPathPrefix: "company/prefix" },
+        },
+      });
+      expect(r.status).toBe("warn");
+      expect((r.warnings ?? []).join(" ")).toMatch(/secretPathPrefix is ignored/i);
+    } finally {
+      if (prev.ADDR === undefined) delete process.env.PAPERCLIP_SECRETS_VAULT_ADDR; else process.env.PAPERCLIP_SECRETS_VAULT_ADDR = prev.ADDR;
+      if (prev.PREFIX === undefined) delete process.env.PAPERCLIP_SECRETS_VAULT_KV_PATH_PREFIX; else process.env.PAPERCLIP_SECRETS_VAULT_KV_PATH_PREFIX = prev.PREFIX;
+      if (prev.ALLOW === undefined) delete process.env.PAPERCLIP_SECRETS_VAULT_ALLOW_CONFIG_ADDR; else process.env.PAPERCLIP_SECRETS_VAULT_ALLOW_CONFIG_ADDR = prev.ALLOW;
+      if (prev.VAULT_TOKEN === undefined) delete process.env.VAULT_TOKEN; else process.env.VAULT_TOKEN = prev.VAULT_TOKEN;
+    }
   });
 });
 

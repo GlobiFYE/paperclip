@@ -535,8 +535,7 @@ export function resolveVaultConfig(input: {
         : undefined;
   const versionRetention = validateVersionRetention(versionRetentionRaw, warnings);
 
-  const namespace = validateNamespace(
-    pinOperatorField({
+  const pinnedNamespace = pinOperatorField({
       operatorValue: asString(input.env.PAPERCLIP_SECRETS_VAULT_NAMESPACE) ?? undefined,
       configValue: asString(vaultConfig.namespace),
       allowConfig: allowConfigAddress,
@@ -544,9 +543,16 @@ export function resolveVaultConfig(input: {
       envName: "PAPERCLIP_SECRETS_VAULT_NAMESPACE",
       consequence: "change the Vault namespace the deployment credential targets",
       warnings,
-    }),
-    warnings,
-  );
+    });
+  const namespace = validateNamespace(pinnedNamespace, warnings);
+  // A namespace that was supplied (operator pin or opted-in config) but fails
+  // validation must not silently fall back to the root namespace: the gateway
+  // omits x-vault-namespace when namespace is null, so reads and writes would
+  // target root instead of the intended namespace. An ABSENT namespace is the
+  // only valid null.
+  if (pinnedNamespace !== null && namespace === null) {
+    return { config: null, warnings };
+  }
 
   if (!url || !kvMount || !kvPathPrefix || !auth || versionRetention === null) {
     return { config: null, warnings };
@@ -630,8 +636,10 @@ export function createVaultProvider(
     }
   }
 
-  function resolveConfig(providerConfig?: SecretProviderVaultRuntimeConfig | null): VaultProviderConfig {
-    if (options?.config) return options.config;
+  function resolveConfigWithWarnings(
+    providerConfig?: SecretProviderVaultRuntimeConfig | null,
+  ): { config: VaultProviderConfig; warnings: string[] } {
+    if (options?.config) return { config: options.config, warnings: [] };
     const resolved = resolveVaultConfig({
       env: process.env,
       providerConfig: providerConfig ?? null,
@@ -641,7 +649,15 @@ export function createVaultProvider(
         `vault provider config invalid: ${resolved.warnings.join("; ")}`,
       );
     }
-    return resolved.config;
+    // Warnings accompany a *usable* config too (e.g. an ignored company
+    // mountPath/namespace): callers that only need the resolved config drop
+    // them, but healthCheck surfaces them so a silently-ignored setting is
+    // diagnosable instead of looking healthy.
+    return { config: resolved.config, warnings: resolved.warnings };
+  }
+
+  function resolveConfig(providerConfig?: SecretProviderVaultRuntimeConfig | null): VaultProviderConfig {
+    return resolveConfigWithWarnings(providerConfig).config;
   }
 
   // One (gateway, tokenManager) pair per unique vault config, cached for the
@@ -1001,7 +1017,9 @@ export function createVaultProvider(
       const warnings: string[] = [];
       let config: VaultProviderConfig | null;
       try {
-        config = resolveConfig(input?.providerConfig);
+        const resolved = resolveConfigWithWarnings(input?.providerConfig);
+        config = resolved.config;
+        warnings.push(...resolved.warnings);
       } catch (error) {
         return {
           provider: "vault",
@@ -1023,7 +1041,7 @@ export function createVaultProvider(
           provider: "vault",
           status: "error" as const,
           message: (error as Error).message,
-          warnings: [],
+          warnings,
           details: {
             address: config.address,
             kvMount: config.kvMount,
