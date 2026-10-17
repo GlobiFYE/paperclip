@@ -46,7 +46,7 @@ import { useNavigate, useSearchParams } from "@/lib/router";
 import { queryKeys } from "@/lib/queryKeys";
 import { copyTextToClipboard } from "@/lib/clipboard";
 import { useCopyAction } from "@/lib/use-copy-action";
-import { isAgentStatusInvokable, slackAppConfigurationSchema, type SlackAppConfiguration } from "@paperclipai/shared";
+import { isAgentStatusInvokable, slackAppConfigurationSchema, type ChatSetupTestStatus, type SlackAppConfiguration } from "@paperclipai/shared";
 import { sanitizedSetupErrorMessage } from "./chat-setup-error";
 import {
   createGitHubPrivateKeyReadGuard,
@@ -76,6 +76,43 @@ function publicOrigin(value: string | null | undefined): string | null {
     return new URL(value).origin;
   } catch {
     return null;
+  }
+}
+
+export function setupTestProgressMessage(
+  provider: ChatProvider,
+  agentName: string,
+  status: ChatSetupTestStatus | undefined,
+  state: { confirmed: boolean; pending: boolean; finishFailed: boolean },
+): { text: string; busy: boolean } | null {
+  if (!status) return null;
+  const button = "“I've sent the test message”";
+  if (status.ready) {
+    if (state.pending) return { text: "Reply received. Finishing setup…", busy: true };
+    if (state.finishFailed) return { text: `Reply received, but setup did not finish. Press ${button} to try again.`, busy: false };
+    if (state.confirmed) return { text: "Reply received. Finishing setup…", busy: true };
+    return { text: `Reply received. Press ${button} to finish setup.`, busy: false };
+  }
+  const direct = provider === "telegram" || provider === "imessage-photon";
+  switch (status.waitingFor) {
+    case "message":
+      return { text: "Waiting for your test message.", busy: false };
+    case "follow_up":
+      return {
+        text: direct
+          ? "Waiting for your direct message."
+          : `Mention received. Reply one time in the same thread, and do not mention ${agentName}.`,
+        busy: false,
+      };
+    case "agent_reply":
+      return {
+        text: state.confirmed
+          ? `Message received. Waiting for ${agentName} to reply. Setup finishes when the reply arrives.`
+          : `Message received. Waiting for ${agentName} to reply.`,
+        busy: true,
+      };
+    default:
+      return null;
   }
 }
 
@@ -690,6 +727,7 @@ function ChatSdkEndpointSetup() {
                     : "disabled"
             }
             pending={testConnection.isPending}
+            finishFailed={testConnection.isError}
             onOpenAccess={() => navigate(`/apps/chat/${endpoint.id}/access`)}
             onTest={() => testConnection.mutate()}
             onSaveExit={() => navigate("/apps")}
@@ -1773,6 +1811,7 @@ function TryStep({
   providerUrl,
   guestIsolationState,
   pending,
+  finishFailed,
   onOpenAccess,
   onTest,
   onSaveExit,
@@ -1787,12 +1826,48 @@ function TryStep({
   providerUrl?: string | null;
   guestIsolationState: "loading" | "enabled" | "disabled" | "unknown";
   pending: boolean;
+  finishFailed: boolean;
   onOpenAccess: () => void;
   onTest: () => void;
   onSaveExit: () => void;
 }) {
   const [commandCopied, setCommandCopied] = useState(false);
   const [commandCopyError, setCommandCopyError] = useState(false);
+  const testStatusQuery = useQuery({
+    queryKey: ["chat-endpoint-setup-test-status", endpointId],
+    queryFn: () => chatEndpointsApi.setupTestStatus(endpointId),
+    enabled: provider !== "slack" && provider !== "github",
+    refetchInterval: 1_500,
+  });
+  const testReady = testStatusQuery.data?.ready === true;
+  const testWaiting = Boolean(testStatusQuery.data?.waitingFor);
+  // The operator confirms the test with the button. If the agent has not
+  // replied yet, the page keeps that confirmation and finishes setup one time
+  // when the reply arrives. The page never finishes setup without the button:
+  // other people in the chat can also complete the test conversation.
+  const [confirmed, setConfirmed] = useState(false);
+  const autoFinishStarted = useRef(false);
+  useEffect(() => {
+    if (!testReady) {
+      autoFinishStarted.current = false;
+      return;
+    }
+    if (!confirmed || autoFinishStarted.current || pending) return;
+    autoFinishStarted.current = true;
+    onTest();
+  }, [confirmed, testReady, pending, onTest]);
+  const confirmTest = () => {
+    setConfirmed(true);
+    // The server would refuse the test now. Wait for the reply instead.
+    if (testWaiting) return;
+    autoFinishStarted.current = true;
+    onTest();
+  };
+  const testProgress = setupTestProgressMessage(provider, agentName, testStatusQuery.data, {
+    confirmed,
+    pending,
+    finishFailed,
+  });
   const principalsQuery = useQuery({
     queryKey: queryKeys.chatEndpoints.principals(endpointId),
     queryFn: () => chatEndpointsApi.listPrincipals(endpointId),
@@ -1960,6 +2035,12 @@ function TryStep({
       <ol className="list-decimal space-y-2 pl-5 text-sm">
         {instructions.map((item) => <li key={item}>{item}</li>)}
       </ol>
+      {testProgress && (
+        <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
+          {testProgress.busy && <Loader2 className="size-4 animate-spin" />}
+          {testProgress.text}
+        </p>
+      )}
       <div className="flex flex-wrap gap-2">
         {providerUrl && (
           <Button asChild variant="outline">
@@ -1968,7 +2049,7 @@ function TryStep({
             </a>
           </Button>
         )}
-        <Button disabled={pending} onClick={onTest}>
+        <Button disabled={pending} onClick={confirmTest}>
           {pending && <Loader2 className="h-4 w-4 animate-spin" />}
           I've sent the test message
         </Button>
