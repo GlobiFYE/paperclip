@@ -3,6 +3,7 @@ import { parseOpenCodeReasoningMode } from "../drivers/opencode/reasoning-mode.j
 import { createInterface } from "node:readline";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { parseOpenCodeProxyPersistentServer } from "./opencode-proxy-server-config.js";
 
 import type {
   HarnessRuntimeRequestResolution,
@@ -86,6 +87,10 @@ function runtimeDirectory(): string {
   return resolve(configured);
 }
 
+function persistentServer(): ReturnType<typeof parseOpenCodeProxyPersistentServer> {
+  return parseOpenCodeProxyPersistentServer();
+}
+
 async function open(
   params: Record<string, unknown>,
   resume: boolean,
@@ -119,6 +124,7 @@ async function open(
     commandLifecycle: launchBinding.commandLifecycle,
     runtimeDirectory: runtimeDirectory(),
     environment: withoutAmbientOpenCodeCommand(process.env),
+    persistentServer: persistentServer(),
     runnerInstanceId:
       process.env.PAPERCLIP_RUNNER_INSTANCE_ID ?? "paperclip-runnerd-opencode",
     taskEnvelope: openCodeProxyTaskEnvelope(params),

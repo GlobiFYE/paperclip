@@ -11,6 +11,11 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
+import {
+  createServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import { tmpdir } from "node:os";
 import { createServer as createHttpServer } from "node:http";
 import { execFile } from "node:child_process";
@@ -36,6 +41,7 @@ import {
 } from "./opencode-server-driver.js";
 
 const roots: string[] = [];
+const fakeV2Servers: Array<{ close(): Promise<void> }> = [];
 const fixture = resolve("test/fixtures/fake-opencode-server.mjs");
 
 const TURN_TERMINAL_EVENT_TYPES = new Set([
@@ -119,6 +125,7 @@ async function makeWritable(root: string): Promise<void> {
 }
 
 afterEach(async () => {
+  await Promise.all(fakeV2Servers.splice(0).map((server) => server.close()));
   await Promise.all(
     roots.splice(0).map(async (root) => {
       await makeWritable(root);
@@ -126,6 +133,373 @@ afterEach(async () => {
     }),
   );
 });
+
+async function startFakeV2Server(options: {
+  eventStatus?: number;
+  connectGate?: Promise<void>;
+} = {}) {
+  const authHeader = "Basic fixture-auth";
+  const session = {
+    id: "ses_fake_v2",
+    title: "Paperclip V2 fixture",
+    location: { directory: "/tmp/fake-v2-workspace" },
+  };
+  const form = {
+    id: "form-fake-v2",
+    sessionID: session.id,
+    title: "V2 fixture input",
+    fields: [
+      {
+        key: "environment",
+        type: "string",
+        title: "Environment",
+        description: "Where should this run deploy?",
+        required: true,
+        options: [{ value: "staging", label: "Staging" }],
+        custom: true,
+      },
+      {
+        key: "regions",
+        type: "multiselect",
+        title: "Regions",
+        options: [
+          { value: "us", label: "US" },
+          { value: "eu", label: "EU" },
+        ],
+      },
+      { key: "approved", type: "boolean", title: "Approved" },
+      { key: "replicas", type: "number", title: "Replicas" },
+    ],
+  };
+  const permission = {
+    id: "permission-fake-v2",
+    sessionID: session.id,
+    action: "shell",
+    resources: ["echo fixture"],
+    message: "Run the fixture command?",
+  };
+  const clients = new Set<ServerResponse>();
+  const mcpNames: string[] = [];
+  const instructionValues: unknown[] = [];
+  const sessionCreates: Record<string, unknown>[] = [];
+  let promptCalls = 0;
+  let eventRequested!: () => void;
+  const eventRequest = new Promise<void>((resolve) => { eventRequested = resolve; });
+  let pendingForm = false;
+  let pendingPermission = false;
+  let formReply: Record<string, unknown> | null = null;
+  let permissionReply: Record<string, unknown> | null = null;
+  let interruptCalls = 0;
+
+  const json = (
+    response: ServerResponse,
+    status: number,
+    value: unknown,
+  ): void => {
+    response.statusCode = status;
+    response.setHeader("Content-Type", "application/json");
+    response.end(JSON.stringify(value));
+  };
+  const noContent = (response: ServerResponse): void => {
+    response.statusCode = 204;
+    response.end();
+  };
+  const body = async (request: IncomingMessage): Promise<Record<string, unknown>> => {
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const raw = Buffer.concat(chunks).toString("utf8");
+    return raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+  };
+  const emit = (event: Record<string, unknown>): void => {
+    const frame = `data: ${JSON.stringify(event)}\n\n`;
+    for (const client of clients) client.write(frame);
+  };
+  const executionStarted = (): void =>
+    emit({
+      id: `v2-start-${Date.now()}`,
+      type: "session.execution.started",
+      data: { sessionID: session.id },
+    });
+  const executionSucceeded = (): void =>
+    emit({
+      id: `v2-success-${Date.now()}-${Math.random()}`,
+      type: "session.execution.succeeded",
+      data: { sessionID: session.id },
+    });
+
+  const server = createServer(async (request, response) => {
+    if (request.headers.authorization !== authHeader)
+      return json(response, 401, { error: "unauthorized" });
+    const url = new URL(
+      request.url ?? "/",
+      `http://${request.headers.host ?? "127.0.0.1"}`,
+    );
+    const path = url.pathname;
+    if (request.method === "GET" && path === "/api/event") {
+      if (options.eventStatus) return json(response, options.eventStatus, {});
+      response.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        Connection: "keep-alive",
+      });
+      response.flushHeaders();
+      eventRequested();
+      await options.connectGate;
+      if (response.destroyed) return;
+      clients.add(response);
+      response.write(
+        `data: ${JSON.stringify({
+          id: "v2-connected",
+          type: "server.connected",
+          data: {},
+        })}\n\n`,
+      );
+      request.on("close", () => clients.delete(response));
+      return;
+    }
+    if (request.method === "GET" && path === "/api/info")
+      return json(response, 200, { version: "2.0.27", pid: process.pid, urls: [] });
+    if (
+      request.method === "PUT" &&
+      path ===
+        `/api/experimental/session/${session.id}/instructions/entries/paperclip.system`
+    ) {
+      const value = await body(request);
+      instructionValues.push(value.value);
+      return noContent(response);
+    }
+    if (request.method === "POST" && path === "/api/session") {
+      sessionCreates.push(await body(request));
+      return json(response, 200, { data: session });
+    }
+    if (request.method === "GET" && path === `/api/session/${session.id}`)
+      return json(response, 200, { data: session });
+    if (request.method === "GET" && path === `/api/session/${session.id}/message`)
+      return json(response, 200, { data: [], cursor: {} });
+    if (request.method === "GET" && path === `/api/session/${session.id}/form`)
+      return json(response, 200, { data: pendingForm ? [form] : [] });
+    if (
+      request.method === "GET" &&
+      path === `/api/session/${session.id}/form/${form.id}`
+    )
+      return json(response, 200, { data: form });
+    if (request.method === "GET" && path === `/api/session/${session.id}/permission`)
+      return json(response, 200, { data: pendingPermission ? [permission] : [] });
+    if (path === "/api/experimental/mcp" || path.startsWith("/api/experimental/mcp/")) {
+      const name = decodeURIComponent(path.slice("/api/experimental/mcp/".length));
+      if (name) mcpNames.push(name);
+      if (request.method === "PUT") {
+        await body(request);
+        return json(response, 200, { data: { status: "connected" } });
+      }
+      if (request.method === "DELETE") return noContent(response);
+    }
+    if (
+      request.method === "POST" &&
+      path === `/api/session/${session.id}/form/${form.id}/reply`
+    ) {
+      formReply = await body(request);
+      pendingForm = false;
+      noContent(response);
+      emit({
+        id: "v2-form-replied",
+        type: "form.replied",
+        data: { id: form.id, sessionID: session.id, answer: formReply.answer },
+      });
+      executionSucceeded();
+      return;
+    }
+    if (
+      request.method === "DELETE" &&
+      path === `/api/session/${session.id}/form/${form.id}`
+    ) {
+      pendingForm = false;
+      return noContent(response);
+    }
+    if (
+      request.method === "POST" &&
+      path === `/api/session/${session.id}/permission/${permission.id}/reply`
+    ) {
+      permissionReply = await body(request);
+      pendingPermission = false;
+      noContent(response);
+      emit({
+        id: "v2-permission-replied",
+        type: "permission.replied",
+        data: {
+          sessionID: session.id,
+          requestID: permission.id,
+          reply:
+            permissionReply.decision === "always"
+              ? "always"
+              : permissionReply.decision === "once"
+                ? "once"
+                : "reject",
+        },
+      });
+      executionSucceeded();
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      path === `/api/session/${session.id}/interrupt`
+    ) {
+      interruptCalls += 1;
+      return json(response, 200, true);
+    }
+    if (
+      request.method === "POST" &&
+      path === `/api/session/${session.id}/prompt`
+    ) {
+      const prompt = await body(request);
+      promptCalls += 1;
+      noContent(response);
+      const text = typeof prompt.text === "string" ? prompt.text : "";
+      executionStarted();
+      // Idle is not a terminal V2 execution event.
+      emit({ id: "v2-idle", type: "session.idle", data: { sessionID: session.id } });
+      if (text.includes("v2-disconnect")) {
+        for (const client of clients) client.end();
+        return;
+      }
+      if (text.includes("v2-failed") || text.includes("v2-interrupted")) {
+        emit({
+          id: "v2-terminal",
+          type: text.includes("v2-failed")
+            ? "session.execution.failed" : "session.execution.interrupted",
+          data: { sessionID: session.id, error: { message: "Fixture failure" }, reason: "user" },
+        });
+        return;
+      }
+      if (text.includes("v2-form")) {
+        pendingForm = true;
+        emit({
+          id: "v2-form-created",
+          type: "form.created",
+          data: { form },
+        });
+        if (text.includes("v2-form-fail")) {
+          emit({
+            id: "v2-form-terminal",
+            type: "session.execution.failed",
+            data: {
+              sessionID: session.id,
+              error: { message: "Fixture failure after form" },
+            },
+          });
+        }
+        return;
+      }
+      if (text.includes("v2-permission")) {
+        pendingPermission = true;
+        emit({
+          id: "v2-permission-asked",
+          type: "permission.asked",
+          data: permission,
+        });
+        return;
+      }
+      emit({
+        id: "v2-text-started",
+        type: "session.text.started",
+        data: {
+          sessionID: session.id,
+          assistantMessageID: "msg-v2",
+          ordinal: 0,
+        },
+      });
+      emit({
+        id: "v2-reasoning-started",
+        type: "session.reasoning.started",
+        data: {
+          sessionID: session.id,
+          assistantMessageID: "msg-v2",
+          ordinal: 0,
+        },
+      });
+      emit({
+        id: "v2-reasoning-delta",
+        type: "session.reasoning.delta",
+        data: {
+          sessionID: session.id,
+          assistantMessageID: "msg-v2",
+          ordinal: 0,
+          delta: "fixture reasoning",
+        },
+      });
+      emit({
+        id: "v2-reasoning-ended",
+        type: "session.reasoning.ended",
+        data: {
+          sessionID: session.id,
+          assistantMessageID: "msg-v2",
+          ordinal: 0,
+          text: "fixture reasoning",
+        },
+      });
+      emit({
+        id: "v2-text-delta",
+        type: "session.text.delta",
+        data: {
+          sessionID: session.id,
+          assistantMessageID: "msg-v2",
+          ordinal: 0,
+          delta: "V2 fixture answer",
+        },
+      });
+      emit({
+        id: "v2-text-ended",
+        type: "session.text.ended",
+        data: {
+          sessionID: session.id,
+          assistantMessageID: "msg-v2",
+          ordinal: 0,
+          text: "V2 fixture answer",
+        },
+      });
+      emit({
+        id: "v2-usage",
+        type: "session.usage.updated",
+        data: {
+          sessionID: session.id,
+          cost: 0.002,
+          tokens: { input: 5, output: 3 },
+        },
+      });
+      executionSucceeded();
+      return;
+    }
+    return json(response, 404, { error: "not found" });
+  });
+  await new Promise<void>((resolveListen, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => resolveListen());
+  });
+  const address = server.address();
+  if (!address || typeof address === "string") throw new Error("fixture bind failed");
+  return {
+    baseUrl: `http://127.0.0.1:${address.port}`,
+    authHeader,
+    get formReply() {
+      return formReply;
+    },
+    get permissionReply() {
+      return permissionReply;
+    },
+    get interruptCalls() {
+      return interruptCalls;
+    },
+    mcpNames,
+    instructionValues,
+    sessionCreates,
+    eventRequest,
+    get promptCalls() { return promptCalls; },
+    close: async () => {
+      for (const client of clients) client.end();
+      await new Promise<void>((resolveClose) => server.close(() => resolveClose()));
+    },
+  };
+}
 
 afterAll(async () => {
   await chmod(fixture, 0o644);
@@ -144,6 +518,454 @@ describe("OpenCodeServerDriver", () => {
         (family) => family.family === "plan",
       ),
     ).toMatchObject({ availability: "unsupported" });
+  });
+
+  it("uses the opt-in persistent V2 daemon protocol and cleans up dynamic MCP", async () => {
+    const root = await mkdtemp(join(tmpdir(), "paperclip-opencode-v2-"));
+    const workspace = await mkdtemp(
+      join(tmpdir(), "paperclip-opencode-v2-workspace-"),
+    );
+    roots.push(root, workspace);
+    const server = await startFakeV2Server();
+    fakeV2Servers.push(server);
+    const driver = new OpenCodeServerDriver({
+      model: "openrouter/deepseek/deepseek-v4-flash-0731",
+      runtimeDirectory: root,
+      persistentServer: {
+        baseUrl: server.baseUrl,
+        authHeader: server.authHeader,
+        version: "2.0.0",
+      },
+      command: "/must-not-spawn-opencode",
+      systemInstructions: "Follow the supplied Paperclip instructions.",
+    });
+    await expect(driver.descriptor()).resolves.toMatchObject({
+      protocolVersion: "http+sse/v2",
+      version: "2.0.0",
+    });
+    const session = await driver.openSession({
+      runId: "run-v2-text",
+      normalizedSessionId: "v2-text",
+      workingDirectory: workspace,
+    });
+    expect(await driver.descriptor()).toMatchObject({ version: "2.0.27" });
+    expect(server.sessionCreates).toEqual([{
+      title: "Paperclip run-v2-text",
+      location: { directory: workspace },
+      model: { providerID: "openrouter", id: "deepseek/deepseek-v4-flash-0731" },
+      permissions: [
+        { action: "*", resource: "*", effect: "allow" },
+        { action: "question", resource: "*", effect: "allow" },
+        { action: "paperclip_*", resource: "*", effect: "allow" },
+        { action: "mcp__paperclip__*", resource: "*", effect: "allow" },
+        { action: "external_directory", resource: "*", effect: "deny" },
+        { action: "external_directory", resource: workspace, effect: "allow" },
+        { action: "external_directory", resource: `${workspace}/**`, effect: "allow" },
+      ],
+    }]);
+    expect(server.instructionValues).toEqual(["Follow the supplied Paperclip instructions."]);
+    await session.startTurn({ message: { role: "user", text: "v2-text" } });
+    const events = await collectTurnEvents(session.events());
+    expect(events).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          eventType: "session.started",
+          payload: expect.objectContaining({
+            context: expect.objectContaining({ protocolVersion: "http+sse/v2" }),
+          }),
+        }),
+        expect.objectContaining({ eventType: "item.completed", payload: expect.objectContaining({ kind: "reasoning" }) }),
+        expect.objectContaining({
+          eventType: "item.completed",
+          payload: expect.objectContaining({
+            kind: "agentMessage",
+            channel: "final",
+            text: "V2 fixture answer",
+          }),
+        }),
+        expect.objectContaining({ eventType: "turn.completed" }),
+      ]),
+    );
+    expect(await session.usage()).toMatchObject({
+      input: 5,
+      output: 3,
+      costUsd: 0.002,
+    });
+    expect(server.mcpNames).toHaveLength(1);
+    await session.close({ reason: "v2 test complete" });
+    expect(server.mcpNames).toHaveLength(2);
+    expect(server.mcpNames[0]).toBe(server.mcpNames[1]);
+    const response = await fetch(`${server.baseUrl}/api/info`, {
+      headers: { Authorization: server.authHeader },
+    });
+    expect(response.ok).toBe(true);
+  });
+
+  it("waits for the V2 subscription handshake even after HTTP headers arrive", async () => {
+    const root = await mkdtemp(join(tmpdir(), "paperclip-v2-ready-"));
+    roots.push(root);
+    const gate = Promise.withResolvers<void>();
+    const server = await startFakeV2Server({ connectGate: gate.promise });
+    fakeV2Servers.push(server);
+    const driver = new OpenCodeServerDriver({
+      model: "fixture/model", runtimeDirectory: root, persistentServer: server,
+    });
+    const session = await driver.openSession({
+      runId: "ready", normalizedSessionId: "ready", workingDirectory: root,
+    });
+    try {
+      const turn = session.startTurn({ message: { role: "user", text: "v2-text" } });
+      await server.eventRequest;
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      expect(server.promptCalls).toBe(0);
+      gate.resolve();
+      await turn;
+      const events = await collectTurnEvents(session.events());
+      expect(events.filter((event) => event.eventType === "turn.completed")).toHaveLength(1);
+      expect(server.promptCalls).toBe(1);
+    } finally {
+      gate.resolve();
+      await session.close({ reason: "test" });
+    }
+  });
+
+  it("does not submit a prompt when the V2 event stream fails to connect", async () => {
+    const root = await mkdtemp(join(tmpdir(), "paperclip-v2-unavailable-"));
+    roots.push(root);
+    const server = await startFakeV2Server({ eventStatus: 503 });
+    fakeV2Servers.push(server);
+    const driver = new OpenCodeServerDriver({
+      model: "fixture/model", runtimeDirectory: root, persistentServer: server,
+    });
+    const session = await driver.openSession({
+      runId: "unavailable", normalizedSessionId: "unavailable", workingDirectory: root,
+    });
+    try {
+      await expect(session.startTurn({ message: { role: "user", text: "v2-text" } }))
+        .rejects.toThrow("event stream is unavailable");
+      expect(server.promptCalls).toBe(0);
+    } finally {
+      await session.close({ reason: "test" });
+    }
+  });
+
+  it.each([
+    ["v2-failed", "turn.failed"],
+    ["v2-interrupted", "turn.cancelled"],
+  ])("maps %s to its V2 terminal outcome", async (text, terminal) => {
+    const root = await mkdtemp(join(tmpdir(), "paperclip-v2-terminal-"));
+    roots.push(root);
+    const server = await startFakeV2Server();
+    fakeV2Servers.push(server);
+    const driver = new OpenCodeServerDriver({
+      model: "fixture/model", runtimeDirectory: root, persistentServer: server,
+    });
+    const session = await driver.openSession({
+      runId: text, normalizedSessionId: text, workingDirectory: root,
+    });
+    try {
+      await session.startTurn({ message: { role: "user", text } });
+      const events = await collectTurnEvents(session.events());
+      expect(events.filter((event) => event.eventType === terminal)).toHaveLength(1);
+      expect(events.some((event) => event.eventType === "turn.completed")).toBe(false);
+    } finally {
+      await session.close({ reason: "test" });
+    }
+  });
+
+  it("reports a lost V2 live stream instead of silently missing a terminal event", async () => {
+    const root = await mkdtemp(join(tmpdir(), "paperclip-v2-disconnect-"));
+    roots.push(root);
+    const server = await startFakeV2Server();
+    fakeV2Servers.push(server);
+    const driver = new OpenCodeServerDriver({
+      model: "fixture/model", runtimeDirectory: root, persistentServer: server,
+    });
+    const session = await driver.openSession({
+      runId: "disconnect", normalizedSessionId: "disconnect", workingDirectory: root,
+    });
+    try {
+      await session.startTurn({ message: { role: "user", text: "v2-disconnect" } });
+      await expect((async () => {
+        for await (const _event of session.events()) { /* drain until failure */ }
+      })()).rejects.toThrow("event stream closed");
+    } finally {
+      await session.close({ reason: "test" });
+    }
+  });
+
+  it("rejects assigned skills before contacting a persistent daemon", async () => {
+    const driver = new OpenCodeServerDriver({
+      model: "fixture/model", runtimeDirectory: "/unused-v2-runtime",
+      persistentServer: { baseUrl: "http://127.0.0.1:1", authHeader: "Basic fixture" },
+      runtimeContext: runtimeContext("/unused-skill", "/unused-instructions"),
+      fetch: async () => { throw new Error("unexpected daemon request"); },
+    });
+    expect(await driver.descriptor()).toMatchObject({
+      runtimeContextCapabilities: { skills: "unsupported" },
+    });
+    await expect(driver.openSession({
+      runId: "skills", normalizedSessionId: "skills", workingDirectory: "/unused",
+    })).rejects.toThrow("does not support assigned runtime skills");
+  });
+
+  it("maps V2 form values to provider option values", async () => {
+    const root = await mkdtemp(join(tmpdir(), "paperclip-opencode-v2-form-"));
+    const workspace = await mkdtemp(
+      join(tmpdir(), "paperclip-opencode-v2-form-workspace-"),
+    );
+    roots.push(root, workspace);
+    const server = await startFakeV2Server();
+    fakeV2Servers.push(server);
+    const driver = new OpenCodeServerDriver({
+      model: "openrouter/deepseek/deepseek-v4-flash-0731",
+      runtimeDirectory: root,
+      persistentServer: {
+        baseUrl: server.baseUrl,
+        authHeader: server.authHeader,
+      },
+    });
+    const session = await driver.openSession({
+      runId: "run-v2-form",
+      normalizedSessionId: "v2-form",
+      workingDirectory: workspace,
+    });
+    const { turnId } = await session.startTurn({
+      message: { role: "user", text: "v2-form" },
+    });
+    const iterator = session.events()[Symbol.asyncIterator]();
+    let created: Awaited<ReturnType<typeof iterator.next>>["value"] | null = null;
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) break;
+      if (next.value.eventType === "runtime_request.created") {
+        created = next.value;
+        break;
+      }
+    }
+    expect(created).toMatchObject({
+      payload: {
+        request: {
+           requestId: "form-fake-v2",
+           type: "input",
+           input: {
+            questions: expect.any(Array),
+           },
+         },
+       },
+     });
+    const questions = (created?.payload as { request: { input: { questions: unknown[] } } })
+      .request.input.questions;
+    expect(questions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "environment", answerMode: "single_select" }),
+        expect.objectContaining({ id: "regions", answerMode: "multi_select" }),
+        expect.objectContaining({ id: "approved", answerMode: "single_select" }),
+        expect.objectContaining({ id: "replicas", answerMode: "text" }),
+      ]),
+    );
+    await session.resolveRuntimeRequest?.({
+      requestId: "form-fake-v2",
+      turnId,
+      resolution: {
+        action: "submit",
+        response: {
+          schema: "paperclip.question_response.v1",
+          answers: {
+             environment: { selectedOptionIds: ["staging"] },
+             regions: { selectedOptionIds: ["us", "eu"] },
+             approved: { selectedOptionIds: ["false"] },
+             replicas: { text: "3" },
+          },
+        },
+      },
+    });
+    const remaining = [];
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) break;
+      remaining.push(next.value);
+      if (TURN_TERMINAL_EVENT_TYPES.has(next.value.eventType)) break;
+    }
+    expect(server.formReply).toEqual({
+      answer: { environment: "staging", regions: ["us", "eu"], approved: false, replicas: 3 },
+    });
+    expect(remaining).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ eventType: "runtime_request.resolved" }),
+        expect.objectContaining({ eventType: "turn.completed" }),
+      ]),
+    );
+    await session.close({ reason: "v2 form test complete" });
+  });
+
+  it("maps V2 permission decisions to the session permission endpoint", async () => {
+    const root = await mkdtemp(join(tmpdir(), "paperclip-opencode-v2-permission-"));
+    const workspace = await mkdtemp(
+      join(tmpdir(), "paperclip-opencode-v2-permission-workspace-"),
+    );
+    roots.push(root, workspace);
+    const server = await startFakeV2Server();
+    fakeV2Servers.push(server);
+    const driver = new OpenCodeServerDriver({
+      model: "openrouter/deepseek/deepseek-v4-flash-0731",
+      permissionMode: "ask",
+      runtimeDirectory: root,
+      persistentServer: {
+        baseUrl: server.baseUrl,
+        authHeader: server.authHeader,
+      },
+    });
+    const session = await driver.openSession({
+      runId: "run-v2-permission",
+      normalizedSessionId: "v2-permission",
+      workingDirectory: workspace,
+    });
+    const { turnId } = await session.startTurn({
+      message: { role: "user", text: "v2-permission" },
+    });
+    const iterator = session.events()[Symbol.asyncIterator]();
+    let created: Awaited<ReturnType<typeof iterator.next>>["value"] | null = null;
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) break;
+      if (next.value.eventType === "runtime_request.created") {
+        created = next.value;
+        break;
+      }
+    }
+    expect(created).toMatchObject({
+      payload: {
+        request: {
+          requestId: "permission-fake-v2",
+          type: "permission",
+        },
+      },
+    });
+    await session.resolveRuntimeRequest?.({
+      requestId: "permission-fake-v2",
+      turnId,
+      resolution: { action: "accept_for_session" },
+    });
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) break;
+      if (TURN_TERMINAL_EVENT_TYPES.has(next.value.eventType)) break;
+    }
+    expect(server.permissionReply).toEqual({ decision: "always" });
+    await session.close({ reason: "v2 permission test complete" });
+  });
+
+  it("keeps a persistent V2 session usable for follow-up turns", async () => {
+    const root = await mkdtemp(join(tmpdir(), "paperclip-opencode-v2-follow-up-"));
+    const workspace = await mkdtemp(
+      join(tmpdir(), "paperclip-opencode-v2-follow-up-workspace-"),
+    );
+    roots.push(root, workspace);
+    const server = await startFakeV2Server();
+    fakeV2Servers.push(server);
+    const driver = new OpenCodeServerDriver({
+      model: "fixture/model",
+      runtimeDirectory: root,
+      persistentServer: server,
+    });
+    const session = await driver.openSession({
+      runId: "v2-follow-up",
+      normalizedSessionId: "v2-follow-up",
+      workingDirectory: workspace,
+    });
+    try {
+      const first = await session.startTurn({
+        message: { role: "user", text: "first" },
+      });
+      expect(await collectTurnEvents(session.events())).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ eventType: "turn.completed", turnId: first.turnId }),
+        ]),
+      );
+      const second = await session.startTurn({
+        message: { role: "user", text: "second" },
+      });
+      expect(await collectTurnEvents(session.events())).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ eventType: "turn.completed", turnId: second.turnId }),
+          expect.objectContaining({
+            eventType: "item.completed",
+            payload: expect.objectContaining({ kind: "agentMessage", text: "V2 fixture answer" }),
+          }),
+        ]),
+      );
+      expect(server.promptCalls).toBe(2);
+    } finally {
+      await session.close({ reason: "v2 follow-up test complete" });
+    }
+  });
+
+  it("settles a pending V2 request before a failed turn terminal event", async () => {
+    const root = await mkdtemp(join(tmpdir(), "paperclip-opencode-v2-pending-fail-"));
+    const workspace = await mkdtemp(
+      join(tmpdir(), "paperclip-opencode-v2-pending-fail-workspace-"),
+    );
+    roots.push(root, workspace);
+    const server = await startFakeV2Server();
+    fakeV2Servers.push(server);
+    const driver = new OpenCodeServerDriver({
+      model: "fixture/model",
+      runtimeDirectory: root,
+      persistentServer: server,
+    });
+    const session = await driver.openSession({
+      runId: "v2-pending-fail",
+      normalizedSessionId: "v2-pending-fail",
+      workingDirectory: workspace,
+    });
+    try {
+      await session.startTurn({
+        message: { role: "user", text: "v2-form-fail" },
+      });
+      const events = await collectTurnEvents(session.events());
+      const settlement = events.findIndex(
+        (event) => event.eventType === "runtime_request.expired",
+      );
+      const terminal = events.findIndex(
+        (event) => event.eventType === "turn.failed",
+      );
+      expect(settlement).toBeGreaterThanOrEqual(0);
+      expect(terminal).toBeGreaterThan(settlement);
+      expect(session.pendingRuntimeRequests?.()).toHaveLength(0);
+    } finally {
+      await session.close({ reason: "v2 pending failure test complete" });
+    }
+  });
+
+  it("interrupts an active persistent V2 execution before cleanup", async () => {
+    const root = await mkdtemp(join(tmpdir(), "paperclip-opencode-v2-close-active-"));
+    const workspace = await mkdtemp(
+      join(tmpdir(), "paperclip-opencode-v2-close-active-workspace-"),
+    );
+    roots.push(root, workspace);
+    const server = await startFakeV2Server();
+    fakeV2Servers.push(server);
+    const driver = new OpenCodeServerDriver({
+      model: "fixture/model",
+      runtimeDirectory: root,
+      persistentServer: server,
+    });
+    const session = await driver.openSession({
+      runId: "v2-close-active",
+      normalizedSessionId: "v2-close-active",
+      workingDirectory: workspace,
+    });
+    await session.startTurn({
+      message: { role: "user", text: "v2-form" },
+    });
+    const iterator = session.events()[Symbol.asyncIterator]();
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done || next.value.eventType === "runtime_request.created") break;
+    }
+    await session.close({ reason: "v2 active close test complete" });
+    expect(server.interruptCalls).toBe(1);
   });
 
   it("normalizes raw OpenCode boundary events into the local-integrity golden identities", async () => {

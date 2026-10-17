@@ -351,10 +351,32 @@ support disabling reasoning; other runner providers reject an explicit selection
 before starting work. Native sessions expose support through the
 `perTurnReasoning` capability.
 
-OpenCode's proxy sends agent instructions once per turn through the system prompt. The
+OpenCode's V1 proxy sends agent instructions once per turn through the system prompt. The
 task envelope retains task-specific constraints and the completion contract,
-without repeating the system instructions. This applies to all users of the
-proxy; already-recorded conversation history is not rewritten.
+without repeating the system instructions. Already-recorded conversation history
+is not rewritten.
+
+### Persistent OpenCode V2 daemon mode
+
+The runner uses the qualified spawned OpenCode V1 server by default. To connect
+to a container-owned OpenCode V2 daemon, set these runner environment values:
+
+```sh
+PAPERCLIP_OPENCODE_SERVER_URL=https://opencode.example
+PAPERCLIP_OPENCODE_SERVER_AUTH='Bearer <token>'
+PAPERCLIP_OPENCODE_SERVER_VERSION=2.0.27
+```
+
+Remote daemon URLs must use HTTPS because the configured authentication header
+is sent to the provider. Cleartext HTTP is accepted only for numeric loopback
+addresses (`127.0.0.0/8` and `::1`) used for local daemons.
+
+`PAPERCLIP_OPENCODE_RUNTIME_DIR` remains required. The driver probes `/api/info`,
+requires a V2 server, and waits for the `/api/event` subscription before it
+sends a prompt. It injects Paperclip instructions into the session and removes
+the session-scoped Paperclip MCP registration before it closes the local MCP
+bridge. Assigned per-session runtime skills and per-turn reasoning selection
+require the spawned V1 path.
 
 The runner's authenticated bridge and controller still enforce company access,
 action claims, task modes, and governed approvals. Provider permission defaults

@@ -3289,6 +3289,24 @@ export function createCapabilityRunnerdProviderEnvironment(input: {
       PAPERCLIP_OPENCODE_RUNTIME_DIR:
         input.options.opencodeRuntimeDirectory ??
         resolve(input.options.stateDirectory ?? tmpdir(), "opencode"),
+      ...(input.options.environment?.PAPERCLIP_OPENCODE_SERVER_URL
+        ? {
+            PAPERCLIP_OPENCODE_SERVER_URL:
+              input.options.environment.PAPERCLIP_OPENCODE_SERVER_URL,
+            ...(input.options.environment.PAPERCLIP_OPENCODE_SERVER_AUTH
+              ? {
+                  PAPERCLIP_OPENCODE_SERVER_AUTH:
+                    input.options.environment.PAPERCLIP_OPENCODE_SERVER_AUTH,
+                }
+              : {}),
+            ...(input.options.environment.PAPERCLIP_OPENCODE_SERVER_VERSION
+              ? {
+                  PAPERCLIP_OPENCODE_SERVER_VERSION:
+                    input.options.environment.PAPERCLIP_OPENCODE_SERVER_VERSION,
+                }
+              : {}),
+          }
+        : {}),
       ...commonIdentity,
     };
   }
@@ -3398,6 +3416,9 @@ const OPEN_CODE_RUNNER_ENVIRONMENT_KEYS = new Set([
   "PAPERCLIP_NATIVE_MCP_NAME",
   "PAPERCLIP_NATIVE_MCP_URL",
   "PAPERCLIP_NATIVE_MCP_TOKEN",
+  "PAPERCLIP_OPENCODE_SERVER_URL",
+  "PAPERCLIP_OPENCODE_SERVER_AUTH",
+  "PAPERCLIP_OPENCODE_SERVER_VERSION",
 ]);
 
 function createSanitizedOpenCodeRunnerEnvironment(
