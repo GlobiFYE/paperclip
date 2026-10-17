@@ -289,5 +289,26 @@
   "Recently used": "Usados hace poco",
   "Recently used:": "Usados hace poco:",
   "bindings need attention": "vínculos necesitan atención",
-  "User secrets resolve from the user responsible for the run. Required bindings fail until that user sets their value under Secrets → My secrets.": "Los secretos de usuario se resuelven con el usuario responsable de la ejecución. Los vínculos obligatorios fallan hasta que ese usuario defina su valor en Secretos → Mis secretos."
+  "User secrets resolve from the user responsible for the run. Required bindings fail until that user sets their value under Secrets → My secrets.": "Los secretos de usuario se resuelven con el usuario responsable de la ejecución. Los vínculos obligatorios fallan hasta que ese usuario defina su valor en Secretos → Mis secretos.",
+
+  "ACP warm process idle ms": "ms de inactividad del proceso en caliente de ACP",
+  "Acknowledge 90-day Memory retention": "Confirmar la retención de 90 días de Memoria",
+  "Auto-pair on first connect": "Emparejamiento automático en la primera conexión",
+  "Automatically approve device pairing": "Aprobar automáticamente el emparejamiento de dispositivos",
+  "Choose whether voted AI outputs can be shared with Paperclip Labs. This answer becomes the default for future thumbs up and thumbs down votes.": "Elegí si las salidas de IA que votás se pueden compartir con Paperclip Labs. Esta respuesta queda como la opción por defecto para los próximos votos a favor y en contra.",
+  "Estimated session ceiling (USD)": "Techo estimado de la sesión (USD)",
+  "Hermes API_SERVER_KEY, not PAPERCLIP_API_KEY": "API_SERVER_KEY de Hermes, no PAPERCLIP_API_KEY",
+  "Interrupt grace period (sec)": "Período de gracia de la interrupción (seg)",
+  "Max turns per run": "Máximo de turnos por ejecución",
+  "Paperclip API URL override": "URL de la API de Paperclip (override)",
+  "Save your feedback sharing preference": "Guardar tu preferencia de compartir comentarios",
+  "Session spend ceiling (USD)": "Techo de gasto de la sesión (USD)",
+  "Show Today, Yesterday, and Earlier rules on newest-first task lists.": "Mostrar las líneas de Hoy, Ayer y Antes en las listas de tareas ordenadas de la más nueva a la más vieja.",
+  "Skip device key authentication": "Omitir la autenticación por clave de dispositivo",
+  "This vote is always saved locally.": "Este voto siempre se guarda localmente.",
+  "Warm idle timeout (ms)": "Tiempo de inactividad en caliente (ms)",
+  "When enabled, Paperclip persists a device key during onboarding so pairing approvals remain stable across runs.": "Cuando está activado, Paperclip guarda una clave de dispositivo durante el onboarding para que las aprobaciones de emparejamiento se mantengan estables entre ejecuciones.",
+  "You can change this later in Settings > General.": "Esto lo podés cambiar después en Configuración > General.",
+  "to keep this vote and future votes local.": "para que este voto y los próximos queden locales.",
+  "to share this vote and future voted AI outputs. Choose": "para compartir este voto y las próximas salidas de IA que votes. Elegí"
 }

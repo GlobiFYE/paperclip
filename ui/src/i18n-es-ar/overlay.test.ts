@@ -11,6 +11,7 @@ import { clearOverlayMemo, formatted, layerEntries, lookup, tEs, translate } fro
 import { PATTERNS } from "./patterns";
 
 import agentsEsAr from "./dictionary/es-AR/agents.json";
+import auditEsAr from "./dictionary/es-AR/audit.json";
 import commonEsAr from "./dictionary/es-AR/common.json";
 import connectionsEsAr from "./dictionary/es-AR/connections.json";
 import errorsEsAr from "./dictionary/es-AR/errors.json";
@@ -19,6 +20,7 @@ import navigationEsAr from "./dictionary/es-AR/navigation.json";
 import onboardingEsAr from "./dictionary/es-AR/onboarding.json";
 import projectsEsAr from "./dictionary/es-AR/projects.json";
 import settingsEsAr from "./dictionary/es-AR/settings.json";
+import tracesEsAr from "./dictionary/es-AR/traces.json";
 
 const ES_AR_AREAS: Record<string, Record<string, string>> = {
   "common.json": commonEsAr,
@@ -30,6 +32,8 @@ const ES_AR_AREAS: Record<string, Record<string, string>> = {
   "projects.json": projectsEsAr,
   "connections.json": connectionsEsAr,
   "onboarding.json": onboardingEsAr,
+  "audit.json": auditEsAr,
+  "traces.json": tracesEsAr,
 };
 
 beforeEach(() => {

@@ -1,0 +1,12 @@
+{
+  "(required — recorded in the audit log)": "(obligatorio — queda en el registro de auditoría)",
+  "Agent Actions requires audit access": "Acciones de agente necesita acceso a la auditoría",
+  "Agent audit is a Paperclip Enterprise view": "La auditoría de agentes es una vista de Paperclip Enterprise",
+  "Every recorded agent action, newest first — with the responsible person and run behind each one.": "Todas las acciones registradas de los agentes, de la más nueva a la más vieja, con la persona responsable y la ejecución detrás de cada una.",
+  "Everything happening in your organization, newest first — people, agents, and the system. Each line is one recorded action.": "Todo lo que pasa en tu empresa, de lo más nuevo a lo más viejo: personas, agentes y el sistema. Cada línea es una acción registrada.",
+  "No actions match these filters": "Ninguna acción coincide con estos filtros",
+  "No actions match “": "Ninguna acción coincide con “",
+  "Recorded by Paperclip — entries can't be edited. Sensitive values are never stored.": "Lo registra Paperclip — las entradas no se pueden editar. Los valores sensibles no se guardan nunca.",
+  "The agent audit log gives you a searchable, exportable record of everything your agents did — every comment, task change, approval, and run — with the responsible person for each action. Ask an administrator to grant you the": "El registro de auditoría de agentes te da un historial buscable y exportable de todo lo que hicieron tus agentes —cada comentario, cambio de tarea, aprobación y ejecución— con la persona responsable de cada acción. Pedile a un administrador que te dé el",
+  "permission to view it.": "permiso para verlo."
+}
