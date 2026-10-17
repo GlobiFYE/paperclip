@@ -33,8 +33,28 @@ async function load() {
   return {
     StatusBadge: await import("@/components/StatusBadge"),
     EmptyState: await import("@/components/EmptyState"),
+    StatusIcon: await import("@/components/StatusIcon"),
   };
 }
+
+/**
+ * Los 7 estados como se ven en el menú de cambio de estado y en los
+ * encabezados del tablero, en orden de `StatusIcon.tsx:8`.
+ *
+ * Es la lista que QA fotografió en CHA-9 y la que arregla CHA-15: antes decía
+ * `Backlog · Por hacer · En curso · En revisión · Listo · Cancelada · Blocked`,
+ * con dos etiquetas en inglés y un `done` que en el Panel se llamaba
+ * "Terminada".
+ */
+const MENU_DE_ESTADO: readonly [string, string][] = [
+  ["backlog", "Backlog"],
+  ["todo", "Por hacer"],
+  ["in_progress", "En curso"],
+  ["in_review", "En revisión"],
+  ["done", "Listo"],
+  ["cancelled", "Cancelada"],
+  ["blocked", "Bloqueada"],
+];
 
 describe.runIf(withOverlay)("StatusBadge (sin tocar el archivo de upstream)", () => {
   it("traduce la etiqueta de estado que el componente **deriva** del valor técnico", async () => {
@@ -69,6 +89,57 @@ describe.runIf(withOverlay)("StatusBadge (sin tocar el archivo de upstream)", ()
     // …y `status` sigue siendo el identificador de la API, que viaja en
     // atributos de estilo y clases, no como texto.
     expect(html).not.toContain("in revisión");
+  });
+});
+
+describe.runIf(withOverlay)("StatusIcon — el menú de estado y el tablero (CHA-15)", () => {
+  /**
+   * `StatusIcon.tsx:10` deriva la etiqueta del valor técnico con
+   * `status.replace(/_/g," ").replace(/\b\w/g, …)`, igual que
+   * `KanbanBoard.tsx:134`, que es una copia byte a byte de la misma función.
+   * O sea: **el menú de estado y los encabezados del tablero no leen de
+   * `issueStatusLabels` ni de `statusLabels`**, les llega la cadena derivada y
+   * la resuelve la capa literal. Ésa es la fuente de H-1 y H-2.
+   *
+   * Sin `onChange` el componente rinde el mismo `statusLabel(displayStatus)`
+   * que el ítem del menú (`:149`) y que el encabezado de columna (`:207`
+   * y `:221`), en la misma frontera de JSX.
+   */
+  it("los 7 estados salen traducidos y con un solo nombre cada uno", async () => {
+    const { StatusIcon } = await load();
+    for (const [status, expected] of MENU_DE_ESTADO) {
+      const html = renderToStaticMarkup(<StatusIcon.StatusIcon status={status} showLabel />);
+      expect(html, status).toContain(expected);
+    }
+  });
+
+  it("no queda ninguna etiqueta de estado en inglés, salvo Backlog", async () => {
+    const { StatusIcon } = await load();
+    for (const [status] of MENU_DE_ESTADO) {
+      const html = renderToStaticMarkup(<StatusIcon.StatusIcon status={status} showLabel />);
+      for (const ingles of ["Todo", "In Progress", "In Review", "Done", "Cancelled", "Blocked"]) {
+        expect(html, `${status} / ${ingles}`).not.toContain(`>${ingles}<`);
+      }
+    }
+  });
+
+  it("done y blocked dicen lo mismo acá que en la leyenda del Panel", async () => {
+    const { StatusIcon } = await load();
+    const { tEs } = await import("./overlay");
+    // La leyenda del Panel (`ActivityCharts.tsx:244-245`) y la lista
+    // (`IssuesList.tsx:141-142`) resuelven por estas dos claves punteadas.
+    // Sus mapas no se exportan, así que lo que se compara es la fuente del
+    // valor, que es la misma que leen ellos.
+    for (const [status, key] of [
+      ["done", "issues.status.done"],
+      ["blocked", "issues.status.blocked"],
+    ] as const) {
+      const html = renderToStaticMarkup(<StatusIcon.StatusIcon status={status} showLabel />);
+      expect(html, status).toContain(tEs(key, "no-deberia-caer-al-ingles"));
+    }
+    // El nombre viejo de `done` no sobrevive en ninguno de los dos caminos.
+    expect(renderToStaticMarkup(<StatusIcon.StatusIcon status="done" showLabel />)).not.toContain("Terminada");
+    expect(tEs("issues.status.done", "Done")).not.toBe("Terminada");
   });
 });
 

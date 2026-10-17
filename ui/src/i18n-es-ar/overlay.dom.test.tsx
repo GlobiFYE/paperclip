@@ -195,13 +195,37 @@ describe("los homógrafos quedan con la traducción de su sentido", () => {
     ]);
   });
 
-  it("el estado y el botón Done no se pisan", async () => {
+  it("el estado y el botón Done dicen lo mismo a propósito (CHA-15)", async () => {
     const { overlay } = await reload({ stored: "es-AR" });
-    // El botón, por diccionario (es el sentido con más sitios).
+    // La capa literal no puede distinguir el chip del botón, porque indexa por
+    // texto: las etiquetas del menú de estado y de los encabezados del tablero
+    // se derivan del valor técnico y le llegan como `"Done"` suelto, igual que
+    // los seis botones de "listo, terminé" de upstream. Unificar el singular
+    // en "Listo" (decisión del Lead en CHA-15, H-2) es lo que hace que el
+    // homógrafo deje de existir en vez de administrarse.
     expect(overlay.translate("Done")).toBe("Listo");
-    // El estado, por clave punteada en los mapas de etiquetas.
-    expect(overlay.tEs("issues.status.done", "Done")).toBe("Terminada");
+    expect(overlay.tEs("issues.status.done", "Done")).toBe("Listo");
+    // El plural sigue siendo el de la colección: son vistas y filtros de
+    // tareas, no el nombre del estado.
     expect(overlay.tEs("navigation.taskViews.done", "Done")).toBe("Terminadas");
+    expect(overlay.tEs("issues.filter.done", "Done")).toBe("Terminadas");
+  });
+
+  it("blocked se dice igual por las dos capas (CHA-15)", async () => {
+    const { overlay } = await reload({ stored: "es-AR" });
+    // H-1: antes `"Blocked"` no tenía entrada literal y quedaba en inglés en el
+    // menú de estado y en el tablero, al lado de cinco etiquetas traducidas.
+    expect(overlay.translate("Blocked")).toBe("Bloqueada");
+    expect(overlay.tEs("issues.status.blocked", "Blocked")).toBe("Bloqueada");
+    expect(overlay.tEs("navigation.taskViews.blocked", "Blocked")).toBe("Bloqueadas");
+  });
+
+  it("Backlog se queda en inglés como etiqueta de estado (glosario §8.3)", async () => {
+    const { overlay } = await reload({ stored: "es-AR" });
+    // No es un hueco del diccionario: es la decisión 9.3, escalada al dueño
+    // como pregunta de glosario. Si se agrega la entrada literal hay que
+    // cambiar el documento primero.
+    expect(overlay.translate("Backlog")).toBe("Backlog");
   });
 
   it("la prioridad es femenina y el esfuerzo del modelo masculino", async () => {
