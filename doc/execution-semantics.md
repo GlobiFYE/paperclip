@@ -219,6 +219,14 @@ start timestamp, or process identity. A later eligible instruction can adopt the
 saved messages through normal admission. This rule does not prove a dispatched
 provider has stopped or change native cancellation acknowledgement.
 
+The queued-run staleness gate is different. It cancels a run automatically when the
+task no longer matches that run, for example when the task is done or has a new
+owner. Nobody asked to stop the work that waits behind that run. So when the gate
+cancels a run, Paperclip releases the task lock through the normal release path,
+and wakes that wait in `deferred_issue_execution` go through normal promotion and
+all current gates. If the gate defers the run instead of cancelling it, the run and
+its waiting wakes stay in place.
+
 ### Known execution waits at admission
 
 A known execution hold is a waiting condition, not a new execution attempt. Every issue wake must read the current effective reconciliation hold under the issue admission lock before creating a run. Resolved recovery bookkeeping can still carry a no-replay hold; only clearing the effective hold makes admission eligible again. The final dispatch gate remains required for changes after admission.
