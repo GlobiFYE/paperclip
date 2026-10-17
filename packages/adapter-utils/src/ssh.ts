@@ -9,6 +9,7 @@ import type { CommandManagedRuntimeRunner } from "./command-managed-runtime.js";
 import {
   createUnrelatedHistoryGraftCommit,
   GIT_SYNC_COMMIT_IDENTITY_ARGS,
+  PROJECT_REPOSITORIES_DIR,
   readSanitizedOriginRemoteUrl,
 } from "./git-workspace-sync.js";
 import type { RunProcessResult } from "./server-utils.js";
@@ -69,17 +70,15 @@ export function createSshCommandManagedRuntimeRunner(input: {
       const cwd = commandInput.cwd?.trim() || defaultCwd;
       const envEntries = Object.entries(commandInput.env ?? {})
         .filter((entry): entry is [string, string] => typeof entry[1] === "string");
+      for (const [key] of envEntries) {
+        if (!isValidShellEnvKey(key)) {
+          throw new Error(`Invalid SSH environment variable key: ${key}`);
+        }
+      }
       const envPrefix = envEntries.length > 0
-        ? `env ${envEntries.map(([key, value]) => `${key}=${shellQuote(value)}`).join(" ")} `
+        ? `env ${envEntries.map(([key, value]) => shellQuote(`${key}=${value}`)).join(" ")} `
         : "";
-      const exportPrefix = envEntries.length > 0
-        ? envEntries.map(([key, value]) => `export ${key}=${shellQuote(value)};`).join(" ") + " "
-        : "";
-      const commandScript = command === "sh" || command === "bash"
-        ? (args[0] === "-c" || args[0] === "-lc") && typeof args[1] === "string"
-          ? `${exportPrefix}${args[1]}`
-          : `${envPrefix}exec ${[shellQuote(command), ...args.map((arg) => shellQuote(arg))].join(" ")}`
-        : `${envPrefix}exec ${[shellQuote(command), ...args.map((arg) => shellQuote(arg))].join(" ")}`;
+      const commandScript = `exec ${envPrefix}${[shellQuote(command), ...args.map((arg) => shellQuote(arg))].join(" ")}`;
       const remoteCommand = `cd ${shellQuote(cwd)} && ${commandScript}`;
 
       try {
@@ -592,18 +591,67 @@ async function runSshScript(
   );
 }
 
+async function removeLocalEntry(entryPath: string, signal?: AbortSignal | null): Promise<void> {
+  throwIfWorkspaceRestoreAborted(signal);
+  const stat = await fs.lstat(entryPath).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  });
+  if (!stat) return;
+  if (!stat.isDirectory()) {
+    await fs.rm(entryPath, { force: true });
+    throwIfWorkspaceRestoreAborted(signal);
+    return;
+  }
+  for (const entry of await fs.readdir(entryPath)) {
+    await removeLocalEntry(path.join(entryPath, entry), signal);
+  }
+  throwIfWorkspaceRestoreAborted(signal);
+  await fs.rm(entryPath, { recursive: false });
+}
+
 async function clearLocalDirectory(
   localDir: string,
   preserveEntries: string[] = [],
+  signal?: AbortSignal | null,
 ): Promise<void> {
+  throwIfWorkspaceRestoreAborted(signal);
   await fs.mkdir(localDir, { recursive: true });
   const preserve = new Set(preserveEntries);
   const entries = await fs.readdir(localDir);
-  await Promise.all(
-    entries
-      .filter((entry) => !preserve.has(entry))
-      .map((entry) => fs.rm(path.join(localDir, entry), { recursive: true, force: true })),
-  );
+  for (const entry of entries) {
+    throwIfWorkspaceRestoreAborted(signal);
+    if (preserve.has(entry)) continue;
+    await removeLocalEntry(path.join(localDir, entry), signal);
+  }
+  throwIfWorkspaceRestoreAborted(signal);
+}
+
+async function copyLocalEntry(
+  sourcePath: string,
+  targetPath: string,
+  signal?: AbortSignal | null,
+): Promise<void> {
+  throwIfWorkspaceRestoreAborted(signal);
+  const stat = await fs.lstat(sourcePath);
+  if (!stat.isDirectory()) {
+    await fs.cp(sourcePath, targetPath, {
+      recursive: false,
+      force: true,
+      preserveTimestamps: true,
+    });
+    throwIfWorkspaceRestoreAborted(signal);
+    return;
+  }
+
+  await fs.mkdir(targetPath, { recursive: true, mode: stat.mode });
+  for (const entry of await fs.readdir(sourcePath)) {
+    await copyLocalEntry(path.join(sourcePath, entry), path.join(targetPath, entry), signal);
+  }
+  throwIfWorkspaceRestoreAborted(signal);
+  await fs.chmod(targetPath, stat.mode);
+  await fs.utimes(targetPath, stat.atime, stat.mtime);
+  throwIfWorkspaceRestoreAborted(signal);
 }
 
 async function copyDirectoryContents(
@@ -611,26 +659,12 @@ async function copyDirectoryContents(
   targetDir: string,
   signal?: AbortSignal | null,
 ): Promise<void> {
+  throwIfWorkspaceRestoreAborted(signal);
   await fs.mkdir(targetDir, { recursive: true });
-  const copyEntry = async (sourcePath: string, targetPath: string): Promise<void> => {
-    throwIfWorkspaceRestoreAborted(signal);
-    const stat = await fs.lstat(sourcePath);
-    if (stat.isDirectory()) {
-      await fs.mkdir(targetPath, { recursive: true });
-      const entries = await fs.readdir(sourcePath);
-      for (const entry of entries) {
-        await copyEntry(path.join(sourcePath, entry), path.join(targetPath, entry));
-      }
-      await fs.chmod(targetPath, stat.mode);
-      await fs.utimes(targetPath, stat.atime, stat.mtime);
-      return;
-    }
-    await fs.cp(sourcePath, targetPath, { force: true, preserveTimestamps: true });
-  };
-  const entries = await fs.readdir(sourceDir);
-  for (const entry of entries) {
-    await copyEntry(path.join(sourceDir, entry), path.join(targetDir, entry));
+  for (const entry of await fs.readdir(sourceDir)) {
+    await copyLocalEntry(path.join(sourceDir, entry), path.join(targetDir, entry), signal);
   }
+  throwIfWorkspaceRestoreAborted(signal);
 }
 
 async function readLocalGitWorkspaceSnapshot(localDir: string): Promise<LocalGitWorkspaceSnapshot | null> {
@@ -732,7 +766,9 @@ async function streamSshToLocalFile(input: {
   remoteScript: string;
   localFile: string;
   progress?: TransferProgress;
+  signal?: AbortSignal | null;
 }): Promise<void> {
+  throwIfWorkspaceRestoreAborted(input.signal);
   const auth = await createSshAuthArgs(input.spec);
   const sshArgs = [
     ...auth.args,
@@ -750,14 +786,23 @@ async function streamSshToLocalFile(input: {
 
     let sshStderr = "";
     let settled = false;
+    let onAbort = () => {};
+    const cleanupAbort = () => input.signal?.removeEventListener("abort", onAbort);
 
     const fail = (error: Error) => {
       if (settled) return;
       settled = true;
+      cleanupAbort();
       ssh.kill("SIGTERM");
       sink.destroy();
       reject(error);
     };
+    onAbort = () => fail(workspaceRestoreCancelledError());
+    input.signal?.addEventListener("abort", onAbort, { once: true });
+    if (input.signal?.aborted) {
+      onAbort();
+      return;
+    }
 
     if (input.progress) {
       input.progress.counter.on("error", fail);
@@ -774,6 +819,7 @@ async function streamSshToLocalFile(input: {
       sink.end(() => {
         if (settled) return;
         settled = true;
+        cleanupAbort();
         if ((code ?? 0) !== 0) {
           reject(new Error(sshStderr.trim() || `ssh exited with code ${code ?? -1}`));
           return;
@@ -912,6 +958,7 @@ async function exportGitWorkspaceFromSsh(input: {
         remoteScript: exportScript,
         localFile: bundlePath,
         progress: progress ?? undefined,
+        signal: input.signal,
       });
       await progress?.finish();
     } catch (error) {
@@ -919,10 +966,12 @@ async function exportGitWorkspaceFromSsh(input: {
       throw error;
     }
 
+    throwIfWorkspaceRestoreAborted(input.signal);
     await runLocalGit(input.localDir, ["fetch", "--force", bundlePath, `refs/paperclip/ssh-sync/export:${importedRef}`], {
       timeout: 60_000,
       maxBuffer: 1024 * 1024,
     });
+    throwIfWorkspaceRestoreAborted(input.signal);
     if (input.resetLocalWorkspace !== false) {
       await runLocalGit(input.localDir, ["reset", "--hard", importedRef], {
         timeout: 60_000,
@@ -1096,6 +1145,91 @@ async function removeDeletedPathsOnSsh(input: {
     timeoutMs: 30_000,
     maxBuffer: 256 * 1024,
   });
+}
+
+const PROJECT_REPOSITORY_NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+async function isLocalGitRepositoryRoot(localDir: string): Promise<boolean> {
+  try {
+    const toplevel = await runLocalGit(localDir, ["rev-parse", "--show-toplevel"], {
+      timeout: 10_000,
+      maxBuffer: 16 * 1024,
+    });
+    const [directory, repository] = await Promise.all([
+      fs.realpath(localDir),
+      fs.realpath(toplevel.stdout.trim()),
+    ]);
+    return directory === repository;
+  } catch {
+    return false;
+  }
+}
+
+export async function listLocalProjectRepositories(localDir: string): Promise<string[]> {
+  const root = path.join(localDir, PROJECT_REPOSITORIES_DIR);
+  const rootStat = await fs.lstat(root).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!rootStat) return [];
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) {
+    throw new Error("Invalid project repositories directory");
+  }
+  const repositories: string[] = [];
+  for (const entry of await fs.readdir(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !PROJECT_REPOSITORY_NAME_PATTERN.test(entry.name)) {
+      throw new Error("Invalid project repository directory");
+    }
+    const relative = `${PROJECT_REPOSITORIES_DIR}/${entry.name}`;
+    if (!(await isLocalGitRepositoryRoot(path.join(localDir, relative)))) {
+      throw new Error(`Project repository is not a Git checkout: ${relative}`);
+    }
+    repositories.push(relative);
+  }
+  return repositories.sort();
+}
+
+async function transportGitWorkspaceToSsh(input: {
+  spec: SshRemoteExecutionSpec;
+  localDir: string;
+  remoteDir: string;
+  snapshot: LocalGitWorkspaceSnapshot;
+  exclude?: string[];
+  onProgress?: RuntimeProgressSink;
+  progressLabel: string;
+}): Promise<void> {
+  await importGitWorkspaceToSsh({
+    spec: input.spec,
+    localDir: input.localDir,
+    remoteDir: input.remoteDir,
+    snapshot: input.snapshot,
+    onProgress: input.onProgress,
+  });
+  await syncDirectoryToSsh({
+    spec: input.spec,
+    localDir: input.localDir,
+    remoteDir: input.remoteDir,
+    exclude: [".git", ".paperclip-runtime", ...(input.exclude ?? [])],
+    onProgress: input.onProgress,
+    progressLabel: input.progressLabel,
+  });
+  await removeDeletedPathsOnSsh({
+    spec: input.spec,
+    remoteDir: input.remoteDir,
+    deletedPaths: input.snapshot.deletedPaths,
+  });
+}
+
+async function excludeProjectRepositoriesOnSsh(spec: SshConnectionConfig, remoteDir: string): Promise<void> {
+  const pattern = `/${PROJECT_REPOSITORIES_DIR}/`;
+  const excludeFile = path.posix.join(remoteDir, ".git", "info", "exclude");
+  await runSshScript(
+    spec,
+    `mkdir -p ${shellQuote(path.posix.dirname(excludeFile))} && ` +
+      `{ grep -qxF ${shellQuote(pattern)} ${shellQuote(excludeFile)} 2>/dev/null || ` +
+      `printf '\\n%s\\n' ${shellQuote(pattern)} >> ${shellQuote(excludeFile)}; }`,
+    { timeoutMs: 30_000 },
+  );
 }
 
 async function allocateLoopbackPort(host: string): Promise<number> {
@@ -1463,6 +1597,15 @@ export async function syncDirectoryToSsh(input: {
   }
 }
 
+async function throwIfWorkspaceRestoreAbortedWithProgress(
+  signal: AbortSignal | null | undefined,
+  onProgress?: RuntimeProgressSink,
+): Promise<void> {
+  if (!signal?.aborted) return;
+  await onProgress?.("[paperclip] Skipping SSH workspace restore: run was cancelled.\n");
+  throw workspaceRestoreCancelledError();
+}
+
 export async function syncDirectoryFromSsh(input: {
   spec: SshRemoteExecutionSpec;
   remoteDir: string;
@@ -1471,19 +1614,10 @@ export async function syncDirectoryFromSsh(input: {
   preserveLocalEntries?: string[];
   onProgress?: RuntimeProgressSink;
   progressLabel?: string;
-  /**
-   * Run-scoped operator cancellation. Checked before opening the transfer and
-   * again after the stream completes, before the destructive local
-   * clear + copy. The in-flight transfer itself is not preempted: it already
-   * reports progress and is bounded by the transferred bytes. Skipped restores
-   * leave the local checkout untouched.
-   */
+  /** Cancellation is checked after transfer and before applying staged files. */
   signal?: AbortSignal | null;
 }): Promise<void> {
-  if (input.signal?.aborted) {
-    await input.onProgress?.("[paperclip] Skipping SSH workspace restore: run was cancelled.\n");
-    throw workspaceRestoreCancelledError();
-  }
+  await throwIfWorkspaceRestoreAbortedWithProgress(input.signal, input.onProgress);
   const auth = await createSshAuthArgs(input.spec);
   const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-ssh-sync-back-"));
   const remoteTarScript = [
@@ -1581,16 +1715,11 @@ export async function syncDirectoryFromSsh(input: {
     });
     await progress?.finish();
 
-    // The terminal 100% line above covers only the remote stream. The local
-    // apply below is silent and historically ran for tens of minutes on large
-    // checkouts while the run row stayed `running` with no live worker.
-    // Yield here when cancelled instead of clearing the shared checkout, so
-    // the existing cancellation machinery can terminalize the run promptly.
     if (input.signal?.aborted) {
       await input.onProgress?.("[paperclip] Skipping SSH workspace restore: run was cancelled.\n");
       throw workspaceRestoreCancelledError();
     }
-    await clearLocalDirectory(input.localDir, input.preserveLocalEntries);
+    await clearLocalDirectory(input.localDir, input.preserveLocalEntries, input.signal);
     await copyDirectoryContents(stagingDir, input.localDir, input.signal);
   } catch (error) {
     await progress?.fail();
@@ -1606,32 +1735,40 @@ export async function prepareWorkspaceForSshExecution(input: {
   localDir: string;
   remoteDir?: string;
   onProgress?: RuntimeProgressSink;
-}): Promise<{ gitBacked: boolean }> {
+  workspaceFileMode?: "all";
+  workspaceExclude?: string[];
+}): Promise<{ gitBacked: boolean; repositories?: string[] }> {
   const remoteDir = input.remoteDir ?? input.spec.remoteCwd;
-  const gitSnapshot = await readLocalGitWorkspaceSnapshot(input.localDir);
+  const gitSnapshot = input.workspaceFileMode === "all" ? null : await readLocalGitWorkspaceSnapshot(input.localDir);
 
   if (gitSnapshot) {
-    await importGitWorkspaceToSsh({
+    const repositories = await listLocalProjectRepositories(input.localDir);
+    await transportGitWorkspaceToSsh({
       spec: input.spec,
       localDir: input.localDir,
       remoteDir,
       snapshot: gitSnapshot,
-      onProgress: input.onProgress,
-    });
-    await syncDirectoryToSsh({
-      spec: input.spec,
-      localDir: input.localDir,
-      remoteDir,
-      exclude: [".git", ".paperclip-runtime"],
+      exclude: repositories.length > 0 ? [PROJECT_REPOSITORIES_DIR] : [],
       onProgress: input.onProgress,
       progressLabel: "workspace",
     });
-    await removeDeletedPathsOnSsh({
-      spec: input.spec,
-      remoteDir,
-      deletedPaths: gitSnapshot.deletedPaths,
-    });
-    return { gitBacked: true };
+    if (repositories.length > 0) {
+      await excludeProjectRepositoriesOnSsh(input.spec, remoteDir);
+    }
+    for (const relative of repositories) {
+      const localDir = path.join(input.localDir, relative);
+      const snapshot = await readLocalGitWorkspaceSnapshot(localDir);
+      if (!snapshot) throw new Error(`Cannot read the Git state of project repository: ${relative}`);
+      await transportGitWorkspaceToSsh({
+        spec: input.spec,
+        localDir,
+        remoteDir: path.posix.join(remoteDir, relative),
+        snapshot,
+        onProgress: input.onProgress,
+        progressLabel: relative,
+      });
+    }
+    return { gitBacked: true, ...(repositories.length > 0 ? { repositories } : {}) };
   }
 
   await clearRemoteDirectory({
@@ -1643,7 +1780,7 @@ export async function prepareWorkspaceForSshExecution(input: {
     spec: input.spec,
     localDir: input.localDir,
     remoteDir,
-    exclude: [".paperclip-runtime"],
+    exclude: [".paperclip-runtime", ...(input.workspaceFileMode === "all" ? input.workspaceExclude ?? [] : [])],
     onProgress: input.onProgress,
     progressLabel: "workspace",
   });
@@ -1657,14 +1794,70 @@ export async function restoreWorkspaceFromSshExecution(input: {
   baselineSnapshot?: DirectorySnapshot;
   restoreGitHistory?: boolean;
   onProgress?: RuntimeProgressSink;
+  repositories?: Array<{ path: string; baselineSnapshot?: DirectorySnapshot }>;
   /** Run-scoped operator cancellation; see {@link syncDirectoryFromSsh}. */
   signal?: AbortSignal | null;
 }): Promise<void> {
-  if (input.signal?.aborted) {
-    await input.onProgress?.("[paperclip] Skipping SSH workspace restore: run was cancelled.\n");
-    throw workspaceRestoreCancelledError();
-  }
+  await throwIfWorkspaceRestoreAbortedWithProgress(input.signal, input.onProgress);
   const remoteDir = input.remoteDir ?? input.spec.remoteCwd;
+  const repositories = input.repositories ?? [];
+  for (const repository of repositories) {
+    if (
+      path.posix.dirname(repository.path) !== PROJECT_REPOSITORIES_DIR ||
+      !PROJECT_REPOSITORY_NAME_PATTERN.test(path.posix.basename(repository.path))
+    ) {
+      throw new Error(`Invalid project repository path: ${repository.path}`);
+    }
+    if (input.baselineSnapshot && !repository.baselineSnapshot) {
+      throw new Error(`Project repository has no workspace baseline: ${repository.path}`);
+    }
+  }
+  if (
+    input.baselineSnapshot &&
+    repositories.length > 0 &&
+    !input.baselineSnapshot.exclude.includes(PROJECT_REPOSITORIES_DIR)
+  ) {
+    throw new Error(`Workspace baseline must exclude ${PROJECT_REPOSITORIES_DIR} when project repositories are restored separately`);
+  }
+  for (const repository of repositories) {
+    throwIfWorkspaceRestoreAborted(input.signal);
+    await restoreWorkspaceRootFromSsh({
+      spec: input.spec,
+      localDir: path.join(input.localDir, repository.path),
+      remoteDir: path.posix.join(remoteDir, repository.path),
+      baselineSnapshot: repository.baselineSnapshot,
+      restoreGitHistory: input.restoreGitHistory,
+      onProgress: input.onProgress,
+      progressLabel: repository.path,
+      signal: input.signal,
+    });
+  }
+  await restoreWorkspaceRootFromSsh({
+    spec: input.spec,
+    localDir: input.localDir,
+    remoteDir,
+    baselineSnapshot: input.baselineSnapshot,
+    restoreGitHistory: input.restoreGitHistory,
+    onProgress: input.onProgress,
+    progressLabel: "workspace",
+    hasProjectRepositories: repositories.length > 0,
+    signal: input.signal,
+  });
+}
+
+async function restoreWorkspaceRootFromSsh(input: {
+  spec: SshRemoteExecutionSpec;
+  localDir: string;
+  remoteDir: string;
+  baselineSnapshot?: DirectorySnapshot;
+  restoreGitHistory?: boolean;
+  onProgress?: RuntimeProgressSink;
+  progressLabel: string;
+  hasProjectRepositories?: boolean;
+  signal?: AbortSignal | null;
+}): Promise<void> {
+  await throwIfWorkspaceRestoreAbortedWithProgress(input.signal, input.onProgress);
+  const remoteDir = input.remoteDir;
   if (input.baselineSnapshot) {
     const stagingDir = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-ssh-sync-back-"));
     const importedRef = input.restoreGitHistory
@@ -1688,14 +1881,13 @@ export async function restoreWorkspaceFromSshExecution(input: {
         localDir: stagingDir,
         exclude: input.baselineSnapshot.exclude,
         onProgress: input.onProgress,
-        progressLabel: "workspace",
+        progressLabel: input.progressLabel,
         signal: input.signal,
       });
       await mergeDirectoryWithBaseline({
         baseline: input.baselineSnapshot,
         sourceDir: stagingDir,
         targetDir: input.localDir,
-        signal: input.signal,
         // Git history advances via integrateImportedGitHead; the working tree
         // still comes from the remote file snapshot so dirty remote edits win.
         beforeApply: importedHead
@@ -1706,6 +1898,7 @@ export async function restoreWorkspaceFromSshExecution(input: {
             });
           }
           : undefined,
+        signal: input.signal,
       });
     } finally {
       if (importedRef) {
@@ -1721,6 +1914,7 @@ export async function restoreWorkspaceFromSshExecution(input: {
   const gitSnapshot = await readLocalGitWorkspaceSnapshot(input.localDir);
 
   if (gitSnapshot) {
+    const projectRepositoryEntries = input.hasProjectRepositories ? [PROJECT_REPOSITORIES_DIR] : [];
     await exportGitWorkspaceFromSsh({
       spec: input.spec,
       remoteDir,
@@ -1732,10 +1926,10 @@ export async function restoreWorkspaceFromSshExecution(input: {
       spec: input.spec,
       remoteDir,
       localDir: input.localDir,
-      exclude: [".git", ".paperclip-runtime"],
-      preserveLocalEntries: [".git"],
+      exclude: [".git", ".paperclip-runtime", ...projectRepositoryEntries],
+      preserveLocalEntries: [".git", ...projectRepositoryEntries],
       onProgress: input.onProgress,
-      progressLabel: "workspace",
+      progressLabel: input.progressLabel,
       signal: input.signal,
     });
     return;
@@ -1747,7 +1941,7 @@ export async function restoreWorkspaceFromSshExecution(input: {
     localDir: input.localDir,
     exclude: [".paperclip-runtime"],
     onProgress: input.onProgress,
-    progressLabel: "workspace",
+    progressLabel: input.progressLabel,
     signal: input.signal,
   });
 }
