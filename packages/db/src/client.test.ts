@@ -268,12 +268,6 @@ describeEmbeddedPostgres("merged Muse migration histories", () => {
 
   type RetainedRowsSnapshot = Awaited<ReturnType<Awaited<ReturnType<typeof seedRetainedRows>>>>;
 
-  // Migrations landing between the merge point and the current tip can add a new
-  // nullable column to one of these tables (for example `default_execution_policy`
-  // on `companies`). That's purely additive and already covered by the schemaShape
-  // assertion below; strip such columns here so this check keeps testing "no
-  // existing data was rewritten," not "no columns were added since this fixture
-  // was written."
   function omitNewlyAddedNullColumns(
     row: Record<string, unknown> | null,
     reference: Record<string, unknown> | null,
