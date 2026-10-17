@@ -29,6 +29,7 @@ import issuesEsAr from "./dictionary/es-AR/issues.json";
 import navigationEsAr from "./dictionary/es-AR/navigation.json";
 import onboardingEsAr from "./dictionary/es-AR/onboarding.json";
 import projectsEsAr from "./dictionary/es-AR/projects.json";
+import routinesEsAr from "./dictionary/es-AR/routines.json";
 import settingsEsAr from "./dictionary/es-AR/settings.json";
 import skillsEsAr from "./dictionary/es-AR/skills.json";
 import tracesEsAr from "./dictionary/es-AR/traces.json";
@@ -94,6 +95,7 @@ const LAYERS: Record<OverlayLocale, Layer> = {
       auditEsAr,
       tracesEsAr,
       skillsEsAr,
+      routinesEsAr,
     ],
     explicitEsAr,
     PATTERNS["es-AR"],
