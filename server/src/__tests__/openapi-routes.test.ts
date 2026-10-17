@@ -25,6 +25,7 @@ const apiPrefixes: Record<string, string> = {
   "announcements.ts": "/api",
   "ai-connections.ts": "/api",
   "decision-models.ts": "/api",
+  "fast-responses.ts": "/api",
   "attention.ts": "/api",
   "approvals.ts": "/api",
   "assets.ts": "/api",
@@ -44,15 +45,18 @@ const apiPrefixes: Record<string, string> = {
   "costs.ts": "/api",
   "dashboard.ts": "/api",
   "dot-runner.ts": "/api",
+  "grok-bot.ts": "/api",
   "decision-queues.ts": "/api",
   "decisions.ts": "/api",
   "decision-training.ts": "/api",
   "environments.ts": "/api",
   "execution-workspaces.ts": "/api",
+  "task-workspaces.ts": "/api",
   "file-resources.ts": "/api",
   "folders.ts": "/api",
   "goals.ts": "/api",
   "health.ts": "/api/health",
+  "liveness.ts": "/api/liveness",
   "inbox-agent-policy.ts": "/api",
   "inbox-dismissals.ts": "/api",
   "instance-database-backups.ts": "/api",
@@ -79,14 +83,15 @@ const apiPrefixes: Record<string, string> = {
   "status-cards.ts": "/api",
   "teams-catalog.ts": "/api",
   "tool-access.ts": "/api",
+  "voice-sessions.ts": "/api",
   "tool-gateway.ts": "/api",
   "user-profiles.ts": "/api",
 };
 
 const ROUTE_LITERAL_PATTERN =
-  /router\.(get|post|put|patch|delete)\(\s*["'`]([^"'`]+)["'`]/g;
-const ROUTE_ARRAY_PATTERN = /router\.(get|post|put|patch|delete)\(\s*\[([^\]]+)\]/g;
-const ROUTER_METHOD_PATTERN = /router\.(get|post|put|patch|delete)\(/;
+  /router\.(get|head|post|put|patch|delete)\(\s*["'`]([^"'`]+)["'`]/g;
+const ROUTE_ARRAY_PATTERN = /router\.(get|head|post|put|patch|delete)\(\s*\[([^\]]+)\]/g;
+const ROUTER_METHOD_PATTERN = /router\.(get|head|post|put|patch|delete)\(/;
 const HTTP_METHODS = new Set([
   "get",
   "put",
@@ -126,6 +131,8 @@ const explicitOpenApiOperationCoverageExclusions = new Set([
   // board API document, while this exact exclusion keeps route coverage honest.
   "POST /api/chat-webhooks/agentmail/{publicId}",
   "POST /api/chat-webhooks/{publicId}/{provider}",
+  "POST /api/voice-webhooks/{publicId}/events",
+  "POST /api/voice-webhooks/{publicId}/tools",
 ]);
 
 // The set of contract-first routes whose OpenAPI document leads the mounted
@@ -168,6 +175,7 @@ function resolveMountedPath(file: string, prefix: string, routePath: string) {
   ) {
     return routePath;
   }
+  if (file === "voice-sessions.ts" && routePath.startsWith("/api/voice-webhooks/")) return routePath;
   if (file === "tool-gateway.ts" && routePath.startsWith("/mcp/gateways/")) {
     return routePath;
   }
@@ -177,7 +185,7 @@ function resolveMountedPath(file: string, prefix: string, routePath: string) {
   ) {
     return routePath;
   }
-  if ((file === "companies.ts" || file === "health.ts") && routePath === "/") {
+  if ((file === "companies.ts" || file === "health.ts" || file === "liveness.ts") && routePath === "/") {
     return prefix;
   }
   if (file === "companies.ts" || file === "health.ts") {
@@ -240,11 +248,11 @@ function loadActualRoutes() {
         }
       }
     }
-    if (file === "dot-runner.ts") {
-      for (const name of ["path", "invitePath"]) {
+    if (file === "dot-runner.ts" || file === "grok-bot.ts") {
+      for (const name of file === "dot-runner.ts" ? ["path", "invitePath"] : ["path"]) {
         const basePath = new RegExp(`const ${name} = "([^"]+)"`).exec(source)?.[1];
         if (!basePath) throw new Error(`Dot ${name} route prefix is missing`);
-        const methods = new RegExp(`router\\.(get|post|delete)\\(${name}(?: \\+ "([^"]+)")?`, "g");
+        const methods = new RegExp(`router\\.(get|post|put|delete)\\(${name}(?: \\+ "([^"]+)")?`, "g");
         for (const match of source.matchAll(methods)) {
           routes.add(`${match[1].toUpperCase()} ${normalizeExpressPath(prefix + basePath + (match[2] ?? ""))}`);
         }
@@ -290,6 +298,17 @@ function loadSpecRoutes() {
 }
 
 describe("openapi routes", () => {
+  it("documents anonymous liveness separately from database readiness", () => {
+    const spec = buildOpenApiSpec() as any;
+    for (const method of ["get", "head"]) {
+      const operation = spec.paths["/api/liveness"][method];
+      expect(operation.security).toEqual([]);
+      expect(operation.responses[503]).toBeDefined();
+    }
+    expect(Object.keys(spec.paths["/api/liveness"].get.responses[200].content["application/json"].schema.properties))
+      .toEqual(["status", "commit"]);
+    expect(spec.paths["/api/health"].get.responses[503]).toBeDefined();
+  });
   it("documents only writable agent update fields and lifecycle status requests", () => {
     const document = buildOpenApiSpec() as any;
     const properties = document.paths["/api/agents/{id}"].patch.requestBody.content["application/json"].schema.properties;
@@ -621,7 +640,7 @@ describe("openapi routes", () => {
         properties: {
           provider: {
             type: "string",
-            enum: ["slack", "github", "discord", "microsoft-teams", "telegram", "imessage-photon"],
+            enum: ["slack", "github", "discord", "microsoft-teams", "telegram", "speko", "imessage-photon"],
           },
           assignedAgentId: { type: "string", format: "uuid" },
         },
@@ -846,6 +865,20 @@ describe("openapi routes", () => {
     ).toBeUndefined();
   });
 
+  it("documents session-bound voice authority without durable credentials", () => {
+    const {spec} = loadSpecRoutes();
+    const start = spec.paths["/api/companies/{companyId}/voice-sessions"].post;
+    expect(start.security).toEqual([{BoardSessionAuth: []}]);
+    expect(start["x-paperclip-authorization"]).toEqual({actor: "board", sessionBound: true});
+    expect(start.requestBody.content["application/json"].schema.required).toEqual(expect.arrayContaining(["endpointId", "idempotencyKey"]));
+    expect(start.responses["201"]).toBeDefined();
+    expect(JSON.stringify(start.responses)).not.toContain("signingSecret");
+    expect(spec.paths["/api/voice-webhooks/{publicId}/tools"]).toBeUndefined();
+    expect(spec.paths["/api/voice-webhooks/{publicId}/events"]).toBeUndefined();
+    const decision=spec.paths["/api/companies/{companyId}/voice-phone/{endpointId}/incoming/{callId}"].post;
+    expect(decision.requestBody.content["application/json"].schema.required).toEqual(expect.arrayContaining(["approve", "approvalCode"]));
+  });
+
   it("covers the mounted server routes exactly", () => {
     const {
       routes: actualRoutes,
@@ -918,6 +951,47 @@ describe("openapi routes", () => {
     }
     expect(replacement.requestBody.content["application/json"].schema.required).toContain("repositoryIds");
     expect(replacement.responses["422"]).toBeDefined();
+  });
+
+  it("documents the manager-only GitHub wizard and compatible owner-aware registration", () => {
+    const { spec } = loadSpecRoutes();
+    for (const [suffix, method] of [["draft", "put"], ["setup", "post"], ["identity/start", "post"], ["identity/confirm", "post"]]) {
+      const operation = spec.paths[`/api/chat-endpoints/{endpointId}/github/${suffix}`][method];
+      expect(operation["x-paperclip-authorization"]).toEqual({ actor: "board" });
+      expect(operation.security).toEqual([{ BoardSessionAuth: [] }, { BoardApiKeyAuth: [] }]);
+    }
+    const registration = spec.paths["/api/chat-endpoints/{endpointId}/github/registration"].post;
+    const input = registration.requestBody.content["application/json"].schema;
+    expect(input.properties.ownerType.enum).toEqual(["personal", "organization"]);
+    expect(input.required).not.toContain("ownerType");
+    const response = registration.responses["200"].content["application/json"].schema;
+    expect(response.oneOf ?? response.anyOf).toHaveLength(2);
+  });
+
+  it("documents GitHub recovery, draft receipts, paged repositories and old review lookups", () => {
+    const { spec } = loadSpecRoutes();
+    const root = "/api/chat-endpoints/{endpointId}/github/";
+    const setup = spec.paths[root + "setup"].post.responses["200"].content["application/json"].schema;
+    expect(setup.properties.restartableRegistrationId.format).toBe("uuid");
+    const restart = spec.paths[root + "registration/restart"].post;
+    expect(restart["x-paperclip-authorization"]).toEqual({ actor: "board" });
+    const restartInput = restart.requestBody.content["application/json"].schema;
+    expect(restartInput.required).toEqual(expect.arrayContaining(["registrationId", "appNotCreated"]));
+    expect(restartInput.properties.appNotCreated.enum ?? [restartInput.properties.appNotCreated.const]).toEqual([true]);
+    const receipt = spec.paths[root + "draft"].put.responses["200"].content["application/json"].schema;
+    expect(receipt.required).toEqual(["saved"]);
+    expect(receipt.properties).not.toHaveProperty("state");
+    const app = spec.paths[root + "app"].post.requestBody.content["application/json"].schema;
+    expect(app.properties.clientId).toBeDefined();
+    expect(app.properties.clientSecret).toBeDefined();
+    expect(app.required).not.toContain("clientId");
+    const page = spec.paths[root + "repositories"].get;
+    expect(page.parameters.map((param: { name: string }) => param.name)).toEqual(expect.arrayContaining(["endpointId", "offset", "limit", "search"]));
+    expect(page.responses["200"].content["application/json"].schema.properties).toHaveProperty("totalCount");
+    expect(spec.paths[root + "repositories/access"].put["x-paperclip-authorization"]).toEqual({ actor: "board" });
+    const review = spec.paths[root + "reviews/{reviewId}"].get;
+    expect(review.parameters.map((param: { name: string }) => param.name)).toEqual(["endpointId", "reviewId"]);
+    expect(review.responses["404"]).toBeDefined();
   });
 
   it("documents auth and reviewed response-code invariants", () => {

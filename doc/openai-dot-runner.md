@@ -28,7 +28,7 @@ Runner setting in addition to Dot and Assistant connections (MCP).
    expiry, and event instructions. Paste the prompt into your Dot so it can add
    or reuse the private plugin and finish OAuth in its own browser. Dot enters
    the one-use code on the Paperclip connection page and chooses
-   **Connect Dot with pairing code**. Entering a valid code first shows the
+   **Allow agent connection**. Entering a valid code first shows the
    exact company, agent, permissions, and ongoing revocable access duration;
    previewing consumes no code and creates no grant. No operator sign-in in Dot’s browser is
    needed. The personal `/mcp/paperclip` connection
@@ -394,6 +394,12 @@ attachment and workspace downloads cannot bypass these settings; use the scoped
 read tools. Raw asset reads and uploads are limited to API captures and output
 artifacts from the current run. API uploads from workspace paths require the
 workspace grant and the same confined root as workspace tools.
+
+### Dot's own tools and task scope
+
+Dot should use its own available tools, apps, plugins, skills, and capabilities to complete each Paperclip assignment or message, then return the result to Paperclip. For example, Dot can use a Slack connection already available in ChatGPT even when Slack is absent from the Paperclip agent's assigned app catalog. The assignment catalog governs Paperclip calls through `paperclip_dot_tool`; it does not enumerate or disable Dot's native tools. Each tool retains its own permissions and approval requirements. Paperclip company, agent, task, and denial boundaries remain in force. Native tools cannot substitute another Paperclip identity or bypass a denied Paperclip operation.
+
+Setup and qualification restrictions are local to their stated scope. Test prompts should say, for example, "For this qualification task only, send Paperclip operations through this test connection. After this test, use your normal available tools and connections for later requests." Avoid "use only this plugin" without naming the task and duration. Do not carry a completed test's restriction into later comments or messages. The copy prompts, external-agent onboarding document, Dot event and capability instructions, and Runner assignment instructions all make this distinction.
 
 A plugin upgraded during a running Dot conversation can retain an old top-level
 tool catalog. Refresh its tools in ChatGPT plugin settings and reattach it.
