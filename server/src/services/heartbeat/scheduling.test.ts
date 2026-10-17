@@ -226,7 +226,8 @@ describe.skipIf(!postgres.supported)("heartbeat scheduling database boundary", (
     expect(await f.scheduler.tickTimers(now)).toEqual({ checked: 2, enqueued: 2, skipped: 0 });
     expect(f.deps.claimDueTimerHeartbeat).toHaveBeenCalledWith(expect.objectContaining({ id: f.agent.id }), now, 60);
     expect(f.deps.enqueueWakeup).toHaveBeenCalledWith(f.agent.id, expect.objectContaining({
-      source: "timer", reason: "heartbeat_timer", contextSnapshot: expect.objectContaining({ timerClaimWasFirstHeartbeat: true }),
+      source: "timer", reason: "heartbeat_timer",
+      contextSnapshot: expect.objectContaining({ timerClaimWasFirstHeartbeat: true, issueId: f.issue.id, taskId: f.issue.id }),
     }));
   });
 
@@ -252,6 +253,31 @@ describe.skipIf(!postgres.supported)("heartbeat scheduling database boundary", (
     expect(f.deps.claimDueTimerHeartbeat).not.toHaveBeenCalled();
     await db.update(agents).set({ status: "idle" }).where(eq(agents.id, f.agent.id));
     expect(await f.scheduler.tickTimers(now)).toEqual({ checked: 1, enqueued: 1, skipped: 0 });
+  });
+
+  // Regression: an unscoped timer wake could check out its assigned issue but
+  // then fail every PATCH/comment with cross_issue_influence_run_context_required.
+  // The wake must carry the eligible issue as its source snapshot.
+  it("scopes the timer wake to the agent's eligible issue", async () => {
+    const f = await fixture();
+    enableTimer(f.deps);
+    await db.update(issues).set({ monitorNextCheckAt: null }).where(eq(issues.id, f.issue.id));
+    expect(await f.scheduler.tickTimers(now)).toEqual({ checked: 1, enqueued: 1, skipped: 0 });
+    expect(f.deps.enqueueWakeup).toHaveBeenCalledWith(f.agent.id, expect.objectContaining({
+      source: "timer", reason: "heartbeat_timer",
+      contextSnapshot: expect.objectContaining({ issueId: f.issue.id, taskId: f.issue.id }),
+    }));
+  });
+
+  it("leaves the timer wake unscoped when the agent has no eligible issue", async () => {
+    const f = await fixture();
+    enableTimer(f.deps);
+    await db.update(issues).set({ monitorNextCheckAt: null, status: "done" }).where(eq(issues.id, f.issue.id));
+    expect(await f.scheduler.tickTimers(now)).toEqual({ checked: 1, enqueued: 1, skipped: 0 });
+    const timerCall = f.deps.enqueueWakeup.mock.calls.find(call => call[1]?.reason === "heartbeat_timer");
+    expect(timerCall).toBeDefined();
+    expect(timerCall![1]!.contextSnapshot?.issueId).toBeUndefined();
+    expect(timerCall![1]!.contextSnapshot?.taskId).toBeUndefined();
   });
 
   it("recovers active goals with stable revision-based admission keys", async () => {
