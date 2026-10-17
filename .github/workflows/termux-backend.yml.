@@ -1,0 +1,40 @@
+name: Termux Backend Build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout Paperclip
+        uses: actions/checkout@v4
+        with:
+          ref: fix/render-production-workspace-exports
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9.15.4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile --ignore-scripts
+
+      - name: Build workspace
+        run: |
+          pnpm run preflight:workspace-links
+          pnpm --filter @paperclipai/shared build
+          pnpm --filter @paperclipai/db build
+          pnpm --filter @paperclipai/plugin-sdk build
+          pnpm --filter @paperclipai/paperclip-runner build
+          pnpm --filter @paperclipai/server build
