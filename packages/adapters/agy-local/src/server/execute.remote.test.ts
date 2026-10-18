@@ -160,6 +160,13 @@ describe("agy-local execute (remote execution)", () => {
               ),
           });
         }
+        const mcpConfigAsset = input.assets?.find((a: any) => a.key === "mcp-config");
+        if (mcpConfigAsset?.restore) {
+          await mcpConfigAsset.restore({
+            assetDir: "/remote/runtime/assets/mcp-config",
+            readFile: async () => Buffer.from(""),
+          });
+        }
       },
     }));
   });
@@ -589,10 +596,10 @@ describe("agy-local execute (remote execution)", () => {
     });
     const restoreCommands = (vi.mocked(runAdapterExecutionTargetShellCommand).mock.calls as unknown as unknown[][])
       .map((call) => String(call[2]));
-    expect(
-      restoreCommands.some(
-        (command) => command.includes("mv") && command.includes("mcp_config.json.paperclip-backup-run-remote-mcp-restore"),
-      ),
-    ).toBe(true);
+    const restoreCommand = restoreCommands.find((cmd) => cmd.includes("mcp_config.json.paperclip-backup-run-remote-mcp-restore"));
+    expect(restoreCommand).toBeDefined();
+    expect(restoreCommand).toContain("readlink");
+    expect(restoreCommand).toContain("mv");
+    expect(restoreCommand).toContain("rm -rf");
   });
 });

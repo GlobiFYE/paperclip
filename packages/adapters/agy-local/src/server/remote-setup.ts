@@ -247,13 +247,14 @@ export async function prepareAgyRemoteRun(
       // SSH targets remoteHomeDir is their real home, not a private one).
       // Preserve a pre-existing file first and put it back during workspace
       // restore, so servers configured only on the remote machine survive
-      // the run. The restore is registered before the link runs, so a
-      // setup failure after this point restores it too.
+      // the run. To prevent concurrent runs from deleting each other's active
+      // tools, teardown only replaces or deletes targetMcpConfig if this run
+      // is still the one pointing targetMcpConfig at stagedMcpFile.
       restoreRemoteMcpConfig = async () => {
         await runAdapterExecutionTargetShellCommand(
           runId,
           executionTarget,
-          `if [ -e ${JSON.stringify(backupMcpConfig)} ] || [ -L ${JSON.stringify(backupMcpConfig)} ]; then rm -f ${JSON.stringify(targetMcpConfig)}; mv ${JSON.stringify(backupMcpConfig)} ${JSON.stringify(targetMcpConfig)}; elif [ -L ${JSON.stringify(targetMcpConfig)} ] && [ "$(readlink ${JSON.stringify(targetMcpConfig)})" = ${JSON.stringify(stagedMcpFile)} ]; then rm -f ${JSON.stringify(targetMcpConfig)}; elif [ -f ${JSON.stringify(targetMcpConfig)} ] && cmp -s ${JSON.stringify(targetMcpConfig)} ${JSON.stringify(stagedMcpFile)}; then rm -f ${JSON.stringify(targetMcpConfig)}; fi`,
+          `if [ -L ${JSON.stringify(targetMcpConfig)} ] && [ "$(readlink ${JSON.stringify(targetMcpConfig)})" = ${JSON.stringify(stagedMcpFile)} ] || ([ -f ${JSON.stringify(targetMcpConfig)} ] && cmp -s ${JSON.stringify(targetMcpConfig)} ${JSON.stringify(stagedMcpFile)}); then if [ -e ${JSON.stringify(backupMcpConfig)} ] || [ -L ${JSON.stringify(backupMcpConfig)} ]; then rm -f ${JSON.stringify(targetMcpConfig)}; mv ${JSON.stringify(backupMcpConfig)} ${JSON.stringify(targetMcpConfig)}; else rm -f ${JSON.stringify(targetMcpConfig)}; fi; else rm -rf ${JSON.stringify(backupMcpConfig)}; fi`,
           { cwd: effectiveExecutionCwd, env, timeoutSec, graceSec, onLog },
         ).catch(() => undefined);
       };
