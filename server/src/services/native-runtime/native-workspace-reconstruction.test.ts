@@ -13,16 +13,29 @@ import { deliverReconciledExecutions } from "../execution-recovery-resolution.js
 import { heartbeatService } from "../heartbeat.js";
 import { remoteTerminationReceipt } from "../remote-execution-termination.js";
 import { reconstructNativeWorkspace } from "./native-workspace-reconstruction.js";
+import { createRunDispatch } from "../../modules/run-dispatch/index.js";
+import { drainHeartbeatRunsToQuiescence } from "../../__tests__/helpers/drain-heartbeat-runs.js";
+const providerExecute = vi.hoisted(() => vi.fn(async () => ({ exitCode: 0, signal: null, timedOut: false,
+  errorMessage: null, summary: "Bounded reconstruction completed.", provider: "test", model: "test" })));
+vi.mock("../../adapters/index.js", async () => ({
+  ...await vi.importActual<typeof import("../../adapters/index.js")>("../../adapters/index.js"),
+  getServerAdapter: () => ({ supportsLocalAgentJwt: false, execute: providerExecute }),
+}));
 
 describe("reconstruction after confirmed native workspace loss", () => {
   let temporary: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
   let db: ReturnType<typeof createDb>;
+  let runningHeartbeat: ReturnType<typeof heartbeatService> | null = null;
   beforeAll(async () => {
     temporary = await startEmbeddedPostgresTestDatabase("workspace-reconstruction-");
     db = createDb(temporary.connectionString);
   }, 30_000);
   afterAll(async () => { await temporary.cleanup(); });
-  afterEach(async () => { await db.transaction(async tx => {
+  afterEach(async () => {
+    if (runningHeartbeat) await drainHeartbeatRunsToQuiescence(db, runningHeartbeat);
+    runningHeartbeat = null;
+    providerExecute.mockClear();
+    await db.transaction(async tx => {
     await tx.execute(sql`set local client_min_messages = warning`);
     await tx.execute(sql`truncate companies cascade`);
   }); });
@@ -143,4 +156,67 @@ describe("reconstruction after confirmed native workspace loss", () => {
     expect((await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, f.actionId)))[0].evidence).toMatchObject({ continuationDelivery: "delivered", continuationRunId: successorId });
     expect(await getExecutionBlocker(db, f.companyId, f.issueId)).toBeNull();
   });
+  it.each(["unchanged", "blocked", "attachment", "paused", "forged_successor"] as const)("rechecks a queued reconstruction at the final provider handoff: %s", async kind => {
+    const f = await seed();
+    await reconstructNativeWorkspace(f);
+    await db.insert(heartbeatRuns).values({ companyId: f.companyId, agentId: f.agentId, status: "running" });
+    const heartbeat = heartbeatService(db, { runtimeEnv: {} });
+    await deliverReconciledExecutions(db, heartbeat.wakeup);
+    const [action] = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, f.actionId));
+    const successorId = String(action.evidence.continuationRunId);
+    expect(successorId).not.toBe("undefined");
+    await db.update(heartbeatRuns).set({ status: "running" }).where(eq(heartbeatRuns.id, successorId));
+    await db.update(issues).set({ status: "in_progress", executionRunId: successorId }).where(eq(issues.id, f.issueId));
+    if (kind === "blocked") await db.update(issues).set({ status: "blocked" }).where(eq(issues.id, f.issueId));
+    if (kind === "attachment") await db.delete(issueAttachments).where(eq(issueAttachments.id, f.attachmentId));
+    if (kind === "paused") await db.update(agents).set({ status: "paused" }).where(eq(agents.id, f.agentId));
+    if (kind === "forged_successor") await db.update(issueRecoveryActions).set({ evidence: { ...action.evidence, continuationRunId: randomUUID() } }).where(eq(issueRecoveryActions.id, f.actionId));
+    const dispatch = vi.fn(async () => "provider entered");
+    const outcome = await createRunDispatch(db).dispatchResolvedInteractionIfCurrent({ companyId: f.companyId,
+      runId: successorId, expectedStatus: "running", dispatch });
+    expect(outcome.dispatched).toBe(kind === "unchanged");
+    expect(dispatch).toHaveBeenCalledTimes(kind === "unchanged" ? 1 : 0);
+    if (!outcome.dispatched) expect(outcome.cancellation).toMatchObject({ outcome: "cancelled" });
+  });
+  it.each([false, true])("runs the assembled heartbeat without overwriting a block after claim: %s", async blockAfterClaim => {
+    const f = await seed();
+    await db.update(agents).set({ adapterType: "codex_local" }).where(eq(agents.id, f.agentId));
+    await reconstructNativeWorkspace(f);
+    const [busy] = await db.insert(heartbeatRuns).values({ companyId: f.companyId, agentId: f.agentId, status: "running" }).returning();
+    const heartbeat = runningHeartbeat = heartbeatService(db, { runtimeEnv: { PAPERCLIP_IN_WORKTREE: "false" } });
+    await deliverReconciledExecutions(db, heartbeat.wakeup);
+    const [action] = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, f.actionId));
+    const successorId = String(action.evidence.continuationRunId);
+    expect(successorId).not.toBe("undefined");
+    if (blockAfterClaim) await db.execute(sql.raw(`
+      create or replace function block_reconstruction_after_claim() returns trigger as $$
+      begin
+        if NEW.id = '${successorId}'::uuid and NEW.status = 'running' then
+          update issues set status = 'blocked' where id = '${f.issueId}'::uuid;
+        end if;
+        return NEW;
+      end; $$ language plpgsql;
+      create trigger block_reconstruction_after_claim after update of status on heartbeat_runs
+      for each row execute function block_reconstruction_after_claim();
+    `));
+    try {
+      await db.update(heartbeatRuns).set({ status: "succeeded", finishedAt: new Date() }).where(eq(heartbeatRuns.id, busy.id));
+      await heartbeat.resumeQueuedRuns();
+      const deadline = Date.now() + 15000;
+      let current;
+      do {
+        [current] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, successorId));
+        if (["succeeded", "failed", "cancelled"].includes(current.status)) break;
+        await new Promise(resolve => setTimeout(resolve, 25));
+      } while (Date.now() < deadline);
+      expect(providerExecute).toHaveBeenCalledTimes(blockAfterClaim ? 0 : 1);
+      if (blockAfterClaim) {
+        expect(current).toMatchObject({ status: "cancelled", errorCode: "execution_reconciliation_required" });
+        expect((await db.select().from(issues).where(eq(issues.id, f.issueId)))[0].status).toBe("blocked");
+      } else expect(current.status).toBe("succeeded");
+    } finally {
+      if (blockAfterClaim) await db.execute(sql`drop trigger block_reconstruction_after_claim on heartbeat_runs; drop function block_reconstruction_after_claim()`);
+      await db.update(issues).set({ status: "done" }).where(eq(issues.id, f.issueId));
+    }
+  }, 30_000);
 });

@@ -2,6 +2,7 @@ import { useId, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import type { ExecutionBlocker } from "@paperclipai/shared";
 import { issuesApi } from "../api/issues";
+import { queryKeys } from "../lib/queryKeys";
 import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Label } from "./ui/label";
@@ -17,12 +18,13 @@ export function WorkspaceReconstructionRecovery({ issueId, blocker, canManage, o
   const [outcomeEvidence, setOutcomeEvidence] = useState("");
   const [actionOutcome, setActionOutcome] = useState<"completed" | "not_performed" | "mixed">("mixed");
   const [acknowledged, setAcknowledged] = useState(false);
-  const files = useQuery({ queryKey: ["workspace-reconstruction-attachments", issueId],
+  const files = useQuery({ queryKey: queryKeys.issues.attachments(issueId),
     queryFn: () => issuesApi.listAttachments(issueId), enabled: canManage });
+  const currentSelection = selected.filter(id => files.data?.some(file => file.id === id));
   const submit = useMutation({
     mutationFn: () => issuesApi.reconstructWorkspace(issueId, {
       actionId: blocker.recoveryActionId!, runId: blocker.runId!, expectedStatusVersion: blocker.workspaceRecoveryStatusVersion!,
-      attachmentIds: selected, missingWork: missingWork.trim(), actionOutcome, outcomeEvidence: outcomeEvidence.trim(), acknowledgeLostWork: true,
+      attachmentIds: currentSelection, missingWork: missingWork.trim(), actionOutcome, outcomeEvidence: outcomeEvidence.trim(), acknowledgeLostWork: true,
     }), onSuccess: onRecorded,
   });
   return <details className="w-full">
@@ -55,7 +57,7 @@ export function WorkspaceReconstructionRecovery({ issueId, blocker, canManage, o
         </div>
       </fieldset>
       <div className="flex justify-end">
-        <Button disabled={submit.isPending || !acknowledged || selected.length === 0 || missingWork.trim().length < 20 || outcomeEvidence.trim().length < 20}
+        <Button disabled={submit.isPending || !acknowledged || currentSelection.length === 0 || missingWork.trim().length < 20 || outcomeEvidence.trim().length < 20}
           onClick={() => submit.mutate()}>{submit.isPending ? "Queuing…" : "Rebuild and continue"}</Button>
       </div>
       {files.isError && <p role="alert" className="text-destructive">{files.error.message}</p>}

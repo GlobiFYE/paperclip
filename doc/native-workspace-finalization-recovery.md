@@ -380,3 +380,6 @@ Repeated submissions adopt the original intent. Normal admission rechecks source
 identity, attachments, authority, budgets, holds and task eligibility. It preserves
 the retry count and does not grant a new work window or replay completed actions.
 The agent must verify the selected attachments before rebuilding files.
+Queued successors recheck their exact reconstruction receipt, sources and current
+execution gates when claimed and immediately before provider handoff. A later
+human block cannot be overwritten by automatic checkout.

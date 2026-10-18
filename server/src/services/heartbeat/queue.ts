@@ -3075,6 +3075,7 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
                 companyId: issue.companyId, issueId: issue.id, runId: sourceRunId, actionId,
               });
               reconciledRestoreRetryCount = executionFailureRetryCount(reconciledRun!);
+              enrichedContextSnapshot.workspaceReconstructionActionId = action.id;
             }
             if (hasWorkspaceRestoreFailure(reconciledRun?.resultJson)) {
               if ((readNonEmptyString(decision.workspaceRepairEvidence)?.length ?? 0) < 20)

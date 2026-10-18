@@ -100,13 +100,13 @@ export async function getExecutionBlocker(db: Db, companyId: string, issueId: st
   )).limit(1) : [];
   const withoutWorkspace = Boolean(run?.driverKind === "grok_bot_mcp" && nativeRunHasNoWorkspaceAccess(run));
   const workspaceRepairRequired = Boolean(restoreHold && !withoutWorkspace);
-  const exportSource = readNativeWorkspaceSyncReference(run?.runnerProfileJson?.nativeWorkspaceSync);
+  const reconstructableExport = ["native_workspace_sync_out_unrecoverable", "native_workspace_sync_out_retry_exhausted"].includes(action.cause);
+  const exportSource = reconstructableExport ? readNativeWorkspaceSyncReference(run?.runnerProfileJson?.nativeWorkspaceSync) : null;
   const [exportLease] = exportSource ? await db.select().from(environmentLeases).where(and(
     eq(environmentLeases.companyId, companyId), eq(environmentLeases.heartbeatRunId, run!.id), eq(environmentLeases.id, exportSource.leaseId),
     eq(environmentLeases.providerLeaseId, exportSource.providerLeaseId),
   )).limit(1) : [];
-  const canReconstructWorkspace = Boolean(["native_workspace_sync_out_unrecoverable", "native_workspace_sync_out_retry_exhausted"].includes(action.cause)
-    && exportLease && hasRemoteTerminationReceipt(exportLease)
+  const canReconstructWorkspace = Boolean(exportLease && hasRemoteTerminationReceipt(exportLease)
     && (exportLease.metadata?.remoteExecutionTermination as { state?: string } | undefined)?.state === "destroyed"
     && !action.evidence.executionReconciliation && conversation?.status === "blocked" && conversation.assigneeAgentId === run?.agentId);
   const reconstructionPending = Boolean((action.evidence.executionReconciliation as { workspaceReconstruction?: unknown } | undefined)?.workspaceReconstruction

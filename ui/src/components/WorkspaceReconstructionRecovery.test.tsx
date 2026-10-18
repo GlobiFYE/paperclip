@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { WorkspaceReconstructionRecovery } from "./WorkspaceReconstructionRecovery";
+import { queryKeys } from "../lib/queryKeys";
 const api = vi.hoisted(() => ({ listAttachments: vi.fn(), reconstructWorkspace: vi.fn() }));
 vi.mock("../api/issues", () => ({ issuesApi: api }));
 
@@ -57,5 +58,17 @@ describe("rebuild a destroyed workspace from partial sources", () => {
   it("offers no reconstruction form to a reader without runtime management authority", async () => {
     await mount(false); expect(container.querySelector("button")).toBeNull();
     expect(api.listAttachments).not.toHaveBeenCalled(); expect(api.reconstructWorkspace).not.toHaveBeenCalled();
+  });
+  it("refreshes uploaded sources with the task attachment cache and drops deleted selections", async () => {
+    await mount(); await fill();
+    await act(async () => client.setQueryData(queryKeys.issues.attachments("task"), [
+      { id: "new-source", originalFilename: "uploaded-source.ts", byteSize: 200 },
+    ]));
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(container.textContent).toContain("uploaded-source.ts");
+    expect(container.textContent).not.toContain("baseline.ts");
+    const button = Array.from(container.querySelectorAll("button")).find(button => button.textContent === "Rebuild and continue")!;
+    expect(button.disabled).toBe(true);
+    expect(api.reconstructWorkspace).not.toHaveBeenCalled();
   });
 });
