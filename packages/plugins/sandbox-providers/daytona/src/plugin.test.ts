@@ -81,6 +81,11 @@ describe("Daytona read-only resource inspection", () => {
 });
 
 describe("Daytona idle eligibility", () => {
+  const params = { driverKey: "daytona", companyId: "fixture-company", environmentId: "fixture-environment",
+    config: { apiKey: "fixture-not-a-key", reuseLease: true } };
+  const signal = new AbortController().signal;
+  beforeEach(() => { mockCreate.mockReset(); mockGet.mockReset(); __resetDaytonaSandboxHandleCacheForTest(); });
+  afterEach(() => { vi.restoreAllMocks(); __resetDaytonaSandboxHandleCacheForTest(); });
   it("permits a fresh unused provider but remains conservative after provider access", async () => {
     __resetDaytonaSandboxHandleCacheForTest();
     const signal = new AbortController().signal;
@@ -92,6 +97,70 @@ describe("Daytona idle eligibility", () => {
     }).catch(() => undefined);
     expect(await plugin.definition.onIdleDrain!(signal)).toBe("present");
     __resetDaytonaSandboxHandleCacheForTest();
+  });
+
+  it("permits idle after a probe's exact sandbox deletion succeeds", async () => {
+    const sandbox = createMockSandbox();
+    mockCreate.mockResolvedValue(sandbox);
+    expect((await plugin.definition.onEnvironmentProbe!(params)).ok).toBe(true);
+    expect(sandbox.delete).toHaveBeenCalledTimes(1);
+    expect(await plugin.definition.onIdleDrain!(signal)).toBe("none");
+  });
+
+  it("retains a failed probe deletion until exact provider cleanup succeeds", async () => {
+    const sandbox = createMockSandbox();
+    sandbox.delete.mockRejectedValueOnce(new Error("delete unavailable"));
+    mockCreate.mockResolvedValue(sandbox); mockGet.mockResolvedValue(sandbox);
+    await plugin.definition.onEnvironmentProbe!(params);
+    expect(await plugin.definition.onIdleDrain!(signal)).toBe("present");
+    await plugin.definition.onEnvironmentDestroyLease!({ ...params, providerLeaseId: sandbox.id });
+    expect(await plugin.definition.onIdleDrain!(signal)).toBe("none");
+  });
+
+  it.each(["stop", "release", "retain", "destroy"])("clears verified %s without clearing another account", async kind => {
+    const first = createMockSandbox({ id: "sandbox-a" });
+    const second = createMockSandbox({ id: "sandbox-b" });
+    mockCreate.mockResolvedValueOnce(first).mockResolvedValueOnce(second);
+    first.delete.mockRejectedValueOnce(new Error("deferred"));
+    second.delete.mockRejectedValueOnce(new Error("deferred"));
+    await plugin.definition.onEnvironmentProbe!(params);
+    const other = { ...params, config: { ...params.config, apiKey: "fixture-other-account" } };
+    await plugin.definition.onEnvironmentProbe!(other);
+    mockGet.mockResolvedValue(first);
+    const cleanup = { ...params, providerLeaseId: first.id };
+    if (kind === "stop") await plugin.definition.onEnvironmentStopLease!(cleanup);
+    else if (kind === "release") await plugin.definition.onEnvironmentReleaseLease!(cleanup);
+    else if (kind === "retain") await plugin.definition.onEnvironmentReleaseLease!({ ...cleanup, resourceDisposition: "stop_and_retain" });
+    else await plugin.definition.onEnvironmentDestroyLease!(cleanup);
+    expect(await plugin.definition.onIdleDrain!(signal)).toBe("present");
+    mockGet.mockResolvedValue(second);
+    await plugin.definition.onEnvironmentDestroyLease!({ ...other, providerLeaseId: second.id });
+    expect(await plugin.definition.onIdleDrain!(signal)).toBe("none");
+  });
+
+  it("keeps a pending create after exact cleanup until it settles and absence is re-proven", async () => {
+    let finishCreate!: (sandbox: ReturnType<typeof createMockSandbox>) => void;
+    const sandbox = createMockSandbox();
+    mockCreate.mockImplementation(() => new Promise(resolve => { finishCreate = resolve; }));
+    const probe = plugin.definition.onEnvironmentProbe!(params);
+    await vi.waitFor(() => expect(finishCreate).toBeTypeOf("function"));
+    mockGet.mockRejectedValue(new MockDaytonaNotFoundError("gone"));
+    await plugin.definition.onEnvironmentDestroyLease!({ ...params, providerLeaseId: sandbox.id });
+    expect(await plugin.definition.onIdleDrain!(signal)).toBe("present");
+    // The late create must finish its own deletion. Its tracked raw request
+    // cannot be confused with a completed RPC or another resource's receipt.
+    finishCreate(sandbox); await probe;
+    expect(await plugin.definition.onIdleDrain!(signal)).toBe("none");
+  });
+
+  it("can clear verified absence after a failed deletion without starting the sandbox", async () => {
+    const sandbox = createMockSandbox(); sandbox.delete.mockRejectedValue(new Error("unavailable"));
+    mockCreate.mockResolvedValue(sandbox);
+    await plugin.definition.onEnvironmentProbe!(params);
+    mockGet.mockRejectedValue(new MockDaytonaNotFoundError("gone"));
+    await plugin.definition.onEnvironmentInspectLease!({ ...params, providerLeaseId: sandbox.id });
+    expect(await plugin.definition.onIdleDrain!(signal)).toBe("none");
+    expect(sandbox.start).not.toHaveBeenCalled();
   });
 });
 
@@ -4000,6 +4069,7 @@ describe("Daytona sandbox provider plugin", () => {
       try {
         await vi.waitFor(() => expect(sandbox.stop).toHaveBeenCalledTimes(1), { timeout: 500 });
         await expect(cancellation).resolves.toEqual({ providerLeaseId: "lease-a", state: "stopped" });
+        expect(await plugin.definition.onIdleDrain!(new AbortController().signal)).toBe("present");
         await expect(plugin.definition.onEnvironmentExecute!(execParams("lease-a"))).rejects.toThrow(/no longer active/);
         await expect(plugin.definition.onEnvironmentResumeLease!({
           driverKey: "daytona", companyId: "company-1", environmentId: "env-1",
@@ -4011,6 +4081,15 @@ describe("Daytona sandbox provider plugin", () => {
         await execute;
         await cancellation;
       }
+      // Completion of the old command is not a second stop receipt. Re-read
+      // the exact resource after it settles before clearing worker evidence.
+      expect(await plugin.definition.onIdleDrain!(new AbortController().signal)).toBe("present");
+      sandbox.state = "stopped";
+      await plugin.definition.onEnvironmentInspectLease!({
+        driverKey: "daytona", companyId: "company-1", environmentId: "env-1",
+        providerLeaseId: "lease-a", config: { apiKey: "host-key" },
+      });
+      expect(await plugin.definition.onIdleDrain!(new AbortController().signal)).toBe("none");
     });
 
     it("does not report termination when the provider rejects Stop", async () => {

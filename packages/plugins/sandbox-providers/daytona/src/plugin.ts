@@ -51,6 +51,7 @@ import type {
 import { performSyncIn, performSyncOut, withProviderSpan } from "./file-sync.js";
 import { DEFAULT_DAYTONA_OPERATION_TIMEOUT_MS } from "./manifest.js";
 import { observeSessionStreamExit } from "./session-stream-exit.js";
+import { DaytonaIdleActivity, trackDaytonaHooks } from "./idle-activity.js";
 
 // The Claude `setup-token` login pseudo-terminal (PTY) session for this provider.
 // The session runs the login command on a real pseudo-terminal, streams the
@@ -112,10 +113,9 @@ let timingNow: () => number = () => Date.now();
 // read the tracer through `getPluginTracer()`. Before `setup` runs (or in a
 // test) the tracer is a no-op, so a span never throws.
 let pluginContext: PluginContext | null = null;
-// Provider deadlines and terminal close failures do not prove remote work
-// stopped. Until those paths provide complete cleanup receipts, only a worker
-// which has never contacted the provider can opt into automatic idle sleep.
-let providerUsed = false;
+// A deadline does not settle the underlying request. Keep both that request
+// and its allocation until completion and scoped provider cleanup are proven.
+const idleActivity = new DaytonaIdleActivity();
 
 /**
  * Return the plugin tracer. It is the injected `ctx.tracer` after `setup`, or a
@@ -321,8 +321,7 @@ function resolveApiKey(config: DaytonaDriverConfig): string {
   return envApiKey;
 }
 
-function createDaytonaClient(config: DaytonaDriverConfig, readOnly = false): Daytona {
-  if (!readOnly) providerUsed = true;
+function createDaytonaClient(config: DaytonaDriverConfig): Daytona {
   const clientConfig: DaytonaConfig = {
     apiKey: resolveApiKey(config),
   };
@@ -464,14 +463,14 @@ async function withLivenessTimeout<T>(
   run: () => Promise<T>,
 ): Promise<T> {
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    return run();
+    return idleActivity.track(run);
   }
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new SandboxLivenessTimeoutError(operation, timeoutMs)), timeoutMs);
   });
   try {
-    return await Promise.race([run(), deadline]);
+    return await Promise.race([idleActivity.track(run), deadline]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
   }
@@ -987,10 +986,13 @@ async function createSandbox(
     attemptId, labels, accountFingerprint: sandboxAccountDiscriminator(config),
   };
   options.onCreateAttempt?.(cleanup);
+  const allocation = idleActivity.resource(providerActivityKey(params, config, name), true);
   try {
-    return await client.create(createParams, {
+    const sandbox = await idleActivity.track(() => client.create(createParams, {
       timeout: toTimeoutSeconds(config.timeoutMs),
-    });
+    }));
+    idleActivity.observe(allocation, providerActivityKey(params, config, sandbox.id));
+    return sandbox;
   } catch (createError) {
     // Observe the create failure before compensating deletion can stall or fail.
     const diagnostic = options.onCreateFailure?.();
@@ -998,7 +1000,7 @@ async function createSandbox(
       // A not-found lookup after an uncertain create is not a deletion receipt:
       // the provider may still materialize the request. Keep the name in the
       // error so cleanup can be reconciled rather than declaring success.
-      await destroyFailedCreation(config, cleanup);
+      await destroyFailedCreation(config, cleanup, params.driverKey);
     } catch (cleanupError) {
       throw new PluginEnvironmentCreationCleanupError([createError, cleanupError],
         `Daytona sandbox creation failed; cleanup could not be confirmed for ${name}`, cleanup, diagnostic);
@@ -1013,6 +1015,7 @@ async function createSandbox(
 // conclusive, even if the deletion receipt or database update was lost.
 async function destroyFailedCreation(
   config: DaytonaDriverConfig, cleanup: PluginEnvironmentCreationCleanup,
+  driverKey: string,
   requireDurableObservation = false,
 ): Promise<void> {
   if (cleanup.providerLeaseId !== `paperclip-create-${cleanup.attemptId}` ||
@@ -1024,6 +1027,11 @@ async function destroyFailedCreation(
       (cleanup.runId !== undefined && cleanup.labels["paperclip-run-id"] !== cleanup.runId)) {
     throw new Error("Failed-create sandbox ownership does not match");
   }
+  const identity = { driverKey, companyId: cleanup.companyId, environmentId: cleanup.environmentId };
+  const allocation = idleActivity.resource(providerActivityKey(identity, config, cleanup.providerLeaseId), true);
+  if (cleanup.observedProviderLeaseId) {
+    idleActivity.observe(allocation, providerActivityKey(identity, config, cleanup.observedProviderLeaseId));
+  }
   const client = createDaytonaClient(config);
   let orphan: Sandbox;
   try {
@@ -1032,7 +1040,10 @@ async function destroyFailedCreation(
   } catch (error) {
     // A name that has never been observed may still materialize. An ID already
     // observed with exact ownership cannot materialize as a new allocation.
-    if (cleanup.observedProviderLeaseId && error instanceof DaytonaNotFoundError) return;
+    if (cleanup.observedProviderLeaseId && error instanceof DaytonaNotFoundError) {
+      idleActivity.confirm(providerActivityKey(identity, config, cleanup.observedProviderLeaseId), true);
+      return;
+    }
     throw error;
   }
   if ((cleanup.observedProviderLeaseId && orphan.id !== cleanup.observedProviderLeaseId) ||
@@ -1046,7 +1057,9 @@ async function destroyFailedCreation(
       throw new PluginEnvironmentCreationCleanupError([], "Persist observed sandbox identity before cleanup", cleanup);
     }
   }
+  idleActivity.observe(allocation, providerActivityKey(identity, config, orphan.id));
   await withLivenessTimeout("sandbox.failedCreateDelete", 15_000, () => orphan.delete(10, true));
+  idleActivity.confirm(providerActivityKey(identity, config, orphan.id));
 }
 
 // Daytona states reported as-is after a create deadline; any other is `other`.
@@ -1103,6 +1116,19 @@ type SandboxScope = {
   providerLeaseId: string;
   config: DaytonaDriverConfig;
 };
+
+function providerActivityKey(
+  identity: { driverKey: string; companyId: string; environmentId: string },
+  config: DaytonaDriverConfig,
+  providerLeaseId: string,
+): string {
+  return sandboxHandleCacheKey({ ...identity, config, providerLeaseId });
+}
+
+function confirmedTermination(scope: SandboxScope, state: "stopped" | "destroyed"): PluginEnvironmentTerminationReceipt {
+  idleActivity.confirm(sandboxHandleCacheKey(scope));
+  return { providerLeaseId: scope.providerLeaseId, state };
+}
 
 // Non-secret provider/account fingerprint. Uses the *resolved* key (config or
 // DAYTONA_API_KEY env fallback) so an env-provided credential is still scoped,
@@ -1188,6 +1214,7 @@ const sandboxHandleTeardownGates = (() => {
   const gates = new Map<string, SandboxHandleTeardownGate>();
 
   function begin(scope: SandboxScope): SandboxHandleTeardownGate {
+    idleActivity.resource(sandboxHandleCacheKey(scope));
     const key = sandboxHandleCacheKey(scope);
     const existing = gates.get(key);
     if (existing) {
@@ -1342,6 +1369,7 @@ async function withSandboxActivityGate<T>(
       if (!options.allowClosed && sandboxHandleLeaseAdmissionStates.isClosed(scope)) {
         throw new Error(`Daytona sandbox lease ${scope.providerLeaseId} is no longer active.`);
       }
+      idleActivity.resource(sandboxHandleCacheKey(scope));
       return await fn();
     } finally {
       sandboxHandleActivityGates.end(scope, activityGate);
@@ -1605,7 +1633,7 @@ const sandboxHandleSessionStore = (() => {
  * Not used in production.
  */
 export function __resetDaytonaSandboxHandleCacheForTest(): void {
-  providerUsed = false;
+  idleActivity.resetForTest();
   sandboxHandleCache.reset();
   sandboxHandleTeardownGates.reset();
   sandboxHandleActivityGates.reset();
@@ -1646,6 +1674,7 @@ async function getSandboxOrNull(scope: SandboxScope, options: SandboxLookupOptio
     return await getSandbox(scope, options);
   } catch (error) {
     if (error instanceof DaytonaNotFoundError) {
+      idleActivity.confirm(sandboxHandleCacheKey(scope), true);
       return null;
     }
     throw error;
@@ -2391,7 +2420,39 @@ async function closeDaytonaDuplexChannelsForLease(providerLeaseId: string): Prom
   await Promise.allSettled(matches.map(entry => entry.session.close()));
 }
 
-const plugin = definePlugin({
+async function stopLease(params: PluginEnvironmentReleaseLeaseParams): Promise<PluginEnvironmentTerminationReceipt> {
+  if (!params.providerLeaseId) throw new Error("Daytona stop requires an exact sandbox identity");
+  const config = parseDriverConfig(params.config);
+  const scope: SandboxScope = { driverKey: params.driverKey, companyId: params.companyId,
+    environmentId: params.environmentId, providerLeaseId: params.providerLeaseId, config };
+  const teardownGate = sandboxHandleTeardownGates.begin(scope);
+  sandboxHandleLeaseAdmissionStates.close(scope);
+  try {
+    const sandbox = await getSandboxOrNull(scope, { bypassTeardownGate: true });
+    if (!sandbox) throw new Error("Daytona retained sandbox is unavailable");
+    evictSandboxHandle(scope);
+    // Provider auto-delete can destroy a stopped sandbox without an explicit
+    // delete call. Confirm the provider disabled it before stopping saved work;
+    // the SDK setter also updates a local field, which is not sufficient proof.
+    const deadline = Math.min(config.livenessTimeoutMs, 30_000);
+    await withLivenessTimeout("sandbox.setAutoDeleteInterval", deadline, () => sandbox.setAutoDeleteInterval(-1));
+    await withLivenessTimeout("sandbox.refreshData", deadline, () => sandbox.refreshData());
+    if (sandbox.autoDeleteInterval !== -1) throw new Error("Daytona retention policy was not confirmed");
+    // An archive already has no live process and retains its filesystem.
+    // Daytona rejects Stop in this state; leave the confirmed archive cold.
+    if (sandbox.state !== "stopped" && sandbox.state !== "archived") {
+      await terminateAtProvider(scope, "sandbox.stop", () => sandbox.stop(Math.min(toTimeoutSeconds(config.timeoutMs), 30)));
+    }
+    sandboxHandleSessionStore.clear(scope);
+    await closeDaytonaDuplexChannelsForLease(params.providerLeaseId);
+    return confirmedTermination(scope, "stopped");
+  } finally {
+    sandboxHandleTeardownGates.end(scope, teardownGate);
+    evictSandboxHandle(scope);
+  }
+}
+
+const plugin = definePlugin(trackDaytonaHooks({
   async setup(ctx) {
     // Hoist the context to a module variable so the lifecycle hooks and the
     // file-sync helpers can read `ctx.tracer` — they have no closure over `ctx`.
@@ -2404,7 +2465,7 @@ const plugin = definePlugin({
   },
 
   async onIdleDrain() {
-    return providerUsed || daytonaLoginPtyByRoute.size > 0 || daytonaDuplexChannelByRoute.size > 0
+    return idleActivity.present() || daytonaLoginPtyByRoute.size > 0 || daytonaDuplexChannelByRoute.size > 0
       ? "present" : "none";
   },
 
@@ -2497,7 +2558,10 @@ const plugin = definePlugin({
           },
         };
       } finally {
-        await sandbox.delete(toTimeoutSeconds(config.timeoutMs)).catch(() => undefined);
+        await sandbox.delete(toTimeoutSeconds(config.timeoutMs)).then(
+          () => idleActivity.confirm(providerActivityKey(params, config, sandbox.id)),
+          () => undefined,
+        );
       }
     } catch (error) {
       return {
@@ -2633,6 +2697,7 @@ const plugin = definePlugin({
           cleanupInProgress = true;
           try {
             await sandbox.delete(toTimeoutSeconds(Math.max(1, deadline - Date.now())));
+            idleActivity.confirm(providerActivityKey(params, config, sandbox.id));
           } catch (cleanupError) {
             if (cleanup) {
               throw new PluginEnvironmentCreationCleanupError([error, cleanupError],
@@ -2651,7 +2716,7 @@ const plugin = definePlugin({
       return await Promise.race([
         // After the deadline only the timer settles the call: a late create
         // rejection cannot replace the timeout's ownership and observation.
-        acquire().catch((error: unknown) => timedOut ? new Promise<never>(() => undefined) : Promise.reject(error)),
+        idleActivity.track(acquire).catch((error: unknown) => timedOut ? new Promise<never>(() => undefined) : Promise.reject(error)),
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(() => { timedOut = true; void deadlineFailure().then(reject); }, budgetMs);
         }),
@@ -2782,43 +2847,13 @@ const plugin = definePlugin({
     );
   },
 
-  async onEnvironmentStopLease(params: PluginEnvironmentReleaseLeaseParams): Promise<PluginEnvironmentTerminationReceipt> {
-    if (!params.providerLeaseId) throw new Error("Daytona stop requires an exact sandbox identity");
-    const config = parseDriverConfig(params.config);
-    const scope: SandboxScope = { driverKey: params.driverKey, companyId: params.companyId,
-      environmentId: params.environmentId, providerLeaseId: params.providerLeaseId, config };
-    const teardownGate = sandboxHandleTeardownGates.begin(scope);
-    sandboxHandleLeaseAdmissionStates.close(scope);
-    try {
-      const sandbox = await getSandboxOrNull(scope, { bypassTeardownGate: true });
-      if (!sandbox) throw new Error("Daytona retained sandbox is unavailable");
-      evictSandboxHandle(scope);
-      // Provider auto-delete can destroy a stopped sandbox without an explicit
-      // delete call. Confirm the provider disabled it before stopping saved work;
-      // the SDK setter also updates a local field, which is not sufficient proof.
-      const deadline = Math.min(config.livenessTimeoutMs, 30_000);
-      await withLivenessTimeout("sandbox.setAutoDeleteInterval", deadline, () => sandbox.setAutoDeleteInterval(-1));
-      await withLivenessTimeout("sandbox.refreshData", deadline, () => sandbox.refreshData());
-      if (sandbox.autoDeleteInterval !== -1) throw new Error("Daytona retention policy was not confirmed");
-      // An archive already has no live process and retains its filesystem.
-      // Daytona rejects Stop in this state; leave the confirmed archive cold.
-      if (sandbox.state !== "stopped" && sandbox.state !== "archived") {
-        await terminateAtProvider(scope, "sandbox.stop", () => sandbox.stop(Math.min(toTimeoutSeconds(config.timeoutMs), 30)));
-      }
-      sandboxHandleSessionStore.clear(scope);
-      await closeDaytonaDuplexChannelsForLease(params.providerLeaseId);
-      return { providerLeaseId: params.providerLeaseId, state: "stopped" };
-    } finally {
-      sandboxHandleTeardownGates.end(scope, teardownGate);
-      evictSandboxHandle(scope);
-    }
-  },
+  onEnvironmentStopLease: stopLease,
 
   async onEnvironmentReleaseLease(
     params: PluginEnvironmentReleaseLeaseParams,
   ): Promise<PluginEnvironmentTerminationReceipt | void> {
     if (!params.providerLeaseId) return;
-    if (params.resourceDisposition === "stop_and_retain") return plugin.definition.onEnvironmentStopLease!(params);
+    if (params.resourceDisposition === "stop_and_retain") return stopLease(params);
     const config = parseDriverConfig(params.config);
     const scope: SandboxScope = {
       driverKey: params.driverKey,
@@ -2845,7 +2880,7 @@ const plugin = definePlugin({
         if (sandbox.state !== "stopped") await sandbox.stop(timeoutSeconds);
         sandboxHandleSessionStore.clear(scope);
         await closeDaytonaDuplexChannelsForLease(params.providerLeaseId);
-        return { providerLeaseId: params.providerLeaseId, state: "stopped" };
+        return confirmedTermination(scope, "stopped");
       }
       await drainSandboxBeforeTermination(sandbox, scope);
 
@@ -2861,10 +2896,10 @@ const plugin = definePlugin({
               `Failed to stop Daytona sandbox during lease release: ${formatErrorMessage(error)}. Attempting delete instead.`,
             );
             await terminateAtProvider(scope, "sandbox.delete", () => sandbox.delete(toTimeoutSeconds(config.timeoutMs), true));
-            return { providerLeaseId: params.providerLeaseId, state: "destroyed" };
+            return confirmedTermination(scope, "destroyed");
           }
         }
-        return { providerLeaseId: params.providerLeaseId, state: "stopped" };
+        return confirmedTermination(scope, "stopped");
       }
 
       if (config.archiveOnRelease) {
@@ -2874,7 +2909,7 @@ const plugin = definePlugin({
           }
           await sandbox.setAutoDeleteInterval(ARCHIVE_ON_RELEASE_AUTO_DELETE_MINUTES);
           await sandbox.archive();
-          return { providerLeaseId: params.providerLeaseId, state: "stopped" };
+          return confirmedTermination(scope, "stopped");
         } catch (error) {
           console.warn(
             `Failed to archive Daytona sandbox during lease release: ${formatErrorMessage(error)}. Falling back to delete.`,
@@ -2883,7 +2918,7 @@ const plugin = definePlugin({
       }
 
       await terminateAtProvider(scope, "sandbox.delete", () => sandbox.delete(toTimeoutSeconds(config.timeoutMs), true));
-      return { providerLeaseId: params.providerLeaseId, state: "destroyed" };
+      return confirmedTermination(scope, "destroyed");
     } finally {
       sandboxHandleTeardownGates.end(scope, teardownGate);
       evictSandboxHandle(scope);
@@ -2905,11 +2940,17 @@ const plugin = definePlugin({
     // Read directly from the provider. The setup-status path and cached lease
     // reconnect path can start a stopped sandbox, so neither is an observation.
     try {
-      const sandbox = await createDaytonaClient(config, true).get(params.providerLeaseId);
+      const sandbox = await createDaytonaClient(config).get(params.providerLeaseId);
       if (sandbox.id !== params.providerLeaseId) return { providerLeaseId: params.providerLeaseId, state: "unknown" };
+      if (sandbox.state === "stopped" || sandbox.state === "archived") {
+        idleActivity.confirm(providerActivityKey(params, config, sandbox.id), true);
+      }
       return { providerLeaseId: sandbox.id, state: sandbox.state === "stopped" ? "stopped" : "active" };
     } catch (error) {
-      if (error instanceof DaytonaNotFoundError) return { providerLeaseId: params.providerLeaseId, state: "destroyed" };
+      if (error instanceof DaytonaNotFoundError) {
+        idleActivity.confirm(providerActivityKey(params, config, params.providerLeaseId), true);
+        return { providerLeaseId: params.providerLeaseId, state: "destroyed" };
+      }
       throw error;
     }
   },
@@ -2927,7 +2968,7 @@ const plugin = definePlugin({
           cleanup.providerLeaseId !== params.providerLeaseId) {
         throw new Error("Failed-create sandbox cleanup scope does not match");
       }
-      await destroyFailedCreation(config, cleanup, true);
+      await destroyFailedCreation(config, cleanup, params.driverKey, true);
       return { providerLeaseId: params.providerLeaseId, state: "destroyed" };
     }
     const scope: SandboxScope = {
@@ -2948,7 +2989,7 @@ const plugin = definePlugin({
       evictSandboxHandle(scope);
       await drainSandboxBeforeTermination(sandbox, scope);
       await terminateAtProvider(scope, "sandbox.delete", () => sandbox.delete(toTimeoutSeconds(config.timeoutMs), true));
-      return { providerLeaseId: params.providerLeaseId, state: "destroyed" };
+      return confirmedTermination(scope, "destroyed");
     } finally {
       sandboxHandleTeardownGates.end(scope, teardownGate);
       evictSandboxHandle(scope);
@@ -3023,7 +3064,10 @@ const plugin = definePlugin({
         }),
       };
     } catch (error) {
-      await sandbox.delete(toTimeoutSeconds(config.timeoutMs)).catch(() => undefined);
+      await sandbox.delete(toTimeoutSeconds(config.timeoutMs)).then(
+        () => idleActivity.confirm(providerActivityKey(params, config, sandbox.id)),
+        () => undefined,
+      );
       throw error;
     }
   },
@@ -3187,6 +3231,7 @@ const plugin = definePlugin({
       await sandboxHandleActivityGates.waitForIdle(scope);
       await teardownSession(sandbox, scope);
       await sandbox.delete(toTimeoutSeconds(config.timeoutMs));
+      idleActivity.confirm(sandboxHandleCacheKey(scope));
       return {
         status: params.reason === "timed_out" ? "timed_out" : "cancelled",
         metadata: {
@@ -3646,6 +3691,6 @@ const plugin = definePlugin({
     sandboxHandleCache.reset();
     runnerIngressGenerationStore.reset();
   },
-});
+}, idleActivity));
 
 export default plugin;
