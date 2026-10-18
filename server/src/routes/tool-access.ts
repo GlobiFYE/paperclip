@@ -69,6 +69,7 @@ import {
   appWithPaperclipCloudConnectorAvailability,
   isPaperclipCloudConnectorStrategy,
   invalidatePaperclipCloudConnectorCapabilities,
+  PaperclipCloudConnectorError,
   type PaperclipCloudConnector,
   paperclipCloudConnectorCapabilitiesFromEnv,
 } from "../services/paperclip-cloud-connector.js";
@@ -103,14 +104,31 @@ const CLOUD_CONNECTOR_CALLBACK_CODES = new Set([
   "oauth_refresh_missing",
   "github_installation_required",
 ]);
+const CLOUD_CONNECTOR_CLIENT_CODES = new Set([
+  "CONNECTOR_BAD_RESPONSE",
+  "CONNECTOR_BINDING_MISMATCH",
+  "CONNECTOR_CONFIG_INCOMPLETE",
+  "CONNECTOR_CONFIG_INVALID",
+  "CONNECTOR_MIGRATION_REQUIRED",
+  "CONNECTOR_REQUEST_FAILED",
+  "CONNECTOR_UNAVAILABLE",
+  "REAUTHORIZATION_REQUIRED",
+]);
 
 export function cloudConnectorCallbackFailure(error: unknown): { code: string; status: number } {
-  const status = error instanceof HttpError ? error.status : 500;
+  const clientStatus = error instanceof PaperclipCloudConnectorError
+    && typeof error.status === "number"
+    && Number.isInteger(error.status)
+    && error.status >= 400 && error.status <= 599 ? error.status : undefined;
+  const status = error instanceof HttpError ? error.status : clientStatus ?? 500;
   const details = error instanceof HttpError && error.details && typeof error.details === "object"
     && !Array.isArray(error.details) ? error.details as Record<string, unknown> : null;
-  const code = typeof details?.code === "string" && CLOUD_CONNECTOR_CALLBACK_CODES.has(details.code)
-    ? details.code
-    : error instanceof HttpError ? `cloud_connector_callback_http_${status}` : "cloud_connector_callback_failed";
+  const code = error instanceof PaperclipCloudConnectorError && CLOUD_CONNECTOR_CLIENT_CODES.has(error.code)
+    ? error.code
+    : typeof details?.code === "string" && CLOUD_CONNECTOR_CALLBACK_CODES.has(details.code)
+      ? details.code
+      : error instanceof HttpError || clientStatus !== undefined
+        ? `cloud_connector_callback_http_${status}` : "cloud_connector_callback_failed";
   return { code, status };
 }
 type Heartbeat = ReturnType<typeof heartbeatService>;
@@ -1221,9 +1239,10 @@ function connectorEnrollmentPrincipal(req: Request): string {
       const details = callbackError instanceof HttpError && callbackError.details && typeof callbackError.details === "object"
         ? callbackError.details as Record<string, unknown>
         : null;
+      const classifiedFailure = cloudConnectorCallbackFailure(callbackError);
       const failure = completionSucceeded
-        ? { code: "cloud_connector_callback_post_completion_failed", status: callbackError instanceof HttpError ? callbackError.status : 500 }
-        : cloudConnectorCallbackFailure(callbackError);
+        ? { ...classifiedFailure, code: "cloud_connector_callback_post_completion_failed" }
+        : classifiedFailure;
       const traceId = randomUUID();
       const diagnostic = {
         ...failure,

@@ -91,7 +91,7 @@ import { logger } from "../middleware/logger.js";
 import * as sentry from "../sentry.js";
 import { HttpError } from "../errors.js";
 import type { VercelConnectClient } from "../services/vercel-connect.js";
-import { invalidatePaperclipCloudConnectorCapabilities, type PaperclipCloudConnector } from "../services/paperclip-cloud-connector.js";
+import { invalidatePaperclipCloudConnectorCapabilities, PaperclipCloudConnectorError, type PaperclipCloudConnector } from "../services/paperclip-cloud-connector.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported
@@ -8374,6 +8374,14 @@ describeEmbeddedPostgres("tool access service", () => {
       auditFailure: false,
     },
     {
+      name: "known Cloud client rejection",
+      failure: new PaperclipCloudConnectorError("Provider-controlled message", "REAUTHORIZATION_REQUIRED", 409),
+      expectedCode: "REAUTHORIZATION_REQUIRED",
+      expectedOutcome: "failed",
+      dialog: false,
+      auditFailure: false,
+    },
+    {
       name: "unexpected provider error",
       failure: new Error("Provider-controlled message"),
       expectedCode: "cloud_connector_callback_failed",
@@ -8451,7 +8459,8 @@ describeEmbeddedPostgres("tool access service", () => {
     ));
     expect(failures).toHaveLength(auditFailure ? 0 : 1);
     if (!auditFailure) expect(failures[0]?.details).toMatchObject({
-      code: expectedCode, status: failure instanceof HttpError ? failure.status : 500,
+      code: expectedCode, status: failure instanceof HttpError || failure instanceof PaperclipCloudConnectorError
+        ? failure.status ?? 500 : 500,
       provider: "paperclip_cloud_connector", traceId: expect.any(String),
     });
     const diagnostic = logSpy.mock.calls[0]?.[0] as { traceId: string };
