@@ -18,8 +18,8 @@ it("uses only a routed connection's configured model IDs", () => {
   expect(fastResponseCatalogModels({ provider: "anthropic", routing: { ...routing, models } })).toEqual(models);
 });
 
-it("returns antigravity catalog models for antigravity provider", () => {
+it("returns empty catalog models for antigravity provider until AI SDK provider is added", () => {
   const models = fastResponseCatalogModels({ provider: "antigravity" });
-  expect(models.length).toBeGreaterThan(0);
+  expect(models).toEqual([]);
 });
 

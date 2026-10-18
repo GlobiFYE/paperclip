@@ -30,7 +30,7 @@ function presentAttempt(id: string, expiresAt: Date, provider: string): LocalAiL
   return {
     sessionId: id, expiresAt: expiresAt.toISOString(),
     ...(provider === "xai" ? { command: `(export GROK_HOME=${shellQuote(directory)} && mkdir -p "$GROK_HOME" && grok login --device-auth)` }
-      : provider === "antigravity" ? { command: `(export HOME=${shellQuote(directory)} && mkdir -p "$HOME/.gemini/antigravity-cli" && agy)` } : {}),
+      : provider === "antigravity" ? { command: `(export HOME=${shellQuote(directory)} && export ANTIGRAVITY_CLI_HOME="$HOME/.gemini/antigravity-cli" GEMINI_CLI_HOME="$HOME/.gemini/antigravity-cli" && mkdir -p "$ANTIGRAVITY_CLI_HOME" && agy)` } : {}),
   };
 }
 async function prepareHome(id: string, provider: string) {

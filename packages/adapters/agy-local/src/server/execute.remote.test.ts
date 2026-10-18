@@ -567,7 +567,7 @@ describe("agy-local execute (remote execution)", () => {
       (command) => command.includes("ln -s") && command.includes("mcp_config.json"),
     );
     expect(linkCommand).toBeDefined();
-    expect(linkCommand).toContain("mcp_config.json.paperclip-backup");
+    expect(linkCommand).toContain("mcp_config.json.paperclip-backup-run-remote-mcp-restore");
     expect(linkCommand).toContain("cp -a");
 
     // The mcp-config asset carries a restore that moves the backup back
@@ -591,7 +591,7 @@ describe("agy-local execute (remote execution)", () => {
       .map((call) => String(call[2]));
     expect(
       restoreCommands.some(
-        (command) => command.includes("mv") && command.includes("mcp_config.json.paperclip-backup"),
+        (command) => command.includes("mv") && command.includes("mcp_config.json.paperclip-backup-run-remote-mcp-restore"),
       ),
     ).toBe(true);
   });

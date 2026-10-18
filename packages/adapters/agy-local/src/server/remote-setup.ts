@@ -242,7 +242,7 @@ export async function prepareAgyRemoteRun(
       const stagedMcpConfigRemote = preparedExecutionTargetRuntime.assetDirs["mcp-config"];
       const targetMcpConfig = path.posix.join(remoteHomeDir, ".gemini", "config", "mcp_config.json");
       const stagedMcpFile = path.posix.join(stagedMcpConfigRemote, "mcp_config.json");
-      const backupMcpConfig = `${targetMcpConfig}.paperclip-backup`;
+      const backupMcpConfig = `${targetMcpConfig}.paperclip-backup-${runId}`;
       // The link below replaces the remote user's own mcp_config.json (on
       // SSH targets remoteHomeDir is their real home, not a private one).
       // Preserve a pre-existing file first and put it back during workspace

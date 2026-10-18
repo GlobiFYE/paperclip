@@ -8,7 +8,7 @@ import { readPaperclipSkillSyncPreference, writePaperclipSkillSyncPreference } f
 import { and, desc, eq, ne } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { activityLog, agents, builtInManagedResources, companies, issueThreadInteractions, issues, routines, routineTriggers } from "@paperclipai/db";
-import { adapterSupportsAiConnections, agentHarnessType, agentRunner, aiConnectionBindingSchema, isAiConnectionCompatible, syncRoutineVariablesWithTemplate, type AgentRunnerChoice } from "@paperclipai/shared";
+import { adapterSupportsAiConnections, agentHarnessType, agentRunner, aiConnectionBindingSchema, aiRuntimeConnectionBindingSchema, isAiConnectionCompatible, syncRoutineVariablesWithTemplate, type AgentRunnerChoice } from "@paperclipai/shared";
 import { DEFAULT_AGY_LOCAL_SUMMARIZER_MODEL } from "@paperclipai/adapter-agy-local";
 import type { Agent, Approval, CompanySkill, PermissionKey, Routine, RoutineTrigger, RoutineVariable } from "@paperclipai/shared";
 import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
@@ -1808,7 +1808,7 @@ export function builtInAgentService(db: Db) {
           patch.metadata = { ...patch.metadata, paperclipBuiltInSetupRequired: false };
         }
         if (existing.runtimeConfig?.aiConnection) {
-          const aiBinding = aiConnectionBindingSchema.safeParse(existing.runtimeConfig.aiConnection).data;
+          const aiBinding = aiRuntimeConnectionBindingSchema.safeParse(existing.runtimeConfig.aiConnection).data;
           const finalConfig = (patch.adapterConfig ?? existing.adapterConfig) as Record<string, unknown> | undefined;
           // Judge support against the FINAL adapter type and configuration:
           // for paperclip_runner agents the provider/acpxAgent fields decide
@@ -1824,13 +1824,14 @@ export function builtInAgentService(db: Db) {
           const isCompatible = Boolean(
             supportsAi &&
             aiBinding &&
-            isAiConnectionCompatible(
-              aiBinding,
-              finalAdapterType,
-              finalConfig?.model,
-              finalConfig?.provider,
-              finalConfig?.acpxAgent,
-            ),
+            (aiBinding.mode === "router" ||
+              isAiConnectionCompatible(
+                aiBinding,
+                finalAdapterType,
+                finalConfig?.model,
+                finalConfig?.provider,
+                finalConfig?.acpxAgent,
+              )),
           );
           if (!supportsAi || !isCompatible) {
             const nextRc = { ...existing.runtimeConfig };
