@@ -1662,6 +1662,12 @@ Required UX behaviors:
 - conflict toasts on atomic checkout failure
 - no silent background failures; every failed run visible in UI
 
+The task collection's Project visibility setting also controls project badges on
+Kanban cards. When enabled, a card shows the known project's name and color in
+regular, compact, and drag-preview states. Long names truncate within the card
+and keep the full name in a tooltip. Tasks without a known project show no badge.
+Disabling Project hides the badges without changing task data or board behavior.
+
 Regular task chats and Agent Chat keep unanswered questions as compact,
 reopenable entries at their original position in the feed. Dismissing a question
 or sending a newer message clears its form from the composer without resolving
