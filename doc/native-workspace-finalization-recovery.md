@@ -411,3 +411,10 @@ If file retention loses the task lock, teardown keeps the source active for a
 later pass. Historical sources already stopping or stopped remain eligible under
 the existing exact-source checks. A stopped source requires the independent
 stop-and-retain receipts and must not have a competing allocation owner.
+Active warm allocations keep the same retention retry path. Only historical
+stopping or stopped sources require the ephemeral policy, because a reusable
+released allocation may already have a new owner.
+For a cancelled native run, the file-recovery form also offers an optional
+confirmation that no external actions were performed. Leave it unchecked unless
+the run history verifies that fact. The default records files without certifying
+action outcomes. Changing the selected source clears the evidence and confirmations.

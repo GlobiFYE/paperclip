@@ -197,7 +197,7 @@ describe.skipIf(!support.supported)("heartbeat run-control database wiring", () 
     return run;
   }
 
-  it("keeps cancellation eligible for retention when teardown loses the task lock", async () => {
+  it.each(["ephemeral", "reuse_by_environment"] as const)("keeps %s cancellation eligible for retention when teardown loses the task lock", async leasePolicy => {
     const { company, agent } = await fixture();
     const [issue] = await db.insert(issues).values({ companyId: company.id, title: "Retain cancelled work",
       status: "in_progress", assigneeAgentId: agent.id }).returning();
@@ -216,7 +216,7 @@ describe.skipIf(!support.supported)("heartbeat run-control database wiring", () 
     await db.insert(nativeRunFinalizations).values({ runId, companyId: company.id, issueId: issue.id,
       phase: "terminal_failure", failureCode: "native_retry_cancelled" });
     await db.insert(environmentLeases).values({ id: leaseId, companyId: company.id, heartbeatRunId: runId,
-      issueId: issue.id, provider: "daytona", providerLeaseId, status: "active", leasePolicy: "ephemeral",
+      issueId: issue.id, provider: "daytona", providerLeaseId, status: "active", leasePolicy,
       metadata: { driver: "sandbox", pluginId: randomUUID(), sandboxProviderPlugin: true, remoteCwd: "/work" } });
     const deps = callbacks(db), control = createHeartbeatRunControl(db, deps);
     let ready!: () => void, release!: () => void;
@@ -232,7 +232,7 @@ describe.skipIf(!support.supported)("heartbeat run-control database wiring", () 
         status: "cancelled", providerResourceDisposition: "stop_and_retain" });
       expect(deps.envOrchestrator.releaseForRun).not.toHaveBeenCalled();
       expect((await db.select().from(environmentLeases).where(eq(environmentLeases.id, leaseId)))[0])
-        .toMatchObject({ status: "active", leasePolicy: "ephemeral" });
+        .toMatchObject({ status: "active", leasePolicy });
     } finally { release(); await holding; }
     await preserveCancelledNativeWorkspaces(db);
     expect((await db.select().from(environmentLeases).where(eq(environmentLeases.id, leaseId)))[0])

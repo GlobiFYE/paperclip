@@ -51,8 +51,9 @@ const support = externalUrl ? { supported: true } : await getEmbeddedPostgresTes
   const readLease = async (id: string) => (await db.select().from(environmentLeases).where(eq(environmentLeases.id, id)))[0]!;
   const actions = async (issueId: string) => db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, issueId));
 
-  it.each(["acknowledged", "pending", "foreign", "owned"])("pins historical cancelled work only after an exact Stop acknowledgement: %s", async kind => {
+  it.each(["acknowledged", "warm", "pending", "foreign", "owned"])("pins historical cancelled work only after an exact Stop acknowledgement: %s", async kind => {
     const f = await seed();
+    if (kind === "warm") await db.update(environmentLeases).set({ leasePolicy: "reuse_by_environment" }).where(eq(environmentLeases.id, f.lease.id));
     await db.update(heartbeatRuns).set({ status: "cancelled", nativePhase: "observed", finishedAt: new Date(),
       resultJson: { cancelledByActorType: "user", cancelledByUserId: "operator", nativeCancellation: {
         schema: "paperclip.native-cancellation.v1", runId: f.runId,
@@ -67,10 +68,11 @@ const support = externalUrl ? { supported: true } : await getEmbeddedPostgresTes
     const current = await readRun(f.runId);
     expect(current).toMatchObject({ status: "cancelled", resultJson: { nativeCancellation: { scope: "run" } } });
     expect((await db.select().from(issues).where(eq(issues.id, f.issueId)))[0].status).toBe("in_progress");
-    expect(await readLease(f.lease.id)).toMatchObject(kind === "acknowledged"
+    const pinned = kind === "acknowledged" || kind === "warm";
+    expect(await readLease(f.lease.id)).toMatchObject(pinned
       ? { status: "pending_cleanup", leasePolicy: "retain_on_failure", metadata: { sandboxStopAndRetain: { runId: f.runId } } }
       : { status: "active", leasePolicy: "ephemeral" });
-    expect(await actions(f.issueId)).toHaveLength(kind === "acknowledged" ? 1 : 0);
+    expect(await actions(f.issueId)).toHaveLength(pinned ? 1 : 0);
     expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.companyId, f.companyId))).toHaveLength(1);
   });
   it("keeps another cancelled workspace recoverable when one task row is locked", async () => {
