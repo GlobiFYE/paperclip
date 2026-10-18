@@ -26,7 +26,6 @@ export interface ServiceManager {
   readonly instanceId: string;
   readonly serviceName: string;
   readonly definitionPath: string;
-  /** Pass the installed definition to carry over operator-added environment variables. */
   renderDefinition(existingDefinition?: string): string;
   install(options: ServiceInstallOptions): Promise<{ changed: boolean }>;
   uninstall(): Promise<void>;
@@ -127,9 +126,6 @@ export function launchdServiceName(instanceId: string): string {
   return instanceId === "default" ? "ing.paperclip.paperclipai" : `ing.paperclip.paperclipai.${instanceId}`;
 }
 
-// Keys the CLI owns in the service environment. Any other key in an
-// installed definition was added by the operator (PATH, feature flags, bind
-// hosts) and must survive a re-render on start/restart/update.
 const MANAGED_ENVIRONMENT_KEYS = new Set(["PAPERCLIP_SERVICE_MANAGED", "PAPERCLIP_INSTANCE_ID", "PAPERCLIP_HOME"]);
 
 export type ServiceEnvironment = Record<string, string>;
@@ -142,9 +138,6 @@ function operatorEnvironment(entries: Iterable<[string, string]>): ServiceEnviro
   return environment;
 }
 
-// Splits an Environment= value into its assignments, keeping each one exactly
-// as written (quotes, escapes and %-specifiers included) so it can be carried
-// forward byte for byte.
 function splitSystemdAssignments(value: string): string[] {
   const words: string[] = [];
   let word = "";
@@ -170,9 +163,6 @@ function splitSystemdAssignments(value: string): string[] {
   return words;
 }
 
-// Returns the installed unit's Environment= lines with the CLI-managed
-// assignments removed. Operator assignments are kept verbatim: decoding and
-// re-escaping them would turn a specifier such as %h into a literal.
 export function extractExtraEnvironmentFromSystemdUnit(content: string): string[] {
   const lines: string[] = [];
   for (const match of content.matchAll(/^Environment=(.*)$/gm)) {

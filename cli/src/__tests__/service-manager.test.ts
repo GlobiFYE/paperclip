@@ -274,7 +274,6 @@ describe("operator-added service environment", () => {
     const unit = await fs.readFile(manager.definitionPath, "utf8");
     expect(unit).toContain(operatorLines[0]);
     expect(unit).toContain(operatorLines[1]);
-    // A managed key on an operator line is dropped; the rest of the line stays.
     expect(unit).toContain('Environment="QUOTED=say \\"hi\\""\n');
     expect(unit).not.toContain("%%h");
     expect(unit).not.toContain("/elsewhere");
