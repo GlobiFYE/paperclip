@@ -29,6 +29,7 @@ export { canonicalRepositoryRoot } from "./execution-workspace-source-roots.js";
 const execFile = promisify(execFileCallback);
 type RepositoryRow = typeof executionWorkspaceRepositories.$inferSelect;
 type DbTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
+type RootProject = Pick<typeof projects.$inferSelect, "id" | "companyId" | "executionWorkspacePolicy">;
 
 function repositoryAccessKeys(entries: Array<Pick<typeof executionWorkspaceRepositoryAccess.$inferSelect, "kind" | "scopeId">>) {
   return new Set(entries.map(entry => `${entry.kind}:${entry.scopeId}`));
@@ -400,7 +401,7 @@ export type TaskWorkspaceCreationTrustContext = {
 async function assertRootProjectTrust(db: Db | DbTransaction, input: {
   companyId: string; projectIds: Set<string>; actor: AuthorizationActor;
   issueId?: string | null; sourceWorkspaceId?: string; assigneeAgentId?: string | null; taskCreation?: TaskWorkspaceCreationTrustContext;
-}, owners?: Array<typeof projects.$inferSelect>) {
+}, owners?: RootProject[]) {
   if (!input.projectIds.size) return;
   const sourceOwners = owners ?? await db.select().from(projects).where(and(eq(projects.companyId, input.companyId),
     or(...[...input.projectIds].map(id => eq(projects.id, id)))));
@@ -568,9 +569,10 @@ export function executionWorkspaceRepositoryService(db: Db) {
       const identities = await loadRepositoryRootReaders(tx, input.companyId, readers);
       const projectIds = [...new Set([...sourceProjectIds, ...sourceProjects.flatMap(source => source.projectId ? [source.projectId] : []),
         ...identities.flatMap(reader => reader.issue.projectId ? [reader.issue.projectId] : [])])];
-      const projectRows: Array<typeof projects.$inferSelect> = [];
+      const projectRows: RootProject[] = [];
       for (let offset = 0; offset < projectIds.length; offset += 500) {
-        projectRows.push(...await measureRunPhase("workspace.sources.inventory", () => tx.select().from(projects).where(and(
+        projectRows.push(...await measureRunPhase("workspace.sources.inventory", () => tx.select({ id: projects.id,
+          companyId: projects.companyId, executionWorkspacePolicy: projects.executionWorkspacePolicy }).from(projects).where(and(
           eq(projects.companyId, input.companyId), inArray(projects.id, projectIds.slice(offset, offset + 500))))));
       }
       const projectsById = new Map(projectRows.map(project => [project.id, project]));

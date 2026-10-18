@@ -7,6 +7,9 @@ import { resolveCoreTrustPreset } from "./trust-preset-resolver.js";
 
 type ReaderDb = Db | Parameters<Parameters<Db["transaction"]>[0]>[0];
 type ReaderEntry = Pick<typeof executionWorkspaceRepositoryAccess.$inferSelect, "scopeId" | "issueId" | "agentId" | "responsibleUserId">;
+type ReaderAgent = Pick<typeof agents.$inferSelect, "id" | "companyId" | "permissions">;
+type ReaderIssue = Pick<typeof issues.$inferSelect, "id" | "companyId" | "projectId" | "executionPolicy">;
+type ReaderProject = Pick<typeof projects.$inferSelect, "companyId" | "executionWorkspacePolicy">;
 
 export const rootReaderRunColumns = {
   id: heartbeatRuns.id, companyId: heartbeatRuns.companyId, agentId: heartbeatRuns.agentId,
@@ -21,19 +24,20 @@ export async function loadRepositoryRootReaders<T extends ReaderEntry>(db: Reade
   const agentIds = [...new Set(entries.flatMap(entry => entry.agentId ? [entry.agentId] : []))];
   const issueIds = [...new Set(entries.flatMap(entry => entry.issueId ? [entry.issueId] : []))];
   const runs = new Map<string, Pick<typeof heartbeatRuns.$inferSelect, keyof typeof rootReaderRunColumns>>();
-  const agentRows = new Map<string, typeof agents.$inferSelect>();
-  const issueRows = new Map<string, typeof issues.$inferSelect>();
+  const agentRows = new Map<string, ReaderAgent>();
+  const issueRows = new Map<string, ReaderIssue>();
   await measureRunPhase("workspace.readers.identity", async () => {
     for (let offset = 0; offset < runIds.length; offset += 500) {
       for (const row of await db.select(rootReaderRunColumns).from(heartbeatRuns).where(and(
         eq(heartbeatRuns.companyId, companyId), inArray(heartbeatRuns.id, runIds.slice(offset, offset + 500))))) runs.set(row.id, row);
     }
     for (let offset = 0; offset < agentIds.length; offset += 500) {
-      for (const row of await db.select().from(agents).where(and(
+      for (const row of await db.select({ id: agents.id, companyId: agents.companyId, permissions: agents.permissions }).from(agents).where(and(
         eq(agents.companyId, companyId), inArray(agents.id, agentIds.slice(offset, offset + 500))))) agentRows.set(row.id, row);
     }
     for (let offset = 0; offset < issueIds.length; offset += 500) {
-      for (const row of await db.select().from(issues).where(and(
+      for (const row of await db.select({ id: issues.id, companyId: issues.companyId, projectId: issues.projectId,
+        executionPolicy: issues.executionPolicy }).from(issues).where(and(
         eq(issues.companyId, companyId), inArray(issues.id, issueIds.slice(offset, offset + 500))))) issueRows.set(row.id, row);
     }
   });
@@ -53,10 +57,10 @@ export async function loadRepositoryRootReaders<T extends ReaderEntry>(db: Reade
 
 export function requiresAnonymousRepositoryAcquisition(input: {
   companyId: string;
-  issue: typeof issues.$inferSelect;
-  agent: typeof agents.$inferSelect | undefined;
-  project: typeof projects.$inferSelect | undefined;
-  workspaceSourceProject: typeof projects.$inferSelect | undefined;
+  issue: ReaderIssue;
+  agent: ReaderAgent | undefined;
+  project: ReaderProject | undefined;
+  workspaceSourceProject: ReaderProject | undefined;
   run: Pick<typeof heartbeatRuns.$inferSelect, keyof typeof rootReaderRunColumns> | undefined;
   agentId: string | null;
   runId: string | null;

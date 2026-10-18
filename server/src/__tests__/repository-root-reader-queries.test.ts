@@ -115,9 +115,15 @@ it("checks identities after the first query batch and reloads them on the next o
     status: "succeeded", contextSnapshot: { taskId: issueId } })));
   const entries = ids.map(scopeId => ({ scopeId, issueId, agentId, responsibleUserId: userId }));
   try {
-    const readers = await loadRepositoryRootReaders(db, companyId, entries);
+    const queries: string[] = [];
+    const recorded = drizzle(db.$client, { schema: db._.fullSchema, logger: { logQuery: query => queries.push(query) } }) as unknown as typeof db;
+    const readers = await loadRepositoryRootReaders(recorded, companyId, entries);
     expect(readers.map(reader => reader.actor.runId)).toEqual(ids);
     expect(readers.every(reader => reader.issue.id === issueId && reader.actor.onBehalfOfUserId === userId)).toBe(true);
+    const agentQueries = queries.filter(query => query.includes('from "agents"'));
+    expect(agentQueries).toHaveLength(1);
+    expect(agentQueries.every(query =>
+      !query.includes('"adapter_config"') && !query.includes('"runtime_config"') && !query.includes('"metadata"'))).toBe(true);
     await db.update(heartbeatRuns).set({ responsibleUserId: randomUUID() }).where(eq(heartbeatRuns.id, ids.at(-1)!));
     await expect(loadRepositoryRootReaders(db, companyId, entries)).rejects.toThrow("identity");
   } finally {
