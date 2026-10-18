@@ -111,6 +111,10 @@ describe("reconstruction after confirmed native workspace loss", () => {
     const [current] = await db.update(issues).set({ status }).where(eq(issues.id, f.issueId)).returning();
     f.request.expectedStatusVersion = current.statusVersion;
     const later = await interveningCancelledRun(f);
+    const visible = await request(app()).get(`/api/issues/${f.issueId}`).expect(200);
+    expect(visible.body.executionBlocker).toMatchObject({
+      runId: f.runId, canReconstructWorkspace: true, workspaceRecoveryStatusVersion: current.statusVersion,
+    });
     await request(app()).post(`/api/issues/${f.issueId}/recovery-actions/reconstruct-workspace`).send(f.body).expect(202);
     const [action] = await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, f.actionId));
     expect(action.evidence.executionReconciliation).toMatchObject({ workspaceReconstruction: {
@@ -225,6 +229,7 @@ describe("reconstruction after confirmed native workspace loss", () => {
     if (kind === "version") f.request.expectedStatusVersion += 1;
     if (kind === "attachment") f.request.attachmentIds = [(await seed()).attachmentId];
     if (kind === "result") await db.update(nativeRunResults).set({ schemaStatus: "rejected" }).where(eq(nativeRunResults.id, f.resultId));
+    if (kind === "execution" || kind === "checkout") expect((await getExecutionBlocker(db, f.companyId, f.issueId))?.canReconstructWorkspace).not.toBe(true);
     await expect(reconstructNativeWorkspace(f)).rejects.toThrow();
     expect(await db.select().from(activityLog).where(eq(activityLog.entityId, f.issueId))).toHaveLength(0);
     expect((await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, f.actionId)))[0].evidence).not.toHaveProperty("executionReconciliation");
