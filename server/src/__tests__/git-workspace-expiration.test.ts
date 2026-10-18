@@ -47,7 +47,7 @@ describeEmbeddedPostgres("reconstructable Git expiration", () => {
     await db.$client.end({ timeout: 1 }); await database.cleanup(); await fs.rm(root, { recursive: true, force: true });
   });
 
-  async function fixture(managed = false, nested = false) {
+  async function fixture(managed = false, nested = false, withProject = managed) {
     const companyId = randomUUID(), issueId = randomUUID(), workspaceId = randomUUID();
     const location = path.join(root, companyId), source = path.join(location, "author"), remote = path.join(location, "remote.git");
     await fs.mkdir(source, { recursive: true });
@@ -60,7 +60,7 @@ describeEmbeddedPostgres("reconstructable Git expiration", () => {
     await db.insert(companies).values({ id: companyId, name: "Git expiration fixture", issuePrefix: `GC${companyId.slice(0, 6)}` });
     await db.insert(issues).values({ id: issueId, companyId, title: "Finished task", status: "done", completedAt: new Date(Date.now() - 48 * 3_600_000) });
     const repoUrl = pathToFileURL(remote).href;
-    const projectId = managed ? randomUUID() : null;
+    const projectId = withProject ? randomUUID() : null;
     if (projectId) await db.insert(projects).values({ id: projectId, companyId, name: "Fixture project" });
     const baseCwd = managed
       ? (await materializeManagedProjectWorkspace(resolveManagedProjectWorkspaceDir({ companyId, projectId: projectId!, repoName: "remote" }), { repoUrl })).cwd
@@ -149,8 +149,8 @@ describeEmbeddedPostgres("reconstructable Git expiration", () => {
     expect(await fs.readFile(settingsPath, "utf8")).toBe("later task settings\n");
   });
 
-  async function nestedFixture() {
-    const f = await fixture(true);
+  async function nestedFixture(managed = true) {
+    const f = await fixture(managed, !managed, true);
     const nestedSource = path.join(path.dirname(f.source), "nested-author");
     const nestedRemote = path.join(path.dirname(f.source), "nested.git");
     await fs.mkdir(nestedSource);
@@ -173,6 +173,40 @@ describeEmbeddedPostgres("reconstructable Git expiration", () => {
     await fs.writeFile(nestedSettingsPath, settings, { mode: 0o640 });
     return { ...f, nestedSource, nestedRemote, nestedA, preparation, nested: nested!, settings, settingsPath, nestedSettingsPath };
   }
+
+  it("expires a nested workspace and its unused private base with the generated ignore entry", async () => {
+    const f = await nestedFixture(false);
+    await f.advance();
+    await fs.writeFile(path.join(f.nestedSource, "nested.txt"), "nested B\n");
+    git(f.nestedSource, "add", "."); git(f.nestedSource, "commit", "-m", "Nested B");
+    git(f.nestedSource, "push", f.nestedRemote, "main");
+    const result = await f.expire();
+    expect(result).toMatchObject({ expired: true, baseExpired: true, skipReason: null });
+    expect(result.reclaimedBytes).toBeGreaterThan(0);
+    expect(await exists(f.cwd)).toBe(false);
+    expect(await exists(f.baseCwd)).toBe(false);
+    expect(await f.reopen()).toMatchObject({ ok: true, reopened: true });
+    expect(git(f.cwd, "rev-parse", "HEAD")).toBe(f.commitA);
+    expect(git(f.nested.cwd, "rev-parse", "HEAD")).toBe(f.nestedA);
+    expect(await fs.readFile(f.settingsPath)).toEqual(f.settings);
+    expect((await fs.stat(f.settingsPath)).mode & 0o777).toBe(0o600);
+    expect(await fs.readFile(f.nestedSettingsPath)).toEqual(f.settings);
+    expect((await fs.stat(f.nestedSettingsPath)).mode & 0o777).toBe(0o640);
+    await fs.writeFile(path.join(f.nested.cwd, "continued.txt"), "continued after base restoration\n");
+    git(f.nested.cwd, "add", "."); git(f.nested.cwd, "commit", "-m", "Continued after base restoration");
+    expect(git(f.nested.cwd, "rev-parse", "HEAD")).not.toBe(f.nestedA);
+  });
+
+  it("retains custom base ignore patterns after expiring the nested workspace", async () => {
+    const f = await nestedFixture(false);
+    const exclude = path.join(f.baseCwd, ".git", "info", "exclude");
+    await fs.appendFile(exclude, "private-output/\n");
+    const original = await fs.readFile(exclude);
+    expect(await f.expire()).toMatchObject({ expired: true, baseExpired: false, skipReason: "custom_git_metadata" });
+    expect(await exists(f.cwd)).toBe(false);
+    expect(await exists(f.baseCwd)).toBe(true);
+    expect(await fs.readFile(exclude)).toEqual(original);
+  });
 
   async function crashWithExpirationLocks(f: Awaited<ReturnType<typeof nestedFixture>>, beforePublication = false) {
     expect(await f.expire({ beforeDelete: async () => { throw new Error("stop_before_locks"); } }))
