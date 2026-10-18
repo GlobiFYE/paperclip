@@ -242,6 +242,14 @@ preparation, execution and settlement spans. They are controller work, not model
 turn time, and carry only the existing run hash. Nested phases overlap their
 containing backend or lifecycle intervals; do not add both durations.
 
+Before provider dispatch, `execution.usage_startup` measures durable usage-recorder
+initialization. `execution.mcp_handoff` measures native MCP server resolution or
+legacy managed MCP configuration. `execution.dispatch_admission` measures the
+final admission gate, including its nested `execution.budget_reservation` span.
+The admission span ends after the provider promise is handed off, not after the
+provider turn finishes. These spans use only the existing run hash. They close
+gaps between preparation and execution; their nested intervals are not additive.
+
 All preparation timing uses the endpoint gate, even when another library has
 registered a tracer provider. Tracer lookup, callback, status or ending failures
 cannot repeat work or replace its result or error. Automatic database children
@@ -281,7 +289,7 @@ attempt or owning phase:
 | `workspace.sources.*` | Source inventory queries, canonicalization, one filesystem alias scan, repository scan, and configured project scan. |
 | `workspace.readers`, `workspace.readers.*`, `workspace.access.*` | Retained-reader groups, identity, trust, project and source authorization, privacy and inventory reads. |
 | `workspace.provenance`, `workspace.notification`, `workspace.write` | Preserved ownership, notification statements, and record writes. |
-| `workspace.materialize.*`, `workspace.checkout.*` | Private source-directory setup and identity verification, existing checkout lookup, Git credential resolution, clone, requested-ref checkout, and atomic publication. The enclosing `heartbeat.prepare.workspace_source_materialize` includes the complete source-materialization path. |
+| `workspace.materialize.*`, `workspace.checkout.*` | Private source-directory setup and identity verification, existing checkout lookup, Git credential resolution, clone, optional pristine-object cache lookup/publication (`cache_lookup`, `cache_publish`), requested-ref checkout, and atomic publication. The enclosing `heartbeat.prepare.workspace_source_materialize` includes the complete source-materialization path. |
 | `runtime_selection.*` | Completion contracts, session/recovery reads, profiles, interaction materialization, backend discovery, bootstrap, run/coordinator writes, transaction entry/settlement, and workspace synchronization. |
 | `runtime_context.instructions`, `.skills`, `.mcp` | The three concurrent runtime-context branches. Their durations overlap. |
 | `runtime_context.asset_*` | Source reads, manifest hashing, cache lookup, cold materialization, and exact file verification on cold and warm paths. |
@@ -976,6 +984,29 @@ counts; `acpPendingToolCount` keeps its finalization-time meaning. When tools ar
 pending, `acpPendingToolKinds` lists their ACP tool kinds as a sorted, comma-separated
 string drawn only from the closed ACP `ToolKind` enum plus `unknown`; the
 server drops the field if any other value appears.
+
+Claude ACP turns also run a stalled-tool watchdog. A pending tool call that gets
+no ACP update for 30 minutes (`stalledToolTimeoutSec`; kept at least 15 minutes
+above `MCP_TOOL_TIMEOUT` and `BASH_MAX_TIMEOUT_MS`) ends the turn through the
+same cancel and fail-fast deadline as a duplex channel loss. The run fails with
+`acpx_tool_stalled` instead of waiting for the wall-clock timeout, and records
+`acpStalledToolKind` (one closed `ToolKind` label or `unknown`) and
+`acpStalledToolSilentMs`. The stop-time fields above are measured when the
+watchdog fired. A live subagent's Task call keeps receiving heartbeats, so only
+a call that itself went silent trips the watchdog. A background subagent's Task
+call completes when the subagent starts, so the watchdog watches that subagent's
+own tool calls instead. Other ACP agents are watched only when
+`stalledToolTimeoutSec` is set.
+
+The engine also observes ACP permission requests without deciding them; ACPX's
+permission mode still decides each one. A stalled run records
+`acpStalledToolPermissionRequested` (whether the stalled call's permission
+request reached Paperclip) and `acpPendingToolPermissionRequestedCount` (how many
+pending calls had one). These fields record only that a request arrived, not
+that the reply reached the agent. A call whose request never arrived stalled
+before the request reached Paperclip. A call whose request arrived stalled
+later: on the reply's return trip, or after the agent received the decision.
+Both fields hold only a boolean and a count.
 
 ACP and legacy OpenCode results retain the adapter's resolved wall-clock timeout as
 `adapterExecutionTimeout` in the instance run result. Finalization uses it for
