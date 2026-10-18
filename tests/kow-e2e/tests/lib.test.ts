@@ -1,10 +1,24 @@
-// Unit tests for the pure harness helpers. Run: bun test (PKST_SCRATCH is set to
-// a temp dir by the test script so manifest I/O never touches the real cache).
-import { test, expect } from "bun:test";
+import { test, expect, beforeAll, afterAll } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   newNonce, runDirFor, sshBase, scpBase, freePort,
-  writeManifest, readManifest, procAlive, SCRATCH, type Manifest,
+  writeManifest, readManifest, procAlive, scratchRoot,
+  readProcStartTime, manifestPath, type Manifest,
 } from "../harness/lib.ts";
+
+let tmpScratch: string;
+
+beforeAll(() => {
+  tmpScratch = mkdtempSync(join(tmpdir(), "pkst-test-"));
+  process.env.PKST_SCRATCH = tmpScratch;
+});
+
+afterAll(() => {
+  delete process.env.PKST_SCRATCH;
+  rmSync(tmpScratch, { recursive: true, force: true });
+});
 
 test("newNonce has the expected shape and is unique", () => {
   const a = newNonce(), b = newNonce();
@@ -12,10 +26,14 @@ test("newNonce has the expected shape and is unique", () => {
   expect(a).not.toBe(b);
 });
 
-test("runDirFor lives under SCRATCH and names the nonce", () => {
+test("runDirFor lives under the scratch root and names the nonce", () => {
   const d = runDirFor("rdeadbeef");
-  expect(d.startsWith(SCRATCH)).toBe(true);
+  expect(d.startsWith(scratchRoot())).toBe(true);
   expect(d.endsWith("run-rdeadbeef")).toBe(true);
+});
+
+test("scratchRoot honours PKST_SCRATCH at call time", () => {
+  expect(scratchRoot()).toBe(tmpScratch);
 });
 
 test("sshBase uses lowercase -p and ignores system config", () => {
@@ -23,7 +41,7 @@ test("sshBase uses lowercase -p and ignores system config", () => {
   expect(a).toContain("-F"); expect(a).toContain("/dev/null");
   expect(a).toEqual(expect.arrayContaining(["-p", "2222", "-i", "/k"]));
   expect(a).toContain("UserKnownHostsFile=/kh");
-  expect(a).not.toContain("-P"); // capital P is scp-only
+  expect(a).not.toContain("-P");
 });
 
 test("scpBase uses capital -P for the port", () => {
@@ -40,7 +58,7 @@ test("freePort returns a usable high port", async () => {
 
 test("manifest round-trips and missing reads null", () => {
   const m: Manifest = {
-    nonce: "rtest" + Date.now().toString(16), qemuPid: 1, hostfwdPort: 2,
+    nonce: "rtest" + Date.now().toString(16), qemuPid: 1, qemuStartTime: 12345, hostfwdPort: 2,
     overlayPath: "/o", runDir: "/r", owner: "claude", startedAt: new Date().toISOString(),
   };
   writeManifest(m);
@@ -50,5 +68,22 @@ test("manifest round-trips and missing reads null", () => {
 
 test("procAlive reflects reality", () => {
   expect(procAlive(process.pid)).toBe(true);
-  expect(procAlive(2147480000)).toBe(false); // almost certainly dead
+  expect(procAlive(2147480000)).toBe(false);
+});
+
+test("readProcStartTime returns a stable positive value for a live pid", () => {
+  const a = readProcStartTime(process.pid);
+  expect(typeof a).toBe("number");
+  expect(a as number).toBeGreaterThan(0);
+  expect(readProcStartTime(process.pid)).toBe(a);
+});
+
+test("readProcStartTime returns null for a dead pid", () => {
+  expect(readProcStartTime(2147480000)).toBeNull();
+});
+
+test("manifestPath lives under the runs dir and names the nonce", () => {
+  const p = manifestPath("rdeadbeef");
+  expect(p.endsWith("rdeadbeef.json")).toBe(true);
+  expect(p.startsWith(scratchRoot())).toBe(true);
 });

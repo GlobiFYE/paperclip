@@ -4,10 +4,8 @@
   "type": "module",
   "description": "End-to-end smoke test: kow brokers a credential for a Paperclip agent inside a throwaway KVM guest; agent never sees the raw key.",
   "scripts": {
-    "up": "bun harness/cli.ts up",
-    "run": "bun harness/cli.ts run",
-    "assert": "bun harness/cli.ts assert",
-    "down": "bun harness/cli.ts down",
-    "test": "bun test"
+    "test": "bun test",
+    "setup": "bun harness/setup-base.ts",
+    "smoke": "bun tests/smoke-core.ts"
   }
 }

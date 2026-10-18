@@ -1,4 +1,3 @@
-// Shared harness primitives. bun/TypeScript. No secrets here.
 import { randomBytes } from "node:crypto";
 import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { createServer } from "node:net";
@@ -6,35 +5,43 @@ import { spawnSync } from "node:child_process";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-export const SCRATCH =
-  process.env.PKST_SCRATCH ?? join(homedir(), ".cache", "paperclip-kow-smoketest");
-export const BASE_IMG = join(SCRATCH, "base", "noble-cloudimg-amd64.img");
-export const RUNS_DIR = join(SCRATCH, "runs");
+export function scratchRoot(): string {
+  return process.env.PKST_SCRATCH ?? join(homedir(), ".cache", "paperclip-kow-smoketest");
+}
+
+export function baseImg(): string {
+  return join(scratchRoot(), "base", "noble-cloudimg-amd64.img");
+}
+
+export function runsDir(): string {
+  return join(scratchRoot(), "runs");
+}
 
 export interface Manifest {
   nonce: string;
   qemuPid: number;
+  qemuStartTime: number;
   hostfwdPort: number;
   overlayPath: string;
   runDir: string;
   owner: string;
-  startedAt: string; // ISO
+  startedAt: string;
 }
 
 export function newNonce(): string {
-  // url-safe, no shell/regex metachars; distinct from any secret.
   return "r" + randomBytes(9).toString("hex");
 }
 
 export function runDirFor(nonce: string): string {
-  return join(SCRATCH, `run-${nonce}`);
+  return join(scratchRoot(), `run-${nonce}`);
 }
 
 export function ensureDirs() {
-  for (const d of [SCRATCH, join(SCRATCH, "base"), RUNS_DIR]) mkdirSync(d, { recursive: true });
+  for (const d of [scratchRoot(), join(scratchRoot(), "base"), runsDir()]) {
+    mkdirSync(d, { recursive: true });
+  }
 }
 
-// Probe a free loopback TCP port by binding :0 and reading it back.
 export async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const s = createServer();
@@ -51,7 +58,6 @@ export async function freePort(): Promise<number> {
   });
 }
 
-// ssh/scp into the guest. -F /dev/null is mandatory (host ssh_config.d is broken).
 export function sshBase(port: number, keyPath: string, knownHosts: string): string[] {
   return [
     "-F", "/dev/null",
@@ -64,7 +70,6 @@ export function sshBase(port: number, keyPath: string, knownHosts: string): stri
   ];
 }
 
-// scp shares ssh's options but takes -P (capital) for the port, not -p.
 export function scpBase(port: number, keyPath: string, knownHosts: string): string[] {
   return [
     "-F", "/dev/null",
@@ -112,15 +117,32 @@ export async function waitForSsh(
 
 export function writeManifest(m: Manifest) {
   ensureDirs();
-  writeFileSync(join(RUNS_DIR, `${m.nonce}.json`), JSON.stringify(m, null, 2), { mode: 0o664 });
+  writeFileSync(join(runsDir(), `${m.nonce}.json`), JSON.stringify(m, null, 2), { mode: 0o664 });
+}
+
+export function manifestPath(nonce: string): string {
+  return join(runsDir(), `${nonce}.json`);
 }
 
 export function readManifest(nonce: string): Manifest | null {
-  const p = join(RUNS_DIR, `${nonce}.json`);
+  const p = manifestPath(nonce);
   if (!existsSync(p)) return null;
   return JSON.parse(readFileSync(p, "utf8")) as Manifest;
 }
 
 export function procAlive(pid: number): boolean {
   try { process.kill(pid, 0); return true; } catch { return false; }
+}
+
+export function readProcStartTime(pid: number): number | null {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const rparen = stat.lastIndexOf(")");
+    if (rparen < 0) return null;
+    const rest = stat.slice(rparen + 1).trim().split(/\s+/);
+    const starttime = rest[19];
+    if (starttime === undefined) return null;
+    const n = Number(starttime);
+    return Number.isFinite(n) ? n : null;
+  } catch { return null; }
 }

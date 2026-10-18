@@ -36,11 +36,44 @@ Root-free `qemu`/KVM guest run as an unprivileged user (via a world-accessible
 in-guest users — `upstream`, `kowd`, `agent` — enforce that the agent cannot
 read the secret at rest. Teardown is a single process kill; nothing persists.
 
+## Prerequisites (host tools)
+
+The smoke test boots a real KVM guest, so the host needs these tools on `PATH`
+before the first run:
+
+- `qemu-system-x86_64` and `qemu-img` (the `qemu` / `qemu-system-x86` package)
+- `cloud-localds` (from `cloud-image-utils`)
+- `ssh` (the OpenSSH client)
+- `openssl`
+- `curl`
+- `bun`
+
+A writable `/dev/kvm` is required for KVM acceleration. The unit tests (`bun test`)
+need only `bun`.
+
+## Setup (fetch the base image)
+
+Run this once before the smoke test to download and verify the base cloud image:
+
+```
+bun run setup
+```
+
+`setup` downloads the pinned Ubuntu *noble* cloud image into `$PKST_SCRATCH/base/`
+(default `~/.cache/paperclip-kow-smoketest`) only if it is absent, checks its size
+and verifies its SHA-256 against the official `SHA256SUMS`, then prints the resolved
+path. The download uses the **system CA bundle**
+(`/etc/ssl/certs/ca-certificates.crt`), never a kow/AVP CA. Re-running is a no-op
+when the cached image already matches. Override the release channel with
+`PKST_NOBLE_CHANNEL`, the mirror with `PKST_BASE_URL`, or hard-pin an exact digest
+with `PKST_BASE_SHA256`.
+
 ## Run
 
 ```
-bun test                 # pure-logic unit tests (fast)
-bun tests/smoke-core.ts  # full boot + provision + live A1/A2a/A3 (~5-6 min)
+bun test        # pure-logic unit tests (fast)
+bun run setup   # one-time: fetch + verify the base image (see above)
+bun run smoke   # full boot + provision + live A1/A2a/A3 (~5-6 min)
 ```
 
 The base cloud image is cached under `$PKST_SCRATCH`

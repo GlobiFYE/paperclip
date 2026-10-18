@@ -6,8 +6,9 @@ runs an arbitrary command; wrapping that command in `kow run` routes the agent's
 egress through kow, which swaps a placeholder for the real credential on the wire.
 The agent process only ever holds the placeholder.
 
-This directory's smoke test (`SPEC.md`, `tests/smoke-core.ts`) proves the pattern
-end to end inside a disposable VM.
+This directory's smoke test (`tests/smoke-core.ts`) exercises credential brokering
+through `kow run` inside a disposable VM. It does not run Paperclip itself; that
+layer is still pending. See `SPEC.md` for the acceptance criteria.
 
 ## The pattern
 

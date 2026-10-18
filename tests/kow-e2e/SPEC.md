@@ -1,11 +1,13 @@
 # Paperclip + kow end-to-end smoke test — SPEC
 
-Status: draft v4 (post design-sweep 3; design sweeps complete). Owner:
+Status: draft v5 (post design-sweep 3; design sweeps complete). Owner:
 Laima/Radek. Date: 2026-10-08.
 Companion: `LIFEOS/DOCUMENTATION/adr/0006-paperclip-kow-smoketest-vm.md`.
 Review log: `docs/REVIEW-LOG.md`. Changelog: v2 applied sweep-1 C1-C10; v3
 applied sweep-2 H1-H3/M1-M5/L1-L4; v4 applies sweep-3 H-A/M-A..M-E/L-A..L-D and
-corrects spec-vs-kow-source drift (see §12).
+corrects spec-vs-kow-source drift (see §12); v5 applies sweep-4
+C1/C2/C4/C7 (implemented A7 at-rest probe, A5 all-line denominator, exact audit
+path match, curl-child rationale).
 
 ## 1. Goal and the exact claim under test
 
@@ -98,6 +100,27 @@ guest-side marker written at run start (L4).
 - **A2a Agent never received it**: fixture (fixed-string) absent from agent
   `printenv`, live `/proc/<pid>/environ` (H1 barrier), argv, verdict JSON,
   result file, Paperclip run logs; `bytesScanned > 0` asserted per source.
+  IMPLEMENTED (smoke-core): evidence targets the real agent pid — `agent.mjs`
+  writes `process.pid` to `agent-<label>.agentpid` at startup (not the
+  `kow run` launcher pid), and `collect-evidence.sh` scans that pid's
+  `/proc/<pid>/environ` AND `/proc/<pid>/cmdline`, the result file, AND the
+  agent's own run log `agent-<label>.log` (`log_readable`/`log_hits`). A live
+  pid whose environ, cmdline, or log cannot be read — or a found result file
+  that cannot be read — is a COLLECTION FAILURE (script exits non-zero;
+  `env_readable`/`cmdline_readable`/`log_readable`/`result_readable` false),
+  never a vacuous clean. The collector never puts the secret on any argv: the
+  pattern is fed to `grep -f -` on stdin, closing the self-inflicted
+  `/proc/<collector-pid>/cmdline` argv leak (sweep-2 C1). Evidence is also
+  identity-bound: the scanned pid's executable must be node and the process
+  owned by the `agent` user (`agent_identity_ok`), and the result file's JSON
+  `nonce` must equal the run nonce (`result_nonce_ok`) — so a different live
+  process plus an arbitrary clean result cannot satisfy A2a.
+  The agent's `curl` child is not scanned as a separate channel (sweep-4 C1): by
+  construction the agent holds ONLY the placeholder, and kow injects the real
+  credential on the egress leg inside the proxy — the curl child inherits the
+  placeholder from the agent env and argv, never the real secret, so its
+  transient env/args carry nothing the agent's own environ/cmdline/result scans
+  do not already cover.
 - **A2b Memory best-effort (supporting)**: walk EVERY readable VMA of the live
   agent via `/proc/<pid>/maps`+`mem` seeks (not just `[stack]`), fixture absent.
 - **A3 Placeholder in, exactly once (M1, M-D)**: in the fresh kow audit log,
@@ -105,8 +128,15 @@ guest-side marker written at run start (L4).
   secret_name=="TEST_API_KEY" && destination.host=="vault-echo.test"`, joined by
   its `request_id` to one `upstream_response` with status 200 (request_id is the
   PRIMARY join; a guest-clock timestamp bracket is a secondary sanity bound —
-  L-D). A5 controls run only after this count is frozen and add ZERO allowed
-  inject_decisions.
+  L-D). IMPLEMENTED (smoke-core): `count-audit.sh` additionally pins the record
+  to the bound request by `destination.path_prefix` (`/echo`) and method
+  (`POST`), applied tolerantly — a field is used only when present in the record.
+  When the record carries a `path_prefix` it is matched EXACTLY against the bound
+  path (sweep-4 C4): the former bidirectional-prefix match treated `/echo-other`
+  and `/` as matching `/echo` and is removed; a record missing the field is still
+  not excluded. The parse emits `seen_paths`/`seen_methods` so a live exact-match
+  miss prints the real stored values for diagnosis. A5 controls run only after
+  this count is frozen and add ZERO allowed inject_decisions.
 - **A4 Paperclip run completed**: terminal success carrying `<nonce>`; result
   file exists.
 - **A5 Scope negative controls (C8, M3)** — each POSITIVELY records a request at
@@ -116,6 +146,23 @@ guest-side marker written at run start (L4).
     allow` and the control mock presents an agent-trusted cert (L-B),
   - A5b `GET` on `vault-echo.test` — no injection,
   - A5c `POST /other` (non-bound path on the bound host) — no injection.
+  IMPLEMENTED (smoke-core): A5c is wired as the selectivity control — a second
+  agent run with a fresh nonce to `POST https://vault-echo.test:8443/other`
+  (unbound path; `unmatched_destination_policy: forward_unmodified`). It runs
+  only after the A3 count is frozen, and asserts (a) for that nonce the upstream
+  recorded at least one request and **EVERY** received-log line carried the
+  **placeholder** fingerprint while NONE carried the fixture fingerprint —
+  aggregated in-guest across all matching lines, not just the last (sweep-2 C6);
+  only fingerprints are compared, never the raw secret or header. The denominator
+  is now ALL received-log lines matching the control nonce (sweep-4 C7): the prior
+  pipeline pre-filtered to lines whose `token_sha256_12` was exactly 12 hex, so a
+  line with a missing/empty fingerprint was silently dropped before counting. The
+  check now extracts the fingerprint per matching line (empty allowed), counts an
+  empty/absent fingerprint as a FAIL, and asserts `total>=1`, `placeholder==total`,
+  `fixture==0`, `other==0`, `empty==0`. And (b) the
+  allowed-injection counts are unchanged (`matching==1`, `unexpected==0`) — kow
+  added ZERO allowed inject_decisions for the unbound destination. A5a/A5b remain spec'd for the
+  fuller harness (need the wrong-host control mock + an agent-trusted cert).
 - **A6 Clean teardown (C5, C10, L2)**: no qemu for this overlay, no hostfwd
   listener, no overlay disk, no run-scoped HOME/ssh/tmp/seed; base cache may
   persist; evidence bundle swept for the fixture → NONE. External post-check,
@@ -129,6 +176,15 @@ guest-side marker written at run start (L4).
   `/proc/<pid>/*` and open-fd target the agent can read, and system tmp; scan
   each with **overlapping windows** (fixture may straddle a read chunk) for the
   fixture AND its base64 form → zero hits (H-A, M-E).
+  IMPLEMENTED (smoke-core, sweep-4 C2): a minimal at-rest permission probe — as
+  the in-guest `agent` user, `cat` BOTH `static-secrets.yaml` (the `static`
+  backend store) AND the upstream `received.log` (the raw-header log); the test
+  compares only in-guest success/failure (file contents never leave the guest)
+  and requires BOTH reads to FAIL with a non-zero rc (permission denied). A rc of
+  0 — the file readable by `agent` — is a real FAIL, and a missing rc marker is
+  RED, never a vacuous clean. The fuller DISCOVERY sweep (all listed paths +
+  modified-since-boot enumeration + `/proc` + overlapping-window encoded scan)
+  remains spec'd for the fuller harness.
 - **A8 Upstream TLS authenticated (L3, M-C)** — in one window: FIRST a
   correctly-upstream-CA'd request that the mock MUST record (positive control so
   the absence checks can't green vacuously), THEN a request to an upstream
@@ -221,6 +277,17 @@ argv option, not automatic (A8 proves it is actually set).
 - Boot-substrate smoke (qemu-as-claude) proved KVM accel is accepted and the
   guest process runs; SSH-over-hostfwd needs console capture + longer boot
   budget — to finish in the implementation phase before the harness is trusted.
+- Teardown now guards the SIGKILL against PID reuse (C6): the manifest records
+  the qemu `/proc/<pid>/stat` field-22 start-time at boot and teardown only
+  kills if the live start-time still matches. On a confirmed kill it best-effort
+  removes the overlay, the run dir, and the manifest (C4, partial). The FULL
+  crash-reaper (C5) — an external per-run orphan sweep that reaps qemu + evidence
+  for runs whose owner process died without reaching the `finally` — is still
+  PENDING; current cleanup is trap/finally-driven only.
+- The §5 egress-hermeticity proof (pinned nftables output chain + readback +
+  live drop-counter-increment + per-pid `ss -tnp` loopback evidence) is spec'd
+  but NOT yet wired into the implemented harness; it remains PENDING and the
+  credentialed request is not yet asserted to run under a live drop ruleset.
 
 ## 12. Sweep resolutions
 
@@ -233,4 +300,13 @@ same-window positive control. M-D→`static` backend named (§3.2/§10),
 records + encoded(base64) plant. L-A→A2b walks all readable VMAs; plant seeds
 heap. L-B→A5a `unmatched_destination_policy: allow` + agent-trusted control cert.
 L-C→A0 YAML round-trip + single-quoted constrained fixture. L-D→A3 request_id
-primary join, timestamp secondary.
+primary join, timestamp secondary. Sweep-4 → v5: C2→A7 implemented as a minimal
+in-guest at-rest permission probe (secret YAML + received.log both must be
+permission-denied to `agent`); C4→`count-audit.sh` exact `path_prefix` match
+(bidirectional prefix removed) + `seen_paths`/`seen_methods` diagnostics; C7→A5
+denominator counts ALL control-nonce received-log lines, empty/absent fingerprint
+is a FAIL; C1→documented rationale (curl child inherits only the placeholder).
+C3 (egress hermeticity) and the full crash-reaper remain disclosed-PENDING (§11).
+Teardown also now fails the test when qemu survives SIGKILL or cleanup leaves the
+overlay/runDir/manifest (sweep-4 C5/C6), and the run nonce is captured before
+provisioning so a provisioning failure still reaches teardown.

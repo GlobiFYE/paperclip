@@ -1,6 +1,4 @@
 #!/bin/bash
-# Start kowd proxy + mock upstream as their isolated users. Runs as tester via sudo.
-# Args: <PLACEHOLDER> <RUNROOT>
 set -euo pipefail
 source "$(dirname "$(readlink -f "$0")")/lib.sh"
 PLACEHOLDER="$1"; RUNROOT="${2:-/opt/pkst}"
@@ -8,7 +6,6 @@ KOWD_DIR="$RUNROOT/kowd"; UP_DIR="$RUNROOT/upstream"; PUB="$RUNROOT/pub"
 ASSET_DIR="/home/tester/pkst-assets"
 log(){ echo "[start] $*"; }
 
-# --- kow proxy (as kowd), detached, logging to a kowd-owned 0600 file (sweep-2 H3) ---
 if ! sudo ss -tnlp 2>/dev/null | grep -q 127.0.0.1:14322; then
   log "starting kow proxy on 127.0.0.1:14322"
   sudo -u kowd bash -c "
@@ -21,15 +18,12 @@ if ! sudo ss -tnlp 2>/dev/null | grep -q 127.0.0.1:14322; then
       </dev/null >'$KOWD_DIR/kowd.log' 2>&1 &
     echo \$! > '$KOWD_DIR/kowd.pid'
   "
-  # wait for listener + CA generation
   wait_for 30 port_listening 14322 || true
 fi
-# publish the kow proxy CA so the agent can trust kow's MITM cert (sweep-2 M2)
 wait_for 20 sudo test -f "$KOWD_DIR/confdir/mitmproxy-ca-cert.pem" || true
 sudo cp "$KOWD_DIR/confdir/mitmproxy-ca-cert.pem" "$PUB/kow-ca.pem"
 sudo chmod 0644 "$PUB/kow-ca.pem"
 
-# --- mock upstream (as upstream), detached ---
 PLACEHOLDER_FP=$(printf '%s' "$PLACEHOLDER" | sha256sum | cut -c1-12)
 EXPECT_FP=$(cat "$PUB/fixture.fp")
 if ! sudo ss -tnlp 2>/dev/null | grep -q 127.0.0.1:8443; then

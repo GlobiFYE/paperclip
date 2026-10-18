@@ -1,11 +1,9 @@
-// `up`: boot a throwaway KVM guest as `claude`, SSH-ready. Encodes the proven
-// recipe (docs/BOOT-RECIPE.md). No root, user-mode slirp, loopback hostfwd.
-import { mkdirSync, writeFileSync, readFileSync, existsSync, chmodSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import {
-  SCRATCH, BASE_IMG, newNonce, runDirFor, ensureDirs, freePort,
-  waitForSsh, writeManifest, type Manifest,
+  baseImg, newNonce, runDirFor, ensureDirs, freePort,
+  waitForSsh, writeManifest, readProcStartTime, type Manifest,
 } from "./lib.ts";
 
 export interface GuestCtx {
@@ -21,10 +19,12 @@ function sh(cmd: string, args: string[], opts: Record<string, unknown> = {}) {
   return r.stdout ?? "";
 }
 
-export async function up(): Promise<GuestCtx> {
-  if (!existsSync(BASE_IMG)) throw new Error(`base image missing: ${BASE_IMG}`);
+export async function up(nonce: string = newNonce()): Promise<GuestCtx> {
+  const base = baseImg();
+  if (!existsSync(base)) {
+    throw new Error(`base image missing: ${base} (run: bun harness/setup-base.ts)`);
+  }
   ensureDirs();
-  const nonce = newNonce();
   const runDir = runDirFor(nonce);
   mkdirSync(runDir, { recursive: true });
   const keyPath = join(runDir, "id");
@@ -34,11 +34,9 @@ export async function up(): Promise<GuestCtx> {
   const consoleLog = join(runDir, "console.log");
   const port = await freePort();
 
-  // throwaway ssh key
   sh("ssh-keygen", ["-t", "ed25519", "-N", "", "-f", keyPath, "-q"]);
   const pub = readFileSync(`${keyPath}.pub`, "utf8").trim();
 
-  // cloud-init: admin control user `tester`; dead-man shutdown backstop (re-armed in provision)
   writeFileSync(join(runDir, "user-data"), `#cloud-config
 ssh_pwauth: false
 users:
@@ -55,12 +53,9 @@ runcmd:
   writeFileSync(join(runDir, "meta-data"),
     `instance-id: pkst-${nonce}\nlocal-hostname: pkst\n`);
   sh("cloud-localds", [seed, join(runDir, "user-data"), join(runDir, "meta-data")]);
-  sh("qemu-img", ["create", "-f", "qcow2", "-F", "qcow2", "-b", BASE_IMG, overlay]);
-  // Grow the overlay so cloud-init growpart expands root to fit node + mitmproxy
-  // (the base cloud image root is ~2 GB and overflows otherwise).
+  sh("qemu-img", ["create", "-f", "qcow2", "-F", "qcow2", "-b", base, overlay]);
   sh("qemu-img", ["resize", overlay, "20G"]);
 
-  // Detached boot: the task harness kills a plain background qemu; setsid orphans it.
   const bootSh = join(runDir, "boot.sh");
   writeFileSync(bootSh, `#!/bin/bash
 cd "${runDir}"
@@ -73,12 +68,12 @@ setsid qemu-system-x86_64 -accel kvm -machine q35 -cpu host -m 2048 -smp 2 \\
 echo $! > "${join(runDir, "qemu.pid")}"
 `, { mode: 0o755 });
   spawnSync("bash", [bootSh], { encoding: "utf8" });
-  // small settle so the pid file lands
   await new Promise((r) => setTimeout(r, 1500));
   const qemuPid = parseInt(readFileSync(join(runDir, "qemu.pid"), "utf8").trim(), 10);
+  const qemuStartTime = readProcStartTime(qemuPid) ?? 0;
 
   const manifest: Manifest = {
-    nonce, qemuPid, hostfwdPort: port, overlayPath: overlay, runDir,
+    nonce, qemuPid, qemuStartTime, hostfwdPort: port, overlayPath: overlay, runDir,
     owner: process.env.USER ?? "claude", startedAt: new Date().toISOString(),
   };
   writeManifest(manifest);
