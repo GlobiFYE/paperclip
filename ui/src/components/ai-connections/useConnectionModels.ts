@@ -45,6 +45,7 @@ export function useConnectionModels(
     staleTime: 60_000,
     retry: false,
   });
+  const claudeCatalogActive = Boolean(companyId && binding && isClaudeLocal);
   const claudeEfforts = new Map((isClaudeLocal ? claudeCatalog.data ?? [] : []).map((m) => [m.id, m.efforts]));
 
   const effectiveRouting: AiProviderRouting | undefined = routing ?? (openRouter
@@ -61,9 +62,19 @@ export function useConnectionModels(
           return efforts ? { id, label: m.label ?? m.id, efforts } : { id, label: m.label ?? m.id };
         }),
         isLoading: discover && catalog.isLoading,
-        error: discover ? catalog.error : null,
-        refreshing: discover && catalog.isFetching,
-        refreshModels: discover ? async () => { await catalog.refetch(); } : undefined,
+        // A claudeCatalog failure only means efforts fall back to bundled values (the model
+        // list itself still comes from `routing.models` or `catalog`), but it must still
+        // surface rather than fail silently, per AGENTS.md's UI error-surfacing rule.
+        error: (discover ? catalog.error : null) ?? (claudeCatalogActive ? claudeCatalog.error : null),
+        refreshing: (discover && catalog.isFetching) || (claudeCatalogActive && claudeCatalog.isFetching),
+        refreshModels: discover || claudeCatalogActive
+          ? async () => {
+              await Promise.all([
+                ...(discover ? [catalog.refetch()] : []),
+                ...(claudeCatalogActive ? [claudeCatalog.refetch()] : []),
+              ]);
+            }
+          : undefined,
         resolveModel: (model: string) =>
           aiRoutingModel(effectiveRouting, harness, model),
       }
