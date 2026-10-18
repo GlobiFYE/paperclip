@@ -1168,8 +1168,8 @@ function connectorEnrollmentPrincipal(req: Request): string {
         claimId,
         error,
         actor: getActorInfo(req),
+        onCommitted: () => { completionSucceeded = true; },
       });
-      completionSucceeded = true;
       const pendingConfig = pendingConnection.config ?? {};
       const oauthConfig = pendingConfig.oauth && typeof pendingConfig.oauth === "object"
         ? pendingConfig.oauth as Record<string, unknown>

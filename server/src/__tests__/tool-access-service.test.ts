@@ -8393,6 +8393,59 @@ describeEmbeddedPostgres("tool access service", () => {
     );
   });
 
+  it("does not audit OAuth failure when GitHub webhook binding fails after commit", async () => {
+    const company = await createCompany(db);
+    const userId = `github-post-commit-${randomUUID()}`;
+    await grantBoardUser(db, company.id, userId, [], "owner");
+    const connector = fakeGitHubConnector(company.id, userId);
+    vi.mocked(connector.setWebhookBinding!).mockRejectedValue(new Error("Provider-controlled webhook error"));
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+      const href = String(url);
+      if (href === "https://api.github.com/user") return mcpHttpResponse({ id: 42, login: "octocat" });
+      if (href.includes("https://api.github.com/user/installations?")) return mcpHttpResponse({
+        installations: [{ id: 101, repository_selection: "selected", html_url: "https://github.com/settings/installations/101", account: { login: "paperclipai" } }],
+      });
+      if (href.includes("https://api.github.com/user/installations/101/repositories?")) return mcpHttpResponse({
+        total_count: 1, repositories: [{ id: 1, full_name: "paperclipai/repo-1" }],
+      });
+      throw new Error(`unexpected fetch ${href}`);
+    });
+    const actor = { actorType: "user" as const, actorId: userId };
+    const service = createTestToolAccessService(db, { paperclipCloudConnector: connector });
+    const connected = await service.connectGalleryApp(company.id, {
+      galleryKey: "github", connectionMethodKey: "managed", grantKind: "user", name: "GitHub post-commit",
+    }, actor);
+    const started = await service.startOAuth(company.id, connected.connectionId, {
+      redirectUri: "https://paperclip.example/api/tools/oauth/cloud-connector/callback", actor,
+    });
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    const warning = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+    const errorLog = vi.spyOn(logger, "error").mockImplementation(() => logger);
+    const app = createRouteApp(db, boardSessionActor(company.id, "owner", userId), undefined, {
+      paperclipCloudConnector: connector,
+    });
+
+    const callback = await request(app).get("/api/tools/oauth/cloud-connector/callback")
+      .query({ state, claim_id: "github-post-commit-claim" }).set("accept", "text/html");
+
+    expect(connector.setWebhookBinding).toHaveBeenCalled();
+    expect(callback.status).toBe(303);
+    expect(callback.headers.location).toContain("oauth=failed");
+    expect(await service.peekOAuthState(state)).toBeNull();
+    const [connection] = await db.select().from(toolConnections).where(eq(toolConnections.id, connected.connectionId));
+    expect(connection.status).toBe("draft");
+    const [grant] = await db.select().from(connectionGrants).where(eq(connectionGrants.connectionId, connected.connectionId));
+    expect(grant.status).toBe("active");
+    expect(await db.select().from(activityLog).where(and(
+      eq(activityLog.companyId, company.id), eq(activityLog.entityId, connected.connectionId),
+      eq(activityLog.action, "tool_app.oauth_failed"),
+    ))).toHaveLength(0);
+    expect(JSON.stringify([warning.mock.calls, errorLog.mock.calls])).not.toContain("Provider-controlled webhook error");
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "cloud_connector_callback_post_completion_failed" }), expect.any(String),
+    );
+  });
+
   it("activates allowed Drive write actions without approval defaults after a managed callback", async () => {
     const company = await createCompany(db);
     const userId = `drive-write-member-${randomUUID()}`;
