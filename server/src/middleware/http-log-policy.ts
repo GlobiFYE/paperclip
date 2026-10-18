@@ -46,12 +46,12 @@ const SECRET_SENSITIVE_HTTP_PATHS = [
 ];
 const SECRET_SENSITIVE_HTTP_METHODS = new Set(["POST", "PUT", "PATCH"]);
 
-/** Free-form agent feedback must never be copied into HTTP diagnostics. */
-export function isPrivateAgentCommentaryHttpRequest(url: string | undefined): boolean {
+/** Free-form agent feedback and TypeSafe task content must never be copied into HTTP diagnostics. */
+export function isPrivateAgentContentHttpRequest(url: string | undefined): boolean {
   if (!url) return false;
   // Express routes are case-insensitive and also accept absolute-form URLs.
   const pathname = normalizePath(url).replace(/^https?:\/\/[^/]*/i, "");
-  return /^\/api\/companies\/[^/]+\/agent-commentary(?:\/|$)/i.test(pathname);
+  return /^\/api\/companies\/[^/]+\/(?:agent-commentary|typesafe\/ask)(?:\/|$)/i.test(pathname);
 }
 
 /** Muse OAuth and worker payloads stay private even on malformed/rejected paths. */
@@ -101,7 +101,7 @@ export function isSecretSensitiveHttpRequest(
 ): boolean {
   if (isPrivateWebhookHttpRequest(method, url) || isPrivateMuseHttpRequest(url)) return true;
   if (url && normalizePath(url).startsWith("/mcp/files/")) return true;
-  if (isPrivateAgentCommentaryHttpRequest(url)) return true;
+  if (isPrivateAgentContentHttpRequest(url)) return true;
   // Avatar uploads and dedicated Dot MCP calls may contain private image bytes.
   if (url && /^(?:\/mcp\/runner(?:\/|$)|\/api\/companies\/[^/]+\/agents\/[^/]+\/avatar(?:\/|$))/i.test(normalizePath(url).replace(/^https?:\/\/[^/]*/i, ""))) return true;
   if (!method || !url) return false;
