@@ -7,10 +7,15 @@ import { RouteErrorBoundary } from "./RouteErrorBoundary";
 
 const navigateMock = vi.hoisted(() => vi.fn());
 const routerLocation = vi.hoisted(() => ({ current: { pathname: "/co/agents/new", search: "?adapterType=claude_local" } }));
+const captureBrowserExceptionMock = vi.hoisted(() => vi.fn());
 
 vi.mock("@/lib/router", () => ({
   useLocation: () => routerLocation.current,
   useNavigate: () => navigateMock,
+}));
+
+vi.mock("@/lib/sentry", () => ({
+  captureBrowserException: (...args: unknown[]) => captureBrowserExceptionMock(...args),
 }));
 
 function Boom(): never {
@@ -33,25 +38,7 @@ describe("RouteErrorBoundary", () => {
   afterEach(() => {
     consoleErrorSpy.mockRestore();
     container.remove();
-  });
-
-  it("renders a recoverable error card instead of a blank page when a child throws", () => {
-    const root = createRoot(container);
-    act(() => {
-      root.render(
-        <RouteErrorBoundary>
-          <Boom />
-        </RouteErrorBoundary>,
-      );
-    });
-
-    expect(container.textContent).toContain("This page hit an error");
-    expect(container.textContent).toContain("Maximum update depth exceeded");
-    expect(container.querySelector("pre")).not.toBeNull();
-
-    act(() => {
-      root.unmount();
-    });
+    captureBrowserExceptionMock.mockClear();
   });
 
   it("navigates back when the user clicks Go back", () => {
@@ -89,7 +76,20 @@ describe("RouteErrorBoundary", () => {
         </RouteErrorBoundary>,
       );
     });
+
+    expect(captureBrowserExceptionMock).toHaveBeenCalledTimes(1);
+    expect(captureBrowserExceptionMock).toHaveBeenCalledWith(expect.any(Error), {
+      boundary: "route", componentStack: expect.stringContaining("Boom"),
+    });
+    expect(
+      Array.from(container.querySelectorAll("button")).some(
+        (button) => button.textContent === "Go back",
+      ),
+    ).toBe(true);
+
     expect(container.textContent).toContain("This page hit an error");
+    expect(container.textContent).toContain("Maximum update depth exceeded");
+    expect(container.querySelector("pre")).not.toBeNull();
 
     // Simulate back-navigation to a different route, then re-render with a
     // healthy child — the boundary should reset off the new resetKey.

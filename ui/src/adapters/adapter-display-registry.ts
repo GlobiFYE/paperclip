@@ -6,10 +6,12 @@
  * `getAdapterDisplay()`.
  */
 import type { ComponentType } from "react";
+import { agentHarnessType } from "@paperclipai/shared";
 import {
   Bot,
   Code,
   Gem,
+  Moon,
   MousePointer2,
   Sparkles,
   Terminal,
@@ -79,6 +81,12 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     icon: Code,
     recommended: true,
   },
+  paperclip_runner: {
+    label: "Paperclip Runner",
+    description: "Experimental Rust runner with a Codex provider",
+    icon: Cpu,
+    experimental: true,
+  },
   gemini_local: {
     label: "Gemini CLI",
     description: "Gemini CLI harness",
@@ -88,6 +96,11 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     label: "Grok Build",
     description: "Grok Build harness",
     icon: Bot,
+  },
+  kimi_local: {
+    label: "Kimi Code",
+    description: "Kimi Code CLI harness",
+    icon: Moon,
   },
   hermes_gateway: {
     label: "Hermes Gateway",
@@ -114,6 +127,20 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     label: "Cursor",
     description: "Cursor CLI harness",
     icon: MousePointer2,
+  },
+  // Display-only choice: persisted as paperclip_runner with provider openai_dot.
+  grok_bot: { label: "Grok Bot", experimental: true, icon: Bot, description: "An existing external Bot in Grok" },
+  openai_dot: {
+    label: "OpenAI Dot",
+    description: "Your Dot in ChatGPT",
+    icon: Bot,
+    experimental: true,
+  },
+  muse: {
+    label: "Muse — Personal agent",
+    description: "Your personal Muse at muse.ai",
+    icon: Bot,
+    experimental: true,
   },
   cursor_cloud: {
     label: "Cursor Cloud",
@@ -186,6 +213,14 @@ export function getAdapterDisplay(type: string): AdapterDisplayInfo {
     description: suffix ? `External ${suffix} adapter` : "External adapter",
     icon: Cpu,
   };
+}
+
+export function agentDisplayAdapterType(agent: { adapterType: string; adapterConfig: Record<string, unknown> }): string {
+  if (agent.adapterType !== "paperclip_runner") return agent.adapterType;
+  if (agent.adapterConfig.provider === "openai_dot" || agent.adapterConfig.provider === "grok_bot" || agent.adapterConfig.provider === "muse") {
+    return agent.adapterConfig.provider;
+  }
+  return agentHarnessType(agent.adapterType, agent.adapterConfig) === "codex_local" ? "codex_local" : agent.adapterType;
 }
 
 export function isKnownAdapterType(type: string): boolean {
