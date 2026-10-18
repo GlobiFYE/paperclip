@@ -119,6 +119,24 @@ function makeSandboxTarget(): AdapterExecutionTarget {
   };
 }
 
+function makeSshTarget(): AdapterExecutionTarget {
+  return {
+    kind: "remote",
+    transport: "ssh",
+    remoteCwd: "/remote/workspace",
+    spec: {
+      host: "127.0.0.1",
+      port: 2222,
+      username: "user",
+      remoteCwd: "/remote/workspace",
+      remoteWorkspacePath: "/remote/workspace",
+      privateKey: "TEST KEY",
+      knownHosts: "[127.0.0.1]:2222 ssh-ed25519 AAAA",
+      strictHostKeyChecking: true,
+    },
+  };
+}
+
 describe("agy-local execute (remote execution)", () => {
   const tmpDirs: string[] = [];
 
@@ -601,5 +619,58 @@ describe("agy-local execute (remote execution)", () => {
     expect(restoreCommand).toContain("readlink");
     expect(restoreCommand).toContain("mv");
     expect(restoreCommand).toContain("rm -rf");
+  });
+
+  it("does not mutate the remote user's ~/.gemini/config/mcp_config.json on unmanaged SSH targets", async () => {
+    const rootDir = await makeTmpDir();
+    const workspaceDir = path.join(rootDir, "workspace");
+    await fs.mkdir(workspaceDir, { recursive: true });
+
+    const ctx: AdapterExecutionContext = {
+      runId: "run-ssh-no-mcp-clobber",
+      agent: {
+        id: "agent-1",
+        companyId: "company-1",
+        name: "Remote SSH Agent",
+        adapterType: "agy_local",
+        adapterConfig: {},
+      },
+      runtime: {
+        sessionId: null,
+        sessionParams: null,
+        sessionDisplayId: null,
+        taskKey: null,
+      },
+      runtimeMcp: {
+        getServers: () => [
+          {
+            name: "Paperclip tools",
+            url: "https://api.paperclip.test/mcp/tools",
+            token: "tool-token",
+            connectionId: "conn-mcp-1",
+          },
+        ],
+      },
+      config: {},
+      context: {
+        paperclipWorkspace: {
+          cwd: workspaceDir,
+        },
+      },
+      executionTarget: makeSshTarget(),
+      onLog: async () => {},
+    };
+
+    vi.mocked(runAdapterExecutionTargetShellCommand).mockClear();
+    await execute(ctx);
+
+    // On unmanaged SSH targets, remoteHomeDir is the real user's home and
+    // must not be mutated or symlinked with per-run MCP credentials.
+    const shellCommands = (vi.mocked(runAdapterExecutionTargetShellCommand).mock.calls as unknown as unknown[][])
+      .map((call) => String(call[2]));
+    const mcpLinkOrBackupCommand = shellCommands.find(
+      (cmd) => cmd.includes("mcp_config.json"),
+    );
+    expect(mcpLinkOrBackupCommand).toBeUndefined();
   });
 });

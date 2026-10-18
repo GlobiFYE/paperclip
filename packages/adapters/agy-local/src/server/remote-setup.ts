@@ -238,18 +238,16 @@ export async function prepareAgyRemoteRun(
       env.GEMINI_CLI_HOME = stagedAgyHomeRemote;
     }
 
-    if (remoteHomeDir && preparedExecutionTargetRuntime.assetDirs["mcp-config"]) {
+    // Only the managed HOME (the per-run runtime root) is touched: on
+    // non-managed remote targets (such as SSH) remoteHomeDir is the user's
+    // real home, where creating or replacing files is out of scope and
+    // concurrent runs could swap run-scoped tool credentials or delete
+    // the user's saved settings.
+    if (managedRemoteHomeDir && preparedExecutionTargetRuntime.assetDirs["mcp-config"]) {
       const stagedMcpConfigRemote = preparedExecutionTargetRuntime.assetDirs["mcp-config"];
-      const targetMcpConfig = path.posix.join(remoteHomeDir, ".gemini", "config", "mcp_config.json");
+      const targetMcpConfig = path.posix.join(managedRemoteHomeDir, ".gemini", "config", "mcp_config.json");
       const stagedMcpFile = path.posix.join(stagedMcpConfigRemote, "mcp_config.json");
       const backupMcpConfig = `${targetMcpConfig}.paperclip-backup-${runId}`;
-      // The link below replaces the remote user's own mcp_config.json (on
-      // SSH targets remoteHomeDir is their real home, not a private one).
-      // Preserve a pre-existing file first and put it back during workspace
-      // restore, so servers configured only on the remote machine survive
-      // the run. To prevent concurrent runs from deleting each other's active
-      // tools, teardown only replaces or deletes targetMcpConfig if this run
-      // is still the one pointing targetMcpConfig at stagedMcpFile.
       restoreRemoteMcpConfig = async () => {
         await runAdapterExecutionTargetShellCommand(
           runId,
