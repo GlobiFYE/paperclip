@@ -1059,6 +1059,62 @@ describe("ssh env-lab fixture", () => {
     })).rejects.toThrow("Workspace baseline must exclude .paperclip-repositories");
   }, SSH_FIXTURE_TEST_TIMEOUT_MS);
 
+  it("isolates and cleans concurrent in-place managed runtime assets over real SSH", async () => {
+    const rootDir = await createFixtureRootDir();
+    const statePath = path.join(rootDir, "state.json");
+    const localWorkspace = path.join(rootDir, "local-workspace");
+    const homeA = path.join(rootDir, "home-a");
+    const homeB = path.join(rootDir, "home-b");
+    await mkdir(localWorkspace, { recursive: true });
+    await mkdir(homeA, { recursive: true });
+    await mkdir(homeB, { recursive: true });
+    await writeFile(path.join(homeA, "config.toml"), "run = 'a'\n", "utf8");
+    await writeFile(path.join(homeB, "config.toml"), "run = 'b'\n", "utf8");
+
+    const started = await startSshEnvLabFixtureOrSkip(
+      statePath,
+      "concurrent in-place managed-runtime asset isolation test",
+    );
+    if (!started) return;
+    const config = await buildSshEnvLabFixtureConfig(started);
+    const spec = { ...config, remoteCwd: started.workspaceDir } as const;
+
+    const [preparedA, preparedB] = await Promise.all([
+      prepareRemoteManagedRuntime({
+        spec,
+        runId: "fixture-run-a",
+        adapterKey: "codex",
+        workspaceLocalDir: localWorkspace,
+        workspaceRemoteDir: started.workspaceDir,
+        syncWorkspace: false,
+        assets: [{ key: "home", localDir: homeA }],
+      }),
+      prepareRemoteManagedRuntime({
+        spec,
+        runId: "fixture-run-b",
+        adapterKey: "codex",
+        workspaceLocalDir: localWorkspace,
+        workspaceRemoteDir: started.workspaceDir,
+        syncWorkspace: false,
+        assets: [{ key: "home", localDir: homeB }],
+      }),
+    ]);
+
+    expect(preparedA.runtimeRootDir).not.toBe(preparedB.runtimeRootDir);
+    const content = await runSshCommand(
+      config,
+      `cat ${JSON.stringify(path.posix.join(preparedA.assetDirs.home!, "config.toml"))} && cat ${JSON.stringify(path.posix.join(preparedB.assetDirs.home!, "config.toml"))}`,
+    );
+    expect(content.stdout).toBe("run = 'a'\nrun = 'b'\n");
+
+    await Promise.all([preparedA.restoreWorkspace(), preparedB.restoreWorkspace()]);
+    const cleanup = await runSshCommand(
+      config,
+      `test ! -e ${JSON.stringify(preparedA.runtimeRootDir)} && test ! -e ${JSON.stringify(preparedB.runtimeRootDir)}`,
+    );
+    expect(cleanup.stderr).toBe("");
+  }, SSH_FIXTURE_TEST_TIMEOUT_MS);
+
   it("preserves nested per-run files across sequential SSH restores with stale baselines", async () => {
     const rootDir = await createFixtureRootDir();
     const statePath = path.join(rootDir, "state.json");
