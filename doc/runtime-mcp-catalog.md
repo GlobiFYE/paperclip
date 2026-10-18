@@ -18,6 +18,13 @@ approval descriptions and complete parameter schemas only for matching results.
 An upstream discovery gateway is still a gateway: first discover its own search
 tool, then use that tool's documented search and call routes.
 
+An omitted inline schema is a discovery step, not evidence of missing connection
+access. For ordinary work, search this assigned catalog directly instead of
+preflighting listed apps with `connections_search`. Explicit requests to connect
+a service still start with the connection tools; missing capability/access and
+disabled tools retain their existing human setup/grant flow. The catalog is never
+proof of execution permission: calls retain current policy and approval checks.
+
 Follow every returned page/reference needed for the selected operation. Large
 schemas and text fields are available in Unicode code-point chunks with hashes;
 pass the reference's `expectedHash` when continuing. A changed value returns 409

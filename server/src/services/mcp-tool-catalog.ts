@@ -176,7 +176,7 @@ export function createMcpToolCatalogDefinitions(tools: readonly McpToolCatalogDe
   const [searchDefinition, callDefinition] = MCP_TOOL_CATALOG_DEFINITIONS;
   const index = appIndexFor(tools);
   const nestedDiscoveryHint =
-    "These entries are currently authorized gateway tools. Some expose another app's tools: when the desired upstream action is not listed, find and use that app's discovery action first. This index grants no access; search for complete descriptions, approval text, and schemas before calling.";
+    "For ordinary work, search this assigned catalog directly; no connections_search preflight is needed for listed apps. Explicit connection/setup requests and missing access still use connection tools. Some entries expose another app's tools: when the desired upstream action is not listed, find and use that app's discovery action first. This index grants no access; read complete descriptions, approval text, and schemas before calling. Execution rechecks current permissions and approvals.";
   return [
     {
       ...searchDefinition,

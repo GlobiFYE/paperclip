@@ -66,6 +66,24 @@ describe("MCP tool catalog utility", () => {
     expect(definitions[0].description).not.toContain('"secret"');
   });
 
+  it("uses the assigned catalog for ordinary discovery while preserving setup and authorization boundaries", () => {
+    const definitions = createMcpToolCatalogDefinitions([
+      descriptor("gateway:search", {
+        applicationKey: "mcp-proxy",
+        applicationDisplayName: "MCP Proxy",
+        upstreamToolName: "PowerShell Search",
+        parametersSchema: { type: "object", properties: { path: { type: "string" } } },
+      }),
+    ]);
+    expect(definitions[0].description).toContain("For ordinary work, search this assigned catalog directly");
+    expect(definitions[0].description).toContain("no connections_search preflight is needed for listed apps");
+    expect(definitions[0].description).toContain("Explicit connection/setup requests and missing access still use connection tools");
+    expect(definitions[0].description).toContain("Execution rechecks current permissions and approvals");
+    expect(definitions[1].description).toContain("current authorized Paperclip catalog");
+    expect(definitions[1].description).toContain("normal authorization and approval checks");
+    expect(definitions[0].description).not.toContain("connections_search before any service tool");
+  });
+
   it("uses whole app counts instead of partial action names when the index exceeds its UTF-8 budget", () => {
     const tools = Array.from({ length: 5_000 }, (_, index) => descriptor(`gateway:${index}`, {
       applicationKey: "large-app",
