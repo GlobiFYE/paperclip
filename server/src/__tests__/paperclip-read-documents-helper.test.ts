@@ -71,6 +71,36 @@ describe("paperclip read documents helper", () => {
     };
   }
 
+  function inlineDocuments(stdout: string): Array<{ issueId: string; key: string; latestRevisionId: string; latestRevisionNumber: number; bodyBytes: number; bodySha256: string; bodySegments: string[] }> {
+    const lines = stdout.trimEnd().split("\n");
+    expect(lines.length).toBeGreaterThan(2);
+    expect(() => JSON.parse(lines[0]!)).not.toThrow();
+    const payload = JSON.parse(lines.slice(1).join("\n")) as { inlineComplete?: boolean; documents?: Array<{ issueId: string; key: string; latestRevisionId: string; latestRevisionNumber: number; bodyBytes: number; bodySha256: string; bodySegments: string[] }> };
+    expect(payload.inlineComplete).toBe(true);
+    expect(payload.documents).toBeDefined();
+    return payload.documents!;
+  }
+
+  function expectOutputLinesWithin(stdout: string, maxBytes: number) {
+    for (const line of stdout.split(/\r?\n/u)) {
+      if (line.length === 0) continue;
+      expect(Buffer.byteLength(line, "utf8")).toBeLessThan(maxBytes);
+    }
+  }
+
+  async function manifestFromDelivery(stdout: string, cwd: string) {
+    const header = JSON.parse(stdout.trimEnd().split("\n")[0]!) as { manifestPath?: string; outputRoot?: string; documents?: Array<{ issueId: string; key: string; segments: Array<{ path: string }> }> };
+    if (header.manifestPath) {
+      const manifestPath = path.isAbsolute(header.manifestPath) ? header.manifestPath : path.resolve(cwd, header.manifestPath);
+      return JSON.parse(await fs.readFile(manifestPath, "utf8")) as typeof header;
+    }
+    return header;
+  }
+
+  async function documentBody(document: { segments: Array<{ path: string }> }) {
+    return (await Promise.all(document.segments.map(segment => fs.readFile(segment.path, "utf8")))).join("");
+  }
+
   it("fetches explicit documents in parallel, writes private Unicode-safe complete segments, and prints only a revision manifest", async () => {
     const longBody = `${"a".repeat(5999)}🌒${"界é".repeat(5000)}\nlast line`;
     const issueIds = [
@@ -130,6 +160,119 @@ describe("paperclip read documents helper", () => {
       expect(rootStat.mode & 0o777).toBe(0o700);
       expect(firstSegment.mode & 0o777).toBe(0o600);
     }
+  });
+
+  it("opts into a complete JSONL inline payload with byte-exact Unicode body and revision evidence", async () => {
+    const issueId = "11111111-1111-4111-8111-111111111111";
+    const body = `Zitat \"escaped\" \\\n🌒界é\nletzte Zeile${'"\t\\🌒界é\n'.repeat(2200)}`;
+    const { baseUrl, requests } = await startServer((_request, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(response(`${issueId}/policy`, body)));
+    });
+    const cwd = await createCwd();
+    const result = await runHelper(baseUrl, ["--inline-max-bytes", "49152", "--document", `${issueId}/policy`], cwd);
+
+    expect(result.code).toBe(0);
+    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThanOrEqual(49152);
+    expectOutputLinesWithin(result.stdout, 6000);
+    const [document] = inlineDocuments(result.stdout);
+    expect(document).toMatchObject({
+      issueId,
+      key: "policy",
+      latestRevisionId: `revision-${issueId}/policy`,
+      latestRevisionNumber: 3,
+      bodyBytes: Buffer.byteLength(body, "utf8"),
+      bodySha256: (await import("node:crypto")).createHash("sha256").update(body, "utf8").digest("hex"),
+    });
+    expect(document.bodySegments.join("")).toBe(body);
+    expect(document.bodySegments.every(segment => Buffer.byteLength(JSON.stringify(segment), "utf8") <= 4096)).toBe(true);
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.authorization).toBe("Bearer fixture-key");
+  });
+
+  it("uses the exact total stdout byte limit and falls back without a partial body one byte below it", async () => {
+    const issueId = "11111111-1111-4111-8111-111111111111";
+    const body = `\"quoted\" \\ backslash\n${"🌒界é".repeat(1800)}`;
+    const { baseUrl } = await startServer((_request, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(response(`${issueId}/policy`, body)));
+    });
+    const probeCwd = await createCwd();
+    const probe = await runHelper(baseUrl, ["--inline-max-bytes", "49152", "--document", `${issueId}/policy`], probeCwd);
+    expect(probe.code).toBe(0);
+    const exactLimit = Buffer.byteLength(probe.stdout, "utf8");
+    expect(exactLimit).toBeGreaterThanOrEqual(1024);
+    expectOutputLinesWithin(probe.stdout, 6000);
+    expect(inlineDocuments(probe.stdout)[0]?.bodySegments.join("")).toBe(body);
+
+    const exactCwd = await createCwd();
+    const exact = await runHelper(baseUrl, ["--inline-max-bytes", String(exactLimit), "--document", `${issueId}/policy`], exactCwd);
+    expect(exact.code).toBe(0);
+    expect(Buffer.byteLength(exact.stdout, "utf8")).toBe(exactLimit);
+    expectOutputLinesWithin(exact.stdout, 6000);
+    expect(inlineDocuments(exact.stdout)[0]?.bodySegments.join("")).toBe(body);
+
+    const fallbackCwd = await createCwd();
+    const fallback = await runHelper(baseUrl, ["--inline-max-bytes", String(exactLimit - 1), "--document", `${issueId}/policy`], fallbackCwd);
+    expect(fallback.code).toBe(0);
+    expect(Buffer.byteLength(fallback.stdout, "utf8")).toBeLessThanOrEqual(exactLimit - 1);
+    expectOutputLinesWithin(fallback.stdout, 6000);
+    expect(fallback.stdout).not.toContain(body);
+    const manifest = await manifestFromDelivery(fallback.stdout, fallbackCwd);
+    const policy = manifest.documents?.find(document => document.issueId === issueId && document.key === "policy");
+    expect(policy).toBeDefined();
+    await expect(documentBody(policy!)).resolves.toBe(body);
+  });
+
+  it("keeps a many-document segment delivery within a small budget via a complete manifest file", async () => {
+    const issueIds = Array.from({ length: 8 }, (_, index) => `${String(index + 1).repeat(8)}-${String(index + 1).repeat(4)}-4${String(index + 1).repeat(3)}-8${String(index + 1).repeat(3)}-${String(index + 1).repeat(12)}`);
+    const bodies = new Map(issueIds.map((issueId, index) => [issueId, `Dokument ${index} 🌒\n${String(index).repeat(12000)}`]));
+    const { baseUrl } = await startServer((request, res) => {
+      const url = new URL(request.url, baseUrl);
+      const [, , , issueId, , key] = url.pathname.split("/");
+      const body = bodies.get(issueId!)!;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(response(`${issueId}/${key}`, body)));
+    });
+    const cwd = await createCwd();
+    const args = ["--inline-max-bytes", "1024", ...issueIds.flatMap(issueId => ["--document", `${issueId}/policy`])];
+    const result = await runHelper(baseUrl, args, cwd);
+
+    expect(result.code).toBe(0);
+    expect(Buffer.byteLength(result.stdout, "utf8")).toBeLessThanOrEqual(1024);
+    expect(result.stdout).not.toContain("Dokument 0");
+    const manifest = await manifestFromDelivery(result.stdout, cwd);
+    expect(manifest.documents).toHaveLength(8);
+    for (const document of manifest.documents!) {
+      await expect(documentBody(document)).resolves.toBe(bodies.get(document.issueId));
+    }
+  });
+
+  it.each([
+    [["--inline-max-bytes", "1023"]],
+    [["--inline-max-bytes", "49153"]],
+    [["--inline-max-bytes", "1024", "--inline-max-bytes", "2048"]],
+  ])("rejects invalid or duplicate inline budget flags before making requests: %j", async args => {
+    const { baseUrl, requests } = await startServer((_request, res) => { res.writeHead(404); res.end(); });
+    const cwd = await createCwd();
+    const result = await runHelper(baseUrl, [...args as string[], "--document", "11111111-1111-4111-8111-111111111111/policy"], cwd);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(requests).toHaveLength(0);
+  });
+
+  it.each([
+    ["HTTP 401", (_request: ServerRequest, res: http.ServerResponse) => { res.writeHead(401, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "unauthorized" })); }],
+    ["missing revision", (_request: ServerRequest, res: http.ServerResponse) => { res.writeHead(200, { "content-type": "application/json" }); const doc = response("11111111-1111-4111-8111-111111111111/policy", "body"); delete (doc as Partial<typeof doc>).latestRevisionId; res.end(JSON.stringify(doc)); }],
+    ["missing body", (_request: ServerRequest, res: http.ServerResponse) => { res.writeHead(200, { "content-type": "application/json" }); const doc = response("11111111-1111-4111-8111-111111111111/policy", "body"); delete (doc as Partial<typeof doc>).body; res.end(JSON.stringify(doc)); }],
+  ])("prints no inline output when the opt-in fetch fails: %s", async (_name, responder) => {
+    const { baseUrl, requests } = await startServer(responder as (request: ServerRequest, res: http.ServerResponse) => void);
+    const cwd = await createCwd();
+    const result = await runHelper(baseUrl, ["--inline-max-bytes", "1024", "--document", "11111111-1111-4111-8111-111111111111/policy"], cwd);
+    expect(result.code).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(requests).toHaveLength(1);
+    expect(await fs.readdir(cwd)).toEqual([]);
   });
 
   it.each([

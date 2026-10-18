@@ -11,11 +11,16 @@ const MAX_CONCURRENCY = 4;
 const MAX_DOCUMENT_BYTES = 2 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 8 * 1024 * 1024;
 const MAX_SEGMENT_CHARACTERS = 6_000;
+const MAX_OUTPUT_LINE_BYTES = 6_000;
+const MAX_INLINE_SEGMENT_JSON_BYTES = 4_096;
+const MIN_INLINE_MAX_BYTES = 1_024;
+const MAX_INLINE_MAX_BYTES = 49_152;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function usage() {
   return [
     "Usage: node paperclip-read-documents.mjs --document ISSUE_ID/KEY [--document ISSUE_ID/KEY ...]",
+    "Optional: --inline-max-bytes N returns complete documents inline when the complete output fits (1024-49152 bytes).",
     "Fetches up to 8 current issue documents in parallel and writes complete UTF-8 bodies",
     "as private files under the current working directory. Prints a JSON manifest to stdout.",
   ].join("\n");
@@ -23,9 +28,18 @@ function usage() {
 
 function parseArguments(args) {
   const documents = [];
+  let inlineMaxBytes;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--help" || arg === "-h") return { help: true, documents: [] };
+    if (arg === "--inline-max-bytes") {
+      if (inlineMaxBytes !== undefined) throw new Error("--inline-max-bytes may be provided only once.");
+      const value = args[++index];
+      if (typeof value !== "string" || !/^\d+$/.test(value)) throw new Error(`--inline-max-bytes must be an integer from ${MIN_INLINE_MAX_BYTES} to ${MAX_INLINE_MAX_BYTES}.`);
+      inlineMaxBytes = Number(value);
+      if (!Number.isSafeInteger(inlineMaxBytes) || inlineMaxBytes < MIN_INLINE_MAX_BYTES || inlineMaxBytes > MAX_INLINE_MAX_BYTES) throw new Error(`--inline-max-bytes must be an integer from ${MIN_INLINE_MAX_BYTES} to ${MAX_INLINE_MAX_BYTES}.`);
+      continue;
+    }
     if (arg !== "--document" || !args[index + 1]) throw new Error(`Unexpected or incomplete argument: ${arg ?? ""}`);
     const value = args[++index];
     const separator = value.lastIndexOf("/");
@@ -39,7 +53,7 @@ function parseArguments(args) {
   if (documents.length === 0) throw new Error("Pass at least one --document ISSUE_ID/KEY reference.");
   if (documents.length > MAX_DOCUMENTS) throw new Error(`At most ${MAX_DOCUMENTS} documents can be read at once.`);
   if (new Set(documents.map(({ issueId, key }) => `${issueId}\0${key}`)).size !== documents.length) throw new Error("Duplicate document references are not allowed.");
-  return { help: false, documents };
+  return { help: false, documents, ...(inlineMaxBytes === undefined ? {} : { inlineMaxBytes }) };
 }
 
 function splitBody(body) {
@@ -57,6 +71,31 @@ function splitBody(body) {
   }
   if (current.length > 0 || segments.length === 0) segments.push(current);
   return segments;
+}
+
+function splitBodyForInline(body) {
+  const segments = [];
+  let current = "";
+  let currentJsonBytes = 2;
+  for (const character of body) {
+    const encodedCharacter = JSON.stringify(character).slice(1, -1);
+    const encodedCharacterBytes = Buffer.byteLength(encodedCharacter, "utf8");
+    if (currentJsonBytes + encodedCharacterBytes > MAX_INLINE_SEGMENT_JSON_BYTES) {
+      if (current.length === 0) throw new Error("A Unicode character exceeds the inline segment limit.");
+      segments.push(current);
+      current = "";
+      currentJsonBytes = 2;
+    }
+    current += character;
+    currentJsonBytes += encodedCharacterBytes;
+  }
+  if (current.length > 0 || segments.length === 0) segments.push(current);
+  return segments;
+}
+
+function outputLinesFit(value) {
+  const lines = value.endsWith("\n") ? value.slice(0, -1).split("\n") : value.split("\n");
+  return lines.every((line) => Buffer.byteLength(line, "utf8") <= MAX_OUTPUT_LINE_BYTES);
 }
 
 async function fetchDocument(reference, apiRoot, apiKey, runId, batchSignal) {
@@ -195,7 +234,35 @@ export async function run(args, env = process.env, cwd = process.cwd()) {
         segments: segmentManifest,
       });
     }
-    return { outputRoot, documents: manifestDocuments };
+    const manifest = { outputRoot, documents: manifestDocuments };
+    if (parsed.inlineMaxBytes === undefined) return manifest;
+
+    const manifestPath = path.join(outputRoot, "manifest.json");
+    await writePrivateFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    // Raw bodies alone cannot fit this budget: avoid encoding an oversized
+    // batch only to discard it. All complete segments already exist above.
+    if (totalBytes <= parsed.inlineMaxBytes) {
+      const inlineDocuments = documents.map((document) => ({
+        issueId: document.issueId,
+        key: document.key,
+        latestRevisionId: document.latestRevisionId,
+        latestRevisionNumber: document.latestRevisionNumber,
+        bodyBytes: document.bodyBytes,
+        bodySha256: document.bodySha256,
+        bodySegments: splitBodyForInline(document.body),
+      }));
+      const inlinePayload = `${JSON.stringify({ inlineComplete: true, documents: inlineDocuments }, null, 2)}\n`;
+      const inlineHeader = `${JSON.stringify({ delivery: "inline", manifestPath, ...manifest })}\n`;
+      const inlineOutput = `${inlineHeader}${inlinePayload}`;
+      if (Buffer.byteLength(inlineOutput, "utf8") <= parsed.inlineMaxBytes && outputLinesFit(inlineOutput)) return { stdout: inlineOutput };
+    }
+
+    const segmentHeader = `${JSON.stringify({ delivery: "segments", manifestPath, ...manifest })}\n`;
+    if (Buffer.byteLength(segmentHeader, "utf8") <= parsed.inlineMaxBytes && outputLinesFit(segmentHeader)) return { stdout: segmentHeader };
+
+    const compactHeader = `${JSON.stringify({ delivery: "manifest-file", manifestPath })}\n`;
+    if (Buffer.byteLength(compactHeader, "utf8") <= parsed.inlineMaxBytes && outputLinesFit(compactHeader)) return { stdout: compactHeader };
+    throw new Error("The manifest-file fallback header exceeds --inline-max-bytes.");
   } catch (error) {
     await rm(outputRoot, { recursive: true, force: true }).catch(() => undefined);
     throw error;
@@ -215,7 +282,7 @@ if (isMainModule()) {
   try {
     const result = await run(process.argv.slice(2));
     if (result.help) process.stdout.write(`${result.help}\n`);
-    else process.stdout.write(`${JSON.stringify(result)}\n`);
+    else process.stdout.write(typeof result.stdout === "string" ? result.stdout : `${JSON.stringify(result)}\n`);
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;
