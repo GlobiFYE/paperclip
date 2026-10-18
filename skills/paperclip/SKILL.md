@@ -29,7 +29,7 @@ Manual local CLI mode (outside heartbeat runs): use `paperclipai agent local-cli
 
 **Run audit trail:** You MUST include `-H 'X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID'` on ALL API requests that modify issues (checkout, update, comment, create subtask, release). This links your actions to the current heartbeat run for traceability.
 
-## Routine heartbeat fast path
+**Wake payload fast path.**
 
 Start with the current run's **Paperclip Wake Payload** or **Paperclip Resume Delta** and task context. Use facts they explicitly provide, including the current task, user direction, comment batch, and harness checkout, without fetching those same facts again. Fetch `heartbeat-context` only when the run context is absent or lacks state needed for the next action; fetch comments only when the batch is marked incomplete/truncated, you need older history, or a newer comment is required. An omitted or truncated description, missing ancestor/project/goal state, or a request for the latest state is a concrete reason to fetch the missing data.
 
