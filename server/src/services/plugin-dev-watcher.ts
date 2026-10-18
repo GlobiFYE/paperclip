@@ -160,6 +160,14 @@ export function createPluginDevWatcher(
   lifecycle: PluginLifecycleManager,
   resolvePluginPackagePath?: ResolvePluginPackagePath,
   fsDeps?: PluginDevWatcherFsDeps,
+  options: {
+    /**
+     * Plugins installed from inside these directories are never watched. The
+     * bundled plugin catalog ships in the image and does not change at
+     * runtime, so watching it only costs file watchers in production.
+     */
+    unwatchedRoots?: readonly string[];
+  } = {},
 ): PluginDevWatcher {
   const watchers = new Map<string, { watcher: FSWatcher; packagePath: string }>();
   const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -167,6 +175,11 @@ export function createPluginDevWatcher(
   // Never reuse an identity after unwatching: an older lookup may still finish.
   let registrationGeneration = 0;
   const fileExists = fsDeps?.existsSync ?? existsSync;
+  const unwatchedRoots = (options.unwatchedRoots ?? []).map((root) => path.resolve(root));
+  const isUnwatched = (absPath: string) => unwatchedRoots.some((root) => {
+    const relative = path.relative(root, absPath);
+    return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+  });
   log.info(
     { resolvesInstalledPlugins: Boolean(resolvePluginPackagePath) },
     "plugin-dev-watcher: initialized",
@@ -179,6 +192,10 @@ export function createPluginDevWatcher(
     // watcher only while it still targets the installed package path.
     if (watchers.get(pluginId)?.packagePath === absPath) return;
     unwatchPlugin(pluginId);
+    if (isUnwatched(absPath)) {
+      log.debug({ pluginId, packagePath: absPath }, "plugin-dev-watcher: bundled plugin path, not watching");
+      return;
+    }
 
     if (!fileExists(absPath)) {
       log.warn(
