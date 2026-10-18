@@ -186,11 +186,23 @@ describeDb("host watcher scoped keys on real issue routes and test DB", () => {
       });
       publishLiveEvent({
         companyId, type: "activity.logged",
-        payload: { issueId: targets.pr923.issueId, bodySnippet: "private issue comment" },
+        payload: {
+          issueId: targets.pr923.issueId,
+          actorType: "agent",
+          actorId: standardAgentId,
+          action: "issue.comment_added",
+          entityType: "issue",
+          entityId: targets.pr923.issueId,
+          details: { bodySnippet: "private issue comment" },
+        },
       });
-      expect(await received).toMatchObject({
-        companyId, payload: { issueId: targets.pr923.issueId, bodySnippet: "private issue comment" },
+      const receivedEvent = await received;
+      expect(receivedEvent).toMatchObject({
+        companyId,
+        type: "activity.logged",
+        payload: { action: "issue.comment_added", entityType: "issue", entityId: targets.pr923.issueId },
       });
+      expect(JSON.stringify(receivedEvent)).not.toContain("private issue comment");
     } finally {
       standardSocket?.terminate();
       await new Promise<void>((resolve) => wss.close(resolve));

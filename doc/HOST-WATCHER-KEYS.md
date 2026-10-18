@@ -44,6 +44,6 @@ rewake and frontend deploy services remains a distinct contract.
 Run the focused verification with:
 
 ```sh
-pnpm exec vitest run server/src/__tests__/host-watcher-key-routes.integration.test.ts server/src/__tests__/agent-auth-middleware.test.ts
+pnpm exec vitest run server/src/__tests__/host-watcher-key-routes.integration.test.ts server/src/__tests__/live-events-ws.test.ts server/src/__tests__/agent-auth-middleware.test.ts
 pnpm exec tsc --noEmit -p server/tsconfig.json
 ```
