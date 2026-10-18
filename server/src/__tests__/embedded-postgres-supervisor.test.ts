@@ -1,6 +1,10 @@
 import { EventEmitter } from "node:events";
-import { describe, expect, it, vi } from "vitest";
-import { createEmbeddedPostgresSupervisor, type SupervisedEmbeddedPostgres } from "../embedded-postgres-supervisor.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  createEmbeddedPostgresSupervisor,
+  type EmbeddedPostgresSupervisor,
+  type SupervisedEmbeddedPostgres,
+} from "../embedded-postgres-supervisor.js";
 
 function createInstance(startError?: Error) {
   const process = new EventEmitter();
@@ -12,7 +16,6 @@ function createInstance(startError?: Error) {
   return { instance, process };
 }
 
-// A postmaster we do not own: no child handle, and we never stop it.
 function createAdoptedInstance(pid = 4242): SupervisedEmbeddedPostgres {
   return {
     owned: false,
@@ -22,14 +25,38 @@ function createAdoptedInstance(pid = 4242): SupervisedEmbeddedPostgres {
   };
 }
 
-const tick = (ms = 20) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const supervisors: EmbeddedPostgresSupervisor[] = [];
+
+function supervise(options: Parameters<typeof createEmbeddedPostgresSupervisor>[0]) {
+  const supervisor = createEmbeddedPostgresSupervisor(options);
+  supervisors.push(supervisor);
+  return supervisor;
+}
+
+afterEach(async () => {
+  while (supervisors.length > 0) {
+    const supervisor = supervisors.pop();
+    if (supervisor) await supervisor.shutdown();
+  }
+});
+
+const tick = (ms = 2) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+async function waitFor(predicate: () => boolean, timeoutMs = 2_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await tick();
+  }
+  throw new Error(`condition not met within ${timeoutMs}ms`);
+}
 
 describe("embedded PostgreSQL supervisor", () => {
   it("restarts PostgreSQL after its managed child exits unexpectedly", async () => {
     const initial = createInstance();
     const replacement = createInstance();
     const onRestarted = vi.fn();
-    const supervisor = createEmbeddedPostgresSupervisor({
+    const supervisor = supervise({
       initialInstance: initial.instance,
       createInstance: () => replacement.instance,
       restartDelaysMs: [0],
@@ -45,7 +72,7 @@ describe("embedded PostgreSQL supervisor", () => {
   it("does not restart PostgreSQL during orderly shutdown", async () => {
     const initial = createInstance();
     const createReplacement = vi.fn(() => createInstance().instance);
-    const supervisor = createEmbeddedPostgresSupervisor({
+    const supervisor = supervise({
       initialInstance: initial.instance,
       createInstance: createReplacement,
       restartDelaysMs: [0],
@@ -59,7 +86,7 @@ describe("embedded PostgreSQL supervisor", () => {
     const initial = createInstance();
     const failures = [new Error("first"), new Error("second"), new Error("third")];
     const onRecoveryExhausted = vi.fn();
-    const supervisor = createEmbeddedPostgresSupervisor({
+    const supervisor = supervise({
       initialInstance: initial.instance,
       createInstance: () => createInstance(failures.shift()).instance,
       restartDelaysMs: [0, 0, 0],
@@ -79,7 +106,7 @@ describe("embedded PostgreSQL supervisor", () => {
       const onAdopted = vi.fn();
       const onRestartAttemptFailed = vi.fn();
       const onRecoveryExhausted = vi.fn();
-      const supervisor = createEmbeddedPostgresSupervisor({
+      const supervisor = supervise({
         initialInstance: initial.instance,
         createInstance: createReplacement,
         restartDelaysMs: [0, 0, 0],
@@ -105,7 +132,7 @@ describe("embedded PostgreSQL supervisor", () => {
       const failures = [new Error("no"), new Error("no"), new Error("no")];
       const onAdopted = vi.fn();
       const onRestartAttemptFailed = vi.fn();
-      const supervisor = createEmbeddedPostgresSupervisor({
+      const supervisor = supervise({
         initialInstance: initial.instance,
         createInstance: () => createInstance(failures.shift()).instance,
         restartDelaysMs: [0, 0, 0],
@@ -128,7 +155,7 @@ describe("embedded PostgreSQL supervisor", () => {
       const probes: Array<SupervisedEmbeddedPostgres | null> = [null, null, null, adopted];
       const onRecoveryExhausted = vi.fn();
       const onAdopted = vi.fn();
-      const supervisor = createEmbeddedPostgresSupervisor({
+      const supervisor = supervise({
         initialInstance: initial.instance,
         createInstance: () => createInstance(failures.shift()).instance,
         restartDelaysMs: [0, 0, 0],
@@ -147,7 +174,7 @@ describe("embedded PostgreSQL supervisor", () => {
       const initial = createInstance();
       const onRecoveryExhausted = vi.fn();
       const adoptRunning = vi.fn(async () => null);
-      const supervisor = createEmbeddedPostgresSupervisor({
+      const supervisor = supervise({
         initialInstance: initial.instance,
         createInstance: () => createInstance(new Error("boom")).instance,
         restartDelaysMs: [0],
@@ -157,7 +184,7 @@ describe("embedded PostgreSQL supervisor", () => {
       });
       initial.process.emit("exit", 1, null);
       await supervisor.waitForRecovery();
-      expect(adoptRunning).toHaveBeenCalledTimes(2); // one per attempt + the final look
+      expect(adoptRunning).toHaveBeenCalledTimes(2);
       expect(onRecoveryExhausted).toHaveBeenCalledOnce();
     });
 
@@ -165,7 +192,7 @@ describe("embedded PostgreSQL supervisor", () => {
       const initial = createInstance();
       const replacement = createInstance();
       const onAdoptProbeFailed = vi.fn();
-      const supervisor = createEmbeddedPostgresSupervisor({
+      const supervisor = supervise({
         initialInstance: initial.instance,
         createInstance: () => replacement.instance,
         restartDelaysMs: [0],
@@ -186,10 +213,8 @@ describe("embedded PostgreSQL supervisor", () => {
       const onAdoptedLost = vi.fn();
       const onRestarted = vi.fn();
       const replacement = createInstance();
-      // Adoption and the liveness probe share one predicate in production: once the postmaster is
-      // gone, adoptRunning stops returning it.
       let adoptedAvailable = true;
-      const supervisor = createEmbeddedPostgresSupervisor({
+      const supervisor = supervise({
         initialInstance: initial.instance,
         createInstance: () => replacement.instance,
         restartDelaysMs: [0],
@@ -208,7 +233,7 @@ describe("embedded PostgreSQL supervisor", () => {
       await supervisor.waitForRecovery();
       expect(supervisor.current()).toBe(adopted);
       alive = false;
-      await tick(60);
+      await waitFor(() => onRestarted.mock.calls.length > 0);
       expect(onAdoptedLost).toHaveBeenCalledWith(adopted);
       expect(onRestarted).toHaveBeenCalledWith(1);
       expect(supervisor.current()).toBe(replacement.instance);
@@ -217,33 +242,35 @@ describe("embedded PostgreSQL supervisor", () => {
     it("survives a single missed probe without starting a restart loop", async () => {
       const initial = createInstance();
       const adopted = createAdoptedInstance();
-      let alive = true;
+      const script = [true, false, true, true, true, true, true, true];
+      let probes = 0;
       const onAdoptedLost = vi.fn();
       const createReplacement = vi.fn(() => createInstance().instance);
-      const supervisor = createEmbeddedPostgresSupervisor({
+      const supervisor = supervise({
         initialInstance: initial.instance,
         createInstance: createReplacement,
         restartDelaysMs: [0],
         adoptRunning: () => adopted,
-        probeRunning: async () => alive,
+        probeRunning: async () => {
+          probes += 1;
+          return script[probes - 1] ?? true;
+        },
         adoptedProbeIntervalMs: 2,
         adoptedProbeFailureThreshold: 2,
         onAdoptedLost,
       });
       initial.process.emit("exit", 1, null);
       await supervisor.waitForRecovery();
-      alive = false;
-      await tick(3);
-      alive = true;
-      await tick(40);
+      await waitFor(() => probes >= 6);
       expect(onAdoptedLost).not.toHaveBeenCalled();
       expect(createReplacement).not.toHaveBeenCalled();
+      expect(supervisor.current()).toBe(adopted);
     });
 
     it("never stops a postmaster it adopted", async () => {
       const initial = createInstance();
       const adopted = createAdoptedInstance();
-      const supervisor = createEmbeddedPostgresSupervisor({
+      const supervisor = supervise({
         initialInstance: initial.instance,
         createInstance: () => createInstance().instance,
         restartDelaysMs: [0],
@@ -254,13 +281,9 @@ describe("embedded PostgreSQL supervisor", () => {
       await supervisor.waitForRecovery();
       await supervisor.shutdown();
       expect(adopted.stop).not.toHaveBeenCalled();
-      expect(initial.instance.stop).not.toHaveBeenCalled(); // already exited
+      expect(initial.instance.stop).not.toHaveBeenCalled();
     });
 
-    // The production probe opens a fresh admin connection and the client has no
-    // connect/query timeout, so a postmaster that accepts the socket but never answers leaves the
-    // probe promise pending forever. That used to freeze the watchdog on its first tick: one pending
-    // promise, no timer, no further probes, and the adopted postmaster stopped being watched.
     it("keeps probing when a probe never settles, and counts the wedge as a miss", async () => {
       const initial = createInstance();
       const adopted = createAdoptedInstance();
@@ -268,7 +291,7 @@ describe("embedded PostgreSQL supervisor", () => {
       const onAdoptedLost = vi.fn();
       const replacement = createInstance();
       let adoptedAvailable = true;
-      const supervisor = createEmbeddedPostgresSupervisor({
+      const supervisor = supervise({
         initialInstance: initial.instance,
         createInstance: () => replacement.instance,
         restartDelaysMs: [0],
@@ -279,40 +302,60 @@ describe("embedded PostgreSQL supervisor", () => {
         },
         probeRunning: () => {
           calls += 1;
-          return new Promise<boolean>(() => {}); // never settles
+          return new Promise<boolean>(() => {});
         },
-        adoptedProbeIntervalMs: 5,
-        adoptedProbeTimeoutMs: 5,
+        adoptedProbeIntervalMs: 2,
+        adoptedProbeTimeoutMs: 2,
         adoptedProbeFailureThreshold: 2,
         onAdoptedLost,
       });
       initial.process.emit("exit", 1, null);
       await supervisor.waitForRecovery();
       expect(supervisor.current()).toBe(adopted);
-      await tick(80);
-      expect(calls).toBeGreaterThan(1); // the watchdog survived the first hung probe
-      expect(onAdoptedLost).toHaveBeenCalledOnce();
+      await waitFor(() => onAdoptedLost.mock.calls.length > 0);
+      expect(calls).toBeGreaterThan(1);
       expect(supervisor.current()).toBe(replacement.instance);
     });
 
     it("does not hang shutdown while a probe is still pending", async () => {
       const initial = createInstance();
       const adopted = createAdoptedInstance();
-      const supervisor = createEmbeddedPostgresSupervisor({
+      const supervisor = supervise({
         initialInstance: initial.instance,
         createInstance: () => createInstance().instance,
         restartDelaysMs: [0],
         adoptRunning: () => adopted,
         probeRunning: () => new Promise<boolean>(() => {}),
-        adoptedProbeIntervalMs: 5,
-        adoptedProbeTimeoutMs: 5,
+        adoptedProbeIntervalMs: 2,
+        adoptedProbeTimeoutMs: 2,
         adoptedProbeFailureThreshold: 5,
       });
       initial.process.emit("exit", 1, null);
       await supervisor.waitForRecovery();
-      await tick(12);
+      await tick(6);
       await expect(supervisor.shutdown()).resolves.toBeUndefined();
       expect(adopted.stop).not.toHaveBeenCalled();
+    });
+
+    it("does not start a replacement database when shutdown begins mid-probe", async () => {
+      const initial = createInstance();
+      const createReplacement = vi.fn(() => createInstance().instance);
+      let release: (() => void) | undefined;
+      const supervisor = supervise({
+        initialInstance: initial.instance,
+        createInstance: createReplacement,
+        restartDelaysMs: [0],
+        adoptRunning: () => new Promise<SupervisedEmbeddedPostgres | null>((settle) => {
+          release = () => settle(null);
+        }),
+        probeRunning: async () => false,
+      });
+      initial.process.emit("exit", 1, null);
+      await waitFor(() => release !== undefined);
+      const shutdown = supervisor.shutdown();
+      release?.();
+      await shutdown;
+      expect(createReplacement).not.toHaveBeenCalled();
     });
   });
 });

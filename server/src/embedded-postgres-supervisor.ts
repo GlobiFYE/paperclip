@@ -4,10 +4,6 @@ export interface SupervisedEmbeddedPostgres {
   start(): Promise<void>;
   stop(): Promise<void>;
   process?: { once(event: "exit", listener: EmbeddedPostgresExitListener): unknown };
-  /**
-   * `false` marks a postmaster we adopted but do not own (it is the child of another supervisor).
-   * Such an instance has no child handle to watch and must never be stopped by `shutdown()`.
-   */
   owned?: boolean;
   pid?: number | null;
 }
@@ -28,19 +24,9 @@ type Options = {
   onRestartAttemptFailed?: (error: unknown, attempt: number) => void;
   onRestarted?: (attempt: number) => void;
   onRecoveryExhausted?: (error: unknown) => void;
-  /**
-   * Called before each restart attempt (and once more after the last one) to look for a live
-   * postmaster we do not own on the cluster. Returning an instance adopts it instead of counting a
-   * failed restart attempt: a serving database is not a failed recovery.
-   */
   adoptRunning?: (attempt: number) => Promise<SupervisedEmbeddedPostgres | null> | SupervisedEmbeddedPostgres | null;
-  /** Liveness probe for an adopted instance, which exposes no child handle. */
   probeRunning?: (instance: SupervisedEmbeddedPostgres) => Promise<boolean>;
   adoptedProbeIntervalMs?: number;
-  /**
-   * A probe that never settles must not freeze the watchdog. A probe slower than this is counted
-   * as a miss (the postmaster is not answering), and the next probe is still scheduled.
-   */
   adoptedProbeTimeoutMs?: number;
   adoptedProbeFailureThreshold?: number;
   onAdopted?: (instance: SupervisedEmbeddedPostgres, attempt: number) => void;
@@ -80,9 +66,6 @@ export function createEmbeddedPostgresSupervisor(options: Options): EmbeddedPost
     return recoveryPromise;
   };
 
-  // An adopted postmaster has no child process handle, so its liveness is polled. Two consecutive
-  // misses (not one) are required before it counts as lost, so a slow probe on a busy host cannot
-  // start a restart loop.
   const watchAdopted = (instance: SupervisedEmbeddedPostgres) => {
     const probe = options.probeRunning;
     if (!probe) {
@@ -94,16 +77,10 @@ export function createEmbeddedPostgresSupervisor(options: Options): EmbeddedPost
     let failures = 0;
     let timer: ReturnType<typeof setTimeout> | null = null;
     const schedule = () => {
-      // One timer at a time. A resolution timer and a timeout timer must not both arm, or the probe
-      // rate doubles instead of staying at the configured interval.
       if (stopped || shuttingDown || timer) return;
       timer = setTimeout(() => { void tick(); }, adoptedProbeIntervalMs);
-      // Never hold the process open for a watchdog of something we do not own.
       (timer as { unref?: () => void }).unref?.();
     };
-    // The production probe opens a fresh admin connection, and that client has no connect/query
-    // timeout of its own. A postmaster that accepts the socket and never answers would leave this
-    // promise pending forever, so bound it: a postmaster that does not answer is not alive.
     const probeAlive = async (): Promise<boolean> => {
       let timeout: ReturnType<typeof setTimeout> | null = null;
       try {
@@ -124,7 +101,6 @@ export function createEmbeddedPostgresSupervisor(options: Options): EmbeddedPost
       timer = null;
       if (stopped || shuttingDown) return;
       if (running) {
-        // A probe outlived its interval; keep the chain alive rather than dropping the watchdog.
         schedule();
         return;
       }
@@ -162,8 +138,6 @@ export function createEmbeddedPostgresSupervisor(options: Options): EmbeddedPost
   const monitor = (instance: SupervisedEmbeddedPostgres) => {
     const child = instance.process;
     if (!child) {
-      // Declaring the host unhealthy the moment we adopt a postmaster we do not own would
-      // reproduce this bug one layer up. Watch it instead.
       if (instance.owned === false) {
         watchAdopted(instance);
         return;
@@ -208,6 +182,7 @@ export function createEmbeddedPostgresSupervisor(options: Options): EmbeddedPost
       if (delayMs > 0) await wait(delayMs);
       if (shuttingDown) return;
       if (await adopt(attempt)) return;
+      if (shuttingDown) return;
       try {
         await options.beforeRestart?.(attempt);
         const replacement = options.createInstance();
@@ -227,8 +202,6 @@ export function createEmbeddedPostgresSupervisor(options: Options): EmbeddedPost
         options.onRestartAttemptFailed?.(error, attempt);
       }
     }
-    // One last look before calling the server unhealthy: the port may have come back while the
-    // last attempt was failing.
     if (!shuttingDown && (await adopt(restartDelaysMs.length + 1))) return;
     if (!shuttingDown) options.onRecoveryExhausted?.(lastError);
   };
@@ -242,7 +215,6 @@ export function createEmbeddedPostgresSupervisor(options: Options): EmbeddedPost
       shuttingDown = true;
       stopWatch();
       await recoveryPromise;
-      // A postmaster we adopted is somebody else's child. Leave it running.
       if (!activeInstanceExited && activeInstance.owned !== false) await activeInstance.stop();
     },
   };
