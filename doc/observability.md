@@ -1002,9 +1002,11 @@ The engine also observes ACP permission requests without deciding them; ACPX's
 permission mode still decides each one. A stalled run records
 `acpStalledToolPermissionRequested` (whether the stalled call's permission
 request reached Paperclip) and `acpPendingToolPermissionRequestedCount` (how many
-pending calls had one). A call whose request never arrived stalled before or
-during its permission round trip; a call whose request arrived stalled after
-Paperclip answered it. Both fields hold only a boolean and a count.
+pending calls had one). These fields record only that a request arrived, not
+that the reply reached the agent. A call whose request never arrived stalled
+before the request reached Paperclip. A call whose request arrived stalled
+later: on the reply's return trip, or after the agent received the decision.
+Both fields hold only a boolean and a count.
 
 ACP and legacy OpenCode results retain the adapter's resolved wall-clock timeout as
 `adapterExecutionTimeout` in the instance run result. Finalization uses it for

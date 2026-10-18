@@ -4128,8 +4128,9 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
     // without an update. The watchdog cancels the turn and arms the same
     // fail-fast deadline as a duplex loss.
     // `permissionRequested` says whether the agent's permission request for
-    // that call reached the host, which separates a call stalled before its
-    // permission round trip from one stalled after it was answered;
+    // that call reached the host. It records receipt only, not that the reply
+    // reached the agent, so it separates a call stalled before its request
+    // arrived from one stalled on the return trip or after the decision;
     // `pendingPermissionRequested` counts the pending calls whose request did.
     let stalledTool: {
       kind: string;
