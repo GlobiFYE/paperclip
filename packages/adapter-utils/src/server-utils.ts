@@ -211,6 +211,7 @@ export function resolvePaperclipInstanceRootForAdapter(
 
 export const DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE = [
   "You are agent {{agent.id}} ({{agent.name}}).",
+  "Before running a script or optional executable, discover it in the same shell and execution target you will use. In POSIX shells, check `command -v python3` and then `command -v python`; when Python 3 is required, verify the selected command with `--version`. In PowerShell, use `Get-Command python3, python, py -ErrorAction SilentlyContinue`; verify a selected `python3` or `python` with `--version`, or verify Python 3 with `py -3 --version` before selecting `py -3`. Finding `py` alone does not prove Python 3 is installed. Reuse the selected command or path only while the shell and execution target stay the same; repeat discovery after either changes. Never infer executable availability from the Paperclip host, another agent, another shell, or a prior run, and do not assume `python` means Python 3.",
   "",
   CONNECTION_INTENT_AGENT_GUIDANCE,
 ].join("\n");

@@ -103,6 +103,13 @@ describe("runtime connection tool delivery", () => {
     expect(DEFAULT_PAPERCLIP_CONVERSATION_PROMPT_TEMPLATE).not.toContain("Execution contract:");
     expect(DEFAULT_PAPERCLIP_CONVERSATION_PROMPT_TEMPLATE).not.toContain("child issues");
   });
+
+  it("guides shell capability checks in the actual execution target", () => {
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("command -v python3");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Get-Command python3, python, py");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("only while the shell and execution target stay the same");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Never infer executable availability from the Paperclip host");
+  });
 });
 
 describe("legacy adapter skill selection", () => {
@@ -1454,9 +1461,11 @@ describe("renderPaperclipWakePrompt", () => {
       DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE,
       DEFAULT_PAPERCLIP_CONVERSATION_PROMPT_TEMPLATE,
     ]) {
-      expect(template).toBe(
-        `You are agent {{agent.id}} ({{agent.name}}).\n\n${CONNECTION_INTENT_AGENT_GUIDANCE}`,
-      );
+      expect(template).toContain("You are agent {{agent.id}} ({{agent.name}}).");
+      expect(template).toContain("Before running a script or optional executable");
+      expect(template).toContain("py -3 --version");
+      expect(template).toContain("repeat discovery after either changes");
+      expect(template).toContain(CONNECTION_INTENT_AGENT_GUIDANCE);
     }
   });
 

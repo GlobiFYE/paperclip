@@ -105,6 +105,11 @@ describe("OpenCode local skill injection", () => {
     for (const prompt of prompts) expect(prompt).not.toContain("Execution contract:");
     expect(prompts[1]).toContain("You are agent agent-1 (OpenCode).");
     expect(prompts[1]).toContain("Connection tools:");
+    expect(prompts[1]).toContain("command -v python3");
+    expect(prompts[1]).toContain("Get-Command python3, python, py");
+    expect(prompts[1]).toContain("py -3 --version");
+    expect(prompts[1]).toContain("only while the shell and execution target stay the same");
+    expect(prompts[1]).toContain("Never infer executable availability from the Paperclip host");
   });
 
   it("injects runtime skills into the configured child HOME", async () => {

@@ -117,6 +117,11 @@ describe("native instruction payload measurement", () => {
         const turn = captured.calls.find(call => call.method === "turn/start")!.params;
         const instructions = setup.developerInstructions ?? setup.baseInstructions;
         expect(instructions).toContain(PAPERCLIP_EXECUTION_PROMPT);
+        expect(instructions).toContain("command -v python3");
+        expect(instructions).toContain("Get-Command python3, python, py");
+        expect(instructions).toContain("py -3 --version");
+        expect(instructions).toContain("only while the shell and execution target stay the same");
+        expect(instructions).toContain("Never infer executable availability from the Paperclip host");
         expect(instructions).toContain("You are an agent in a Paperclip company.");
         const deliveredTools = setup.dynamicTools as Array<{ name: string; description: string }>;
         expect(deliveredTools.filter(tool => tool.name === "paperclip_finish")).toEqual([
