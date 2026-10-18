@@ -1,9 +1,17 @@
 # paperclip-kow-smoketest
 
-An end-to-end smoke test that proves **[keys-on-the-wire (kow)](https://github.com/inflightsec/keys-on-the-wire)
-brokers a credential for an AI agent without the agent ever seeing the raw key** —
-demonstrated live inside a disposable KVM guest, with Paperclip's `process`-adapter
-agent shape.
+Run Paperclip agents through **[keys-on-the-wire (kow)](https://github.com/inflightsec/keys-on-the-wire)**
+so the agent never holds the raw credential — **with no changes to Paperclip core** —
+plus an end-to-end smoke test that proves it live inside a disposable KVM guest.
+
+- **How to integrate:** `INTEGRATION.md` — the `process`-adapter pattern
+  (`kow run -- <agent-cmd>`) and the config shape.
+- **Proof it works:** the smoke test below, asserting the security claim from real
+  evidence captured in the guest.
+
+A native, ergonomic integration (a kow secret-provider + sandbox egress pointed at
+kow) is a deeper core change proposed separately — see `INTEGRATION.md` and the PR
+description.
 
 ## What it proves
 
@@ -44,4 +52,5 @@ The base cloud image is cached under `$PKST_SCRATCH`
 - `guest/` — `provision.sh`, `start.sh`, `run-agent.sh`, `lib.sh`, the mock
   upstream and agent programs, kow `static`-backend config generation.
 - `tests/` — `lib.test.ts` (unit), `smoke-core.ts` (live core assertions).
+- `INTEGRATION.md` — the integration pattern (how to run a Paperclip agent via kow).
 - `SPEC.md`, `docs/` — spec, boot recipe, review log, status.
