@@ -108,7 +108,7 @@ retry and some operator controls require board. Completion or cancellation of a
 task does not clear its exact unresolved native workspace owner hold. Physical
 owner release still requires the [operator stop-verification procedure](../../doc/native-workspace-finalization-recovery.md).
 
-For a resolved legacy action that retains a file hold, the same resolution API
+For a resolved legacy or native action that retains a file hold, the same resolution API
 supports source-only file repair. Board runtime management and recovery-resolution
 authority are required. The request identifies the exact source action/run and
 records recovered-file evidence; the server verifies the original stop receipt.
@@ -176,6 +176,7 @@ Review: `baseline`.
 API: `present` — representative operation IDs:
 
 - `POST /api/issues/{id}/recovery-actions/retry-workspace-export`.
+- `POST /api/issues/{id}/recovery-actions/reconstruct-workspace`.
 - `POST /api/issues/{id}/recovery-actions/resume-workspace-finalization`.
 - `POST /api/issues/{id}/recovery-actions/resolve` for retained-source file repair.
 - `POST /api/execution-workspaces/{id}/reconcile-branch`.
@@ -184,6 +185,13 @@ Agent access: `restricted` — Board/runtime management APIs; agent reads diagno
 performs permitted workspace work.
 
 Policy: Export retry and branch reconciliation require board runtime management.
+Reconstruction also requires board runtime management. It verifies exact source
+destruction and same-task attachment hashes, records lost work and external action
+outcomes, and admits one fresh continuation through normal execution gates. The
+old failed export remains failed. A retained or uncertain source cannot use it.
+An intervening native run-only cancellation requires its own acknowledged Stop,
+confirmed stopped leases, board file repair and `not_performed` action outcome.
+The reconstruction records and rechecks that exact proof; other later runs stay denied.
 Retained legacy file-only repair requires the board, exact stopped-source receipts,
 and recovered-file evidence. It can record repair for a successful legacy turn
 without changing its result or authorizing replay. Queued and running sources

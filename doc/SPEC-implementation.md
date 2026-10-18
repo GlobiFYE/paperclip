@@ -1400,6 +1400,20 @@ as execution. Codex CLI defaults permit workspace writes and network access for
 Paperclip coordination without disabling its sandbox; explicit operator
 restrictions and execution-target network denials remain effective.
 
+### Experimental personal Muse Runner provider
+
+The `paperclip_runner` adapter can select `provider: "muse"` behind the default-off
+Muse and native Runner gates. This connects personal Meta Muse through a
+company- and named-agent-bound receiver, distinct from human-authorized MCP.
+Pairing, detector contact, and a verified background reply are separate setup
+milestones. Idle first-party collaboration retains both agent and authorizing
+user permissions; task execution additionally requires the admitted native run.
+Only one assignment may execute per connection, and unresolved remote work or
+native effects block overlap across cancellation, reconnect, and provider changes.
+Remote interruption and external usage remain unconfirmed or unavailable unless
+supported by evidence. Release requires the live journeys and bounded cadence
+qualification in [Personal Muse receiver](muse-personal-agent.md).
+
 ## 11.2 Process Adapter
 
 Config shape:
@@ -2084,6 +2098,12 @@ unavailable. Preserve current ownership and newer-work fences. See
   and history. New key collisions cannot overwrite unrelated skills. Only changed package
   bytes or executable modes create versions. Library reads, tests, and subsequent unpinned
   runs use local installed snapshots; pinned/active runs retain their versions.
+- Runtime version directories are disposable caches. An hourly, bounded sweep may
+  evict non-current copies unused for one hour, preserving active and unresolved
+  execution pins. Selection, materialization, and pin persistence serialize with
+  eviction across processes. Missing copies rebuild from immutable database bytes
+  without upstream access. See [recoverable disk cleanup](recoverable-disk-cleanup.md)
+  for rollout controls, legacy grace periods, and interrupted cleanup recovery.
 - Manually selected sources retain reviewed selection, with new candidates checked by default and
   explicit folder exclusions retained. Upstream deletion keeps installed content with
   removed status; moves are removal plus discovery. Deselect retains content
