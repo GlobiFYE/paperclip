@@ -137,7 +137,7 @@ while :; do
       '
         length == 1 and
         (.[0] | type == "object" and
-          (.id == $issue_id or .identifier == $issue_id) and
+          (.id == $issue_id or (.identifier | type == "string" and ascii_upcase == ($issue_id | ascii_upcase))) and
           ($status == "" or .status == $status) and
           ($comment == "" or (.comment | type == "object" and .body == $comment)))
       ' >/dev/null 2>&1 <<<"$body"; then

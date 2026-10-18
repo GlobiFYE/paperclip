@@ -122,12 +122,12 @@ describe("paperclip issue update helper", () => {
       res.end(JSON.stringify({ id: "f4c2ca29-1051-4d25-9da0-4e91748c2376", identifier: "TST-123", status: payload.status, comment: { body: payload.comment } }));
     });
 
-    const result = await runHelper(baseUrl, ["--issue-id", "TST-123", "--status", "done", "--comment", comment]);
+    const result = await runHelper(baseUrl, ["--issue-id", "tst-123", "--status", "done", "--comment", comment]);
 
     expect(result.code).toBe(0);
     expect(JSON.parse(result.stdout)).toMatchObject({ identifier: "TST-123", status: "done", comment: { body: comment } });
     expect(requests).toHaveLength(1);
-    expect(requests[0]?.url).toBe("/api/issues/TST-123");
+    expect(requests[0]?.url).toBe("/api/issues/tst-123");
   });
 
   it.each([".claude/skills", "codex-home/skills"])(
@@ -165,7 +165,7 @@ describe("paperclip issue update helper", () => {
     cleanupFns.push(() => fs.rm(root, { recursive: true, force: true }));
     const result = await runHelper("", [...doneArgs, "--dry-run"], { helper: REPO_HELPER_PATH, cwd: root });
     expect(result.code).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ status: "done", comment: "closing note" });
+    expect(JSON.parse(result.stdout)).toEqual({ status: "done", comment });
   });
 
   it("fails an empty 2xx body instead of treating it as success", async () => {
