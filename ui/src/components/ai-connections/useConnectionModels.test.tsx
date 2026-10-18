@@ -69,6 +69,38 @@ it("preserves an explicit connection model list instead of replacing it with the
   expect(agentsApi.adapterModels).not.toHaveBeenCalled();
 });
 
+it("merges on-disk catalog efforts onto a claude_local connection pool's model list", async () => {
+  const claudeCatalogModels = [
+    { id: "claude-haiku-4-5", label: "Claude Haiku 4.5", efforts: ["low", "medium", "high", "xhigh"] },
+  ];
+  vi.mocked(agentsApi.adapterModels).mockImplementation((_companyId, type) =>
+    Promise.resolve(type === "claude_local" ? claudeCatalogModels : catalog));
+  const pool: AiManagedConnectionSummary = {
+    ...account,
+    id: "claude-pool",
+    grantId: "claude-grant",
+    provider: "anthropic",
+    routing: { kind: "bedrock", protocol: "bedrock", auth: "bearer", region: "us-east-1", models: [{ id: "claude-haiku-4-5", label: "Haiku 4.5" }] },
+  };
+  await mount([pool], "claude_local", { provider: "anthropic", method: "api_key", mode: "shared", connectionId: pool.id, grantId: pool.grantId });
+  await vi.waitFor(() => expect(result?.models).toEqual([{ id: "claude-haiku-4-5", label: "Haiku 4.5", efforts: ["low", "medium", "high", "xhigh"] }]));
+  expect(agentsApi.adapterModels).toHaveBeenCalledWith("company", "claude_local");
+});
+
+it("leaves a claude_local pool model's options untouched when the catalog has no matching id", async () => {
+  vi.mocked(agentsApi.adapterModels).mockImplementation((_companyId, type) =>
+    Promise.resolve(type === "claude_local" ? [] : catalog));
+  const pool: AiManagedConnectionSummary = {
+    ...account,
+    id: "claude-pool",
+    grantId: "claude-grant",
+    provider: "anthropic",
+    routing: { kind: "bedrock", protocol: "bedrock", auth: "bearer", region: "us-east-1", models: [{ id: "claude-haiku-4-5", label: "Haiku 4.5" }] },
+  };
+  await mount([pool], "claude_local", { provider: "anthropic", method: "api_key", mode: "shared", connectionId: pool.id, grantId: pool.grantId });
+  await vi.waitFor(() => expect(result?.models).toEqual([{ id: "claude-haiku-4-5", label: "Haiku 4.5" }]));
+});
+
 it("does not reuse public OpenRouter models after switching to a custom gateway", async () => {
   const gateway: AiManagedConnectionSummary = { ...account, id: "gateway", grantId: "gateway-grant", provider: "openai", routing: { kind: "gateway", protocol: "chat", auth: "bearer", baseUrl: "https://example.com/v1", models: [] } };
   await mount([account, gateway]);

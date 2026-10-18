@@ -9,6 +9,7 @@ export function useConnectionModels(
   binding: AiConnectionBinding | undefined,
   harness: string,
 ) {
+  const isClaudeLocal = harness === "claude_local";
   const accounts = useQuery({
     queryKey: ["ai-connections", companyId],
     queryFn: () => aiConnectionsApi.list(companyId!),
@@ -32,6 +33,20 @@ export function useConnectionModels(
     staleTime: 60_000,
     retry: false,
   });
+  // A claude_local connection pool's model allow-list (`routing.models`) is operator-entered
+  // and carries only {id, label} — it can't know about reasoning efforts. Merge in the
+  // server-resolved, on-disk-catalog-aware `efforts` for each id, from the same adapter-models
+  // endpoint the non-pooled picker already uses, so a pool-routed agent's effort picker matches
+  // what ai-connection-router.ts enforces for that same model.
+  const claudeCatalog = useQuery({
+    queryKey: queryKeys.agents.adapterModels(companyId ?? "none", "claude_local", null, undefined),
+    queryFn: () => agentsApi.adapterModels(companyId!, "claude_local"),
+    enabled: Boolean(companyId && binding && isClaudeLocal),
+    staleTime: 60_000,
+    retry: false,
+  });
+  const claudeEfforts = new Map((isClaudeLocal ? claudeCatalog.data ?? [] : []).map((m) => [m.id, m.efforts]));
+
   const effectiveRouting: AiProviderRouting | undefined = routing ?? (openRouter
     ? { kind: "openrouter", protocol: "chat", auth: "bearer", models: [] }
     : undefined);
@@ -40,10 +55,11 @@ export function useConnectionModels(
     : routing?.models ?? [];
   return effectiveRouting
     ? {
-        models: modelOptions.map((m) => ({
-          id: aiRoutingModel(effectiveRouting, harness, m.id),
-          label: m.label ?? m.id,
-        })),
+        models: modelOptions.map((m) => {
+          const id = aiRoutingModel(effectiveRouting, harness, m.id);
+          const efforts = claudeEfforts.get(id);
+          return efforts ? { id, label: m.label ?? m.id, efforts } : { id, label: m.label ?? m.id };
+        }),
         isLoading: discover && catalog.isLoading,
         error: discover ? catalog.error : null,
         refreshing: discover && catalog.isFetching,
