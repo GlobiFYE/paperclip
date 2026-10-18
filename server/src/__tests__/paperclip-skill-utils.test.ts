@@ -354,6 +354,8 @@ describe("paperclip skill utils", () => {
     expect(normalizedCore).toContain("Verify writes — never infer them");
     expect(normalizedCore).toContain("Before ending any heartbeat");
     expect(normalizedCore).toContain("Read each required core document and index in full");
+    expect(normalizedCore).toContain("Do not spend a separate model/tool round trip probing `node`");
+    expect(normalizedCore).toContain("Batch other independent required local instruction-file reads");
     expect(normalizedCore).toContain("load only the references whose stated triggers match the current work");
     expect(normalizedCore).toContain("if the task scope changes, load newly relevant references before proceeding");
     expect(skillBody).toContain("<a id=\"asking-for-human-input\"></a>");
