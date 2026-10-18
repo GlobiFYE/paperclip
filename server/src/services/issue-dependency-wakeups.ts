@@ -267,5 +267,12 @@ export async function findExistingIssueBlockersResolvedWakeForReadyState(
       blockedTransitionAt,
     }),
   );
-  return covering ?? null;
+  if (covering) return covering;
+
+  const failedCycleWakes = rows
+    .filter(
+      (row) => row.idempotencyKey === cycleKey && row.status === "failed",
+    )
+    .sort((a, b) => b.requestedAt.getTime() - a.requestedAt.getTime());
+  return failedCycleWakes.length >= 2 ? failedCycleWakes[0]! : null;
 }
