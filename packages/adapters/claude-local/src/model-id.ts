@@ -29,8 +29,10 @@ export interface ClaudeModelKey {
 
 export function parseClaudeModelId(id: string): ClaudeModelKey | null {
   let bare = id.trim().toLowerCase().replace(/\[1m\]$/, "");
-  // Bedrock ids: us.anthropic.claude-opus-4-6-v1, us.anthropic.claude-sonnet-4-5-20250929-v2:0
-  bare = bare.replace(/^[a-z]+\.anthropic\./, "");
+  // Bedrock ids: us.anthropic.claude-opus-4-6-v1, us.anthropic.claude-sonnet-4-5-20250929-v2:0.
+  // The region segment is optional: a direct (non-cross-region) Bedrock invocation id has
+  // no region prefix at all, e.g. anthropic.claude-opus-5-5.
+  bare = bare.replace(/^(?:[a-z]+\.)?anthropic\./, "");
   let pinned = false;
   let snapshot = 0;
   const revision = bare.match(/^(.*)-v\d+(?::\d+)?$/);
