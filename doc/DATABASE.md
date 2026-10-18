@@ -43,6 +43,13 @@ launch context does not travel with each policy or parent-report check. JSON
 types, task-key precedence, and company and agent identity checks are preserved.
 Each decision still reads current data; this is not an authorization cache.
 
+Repository-root checks load retained run, agent and task identities in batches
+of at most 500 IDs. They keep each run's task binding, responsible user and saved
+policy separate, even when several runs use the same agent. Project settings and
+saved policies for batched read authorization are also loaded once per operation.
+The next admission or publication reloads these records and permission grants.
+The queries exclude run results and unused launch context.
+
 The initial agent JWT run lookup reads only the cancellation state and
 conversation flag from saved run JSON. It does not transfer the full context or
 result. Run status, responsible-user identity, company and agent boundaries,
@@ -980,3 +987,10 @@ session-compatible database connection; do not enable it through a transaction
 pooler. Reconnection scans the durable journal. Existing process-local work
 signals continue to serve other delivery queues. See
 [the plugin contract](plugins/AGENT_RUNTIME_SYNC.md).
+
+Migration 0354 extends this stream to standing connection assignments. Statement
+triggers compare the fields returned by the assignment snapshot and coalesce
+company invalidation within the mutation transaction. Agent runtime journaling
+uses ordered `FOR NO KEY UPDATE` locks, which remain compatible with foreign-key
+references while excluding runtime readers' `FOR SHARE` locks. Connector feature
+switches use the same journal; process-start overlays receive a delivery baseline.
