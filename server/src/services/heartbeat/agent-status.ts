@@ -59,7 +59,8 @@ export function createHeartbeatAgentStatus(db: Db) {
         errorReason: nextStatus === "error" ? errorReason(failureReason) : null,
         lastHeartbeatAt: now,
         updatedAt: now,
-      }).where(and(eq(agents.id, agentId), eq(agents.companyId, existing.companyId))).returning();
+      }).where(and(eq(agents.id, agentId), eq(agents.companyId, existing.companyId),
+        eq(agents.lifecycleState, "ready"))).returning();
       return { updated, isFirstHeartbeat: options?.wasFirstHeartbeat ?? !existing.lastHeartbeatAt };
     });
     if (!result?.updated) return;
@@ -127,7 +128,8 @@ export function createHeartbeatAgentStatus(db: Db) {
         const nextStatus = settledStatus(lastRun?.status);
         const [agent] = await tx.update(agents).set({ status: nextStatus,
           errorReason: nextStatus === "error" ? errorReason(lastRun?.error) : null, updatedAt: now,
-        }).where(and(eq(agents.id, candidate.id), eq(agents.companyId, candidate.companyId))).returning();
+        }).where(and(eq(agents.id, candidate.id), eq(agents.companyId, candidate.companyId),
+          eq(agents.status, "running"), eq(agents.lifecycleState, "ready"))).returning();
         await logActivity(tx as unknown as Db, {
           companyId: candidate.companyId, actorType: "system", actorId: "system",
           action: "agent.status_reconciled", entityType: "agent", entityId: candidate.id,
