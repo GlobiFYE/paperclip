@@ -153,5 +153,12 @@ describe("incremental managed file checkpoints", () => {
     expect(await fs.readFile(path.join(root, "delta", "files", "note"), "utf8")).toBe("two");
     expect(second.manifest.entries[0]![1].hash).not.toBe(first.manifest.entries[0]![1].hash);
     expect(second.manifest.entries[0]![1].racy).toBe(true);
+    clock.mockReturnValue((await newestMs(note)) + 5_000);
+    const third = await captureAgentFiles(live(), second.manifest);
+    expect(third.stats.hashedBytes).toBe(3);
+    expect(third.manifest.entries[0]![1].racy).toBeUndefined();
+    const fourth = await captureAgentFiles(live(), third.manifest);
+    expect(fourth.stats.hashedBytes).toBe(0);
+    expect(fourth.manifest.entries[0]![1].hash).toBe(third.manifest.entries[0]![1].hash);
   });
 });
