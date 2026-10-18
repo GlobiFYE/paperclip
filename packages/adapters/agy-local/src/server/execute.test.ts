@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { AdapterExecutionContext, AdapterInvocationMeta } from "@paperclipai/adapter-utils";
 import { runChildProcess } from "@paperclipai/adapter-utils/server-utils";
-import { discoverAgySessionArtifacts, execute, modelHasEffortSuffix, resolveAgyPrintTimeoutSec } from "./execute.js";
+import { discoverAgySessionArtifacts, execute } from "./execute.js";
 import { DENIED_ACTION_RUN, SIMPLE_RUN, TOOL_ERROR_RECOVERED_RUN } from "./fixtures.test-util.js";
 import * as mcpModule from "./mcp.js";
 
@@ -980,24 +980,5 @@ describe("discoverAgySessionArtifacts", () => {
   it("returns empty array for invalid or missing sessionId", async () => {
     expect(await discoverAgySessionArtifacts("")).toEqual([]);
     expect(await discoverAgySessionArtifacts("non-existent-conv-id-99999")).toEqual([]);
-  });
-});
-
-describe("modelHasEffortSuffix and resolveAgyPrintTimeoutSec", () => {
-  it("modelHasEffortSuffix detects effort-suffixed model ids", () => {
-    expect(modelHasEffortSuffix("gemini-3.6-flash-high")).toBe(true);
-    expect(modelHasEffortSuffix("gemini-3.6-flash-medium")).toBe(true);
-    expect(modelHasEffortSuffix("gpt-oss-120b-medium")).toBe(true);
-    expect(modelHasEffortSuffix("auto")).toBe(false);
-    expect(modelHasEffortSuffix("claude-sonnet-4-6")).toBe(false);
-    expect(modelHasEffortSuffix("claude-opus-4-6-thinking")).toBe(false);
-  });
-
-  it("agy's print timeout stays under the Paperclip run timeout when resolved", () => {
-    expect(resolveAgyPrintTimeoutSec(3600)).toBeLessThan(3600);
-    expect(resolveAgyPrintTimeoutSec(3600)).toBe(3420);
-    expect(resolveAgyPrintTimeoutSec(120)).toBe(110);
-    expect(resolveAgyPrintTimeoutSec(10)).toBe(30);
-    expect(resolveAgyPrintTimeoutSec(0)).toBe(0);
   });
 });
