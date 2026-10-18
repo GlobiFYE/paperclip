@@ -98,6 +98,18 @@ export const TEXT_DECLS: readonly TextDecl[] = [
   { file: "src/pages/ProfileSettings.tsx", names: ["uploadHint"] },
   { file: "src/components/TaskChatThread.tsx", names: ["detail"] },
   { file: "src/components/WorkspaceFileBrowser.tsx", names: ["announcement"] },
+  // El primer renglón de la pantalla Skills (D-4 de CHA-36). Los tres son
+  // ternarios **entre dos literales**, así que el canal los marca uno por uno y
+  // el contador de posiciones no literales no se mueve. `CompanySkills.
+  // production.tsx` **no** entra: en este árbol no tiene ninguna de las tres
+  // declaraciones, y `declPlan` falla el build si un nombre no aparece.
+  { file: "src/pages/CompanySkills.tsx", names: ["viewTitle", "viewDescription", "searchLabel"] },
+  // El valor por defecto del prop `labels`, que es de dónde sale «Secrets &
+  // variables» en la barra lateral de la ficha de agente. El canal ya cubría la
+  // posición «valor por defecto de parámetro» (`AssignmentPattern` en
+  // `declPlan`); lo único que faltaba era el nombre. La clave `secrets` no está
+  // en `TEXT_KEYS` y no tiene por qué estarlo: es técnica en casi todos lados.
+  { file: "src/components/AgentContextualSidebar.tsx", names: ["labels"] },
 
   // Función que devuelve el motivo por el que no se puede borrar un entorno.
   { file: "src/pages/CompanyEnvironments.tsx", names: ["environmentDeleteBlockMessage"] },

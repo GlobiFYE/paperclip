@@ -68,5 +68,8 @@
   "Review tab": "Pestaña Revisión",
 
   "See all agents": "Ver todos los agentes",
-  "Skip to Main Content": "Saltar al contenido principal"
+  "Skip to Main Content": "Saltar al contenido principal",
+
+  "Command Palette": "Paleta de comandos",
+  "Search for a command to run...": "Buscá un comando para ejecutar…"
 }

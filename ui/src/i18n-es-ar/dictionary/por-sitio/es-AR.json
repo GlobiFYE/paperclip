@@ -14,6 +14,7 @@
   "components/IssueThreadInteractionCard.tsx": { "Open": "Abrir" },
   "components/PipelineHealthWarnings.tsx": { "Open": "Abrir" },
   "components/ProjectProperties.tsx": { "Private": "Privado" },
+  "components/RoutineList.tsx": { "Archived": "Archivo", "Off": "Off", "On": "Activa" },
   "components/agent-config-primitives.tsx": { "Run": "Ejecutá" },
   "components/chat/ExternallyConnectedTaskBanner.tsx": { "Open": "Abrir" },
   "components/issue-output/OutputPrimaryCard.tsx": { "Open": "Abrir" },

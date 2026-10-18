@@ -34,7 +34,7 @@ const UI_ROOT = path.resolve(import.meta.dirname, "..", "..");
 const SRC = path.join(UI_ROOT, "src");
 
 /** Las 8 cadenas del corte 2 que necesitan dos españoles según el sitio. */
-const CADENAS = [
+const HOMOGRAFOS = [
   "All",
   "Private",
   "Installed ·",
@@ -46,6 +46,25 @@ const CADENAS = [
 ] as const;
 
 /**
+ * La segunda clase de entrada, de CHA-42: **el sitio no cabe**.
+ *
+ * `RoutineList.tsx:188` pone el estado de la rutina en un `<span className="w-12
+ * text-xs">`, que son 48 px fijos, y el archivo es de upstream: no se ensancha.
+ * Medido con la tipografía del build (12 px InterVariable), «Desactivado» —el
+ * español global de `Off`— ocupa 75 px y se corta a la mitad sin puntos
+ * suspensivos. Las formas de acá entran en la caja; la tabla medida está en
+ * `doc/i18n-es-ar/CHA-42-tres-defectos.md`.
+ *
+ * `Off` es el caso que **no** tiene forma: «Apagada», la que eligió el Lead,
+ * mide 53 px. La entrada es `"Off": "Off"`, o sea inglés a propósito en este
+ * sitio, que es la salida que pidió la tarea: antes una palabra en inglés que
+ * una palabra cortada.
+ */
+const POR_ANCHO = ["Archived", "Off", "On"] as const;
+
+const CADENAS = [...HOMOGRAFOS, ...POR_ANCHO] as const;
+
+/**
  * Una fila por cadena: el mismo inglés, dos archivos, dos españoles.
  *
  * Las formas **no se inventaron acá**: salen de las bitácoras de los lotes que
@@ -53,7 +72,7 @@ const CADENAS = [
  * CHA-31 `All`/`Private`/`Installed ·`, CHA-33 `Type`).
  */
 const DOS_ESPANOLES: readonly {
-  ingles: (typeof CADENAS)[number];
+  ingles: (typeof HOMOGRAFOS)[number];
   a: readonly [string, string];
   b: readonly [string, string];
 }[] = [
@@ -119,12 +138,37 @@ describe("el mismo inglés, dos españoles según el archivo (§14.2)", () => {
     });
   }
 
-  it("cubre las 8 cadenas y ninguna más", () => {
+  it("cubre las 11 cadenas y ninguna más", () => {
     const cubiertas = new Set<string>();
     for (const porIngles of entradasPorSitio("es-AR").values()) {
       for (const ingles of porIngles.keys()) cubiertas.add(ingles);
     }
     expect([...cubiertas].sort()).toEqual([...CADENAS].sort());
+  });
+});
+
+describe("la columna de 48 px de la lista de Rutinas (CHA-42)", () => {
+  const ARCHIVO = "components/RoutineList.tsx";
+
+  it("«Activa» y «Archivo» entran en la caja y reemplazan al global", () => {
+    expect(lookupPorSitio("On", ARCHIVO)).toBe("Activa");
+    expect(lookupPorSitio("Archived", ARCHIVO)).toBe("Archivo");
+    // El global de `Archived` es «En archivo», que mide 43 px y también
+    // entraría; la entrada existe igual porque «Archivo» es la forma que el
+    // glosario quiere para el estado de una rutina, no para la bandeja.
+    expect(lookup("Archived")).toBe("En archivo");
+  });
+
+  it("`Off` queda en inglés acá y sigue siendo «Desactivado» en el resto", () => {
+    // La regla medida: lo que pasa de 48 px no entra. «Apagada» mide 53 px.
+    expect(lookupPorSitio("Off", ARCHIVO)).toBe("Off");
+    expect(lookup("Off")).toBe("Desactivado");
+    expect(lookupPorSitio("Off", SIN_ENTRADA_EN_EL_MAPA)).toBe("Desactivado");
+  });
+
+  it("`Draft` no tiene entrada en ningún lado y sale en inglés", () => {
+    expect(lookup("Draft")).toBe("Draft");
+    expect(lookupPorSitio("Draft", ARCHIVO)).toBe("Draft");
   });
 });
 
@@ -181,12 +225,29 @@ describe("la garantía del dueño: por qué estas 7 no van al diccionario global
    *
    * Por eso las 7 cadenas nuevas viven **sólo** en el mapa por sitio. `Review`
    * es la excepción y ya tenía entrada global antes de esta tarea.
+   *
+   * Las tres de CHA-42 son la otra clase y por eso no entran en esta garantía:
+   * la entrada no está para separar dos sentidos sino para que la forma entre
+   * en 48 px, y el español global de `Off` y de `Archived` tiene que seguir
+   * existiendo —sacarlo los dejaría en inglés en toda la app para arreglar una
+   * sola columna—.
    */
+  const CON_GLOBAL_A_PROPOSITO = new Set(["Review", ...POR_ANCHO]);
+
   it("ninguna de las 7 tiene entrada en el diccionario global", () => {
     for (const ingles of CADENAS) {
-      if (ingles === "Review") continue;
+      if (CON_GLOBAL_A_PROPOSITO.has(ingles)) continue;
       expect(lookup(ingles), `${ingles} no puede estar en el diccionario global`).toBe(ingles);
     }
+  });
+
+  it("y las dos de CHA-42 que sí lo tienen lo conservan intacto", () => {
+    // El control: la entrada por sitio **no** se come el diccionario global.
+    expect(lookup("Off")).toBe("Desactivado");
+    expect(lookup("Archived")).toBe("En archivo");
+    // `On` nunca tuvo entrada global y la sigue sin tener: «Activa» es la forma
+    // de una rutina, no la de un interruptor cualquiera.
+    expect(lookup("On")).toBe("On");
   });
 });
 
