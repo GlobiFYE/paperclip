@@ -238,12 +238,33 @@ export async function prepareAgyRemoteRun(
       env.GEMINI_CLI_HOME = stagedAgyHomeRemote;
     }
 
-    // Only the managed HOME (the per-run runtime root) is touched: on
-    // non-managed remote targets (such as SSH) remoteHomeDir is the user's
-    // real home, where creating or replacing files is out of scope and
-    // concurrent runs could swap run-scoped tool credentials or delete
-    // the user's saved settings.
-    if (managedRemoteHomeDir && preparedExecutionTargetRuntime.assetDirs["mcp-config"]) {
+    let effectiveRemoteHomeDir = remoteHomeDir;
+    if (!managedRemoteHomeDir && preparedExecutionTargetRuntime.assetDirs["mcp-config"] && preparedExecutionTargetRuntime.runtimeRootDir) {
+      // For unmanaged targets (such as SSH), provide an isolated per-run
+      // HOME under runtimeRootDir. Link ~/.gemini/antigravity-cli, ~/.gemini/antigravity,
+      // and any other non-MCP .gemini/config entries from the user's real home,
+      // and put this run's mcp_config.json in place. This gives the run its assigned
+      // MCP tools without touching or clobbering the remote user's real ~/.gemini/config/mcp_config.json.
+      const isolatedHomeDir = path.posix.join(preparedExecutionTargetRuntime.runtimeRootDir, "home");
+      const isolatedConfigDir = path.posix.join(isolatedHomeDir, ".gemini", "config");
+      const stagedMcpConfigRemote = preparedExecutionTargetRuntime.assetDirs["mcp-config"];
+      const targetMcpConfig = path.posix.join(isolatedConfigDir, "mcp_config.json");
+      const stagedMcpFile = path.posix.join(stagedMcpConfigRemote, "mcp_config.json");
+      const realGeminiDir = remoteHomeDir ? path.posix.join(remoteHomeDir, ".gemini") : null;
+
+      await runAdapterExecutionTargetShellCommand(
+        runId,
+        executionTarget,
+        `mkdir -p ${JSON.stringify(isolatedConfigDir)}; ${realGeminiDir ? `ln -s ${JSON.stringify(path.posix.join(realGeminiDir, "antigravity-cli"))} ${JSON.stringify(path.posix.join(isolatedHomeDir, ".gemini", "antigravity-cli"))} 2>/dev/null || true; ln -s ${JSON.stringify(path.posix.join(realGeminiDir, "antigravity"))} ${JSON.stringify(path.posix.join(isolatedHomeDir, ".gemini", "antigravity"))} 2>/dev/null || true; ` : ""}cp -a ${JSON.stringify(stagedMcpFile)} ${JSON.stringify(targetMcpConfig)}`,
+        { cwd: effectiveExecutionCwd, env, timeoutSec, graceSec, onLog },
+      );
+      effectiveRemoteHomeDir = isolatedHomeDir;
+      env.HOME = isolatedHomeDir;
+      await onLog(
+        "stdout",
+        `[paperclip] Configured ${runtimeMcpServers.length} Paperclip-managed MCP server(s) in isolated remote ${targetMcpConfig}.\n`,
+      );
+    } else if (managedRemoteHomeDir && preparedExecutionTargetRuntime.assetDirs["mcp-config"]) {
       const stagedMcpConfigRemote = preparedExecutionTargetRuntime.assetDirs["mcp-config"];
       const targetMcpConfig = path.posix.join(managedRemoteHomeDir, ".gemini", "config", "mcp_config.json");
       const stagedMcpFile = path.posix.join(stagedMcpConfigRemote, "mcp_config.json");

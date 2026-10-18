@@ -621,13 +621,13 @@ describe("agy-local execute (remote execution)", () => {
     expect(restoreCommand).toContain("rm -rf");
   });
 
-  it("does not mutate the remote user's ~/.gemini/config/mcp_config.json on unmanaged SSH targets", async () => {
+  it("configures MCP servers in an isolated per-run HOME on unmanaged SSH targets without mutating the user real ~/.gemini/config/mcp_config.json", async () => {
     const rootDir = await makeTmpDir();
     const workspaceDir = path.join(rootDir, "workspace");
     await fs.mkdir(workspaceDir, { recursive: true });
 
     const ctx: AdapterExecutionContext = {
-      runId: "run-ssh-no-mcp-clobber",
+      runId: "run-ssh-isolated-mcp",
       agent: {
         id: "agent-1",
         companyId: "company-1",
@@ -664,13 +664,19 @@ describe("agy-local execute (remote execution)", () => {
     vi.mocked(runAdapterExecutionTargetShellCommand).mockClear();
     await execute(ctx);
 
-    // On unmanaged SSH targets, remoteHomeDir is the real user's home and
-    // must not be mutated or symlinked with per-run MCP credentials.
     const shellCommands = (vi.mocked(runAdapterExecutionTargetShellCommand).mock.calls as unknown as unknown[][])
       .map((call) => String(call[2]));
-    const mcpLinkOrBackupCommand = shellCommands.find(
-      (cmd) => cmd.includes("mcp_config.json"),
+
+    // An isolated HOME was created under the runtime root directory
+    const isolatedMcpSetupCommand = shellCommands.find(
+      (cmd) => cmd.includes("/remote/runtime/home/.gemini/config/mcp_config.json"),
     );
-    expect(mcpLinkOrBackupCommand).toBeUndefined();
+    expect(isolatedMcpSetupCommand).toBeDefined();
+
+    // The user's shared ~/.gemini/config/mcp_config.json was never symlinked or backed up
+    const sharedHomeClobberCommand = shellCommands.find(
+      (cmd) => cmd.includes(".paperclip-backup") && cmd.includes("ssh"),
+    );
+    expect(sharedHomeClobberCommand).toBeUndefined();
   });
 });
