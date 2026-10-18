@@ -100,6 +100,7 @@ const CLOUD_CONNECTOR_CALLBACK_CODES = new Set([
   "paperclip_cloud_connector_failed",
   "paperclip_cloud_connector_unavailable",
   "oauth_refresh_missing",
+  "github_installation_required",
 ]);
 
 export function cloudConnectorCallbackFailure(error: unknown): { code: string; status: number } {

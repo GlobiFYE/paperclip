@@ -8267,6 +8267,46 @@ describeEmbeddedPostgres("tool access service", () => {
     expect(callback.headers.location ?? callback.text).not.toContain("provider_controlled_value");
   });
 
+  it("preserves managed GitHub installation recovery from a Paperclip callback error", async () => {
+    const company = await createCompany(db);
+    const userId = `github-callback-${randomUUID()}`;
+    await grantBoardUser(db, company.id, userId, [], "owner");
+    const connector = fakeGitHubConnector(company.id, userId);
+    vi.mocked(connector.claim).mockRejectedValue(new HttpError(422, "Install the app", {
+      code: "github_installation_required",
+      installationUrl: "https://github.com/apps/paperclip-development/installations/new",
+      managementUrl: "https://github.com/settings/installations",
+    }));
+    const service = createTestToolAccessService(db, { paperclipCloudConnector: connector });
+    const actor = { actorType: "user" as const, actorId: userId };
+    const connected = await service.connectGalleryApp(company.id, {
+      galleryKey: "github", connectionMethodKey: "managed", grantKind: "user", name: "GitHub callback",
+    }, actor);
+    const started = await service.startOAuth(company.id, connected.connectionId, {
+      redirectUri: "https://paperclip.example/api/tools/oauth/cloud-connector/callback", actor,
+    });
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    const app = createRouteApp(db, boardSessionActor(company.id, "owner", userId), undefined, {
+      paperclipCloudConnector: connector,
+    });
+
+    const callback = await request(app).get("/api/tools/oauth/cloud-connector/callback")
+      .query({ state, claim_id: "github-claim-for-recovery" }).set("accept", "text/html");
+
+    expect(callback.status).toBe(303);
+    const recovery = new URL(callback.headers.location, "https://paperclip.example");
+    expect(recovery.searchParams.get("oauth")).toBe("failed");
+    expect(recovery.searchParams.get("code")).toBe("github_installation_required");
+    expect(recovery.searchParams.get("installation_url")).toBe("https://github.com/apps/paperclip-development/installations/new");
+    expect(recovery.searchParams.get("management_url")).toBe("https://github.com/settings/installations");
+    const failures = await db.select().from(activityLog).where(and(
+      eq(activityLog.companyId, company.id), eq(activityLog.entityId, connected.connectionId),
+      eq(activityLog.action, "tool_app.oauth_failed"),
+    ));
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.details).toMatchObject({ code: "github_installation_required", status: 422 });
+  });
+
   it("propagates a non-HTML managed callback error without browser failure activity", async () => {
     const company = await createCompany(db);
     const userId = `callback-json-${randomUUID()}`;
