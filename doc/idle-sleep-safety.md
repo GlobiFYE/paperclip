@@ -36,6 +36,12 @@ signed bootstrap writes. Only the task-drain read skips request tracking.
 Its authentication finishes under a separate work token before entering the
 report, so it counts concurrent writes without blocking on its own scan.
 
+A matched static UI file finishes its request tracking when its response ends
+or closes. An aborted file download performs no application write and must not
+leave the instance permanently busy. Unfinished middleware promises remain
+tracked. Missing files continue through the normal fallback and error handlers;
+they do not exempt other GET requests or callback-only application work.
+
 ## Scheduled routine wake protocol
 
 Historical failed ephemeral leases and terminal custom-image setup sessions can

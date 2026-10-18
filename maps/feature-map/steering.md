@@ -100,10 +100,12 @@ the task (and separately its ancestor), preserve a draft, then resume the actual
 hold; no hidden send should occur while paused. Check both task presentations
 when available; the named component tests do not prove every host integration.
 
-Pause an agent after a follow-up is accepted but before the prior turn finishes.
-Let release and periodic recovery run. Confirm the saved request remains pending,
-then resume the agent and verify one delivery. A paused request must not prevent
-another eligible recipient's queued work from proceeding.
+Start with an agent in its completed paused lifecycle state, then create an
+accepted deferred follow-up for it. Let release and periodic recovery run.
+Confirm that the saved request remains pending. Resume the agent, wait for its
+lifecycle to become ready, and verify one delivery. An explicit Pause cancels
+older queued work; those cancelled receipts must not be replayed. A paused
+request must not prevent another eligible recipient's queued work from proceeding.
 
 ### `agent-chat`
 

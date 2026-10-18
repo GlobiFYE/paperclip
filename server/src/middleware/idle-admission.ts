@@ -11,6 +11,13 @@ function settle(work: RequestWork) {
   }
 }
 
+export function completeIdleReadOnlyResponse(req: Request): void {
+  const work = requests.get(req);
+  if (!work) return;
+  work.ended = true;
+  settle(work);
+}
+
 // Only the exact control endpoint and health probes bypass admission. The
 // control route still authenticates each operation. GET is otherwise tracked:
 // OAuth callbacks and tool streams can create work too.
