@@ -3539,8 +3539,6 @@ describe("ACP activity diagnostics", () => {
               inferredKind: "think",
             } as never, { signal: new AbortController().signal }));
             yield { type: "tool_call", toolCallId: "private-task", title: "private task", kind: "think", status: "in_progress" };
-            // Finished peers: two of the stalled call's kind, one of which
-            // sent a permission request, and one of another kind that did.
             for (const toolCallId of ["private-peer-asked", "private-peer-shell"]) {
               await options.onPermissionRequest?.({
                 sessionId: "session-1",

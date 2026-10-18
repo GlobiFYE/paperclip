@@ -4132,11 +4132,6 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
     // reached the agent, so it separates a call stalled before its request
     // arrived from one stalled on the return trip or after the decision;
     // `pendingPermissionRequested` counts the pending calls whose request did.
-    // `settledSameKind` and `settledSameKindPermissionRequested` are the
-    // positive control: how many finished calls of the stalled call's kind the
-    // run saw, and how many of those sent a permission request. A missing
-    // request on the stalled call only locates the stall if its finished peers
-    // sent one.
     let stalledTool: {
       kind: string;
       silentMs: number;
