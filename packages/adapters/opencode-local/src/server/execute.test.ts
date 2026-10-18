@@ -110,6 +110,14 @@ describe("OpenCode local skill injection", () => {
     expect(prompts[1]).toContain("py -3 --version");
     expect(prompts[1]).toContain("only while the shell and execution target stay the same");
     expect(prompts[1]).toContain("Never infer executable availability from the Paperclip host");
+    expect(prompts[1]).toContain("command -v rg");
+    expect(prompts[1]).toContain("use `grep`");
+    expect(prompts[1]).toContain("Select-String");
+    expect(prompts[1]).toContain("PowerShell `ConvertFrom-Json`");
+    expect(prompts[1]).toContain("check the transport result and confirm the HTTP status is successful before parsing the body");
+    expect(prompts[1]).toContain("If the status is non-2xx or the body is unexpected");
+    expect(prompts[1]).toContain("Never append a `curl -w` status marker");
+    expect(prompts[1]).toContain("do not blindly retry a parse failure");
   });
 
   it("injects runtime skills into the configured child HOME", async () => {

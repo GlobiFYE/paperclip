@@ -122,6 +122,14 @@ describe("native instruction payload measurement", () => {
         expect(instructions).toContain("py -3 --version");
         expect(instructions).toContain("only while the shell and execution target stay the same");
         expect(instructions).toContain("Never infer executable availability from the Paperclip host");
+        expect(instructions).toContain("command -v rg");
+        expect(instructions).toContain("use `grep`");
+        expect(instructions).toContain("Select-String");
+        expect(instructions).toContain("PowerShell `ConvertFrom-Json`");
+        expect(instructions).toContain("check the transport result and confirm the HTTP status is successful before parsing the body");
+        expect(instructions).toContain("If the status is non-2xx or the body is unexpected");
+        expect(instructions).toContain("Never append a `curl -w` status marker");
+        expect(instructions).toContain("do not blindly retry a parse failure");
         expect(instructions).toContain("You are an agent in a Paperclip company.");
         const deliveredTools = setup.dynamicTools as Array<{ name: string; description: string }>;
         expect(deliveredTools.filter(tool => tool.name === "paperclip_finish")).toEqual([
