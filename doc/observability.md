@@ -1008,6 +1008,15 @@ before the request reached Paperclip. A call whose request arrived stalled
 later: on the reply's return trip, or after the agent received the decision.
 Both fields hold only a boolean and a count.
 
+A missing request locates the stall only if calls like it normally send one.
+So a stalled run also records `acpSettledSameKindToolCount` (how many finished
+calls of the stalled call's kind the run saw) and
+`acpSettledSameKindToolPermissionRequestedCount` (how many of those sent a
+permission request). When finished peers sent requests and the stalled call did
+not, the call stalled before its request. When the finished peers sent none
+either, calls of that kind skip the request, and its absence says nothing about
+where the call stalled. Both fields hold only counts.
+
 ACP and legacy OpenCode results retain the adapter's resolved wall-clock timeout as
 `adapterExecutionTimeout` in the instance run result. Finalization uses it for
 `effectiveTimeoutSec`, `timeoutSource`, and `timeoutConfigured`. Sources are

@@ -4132,11 +4132,18 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
     // reached the agent, so it separates a call stalled before its request
     // arrived from one stalled on the return trip or after the decision;
     // `pendingPermissionRequested` counts the pending calls whose request did.
+    // `settledSameKind` and `settledSameKindPermissionRequested` are the
+    // positive control: how many finished calls of the stalled call's kind the
+    // run saw, and how many of those sent a permission request. A missing
+    // request on the stalled call only locates the stall if its finished peers
+    // sent one.
     let stalledTool: {
       kind: string;
       silentMs: number;
       permissionRequested: boolean;
       pendingPermissionRequested: number;
+      settledSameKind: number;
+      settledSameKindPermissionRequested: number;
     } | null = null;
     let stalledToolTimer: ReturnType<typeof setInterval> | undefined;
     let forcedStop = false;
@@ -5055,12 +5062,21 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
             }
             if (!oldest) return;
             clearInterval(stalledToolTimer);
+            let settledSameKind = 0;
+            let settledSameKindPermissionRequested = 0;
+            for (const [toolCallId, tool] of interruptionTools) {
+              if (isPendingAcpTool(tool) || tool.kind !== oldest.kind) continue;
+              settledSameKind += 1;
+              if (permissionRequestedToolCallIds.has(toolCallId)) settledSameKindPermissionRequested += 1;
+            }
             const knownKinds: readonly string[] = ACP_TOOL_KINDS;
             stalledTool = {
               kind: oldest.kind && knownKinds.includes(oldest.kind) ? oldest.kind : "unknown",
               silentMs: oldest.silentMs,
               permissionRequested: permissionRequestedToolCallIds.has(oldest.toolCallId),
               pendingPermissionRequested,
+              settledSameKind,
+              settledSameKindPermissionRequested,
             };
             turnStopRequestedAt = checkedAt;
             pendingToolsAtStop = [...interruptionTools.values()].filter(isPendingAcpTool);
@@ -5352,6 +5368,8 @@ export function createAcpxEngineExecutor(deps: AcpxEngineExecutorOptions = {}) {
                   acpStalledToolSilentMs: stalledTool.silentMs,
                   acpStalledToolPermissionRequested: stalledTool.permissionRequested,
                   acpPendingToolPermissionRequestedCount: stalledTool.pendingPermissionRequested,
+                  acpSettledSameKindToolCount: stalledTool.settledSameKind,
+                  acpSettledSameKindToolPermissionRequestedCount: stalledTool.settledSameKindPermissionRequested,
                 }
               : {}),
             ...(failureDiagnostic ? { terminalSessionFailure: failureDiagnostic } : {}),
