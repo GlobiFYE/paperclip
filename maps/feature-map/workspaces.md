@@ -24,6 +24,10 @@ Select surviving task attachments, record lost work and external action outcomes
 then rebuild through fresh-session admission. The old failed run remains failed.
 Bounded bootstrap retries retain this decision and recheck their system wake,
 predecessors, saved files and current execution gates before provider startup.
+Later cancelled runs require their own confirmed stop and board file repair.
+Their evidence is preserved with the reconstruction and rechecked before dispatch.
+Stop retains unfinished native files; startup also repairs missing historical
+retention without replaying the cancelled turn.
 Retained sandboxes keep their existing export recovery path. Automated coverage:
 [reconstruction](../../server/src/services/native-runtime/native-workspace-reconstruction.test.ts).
 Live staging acceptance remains separate from these regression tests.

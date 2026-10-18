@@ -6,7 +6,7 @@ import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } fro
 import { getExecutionBlocker } from "../execution-blocker.js";
 import { markExecutionReconciliation, validateExecutionReconciliation } from "../execution-recovery-resolution.js";
 import { settleStopOnlyCleanup } from "../sandbox-stop-and-retain.js";
-import { preserveNativeFailedWorkspace } from "./native-failed-workspace-recovery.js";
+import { preserveCancelledNativeWorkspaces, preserveNativeFailedWorkspace } from "./native-failed-workspace-recovery.js";
 import type { NativeRestartRecoveryClaim } from "./native-restart-recovery.js";
 import { NativeWorkspaceFinalizationBusyError } from "./native-workspace-finalization-ownership.js";
 import { preserveWorkspaceRestoreRecoveryMetadataSql } from "../legacy-workspace-restore-recovery.js";
@@ -50,6 +50,52 @@ const support = externalUrl ? { supported: true } : await getEmbeddedPostgresTes
   const readRun = async (id: string) => (await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, id)))[0]!;
   const readLease = async (id: string) => (await db.select().from(environmentLeases).where(eq(environmentLeases.id, id)))[0]!;
   const actions = async (issueId: string) => db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.sourceIssueId, issueId));
+
+  it.each(["acknowledged", "pending", "foreign", "owned"])("pins historical cancelled work only after an exact Stop acknowledgement: %s", async kind => {
+    const f = await seed();
+    await db.update(heartbeatRuns).set({ status: "cancelled", nativePhase: "observed", finishedAt: new Date(),
+      resultJson: { cancelledByActorType: "user", cancelledByUserId: "operator", nativeCancellation: {
+        schema: "paperclip.native-cancellation.v1", runId: f.runId,
+        companyId: kind === "foreign" ? randomUUID() : f.companyId, issueId: f.issueId,
+        scope: "run", reasonCode: "cancellation_run_only", dispatchState: kind === "pending" ? "pending" : "acknowledged",
+        dispatched: true, intentAuditId: randomUUID(), acknowledgementAuditId: randomUUID(),
+      } },
+    }).where(eq(heartbeatRuns.id, f.runId));
+    if (kind === "owned") await db.update(nativeRunFinalizations).set({ leaseOwner: "current-controller" })
+      .where(eq(nativeRunFinalizations.runId, f.runId));
+    await preserveCancelledNativeWorkspaces(db);
+    const current = await readRun(f.runId);
+    expect(current).toMatchObject({ status: "cancelled", resultJson: { nativeCancellation: { scope: "run" } } });
+    expect((await db.select().from(issues).where(eq(issues.id, f.issueId)))[0].status).toBe("in_progress");
+    expect(await readLease(f.lease.id)).toMatchObject(kind === "acknowledged"
+      ? { status: "pending_cleanup", leasePolicy: "retain_on_failure", metadata: { sandboxStopAndRetain: { runId: f.runId } } }
+      : { status: "active", leasePolicy: "ephemeral" });
+    expect(await actions(f.issueId)).toHaveLength(kind === "acknowledged" ? 1 : 0);
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.companyId, f.companyId))).toHaveLength(1);
+  });
+  it("keeps another cancelled workspace recoverable when one task row is locked", async () => {
+    const busy = await seed(), free = await seed();
+    for (const f of [busy, free]) await db.update(heartbeatRuns).set({ status: "cancelled", finishedAt: new Date(),
+      resultJson: { cancelledByActorType: "user", cancelledByUserId: "operator", nativeCancellation: {
+        schema: "paperclip.native-cancellation.v1", runId: f.runId, companyId: f.companyId, issueId: f.issueId,
+        scope: "run", reasonCode: "cancellation_run_only", dispatchState: "acknowledged", dispatched: true,
+        intentAuditId: randomUUID(), acknowledgementAuditId: randomUUID(),
+      } },
+    }).where(eq(heartbeatRuns.id, f.runId));
+    let release!: () => void, ready!: () => void;
+    const released = new Promise<void>(resolve => { release = resolve; });
+    const acquired = new Promise<void>(resolve => { ready = resolve; });
+    const holding = db.transaction(async tx => {
+      await tx.select().from(issues).where(eq(issues.id, busy.issueId)).for("update");
+      ready(); await released;
+    });
+    await acquired;
+    try {
+      for (let pass = 0; pass < 3; pass++) await preserveCancelledNativeWorkspaces(db);
+      expect(await readLease(busy.lease.id)).toMatchObject({ status: "active" });
+      expect(await readLease(free.lease.id)).toMatchObject({ status: "pending_cleanup", leasePolicy: "retain_on_failure" });
+    } finally { release(); await holding; }
+  }, 15_000);
 
   it("pins only the exact unexported source and exposes a file-only recovery card", async () => {
     const f = await seed();
