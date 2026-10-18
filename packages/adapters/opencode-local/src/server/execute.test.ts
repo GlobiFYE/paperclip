@@ -312,7 +312,7 @@ describe("OpenCode runtime MCP handoff", () => {
     expect(result.exitCode).toBe(0);
     expect(configAtExecution?.permission).toBeUndefined();
     expect(configAtExecution?.mcp).toMatchObject({
-      "paperclip_felix-pc-powershell": {
+      PowerShell_on_Felix_PC: {
         type: "remote",
         url: "https://paperclip.example/api/mcp/run-1",
         headers: { Authorization: `Bearer ${secret}` },

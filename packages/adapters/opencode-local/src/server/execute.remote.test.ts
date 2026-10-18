@@ -261,7 +261,7 @@ describe("opencode remote execution", () => {
     });
     expect(stagedMcpConfigs).toHaveLength(1);
     expect(stagedMcpConfigs[0]?.mcp).toMatchObject({
-      "paperclip_remote-mcp-fixture": {
+      Remote_MCP_fixture: {
         url: "https://paperclip.example/api/mcp/remote-run",
         headers: { Authorization: "Bearer remote-run-secret" },
         oauth: false,

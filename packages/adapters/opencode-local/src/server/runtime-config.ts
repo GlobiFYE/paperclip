@@ -1,8 +1,11 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import type { AdapterRuntimeMcpServer } from "@paperclipai/adapter-utils";
 import { asBoolean } from "@paperclipai/adapter-utils/server-utils";
+
+const MAX_RUNTIME_MCP_SERVER_NAME_LENGTH = 22;
 
 type PreparedOpenCodeRuntimeConfig = {
   env: Record<string, string>;
@@ -111,14 +114,21 @@ function buildRuntimeMcpConfig(
   const usedNames = new Set(Object.keys(mcp));
 
   for (const server of servers) {
-    const safeConnectionId = server.connectionId.replace(/[^a-zA-Z0-9_-]/g, "_") || "connection";
-    const baseName = `paperclip_${safeConnectionId}`;
-    let name = baseName;
-    let suffix = 2;
-    while (usedNames.has(name)) {
-      name = `${baseName}_${suffix}`;
+    const safeServerName = server.name.replace(/[^a-zA-Z0-9_-]/g, "_") || "connection";
+    let suffix = 1;
+    let name: string;
+    do {
+      const collisionSuffix = suffix === 1 ? "" : `_${suffix}`;
+      const nameBudget = MAX_RUNTIME_MCP_SERVER_NAME_LENGTH - collisionSuffix.length;
+      if (safeServerName.length <= nameBudget) {
+        name = `${safeServerName}${collisionSuffix}`;
+      } else {
+        const hash = createHash("sha256").update(safeServerName).digest("hex").slice(0, 8);
+        const prefixLength = nameBudget - hash.length - 1;
+        name = `${safeServerName.slice(0, prefixLength)}_${hash}${collisionSuffix}`;
+      }
       suffix += 1;
-    }
+    } while (usedNames.has(name));
     usedNames.add(name);
     mcp[name] = {
       type: "remote",
