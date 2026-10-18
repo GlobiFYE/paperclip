@@ -35,7 +35,28 @@ Start with the current run's **Paperclip Wake Payload** or **Paperclip Resume De
 
 Use the skill text and named references already available in this run. Do not search the repository or reread sections just to reconstruct an API operation documented here; open a referenced section once when its additional contract is needed. When a response already contains the requested data, parse or reformat that local response instead of repeating the remote read.
 
-When work is complete and both a final comment and status change are needed, send them together in one issue-update PATCH with the bundled helper below. Its response must confirm the target issue, requested status, and exact saved comment before reporting success. Do not issue a second read merely to confirm fields already echoed exactly. A transport failure, server error, or mismatched response after a comment write has an uncertain outcome: inspect the task/comment state before retrying so an accepted comment is not duplicated. Independent reviews, approvals, or other required checks still follow their normal paths.
+**Required documents are one input phase.** Collect the explicit issue-document references required by the agent, company, and task instructions before fetching them. They remain required reading; this fast path does not waive any rule or authorize unrelated documents. Set `paperclip_skill_dir` from the installed skill's harness-supplied base directory, not the task workspace. Where Node.js is available, fetch independent documents together with the bundled `scripts/paperclip-read-documents.mjs`, resolved relative to this installed skill. It uses the current run's API authorization and writes complete bodies into private, revision-labelled local segments; it does not summarize or omit rules. For example, substitute the actual instructed issue IDs and keys:
+
+```bash
+node "$paperclip_skill_dir/scripts/paperclip-read-documents.mjs" \
+  --document "<policy-issue-id>/policy" --document "<lessons-issue-id>/lessons"
+```
+
+Read **every** segment listed in the successful manifest, in one parallel batch of independent file-read tool calls. Do not turn known segment paths into a serial read/think/read loop. A manifest, digest, or local file alone does not mean you have read its contents. Respect any stricter reading limits in the instructions; the helper segments contain at most 6,000 characters each. Use reads that preserve complete lines; if the file-read tool shortens long lines, use a bounded shell `cat` of each segment in that same batch instead. Check that every segment was read without truncation. Treat these complete bodies and revisions as the read context for this run. Fetch again if a relevant edit, lost context, missing segment, explicit freshness requirement, or later decision needs newer state; do not silently reuse a previous run's files. If the helper/runtime is unavailable, batch the independent authorized document reads with the available tools and preserve the same completeness checks. Never install a runtime merely to use this shortcut.
+
+**One final disposition.** When work is complete and both a final comment and status change are needed, you **must send them together** in one issue-update PATCH with the bundled helper below. A final comment in this PATCH satisfies the requirement to leave a comment before exiting; do not first POST the same final result to `/comments` and then PATCH the status. Separate progress comments are for useful updates while work is still incomplete, or a genuinely required earlier evidence/handoff phase. Required document/artifact publication and independent reviews still happen before final disposition.
+
+Use the actual final result:
+
+```bash
+bash "$paperclip_skill_dir/scripts/paperclip-issue-update.sh" --issue-id "$PAPERCLIP_TASK_ID" --status done <<'MD'
+Completed the requested work.
+
+- Actual result and the required evidence links.
+MD
+```
+
+Its response must confirm the target issue, requested status, and exact saved comment before reporting success. That saved response is the readback for the fields it confirms; do not issue a second read merely to repeat them. A transport failure, server error, or mismatched response after a comment write has an uncertain outcome: inspect the task/comment state before retrying so an accepted comment is not duplicated. Independent reviews, approvals, explicit read-after-write requirements, or other required checks still follow their normal paths.
 
 ## Conversation tasks
 
