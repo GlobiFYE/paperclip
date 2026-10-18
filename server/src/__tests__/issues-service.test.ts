@@ -4352,6 +4352,171 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
     });
   });
 
+  async function seedDeltaIssues() {
+    const companyId = randomUUID();
+    const issueId = randomUUID();
+    const blockerA = randomUUID();
+    const blockerB = randomUUID();
+    await seedIssueCompany(db, companyId);
+    await db.insert(issues).values([issueId, blockerA, blockerB].map((id) => ({
+      id, companyId, title: id, status: "todo", priority: "medium",
+    })));
+    return { companyId, issueId, blockerA, blockerB };
+  }
+
+  it("returns previous blocker details added after a stale snapshot for a removal delta", async () => {
+    const { issueId, blockerA } = await seedDeltaIssues();
+    const staleRelations = await svc.getRelationSummaries(issueId);
+    expect(staleRelations.blockedBy).toEqual([]);
+
+    await db.transaction(async (tx) => {
+      await tx.update(issues).set({
+        identifier: "PAP-101", title: "Concurrently added blocker", status: "done",
+      }).where(eq(issues.id, blockerA));
+      await svc.update(issueId, { addBlockedByIssueIds: [blockerA] }, tx);
+    });
+    const updated = await svc.update(issueId, { removeBlockedByIssueIds: [blockerA] });
+
+    expect(updated?.blockedByIssueIds).toEqual([]);
+    expect(updated?.changes.blockedByIssueIds).toEqual({ from: [blockerA], to: [] });
+    expect(updated?.previousBlockedByRelations).toEqual([
+      expect.objectContaining({
+        id: blockerA, identifier: "PAP-101", title: "Concurrently added blocker", status: "done",
+      }),
+    ]);
+    expect((await svc.getRelationSummaries(issueId)).blockedBy).toEqual([]);
+  });
+
+  it("serializes concurrent blocker deltas without losing either addition", async () => {
+    const { issueId, blockerA, blockerB } = await seedDeltaIssues();
+    const firstApplied = deferred<void>();
+    const firstCanCommit = deferred<void>();
+    const secondStarted = deferred<number>();
+    const first = db.transaction(async (tx) => {
+      await svc.update(issueId, { addBlockedByIssueIds: [blockerA] }, tx);
+      firstApplied.resolve();
+      await firstCanCommit.promise;
+    });
+    await firstApplied.promise;
+    const second = db.transaction(async (tx) => {
+      const [backend] = await tx.execute(sql`select pg_backend_pid() as pid`);
+      secondStarted.resolve(Number(backend!.pid));
+      return svc.update(issueId, { addBlockedByIssueIds: [blockerB] }, tx);
+    });
+    try {
+      const pid = await secondStarted.promise;
+      await vi.waitFor(async () => {
+        const [backend] = await db.execute(sql`select wait_event_type from pg_stat_activity where pid = ${pid}`);
+        expect(backend?.wait_event_type).toBe("Lock");
+      });
+    } finally {
+      firstCanCommit.resolve();
+      await Promise.all([first, second]);
+    }
+    const result = await second;
+    expect(result?.blockedByIssueIds).toEqual([blockerA, blockerB].sort());
+    expect(result?.changes.blockedByIssueIds).toEqual({ from: [blockerA], to: [blockerA, blockerB].sort() });
+    expect((await svc.getRelationSummaries(issueId)).blockedBy.map((row) => row.id).sort()).toEqual([blockerA, blockerB].sort());
+  });
+
+  it("serializes a blocker delta behind a replacement that holds the target row first", async () => {
+    const companyId = randomUUID();
+    const issueId = "ffffffff-ffff-4fff-bfff-fffffffffff0";
+    const blockerA = "00000000-0000-4000-8000-000000000001";
+    const blockerB = "00000000-0000-4000-8000-000000000002";
+    await seedIssueCompany(db, companyId);
+    await db.insert(issues).values([issueId, blockerA, blockerB].map((id) => ({
+      id, companyId, title: id, status: "todo", priority: "medium",
+    })));
+    const targetLocked = deferred<void>();
+    const replacementCanApply = deferred<void>();
+    const deltaStarted = deferred<number>();
+    const replacement = db.transaction(async (tx) => {
+      await tx.select().from(issues).where(eq(issues.id, issueId)).for("update");
+      targetLocked.resolve();
+      await replacementCanApply.promise;
+      return svc.update(issueId, { blockedByIssueIds: [blockerA] }, tx);
+    });
+    await targetLocked.promise;
+    const delta = db.transaction(async (tx) => {
+      const [backend] = await tx.execute(sql`select pg_backend_pid() as pid`);
+      deltaStarted.resolve(Number(backend!.pid));
+      return svc.update(issueId, { addBlockedByIssueIds: [blockerA, blockerB] }, tx);
+    });
+    try {
+      const pid = await deltaStarted.promise;
+      await vi.waitFor(async () => {
+        const [backend] = await db.execute(sql`select wait_event_type from pg_stat_activity where pid = ${pid}`);
+        expect(backend?.wait_event_type).toBe("Lock");
+      });
+    } finally {
+      replacementCanApply.resolve();
+      await Promise.all([replacement, delta]);
+    }
+    expect((await replacement)?.blockedByIssueIds).toEqual([blockerA]);
+    const result = await delta;
+    expect(result?.blockedByIssueIds).toEqual([blockerA, blockerB]);
+    expect(result?.changes.blockedByIssueIds).toEqual({ from: [blockerA], to: [blockerA, blockerB] });
+    expect(result?.previousBlockedByRelations).toEqual([
+      expect.objectContaining({ id: blockerA, title: blockerA, status: "todo" }),
+    ]);
+    expect((await svc.getRelationSummaries(issueId)).blockedBy.map((row) => row.id).sort()).toEqual([blockerA, blockerB]);
+  });
+
+  it("keeps blocker delta additions idempotent and preserves untouched relation metadata", async () => {
+    const { issueId, blockerA, blockerB } = await seedDeltaIssues();
+    await svc.update(issueId, { addBlockedByIssueIds: [blockerA, blockerA] });
+    const before = await db.select().from(issueRelations).where(eq(issueRelations.relatedIssueId, issueId));
+    const repeated = await svc.update(issueId, { addBlockedByIssueIds: [blockerA] });
+    expect(repeated?.changes.blockedByIssueIds).toBeUndefined();
+    await svc.update(issueId, { addBlockedByIssueIds: [blockerB] });
+    const after = await db.select().from(issueRelations).where(eq(issueRelations.relatedIssueId, issueId));
+    expect(after).toHaveLength(2);
+    expect(after.find((row) => row.issueId === blockerA)).toEqual(before[0]);
+  });
+
+  it("removes only requested blockers and ignores missing relations and empty deltas", async () => {
+    const { issueId, blockerA, blockerB } = await seedDeltaIssues();
+    await svc.update(issueId, { blockedByIssueIds: [blockerA, blockerB] });
+    const updated = await svc.update(issueId, { removeBlockedByIssueIds: [blockerA, randomUUID()] });
+    expect(updated?.blockedByIssueIds).toEqual([blockerB]);
+    expect(updated?.changes.blockedByIssueIds).toEqual({ from: [blockerA, blockerB].sort(), to: [blockerB] });
+    expect((await svc.update(issueId, { removeBlockedByIssueIds: [blockerA] }))?.blockedByIssueIds).toEqual([blockerB]);
+    expect((await svc.update(issueId, { addBlockedByIssueIds: [] }))?.blockedByIssueIds).toEqual([blockerB]);
+  });
+
+  it("rejects blocker deltas that create a cycle or block an issue by itself", async () => {
+    const { issueId, blockerA, blockerB } = await seedDeltaIssues();
+    await svc.update(blockerA, { blockedByIssueIds: [issueId] });
+    await svc.update(issueId, { addBlockedByIssueIds: [blockerB] });
+    await expect(svc.update(issueId, { addBlockedByIssueIds: [blockerA], removeBlockedByIssueIds: [blockerB] })).rejects.toThrow("Blocking relations cannot contain cycles");
+    await expect(svc.update(issueId, { addBlockedByIssueIds: [issueId] })).rejects.toThrow("Issue cannot be blocked by itself");
+    expect((await svc.getRelationSummaries(issueId)).blockedBy.map((row) => row.id)).toEqual([blockerB]);
+  });
+
+  it("rejects foreign-company and missing blocker additions without applying removals", async () => {
+    const { issueId, blockerA } = await seedDeltaIssues();
+    const foreignCompanyId = randomUUID();
+    const foreignIssueId = randomUUID();
+    await seedIssueCompany(db, foreignCompanyId);
+    await db.insert(issues).values({ id: foreignIssueId, companyId: foreignCompanyId, title: "Foreign" });
+    await svc.update(issueId, { addBlockedByIssueIds: [blockerA] });
+    for (const invalid of [foreignIssueId, randomUUID()]) {
+      await expect(svc.update(issueId, { addBlockedByIssueIds: [invalid], removeBlockedByIssueIds: [blockerA] })).rejects.toThrow("Blocked-by issues must belong to the same company");
+    }
+    expect((await svc.getRelationSummaries(issueId)).blockedBy.map((row) => row.id)).toEqual([blockerA]);
+  });
+
+  it("checks in-progress readiness against the resulting blocker delta and rolls back failure", async () => {
+    const { companyId, issueId, blockerA, blockerB } = await seedDeltaIssues();
+    const agentId = randomUUID();
+    await seedCodexCoder(db, companyId, agentId);
+    await svc.update(issueId, { assigneeAgentId: agentId, blockedByIssueIds: [blockerA] });
+    await expect(svc.update(issueId, { status: "in_progress", addBlockedByIssueIds: [blockerB] })).rejects.toThrow("Issue is blocked by unresolved blockers");
+    expect((await svc.getRelationSummaries(issueId)).blockedBy.map((row) => row.id)).toEqual([blockerA]);
+    expect((await svc.update(issueId, { status: "in_progress", removeBlockedByIssueIds: [blockerA] }))?.status).toBe("in_progress");
+  });
+
   it("rejects blocking cycles", async () => {
     const companyId = randomUUID();
     await seedIssueCompany(db, companyId);

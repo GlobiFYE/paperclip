@@ -7459,6 +7459,70 @@ export function issueService(db: Db) {
     }
   }
 
+  async function lockBlockingIssues(
+    issueId: string,
+    companyId: string,
+    blockerIssueIds: string[],
+    dbOrTx: any,
+  ) {
+    const lockedIssueIds = [...new Set([issueId, ...blockerIssueIds])].sort();
+    await dbOrTx.execute(
+      sql`SELECT ${issues.id} FROM ${issues}
+          WHERE ${and(eq(issues.companyId, companyId), inArray(issues.id, lockedIssueIds))}
+          ORDER BY ${issues.id}
+          FOR UPDATE`,
+    );
+  }
+
+  async function validateBlockedByIssueIds(
+    issueId: string,
+    companyId: string,
+    blockerIssueIds: string[],
+    dbOrTx: any,
+  ) {
+    if (blockerIssueIds.some((candidate) => candidate === issueId)) {
+      throw unprocessable("Issue cannot be blocked by itself");
+    }
+    if (blockerIssueIds.length === 0) return;
+    const relatedIssues = await dbOrTx
+      .select({ id: issues.id })
+      .from(issues)
+      .where(and(eq(issues.companyId, companyId), inArray(issues.id, blockerIssueIds)));
+    if (relatedIssues.length !== blockerIssueIds.length) {
+      throw unprocessable("Blocked-by issues must belong to the same company");
+    }
+    await assertNoBlockingCycles(companyId, issueId, blockerIssueIds, dbOrTx);
+  }
+
+  async function applyBlockedByDelta(
+    issueId: string,
+    companyId: string,
+    delta: { add: string[]; remove: string[] },
+    resultingIssueIds: string[],
+    actor: { agentId?: string | null; userId?: string | null },
+    tx: any,
+  ) {
+    await validateBlockedByIssueIds(issueId, companyId, resultingIssueIds, tx);
+    if (delta.remove.length > 0) {
+      await tx.delete(issueRelations).where(and(
+        eq(issueRelations.companyId, companyId),
+        eq(issueRelations.relatedIssueId, issueId),
+        eq(issueRelations.type, "blocks"),
+        inArray(issueRelations.issueId, delta.remove),
+      ));
+    }
+    if (delta.add.length > 0) {
+      await tx.insert(issueRelations).values(delta.add.map((blockerIssueId) => ({
+        companyId,
+        issueId: blockerIssueId,
+        relatedIssueId: issueId,
+        type: "blocks",
+        createdByAgentId: actor.agentId ?? null,
+        createdByUserId: actor.userId ?? null,
+      }))).onConflictDoNothing();
+    }
+  }
+
   async function syncBlockedByIssueIds(
     issueId: string,
     companyId: string,
@@ -7472,25 +7536,8 @@ export function issueService(db: Db) {
     }
 
     if (deduped.length > 0) {
-      const lockedIssueIds = [issueId, ...deduped].sort();
-      await dbOrTx.execute(
-        sql`SELECT ${issues.id} FROM ${issues}
-            WHERE ${and(eq(issues.companyId, companyId), inArray(issues.id, lockedIssueIds))}
-            ORDER BY ${issues.id}
-            FOR UPDATE`,
-      );
-      const relatedIssues = await dbOrTx
-        .select({ id: issues.id })
-        .from(issues)
-        .where(
-          and(eq(issues.companyId, companyId), inArray(issues.id, deduped)),
-        );
-      if (relatedIssues.length !== deduped.length) {
-        throw unprocessable(
-          "Blocked-by issues must belong to the same company",
-        );
-      }
-      await assertNoBlockingCycles(companyId, issueId, deduped, dbOrTx);
+      await lockBlockingIssues(issueId, companyId, deduped, dbOrTx);
+      await validateBlockedByIssueIds(issueId, companyId, deduped, dbOrTx);
     }
 
     await dbOrTx
@@ -10786,6 +10833,8 @@ export function issueService(db: Db) {
       data: Partial<typeof issues.$inferInsert> & {
         labelIds?: string[];
         blockedByIssueIds?: string[];
+        addBlockedByIssueIds?: string[];
+        removeBlockedByIssueIds?: string[];
         actorAgentId?: string | null;
         actorRunId?: string | null;
         actorRunStopId?: string | null;
@@ -10834,7 +10883,9 @@ export function issueService(db: Db) {
 
       const {
         labelIds: nextLabelIds,
-        blockedByIssueIds,
+        blockedByIssueIds: replacementBlockedByIssueIds,
+        addBlockedByIssueIds,
+        removeBlockedByIssueIds,
         actorAgentId,
         actorRunId,
         actorRunStopId,
@@ -10844,6 +10895,19 @@ export function issueService(db: Db) {
         expectedExecutionPolicy,
         ...issueData
       } = data;
+      const blockerDelta = addBlockedByIssueIds !== undefined || removeBlockedByIssueIds !== undefined
+        ? {
+            add: [...new Set((addBlockedByIssueIds ?? []).map((id) => id.toLowerCase()))],
+            remove: [...new Set((removeBlockedByIssueIds ?? []).map((id) => id.toLowerCase()))],
+          }
+        : null;
+      if (blockerDelta && replacementBlockedByIssueIds !== undefined) {
+        throw unprocessable("Blocker replacement and delta operations are mutually exclusive");
+      }
+      if (blockerDelta?.add.some((id) => blockerDelta.remove.includes(id))) {
+        throw unprocessable("An issue cannot be both added and removed as a blocker");
+      }
+      let blockedByIssueIds = replacementBlockedByIssueIds;
       // An explicit edit claims the title, even if it keeps the same text.
       if (issueData.title !== undefined) issueData.titleNeedsGeneration = false;
       if (
@@ -10963,7 +11027,7 @@ export function issueService(db: Db) {
       ) {
         throw unprocessable("in_progress issues require an assignee");
       }
-      if (patch.status === "in_progress") {
+      if (patch.status === "in_progress" && !blockerDelta) {
         const dependencyReadiness =
           blockedByIssueIds === undefined
             ? (
@@ -11096,6 +11160,26 @@ export function issueService(db: Db) {
           .for("update")
           .then((rows: Array<typeof issues.$inferSelect>) => rows[0] ?? null);
         if (!receiptExisting) return null;
+        if (blockerDelta) {
+          await lockBlockingIssues(id, existing.companyId, [...blockerDelta.add, ...blockerDelta.remove], tx);
+          const current = await tx.select({ id: issueRelations.issueId }).from(issueRelations).where(and(
+            eq(issueRelations.companyId, existing.companyId),
+            eq(issueRelations.relatedIssueId, id),
+            eq(issueRelations.type, "blocks"),
+          ));
+          const removals = new Set(blockerDelta.remove);
+          blockedByIssueIds = [...new Set([
+            ...current.map((row: { id: string }) => row.id),
+            ...blockerDelta.add,
+          ])].filter((id) => !removals.has(id));
+          if (patch.status === "in_progress") {
+            const unresolvedBlockerIssueIds = await listUnresolvedBlockerIssueIds(tx, existing.companyId, blockedByIssueIds);
+            if (unresolvedBlockerIssueIds.length > 0) {
+              const unresolvedBlockers = await listUnresolvedBlockerDetails(tx, existing.companyId, unresolvedBlockerIssueIds);
+              throw unprocessable("Issue is blocked by unresolved blockers", { unresolvedBlockerIssueIds, unresolvedBlockers });
+            }
+          }
+        }
         if (issueData.executionWorkspaceId !== undefined || issueData.projectWorkspaceId !== undefined ||
             issueData.executionWorkspacePreference !== undefined || issueData.executionWorkspaceSettings !== undefined) {
           Object.assign(patch, await executionWorkspaceService(db).prepareTaskWorkspaceUpdate({
@@ -11401,7 +11485,12 @@ export function issueService(db: Db) {
             tx,
           );
         }
-        if (blockedByIssueIds !== undefined) {
+        if (blockerDelta) {
+          await applyBlockedByDelta(updated.id, existing.companyId, blockerDelta, blockedByIssueIds!, {
+            agentId: actorAgentId ?? null,
+            userId: actorUserId ?? null,
+          }, tx);
+        } else if (blockedByIssueIds !== undefined) {
           await syncBlockedByIssueIds(
             updated.id,
             existing.companyId,
@@ -11545,6 +11634,9 @@ export function issueService(db: Db) {
           ...enriched,
           ...(nextBlockedByIssueIds !== undefined
             ? { blockedByIssueIds: nextBlockedByIssueIds }
+            : {}),
+          ...(blockerDelta
+            ? { previousBlockedByRelations: previousRelationSummaries.get(id)?.blockedBy ?? [] }
             : {}),
           changes,
         };

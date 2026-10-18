@@ -102,6 +102,13 @@ regressions in [ownership tests](../../server/src/__tests__/issue-agent-mutation
 cover a human handoff and stop enforcement for other actors, runtimes and targets;
 they use mocked services and do not claim live execution proof.
 
+Blocker updates accept atomic additions and removals through PATCH and the public
+MCP `paperclip_update_task` changes object. Delta fields use the same task-control
+and low-trust gates as full blocker replacement. They cannot be combined with
+replacement or name the same UUID in both arrays. The server serializes deltas
+on the task row and returns the resulting blocker set. Native `set_dependencies`
+continues to replace the full set.
+
 Gaps: Dedicated tools differ in scope and fields. Generic `call_api` forwards
 status, assignment and dependency fields to existing route authorization.
 

@@ -905,6 +905,28 @@ const issueCommentAttachmentIdsSchema = z
     message: "Attachment ids must be unique",
   });
 
+export function refineBlockedByDelta(
+  value: { blockedByIssueIds?: unknown; addBlockedByIssueIds?: string[]; removeBlockedByIssueIds?: string[] },
+  ctx: z.RefinementCtx,
+) {
+  if (value.blockedByIssueIds !== undefined &&
+      (value.addBlockedByIssueIds !== undefined || value.removeBlockedByIssueIds !== undefined)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["blockedByIssueIds"],
+      message: "Blocker replacement and delta operations are mutually exclusive",
+    });
+  }
+  const removals = new Set(value.removeBlockedByIssueIds?.map((id) => id.toLowerCase()));
+  if (value.addBlockedByIssueIds?.some((id) => removals.has(id.toLowerCase()))) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["addBlockedByIssueIds"],
+      message: "An issue cannot be both added and removed as a blocker",
+    });
+  }
+}
+
 export const updateIssueSchema = objectWithoutDefaults(
   createIssueBaseSchema.omit({
     workspaceSelection: true,
@@ -926,13 +948,16 @@ export const updateIssueSchema = objectWithoutDefaults(
     onBehalfOfUserId: z.string().trim().min(1).optional().nullable(),
     reviewInteractionId: z.string().guid().optional(),
     reviewRequest: issueReviewRequestSchema.optional().nullable(),
+    addBlockedByIssueIds: z.array(z.string().guid()).optional(),
+    removeBlockedByIssueIds: z.array(z.string().guid()).optional(),
     reopen: z.boolean().optional(),
     resume: z.boolean().optional(),
     interrupt: z.boolean().optional(),
     /** Assignment-only handoff; the following structured goal action owns the wake. */
     deferWakeForGoal: z.boolean().optional(),
     hiddenAt: z.string().datetime().nullable().optional(),
-  });
+  })
+  .superRefine(refineBlockedByDelta);
 
 export type UpdateIssue = z.infer<typeof updateIssueSchema>;
 export type IssueExecutionWorkspaceSettings = z.infer<

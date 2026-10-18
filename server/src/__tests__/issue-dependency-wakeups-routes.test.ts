@@ -27,10 +27,21 @@ const mockIssueService = vi.hoisted(() => ({
   getCommentCursor: vi.fn(),
   getRelationSummaries: vi.fn(),
   update: vi.fn(),
+  addComment: vi.fn(),
   getDependencyReadiness: vi.fn(),
   listWakeableBlockedDependents: vi.fn(),
   getWakeableParentAfterChildCompletion: vi.fn(),
   findMentionedAgents: vi.fn(async () => []),
+}));
+
+vi.mock("../services/fast-responses.js", () => ({
+  enqueueFastResponse: vi.fn(async () => undefined),
+}));
+vi.mock("../services/runner-goals.js", () => ({
+  runnerGoalService: () => ({ projection: vi.fn(async () => null) }),
+}));
+vi.mock("../services/external-objects.js", () => ({
+  externalObjectService: () => ({ syncCommentSafely: vi.fn(async () => undefined) }),
 }));
 
 vi.mock("../services/index.js", () => ({
@@ -136,7 +147,7 @@ async function createApp() {
     select: vi.fn(() => ({
       from: vi.fn(() => query),
     })),
-    transaction: async (callback: (tx: Record<string, never>) => Promise<unknown>) => callback({}),
+    transaction: async (callback: (tx: Record<string, never>) => Promise<unknown>) => callback(routeDb as any),
   };
   const [{ issueRoutes }, { errorHandler }] = await Promise.all([
     vi.importActual<typeof import("../routes/issues.js")>("../routes/issues.js"),
@@ -187,6 +198,16 @@ describe("issue dependency wakeups in issue routes", () => {
     });
     mockIssueService.listWakeableBlockedDependents.mockResolvedValue([]);
     mockIssueService.getWakeableParentAfterChildCompletion.mockResolvedValue(null);
+  });
+
+  it.each([
+    { blockedByIssueIds: [], addBlockedByIssueIds: [] },
+    { blockedByIssueIds: [], removeBlockedByIssueIds: [] },
+    { addBlockedByIssueIds: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"], removeBlockedByIssueIds: ["aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"] },
+  ])("rejects conflicting blocker operations before dispatch: %j", async (body) => {
+    const res = await request(await createApp()).patch("/api/issues/issue-1").send(body);
+    expect(res.status).toBe(400);
+    expect(mockIssueService.update).not.toHaveBeenCalled();
   });
 
   it("wakes dependents when the final blocker transitions to done", async () => {
@@ -248,7 +269,7 @@ describe("issue dependency wakeups in issue routes", () => {
     });
   });
 
-  it("wakes an assigned blocked issue when blockers are applied after the blocker is already done", async () => {
+  it.each(["blockedByIssueIds", "addBlockedByIssueIds"])("wakes an assigned blocked issue when %s restores an already done blocker", async (field) => {
     const parentIssueId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     const childIssueId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
     mockIssueService.getById.mockResolvedValue({
@@ -284,6 +305,8 @@ describe("issue dependency wakeups in issue routes", () => {
       executionWorkspaceId: null,
       labels: [],
       labelIds: [],
+      blockedByIssueIds: [childIssueId],
+      changes: { blockedByIssueIds: { from: [], to: [childIssueId] } },
     });
     mockIssueService.getDependencyReadiness.mockResolvedValue({
       issueId: parentIssueId,
@@ -299,11 +322,18 @@ describe("issue dependency wakeups in issue routes", () => {
       .patch(`/api/issues/${parentIssueId}`)
       .send({
         status: "blocked",
-        blockedByIssueIds: [childIssueId],
+        [field]: [childIssueId],
         unblockDescriptor: { owner: "board", action: "Review the restored dependency" },
       });
 
     expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith(parentIssueId, expect.objectContaining({ [field]: [childIssueId] }), ...(field === "addBlockedByIssueIds" ? [expect.anything()] : []));
+    expect(res.body.blockedByIssueIds).toEqual([childIssueId]);
+    const { logActivity } = await import("../services/index.js");
+    expect(logActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "issue.blockers_updated",
+      details: expect.objectContaining({ blockedByIssueIds: [childIssueId], addedBlockedByIssueIds: [childIssueId] }),
+    }));
     await vi.waitFor(() => {
       expect(mockWakeup).toHaveBeenCalledWith(
         "agent-2",
@@ -320,6 +350,104 @@ describe("issue dependency wakeups in issue routes", () => {
         }),
       );
     });
+  });
+
+  it("logs removed blocker details from the locked snapshot when the old snapshot omits the blocker", async () => {
+    const blockerId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const blocker = { id: blockerId, identifier: "PAP-101", title: "Concurrently added blocker", status: "todo" };
+    mockIssueService.getById.mockResolvedValue(issueRecord({ status: "blocked" }));
+    mockIssueService.getRelationSummaries.mockResolvedValue({ blockedBy: [], blocks: [] });
+    mockIssueService.update.mockResolvedValue(issueRecord({
+      status: "blocked", blockedByIssueIds: [],
+      previousBlockedByRelations: [blocker],
+      changes: { blockedByIssueIds: { from: [blockerId], to: [] } },
+    }));
+    const res = await request(await createApp()).patch("/api/issues/issue-1").send({ removeBlockedByIssueIds: [blockerId] });
+    expect(res.status).toBe(200);
+    expect(res.body.blockedByIssueIds).toEqual([]);
+    expect(res.body).not.toHaveProperty("previousBlockedByRelations");
+    expect(mockIssueService.getRelationSummaries).toHaveBeenCalledTimes(1);
+    expect(mockIssueService.update).toHaveBeenCalledWith("issue-1", expect.objectContaining({ removeBlockedByIssueIds: [blockerId] }), expect.anything());
+    const { logActivity } = await import("../services/index.js");
+    expect(logActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "issue.blockers_updated",
+      details: expect.objectContaining({
+        blockedByIssueIds: [], addedBlockedByIssueIds: [], removedBlockedByIssueIds: [blockerId],
+        removedBlockedByIssues: [{ id: blockerId, identifier: blocker.identifier, title: blocker.title }],
+      }),
+    }));
+  });
+
+  it("uses the committed blocker delta when a removal comment has a stale relation snapshot", async () => {
+    const removedId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const staleId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    mockIssueService.getById.mockResolvedValue(issueRecord({ status: "blocked" }));
+    mockIssueService.getRelationSummaries.mockImplementation(async () => ({
+      blockedBy: mockIssueService.update.mock.calls.length > 0 ? [] : [
+        { id: removedId, title: "Removed", status: "done" },
+        { id: staleId, title: "Concurrently removed", status: "done" },
+      ],
+      blocks: [],
+    }));
+    mockIssueService.update.mockResolvedValue(issueRecord({
+      status: "todo", blockedByIssueIds: [],
+      previousBlockedByRelations: [{ id: removedId, title: "Removed", status: "done" }],
+      changes: {
+        status: { from: "blocked", to: "todo" },
+        blockedByIssueIds: { from: [removedId], to: [] },
+      },
+    }));
+    mockIssueService.addComment.mockResolvedValue({
+      id: "comment-1", body: "Please continue", createdByUserId: "local-board", createdAt: new Date(),
+    });
+
+    const res = await request(await createApp()).patch("/api/issues/issue-1").send({
+      removeBlockedByIssueIds: [removedId], comment: "Please continue",
+    });
+
+    expect(res.status).toBe(200);
+    expect(mockIssueService.update).toHaveBeenCalledWith("issue-1", expect.objectContaining({
+      status: "todo", removeBlockedByIssueIds: [removedId],
+    }), expect.anything());
+    expect(res.body.status).toBe("todo");
+    expect(res.body.blockedByIssueIds).toEqual([]);
+    expect(res.body.blockedBy).toEqual([]);
+    const { logActivity } = await import("../services/index.js");
+    expect(logActivity).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "issue.blockers_updated",
+      details: expect.objectContaining({
+        blockedByIssueIds: [], addedBlockedByIssueIds: [], removedBlockedByIssueIds: [removedId],
+      }),
+    }));
+    await vi.waitFor(() => expect(mockWakeup).toHaveBeenCalled());
+    expect(mockWakeup).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      reason: "issue_blockers_resolved",
+    }));
+  });
+
+  it("rejects blocked entry when the committed delta has no blockers despite the stale snapshot", async () => {
+    const removedId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const staleId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    mockIssueService.getById.mockResolvedValue(issueRecord());
+    mockIssueService.getRelationSummaries.mockResolvedValue({
+      blockedBy: [{ id: removedId }, { id: staleId }], blocks: [],
+    });
+    mockIssueService.update.mockResolvedValue(issueRecord({
+      status: "blocked", blockedByIssueIds: [],
+      changes: { blockedByIssueIds: { from: [removedId], to: [] } },
+    }));
+
+    const res = await request(await createApp()).patch("/api/issues/issue-1").send({
+      status: "blocked", removeBlockedByIssueIds: [removedId],
+    });
+
+    expect(res.status).toBe(422);
+    expect(res.body.error).toContain("Entering blocked requires unresolved blockers");
+    expect(mockIssueService.update).toHaveBeenCalled();
+    const { logActivity } = await import("../services/index.js");
+    expect(logActivity).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      action: "issue.blockers_updated",
+    }));
   });
 
   it("wakes the parent when all direct children become terminal", async () => {

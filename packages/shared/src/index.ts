@@ -1994,6 +1994,7 @@ export {
   issueBlockedInboxSeveritySchema,
   issueBlockedInboxStateSchema,
   updateIssueSchema,
+  refineBlockedByDelta,
   stalledReviewDecisionSchema,
   issueExecutionPolicySchema,
   issueExecutionMonitorPolicySchema,

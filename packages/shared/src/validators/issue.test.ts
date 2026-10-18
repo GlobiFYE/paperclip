@@ -16,6 +16,20 @@ import {
 import { createAgentSchema } from "./agent.js";
 
 describe("issue validators", () => {
+  it("accepts blocker deltas without adding them to other updates", () => {
+    const id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    expect(updateIssueSchema.parse({ addBlockedByIssueIds: [id] }).addBlockedByIssueIds).toEqual([id]);
+    expect(updateIssueSchema.parse({ removeBlockedByIssueIds: [id] }).removeBlockedByIssueIds).toEqual([id]);
+    expect(updateIssueSchema.parse({ addBlockedByIssueIds: [], removeBlockedByIssueIds: [] })).toEqual({ addBlockedByIssueIds: [], removeBlockedByIssueIds: [] });
+    expect(updateIssueSchema.parse({})).not.toHaveProperty("addBlockedByIssueIds");
+    for (const field of ["addBlockedByIssueIds", "removeBlockedByIssueIds"]) {
+      expect(updateIssueSchema.safeParse({ [field]: ["invalid"] }).success).toBe(false);
+      expect(updateIssueSchema.safeParse({ [field]: null }).success).toBe(false);
+      expect(updateIssueSchema.safeParse({ blockedByIssueIds: [], [field]: [] }).success).toBe(false);
+    }
+    expect(updateIssueSchema.safeParse({ addBlockedByIssueIds: [id], removeBlockedByIssueIds: [id.toUpperCase()] }).success).toBe(false);
+  });
+
   it("preserves the exact expected execution policy snapshot without defaults", () => {
     const snapshot = { mode: "normal", stages: [], monitor: { nextCheckAt: "2026-10-10T12:00:00Z" } };
     expect(updateIssueSchema.parse({ expectedExecutionPolicy: snapshot }).expectedExecutionPolicy).toEqual(snapshot);
