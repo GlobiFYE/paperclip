@@ -192,7 +192,7 @@ remains. A saved answer never bypasses authorization for downstream actions.
 
 ### Generated Artifacts and Work Products
 
-When delivering files, artifacts, work products, previews, or external review handoffs, read [references/artifacts.md](references/artifacts.md) for the complete procedure.
+When delivering files, artifacts, work products, previews, or external review handoffs, read [references/artifacts.md](references/artifacts.md) for the complete procedure. For external human review, PR-merge waits, or release approval, also read [External review handoffs](references/issue-interactions.md#external-review-handoffs) before handing off.
 
 **Step 8 — Update status and communicate.** Always include the run ID header.
 

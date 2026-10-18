@@ -204,6 +204,8 @@ improvement. This is not a mandatory report. Their shared helper is
 stays in this instance with agent/run/task attribution; submit silently once and
 continue the primary task even if submission fails.
 
+<a id="external-review-handoffs"></a>
+
 **External review handoffs.**
 
 For a PR, put its link in the work product's top-level `url` field. If a human

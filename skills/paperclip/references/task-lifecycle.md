@@ -93,3 +93,5 @@ POST /api/companies/{companyId}/approvals
 ```
 
 `issueIds` links the approval into the issue thread. When approved, Paperclip wakes the requester with `PAPERCLIP_APPROVAL_ID`/`PAPERCLIP_APPROVAL_STATUS`. Keep the payload concise and decision-ready.
+
+For external human review, PR-merge waits, or release-approval handoffs, also read [External review handoffs](issue-interactions.md#external-review-handoffs). Preserve the required human-only interaction and continuation path; a work-product flag or monitor alone does not satisfy it.

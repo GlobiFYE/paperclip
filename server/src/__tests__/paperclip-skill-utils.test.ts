@@ -372,6 +372,10 @@ describe("paperclip skill utils", () => {
     expect(references[2]).toContain("Approval means **approve and run**");
     expect(references[2]).toContain("When the user answers a pending confirmation in a message");
     expect(references[2]).toContain("This is not a mandatory report");
+    expect(skillBody).toContain("references/issue-interactions.md#external-review-handoffs");
+    expect(references[1]).toContain("issue-interactions.md#external-review-handoffs");
+    expect(references[4]).toContain("issue-interactions.md#external-review-handoffs");
+    expect(references[2]).toContain('<a id="external-review-handoffs"></a>');
     expect(references[4]).toContain("operator-facing engineering output");
     expect(references[4]).toContain('metadata.resourceRef.kind: "workspace_file"');
     expect(references[5]).toContain("Read the saved document back before marking the task done");
