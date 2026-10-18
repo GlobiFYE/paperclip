@@ -3051,7 +3051,10 @@ describe("shared ACPX engine runtime behavior", () => {
     expect(JSON.stringify(first.result.sessionParams)).not.toContain("token-one");
     expect(first.result.sessionParams?.configFingerprint).toBe(rotatedToken.result.sessionParams?.configFingerprint);
     expect(first.result.sessionParams?.configFingerprint).not.toBe(changedSet.result.sessionParams?.configFingerprint);
-    expect(changedCatalog.runtimeOptions[0]?.mcpServers[0]?.url).toBe(`${server.url}?catalog=on-demand`);
+    expect(changedCatalog.runtimeOptions[0]?.mcpServers).toEqual([{
+      type: "http", name: "github", url: `${server.url}?catalog=on-demand`,
+      headers: [{ name: "Authorization", value: "Bearer token-two" }],
+    }]);
     expect(first.result.sessionParams?.configFingerprint).not.toBe(changedCatalog.result.sessionParams?.configFingerprint);
   });
 });
