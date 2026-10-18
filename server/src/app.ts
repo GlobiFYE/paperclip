@@ -1370,8 +1370,6 @@ export async function createApp(
     async (pluginId) =>
       (await pluginRegistry.getById(pluginId))?.packagePath ?? null,
     undefined,
-    // Bundled plugins are installed from local paths too, but they ship in
-    // the image and never change, so they get no file watchers.
     { unwatchedRoots: [bundledCatalogRoot] },
   );
   // Auto-provision bundled plugins so their providers are registered for

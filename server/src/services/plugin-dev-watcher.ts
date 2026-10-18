@@ -14,7 +14,7 @@
  * @see PLUGIN_SPEC.md §27.2 — Local Development Workflow
  */
 import chokidar, { type FSWatcher } from "chokidar";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, statSync } from "node:fs";
 import path from "node:path";
 import { logger } from "../middleware/logger.js";
 import type { PluginLifecycleManager } from "./plugin-lifecycle.js";
@@ -160,14 +160,7 @@ export function createPluginDevWatcher(
   lifecycle: PluginLifecycleManager,
   resolvePluginPackagePath?: ResolvePluginPackagePath,
   fsDeps?: PluginDevWatcherFsDeps,
-  options: {
-    /**
-     * Plugins installed from inside these directories are never watched. The
-     * bundled plugin catalog ships in the image and does not change at
-     * runtime, so watching it only costs file watchers in production.
-     */
-    unwatchedRoots?: readonly string[];
-  } = {},
+  options: { unwatchedRoots?: readonly string[] } = {},
 ): PluginDevWatcher {
   const watchers = new Map<string, { watcher: FSWatcher; packagePath: string }>();
   const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -175,11 +168,19 @@ export function createPluginDevWatcher(
   // Never reuse an identity after unwatching: an older lookup may still finish.
   let registrationGeneration = 0;
   const fileExists = fsDeps?.existsSync ?? existsSync;
-  const unwatchedRoots = (options.unwatchedRoots ?? []).map((root) => path.resolve(root));
-  const isUnwatched = (absPath: string) => unwatchedRoots.some((root) => {
-    const relative = path.relative(root, absPath);
+  const pathForms = (target: string) => {
+    const resolved = path.resolve(target);
+    try {
+      return [resolved, realpathSync(resolved)];
+    } catch {
+      return [resolved];
+    }
+  };
+  const unwatchedRoots = (options.unwatchedRoots ?? []).flatMap(pathForms);
+  const isUnwatched = (absPath: string) => pathForms(absPath).some((candidate) => unwatchedRoots.some((root) => {
+    const relative = path.relative(root, candidate);
     return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
-  });
+  }));
   log.info(
     { resolvesInstalledPlugins: Boolean(resolvePluginPackagePath) },
     "plugin-dev-watcher: initialized",
@@ -193,7 +194,7 @@ export function createPluginDevWatcher(
     if (watchers.get(pluginId)?.packagePath === absPath) return;
     unwatchPlugin(pluginId);
     if (isUnwatched(absPath)) {
-      log.debug({ pluginId, packagePath: absPath }, "plugin-dev-watcher: bundled plugin path, not watching");
+      log.debug({ pluginId, packagePath: absPath }, "plugin-dev-watcher: plugin path is not watched");
       return;
     }
 

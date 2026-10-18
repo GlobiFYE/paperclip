@@ -1,4 +1,4 @@
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { EventEmitter } from "node:events";
 import os from "node:os";
 import path from "node:path";
@@ -159,6 +159,46 @@ describe("createPluginDevWatcher", () => {
     expect(watchedPaths).toContain(path.join(localDir, "dist", "worker.js"));
     const everyWatched = chokidarMock.watch.mock.calls.flatMap(([paths]) => paths as string[]);
     expect(everyWatched.some((watched) => watched.startsWith(catalogRoot))).toBe(false);
+
+    devWatcher.close();
+  });
+
+  it("matches unwatched roots through symbolic links", async () => {
+    const realRoot = makeTempPluginDir();
+    const linkParent = makeTempPluginDir();
+    const linkedRoot = path.join(linkParent, "catalog");
+    symlinkSync(realRoot, linkedRoot, "dir");
+    const bundledDir = path.join(realRoot, "sandbox-providers", "example");
+    writePluginPackage(bundledDir);
+    installMockFsWatcher();
+
+    const devWatcher = createPluginDevWatcher(createLifecycle() as never, undefined, undefined, { unwatchedRoots: [linkedRoot] });
+    devWatcher.watch("bundled", bundledDir);
+    devWatcher.watch("bundled-through-link", path.join(linkedRoot, "sandbox-providers", "example"));
+
+    expect(chokidarMock.watch).not.toHaveBeenCalled();
+    devWatcher.close();
+  });
+
+  it("closes the old watcher and cancels a pending restart when a plugin moves into an unwatched root", async () => {
+    vi.useFakeTimers();
+    const localDir = makeTempPluginDir();
+    writePluginPackage(localDir);
+    const catalogRoot = makeTempPluginDir();
+    const bundledDir = path.join(catalogRoot, "sandbox-providers", "example");
+    writePluginPackage(bundledDir);
+    const { fakeWatcher, handlers } = installMockFsWatcher();
+    const lifecycle = createLifecycle();
+
+    const devWatcher = createPluginDevWatcher(lifecycle as never, undefined, undefined, { unwatchedRoots: [catalogRoot] });
+    devWatcher.watch("plugin-1", localDir);
+    handlers.all?.("change", path.join(localDir, "dist", "worker.js"));
+    devWatcher.watch("plugin-1", bundledDir);
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    expect(fakeWatcher.close).toHaveBeenCalled();
+    expect(lifecycle.restartWorker).not.toHaveBeenCalled();
+    expect(chokidarMock.watch).toHaveBeenCalledTimes(1);
 
     devWatcher.close();
   });
