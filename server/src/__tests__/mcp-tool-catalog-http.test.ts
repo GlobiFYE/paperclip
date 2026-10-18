@@ -35,6 +35,8 @@ describe("on-demand named gateway catalog over HTTP", () => {
       "paperclip_search_tools", "paperclip_call_tool", "paperclip_list_resources", "paperclip_read_resource", "paperclip_list_prompts", "paperclip_get_prompt",
     ]);
     expect(JSON.stringify(compact.body)).not.toContain("app:action");
+    expect(compact.body.result.tools[0].description).toContain("Example app: Action");
+    expect(compact.body.result.tools[0].description).not.toContain("Approval required.");
     expect(gateway.listToolsForNamedGateway).toHaveBeenCalledTimes(2);
     expect((await post("tools/list", undefined, "?catalog=other")).body).toEqual(direct.body);
   });

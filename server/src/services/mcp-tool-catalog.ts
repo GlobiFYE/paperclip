@@ -13,6 +13,7 @@ export type McpToolCatalogDescriptor = {
   parametersSchema: Record<string, unknown>;
   applicationKey?: string | null;
   applicationDisplayName?: string | null;
+  upstreamToolName?: string | null;
   risk?: string | null;
   approvalDescription?: string | null;
 };
@@ -103,6 +104,7 @@ const MAX_RESPONSE_BYTES = 240 * 1024;
 const MAX_SCHEMA_CHUNK_CODE_POINTS = 24 * 1024;
 const MAX_TEXT_INLINE_BYTES = 32 * 1024;
 const MAX_TEXT_CHUNK_CODE_POINTS = 24 * 1024;
+const MAX_APP_INDEX_BYTES = 12 * 1024;
 const TEXT_FIELDS = new Set<McpToolCatalogTextField>(["displayName", "description", "applicationKey", "applicationDisplayName", "approvalDescription"]);
 const addFormats = (addFormatsModule as unknown as { default: Plugin<FormatsPluginOptions> }).default;
 
@@ -146,6 +148,43 @@ export const MCP_TOOL_CATALOG_DEFINITIONS = [
   PAPERCLIP_SEARCH_TOOLS_DEFINITION,
   PAPERCLIP_CALL_TOOL_DEFINITION,
 ] as const;
+
+function appIndexFor(tools: readonly McpToolCatalogDescriptor[]): string {
+  const compare = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0;
+  const apps = new Map<string, Set<string>>();
+  for (const tool of tools) {
+    const appName = tool.applicationDisplayName?.trim() || tool.applicationKey?.trim() || "Other";
+    const actionName = tool.upstreamToolName?.trim() || tool.displayName?.trim() || tool.name;
+    const actions = apps.get(appName) ?? new Set<string>();
+    actions.add(actionName);
+    apps.set(appName, actions);
+  }
+  const sortedApps = [...apps.entries()].sort(([left], [right]) => compare(left, right));
+  const fullIndex = sortedApps
+    .map(([appName, actions]) => `${appName}: ${[...actions].sort(compare).join(", ")}`)
+    .join("\n");
+  if (Buffer.byteLength(fullIndex, "utf8") <= MAX_APP_INDEX_BYTES) return fullIndex;
+
+  const counts = `App counts only; search for the desired action.\n${sortedApps.map(([appName, actions]) => `${appName} (${actions.size})`).join("\n")}`;
+  if (Buffer.byteLength(counts, "utf8") <= MAX_APP_INDEX_BYTES) {
+    return counts;
+  }
+  return "The app index is too large to include. Search or browse the current catalog by app or tool name.";
+}
+
+export function createMcpToolCatalogDefinitions(tools: readonly McpToolCatalogDescriptor[]) {
+  const [searchDefinition, callDefinition] = MCP_TOOL_CATALOG_DEFINITIONS;
+  const index = appIndexFor(tools);
+  const nestedDiscoveryHint =
+    "These entries are currently authorized gateway tools. Some expose another app's tools: when the desired upstream action is not listed, find and use that app's discovery action first. This index grants no access; search for complete descriptions, approval text, and schemas before calling.";
+  return [
+    {
+      ...searchDefinition,
+      description: `${searchDefinition.description}\n${nestedDiscoveryHint}\nCurrent app index:\n${index}`,
+    },
+    callDefinition,
+  ] as const;
+}
 
 const SEARCH_KEYS = new Set(["query", "offset", "limit", "schemaTool", "schemaOffset", "expectedHash", "textTool", "textField", "textOffset"]);
 const CALL_KEYS = new Set(["name", "arguments"]);
@@ -324,6 +363,7 @@ function matchingTools(descriptors: readonly McpToolCatalogDescriptor[], query: 
   const matched = descriptors.filter(tool => {
     const searchable = [
       tool.name,
+      tool.upstreamToolName ?? "",
       tool.displayName ?? "",
       tool.description ?? "",
       tool.applicationKey ?? "",
@@ -333,8 +373,14 @@ function matchingTools(descriptors: readonly McpToolCatalogDescriptor[], query: 
   });
   const exactName = query.trim().toLowerCase();
   return matched.toSorted((left, right) => {
-    const leftExact = exactName !== "" && left.name.toLowerCase() === exactName ? 0 : 1;
-    const rightExact = exactName !== "" && right.name.toLowerCase() === exactName ? 0 : 1;
+    const exactPriority = (tool: McpToolCatalogDescriptor) => {
+      if (exactName === "") return 2;
+      if (tool.name.toLowerCase() === exactName) return 0;
+      if (tool.upstreamToolName?.toLowerCase() === exactName || tool.displayName?.toLowerCase() === exactName) return 1;
+      return 2;
+    };
+    const leftExact = exactPriority(left);
+    const rightExact = exactPriority(right);
     if (leftExact !== rightExact) return leftExact - rightExact;
     const leftName = left.name.toLowerCase();
     const rightName = right.name.toLowerCase();

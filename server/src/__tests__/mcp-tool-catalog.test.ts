@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   McpToolCatalogError,
   MCP_TOOL_CATALOG_DEFINITIONS,
+  createMcpToolCatalogDefinitions,
   PAPERCLIP_CALL_TOOL_DEFINITION,
   PAPERCLIP_SEARCH_TOOLS_DEFINITION,
   parseMcpToolCall,
@@ -38,6 +39,57 @@ describe("MCP tool catalog utility", () => {
       "paperclip_search_tools",
       "paperclip_call_tool",
     ]);
+  });
+
+  it("adds a complete UTF-8 app/action index while keeping exactly two generic wrappers", () => {
+    const tools = [
+      descriptor("gateway:search", {
+        applicationKey: "mcp-proxy",
+        applicationDisplayName: "MCP Proxy 🌲",
+        upstreamToolName: "PowerShell Search",
+        parametersSchema: { type: "object", properties: { secret: { type: "string" } } },
+      }),
+      descriptor("gateway:run", {
+        applicationKey: "mcp-proxy",
+        applicationDisplayName: "MCP Proxy 🌲",
+        displayName: "Run command",
+      }),
+    ];
+    const before = JSON.stringify(tools);
+    const definitions = createMcpToolCatalogDefinitions(tools);
+    expect(definitions.map(definition => definition.name)).toEqual(["paperclip_search_tools", "paperclip_call_tool"]);
+    expect(definitions[0].description).toContain("MCP Proxy 🌲: PowerShell Search, Run command");
+    expect(definitions[0].description).toContain("find and use that app's discovery action first");
+    expect(definitions[0].inputSchema).toEqual(PAPERCLIP_SEARCH_TOOLS_DEFINITION.inputSchema);
+    expect(definitions[1]).toEqual(PAPERCLIP_CALL_TOOL_DEFINITION);
+    expect(JSON.stringify(tools)).toBe(before);
+    expect(definitions[0].description).not.toContain('"secret"');
+  });
+
+  it("uses whole app counts instead of partial action names when the index exceeds its UTF-8 budget", () => {
+    const tools = Array.from({ length: 5_000 }, (_, index) => descriptor(`gateway:${index}`, {
+      applicationKey: "large-app",
+      applicationDisplayName: "Großer MCP Proxy 🌲",
+      upstreamToolName: `Upstream action ${index}`,
+    }));
+    const before = JSON.stringify(tools.map(tool => [tool.name, tool.upstreamToolName]));
+    const description = createMcpToolCatalogDefinitions(tools)[0].description;
+    const index = description.split("Current app index:\n")[1];
+    expect(index).toBe("App counts only; search for the desired action.\nGroßer MCP Proxy 🌲 (5000)");
+    expect(Buffer.byteLength(index, "utf8")).toBeLessThanOrEqual(12 * 1024);
+    expect(index).not.toContain("Upstream action");
+    expect(JSON.stringify(tools.map(tool => [tool.name, tool.upstreamToolName]))).toBe(before);
+  });
+
+  it("falls back to a browse hint when even complete app counts exceed the index budget", () => {
+    const tools = Array.from({ length: 1_000 }, (_, index) => descriptor(`tool-${index}`, {
+      applicationKey: `application-${index}-${"x".repeat(20)}`,
+      applicationDisplayName: `Application ${index}-${"🌲".repeat(10)}`,
+    }));
+    const description = createMcpToolCatalogDefinitions(tools)[0].description;
+    const index = description.split("Current app index:\n")[1];
+    expect(index).toBe("The app index is too large to include. Search or browse the current catalog by app or tool name.");
+    expect(Buffer.byteLength(index, "utf8")).toBeLessThanOrEqual(12 * 1024);
   });
 
   it("paginates every result without mutation and preserves tool metadata and schemas", () => {
@@ -137,6 +189,22 @@ describe("MCP tool catalog utility", () => {
     expect(isSearchPage(browse)).toBe(true);
     if (!isSearchPage(browse)) throw new Error("Expected a search page");
     expect(browse.tools).toHaveLength(3);
+  });
+
+  it("searches and prioritizes exact upstream action names over description mentions", () => {
+    const tools = [
+      descriptor("paperclip_call_tool", { description: "Call wrapper for retrieve_tools from another app." }),
+      descriptor("gateway-retrieve-tools", { upstreamToolName: "retrieve_tools", applicationDisplayName: "MCP Proxy" }),
+      descriptor("gateway-retrieve-tools-help", { description: "Use retrieve_tools for discovery." }),
+    ];
+    const results = searchMcpToolCatalog(tools, { query: "retrieve_tools" });
+    expect(isSearchPage(results)).toBe(true);
+    if (!isSearchPage(results)) throw new Error("Expected a search page");
+    expect(results.tools.map(tool => tool.name)).toEqual([
+      "gateway-retrieve-tools",
+      "gateway-retrieve-tools-help",
+      "paperclip_call_tool",
+    ]);
   });
 
   it("retrieves a large Unicode schema in bounded code-point chunks that reconstruct exactly", () => {

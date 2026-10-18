@@ -18,7 +18,7 @@ import { forbidden, HttpError } from "../errors.js";
 import { accessService } from "../services/index.js";
 import { listConnectionLifecycleEvents } from "../services/tool-connection-activity.js";
 import {
-  MCP_TOOL_CATALOG_DEFINITIONS,
+  createMcpToolCatalogDefinitions,
   searchMcpToolCatalog,
   parseMcpToolCall,
   validateCatalogToolArguments,
@@ -130,7 +130,7 @@ async function handleMcpGatewayProtocol(
         id,
         result: {
           tools: [
-            ...(onDemandCatalog ? structuredClone(MCP_TOOL_CATALOG_DEFINITIONS) : tools.map((tool) => ({
+            ...(onDemandCatalog ? structuredClone(createMcpToolCatalogDefinitions(tools)) : tools.map((tool) => ({
             name: tool.name,
             title: tool.displayName,
             description: tool.description,

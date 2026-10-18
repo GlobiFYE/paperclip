@@ -8,7 +8,11 @@ gateway service directly retain their own catalog contract.
 
 In this mode, MCP `tools/list` authorizes the existing listing and exposes
 `paperclip_search_tools` and `paperclip_call_tool`, alongside the existing four
-resource/prompt helpers. Search accepts tool/application names and descriptions;
+resource/prompt helpers. A small app/action name index makes nested discovery
+actions visible before the first search, without eagerly including their schemas.
+If the complete index exceeds 12 KiB, it uses complete app counts or a browse
+hint; all names remain searchable. Search accepts tool/application names, upstream
+action names and descriptions; exact action names rank ahead of mentions;
 an empty query browses. It returns exact original names, risk metadata,
 approval descriptions and complete parameter schemas only for matching results.
 An upstream discovery gateway is still a gateway: first discover its own search
