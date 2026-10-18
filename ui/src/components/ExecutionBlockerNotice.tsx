@@ -51,14 +51,14 @@ export function ExecutionBlockerNotice({ companyId, issueId, issueStatus, canMan
   return (
     <div role="status" aria-label="Task recovery" className={cn("task-context-notice flex flex-wrap items-center justify-between gap-2", className)}>
       <div className="min-w-0 flex-1 break-words">
-        <p>{modelRejected ? "Model unavailable." : "Recovery needed."}{blocker.runError ? ` ${blocker.runError}` : ""}</p>
+        <p>{blocker.workspaceReconstructionPending ? "Reconstruction queued." : modelRejected ? "Model unavailable." : "Recovery needed."}{blocker.runError && !blocker.workspaceReconstructionPending ? ` ${blocker.runError}` : ""}</p>
         {modelRejected && <p>Choose a supported model or clear the task's model override, then retry.</p>}
         {blocker.workspaceRepairRequired ? (
           <>
             {/* The stored next action is an operator runbook step; lead with what happened. This hold also covers
                 unsafe archives and local runs, so do not claim retries or a retained sandbox here. */}
             <p>
-              {blocker.canReconstructWorkspace
+              {blocker.workspaceReconstructionPending ? blocker.nextAction : blocker.canReconstructWorkspace
                 ? "The workspace was destroyed before its edits were saved. A board operator can continue from surviving source attachments."
                 : "Paperclip could not restore the agent's workspace files after its last run. A board operator must recover the files before the agent can continue."}
             </p>

@@ -15,6 +15,7 @@ export interface ExecutionBlocker {
   workspaceRepairRequired?: boolean;
   canRecordWorkspaceRepair?: boolean;
   canReconstructWorkspace?: boolean;
+  workspaceReconstructionPending?: boolean;
   workspaceRecoveryStatusVersion?: number;
   savedMessageCount?: number;
 }

@@ -81,7 +81,7 @@ export async function validateNativeWorkspaceReconstruction(db: Db, input: {
   const decision = action.evidence.executionReconciliation as ExecutionReconciliation | undefined;
   if (decision?.workspaceReconstruction) {
     const reconstruction = decision.workspaceReconstruction;
-    if (decision.runId !== run.id || reconstruction.schema !== "paperclip.workspace-reconstruction.v1"
+    if (issue.status !== "todo" || decision.runId !== run.id || reconstruction.schema !== "paperclip.workspace-reconstruction.v1"
       || reconstruction.leaseId !== lease.id || reconstruction.resultId !== result.id
       || reconstruction.descriptorSha256 !== reference.descriptorSha256 || !reconstruction.sources?.length) throw changed();
     const files = await db.select({ attachmentId: issueAttachments.id, sha256: assets.sha256 }).from(issueAttachments)
@@ -123,7 +123,8 @@ export async function reconstructNativeWorkspace(input: {
       evidence: sql`${issueRecoveryActions.evidence} || ${JSON.stringify({ workspaceReconstructionRequest: requestSha256 })}::jsonb`,
       wakePolicy: null, monitorPolicy: null,
     }).where(eq(issueRecoveryActions.id, source.action.id));
-    await tx.update(issues).set({ status: "todo", updatedAt: now }).where(eq(issues.id, issue.id));
+    await tx.update(issues).set({ status: "todo", unblockDescriptor: null, blockedTransitionAt: null,
+      blockedOwnerNotifiedAt: null, updatedAt: now }).where(eq(issues.id, issue.id));
     const publication = await persistActivity(db, { companyId: input.companyId, actorType: "user", actorId: input.actorId,
       action: "issue.workspace_reconstruction_authorized", entityType: "issue", entityId: input.issueId, runId: request.runId,
       details: { recoveryActionId: request.actionId, ...decision } });

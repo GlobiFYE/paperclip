@@ -109,6 +109,8 @@ export async function getExecutionBlocker(db: Db, companyId: string, issueId: st
     && exportLease && hasRemoteTerminationReceipt(exportLease)
     && (exportLease.metadata?.remoteExecutionTermination as { state?: string } | undefined)?.state === "destroyed"
     && !action.evidence.executionReconciliation && conversation?.status === "blocked" && conversation.assigneeAgentId === run?.agentId);
+  const reconstructionPending = Boolean((action.evidence.executionReconciliation as { workspaceReconstruction?: unknown } | undefined)?.workspaceReconstruction
+    && action.evidence.continuationDelivery === "pending");
   const queue = await db.select({ payload: agentWakeupRequests.payload }).from(agentWakeupRequests).where(and(
     eq(agentWakeupRequests.companyId, companyId), eq(agentWakeupRequests.status, "deferred_issue_execution"),
     sql`${agentWakeupRequests.payload}->>'issueId' = ${issueId}`,
@@ -178,7 +180,7 @@ export async function getExecutionBlocker(db: Db, companyId: string, issueId: st
     // A stopped reviewer can differ from the task owner who receives the work back.
     agentId: run?.agentId ?? null,
     cause: action.cause,
-    nextAction,
+    nextAction: reconstructionPending ? "Continuation from saved sources is queued and waiting for execution checks." : nextAction,
     runStatus: run?.status ?? null,
     runError: runError?.slice(0, 1024) ?? null,
     canContinue: eligibleContinuation && !chatBinding,
@@ -186,5 +188,6 @@ export async function getExecutionBlocker(db: Db, companyId: string, issueId: st
     ...(restoreHold ? { workspaceRepairRequired, canRecordWorkspaceRepair: workspaceRepairRequired && hasRequiredWorkspaceRecovery(action.evidence) } : {}),
     savedMessageCount: saved.length,
     ...(canReconstructWorkspace ? { canReconstructWorkspace, workspaceRecoveryStatusVersion: conversation!.statusVersion } : {}),
+    ...(reconstructionPending ? { workspaceReconstructionPending: true } : {}),
   };
 }

@@ -109,6 +109,17 @@ describe("reconstruction after confirmed native workspace loss", () => {
     await request(app({ type: "agent", companyId: f.companyId, agentId: f.agentId, runId: f.runId })).post(`/api/issues/${f.issueId}/recovery-actions/reconstruct-workspace`).send(f.body).expect(403);
     await request(app()).post(`/api/issues/${f.issueId}/recovery-actions/reconstruct-workspace`).send(f.body).expect(202);
   });
+  it.each(["status", "attachment", "paused"] as const)("keeps delivery pending when %s changes after reconstruction is recorded", async kind => {
+    const f = await seed();
+    await reconstructNativeWorkspace(f);
+    if (kind === "status") await db.update(issues).set({ status: "blocked" }).where(eq(issues.id, f.issueId));
+    if (kind === "attachment") await db.delete(issueAttachments).where(eq(issueAttachments.id, f.attachmentId));
+    if (kind === "paused") await db.update(agents).set({ status: "paused" }).where(eq(agents.id, f.agentId));
+    const heartbeat = heartbeatService(db, { runtimeEnv: {} });
+    await deliverReconciledExecutions(db, heartbeat.wakeup);
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.agentId, f.agentId))).toHaveLength(1);
+    expect((await db.select().from(issueRecoveryActions).where(eq(issueRecoveryActions.id, f.actionId)))[0].evidence.continuationDelivery).toBe("pending");
+  });
   it("admits one fresh continuation through public heartbeat, keeps retry budget, and adopts a lost acknowledgement", async () => {
     const f = await seed();
     await reconstructNativeWorkspace(f);

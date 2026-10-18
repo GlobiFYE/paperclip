@@ -6,6 +6,7 @@ import { Button } from "./ui/button";
 import { Checkbox } from "./ui/checkbox";
 import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
+import { NativeSelect } from "./ui/select";
 
 export function WorkspaceReconstructionRecovery({ issueId, blocker, canManage, onRecorded }: {
   issueId: string; blocker: ExecutionBlocker; canManage: boolean; onRecorded: () => void;
@@ -41,11 +42,11 @@ export function WorkspaceReconstructionRecovery({ issueId, blocker, canManage, o
         <Label htmlFor={`${id}-missing`}>Missing work and reconstruction plan</Label>
         <Textarea id={`${id}-missing`} maxLength={12000} value={missingWork} onChange={event => setMissingWork(event.target.value)} />
         <Label htmlFor={`${id}-outcome`}>Previously completed external actions</Label>
-        <select id={`${id}-outcome`} value={actionOutcome} onChange={event => setActionOutcome(event.target.value as typeof actionOutcome)}>
+        <NativeSelect id={`${id}-outcome`} value={actionOutcome} onChange={event => setActionOutcome(event.target.value as typeof actionOutcome)}>
           <option value="mixed">Some completed, some not performed</option>
           <option value="not_performed">None performed</option>
           <option value="completed">All completed</option>
-        </select>
+        </NativeSelect>
         <Label htmlFor={`${id}-evidence`}>Evidence and actions that must not be repeated</Label>
         <Textarea id={`${id}-evidence`} maxLength={12000} value={outcomeEvidence} onChange={event => setOutcomeEvidence(event.target.value)} />
         <div className="flex items-center gap-2">
