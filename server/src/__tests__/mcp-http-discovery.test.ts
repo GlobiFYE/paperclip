@@ -1,8 +1,51 @@
 import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { spawn } from "node:child_process";
+import { createInterface } from "node:readline";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { requestMcpHttpToolsList, McpHttpInitializationError } from "../services/mcp-http.js";
+
+it("discovers the real Smoke Lab HTTP fixture through the complete MCP handshake", async () => {
+  const fixture = fileURLToPath(new URL("../../../scripts/mcp-fixtures/servers/http-fixture.mjs", import.meta.url));
+  const child = spawn(process.execPath, [fixture], {
+    env: { ...process.env, HOST: "127.0.0.1", PORT: "0" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const lines = createInterface({ input: child.stdout });
+  try {
+    const ready = await new Promise<{ port: number }>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error("Smoke Lab fixture did not start")), 5_000);
+      const fail = (error: Error) => { clearTimeout(timeout); reject(error); };
+      child.once("error", fail);
+      lines.once("line", line => {
+        clearTimeout(timeout);
+        child.off("error", fail);
+        try { resolve(JSON.parse(line)); } catch (error) { reject(error); }
+      });
+    });
+    const methods: string[] = [];
+    const { response } = await requestMcpHttpToolsList({
+      scope: `smoke-lab-fixture-${randomUUID()}`,
+      requestId: "smoke-catalog",
+      send: async init => {
+        methods.push(JSON.parse(String(init.body)).method);
+        return fetch(`http://127.0.0.1:${ready.port}/mcp`, init);
+      },
+    });
+    expect(response.status).toBe(200);
+    expect((await response.json()).result.tools.map((tool: { name: string }) => tool.name)).toContain("todo.list");
+    expect(methods).toEqual(["initialize", "notifications/initialized", "tools/list"]);
+  } finally {
+    lines.close();
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, "exit");
+      child.kill();
+      await exited;
+    }
+  }
+});
 
 type Options = {
   stateless?: boolean;
