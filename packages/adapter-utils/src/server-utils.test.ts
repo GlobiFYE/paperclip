@@ -107,7 +107,10 @@ describe("runtime connection tool delivery", () => {
   it("guides shell capability checks in the actual execution target", () => {
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("command -v python3");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Get-Command python3, python, py");
-    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("only while the shell and execution target stay the same");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("availability already verified for this same shell and execution target");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("combine the check with the intended operation in one shell invocation when practical");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("do not spend a separate model round on preflight alone");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Repeat discovery after the shell or target changes");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Never infer executable availability from the Paperclip host");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("command -v rg");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("use `grep`");
@@ -117,6 +120,14 @@ describe("runtime connection tool delivery", () => {
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("If the status is non-2xx or the body is unexpected");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Never append a `curl -w` status marker");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("do not blindly retry a parse failure");
+  });
+
+  it("keeps MCP tool discovery separate from the task's read-only intent", () => {
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("search for the exact requested tool name without adding an unrequested `read_only_only` or other capability or risk filter");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Read-only intent belongs in the concrete arguments");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("no result under a narrower filter does not prove the tool is unavailable");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("through its paired authoritative call tool");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Never bypass a denial");
   });
 });
 
@@ -1472,7 +1483,7 @@ describe("renderPaperclipWakePrompt", () => {
       expect(template).toContain("You are agent {{agent.id}} ({{agent.name}}).");
       expect(template).toContain("Before running a script or optional executable");
       expect(template).toContain("py -3 --version");
-      expect(template).toContain("repeat discovery after either changes");
+      expect(template).toContain("Repeat discovery after the shell or target changes");
       expect(template).toContain(CONNECTION_INTENT_AGENT_GUIDANCE);
     }
   });
