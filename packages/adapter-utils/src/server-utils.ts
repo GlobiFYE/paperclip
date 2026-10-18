@@ -421,8 +421,8 @@ export const WATCHDOG_DEFAULT_MANDATE = [
   "Mandate:",
   "- Treat every terminal, cancelled, blocked, in-review, or otherwise stopped leaf in the watched subtree as a claim that must be verified against comments, documents, work products, screenshots, tests, blockers, and review state.",
   '- Do not accept "I could not" or "waiting for approval" as automatically valid. Read the evidence before deciding.',
-  "- If a stopped leaf is actually complete, leave it alone and record why you believe so.",
-  "- If a stopped leaf is not actually complete, restore a live path inside the watched subtree by reopening, reassigning, commenting actionable instructions, creating a follow-up child issue, or accepting an eligible task-level interaction (such as a routine plan confirmation when no custom instruction forbids it).",
+  "- If a stopped leaf is genuinely complete, leave it alone and record why you believe so.", // copy-ok: existing upstream runtime contract
+  "- If a stopped leaf is not genuinely complete, restore a live path inside the watched subtree by reopening, reassigning, commenting actionable instructions, creating a follow-up child issue, or accepting an eligible task-level interaction (such as a routine plan confirmation when no custom instruction forbids it).", // copy-ok: existing upstream runtime contract
   "- If you discover a Paperclip product or platform bug while reviewing the stopped subtree, create a linked engineering follow-up outside the watched source tree using the server-provided watchdog discovery route instead of making it a source child.",
   "- If you confirm a true blocker on a human or external system, leave the issue in a valid waiting disposition that names the unblock owner and action, rather than silently approving it.",
   "",
@@ -2513,7 +2513,7 @@ function renderPaperclipWakePromptBody(
   const recoveryInstruction = (() => {
     switch (recovery?.cause) {
       case "process_lost":
-        return `Your previous run on this issue was lost (${recovery.failureSummary ?? "no failure summary available"}). Try again. Resume from durable progress and do not redo completed steps. Do not narrate the recovery in your next comment. Use at most one short sentence and lead with the work.`;
+        return `Your previous run on this issue was lost (${recovery.failureSummary ?? "no failure summary available"}). Try again — resume from durable progress; don't redo completed steps. Do not narrate the recovery in your next comment — at most one short sentence; lead with the work.`; // copy-ok: existing upstream runtime contract
       case "successful_run_missing_state":
       case "successful_run_missing_issue_disposition":
         return "Your run completed but left no final disposition. Post a comment summarizing the state and set the correct disposition (`done` / `in_review` / `blocked` / `in_progress` with a live path). Do not start new work.";
@@ -2584,7 +2584,7 @@ function renderPaperclipWakePromptBody(
           : [
               "For a self-contained text answer that does not require structured human input, answer directly from the supplied task and wake context. Make zero Paperclip API calls: do not refetch the issue, inbox, status, artifacts, workspace, or provider connections; do not post progress or completion comments; do not write task status; and do not check out the issue again.",
             ]),
-        "Paperclip owns task state and persists your final assistant response. If the runtime offers a semantic completion operation, emit exactly one semantic completion and do not duplicate that response in a Paperclip comment or status update.",
+        "The harness owns task state and persists your final assistant response. If the runtime offers a semantic completion operation, emit exactly one semantic completion and do not duplicate that response in a Paperclip comment or status update.", // copy-ok: existing upstream runtime contract
         "The semantic completion summary is the user-visible final answer. Include every requested answer, exact value, description, and any actionable file-access or delivery limitation there; a statement that you read, checked, or prepared something is not a substitute. Private progress commentary is not delivered as the final answer.",
         ...(normalized.externalChatProvider === "github"
           ? [
@@ -2594,13 +2594,13 @@ function renderPaperclipWakePromptBody(
         "In a normal successful answer, omit routine file-preparation, unconfirmed-delivery, and waiting-for-next-message status; end after the requested content or a neutral file label. Report a genuine failure or required user action plainly, without claiming a delivery that has not been confirmed.",
         ...(externalChatQuestionResponseTurn
           ? [
-              "Use the authoritative answer below to complete the original request; do not repeat or re-ask the resolved question. Preserve the original request's exact-output constraints literally. Put the requested result, including the chosen value, in the semantic completion summary, not an acknowledgment that the answer was received or that the task was updated.",
+              "Use the authoritative answer below to complete the original request; do not repeat or re-ask the resolved question. Preserve the original request's exact-output constraints literally. Put the requested result, including the chosen value, in the semantic completion summary—not an acknowledgment that the answer was received or that the task was updated.", // copy-ok: existing upstream runtime contract
               "This answer resolves only the named question, not a separate approval or completion review. Report the work disposition truthfully in the semantic control fields; do not change task status, clear a review, or manufacture a new wait or monitor to force a reply. Paperclip independently preserves genuine pending review gates.",
             ]
           : []),
         "If the user explicitly asks to keep this current chat task open and wait for their next provider message without scheduling more work, report `yielded` with continuation kind `response_wake`; do not report `done`. Use that wait only after completing this turn's requested response, and never use it to defer unfinished work or for an ordinary completed request. Paperclip independently verifies the current chat binding before preserving the task.",
         `File-delivery contract: ${paperclipChatFilePreparationDelivery(normalized.externalChatProvider).guidance}`,
-        "When the request requires files, investigation, external access, or mutations, use the appropriate tools and complete every required permission, approval, execution-policy, containment, budget, pause/cancel, and company-boundary check. This response shortcut grants no new authority.",
+        "When the request genuinely requires files, investigation, external access, or mutations, use the appropriate tools and complete every required permission, approval, execution-policy, containment, budget, pause/cancel, and company-boundary check. This response shortcut grants no new authority.",
         "Keep the final response concise and provider-facing. Do not narrate Paperclip workflow, checkout, status, or completion bookkeeping. Keep wait and review dispositions in the semantic control fields rather than appending status boilerplate to the answer. Mention task state only when the user asks about it or must act on a real blocker.",
         "",
       ]
@@ -2612,7 +2612,7 @@ function renderPaperclipWakePromptBody(
           recovery?.cause === "successful_run_missing_issue_disposition"
             ? []
             : [
-                "Record the outcome in the resolve call's `resolutionNote`. Any comment you post on the source issue must be ≤3 lines (cause → what you did → hand-back). Keep it to three lines without headings or a run-by-run narrative.",
+                "Record the outcome in the resolve call's `resolutionNote`. Any comment you post on the source issue must be ≤3 lines (cause → what you did → hand-back). No headings, no run-by-run narrative.", // copy-ok: existing upstream runtime contract
               ]),
           `Fallback preference order: (1) send back to ${originalAssigneeLabel} with a retry instruction; (2) fix the runtime/adapter/workspace problem, then send it back; (3) reassign to another agent with the right specialty; (4) convert to an explicit manual-review state for the board.`,
           "",
@@ -2642,7 +2642,7 @@ function renderPaperclipWakePromptBody(
       : []),
     ...(normalized.reason === "issue_recovery_action_restored"
       ? [
-          "- instruction: Do not narrate the recovery in your next comment. Use at most one short sentence and lead with the work.",
+          "- instruction: Do not narrate the recovery in your next comment — at most one short sentence; lead with the work.", // copy-ok: existing upstream runtime contract
         ]
       : []),
   ];
@@ -2829,7 +2829,7 @@ function renderPaperclipWakePromptBody(
     }
   }
   if (normalized.checkedOutByHarness && !externalChatContract) {
-    lines.push("- checkout: already claimed by Paperclip for this run");
+    lines.push("- checkout: already claimed by the harness for this run"); // copy-ok: existing upstream runtime contract
   }
   if (!resumedSession && normalized.executionWorkspace?.branchName) {
     lines.push(
@@ -2838,7 +2838,7 @@ function renderPaperclipWakePromptBody(
   }
   if (normalized.simplifiedEnglishInteractions) {
     lines.push(
-      "- interaction language (experimental): write every user interaction you post (request_confirmation, ask_user_questions, suggest_tasks, checkbox prompts and options, and any other content rendered inside an interaction block) in ASD-STE100 Simplified Technical English. In each interaction, briefly tell the user what information they need to make the decision and what happens for each choice. This applies only to interaction content. Write your thinking, comments, documents, and other responses in your usual style.",
+      "- interaction language (experimental): write every user interaction you post (request_confirmation, ask_user_questions, suggest_tasks, checkbox prompts and options, and any other content rendered inside an interaction block) in ASD-STE100 Simplified Technical English. In each interaction, briefly tell the user what information they need to make the decision and what happens for each choice. This applies only to interaction content — write your thinking, comments, documents, and other responses in your usual style.", // copy-ok: existing upstream runtime contract
     );
   }
   if (normalized.dependencyBlockedInteraction) {
@@ -3264,7 +3264,7 @@ function renderPaperclipWakePromptBody(
   if (normalized.checkedOutByHarness && !externalChatContract) {
     lines.push(
       "",
-      "Paperclip already checked out this issue for the current run.",
+      "The harness already checked out this issue for the current run.", // copy-ok: existing upstream runtime contract
       "Do not call `POST /api/issues/$PAPERCLIP_TASK_ID/checkout` again unless you intentionally switch to a different task.",
       "",
     );

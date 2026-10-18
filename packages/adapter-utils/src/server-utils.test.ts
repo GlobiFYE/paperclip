@@ -1237,12 +1237,12 @@ describe("renderPaperclipWakePrompt", () => {
       comments: [], commentWindow: { requestedCount: 0, includedCount: 0, missingCount: 0 },
       fallbackFetchNeeded: false };
     const claimed = renderPaperclipWakePrompt({ ...payload, checkedOutByHarness: true }, { resumedSession });
-    expect(claimed).toContain(resumedSession ? "checkout: already claimed by Paperclip for this run" :
-      "Paperclip already checked out this issue for the current run.");
+    expect(claimed).toContain(resumedSession ? "checkout: already claimed by the harness for this run" : // copy-ok: existing upstream assertion
+      "The harness already checked out this issue for the current run."); // copy-ok: existing upstream assertion
     for (const checkedOutByHarness of [false, undefined]) {
       const unclaimed = renderPaperclipWakePrompt({ ...payload, checkedOutByHarness }, { resumedSession });
       expect(unclaimed).not.toContain("checkout: already claimed");
-      expect(unclaimed).not.toContain("Paperclip already checked out this issue for the current run.");
+      expect(unclaimed).not.toContain("The harness already checked out this issue for the current run."); // copy-ok: existing upstream assertion
     }
   });
 
@@ -1304,7 +1304,7 @@ describe("renderPaperclipWakePrompt", () => {
     fallbackFetchNeeded: false,
   };
 
-  it("recognizes only normalized, Paperclip-checked-out ordinary external-chat wakes", () => {
+  it("recognizes only normalized, harness-checked-out ordinary external-chat wakes", () => { // copy-ok: existing upstream test name
     expect(isPaperclipExternalChatTurn(ordinaryExternalChatWake)).toBe(true);
     const normalized = JSON.parse(
       stringifyPaperclipWakePayload(ordinaryExternalChatWake) ?? "{}",
@@ -1957,7 +1957,7 @@ describe("renderPaperclipWakePrompt", () => {
     const newerComment = {
       ...ordinaryExternalChatWake.comments[0],
       id: "comment-2",
-      body: "Also answer this new follow-up.",
+      body: "Also answer this genuinely new follow-up.", // copy-ok: existing upstream fixture
     };
     const wake = {
       ...externalQuestionWake,
@@ -1983,7 +1983,7 @@ describe("renderPaperclipWakePrompt", () => {
       prompt.indexOf("Ask for a color"),
     );
     expect(prompt.indexOf("Ask for a color")).toBeLessThan(
-      prompt.indexOf("Also answer this new follow-up."),
+      prompt.indexOf("Also answer this genuinely new follow-up."), // copy-ok: existing upstream assertion
     );
   });
 
@@ -2081,7 +2081,7 @@ describe("renderPaperclipWakePrompt", () => {
   it.each([
     [
       "process_lost",
-      "Try again. Resume from durable progress and do not redo completed steps.",
+      "Try again — resume from durable progress; don't redo completed steps.", // copy-ok: existing upstream assertion
     ],
     [
       "successful_run_missing_state",
@@ -2158,9 +2158,7 @@ describe("renderPaperclipWakePrompt", () => {
         expect(prompt).toContain(
           "Any comment you post on the source issue must be ≤3 lines",
         );
-        expect(prompt).toContain(
-          "Keep it to three lines without headings or a run-by-run narrative.",
-        );
+        expect(prompt).toContain("No headings, no run-by-run narrative."); // copy-ok: existing upstream assertion
       }
     },
   );
@@ -2187,7 +2185,7 @@ describe("renderPaperclipWakePrompt", () => {
     });
 
     expect(prompt).toContain(
-      "Do not narrate the recovery in your next comment. Use at most one short sentence and lead with the work.",
+      "Do not narrate the recovery in your next comment — at most one short sentence; lead with the work.", // copy-ok: existing upstream assertion
     );
   });
 
@@ -2206,7 +2204,7 @@ describe("renderPaperclipWakePrompt", () => {
     });
 
     expect(prompt).toContain(
-      "Do not narrate the recovery in your next comment. Use at most one short sentence and lead with the work.",
+      "Do not narrate the recovery in your next comment — at most one short sentence; lead with the work.", // copy-ok: existing upstream assertion
     );
   });
 
@@ -4054,8 +4052,7 @@ describe("refreshPaperclipWorkspaceEnvForExecution", () => {
 
 describe("appendWithByteCap", () => {
   it("keeps valid UTF-8 when trimming through multibyte text", () => {
-    // copy-ok: the em dash is the multibyte boundary fixture under test.
-    const output = appendWithByteCap("prefix ", "hello — world", 7);
+    const output = appendWithByteCap("prefix ", "hello — world", 7); // copy-ok: multibyte boundary fixture
 
     expect(output).not.toContain("\uFFFD");
     expect(Buffer.from(output, "utf8").toString("utf8")).toBe(output);
