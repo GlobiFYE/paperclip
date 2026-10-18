@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   activityLog,
@@ -400,6 +400,8 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
       optedIn?: boolean;
       /** The case's tasks are its own stage tasks (automation links); default true. */
       linkStageTasks?: boolean;
+      /** Stage whose automation created the linked tasks (default "intake"). */
+      linkStageKey?: string;
     }) {
       const repoRoot = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-case-workspace-"));
       tempDirs.add(repoRoot);
@@ -416,7 +418,7 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
       await runGit(repoRoot, ["branch", branchName]);
       await runGit(repoRoot, ["worktree", "add", worktreePath, branchName]);
 
-      const { companyId, projectId, pipeline } = await seed({ scope: input.optedIn === false ? null : "case" });
+      const { companyId, projectId, pipeline, byKey } = await seed({ scope: input.optedIn === false ? null : "case" });
       const [workspace] = await db.insert(executionWorkspaces).values({
         companyId,
         projectId,
@@ -474,21 +476,36 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
         actor: userActor,
       });
       if (input.linkStageTasks !== false) {
-        // What a stage automation records for each stage task it creates.
+        // What a stage automation records for each stage task it creates: an execution of
+        // the stage's automation and an automation link to the task.
+        const [linkStage] = await db
+          .select()
+          .from(pipelineStages)
+          .where(eq(pipelineStages.id, byKey.get(input.linkStageKey ?? "intake")!.id));
+        const onEnter = (linkStage!.config as { onEnter: { id?: string; routineId: string } }).onEnter;
         for (const issueId of [refIssueId, openBoundIssueId].filter((id): id is string => id !== null)) {
+          const [execution] = await db.insert(pipelineAutomationExecutions).values({
+            companyId,
+            caseId: created.case.id,
+            automationId: onEnter.id ?? `${linkStage!.id}:on_enter`,
+            triggeringEventId: randomUUID(),
+            routineId: onEnter.routineId,
+            status: "succeeded",
+            executionIssueId: issueId,
+          }).returning();
           await db.insert(pipelineCaseIssueLinks).values({
             companyId,
             caseId: created.case.id,
             issueId,
             role: "automation",
-            automationAttemptId: randomUUID(),
+            automationAttemptId: execution!.id,
           });
         }
       }
       if (input.caseTerminal) {
         await db.update(pipelineCases).set({ terminalKind: "done", terminalAt: new Date() }).where(eq(pipelineCases.id, created.case.id));
       }
-      return { workspaceId: workspace!.id, caseId: created.case.id, companyId, refIssueId };
+      return { workspaceId: workspace!.id, caseId: created.case.id, companyId, pipelineId: pipeline.id, refIssueId };
     }
 
     async function statusOf(workspaceId: string) {
@@ -563,6 +580,47 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
         caseTerminal: false,
         recordWorkspaceId: true,
         linkStageTasks: false,
+      });
+
+      const sweep = await workspaces.sweepTerminalWorkspaces();
+
+      expect(sweep).toMatchObject({ archived: 1, skippedNonTerminalTree: 0 });
+      expect(await statusOf(workspaceId)).toBe("archived");
+    }, 30_000);
+
+    it("an opted-in pipeline does not hold a workspace bound only through a stage without the opt-in", async () => {
+      const { workspaceId, pipelineId } = await seedDeliveredCaseWorkspace({
+        caseTerminal: false,
+        recordWorkspaceId: true,
+        linkStageKey: "in_progress",
+      });
+      // Intake keeps the opt-in; the stage that created the linked task drops it.
+      const [stage] = await db
+        .select()
+        .from(pipelineStages)
+        .where(and(eq(pipelineStages.pipelineId, pipelineId), eq(pipelineStages.key, "in_progress")));
+      const config = stage!.config as { onEnter: Record<string, unknown> };
+      const { executionWorkspaceScope: _scope, ...onEnter } = config.onEnter;
+      await db.update(pipelineStages).set({ config: { ...config, onEnter } }).where(eq(pipelineStages.id, stage!.id));
+
+      const sweep = await workspaces.sweepTerminalWorkspaces();
+
+      expect(sweep).toMatchObject({ archived: 1, skippedNonTerminalTree: 0 });
+      expect(await statusOf(workspaceId)).toBe("archived");
+    }, 30_000);
+
+    it("a hand-made automation link without a matching automation execution does not hold a workspace", async () => {
+      const { workspaceId, caseId, companyId, refIssueId } = await seedDeliveredCaseWorkspace({
+        caseTerminal: false,
+        recordWorkspaceId: true,
+        linkStageTasks: false,
+      });
+      await db.insert(pipelineCaseIssueLinks).values({
+        companyId,
+        caseId,
+        issueId: refIssueId,
+        role: "automation",
+        automationAttemptId: randomUUID(),
       });
 
       const sweep = await workspaces.sweepTerminalWorkspaces();

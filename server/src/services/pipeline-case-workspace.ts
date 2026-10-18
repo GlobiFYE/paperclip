@@ -14,12 +14,19 @@
 // case holds (see `pipelineCaseHoldsExecutionWorkspaceSql`).
 //
 // `workspace_ref` is caller-editable (PATCH /cases/:caseId), so it is only a hint. A case
-// reuses or holds a workspace only when one of its own stage tasks (an automation issue
-// link the server created) is bound to that workspace, and the hold also needs a stage of
-// the case's pipeline that opts in to the case scope.
-import { and, eq, isNotNull, sql, type SQL } from "drizzle-orm";
+// reuses or holds a workspace only when one of its own scoped stage tasks is bound to that
+// workspace: an automation issue link the server created, whose automation execution
+// belongs to a stage of the case's pipeline that opts in to the case scope.
+import { and, eq, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
-import { executionWorkspaces, issues, pipelineCaseIssueLinks, pipelineCases, pipelineStages } from "@paperclipai/db";
+import {
+  executionWorkspaces,
+  issues,
+  pipelineAutomationExecutions,
+  pipelineCaseIssueLinks,
+  pipelineCases,
+  pipelineStages,
+} from "@paperclipai/db";
 import type { IssueExecutionWorkspaceSettings, PipelineCaseWorkspaceRef } from "@paperclipai/shared";
 import { issueExecutionWorkspaceModeForPersistedWorkspace } from "./execution-workspace-policy.js";
 
@@ -28,30 +35,46 @@ type DbReader = Pick<Db, "select" | "update">;
 const CLOSED_WORKSPACE_STATUSES = new Set(["archived", "cleanup_failed"]);
 
 /**
- * True when a stage task of this case is bound to the workspace. Only links the stage
- * automation created count (role "automation" with an automation attempt); a manual issue
- * link or a hand-edited workspace_ref does not tie a workspace to the case.
+ * True when a scoped stage task of the case (the `held_case` alias) is bound to the workspace.
+ * Only server-created links count: an automation issue link whose automation execution
+ * belongs to this case and to a stage of the case's pipeline whose automation opts in to
+ * `executionWorkspaceScope: "case"` (the automation id matches `stageAutomation()` in
+ * pipelines.ts). A manual issue link, a stage without the opt-in, or a hand-edited
+ * workspace_ref does not tie a workspace to the case.
  */
+function caseScopedStageTaskBoundSql(input: { companyId: string; workspaceId: string }): SQL<boolean> {
+  return sql<boolean>`EXISTS (
+    SELECT 1
+    FROM ${pipelineCaseIssueLinks} held_link
+    JOIN ${issues} held_issue
+      ON held_issue.id = held_link.issue_id
+      AND held_issue.company_id = ${input.companyId}
+    JOIN ${pipelineAutomationExecutions} held_execution
+      ON held_execution.id = held_link.automation_attempt_id
+      AND held_execution.case_id = held_case.id
+      AND held_execution.company_id = ${input.companyId}
+    JOIN ${pipelineStages} held_stage
+      ON held_stage.pipeline_id = held_case.pipeline_id
+      AND held_stage.config -> 'onEnter' ->> 'executionWorkspaceScope' = 'case'
+      AND COALESCE(held_stage.config -> 'onEnter' ->> 'id', held_stage.id::text || ':on_enter')
+        = held_execution.automation_id
+    WHERE held_link.company_id = ${input.companyId}
+      AND held_link.case_id = held_case.id
+      AND held_link.role = 'automation'
+      AND held_issue.execution_workspace_id = ${input.workspaceId}
+  )`;
+}
+
 async function caseStageTaskBoundToWorkspace(
   db: DbReader,
   input: { companyId: string; caseId: string; workspaceId: string },
 ) {
   const rows = await db
-    .select({ id: pipelineCaseIssueLinks.id })
-    .from(pipelineCaseIssueLinks)
-    .innerJoin(
-      issues,
-      and(eq(issues.id, pipelineCaseIssueLinks.issueId), eq(issues.companyId, input.companyId)),
-    )
-    .where(and(
-      eq(pipelineCaseIssueLinks.companyId, input.companyId),
-      eq(pipelineCaseIssueLinks.caseId, input.caseId),
-      eq(pipelineCaseIssueLinks.role, "automation"),
-      isNotNull(pipelineCaseIssueLinks.automationAttemptId),
-      eq(issues.executionWorkspaceId, input.workspaceId),
-    ))
+    .select({ bound: caseScopedStageTaskBoundSql(input) })
+    .from(sql`${pipelineCases} held_case`)
+    .where(sql`held_case.id = ${input.caseId} AND held_case.company_id = ${input.companyId}`)
     .limit(1);
-  return rows.length > 0;
+  return rows[0]?.bound === true;
 }
 
 function readId(value: unknown): string | null {
@@ -189,9 +212,9 @@ export async function writePipelineCaseWorkspaceRef(
  *   realised for that issue (`source_issue_id`), or that issue was bound to an existing
  *   workspace (`execution_workspace_id`), in which case the workspace's own source issue
  *   differs. workspace_ref is caller-editable, so it only selects candidates;
- * - a stage task of the case (an automation issue link the server created) is bound to
- *   the workspace;
- * - a stage of the case's pipeline opts in to `executionWorkspaceScope: "case"`;
+ * - a scoped stage task of the case is bound to the workspace: an automation issue link
+ *   the server created for a stage that opts in to `executionWorkspaceScope: "case"`
+ *   (see `caseScopedStageTaskBoundSql`);
  * - the case is still open, or it is terminal but an issue bound to the workspace is
  *   still open.
  * Workspaces no case holds are unaffected.
@@ -220,27 +243,7 @@ export function pipelineCaseHoldsExecutionWorkspaceSql(workspace: {
             AND ref_issue.execution_workspace_id = ${workspace.id}
         )
       )
-      AND EXISTS (
-        SELECT 1
-        FROM ${pipelineCaseIssueLinks} held_link
-        JOIN ${issues} held_issue
-          ON held_issue.id = held_link.issue_id
-          AND held_issue.company_id = ${workspace.companyId}
-        WHERE held_link.company_id = ${workspace.companyId}
-          AND held_link.case_id = held_case.id
-          AND held_link.role = 'automation'
-          AND held_link.automation_attempt_id IS NOT NULL
-          AND held_issue.execution_workspace_id = ${workspace.id}
-      )
-      AND EXISTS (
-        SELECT 1
-        FROM ${pipelineStages} held_stage
-        WHERE held_stage.pipeline_id = held_case.pipeline_id
-          AND (
-            held_stage.config -> 'onEnter' ->> 'executionWorkspaceScope' = 'case'
-            OR held_stage.config -> 'automation' ->> 'executionWorkspaceScope' = 'case'
-          )
-      )
+      AND ${caseScopedStageTaskBoundSql({ companyId: workspace.companyId, workspaceId: workspace.id })}
       AND (
         (held_case.terminal_kind IS NULL AND held_case.retired_at IS NULL)
         OR EXISTS (
