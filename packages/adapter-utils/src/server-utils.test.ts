@@ -123,10 +123,14 @@ describe("runtime connection tool delivery", () => {
   });
 
   it("keeps MCP tool discovery separate from the task's read-only intent", () => {
-    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("search for the exact requested tool name without adding an unrequested `read_only_only` or other capability or risk filter");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("follow the search tool's documented query semantics");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("use that for a known identifier");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("search with the unqualified action or tool name, or relevant keywords");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Do not add an unrequested `read_only_only` or other capability or risk filter");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Read-only intent belongs in the concrete arguments");
-    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("no result under a narrower filter does not prove the tool is unavailable");
-    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("through its paired authoritative call tool");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("no result from a narrower filter or mismatched query does not prove the tool is unavailable");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Treat the returned tool name and schema as authoritative");
+    expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("through its paired call tool");
     expect(DEFAULT_PAPERCLIP_AGENT_PROMPT_TEMPLATE).toContain("Never bypass a denial");
   });
 });
