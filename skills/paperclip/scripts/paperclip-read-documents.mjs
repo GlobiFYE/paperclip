@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 
 import { createHash, randomUUID } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { mkdir, open, rm } from "node:fs/promises";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 
 const MAX_DOCUMENTS = 8;
 const MAX_CONCURRENCY = 4;
@@ -201,7 +202,16 @@ export async function run(args, env = process.env, cwd = process.cwd()) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+function isMainModule() {
+  if (typeof process.argv[1] !== "string") return false;
+  try {
+    return realpathSync(path.resolve(process.argv[1])) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule()) {
   try {
     const result = await run(process.argv.slice(2));
     if (result.help) process.stdout.write(`${result.help}\n`);

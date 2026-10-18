@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -32,9 +33,9 @@ describe("paperclip read documents helper", () => {
     return { baseUrl: `http://127.0.0.1:${port}`, requests };
   }
 
-  function runHelper(apiUrl: string, args: string[], cwd: string): Promise<HelperResult> {
+  function runHelper(apiUrl: string, args: string[], cwd: string, helper = HELPER_PATH): Promise<HelperResult> {
     return new Promise((resolve, reject) => {
-      const child = spawn(process.execPath, [HELPER_PATH, ...args], {
+      const child = spawn(process.execPath, [helper, ...args], {
         cwd,
         env: { ...process.env, PAPERCLIP_API_URL: apiUrl, PAPERCLIP_API_KEY: "fixture-key", PAPERCLIP_RUN_ID: "fixture-run" },
         stdio: ["ignore", "pipe", "pipe"],
@@ -172,6 +173,48 @@ describe("paperclip read documents helper", () => {
     expect(result.code).toBe(0);
     expect(requests).toHaveLength(1);
     expect(requests[0]?.url).toBe(`/api/issues/${issueId}/documents/policy`);
+  });
+
+  it("runs the real CLI through an installed skill-directory symlink", async () => {
+    const issueId = "11111111-1111-4111-8111-111111111111";
+    const { baseUrl, requests } = await startServer((_request, res) => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify(response(`${issueId}/policy`, "policy body")));
+    });
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-read-docs-symlink-"));
+    cleanup.push(() => fs.rm(root, { recursive: true, force: true }));
+    const cwd = path.join(root, "unrelated task workspace");
+    const installedSkill = path.join(root, ".claude", "skills", "paperclip");
+    await fs.mkdir(cwd, { recursive: true });
+    await fs.mkdir(path.dirname(installedSkill), { recursive: true });
+    await fs.symlink(path.dirname(path.dirname(HELPER_PATH)), installedSkill, process.platform === "win32" ? "junction" : "dir");
+    const linkedHelper = path.join(installedSkill, "scripts", "paperclip-read-documents.mjs");
+    expect(await fs.realpath(linkedHelper)).toBe(await fs.realpath(HELPER_PATH));
+    expect(path.resolve(linkedHelper)).not.toBe(await fs.realpath(linkedHelper));
+
+    const result = await runHelper(baseUrl, ["--document", `${issueId}/policy`], cwd, linkedHelper);
+
+    expect(result.code).toBe(0);
+    expect(JSON.parse(result.stdout).documents[0]).toMatchObject({ issueId, key: "policy", latestRevisionNumber: 3 });
+    expect(requests).toHaveLength(1);
+  });
+
+  it("imports without CLI argv and produces no output or network request", async () => {
+    const child = spawn(process.execPath, ["--input-type=module", "-e", `await import(${JSON.stringify(pathToFileURL(HELPER_PATH).href)})`], {
+      env: Object.fromEntries(Object.entries(process.env).filter(([key]) => !["PAPERCLIP_API_URL", "PAPERCLIP_API_KEY", "PAPERCLIP_RUN_ID"].includes(key))),
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", chunk => { stdout += chunk; });
+    child.stderr.on("data", chunk => { stderr += chunk; });
+    const code = await new Promise<number | null>((resolve, reject) => {
+      child.on("error", reject);
+      child.on("close", resolve);
+    });
+    expect(code).toBe(0);
+    expect(stdout).toBe("");
+    expect(stderr).toBe("");
   });
 
   it("fails closed on an oversized streamed HTTP response without writing files", async () => {
