@@ -100,8 +100,12 @@ the task (and separately its ancestor), preserve a draft, then resume the actual
 hold; no hidden send should occur while paused. Check both task presentations
 when available; the named component tests do not prove every host integration.
 
-Start with an agent in its completed paused lifecycle state, then create an
-accepted deferred follow-up for it. Let release and periodic recovery run.
+Fixture-backed recovery check: start with an agent in its completed paused
+lifecycle state, then insert a new accepted `deferred_issue_execution` request
+through the [PostgreSQL recovery fixture](../../server/src/modules/wake-queue/adapters/postgres.test.ts).
+Normal wake admission
+rejects paused agents, so this pending state cannot be created by sending a new
+message through the ordinary UI or API. Let release and periodic recovery run.
 Confirm that the saved request remains pending. Resume the agent, wait for its
 lifecycle to become ready, and verify one delivery. An explicit Pause cancels
 older queued work; those cancelled receipts must not be replayed. A paused
