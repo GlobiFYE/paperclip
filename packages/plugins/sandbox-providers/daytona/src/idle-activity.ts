@@ -1,4 +1,7 @@
 import type { PluginDefinition } from "@paperclipai/plugin-sdk";
+import { AsyncLocalStorage } from "node:async_hooks";
+
+type Request = { parent?: Request; resources: Set<string> };
 
 type Resource = {
   keys: Set<string>;
@@ -8,15 +11,17 @@ type Resource = {
 
 /** Worker-local evidence complements the host's durable lease and task gates. */
 export class DaytonaIdleActivity {
-  private readonly requests = new Set<object>();
+  private readonly requests = new Set<Request>();
+  private readonly current = new AsyncLocalStorage<Request>();
   private readonly resources = new Map<string, Set<Resource>>();
 
   track<T>(run: () => Promise<T>): Promise<T> {
-    const request = {};
+    const parent = this.current.getStore();
+    const request: Request = { parent, resources: parent?.resources ?? new Set() };
     this.requests.add(request);
     let pending: Promise<T>;
     try {
-      pending = run();
+      pending = this.current.run(request, run);
     } catch (error) {
       this.requests.delete(request);
       throw error;
@@ -28,6 +33,7 @@ export class DaytonaIdleActivity {
   }
 
   resource(key: string, provisional = false): Resource {
+    this.current.getStore()?.resources.add(key);
     const existing = this.resources.get(key)?.values().next().value;
     if (existing) return existing;
     const resource: Resource = {
@@ -42,6 +48,7 @@ export class DaytonaIdleActivity {
   /** Attach an observed immutable ID without reviving a confirmed allocation. */
   observe(resource: Resource, key: string): void {
     if (resource.confirmed) return;
+    this.current.getStore()?.resources.add(key);
     resource.keys.add(key);
     resource.absenceProofKeys.add(key);
     const linked = this.resources.get(key) ?? new Set<Resource>();
@@ -50,11 +57,14 @@ export class DaytonaIdleActivity {
   }
 
   confirm(key: string, absenceOnly = false): void {
-    // One request is the cleanup/inspection hook itself. If another hook or
-    // an underlying timed-out request is still running, it can change the
-    // provider after this receipt. Require a later, quiescent observation.
-    if (this.requests.size > 1) return;
+    const ownChain = new Set<Request>();
+    for (let request = this.current.getStore(); request; request = request.parent) ownChain.add(request);
     for (const resource of [...(this.resources.get(key) ?? [])]) {
+      // Ignore the receipt's own call chain, but never a child request that
+      // outlived its deadline or another operation on the same allocation.
+      // Unrelated sandbox cleanup must not leave a permanent blocker.
+      if ([...this.requests].some(request => !ownChain.has(request) &&
+        [...resource.keys].some(alias => request.resources.has(alias)))) continue;
       // An unobserved create name can materialize after a not-found response.
       if (absenceOnly && !resource.absenceProofKeys.has(key)) continue;
       resource.confirmed = true;
@@ -71,6 +81,9 @@ export class DaytonaIdleActivity {
   }
 
   resetForTest(): void {
+    for (const allocations of this.resources.values()) {
+      for (const allocation of allocations) allocation.confirmed = true;
+    }
     this.requests.clear();
     this.resources.clear();
   }

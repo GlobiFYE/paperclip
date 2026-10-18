@@ -58,13 +58,42 @@ describe("Daytona idle evidence", () => {
     const activity = new DaytonaIdleActivity();
     activity.resource("resource");
     const request = deferred();
-    const pending = activity.track(() => request.promise);
+    const pending = activity.track(() => { activity.resource("resource"); return request.promise; });
     await activity.track(async () => { activity.confirm("resource"); });
     expect(activity.present()).toBe(true);
     request.resolve();
     await pending;
     expect(activity.present()).toBe(true);
     await activity.track(async () => { activity.confirm("resource", true); });
+    expect(activity.present()).toBe(false);
+  });
+
+  it("clears unrelated cleanup concurrently without losing pending work", async () => {
+    const activity = new DaytonaIdleActivity();
+    const unrelated = deferred();
+    const pending = activity.track(() => { activity.resource("other"); return unrelated.promise; });
+    await activity.track(async () => {
+      activity.resource("cleaned");
+      activity.confirm("cleaned");
+    });
+    unrelated.resolve(); await pending;
+    activity.confirm("other");
+    expect(activity.present()).toBe(false);
+  });
+
+  it("does not mistake a timed-out child request for the receipt's own completed work", async () => {
+    const activity = new DaytonaIdleActivity();
+    const child = deferred();
+    let pending!: Promise<void>;
+    await activity.track(async () => {
+      activity.resource("resource");
+      pending = activity.track(() => child.promise);
+      await Promise.race([pending, Promise.resolve()]);
+      activity.confirm("resource");
+    });
+    child.resolve(); await pending;
+    expect(activity.present()).toBe(true);
+    activity.confirm("resource");
     expect(activity.present()).toBe(false);
   });
 
