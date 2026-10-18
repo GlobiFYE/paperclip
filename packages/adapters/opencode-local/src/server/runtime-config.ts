@@ -6,6 +6,7 @@ import { asBoolean } from "@paperclipai/adapter-utils/server-utils";
 type PreparedOpenCodeRuntimeConfig = {
   env: Record<string, string>;
   notes: string[];
+  runtimeConfigHome: string | null;
   cleanup: () => Promise<void>;
 };
 
@@ -131,67 +132,62 @@ export async function prepareOpenCodeRuntimeConfig(input: {
   targetIsRemote?: boolean;
 }): Promise<PreparedOpenCodeRuntimeConfig> {
   const skipPermissions = asBoolean(input.config.dangerouslySkipPermissions, true);
-  if (!skipPermissions) {
-    const existingConfig = input.targetIsRemote ? {} : await readJsonObject(
+  const targetIsRemote = input.targetIsRemote === true;
+  if (!skipPermissions && !targetIsRemote) {
+    const existingConfig = await readJsonObject(
       path.join(resolveXdgConfigHome(input.env), "opencode", "opencode.json"),
     );
     return {
       env: preserveExplicitModelModalities(input.env, existingConfig.provider, input.config.model),
       notes: [],
+      runtimeConfigHome: null,
       cleanup: async () => {},
     };
   }
 
-  // For remote execution targets the host XDG_CONFIG_HOME path is meaningless
-  // (and actively harmful — it leaks a macOS-only path into the remote Linux
-  // env). Callers that need to ship a runtime opencode config to the remote
-  // box do that via prepareAdapterExecutionTargetRuntime in execute.ts; this
-  // host-fs helper is local-only.
-  if (input.targetIsRemote) {
-    return {
-      env: input.env,
-      notes: [],
-      cleanup: async () => {},
-    };
-  }
-
-  const sourceConfigDir = path.join(resolveXdgConfigHome(input.env), "opencode");
-  const runtimeConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-opencode-config-"));
-  const runtimeConfigDir = path.join(runtimeConfigHome, "opencode");
-  const runtimeConfigPath = path.join(runtimeConfigDir, "opencode.json");
-
-  await fs.mkdir(runtimeConfigDir, { recursive: true });
-  try {
-    await fs.cp(sourceConfigDir, runtimeConfigDir, {
-      recursive: true,
-      force: true,
-      errorOnExist: false,
-      dereference: false,
-    });
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException | null)?.code !== "ENOENT") {
-      throw err;
-    }
-  }
-
-  const existingConfig = await readJsonObject(runtimeConfigPath);
-  const notes = [
-    "Injected runtime OpenCode config with permission=allow for all tools and connections.",
-  ];
-
-  // Merge gateway/custom provider definitions supplied via PAPERCLIP_OPENCODE_PROVIDERS
-  // (a JSON object in OpenCode's `provider` shape). OpenCode resolves a `--model
-  // provider/model` only when that model exists in a provider's `models` map, and
-  // OPENCODE_ALLOW_ALL_MODELS does NOT bypass its internal getModel(). So routing a
-  // gateway model (e.g. an EU LLM gateway exposing OpenAI-compatible /v1) requires a
-  // custom provider with an explicit models map. We accept it as config (not
-  // hard-coded) so the gateway URL, key env, and model list stay declarative.
+  const notes: string[] = skipPermissions
+    ? ["Injected runtime OpenCode config with permission=allow for all tools and connections."]
+    : [];
   const resolveEnv = (name: string): string | undefined => input.env[name] ?? process.env[name];
   const gatewayProviders = parseProviderConfig(
     input.env.PAPERCLIP_OPENCODE_PROVIDERS ?? process.env.PAPERCLIP_OPENCODE_PROVIDERS,
     resolveEnv,
     notes,
   );
+  const smallModel = (input.env.PAPERCLIP_OPENCODE_SMALL_MODEL ?? process.env.PAPERCLIP_OPENCODE_SMALL_MODEL)?.trim();
+  if (targetIsRemote && !skipPermissions && !gatewayProviders && !smallModel) {
+    return {
+      env: preserveExplicitModelModalities(input.env, undefined, input.config.model),
+      notes,
+      runtimeConfigHome: null,
+      cleanup: async () => {},
+    };
+  }
+
+  const sourceConfigDir = targetIsRemote
+    ? null
+    : path.join(resolveXdgConfigHome(input.env), "opencode");
+  const runtimeConfigHome = await fs.mkdtemp(path.join(os.tmpdir(), "paperclip-opencode-config-"));
+  const runtimeConfigDir = path.join(runtimeConfigHome, "opencode");
+  const runtimeConfigPath = path.join(runtimeConfigDir, "opencode.json");
+
+  await fs.mkdir(runtimeConfigDir, { recursive: true });
+  if (sourceConfigDir) {
+    try {
+      await fs.cp(sourceConfigDir, runtimeConfigDir, {
+        recursive: true,
+        force: true,
+        errorOnExist: false,
+        dereference: false,
+      });
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException | null)?.code !== "ENOENT") {
+        throw err;
+      }
+    }
+  }
+
+  const existingConfig = await readJsonObject(runtimeConfigPath);
   const existingProvider = isPlainObject(existingConfig.provider) ? existingConfig.provider : {};
   let nextProvider = gatewayProviders
     ? { ...existingProvider, ...gatewayProviders }
@@ -230,7 +226,7 @@ export async function prepareOpenCodeRuntimeConfig(input: {
 
   const nextConfig: Record<string, unknown> = {
     ...existingConfig,
-    permission: "allow",
+    ...(skipPermissions ? { permission: "allow" } : {}),
   };
   if (Object.keys(nextProvider).length > 0) {
     nextConfig.provider = nextProvider;
@@ -242,7 +238,6 @@ export async function prepareOpenCodeRuntimeConfig(input: {
   // for the anthropic provider); when that provider is repointed at a gateway that
   // does not serve that exact model, the title-gen call fails and aborts the run.
   // Setting small_model to a gateway-served model keeps every call on supported models.
-  const smallModel = (input.env.PAPERCLIP_OPENCODE_SMALL_MODEL ?? process.env.PAPERCLIP_OPENCODE_SMALL_MODEL)?.trim();
   if (smallModel) {
     nextConfig.small_model = smallModel;
     notes.push(`Pinned OpenCode small_model to ${smallModel}.`);
@@ -255,6 +250,7 @@ export async function prepareOpenCodeRuntimeConfig(input: {
       XDG_CONFIG_HOME: runtimeConfigHome,
     },
     notes,
+    runtimeConfigHome,
     cleanup: async () => {
       await fs.rm(runtimeConfigHome, { recursive: true, force: true });
     },
