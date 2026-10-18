@@ -1,3 +1,4 @@
+import { createHeartbeatAgentStatus } from "./agent-status.js";
 import { preserveWorkspaceRestoreRecoveryMetadataSql } from "../legacy-workspace-restore-recovery.js";
 import { preserveCancelledNativeWorkspaces } from "../native-runtime/native-failed-workspace-recovery.js";
 import { nativeWorkspaceExportPendingForLease, pendingNativeWorkspaceFinalizationCondition } from "../native-runtime/native-workspace-finalization-state.js";
@@ -2509,6 +2510,10 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
         "pending_cleanup lease sweep failed",
       );
     }
+
+    await createHeartbeatAgentStatus(db).reconcileStrandedAgentStatuses(() => new Set([
+      ...activeRunExecutions, ...runningProcesses.keys(), ...adapterExecutionControls.keys(),
+    ]));
 
     return { reaped: reaped.length, runIds: reaped };
   }
