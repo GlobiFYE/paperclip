@@ -2564,7 +2564,7 @@ const plugin = definePlugin(trackDaytonaHooks({
         };
       } finally {
         const proof = idleActivity.proof(providerActivityKey(params, config, sandbox.id));
-        await sandbox.delete(toTimeoutSeconds(config.timeoutMs)).then(
+        await sandbox.delete(toTimeoutSeconds(config.timeoutMs), true).then(
           () => idleActivity.confirm(proof),
           () => undefined,
         );
@@ -2703,7 +2703,7 @@ const plugin = definePlugin(trackDaytonaHooks({
           cleanupInProgress = true;
           try {
             const proof = idleActivity.proof(providerActivityKey(params, config, sandbox.id));
-            await sandbox.delete(toTimeoutSeconds(Math.max(1, deadline - Date.now())));
+            await sandbox.delete(toTimeoutSeconds(Math.max(1, deadline - Date.now())), true);
             idleActivity.confirm(proof);
           } catch (cleanupError) {
             if (cleanup) {
@@ -3076,7 +3076,7 @@ const plugin = definePlugin(trackDaytonaHooks({
       };
     } catch (error) {
       const proof = idleActivity.proof(providerActivityKey(params, config, sandbox.id));
-      await sandbox.delete(toTimeoutSeconds(config.timeoutMs)).then(
+      await sandbox.delete(toTimeoutSeconds(config.timeoutMs), true).then(
         () => idleActivity.confirm(proof),
         () => undefined,
       );
@@ -3243,7 +3243,7 @@ const plugin = definePlugin(trackDaytonaHooks({
       await sandboxHandleActivityGates.waitForIdle(scope);
       await teardownSession(sandbox, scope);
       const proof = idleActivity.proof(sandboxHandleCacheKey(scope));
-      await sandbox.delete(toTimeoutSeconds(config.timeoutMs));
+      await sandbox.delete(toTimeoutSeconds(config.timeoutMs), true);
       idleActivity.confirm(proof);
       return {
         status: params.reason === "timed_out" ? "timed_out" : "cancelled",
