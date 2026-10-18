@@ -33,7 +33,7 @@ import {
 } from "./cli-capabilities.js";
 import { isBedrockModelId } from "./models.js";
 import { buildClaudeProbePermissionArgs, claudeSandboxPermissionEnv } from "./permissions.js";
-import { prepareSandboxClaudeProbeRuntime } from "./claude-config.js";
+import { DEFAULT_CLAUDE_HELLO_PROBE_TIMEOUT_SEC, prepareSandboxClaudeProbeRuntime } from "./claude-config.js";
 import { resolveClaudeModel, SANDBOX_INSTALL_COMMAND } from "../index.js";
 import { resolveClaudeExecutionEngineForRun, testClaudeAcpEnvironment } from "./acp.js";
 import { ADAPTER_AUTH_MISSING_CHECK_CODE } from "./auth-check.js";
@@ -145,7 +145,7 @@ export async function testEnvironment(
       detectCommand: command,
       targetIsRemote,
       targetIsSandbox,
-      helloProbeTimeoutSec: asNumber(config.helloProbeTimeoutSec, 90),
+      helloProbeTimeoutSec: asNumber(config.helloProbeTimeoutSec, DEFAULT_CLAUDE_HELLO_PROBE_TIMEOUT_SEC),
     })),
   );
   const runtimeEnv = ensurePathInEnv({ ...process.env, ...env });
@@ -373,11 +373,9 @@ export async function testEnvironment(
       // Sandbox bridges still add lease warmup and transport overhead, but
       // the standard-2 Cloudflare tier now probes fast enough that a 90s
       // budget leaves headroom without masking real hangs.
-      // Local probes share the 90s budget: cold starts and API latency
-      // can exceed 45s on typical machines.
       const helloProbeTimeoutSec = Math.max(
         1,
-        asNumber(config.helloProbeTimeoutSec, 90),
+        asNumber(config.helloProbeTimeoutSec, DEFAULT_CLAUDE_HELLO_PROBE_TIMEOUT_SEC),
       );
 
       // A local probe uses the trusted resolved executable and the
