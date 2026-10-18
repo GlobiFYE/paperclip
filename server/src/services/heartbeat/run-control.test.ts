@@ -5,7 +5,10 @@ import { eq, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "../../__tests__/helpers/embedded-postgres.js";
 import { runningProcesses } from "../../adapters/index.js";
-import { terminateSystemdRunScope } from "../../adapters/utils.js";
+import {
+  markLocalRunCancellationRequested,
+  terminateSystemdRunScope,
+} from "../../adapters/utils.js";
 import {
   adapterExecutionControls,
   createAdapterExecutionControl,
@@ -37,6 +40,7 @@ vi.mock("../local-service-supervisor.js", async (importOriginal) => ({
 }));
 vi.mock("../../adapters/utils.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("../../adapters/utils.js")>(),
+  markLocalRunCancellationRequested: vi.fn(),
   terminateSystemdRunScope: vi.fn(async () => undefined),
 }));
 
@@ -344,6 +348,7 @@ describe.skipIf(!support.supported)("heartbeat run-control database wiring", () 
       createHeartbeatRunControl(db, deps).cancelRunInternal(run.id, "Stop"),
     ).resolves.toMatchObject({ status: "cancelled" });
 
+    expect(markLocalRunCancellationRequested).toHaveBeenCalledWith(run.id);
     expect(terminateSystemdRunScope).toHaveBeenCalledWith(
       tracked.containment,
       { graceMs: 4_000, signal: "SIGINT" },

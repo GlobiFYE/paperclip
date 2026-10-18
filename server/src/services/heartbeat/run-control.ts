@@ -102,6 +102,7 @@ import {
 import { runningProcesses } from "../../adapters/index.js";
 import {
   parseObject,
+  markLocalRunCancellationRequested,
   terminateSystemdRunScope,
   type LocalRunContainment,
 } from "../../adapters/utils.js";
@@ -952,6 +953,7 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
         throw pendingProcessCancellation.error;
       return getRun(run.id);
     }
+    markLocalRunCancellationRequested(run.id);
     const running = runningProcesses.get(run.id);
     const stopOwnership =
       run.runtimeMode !== "native"
