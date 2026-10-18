@@ -545,7 +545,8 @@ describe("paperclip skill utils", () => {
     const skillBody = await fs.readFile(path.resolve("skills/paperclip/SKILL.md"), "utf8");
 
     expect(skillBody).toContain("Verify writes — never infer them");
-    expect(skillBody).toContain("An empty response body means the write FAILED");
+    expect(skillBody).toContain("An empty body, malformed JSON, wrong issue ID");
+    expect(skillBody).toContain("it does not prove the server rolled the write back");
     expect(skillBody).toContain("Never pipe a disposition write through `head`/`tail`");
     expect(skillBody).toContain("resolved relative to this installed `SKILL.md`, not the task workspace");
     expect(skillBody).toContain("do not search the filesystem for it");

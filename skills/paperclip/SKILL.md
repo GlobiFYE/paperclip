@@ -29,6 +29,14 @@ Manual local CLI mode (outside heartbeat runs): use `paperclipai agent local-cli
 
 **Run audit trail:** You MUST include `-H 'X-Paperclip-Run-Id: $PAPERCLIP_RUN_ID'` on ALL API requests that modify issues (checkout, update, comment, create subtask, release). This links your actions to the current heartbeat run for traceability.
 
+## Routine heartbeat fast path
+
+Start with the current run's **Paperclip Wake Payload** or **Paperclip Resume Delta** and task context. Use facts they explicitly provide, including the current task, user direction, comment batch, and harness checkout, without fetching those same facts again. Fetch `heartbeat-context` only when the run context is absent or lacks state needed for the next action; fetch comments only when the batch is marked incomplete/truncated, you need older history, or a newer comment is required. An omitted or truncated description, missing ancestor/project/goal state, or a request for the latest state is a concrete reason to fetch the missing data.
+
+Use the skill text and named references already available in this run. Do not search the repository or reread sections just to reconstruct an API operation documented here; open a referenced section once when its additional contract is needed. When a response already contains the requested data, parse or reformat that local response instead of repeating the remote read.
+
+When work is complete and both a final comment and status change are needed, send them together in one issue-update PATCH with the bundled helper below. Its response must confirm the target issue, requested status, and exact saved comment before reporting success. Do not issue a second read merely to confirm fields already echoed exactly. A transport failure, server error, or mismatched response after a comment write has an uncertain outcome: inspect the task/comment state before retrying so an accepted comment is not duplicated. Independent reviews, approvals, or other required checks still follow their normal paths.
+
 ## Conversation tasks
 
 When the task context says **Chat mode** (the issue has `conversationAgentId`),
@@ -129,11 +137,11 @@ If already checked out by you, returns normally. If owned by another agent: `409
 
 **Name provisional tasks early.** When the task has `titleNeedsGeneration: true`, use `set_task_title` with a concise outcome-focused title and `onlyIfProvisional: true` as one of your first calls after checkout. If the tool is unavailable, use `PUT /api/issues/{issueId}/title` with `{ "title": "Concise task title", "onlyIfProvisional": true }` and the normal authentication/run headers. This metadata update is allowed in Ask and Plan modes. Keep explicit titles and the full description intact, then continue the task.
 
-**Step 6 — Understand context.** Prefer `GET /api/issues/{issueId}/heartbeat-context` first. It gives you compact issue state, ancestor summaries, goal/project info, and comment cursor metadata without forcing a full thread replay.
+**Step 6 — Understand context.** Use the current run's task and wake context first. If it names the issue and contains the state needed for the next action, do not fetch `GET /api/issues/{issueId}/heartbeat-context` just to repeat those fields. Fetch it when context is absent, incomplete, truncated, stale for the requested decision, or lacks required issue, ancestor, goal, project, or comment-cursor state.
 
 For attribution questions, read `GET /api/issues/{issueId}/activity`. Sandbox agents can use this issue-scoped route subject to the same company and issue-read authorization. Automatic recovery cleanup is system activity, not evidence that the person viewing a task participated in it.
 
-If the run prompt includes a Paperclip wake payload, inspect that section before calling the API. It is the fastest path for comment wakes and may already include the exact new comments that triggered this run. For comment-driven wakes, reflect the new comment context first, then fetch broader history only if needed.
+If the run prompt includes a Paperclip wake payload, inspect that section before calling the API. Its comment window is complete when `fallbackFetchNeeded` is false and the included comment batch covers the requested count. For comment-driven wakes, reflect the supplied comment context first, then fetch broader history only if needed.
 
 Use comments incrementally:
 
@@ -155,7 +163,7 @@ If `currentParticipant` does not match you, do not try to advance the stage — 
 **Step 7 — Do the work.** Use your tools and capabilities. Execution contract:
 
 - If the issue is actionable, start concrete work in the same heartbeat. Do not stop at a plan unless the issue specifically asks for planning.
-- Leave durable progress in comments, issue documents, or work products, then update the issue state/path to a clear final disposition before you exit.
+- Leave durable progress in comments, issue documents, or work products when the work needs them. At final disposition, combine the final comment and status change in one update when both are needed; use a separate progress comment only when it gives useful information before the work is complete.
 - Treat comments, documents, screenshots, work products, and `Remaining` bullets as evidence. They are not valid liveness paths by themselves.
 - Use child issues for parallel or long delegated work; do not busy-poll agents, sessions, child issues, or processes waiting for completion.
 - If your heartbeat creates a pending board/user interaction or approval before more work can proceed, leave the source issue in an explicit waiting posture before you exit. Prefer `in_review` for review, approval, `request_confirmation`, `ask_user_questions`, and `suggest_tasks` waits. Use `blocked` with `blockedByIssueIds` when another issue is the blocker.
@@ -210,9 +218,9 @@ the routine server-verified external-chat handoff described above.
 
 **Step 8 — Update status and communicate.** Always include the run ID header.
 
-**Bounded write retry.** If the same control-plane write fails twice consecutively, stop retrying that write for the rest of the heartbeat. Continue any useful work that does not depend on it, report the failed write in your final response, and rely on the adapter/runtime status channel as the sanctioned fallback. Do not burn additional tool calls repeatedly attempting the same comment or status mutation in a degraded environment.
+**Bounded write retry.** If the same control-plane write fails twice consecutively, stop retrying that write for the rest of the heartbeat. Continue any useful work that does not depend on it, report the unconfirmed write in your final response, and rely on the adapter/runtime status channel as the sanctioned fallback. Do not burn additional tool calls repeatedly attempting the same comment or status mutation in a degraded environment. A write that included a comment and then returned a transport failure, server error, or response mismatch is ambiguous; inspect its state before retrying it.
 
-**Verify writes — never infer them.** A successful `PATCH /api/issues/{id}` always returns the updated issue JSON. An empty response body means the write FAILED, even if the command exited 0. Never pipe a disposition write through `head`/`tail` and never rely on `curl -f` inside a pipeline — the pipe swallows curl's exit status, and a lost connection then looks identical to success. Use the bundled `scripts/paperclip-issue-update.sh`, resolved relative to this installed `SKILL.md`, not the task workspace (it checks the HTTP status, retries connection-level failures, and confirms the echoed `status`); if you must hand-roll curl, capture `-w '%{http_code}'` and check the response echoes your update. When a status write cannot be confirmed, your final report must say the write FAILED — not that it "was sent" — so the recovery path gets accurate context.
+**Verify writes — never infer them.** A successful `PATCH /api/issues/{id}` returns the updated issue JSON and, when requested, the saved comment. An empty body, malformed JSON, wrong issue ID, mismatched status, or mismatched comment means the response does not confirm the write, even if the command exited 0; it does not prove the server rolled the write back. Never pipe a disposition write through `head`/`tail` and never rely on `curl -f` inside a pipeline — the pipe swallows curl's exit status, and a lost connection then looks identical to success. Use the bundled `scripts/paperclip-issue-update.sh`, resolved relative to this installed `SKILL.md`, not the task workspace; it checks the HTTP status and verifies the echoed issue ID or identifier, status, and exact comment body. When an exact comment is echoed, do not fetch comments solely to repeat that verification. If a write has an ambiguous outcome, inspect the task before retrying. When a write cannot be confirmed, report it as unconfirmed and do not assume it was saved.
 
 Before exiting, persist the appropriate waiting path: a saved pending interaction plus `in_review` for human input, or `blocked` with first-class blockers or an agent-permitted unblock descriptor for a real dependency. A comment naming someone does not create that path.
 
