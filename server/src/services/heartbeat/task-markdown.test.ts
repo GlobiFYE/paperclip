@@ -87,6 +87,29 @@ describe("heartbeat task markdown rendering", () => {
     expect(markdown).not.toContain("Structured GitHub pull request references:");
   });
 
+  it.each([
+    ["another number", "45"],
+    ["non-numeric text", "garbage"],
+  ])("drops the unfinished final token after a %s continuation", (_label, continuation) => {
+    const completeUrl = "https://github.com/acme/complete/pull/7";
+    const cutUrl = "https://github.com/acme/partial/pull/123";
+    const fullCutUrl = `${cutUrl}${continuation}`;
+    const laterUrl = "https://github.com/acme/later/pull/99";
+    const prefix = `${completeUrl}\n`;
+    const fillerLength = 64_000 - prefix.length - cutUrl.length;
+    const description = `${prefix}${"x".repeat(fillerLength)}${fullCutUrl}\n${laterUrl}`;
+    expect(description.slice(0, 64_000).endsWith(cutUrl)).toBe(true);
+
+    const markdown = buildPaperclipTaskMarkdown({
+      issue: { ...issue, description },
+    })!;
+    const structuredReferences = markdown.split("Structured GitHub pull request references:")[1] ?? "";
+
+    expect(structuredReferences).toContain(completeUrl);
+    expect(structuredReferences).not.toContain(cutUrl);
+    expect(structuredReferences).not.toContain(laterUrl);
+  });
+
   it("surfaces conflicting PR targets and bounds the structured reference list", () => {
     const markdown = buildPaperclipTaskMarkdown({
       issue: { ...issue, description: "Review https://github.com/acme/one/pull/1." },

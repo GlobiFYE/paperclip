@@ -8,6 +8,13 @@ import { extractGitHubPullRequestReferences } from "../github-pull-request-refer
 const MAX_TASK_PULL_REQUEST_REFERENCES = 12;
 const MAX_TASK_REFERENCE_SOURCE_CHARS = 64_000;
 
+function boundTaskReferenceSource(text: string): string {
+  if (text.length <= MAX_TASK_REFERENCE_SOURCE_CHARS) return text;
+  const bounded = text.slice(0, MAX_TASK_REFERENCE_SOURCE_CHARS);
+  const lastWhitespace = bounded.search(/\s(?=\S*$)/);
+  return lastWhitespace < 0 ? "" : bounded.slice(0, lastWhitespace + 1);
+}
+
 function taskPullRequestReferences(input: {
   issue: { identifier?: string | null; id: string; description?: string | null } | null;
   ancestors: Array<{ identifier?: string | null; id: string; description?: string | null }>;
@@ -31,7 +38,7 @@ function taskPullRequestReferences(input: {
   let omittedCount = 0;
   for (const source of sources) {
     for (const reference of extractGitHubPullRequestReferences(
-      [source.text.slice(0, MAX_TASK_REFERENCE_SOURCE_CHARS)],
+      [boundTaskReferenceSource(source.text)],
       { includeShorthand: false },
     )) {
       const key = `${reference.owner.toLowerCase()}/${reference.repo.toLowerCase()}#${reference.number}`;
