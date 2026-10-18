@@ -30,10 +30,10 @@ describe("Daytona idle evidence", () => {
   it("does not treat absence of an unobserved creation name as deletion", () => {
     const activity = new DaytonaIdleActivity();
     const allocation = activity.resource("account/company/environment/create-name", true);
-    activity.confirm("account/company/environment/create-name", true);
+    activity.confirm(activity.proof("account/company/environment/create-name"), true);
     expect(activity.present()).toBe(true);
     activity.observe(allocation, "account/company/environment/immutable-id");
-    activity.confirm("account/company/environment/immutable-id", true);
+    activity.confirm(activity.proof("account/company/environment/immutable-id"), true);
     expect(activity.present()).toBe(false);
     activity.observe(allocation, "account/company/environment/immutable-id");
     expect(activity.present()).toBe(false);
@@ -46,10 +46,10 @@ describe("Daytona idle evidence", () => {
     for (const key of ["account-b/company-a/environment-a/id", "account-a/company-b/environment-a/id", "account-a/company-a/environment-b/id"]) {
       activity.resource(key);
     }
-    activity.confirm("account-a/company-a/environment-a/id");
+    activity.confirm(activity.proof("account-a/company-a/environment-a/id"));
     expect(activity.present()).toBe(true);
     for (const key of ["account-b/company-a/environment-a/id", "account-a/company-b/environment-a/id", "account-a/company-a/environment-b/id"]) {
-      activity.confirm(key);
+      activity.confirm(activity.proof(key));
     }
     expect(activity.present()).toBe(false);
   });
@@ -59,12 +59,12 @@ describe("Daytona idle evidence", () => {
     activity.resource("resource");
     const request = deferred();
     const pending = activity.track(() => { activity.resource("resource"); return request.promise; });
-    await activity.track(async () => { activity.confirm("resource"); });
+    await activity.track(async () => { activity.confirm(activity.proof("resource")); });
     expect(activity.present()).toBe(true);
     request.resolve();
     await pending;
     expect(activity.present()).toBe(true);
-    await activity.track(async () => { activity.confirm("resource", true); });
+    await activity.track(async () => { activity.confirm(activity.proof("resource"), true); });
     expect(activity.present()).toBe(false);
   });
 
@@ -74,10 +74,10 @@ describe("Daytona idle evidence", () => {
     const pending = activity.track(() => { activity.resource("other"); return unrelated.promise; });
     await activity.track(async () => {
       activity.resource("cleaned");
-      activity.confirm("cleaned");
+      activity.confirm(activity.proof("cleaned"));
     });
     unrelated.resolve(); await pending;
-    activity.confirm("other");
+    activity.confirm(activity.proof("other"));
     expect(activity.present()).toBe(false);
   });
 
@@ -89,23 +89,49 @@ describe("Daytona idle evidence", () => {
       activity.resource("resource");
       pending = activity.track(() => child.promise);
       await Promise.race([pending, Promise.resolve()]);
-      activity.confirm("resource");
+      activity.confirm(activity.proof("resource"));
     });
     child.resolve(); await pending;
     expect(activity.present()).toBe(true);
-    activity.confirm("resource");
+    activity.confirm(activity.proof("resource"));
     expect(activity.present()).toBe(false);
+  });
+
+  it("rejects a stopped observation when overlapping work finishes before the reply", async () => {
+    const activity = new DaytonaIdleActivity();
+    const finishWork = deferred(), reply = deferred();
+    const pending = activity.track(() => { activity.resource("resource"); return finishWork.promise; });
+    const stoppedObservation = activity.track(async () => {
+      const proof = activity.proof("resource");
+      await reply.promise;
+      activity.confirm(proof, true);
+    });
+    finishWork.resolve(); await pending;
+    reply.resolve(); await stoppedObservation;
+    expect(activity.present()).toBe(true);
+    await activity.track(async () => { activity.confirm(activity.proof("resource"), true); });
+    expect(activity.present()).toBe(false);
+  });
+
+  it("rejects proof captured before another resource generation was admitted", () => {
+    const activity = new DaytonaIdleActivity();
+    activity.resource("resource");
+    const old = activity.proof("resource");
+    activity.confirm(old);
+    activity.resource("resource");
+    activity.confirm(old);
+    expect(activity.present()).toBe(true);
   });
 
   it("does not let a late create callback clear a new generation of the same ID", () => {
     const activity = new DaytonaIdleActivity();
     const old = activity.resource("resource");
-    activity.confirm("resource");
+    activity.confirm(activity.proof("resource"));
     activity.resource("resource");
     activity.observe(old, "late-alias");
-    activity.confirm("late-alias");
+    activity.confirm(activity.proof("late-alias"));
     expect(activity.present()).toBe(true);
-    activity.confirm("resource");
+    activity.confirm(activity.proof("resource"));
     expect(activity.present()).toBe(false);
   });
 
