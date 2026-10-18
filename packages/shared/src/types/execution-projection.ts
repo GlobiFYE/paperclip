@@ -14,6 +14,8 @@ export interface ExecutionBlocker {
   /** Required workspace files must be recovered before another provider turn. */
   workspaceRepairRequired?: boolean;
   canRecordWorkspaceRepair?: boolean;
+  canReconstructWorkspace?: boolean;
+  workspaceRecoveryStatusVersion?: number;
   savedMessageCount?: number;
 }
 
@@ -76,4 +78,12 @@ export interface ExecutionReconciliation {
   outcomeEvidence: string;
   /** Operator evidence bound to this failed run; required after workspace restore failure. */
   workspaceRepairEvidence?: string;
+  workspaceReconstruction?: {
+    schema: "paperclip.workspace-reconstruction.v1";
+    leaseId: string;
+    resultId: string;
+    descriptorSha256: string;
+    missingWork: string;
+    sources: Array<{ attachmentId: string; sha256: string; byteSize: number; filename: string | null }>;
+  };
 }

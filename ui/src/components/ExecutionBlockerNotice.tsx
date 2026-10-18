@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ExecutionBlocker, Issue } from "@paperclipai/shared";
 import { WorkspaceFileRecovery } from "./WorkspaceFileRecovery";
+import { WorkspaceReconstructionRecovery } from "./WorkspaceReconstructionRecovery";
 import { agentsApi } from "../api/agents";
 import { activityApi } from "../api/activity";
 import { issuesApi } from "../api/issues";
@@ -57,8 +58,9 @@ export function ExecutionBlockerNotice({ companyId, issueId, issueStatus, canMan
             {/* The stored next action is an operator runbook step; lead with what happened. This hold also covers
                 unsafe archives and local runs, so do not claim retries or a retained sandbox here. */}
             <p>
-              Paperclip could not restore the agent's workspace files after its last run. A board operator must
-              recover the files before the agent can continue.
+              {blocker.canReconstructWorkspace
+                ? "The workspace was destroyed before its edits were saved. A board operator can continue from surviving source attachments."
+                : "Paperclip could not restore the agent's workspace files after its last run. A board operator must recover the files before the agent can continue."}
             </p>
             <details>
               <summary className="cursor-pointer">Technical details</summary>
@@ -94,6 +96,8 @@ export function ExecutionBlockerNotice({ companyId, issueId, issueStatus, canMan
       {recoveryError && <p role="alert" className="w-full text-destructive">Unable to load recovery details: {recoveryError.message}</p>}
       {issueStatus && <WorkspaceFileRecovery key={`${blocker.recoveryActionId}:${blocker.runId}`} issueId={issueId}
         issueStatus={issueStatus} blocker={blocker} canManage={canManage} onRecorded={onRetried} />}
+      {blocker.canReconstructWorkspace && <WorkspaceReconstructionRecovery key={`reconstruct:${blocker.recoveryActionId}:${blocker.runId}`}
+        issueId={issueId} blocker={blocker} canManage={canManage} onRecorded={onRetried} />}
     </div>
   );
 }
