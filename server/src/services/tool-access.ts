@@ -14201,7 +14201,9 @@ export function toolAccessService(
                   (!prior.catalogEntryId &&
                     entry.selectorType === prior.selectorType &&
                     entry.connectionId === prior.connectionId &&
-                    (entry.toolName ?? null) === prior.toolName),
+                    (entry.toolName ?? null) === prior.toolName &&
+                    (entry.effect ?? "include") === prior.effect &&
+                    stableHash(entry.conditions ?? null) === stableHash(prior.conditions ?? null)),
               )
             )
               entries.push({
