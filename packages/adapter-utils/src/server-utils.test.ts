@@ -1236,16 +1236,13 @@ describe("renderPaperclipWakePrompt", () => {
     const payload = { reason: "issue_assigned", issue: { id: "issue-1", status: "in_progress" },
       comments: [], commentWindow: { requestedCount: 0, includedCount: 0, missingCount: 0 },
       fallbackFetchNeeded: false };
-    // copy-ok: Paperclip names this runtime boundary the harness.
     const claimed = renderPaperclipWakePrompt({ ...payload, checkedOutByHarness: true }, { resumedSession });
-    // copy-ok: This checks the exact runtime contract wording.
-    expect(claimed).toContain(resumedSession ? "checkout: already claimed by the harness for this run" :
-      "The harness already checked out this issue for the current run."); // copy-ok
+    expect(claimed).toContain(resumedSession ? "checkout: already claimed by Paperclip for this run" :
+      "Paperclip already checked out this issue for the current run.");
     for (const checkedOutByHarness of [false, undefined]) {
       const unclaimed = renderPaperclipWakePrompt({ ...payload, checkedOutByHarness }, { resumedSession });
       expect(unclaimed).not.toContain("checkout: already claimed");
-      // copy-ok: This checks the exact runtime contract wording.
-      expect(unclaimed).not.toContain("The harness already checked out this issue for the current run.");
+      expect(unclaimed).not.toContain("Paperclip already checked out this issue for the current run.");
     }
   });
 

@@ -346,7 +346,7 @@ describe.skipIf(!support.supported)("heartbeat run-control database wiring", () 
 
     expect(terminateSystemdRunScope).toHaveBeenCalledWith(
       tracked.containment,
-      { graceMs: 100, signal: "SIGINT" },
+      { graceMs: 4_000, signal: "SIGINT" },
     );
     expect(terminateLocalService).not.toHaveBeenCalled();
     expect(deps.setRunStatusFromLive).toHaveBeenCalledTimes(1);
