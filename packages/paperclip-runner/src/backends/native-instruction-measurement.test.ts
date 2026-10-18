@@ -120,7 +120,10 @@ describe("native instruction payload measurement", () => {
         expect(instructions).toContain("command -v python3");
         expect(instructions).toContain("Get-Command python3, python, py");
         expect(instructions).toContain("py -3 --version");
-        expect(instructions).toContain("only while the shell and execution target stay the same");
+        expect(instructions).toContain("availability already verified for this same shell and execution target");
+        expect(instructions).toContain("combine the check with the intended operation in one shell invocation when practical");
+        expect(instructions).toContain("do not spend a separate model round on preflight alone");
+        expect(instructions).toContain("Repeat discovery after the shell or target changes");
         expect(instructions).toContain("Never infer executable availability from the Paperclip host");
         expect(instructions).toContain("command -v rg");
         expect(instructions).toContain("use `grep`");
@@ -130,6 +133,8 @@ describe("native instruction payload measurement", () => {
         expect(instructions).toContain("If the status is non-2xx or the body is unexpected");
         expect(instructions).toContain("Never append a `curl -w` status marker");
         expect(instructions).toContain("do not blindly retry a parse failure");
+        expect(instructions).toContain("follow the search tool's documented query semantics");
+        expect(instructions).toContain("no result from a narrower filter or mismatched query does not prove the tool is unavailable");
         expect(instructions).toContain("You are an agent in a Paperclip company.");
         const deliveredTools = setup.dynamicTools as Array<{ name: string; description: string }>;
         expect(deliveredTools.filter(tool => tool.name === "paperclip_finish")).toEqual([
