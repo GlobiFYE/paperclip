@@ -223,5 +223,9 @@
   "names are reserved.": "son nombres reservados.",
   "older…": "anteriores…",
   "on day": "el día",
-  "your app": "tu app"
+  "your app": "tu app",
+  "A run is active now": "Hay una ejecución activa ahora",
+  "No active run": "No hay ninguna ejecución activa",
+  "Scheduled": "Programada",
+  "Run manually or wait for a trigger": "Ejecutala a mano o esperá un disparador"
 }

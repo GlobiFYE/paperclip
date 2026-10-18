@@ -40,5 +40,6 @@
 
   "{0} results match": "Coinciden {0} resultados",
   "{0} active filters hide": "los {0} filtros activos esconden",
-  "The server returned {0}.": "El servidor respondió {0}."
+  "The server returned {0}.": "El servidor respondió {0}.",
+  "Comments": "Comentarios"
 }

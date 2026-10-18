@@ -22,6 +22,13 @@ export const TEXT_ATTRS: ReadonlySet<string> = new Set([
   "footnote", "eyebrow", "action", "emptyMessage", "searchPlaceholder",
   "allLabel", "noneLabel", "copiedLabel", "badgeLabel", "errorMessage",
   "error", "approveLabel", "rejectLabel", "requestedAccess",
+  // `detail` es la segunda línea de una ficha, debajo de `label`, y es texto en
+  // los 35 sitios medidos: ni una clase de Tailwind ni un valor técnico. El
+  // nombre **ya estaba** en `TEXT_KEYS` con una excepción por archivo para
+  // `TaskChatThread.tsx`, así que esto no es una decisión de producto nueva: es
+  // la misma, aplicada a la variante «atributo». Lo pidieron cuatro lotes
+  // seguidos (CHA-30, CHA-31, CHA-32, CHA-33).
+  "detail",
 ]);
 
 /**
@@ -78,6 +85,12 @@ export const TEXT_DECLS: readonly TextDecl[] = [
   { file: "src/components/decision-models/DecisionModelSettings.tsx", names: ["failureMessages"] },
   { file: "src/components/task-chat/composer-run-settings.ts", names: ["EFFORT_LABELS"] },
   { file: "src/components/onboarding/Stepper.tsx", names: ["ONBOARDING_STEP_LABELS"] },
+  // Las siete pestañas de Búsqueda. Va **sólo** `SCOPE_LABELS`: declarar
+  // además `describeScope` suma una cuarta posición no literal al canal de
+  // declaraciones (`return SCOPE_LABELS[scope]` se envuelve entero) y
+  // `datos-del-dueno.es-ar.test.tsx` lo para a propósito. Es una decisión del
+  // Lead, no de este corte: ver `doc/i18n-es-ar/CHA-39-dos-declaraciones.md`.
+  { file: "src/pages/Search.tsx", names: ["SCOPE_LABELS"] },
 
   // Declaraciones locales que arman una etiqueta antes de que llegue al JSX.
   { file: "src/pages/InstanceGeneralSettings.tsx", names: ["label", "visibleActionError"] },

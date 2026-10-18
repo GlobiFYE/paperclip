@@ -369,5 +369,6 @@
   "replace the existing skill": "reemplazar la skill que ya está",
   "· Latest": "· Última",
   "· executable": "· ejecutable",
-  "· referenced in": "· referenciado en"
+  "· referenced in": "· referenciado en",
+  "Last attempt {0}": "Último intento {0}"
 }
