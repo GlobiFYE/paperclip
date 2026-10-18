@@ -63,6 +63,55 @@ describe("heartbeat task markdown rendering", () => {
     expect(markdown).toContain("[ancestor context truncated after 6 entries]");
   });
 
+  it("carries a parent's canonical PR reference with provenance ahead of fork workspace context", () => {
+    const markdown = buildPaperclipTaskMarkdown({
+      issue: { ...issue, description: "Work in the configured fork checkout and review PR 42." },
+      ancestors: [{
+        id: "parent-1",
+        identifier: "PARENT-1",
+        title: "Review the upstream change",
+        description: "Please review https://github.com/upstream-owner/project/pull/42.",
+      }],
+    })!;
+
+    expect(markdown).toContain('"parent PARENT-1": https://github.com/upstream-owner/project/pull/42');
+    expect(markdown).toContain("This target takes precedence over a workspace remote or fork.");
+    expect(markdown).not.toContain("https://github.com/configured-fork/project/pull/42");
+  });
+
+  it("does not turn issue shorthand or malformed PR URLs into canonical PR targets", () => {
+    const markdown = buildPaperclipTaskMarkdown({
+      issue: { ...issue, description: "Related issue: acme/project#42. Broken PR: https://github.com/acme/project/pull/43garbage." },
+    })!;
+
+    expect(markdown).not.toContain("Structured GitHub pull request references:");
+  });
+
+  it("surfaces conflicting PR targets and bounds the structured reference list", () => {
+    const markdown = buildPaperclipTaskMarkdown({
+      issue: { ...issue, description: "Review https://github.com/acme/one/pull/1." },
+      ancestors: [{
+        id: "parent-1",
+        identifier: "PARENT-1",
+        description: "The related PR is https://github.com/acme/two/pull/2.",
+      }],
+      taskPlan: {
+        documentId: "plan-1",
+        revisionId: "revision-1",
+        revisionNumber: 1,
+        body: Array.from({ length: 14 }, (_, index) => `https://github.com/acme/repo/pull/${index + 10}`).join("\n"),
+      },
+    })!;
+
+    expect(markdown).toContain("https://github.com/acme/one/pull/1");
+    expect(markdown).toContain("https://github.com/acme/two/pull/2");
+    expect(markdown).toContain("If the task references conflicting PR targets");
+    const structuredReferences = markdown.split("Structured GitHub pull request references:")[1] ?? "";
+    expect(structuredReferences).toContain("https://github.com/acme/repo/pull/19");
+    expect(structuredReferences).not.toContain("https://github.com/acme/repo/pull/20");
+    expect(structuredReferences).toContain("4 additional PR reference(s) omitted");
+  });
+
   it.each([true, false])("retains attachment-only wakes with hidden comment bodies (native=%s)", (nativeRunner) => {
     const contentPath = "/api/attachments/attachment-1/content";
     const markdown = buildPaperclipTaskMarkdown({
