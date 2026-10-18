@@ -407,3 +407,7 @@ missed this step. The existing stop-only cleanup worker retains their exact
 sandboxes and records provider receipts; this does not reopen a task or start
 another turn. The normal file-only repair control remains required before an
 older lost-work reconstruction can proceed.
+If file retention loses the task lock, teardown keeps the source active for a
+later pass. Historical sources already stopping or stopped remain eligible under
+the existing exact-source checks. A stopped source requires the independent
+stop-and-retain receipts and must not have a competing allocation owner.

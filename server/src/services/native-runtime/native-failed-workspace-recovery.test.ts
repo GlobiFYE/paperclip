@@ -5,7 +5,7 @@ import { activityLog, agents, companies, createDb, environmentLeases, environmen
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "../../__tests__/helpers/embedded-postgres.js";
 import { getExecutionBlocker } from "../execution-blocker.js";
 import { markExecutionReconciliation, validateExecutionReconciliation } from "../execution-recovery-resolution.js";
-import { settleStopOnlyCleanup } from "../sandbox-stop-and-retain.js";
+import { prepareSandboxStopAndRetain, settleStopOnlyCleanup } from "../sandbox-stop-and-retain.js";
 import { preserveCancelledNativeWorkspaces, preserveNativeFailedWorkspace } from "./native-failed-workspace-recovery.js";
 import type { NativeRestartRecoveryClaim } from "./native-restart-recovery.js";
 import { NativeWorkspaceFinalizationBusyError } from "./native-workspace-finalization-ownership.js";
@@ -96,6 +96,32 @@ const support = externalUrl ? { supported: true } : await getEmbeddedPostgresTes
       expect(await readLease(free.lease.id)).toMatchObject({ status: "pending_cleanup", leasePolicy: "retain_on_failure" });
     } finally { release(); await holding; }
   }, 15_000);
+  it.each(["pending_cleanup", "released"])("keeps an exact %s cancellation eligible until its file hold is recorded", async status => {
+    const f = await seed();
+    await db.update(heartbeatRuns).set({ status: "cancelled", finishedAt: new Date(),
+      resultJson: { cancelledByActorType: "user", cancelledByUserId: "operator", nativeCancellation: {
+        schema: "paperclip.native-cancellation.v1", runId: f.runId, companyId: f.companyId, issueId: f.issueId,
+        scope: "run", reasonCode: "cancellation_run_only", dispatchState: "acknowledged", dispatched: true,
+        intentAuditId: randomUUID(), acknowledgementAuditId: randomUUID(),
+      } },
+    }).where(eq(heartbeatRuns.id, f.runId));
+    const stopping = await prepareSandboxStopAndRetain(db, f.lease);
+    if (!stopping) throw new Error("Expected the exact stop-only source");
+    if (status === "pending_cleanup") {
+      await preserveCancelledNativeWorkspaces(db);
+      expect((await readRun(f.runId)).resultJson).not.toHaveProperty("workspaceRestoreRecovery");
+      expect(await readLease(f.lease.id)).toMatchObject({ status: "pending_cleanup", leasePolicy: "ephemeral" });
+    }
+    await settleStopOnlyCleanup(db, stopping, { attemptId: String(stopping.metadata?.pendingCleanupAttemptId),
+      receipt: { providerLeaseId: f.lease.providerLeaseId, state: "stopped" } });
+    for (let pass = 0; pass < 3; pass++) await preserveCancelledNativeWorkspaces(db);
+    expect(await readLease(f.lease.id)).toMatchObject({ status: "released", leasePolicy: "retain_on_failure",
+      metadata: { remoteExecutionTermination: { state: "stopped" } } });
+    expect(await readRun(f.runId)).toMatchObject({ status: "cancelled", resultJson: {
+      workspaceRestoreRecovery: { leaseIds: [f.lease.id] },
+    } });
+    expect(await actions(f.issueId)).toHaveLength(1);
+  });
 
   it("pins only the exact unexported source and exposes a file-only recovery card", async () => {
     const f = await seed();
