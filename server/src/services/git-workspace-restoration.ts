@@ -156,7 +156,12 @@ export async function assertReproducibleBaseGitStorage(cwd: string, signal?: Abo
     for (const name of await fs.readdir(path.join(root, directory))) {
       const file = `${directory}/${name}`;
       const entry = await fs.lstat(path.join(root, file));
-      if (!entry.isFile() || !templates.get(file)?.equals(await fs.readFile(path.join(root, file)))) throw new Error("custom_git_metadata");
+      if (!entry.isFile()) throw new Error("custom_git_metadata");
+      const actual = await fs.readFile(path.join(root, file));
+      const template = templates.get(file);
+      const managedExclude = file === "info/exclude" && template
+        ? Buffer.concat([template, Buffer.from(`\n/${PROJECT_REPOSITORIES_DIR}/\n`)]) : null;
+      if (!template?.equals(actual) && !managedExclude?.equals(actual)) throw new Error("custom_git_metadata");
     }
   }
   if (!templates.get("description")?.equals(await fs.readFile(path.join(root, "description")))) throw new Error("custom_git_metadata");
