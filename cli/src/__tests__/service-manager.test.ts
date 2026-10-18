@@ -252,8 +252,51 @@ describe("operator-added service environment", () => {
 
     const unit = await fs.readFile(manager.definitionPath, "utf8");
     expect(unit).toContain('Environment="PATH=/home/alice/.local/bin:/usr/bin"');
-    expect(unit).toContain('Environment="PAPERCLIP_TAILNET_BIND_HOST=100.64.0.1"');
+    expect(unit).toContain("Environment=PAPERCLIP_TAILNET_BIND_HOST=100.64.0.1");
     expect(unit.match(/PAPERCLIP_HOME=/g)).toHaveLength(1);
     expect(manager.renderDefinition(unit)).toBe(unit);
+  });
+  it("carries systemd assignments forward exactly as written", async () => {
+    const userHome = await temporaryDirectory();
+    const runner: CommandRunner = async () => ({ stdout: "", stderr: "" });
+    const manager = new SystemdServiceManager("default", runner, path.join(userHome, ".paperclip"), path.join(userHome, ".local/bin/paperclipai"), userHome);
+    await fs.mkdir(path.dirname(manager.definitionPath), { recursive: true });
+    const operatorLines = [
+      'Environment="PATH=%h/.local/bin:/usr/bin" "FEATURE_FLAG=1"',
+      "Environment='GREETING=hello world' PLAIN=$HOME",
+      'Environment="QUOTED=say \\"hi\\"" PAPERCLIP_HOME=/elsewhere',
+    ];
+    const customized = manager.renderDefinition().replace("WorkingDirectory=%h", `${operatorLines.join("\n")}\nWorkingDirectory=%h`);
+    await fs.writeFile(manager.definitionPath, customized, "utf8");
+
+    await manager.restart();
+
+    const unit = await fs.readFile(manager.definitionPath, "utf8");
+    expect(unit).toContain(operatorLines[0]);
+    expect(unit).toContain(operatorLines[1]);
+    // A managed key on an operator line is dropped; the rest of the line stays.
+    expect(unit).toContain('Environment="QUOTED=say \\"hi\\""\n');
+    expect(unit).not.toContain("%%h");
+    expect(unit).not.toContain("/elsewhere");
+    expect(unit.match(/PAPERCLIP_HOME=/g)).toHaveLength(1);
+    expect(manager.renderDefinition(unit)).toBe(unit);
+  });
+
+  it("decodes numeric character references in launchd values", async () => {
+    const userHome = await temporaryDirectory();
+    const runner: CommandRunner = async () => ({ stdout: "", stderr: "" });
+    const manager = new LaunchdServiceManager("default", runner, path.join(userHome, ".paperclip"), path.join(userHome, ".local/bin/paperclipai"), userHome);
+    await fs.mkdir(path.dirname(manager.definitionPath), { recursive: true });
+    const customized = manager.renderDefinition().replace(
+      "  </dict>\n  <key>RunAtLoad</key>",
+      "    <key>PATH</key><string>/Users/Alice&#32;Smith/bin:/usr&#x2F;bin</string>\n  </dict>\n  <key>RunAtLoad</key>",
+    );
+    await fs.writeFile(manager.definitionPath, customized, "utf8");
+
+    await manager.start();
+
+    const plist = await fs.readFile(manager.definitionPath, "utf8");
+    expect(plist).toContain("<key>PATH</key><string>/Users/Alice Smith/bin:/usr/bin</string>");
+    expect(plist).not.toContain("&amp;#");
   });
 });

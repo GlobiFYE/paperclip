@@ -88,9 +88,11 @@ function unescapeSystemd(value: string): string {
 }
 
 function unescapeXml(value: string): string {
-  return value.replace(/&(amp|lt|gt|quot|apos);/g, (_, name: string) =>
-    name === "amp" ? "&" : name === "lt" ? "<" : name === "gt" ? ">" : name === "quot" ? '"' : "'",
-  );
+  return value.replace(/&(?:(amp|lt|gt|quot|apos)|#x([0-9a-fA-F]+)|#([0-9]+));/g, (entity, name: string | undefined, hex: string | undefined, decimal: string | undefined) => {
+    if (name !== undefined) return name === "amp" ? "&" : name === "lt" ? "<" : name === "gt" ? ">" : name === "quot" ? '"' : "'";
+    const codePoint = Number.parseInt(hex ?? decimal ?? "", hex !== undefined ? 16 : 10);
+    return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : entity;
+  });
 }
 
 export function extractExecutableFromSystemdUnit(content: string): string | null {
@@ -140,14 +142,49 @@ function operatorEnvironment(entries: Iterable<[string, string]>): ServiceEnviro
   return environment;
 }
 
-export function extractExtraEnvironmentFromSystemdUnit(content: string): ServiceEnvironment {
-  const entries: [string, string][] = [];
-  for (const match of content.matchAll(/^Environment=(?:"((?:\\.|[^"\\])*)"|([^\s"]\S*))\s*$/gm)) {
-    const assignment = match[1] !== undefined ? unescapeSystemd(match[1]) : unescapeSystemd(match[2]);
-    const separator = assignment.indexOf("=");
-    if (separator > 0) entries.push([assignment.slice(0, separator), assignment.slice(separator + 1)]);
+// Splits an Environment= value into its assignments, keeping each one exactly
+// as written (quotes, escapes and %-specifiers included) so it can be carried
+// forward byte for byte.
+function splitSystemdAssignments(value: string): string[] {
+  const words: string[] = [];
+  let word = "";
+  let quote: string | null = null;
+  for (let index = 0; index < value.length; index++) {
+    const char = value[index];
+    if (char === "\\" && index + 1 < value.length) {
+      word += char + value[++index];
+    } else if (quote !== null) {
+      word += char;
+      if (char === quote) quote = null;
+    } else if (char === '"' || char === "'") {
+      word += char;
+      quote = char;
+    } else if (/\s/.test(char)) {
+      if (word) words.push(word);
+      word = "";
+    } else {
+      word += char;
+    }
   }
-  return operatorEnvironment(entries);
+  if (word) words.push(word);
+  return words;
+}
+
+// Returns the installed unit's Environment= lines with the CLI-managed
+// assignments removed. Operator assignments are kept verbatim: decoding and
+// re-escaping them would turn a specifier such as %h into a literal.
+export function extractExtraEnvironmentFromSystemdUnit(content: string): string[] {
+  const lines: string[] = [];
+  for (const match of content.matchAll(/^Environment=(.*)$/gm)) {
+    const assignments = splitSystemdAssignments(match[1]);
+    const kept = assignments.filter((assignment) => {
+      const key = assignment.replace(/^["']/, "").split("=", 1)[0];
+      return !MANAGED_ENVIRONMENT_KEYS.has(key);
+    });
+    if (kept.length === 0) continue;
+    lines.push(kept.length === assignments.length ? match[0] : `Environment=${kept.join(" ")}`);
+  }
+  return lines;
 }
 
 export function extractExtraEnvironmentFromLaunchdPlist(content: string): ServiceEnvironment {
@@ -160,10 +197,8 @@ export function extractExtraEnvironmentFromLaunchdPlist(content: string): Servic
   return operatorEnvironment(entries);
 }
 
-export function renderSystemdUnit(input: { instanceId: string; shimPath: string; homeDir: string; extraEnvironment?: ServiceEnvironment }): string {
-  const extra = Object.entries(input.extraEnvironment ?? {})
-    .map(([key, value]) => `Environment="${escapeSystemd(`${key}=${value}`)}"\n`)
-    .join("");
+export function renderSystemdUnit(input: { instanceId: string; shimPath: string; homeDir: string; extraEnvironment?: readonly string[] }): string {
+  const extra = (input.extraEnvironment ?? []).map((line) => `${line}\n`).join("");
   return `[Unit]
 Description=Paperclip AI (${escapeSystemd(input.instanceId)})
 After=network.target
