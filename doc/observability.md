@@ -993,8 +993,18 @@ same cancel and fail-fast deadline as a duplex channel loss. The run fails with
 `acpStalledToolKind` (one closed `ToolKind` label or `unknown`) and
 `acpStalledToolSilentMs`. The stop-time fields above are measured when the
 watchdog fired. A live subagent's Task call keeps receiving heartbeats, so only
-a call that itself went silent trips the watchdog. Other ACP agents are watched
-only when `stalledToolTimeoutSec` is set.
+a call that itself went silent trips the watchdog. A background subagent's Task
+call completes when the subagent starts, so the watchdog watches that subagent's
+own tool calls instead. Other ACP agents are watched only when
+`stalledToolTimeoutSec` is set.
+
+The engine also observes ACP permission requests without deciding them; ACPX's
+permission mode still decides each one. A stalled run records
+`acpStalledToolPermissionRequested` (whether the stalled call's permission
+request reached Paperclip) and `acpPendingToolPermissionRequestedCount` (how many
+pending calls had one). A call whose request never arrived stalled before or
+during its permission round trip; a call whose request arrived stalled after
+Paperclip answered it. Both fields hold only a boolean and a count.
 
 ACP and legacy OpenCode results retain the adapter's resolved wall-clock timeout as
 `adapterExecutionTimeout` in the instance run result. Finalization uses it for
