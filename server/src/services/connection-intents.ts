@@ -268,6 +268,8 @@ export function connectionIntentService(db: Db) {
     serviceSlug: string;
     purpose?: "ai" | "channel";
     sourceRunId?: string | null;
+    /** The task the agent would call from; governance conditions can depend on it. */
+    issueId?: string | null;
     inventory?: Awaited<ReturnType<typeof connectionInventory>>;
   }) {
     const managed = input.purpose === "ai" ? await managedAgent(input.companyId, input.agentId, input.serviceSlug, { sourceRunId: input.sourceRunId }) : null;
@@ -291,7 +293,7 @@ export function connectionIntentService(db: Db) {
     if (matching.length === 0) return null;
     // TypeSafe has no catalog tools; its connector eligibility and policy decision are the readiness test.
     if (input.serviceSlug === TYPESAFE_GALLERY_KEY) {
-      const usable = await typesafeUsableConnections(db, { companyId: input.companyId, agentId: input.agentId });
+      const usable = await typesafeUsableConnections(db, { companyId: input.companyId, agentId: input.agentId, issueId: input.issueId });
       return usable.length === 1 ? access.getConnection(usable[0]!.id, input.companyId) : null;
     }
     const effective = await access.getEffectiveProfilesForAgent(input.companyId, input.agentId);
@@ -459,7 +461,7 @@ export function connectionIntentService(db: Db) {
       const { score, nameScore } = scoreConnectionSearch(preparedQuery, [app.slug, app.name],
         `${app.description ?? ""} ${app.searchCapabilities} ${catalog.map(tool => `${tool.toolName} ${tool.description ?? ""}`).join(" ")}`);
       if (!score) continue;
-      const ready = await usableConnectionForAgent({ companyId: run.companyId, agentId: agent.id,
+      const ready = await usableConnectionForAgent({ companyId: run.companyId, agentId: agent.id, issueId: issue.id,
         responsibleUserId: run.responsibleUserId!, serviceSlug: service, purpose: aiOnly ? "ai" : service === "agentmail" ? "channel" : undefined, inventory });
       const denied = !aiOnly && !ready && matching.length > 0 && await administrativeDenial(run.companyId, agent.id, service, inventory);
       candidates.push({ score, nameScore, item: {
@@ -546,7 +548,7 @@ export function connectionIntentService(db: Db) {
           if (await administrativeDenial(run.companyId, agent.id, provider, inventory)) continue;
           const app = await resolveService(provider, run.companyId, run.responsibleUserId!, agent.id);
           if (!app.available || !app.methods.length) continue;
-          const ready = await usableConnectionForAgent({ companyId: run.companyId, agentId: agent.id, responsibleUserId: run.responsibleUserId!, serviceSlug: provider, inventory });
+          const ready = await usableConnectionForAgent({ companyId: run.companyId, agentId: agent.id, issueId: issue.id, responsibleUserId: run.responsibleUserId!, serviceSlug: provider, inventory });
           alternatives.push({
             service: `via:${provider}:${targetService}`, name: `${targetName} through ${app.name}`,
             source: "aggregator", state: "available", description: `Connect ${targetName} through ${app.name}, an external service.`,
@@ -775,6 +777,7 @@ export function connectionIntentService(db: Db) {
       serviceSlug: app.slug,
       purpose: options.purpose,
       sourceRunId: context.run.id,
+      issueId: context.issue.id,
     });
     if (ready && !accessRequest && (!options.connectionId || ready.id === options.connectionId)) {
       return {
@@ -1149,7 +1152,7 @@ export function connectionIntentService(db: Db) {
 
       const runtimeConnection = await connectionIntentService(txDb).usableConnectionForAgent({
         companyId: loaded.issue.companyId, agentId: payload.requestingAgentId,
-        responsibleUserId: userId, serviceSlug: payload.serviceSlug,
+        responsibleUserId: userId, serviceSlug: payload.serviceSlug, issueId: loaded.issue.id,
       });
       if (runtimeConnection?.id !== selectedConnection.id) throw conflict("This identity is not the connection this agent can execute. Resolve conflicting identities before continuing.");
 

@@ -154,7 +154,7 @@ export function connectionIntentDeliveryService(db: Db, heartbeat: Pick<Heartbea
     }
     if (interaction.status === "accepted") {
       const ready = await connectionIntentService(db).usableConnectionForAgent({ companyId: claimed.companyId,
-        agentId: payload!.requestingAgentId!, responsibleUserId: userId!, serviceSlug: payload!.serviceSlug!, purpose: payload!.purpose });
+        agentId: payload!.requestingAgentId!, responsibleUserId: userId!, serviceSlug: payload!.serviceSlug!, purpose: payload!.purpose, issueId: loaded.issue.id });
       if (!ready) return;
     }
     if (retiredForAvailableConnection) {
