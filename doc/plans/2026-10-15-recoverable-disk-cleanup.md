@@ -33,7 +33,68 @@ Each slice gets focused tests, required repository checks, review, single-worksp
 deployment at an exact SHA, dry-run inspection, measured reclamation, and ordinary
 product acceptance. Rollback disables deletion and retains restoration support.
 
-## Current state (2026-10-15, 19:27 UTC)
+## Current delivery state (2026-10-17)
+
+The earlier fixture acceptance proved recovery, but did not reclaim the real backlog.
+The Oct 16 recurrence measured 129 GiB used and 8.24 GiB free. Nested project copies
+accounted for 21.31 GiB; 36 fully finished task trees held 9.23 GiB of candidate
+nested copies. Those are candidate bytes, not reclaimed bytes. Runner backups and
+legacy skill-run pinning remain separate follow-ups.
+
+Upstream PRs #16586, #16614, and #16621 now recognize managed nested checkouts,
+short-circuit shared paths, and verify public Git commits without a run identity.
+The remaining implementation gap is exact nested commit and local settings recovery.
+Current work builds on master `1f27427ffdefaf5fb2760d1d53c0d78cb9683d4c`, branch
+`codex/worktree-nested-restoration`. Serving SHA observed before work:
+`27ab902d3db2770ada79c9f42a9c06e1d346f34b`. No deployment or real reclamation yet.
+
+| Required outcome | Current evidence | Remaining gap | Next action / owner |
+| --- | --- | --- | --- |
+| Restore every nested repository at its recorded commit | Real Git/Postgres regression now restores A after upstream advances to B, before provisioning | Review and deployed proof | CI and one-target rollout / this task |
+| Preserve local settings and unique work | Encrypted bytes/modes, mutation fencing, interrupted publication and retry controls pass | Review and deployed proof | CI and protected-data comparison / this task |
+| Reclaim real finished backlog on staging | Oct 16 disk survey and skip reasons retained | Reviewed merge, one-target rollout, actual measured deletion | Existing deployment workflow / this task |
+| Ordinary reopening and subsequent work | Prior main-repository fixture proof only | Real expired nested workspace journey plus independent inspection | Product acceptance / this task |
+
+Retained experiment evidence: `/tmp/paperclip-disk-20261016/nested-baseline-built.log`.
+After 17s dependency installation and one SDK build, the useful baseline took 12.23s
+(6.91s test, 3.07s transform), using bare upstream repositories and normal preparation,
+expiration, and reopening. It failed because nested HEAD became B instead of A.
+Treatment passed the same recovery case in 14.44s. The affected suites passed
+37 cases in 142.37s; six nested mutation/retry cases passed in 56.72s. Independent
+review found interrupted hard-link publication and tracked-settings mode risks;
+three added controls passed in 19.07s after fixes. The final affected run passed
+55 of 56 cases in 98.38s; one fault-injection fixture used a noncanonical macOS
+path and missed its intended failure. Correcting that path made the case pass
+in 16.94s. All five content controls passed again after the bounded-read fix.
+Full workspace typecheck and build passed. The broad local test run was stopped
+after approximately 12 minutes of unrelated serial server tests; mandatory
+parallel CI remains required before merge. No full-suite local pass is claimed.
+
+Live skip inspection found ordinary linked-worktree FETCH_HEAD files blocking
+45 of 200 sampled worker events. The local baseline reproduced rejection in
+8.31s; the verified-fetch treatment passed five cases in 15.23s. Unknown,
+malformed, and unverified local-only fetched state stays protected.
+
+The existing fleet campaign completed for this target during diagnosis. Current
+serving SHA is `d30648dee89720358271c276b9fc28cf83f18be7`, artifact
+`cloud-39088110403-1`. The target is temporarily user-managed, with no operation
+lock; Git dry-run was staged for the next deployment. Fleet defaults are unchanged.
+Reconcile the pin after acceptance without rolling back restoration support.
+Staging read-only baseline at 2026-10-18 03:05 UTC: 127,859,752,960 bytes used,
+19,438,809,088 free (87%). Only one real-company workspace had a completed
+expiration record. These observations do not establish reclamation by this change.
+
+First attempts exposed loopback sandbox denial and a missing SDK build; both setup
+issues were corrected before judging behavior. Reuse this fixture for treatment.
+
+All prior temporary SSH keys have been revoked and removed. This iteration registered
+`paperclip-cleanup-20261017`, fingerprint `SHA256:h6kA+d64fu/OoA4bLNfjW0J3V5YsapuSWVbZpR+VcdA`.
+Revoke it and remove `/tmp/paperclip-cleanup-20261017/railway-key{,.pub}` and
+`~/.ssh/paperclip_cleanup_20261017{,.pub}` at completion. Historical details below describe prior
+revisions and must not be treated as current deployment or access state.
+
+## Historical state (2026-10-15, 19:27 UTC)
+
 
 - Skill [PR #16433](https://github.com/paperclipai/paperclip/pull/16433) merged as
   `86c965ce7ab1499864f74b8dd6ed0d2d8db15197`. Git

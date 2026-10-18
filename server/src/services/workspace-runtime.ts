@@ -1,3 +1,4 @@
+import { restoreGitWorkspaceContents } from "./git-workspace-contents.js";
 import { savedGitWorkspaceRestoration, ensureSavedGitCommit, GitCacheRestorationFailure } from "./git-workspace-restoration.js";
 import { sanitizeRuntimeServiceBaseEnv } from "./runtime-service-env.js";
 import { verifiedRecordedIsolatedRemoteSource } from "./isolated-remote-workspace-source.js";
@@ -3769,6 +3770,7 @@ export async function realizeExecutionWorkspace(input: {
 }
 
 export async function ensurePersistedExecutionWorkspaceAvailable(input: {
+  prepareRestoredLocalSource?: (sourceCwd: string) => Promise<() => Promise<void>>;
   db?: Db | null;
   base: ExecutionWorkspaceInput;
   workspace: {
@@ -3853,6 +3855,24 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     workspaceId: input.workspace.id, cwd, baseCwd, repoUrl: input.workspace.repoUrl ?? input.base.repoUrl,
     branchName: input.workspace.branchName ?? null });
   const savedCommit = restoration?.commit ?? null;
+  const restoreContents = async () => {
+    if (!restoration?.contents || !input.workspace.id) return;
+    await restoreGitWorkspaceContents({ cwd, companyId: input.agent.companyId, workspaceId: input.workspace.id,
+      contents: restoration.contents, resolveGitAuth: async url => {
+        const auth = await input.resolveGitAuth?.(url);
+        if (!auth) return null;
+        const source = auth.source;
+        if (source !== "company_secret" && source !== "managed_connection" && source !== "server_env") throw new GitCacheRestorationFailure();
+        return { ...auth, source, secretName: auth.secretName ?? null };
+      },
+      authorizeSource: async source => {
+        if (!input.db || !input.workspace.projectId) throw new GitCacheRestorationFailure();
+        const [row] = await input.db.select().from(projectWorkspaces).where(and(
+          eq(projectWorkspaces.id, source.id), eq(projectWorkspaces.companyId, input.agent.companyId),
+          eq(projectWorkspaces.projectId, input.workspace.projectId)));
+        if (!row || row.repoUrl !== source.repoUrl) throw new GitCacheRestorationFailure();
+      }, prepareLocalSource: input.prepareRestoredLocalSource });
+  };
   const repoRoot = await runGit(["rev-parse", "--show-toplevel"], baseCwd);
   await input.beforeSourceCopy?.(repoRoot, realized.worktreePath ?? cwd);
   const recordedBaseRefSha = readRecordedBaseRefSha(input.workspace.metadata);
@@ -3934,6 +3954,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     realized.warnings = [...repairWarnings, ...baseRefreshWarnings, ...baseDrift.warnings];
     realized.baseRefSha = refresh.baseRefSha ?? recordedBaseRefSha ?? baseDrift.branchBaseRefSha ?? baseDrift.currentBaseRefSha;
     await input.afterSourceCopy?.(repoRoot, realized.worktreePath ?? cwd);
+    if (restoration && !restoration.restored) await restoreContents();
     await provisionExecutionWorktree({
       skipHostProvision: input.skipHostProvision,
       strategy: {
@@ -4035,6 +4056,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
   });
 
   await input.afterSourceCopy?.(repoRoot, worktreePath);
+  await restoreContents();
   await provisionExecutionWorktree({
     skipHostProvision: input.skipHostProvision,
     strategy: {

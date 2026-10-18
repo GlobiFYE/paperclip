@@ -572,6 +572,10 @@ async function prepareHeartbeatWorkspaceLocked(db: Db, input: HeartbeatWorkspace
       restoreExistingWorkspace: reusableExistingExecutionWorkspace
         ? () =>
             ensurePersistedExecutionWorkspaceAvailable({
+              prepareRestoredLocalSource: issueId ? sourceCwd => executionWorkspacesSvc.prepareConfiguredRepositorySource({
+                companyId: agent.companyId, issueId, workspaceId: reusableExistingExecutionWorkspace.id,
+                cwd: reusableExistingExecutionWorkspace.cwd!, agentId: agent.id, runId: run.id, sourceCwd,
+              }) : undefined,
               skipHostProvision,
               db,
               base: executionWorkspaceBase,

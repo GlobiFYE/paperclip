@@ -1,4 +1,6 @@
+import { validateGitWorkspaceContents, type GitWorkspaceContents } from "./git-workspace-contents.js";
 import fs from "node:fs/promises";
+import { constants } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFile as execFileCallback } from "node:child_process";
@@ -31,6 +33,7 @@ export type GitCacheRestoration = {
   gitBranchOwnershipVersion: 1;
   verifiedAt: string;
   restoredAt?: string;
+  contents?: GitWorkspaceContents;
 };
 export type GitCacheExpiration = {
   schema: "paperclip.git-cache-expiration.v1"; generation: number; workspaceRemoved: boolean;
@@ -89,6 +92,7 @@ export function readGitCacheRestoration(workspace: Workspace): GitCacheRestorati
     || (recipe.restoredAt !== undefined && !Number.isFinite(Date.parse(recipe.restoredAt)))) {
     throw new GitCacheRestorationFailure();
   }
+  validateGitWorkspaceContents(recipe.contents);
   return recipe;
 }
 
@@ -187,7 +191,7 @@ export async function assertReproducibleManagedCheckout(checkout: string, input:
   const worktrees = (await gitCacheCommand(checkout, ["worktree", "list", "--porcelain"], signal))
     .split("\n").filter(line => line.startsWith("worktree "));
   if (worktrees.length !== 1) throw new Error("managed_checkout_has_worktrees");
-  await assertReproducibleGitFiles(checkout, signal);
+  await assertReproducibleGitFiles(checkout, signal, { preserveSettings: true });
   await assertReproducibleBaseGitStorage(checkout, signal);
   const refs = (await gitCacheCommand(checkout, ["for-each-ref", "--format=%(refname)"], signal)).trim().split("\n").filter(Boolean);
   if (refs.some(ref => !/^refs\/(heads|tags|remotes\/origin)\//.test(ref))) throw new Error("unsupported_managed_checkout_refs");
@@ -230,8 +234,57 @@ async function hasCommitsMissingUpstream(checkout: string, localTips: string[], 
   }
 }
 
+async function assertReproducibleFetchHead(cwd: string, gitDir: string, signal?: AbortSignal,
+  verifyFetchedCommit?: (commit: string, signal?: AbortSignal) => Promise<void>) {
+  const target = path.join(gitDir, "FETCH_HEAD");
+  const entry = await fs.lstat(target).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!entry) return;
+  const byteLimit = 64 * 1024;
+  if (!entry.isFile() || entry.isSymbolicLink() || entry.size > byteLimit) throw new Error("unsupported_worktree_fetch_head");
+  const handle = await fs.open(target, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  let contents: Buffer;
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.nlink !== 1 || stat.size > byteLimit) throw new Error("unsupported_worktree_fetch_head");
+    const buffer = Buffer.alloc(byteLimit + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      signal?.throwIfAborted();
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    if (length > byteLimit) throw new Error("unsupported_worktree_fetch_head");
+    contents = buffer.subarray(0, length);
+  } finally { await handle.close(); }
+  const text = contents.toString("utf8");
+  if (!Buffer.from(text, "utf8").equals(contents) || text && !text.endsWith("\n")) throw new Error("unsupported_worktree_fetch_head");
+  const commits = new Set<string>();
+  for (const line of text ? text.slice(0, -1).split("\n") : []) {
+    const match = /^([a-f0-9]{40})\t(?:not-for-merge)?\t[^\t\r\n\0]*$/.exec(line);
+    if (!match) throw new Error("unsupported_worktree_fetch_head");
+    commits.add(match[1]!);
+    if (commits.size > 32) throw new Error("worktree_fetch_head_budget");
+  }
+  for (const commit of commits) {
+    signal?.throwIfAborted();
+    const objectType = await gitCacheCommand(cwd, ["cat-file", "-t", commit], signal).catch(() => "");
+    const ancestor = objectType.trim() === "commit" && await gitCacheCommand(cwd, ["merge-base", "--is-ancestor", commit, "HEAD"], signal)
+      .then(() => true, () => false);
+    signal?.throwIfAborted();
+    if (ancestor) continue;
+    if (!verifyFetchedCommit) throw new Error("unverified_fetched_commit");
+    await verifyFetchedCommit(commit, signal);
+  }
+}
+
 export async function assertReproducibleGitFiles(cwd: string, signal?: AbortSignal, options: {
   proveManagedCheckout?: ManagedCheckoutProver;
+  preserveSettings?: boolean;
+  verifyFetchedCommit?: (commit: string, signal?: AbortSignal) => Promise<void>;
 } = {}) {
   if ((await gitCacheCommand(cwd, ["status", "--porcelain=v1", "--untracked-files=all", "-z"], signal)).length) throw new Error("dirty_or_untracked_files");
   if ((await gitCacheCommand(cwd, ["ls-files", "-v"], signal)).split("\n").some(line => /^[a-zS] /.test(line))) throw new Error("unsupported_index_flags");
@@ -239,7 +292,7 @@ export async function assertReproducibleGitFiles(cwd: string, signal?: AbortSign
   if (localConfig.split("\n").filter(Boolean).some(key => !/^(core\.(repositoryformatversion|filemode|bare|logallrefupdates|ignorecase|precomposeunicode)|remote\.origin\.(url|fetch)|branch\.[^.]+\.(remote|merge))$/.test(key))) throw new Error("unsupported_local_git_config");
   const regenerable = await findRegenerableWorkspaceDirs(cwd, { signal });
   const ignored = (await gitCacheCommand(cwd, ["ls-files", "--others", "--ignored", "--exclude-standard", "-z"], signal)).split("\0").filter(Boolean);
-  const unexplained = ignored.filter(file => file !== PAPERCLIP_CLAUDE_SETTINGS_FILE && !regenerable.some(dir => file.startsWith(`${dir}/`)));
+  const unexplained = ignored.filter(file => !(options.preserveSettings && file === PAPERCLIP_CLAUDE_SETTINGS_FILE) && !regenerable.some(dir => file.startsWith(`${dir}/`)));
   const checkouts = new Set<string>();
   for (const file of unexplained) {
     const [namespace, name, rest] = file.split("/", 3);
@@ -266,8 +319,9 @@ export async function assertReproducibleGitFiles(cwd: string, signal?: AbortSign
   if (original) await gitCacheCommand(cwd, ["merge-base", "--is-ancestor", original.trim(), "HEAD"], signal)
     .catch(() => { throw new Error("unique_original_head"); });
   if (gitDir !== common) {
-    const allowed = new Set(["HEAD", "ORIG_HEAD", "index", "commondir", "gitdir", "logs", "refs", "COMMIT_EDITMSG", "index.lock", "HEAD.lock"]);
+    const allowed = new Set(["HEAD", "ORIG_HEAD", "FETCH_HEAD", "index", "commondir", "gitdir", "logs", "refs", "COMMIT_EDITMSG", "index.lock", "HEAD.lock"]);
     if ((await fs.readdir(gitDir)).some(name => !allowed.has(name))) throw new Error("unknown_worktree_git_files");
+    await assertReproducibleFetchHead(cwd, gitDir, signal, options.verifyFetchedCommit);
     async function assertEmptyRefs(root: string): Promise<void> {
       const entries = await fs.readdir(root, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
         if (error.code === "ENOENT") return []; throw error;
@@ -316,7 +370,8 @@ export async function inspectGitCacheRecipe(workspace: Workspace, resolveGitAuth
   if (!(await fs.lstat(path.join(workspace.cwd, ".git"))).isFile()) throw new Error("not_linked_worktree");
   if ((await gitCacheCommand(workspace.cwd, ["rev-parse", "--path-format=absolute", "--git-common-dir"], signal)).trim() !== path.join(await fs.realpath(source), ".git")) throw new Error("source_identity_changed");
   if ((await gitCacheCommand(workspace.cwd, ["symbolic-ref", "--short", "HEAD"], signal)).trim() !== workspace.branchName) throw new Error("branch_identity_changed");
-  await assertReproducibleGitFiles(workspace.cwd, signal, options);
+  await assertReproducibleGitFiles(workspace.cwd, signal, { ...options, preserveSettings: true,
+    verifyFetchedCommit: (commit, verificationSignal) => verifyRemoteGitCommit(workspace.repoUrl!, commit, resolveGitAuth, verificationSignal) });
   const commit = (await gitCacheCommand(workspace.cwd, ["rev-parse", "HEAD"], signal)).trim();
   await verifyRemoteGitCommit(workspace.repoUrl, commit, resolveGitAuth, signal);
   return { schema: "paperclip.git-cache-restoration.v1", companyId: workspace.companyId, workspaceId: workspace.id,
@@ -424,5 +479,6 @@ export function savedGitWorkspaceRestoration(input: { metadata?: Record<string, 
     || value.repoUrl !== input.repoUrl || value.branchName !== input.branchName
     || !isRuntimeOwnedGitBranch(input.metadata)
     || (value.restoredAt !== undefined && !Number.isFinite(Date.parse(value.restoredAt)))) throw new GitCacheRestorationFailure();
-  return { commit: value.commit, restored: value.restoredAt !== undefined };
+  validateGitWorkspaceContents(value.contents);
+  return { commit: value.commit, restored: value.restoredAt !== undefined, contents: value.contents };
 }

@@ -3863,6 +3863,17 @@ export function executionWorkspaceService(db: Db, opts: ExecutionWorkspaceServic
           const realized = await ensurePersistedExecutionWorkspaceAvailable({
             db: tx as unknown as Db,
             resolveGitAuth: gitAuth,
+            prepareRestoredLocalSource: async sourceCwd => {
+              const captured = await assertIsolatedWorkspaceSourceReadAccess(tx as unknown as Db, {
+                companyId: row.companyId, sourceCwd, actor: input.authorizationActor, copyKind: "repository",
+              });
+              const recheck = () => retainIsolatedWorkspaceSourceAccess(tx as unknown as Db, {
+                companyId: row.companyId, sourceCwd, targetCwd: row.cwd!, actor: input.authorizationActor,
+                captured, issueId: issue.id, copyKind: "repository",
+              });
+              await recheck();
+              return recheck;
+            },
             skipHostProvision: trust.kind === "low_trust_review" || copyOnlyProvisioning,
             beforeSourceCopy: verifyCopyIdentity,
             afterSourceCopy: verifyCopyIdentity,

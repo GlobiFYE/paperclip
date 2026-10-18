@@ -1,3 +1,4 @@
+import { captureGitWorkspaceContents, assertGitWorkspaceContentsUnchanged, readManagedCheckoutContents, type ManagedCheckoutContents } from "./git-workspace-contents.js";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { and, eq, ne, sql } from "drizzle-orm";
@@ -135,7 +136,7 @@ async function inspectBase(db: Db, workspace: Workspace, signal?: AbortSignal, a
   return allocatedBytes(recipe.sourcePath, () => { signal?.throwIfAborted(); return true; });
 }
 
-function managedCheckoutProver(db: Db, workspace: Workspace, auth: GitRemoteAuthProvider): ManagedCheckoutProver {
+function managedCheckoutProver(db: Db, workspace: Workspace, auth: GitRemoteAuthProvider, checkouts: Map<string, ManagedCheckoutContents>): ManagedCheckoutProver {
   let rows: Promise<Array<{ id: string; repoUrl: string | null; repoRef: string | null; cwd: string | null }>> | undefined;
   return async (checkoutPath, name, signal) => {
     if (!workspace.projectId) throw new Error("unknown_managed_checkout");
@@ -146,6 +147,7 @@ function managedCheckoutProver(db: Db, workspace: Workspace, auth: GitRemoteAuth
       && managedProjectCheckoutName({ id: row.id, repoUrl: row.repoUrl, repoRef: row.repoRef, cwd: row.cwd }) === name);
     if (!source?.repoUrl) throw new Error("unknown_managed_checkout");
     await assertReproducibleManagedCheckout(checkoutPath, { repoUrl: source.repoUrl, resolveGitAuth: auth, signal });
+    checkouts.set(name, await readManagedCheckoutContents(checkoutPath, name, { ...source, repoUrl: source.repoUrl }, signal));
   };
 }
 
@@ -169,9 +171,12 @@ export async function expireReconstructableGitWorkspace(db: Db, snapshot: Worksp
         if (!hasPendingGitExpiration(workspace) && !["active", "idle", "in_review"].includes(workspace.status)) throw new Error("not_expirable");
         if (["active", "idle", "in_review"].includes(workspace.status)) state = null;
         const auth = expirationGitAuth(db, workspace);
-        const proveManagedCheckout = managedCheckoutProver(db, workspace, auth);
+        const checkouts = new Map<string, ManagedCheckoutContents>();
+        const identity = { companyId: workspace.companyId, workspaceId: workspace.id };
+        const proveManagedCheckout = managedCheckoutProver(db, workspace, auth, checkouts);
         let recipe = state ? readGitCacheRestoration(workspace)! : await inspectGitCacheRecipe(workspace,
           auth, options.signal, { proveManagedCheckout });
+        if (!state) recipe.contents = await captureGitWorkspaceContents(recipe.worktreePath, identity, [...checkouts.values()]);
         const present = await exists(recipe.worktreePath);
         if (!state && !present) throw new Error("missing_unverified_worktree");
         result.candidate = true;
@@ -212,14 +217,32 @@ export async function expireReconstructableGitWorkspace(db: Db, snapshot: Worksp
         if (!await isGitWorkspaceExpirationEligible(tx, workspace, options.now)) throw new Error("live_or_unresolved_consumer");
         if (!state.workspaceRemoved && present) {
           const { acquireGitWorktreeCleanupLock } = await import("./workspace-runtime.js");
-          const lock = await acquireGitWorktreeCleanupLock(recipe.worktreePath);
+          const locks = [await acquireGitWorktreeCleanupLock(recipe.worktreePath)];
           try {
-            await assertReproducibleGitFiles(recipe.worktreePath, options.signal, { proveManagedCheckout });
-            if ((await gitCacheCommand(recipe.worktreePath, ["rev-parse", "HEAD"], options.signal)).trim() !== recipe.commit) throw new Error("head_changed");
+            try {
+              checkouts.clear();
+              await assertReproducibleGitFiles(recipe.worktreePath, options.signal, { proveManagedCheckout, preserveSettings: true,
+                verifyFetchedCommit: (commit, signal) => verifyRemoteGitCommit(recipe.repoUrl, commit, auth, signal) });
+              for (const checkout of checkouts.values()) {
+                const cwd = path.join(recipe.worktreePath, ".paperclip-repositories", checkout.name);
+                locks.push(await acquireGitWorktreeCleanupLock(cwd));
+                if ((await gitCacheCommand(cwd, ["status", "--porcelain=v1", "--untracked-files=all", "-z"], options.signal)).length) throw new Error("managed_checkouts_changed");
+                checkouts.set(checkout.name, await readManagedCheckoutContents(cwd, checkout.name, checkout.source, options.signal));
+              }
+              await assertGitWorkspaceContentsUnchanged(recipe.worktreePath, identity, recipe.contents, [...checkouts.values()]);
+              if ((await gitCacheCommand(recipe.worktreePath, ["rev-parse", "HEAD"], options.signal)).trim() !== recipe.commit) throw new Error("head_changed");
+            } catch (error) {
+              const metadata: Record<string, unknown> = { ...workspace.metadata, lifecycleGeneration: state.generation + 1,
+                [GIT_CACHE_RESTORATION_KEY]: { ...recipe, restoredAt: new Date().toISOString() } };
+              delete metadata[EXPIRATION_KEY];
+              await db.update(executionWorkspaces).set({ status: "active", closedAt: null, cleanupEligibleAt: null,
+                cleanupReason: null, metadata, updatedAt: new Date() }).where(eq(executionWorkspaces.id, workspace.id));
+              throw error;
+            }
             await fs.rename(recipe.worktreePath, state.worktreeTrash);
             await finishGitCacheTrash(workspace);
             result.reclaimedBytes += result.candidateBytes;
-          } finally { await lock.release(); }
+          } finally { for (const lock of locks.reverse()) await lock.release(); }
         }
         await finishGitCacheTrash(workspace);
         state.workspaceRemoved = true;
