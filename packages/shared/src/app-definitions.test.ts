@@ -1424,6 +1424,7 @@ describe("typesafe", () => {
       transport: "rest_api",
       auth: "api_key",
       riskTier: "S2",
+      grantKinds: ["organization"],
       keyPlacement: { location: "header", name: "Authorization", prefix: "Bearer " },
     });
     expect(method.provider).toBeUndefined();
