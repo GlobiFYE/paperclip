@@ -38,6 +38,7 @@ import { pipelineService, type PipelineActor } from "../services/pipelines.ts";
 import { routineService } from "../services/routines.ts";
 import { instanceSettingsService } from "../services/instance-settings.ts";
 import { executionWorkspaceService } from "../services/execution-workspaces.ts";
+import { isGitWorkspaceExpirationEligible } from "../services/git-workspace-expiration.ts";
 
 const execFileAsync = promisify(execFile);
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
@@ -546,6 +547,18 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
       const [row] = await db.select({ status: executionWorkspaces.status }).from(executionWorkspaces).where(eq(executionWorkspaces.id, workspaceId));
       return row!.status;
     }
+
+    it("git cache expiration also leaves a workspace an open case holds", async () => {
+      const { workspaceId, caseId } = await seedDeliveredCaseWorkspace({ caseTerminal: false, recordWorkspaceId: true });
+      const [workspace] = await db.select().from(executionWorkspaces).where(eq(executionWorkspaces.id, workspaceId));
+      // Past the one-day terminal window, so only the case hold decides.
+      const later = new Date(Date.now() + 3 * 86_400_000);
+      const eligible = () => db.transaction((tx) => isGitWorkspaceExpirationEligible(tx, workspace!, later));
+
+      expect(await eligible()).toBe(false);
+      await db.update(pipelineCases).set({ terminalKind: "done", terminalAt: new Date() }).where(eq(pipelineCases.id, caseId));
+      expect(await eligible()).toBe(true);
+    }, 30_000);
 
     it("keeps a workspace an open case holds, by id or by its source issue", async () => {
       const { workspaceId: byId } = await seedDeliveredCaseWorkspace({ caseTerminal: false, recordWorkspaceId: true });
