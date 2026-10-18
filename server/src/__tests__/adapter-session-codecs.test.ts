@@ -6,27 +6,75 @@ import {
   isCursorUnknownSessionError,
 } from "@paperclipai/adapter-cursor-local/server";
 import {
+  sessionCodec as geminiSessionCodec,
+  isGeminiSessionUnrecoverableError,
+} from "@paperclipai/adapter-gemini-local/server";
+import {
   sessionCodec as opencodeSessionCodec,
   isOpenCodeUnknownSessionError,
 } from "@paperclipai/adapter-opencode-local/server";
+import { sessionCodec as acpxSessionCodec } from "@paperclipai/adapter-utils/acpx-engine/session-codec";
 
 describe("adapter session codecs", () => {
   it("normalizes claude session params with cwd", () => {
     const parsed = claudeSessionCodec.deserialize({
       session_id: "claude-session-1",
       folder: "/tmp/workspace",
+      prompt_bundle_key: "bundle-1",
     });
     expect(parsed).toEqual({
       sessionId: "claude-session-1",
       cwd: "/tmp/workspace",
+      promptBundleKey: "bundle-1",
     });
 
     const serialized = claudeSessionCodec.serialize(parsed);
     expect(serialized).toEqual({
       sessionId: "claude-session-1",
       cwd: "/tmp/workspace",
+      promptBundleKey: "bundle-1",
     });
     expect(claudeSessionCodec.getDisplayId?.(serialized ?? null)).toBe("claude-session-1");
+  });
+
+  it("preserves Claude MCP identity across persistence so resumed turns keep their context", () => {
+    const params = {
+      sessionId: "11111111-1111-4111-8111-111111111111",
+      cwd: "/tmp/workspace",
+      mcpServerIdentity: JSON.stringify([{
+        name: "Paperclip projects",
+        url: "http://localhost:3100/api/mcp/project-tools",
+        connectionId: "paperclip-project-tools",
+      }]),
+    };
+    expect(claudeSessionCodec.deserialize(claudeSessionCodec.serialize(params))).toEqual(params);
+  });
+
+  it("preserves claude ACP session params for ACP lane resumes", () => {
+    const parsed = claudeSessionCodec.deserialize({
+      sessionKey: "paperclip:company:agent:task:fingerprint",
+      runtimeSessionName: "runtime-session-1",
+      acpxRecordId: "record-1",
+      acpSessionId: "acp-session-1",
+      agentSessionId: "agent-session-1",
+      agent: "claude",
+      cwd: "/tmp/claude-acp",
+      mode: "persistent",
+      stateDir: "/tmp/claude-acp-state",
+      configFingerprint: "fingerprint",
+      workspaceId: "workspace-1",
+    });
+
+    expect(parsed).toMatchObject({
+      runtimeSessionName: "runtime-session-1",
+      acpSessionId: "acp-session-1",
+      agent: "claude",
+      cwd: "/tmp/claude-acp",
+      configFingerprint: "fingerprint",
+      workspaceId: "workspace-1",
+    });
+    expect(claudeSessionCodec.serialize(parsed)).toEqual(parsed);
+    expect(claudeSessionCodec.getDisplayId?.(parsed)).toBe("runtime-session-1");
   });
 
   it("normalizes codex session params with cwd", () => {
@@ -45,6 +93,33 @@ describe("adapter session codecs", () => {
       cwd: "/tmp/codex",
     });
     expect(codexSessionCodec.getDisplayId?.(serialized ?? null)).toBe("codex-session-1");
+  });
+
+  it("preserves codex ACP session params for ACP lane resumes", () => {
+    const parsed = codexSessionCodec.deserialize({
+      sessionKey: "paperclip:company:agent:task:fingerprint",
+      runtimeSessionName: "runtime-session-1",
+      acpxRecordId: "record-1",
+      acpSessionId: "acp-session-1",
+      agentSessionId: "agent-session-1",
+      agent: "codex",
+      cwd: "/tmp/codex-acp",
+      mode: "persistent",
+      stateDir: "/tmp/codex-acp-state",
+      configFingerprint: "fingerprint",
+      workspaceId: "workspace-1",
+    });
+
+    expect(parsed).toMatchObject({
+      runtimeSessionName: "runtime-session-1",
+      acpSessionId: "acp-session-1",
+      agent: "codex",
+      cwd: "/tmp/codex-acp",
+      configFingerprint: "fingerprint",
+      workspaceId: "workspace-1",
+    });
+    expect(codexSessionCodec.serialize(parsed)).toEqual(parsed);
+    expect(codexSessionCodec.getDisplayId?.(parsed)).toBe("runtime-session-1");
   });
 
   it("normalizes opencode session params with cwd", () => {
@@ -81,6 +156,95 @@ describe("adapter session codecs", () => {
       cwd: "/tmp/cursor",
     });
     expect(cursorSessionCodec.getDisplayId?.(serialized ?? null)).toBe("cursor-session-1");
+  });
+
+  it("normalizes gemini session params with cwd", () => {
+    const parsed = geminiSessionCodec.deserialize({
+      session_id: "gemini-session-1",
+      cwd: "/tmp/gemini",
+    });
+    expect(parsed).toEqual({
+      sessionId: "gemini-session-1",
+      cwd: "/tmp/gemini",
+    });
+
+    const serialized = geminiSessionCodec.serialize(parsed);
+    expect(serialized).toEqual({
+      sessionId: "gemini-session-1",
+      cwd: "/tmp/gemini",
+    });
+    expect(geminiSessionCodec.getDisplayId?.(serialized ?? null)).toBe("gemini-session-1");
+  });
+
+  it("preserves gemini ACP session params for ACP lane resumes", () => {
+    const parsed = geminiSessionCodec.deserialize({
+      sessionKey: "paperclip:company:agent:task:fingerprint",
+      runtimeSessionName: "runtime-session-1",
+      acpxRecordId: "record-1",
+      acpSessionId: "acp-session-1",
+      agentSessionId: "agent-session-1",
+      agent: "gemini",
+      cwd: "/tmp/gemini-acp",
+      mode: "persistent",
+      stateDir: "/tmp/gemini-acp-state",
+      configFingerprint: "fingerprint",
+      workspaceId: "workspace-1",
+    });
+
+    expect(parsed).toMatchObject({
+      runtimeSessionName: "runtime-session-1",
+      acpSessionId: "acp-session-1",
+      agent: "gemini",
+      cwd: "/tmp/gemini-acp",
+      configFingerprint: "fingerprint",
+      workspaceId: "workspace-1",
+    });
+    expect(geminiSessionCodec.serialize(parsed)).toEqual(parsed);
+    expect(geminiSessionCodec.getDisplayId?.(parsed)).toBe("runtime-session-1");
+  });
+
+  it("preserves acpx session params required for compatibility checks", () => {
+    const parsed = acpxSessionCodec.deserialize({
+      sessionKey: "paperclip:company:agent:task:fingerprint",
+      runtimeSessionName: "runtime-session-1",
+      acpxRecordId: "record-1",
+      acpSessionId: "acp-session-1",
+      agentSessionId: "agent-session-1",
+      agent: "claude",
+      cwd: "/tmp/acpx",
+      mode: "persistent",
+      stateDir: "/tmp/acpx-state",
+      configFingerprint: "fingerprint",
+      workspaceId: "workspace-1",
+      repoUrl: "https://example.com/repo.git",
+      repoRef: "main",
+      remoteExecution: {
+        environmentId: "environment-1",
+        leaseId: "lease-1",
+      },
+    });
+
+    expect(parsed).toMatchObject({
+      sessionKey: "paperclip:company:agent:task:fingerprint",
+      runtimeSessionName: "runtime-session-1",
+      acpxRecordId: "record-1",
+      acpSessionId: "acp-session-1",
+      agentSessionId: "agent-session-1",
+      agent: "claude",
+      cwd: "/tmp/acpx",
+      mode: "persistent",
+      stateDir: "/tmp/acpx-state",
+      configFingerprint: "fingerprint",
+      workspaceId: "workspace-1",
+      repoUrl: "https://example.com/repo.git",
+      repoRef: "main",
+      remoteExecution: {
+        environmentId: "environment-1",
+        leaseId: "lease-1",
+      },
+    });
+    expect(acpxSessionCodec.serialize(parsed)).toEqual(parsed);
+    expect(acpxSessionCodec.getDisplayId?.(parsed)).toBe("runtime-session-1");
   });
 });
 
@@ -140,6 +304,29 @@ describe("cursor resume recovery detection", () => {
     ).toBe(true);
     expect(
       isCursorUnknownSessionError(
+        "{\"type\":\"result\",\"subtype\":\"success\"}",
+        "",
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("gemini resume recovery detection", () => {
+  it("detects unknown session errors from gemini output", () => {
+    expect(
+      isGeminiSessionUnrecoverableError(
+        "",
+        "unknown session id abc",
+      ),
+    ).toBe(true);
+    expect(
+      isGeminiSessionUnrecoverableError(
+        "",
+        "checkpoint latest not found",
+      ),
+    ).toBe(true);
+    expect(
+      isGeminiSessionUnrecoverableError(
         "{\"type\":\"result\",\"subtype\":\"success\"}",
         "",
       ),

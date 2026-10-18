@@ -40,7 +40,8 @@ Priority indicators:
 
 ### Typography
 
-- **Font:** System font stack (Inter if loaded, else `-apple-system, BlinkMacSystemFont, 'Segoe UI'`)
+- **Font:** Bundled Inter v4.1 variable WOFF2 for sans text, loaded from `/fonts/InterVariable.woff2` and `/fonts/InterVariable-Italic.woff2`, with `Inter`, `ui-sans-serif`, `system-ui`, `-apple-system`, `BlinkMacSystemFont`, and `'Segoe UI'` fallbacks.
+- **Mono:** System monospace stack via the `font-mono` token (`ui-monospace`, `SFMono-Regular`, `Menlo`, `Monaco`, `Consolas`, `Liberation Mono`, `Courier New`, `monospace`).
 - **Body:** 13px / 1.5 line-height
 - **Labels/metadata:** 11px / uppercase tracking
 - **Headings:** 14-18px / semi-bold, never all-caps
@@ -114,7 +115,7 @@ No section header — these are always at the top, below the company header.
   My Issues
 ```
 
-- **Inbox** — items requiring the board operator's attention. Badge count on the right. Includes: pending approvals, stale tasks, budget alerts, failed heartbeats. The number is the total unread/unresolved count.
+- **Inbox** — items requiring the board operator's attention. Badge count on the right. Includes: pending approvals, budget alerts, failed heartbeats. The number is the total unread/unresolved count.
 - **My Issues** — issues created by or assigned to the board operator.
 
 ### 3.3 Work Section
