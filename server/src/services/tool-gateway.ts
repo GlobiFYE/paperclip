@@ -10046,9 +10046,7 @@ export function createToolGatewayService(
         }
       }
       let tool = await findToolForSession(session, input.tool);
-      if (input.validateParametersSchema && tool.providerType === "paperclip_virtual") {
-        validateCatalogToolArguments(tool, input.parameters ?? {});
-      }
+      if (input.validateParametersSchema) validateCatalogToolArguments(tool, input.parameters ?? {});
       if (tool.providerType === "paperclip_slack_chat") {
         const definition = SLACK_TOOLS.find(t => t.name === tool.upstreamToolName);
         const args = definition?.schema.parse(input.parameters ?? {}) as Record<string, unknown> | undefined;
@@ -10173,6 +10171,7 @@ export function createToolGatewayService(
         virtualToolName = "run_tool";
         tool = targetTool;
         requestedParameters = targetParameters;
+        if (input.validateParametersSchema) validateCatalogToolArguments(tool, requestedParameters);
       }
 
       // Managed provider arguments are part of the governed call, not a
@@ -10188,7 +10187,6 @@ export function createToolGatewayService(
         );
       }
 
-      if (input.validateParametersSchema) validateCatalogToolArguments(tool, requestedParameters);
       const argumentValidation = validateToolContent({
         value: requestedParameters,
         direction: "arguments",

@@ -27,7 +27,8 @@ Search and schema/text retrieval reload the authorized catalog on every request.
 Search requires the token's `tools/list` and `tools/call` actions. The call wrapper
 uses the original `executeTool` path once: it resolves the exact current target,
 validates arguments against that tool's schema without coercion, defaults or
-property removal, and evaluates policy with the actual supplied arguments.
+property removal, before projecting server-managed provider fields. Policy still
+evaluates the actual governed arguments used for execution.
 Listing visibility with empty arguments is not an execution permission gate.
 Each incoming call consumes the normal protocol limits once. Run/company/identity,
 current grants, profiles, work-mode policy, approvals, invocation auditing and
