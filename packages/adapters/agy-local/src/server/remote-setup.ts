@@ -251,11 +251,12 @@ export async function prepareAgyRemoteRun(
       const targetMcpConfig = path.posix.join(isolatedConfigDir, "mcp_config.json");
       const stagedMcpFile = path.posix.join(stagedMcpConfigRemote, "mcp_config.json");
       const realGeminiDir = remoteHomeDir ? path.posix.join(remoteHomeDir, ".gemini") : null;
+      const realConfigDir = remoteHomeDir ? path.posix.join(remoteHomeDir, ".gemini", "config") : null;
 
       await runAdapterExecutionTargetShellCommand(
         runId,
         executionTarget,
-        `mkdir -p ${JSON.stringify(isolatedConfigDir)}; ${realGeminiDir ? `ln -s ${JSON.stringify(path.posix.join(realGeminiDir, "antigravity-cli"))} ${JSON.stringify(path.posix.join(isolatedHomeDir, ".gemini", "antigravity-cli"))} 2>/dev/null || true; ln -s ${JSON.stringify(path.posix.join(realGeminiDir, "antigravity"))} ${JSON.stringify(path.posix.join(isolatedHomeDir, ".gemini", "antigravity"))} 2>/dev/null || true; ` : ""}cp -a ${JSON.stringify(stagedMcpFile)} ${JSON.stringify(targetMcpConfig)}`,
+        `mkdir -p ${JSON.stringify(isolatedConfigDir)}; ${realGeminiDir ? `ln -s ${JSON.stringify(path.posix.join(realGeminiDir, "antigravity-cli"))} ${JSON.stringify(path.posix.join(isolatedHomeDir, ".gemini", "antigravity-cli"))} 2>/dev/null || true; ln -s ${JSON.stringify(path.posix.join(realGeminiDir, "antigravity"))} ${JSON.stringify(path.posix.join(isolatedHomeDir, ".gemini", "antigravity"))} 2>/dev/null || true; ` : ""}${realConfigDir ? `if [ -d ${JSON.stringify(realConfigDir)} ]; then for e in ${JSON.stringify(realConfigDir)}/*; do if [ -e "$e" ] && [ "$(basename "$e")" != "mcp_config.json" ]; then ln -s "$e" ${JSON.stringify(isolatedConfigDir)}/ 2>/dev/null || true; fi; done; fi; ` : ""}cp -a ${JSON.stringify(stagedMcpFile)} ${JSON.stringify(targetMcpConfig)}`,
         { cwd: effectiveExecutionCwd, env, timeoutSec, graceSec, onLog },
       );
       effectiveRemoteHomeDir = isolatedHomeDir;
