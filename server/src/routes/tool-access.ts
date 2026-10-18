@@ -1160,6 +1160,7 @@ function connectorEnrollmentPrincipal(req: Request): string {
       await assertToolConnectionConfigureAccess(req, pendingConnection);
     }
     const acceptsHtml = req.get("accept")?.includes("text/html") === true;
+    let completionSucceeded = false;
     try {
       const result = await svc.completePaperclipCloudConnectorCallback({
         state,
@@ -1167,6 +1168,7 @@ function connectorEnrollmentPrincipal(req: Request): string {
         error,
         actor: getActorInfo(req),
       });
+      completionSucceeded = true;
       const pendingConfig = pendingConnection.config ?? {};
       const oauthConfig = pendingConfig.oauth && typeof pendingConfig.oauth === "object"
         ? pendingConfig.oauth as Record<string, unknown>
@@ -1226,7 +1228,9 @@ function connectorEnrollmentPrincipal(req: Request): string {
       const details = callbackError instanceof HttpError && callbackError.details && typeof callbackError.details === "object"
         ? callbackError.details as Record<string, unknown>
         : null;
-      const failure = cloudConnectorCallbackFailure(callbackError);
+      const failure = completionSucceeded
+        ? { code: "cloud_connector_callback_post_completion_failed", status: callbackError instanceof HttpError ? callbackError.status : 500 }
+        : cloudConnectorCallbackFailure(callbackError);
       const traceId = randomUUID();
       const diagnostic = {
         ...failure,
@@ -1235,25 +1239,29 @@ function connectorEnrollmentPrincipal(req: Request): string {
         companyId: pendingState.companyId,
         connectionId: pendingState.connectionId,
       };
-      logger.warn(diagnostic, "Paperclip Cloud connector callback failed");
-      try {
-        await logActivity(db, {
-          companyId: pendingState.companyId,
-          actorType: "user",
-          actorId: req.actor.userId ?? "board",
-          action: "tool_app.oauth_failed",
-          entityType: "tool_connection",
-          entityId: pendingState.connectionId,
-          details: { code: failure.code, status: failure.status, provider: diagnostic.provider, traceId },
-        });
-      } catch {
-        logger.error({
-          code: "cloud_connector_callback_audit_failed",
-          provider: diagnostic.provider,
-          traceId,
-          companyId: pendingState.companyId,
-          connectionId: pendingState.connectionId,
-        }, "Paperclip Cloud connector callback failure audit could not be written");
+      if (completionSucceeded) {
+        logger.error(diagnostic, "Paperclip Cloud connector callback failed after completion");
+      } else {
+        logger.warn(diagnostic, "Paperclip Cloud connector callback failed");
+        try {
+          await logActivity(db, {
+            companyId: pendingState.companyId,
+            actorType: "user",
+            actorId: req.actor.userId ?? "board",
+            action: "tool_app.oauth_failed",
+            entityType: "tool_connection",
+            entityId: pendingState.connectionId,
+            details: { code: failure.code, status: failure.status, provider: diagnostic.provider, traceId },
+          });
+        } catch {
+          logger.error({
+            code: "cloud_connector_callback_audit_failed",
+            provider: diagnostic.provider,
+            traceId,
+            companyId: pendingState.companyId,
+            connectionId: pendingState.connectionId,
+          }, "Paperclip Cloud connector callback failure audit could not be written");
+        }
       }
       if (pendingConnectionIntent && pendingState.interactionId && req.actor.userId) {
         const outcome = failure.code === "oauth_authorization_denied" ? "declined" : "failed";

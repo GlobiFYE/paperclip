@@ -8303,6 +8303,56 @@ describeEmbeddedPostgres("tool access service", () => {
     expect(await service.peekOAuthState(state)).toMatchObject({ connectionId: connected.connectionId });
   });
 
+  it("does not record OAuth failure when connected activity fails after managed completion", async () => {
+    const company = await createCompany(db);
+    const userId = `callback-post-completion-${randomUUID()}`;
+    await grantBoardUser(db, company.id, userId, [], "owner");
+    const connector = fakeGoogleWorkspaceConnector(company.id, userId);
+    const service = createTestToolAccessService(db, { paperclipCloudConnector: connector });
+    const actor = { actorType: "user" as const, actorId: userId };
+    const connected = await service.connectGalleryApp(company.id, {
+      galleryKey: "gmail", connectionMethodKey: "paperclip-draft", grantKind: "user", name: "Callback audit",
+    }, actor);
+    const started = await service.startOAuth(company.id, connected.connectionId, {
+      redirectUri: "https://paperclip.example/api/tools/oauth/cloud-connector/callback", actor,
+    });
+    const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+    mockToolsList([]);
+    const originalInsert = db.insert.bind(db);
+    let failedConnectedAudit = false;
+    vi.spyOn(db, "insert").mockImplementation(((table: unknown) => {
+      if (table === activityLog && !failedConnectedAudit) {
+        failedConnectedAudit = true;
+        throw new Error("Provider-controlled audit error");
+      }
+      return originalInsert(table as typeof activityLog);
+    }) as typeof db.insert);
+    const warning = vi.spyOn(logger, "warn").mockImplementation(() => logger);
+    const errorLog = vi.spyOn(logger, "error").mockImplementation(() => logger);
+    const app = createRouteApp(db, boardSessionActor(company.id, "owner", userId), undefined, {
+      paperclipCloudConnector: connector,
+    });
+
+    const callback = await request(app).get("/api/tools/oauth/cloud-connector/callback")
+      .query({ state, claim_id: "claim-for-post-completion-test" }).set("accept", "text/html");
+
+    expect(failedConnectedAudit).toBe(true);
+    expect(callback.status).toBe(303);
+    expect(callback.headers.location).toContain("oauth=failed");
+    expect(callback.headers.location).not.toContain("success=1");
+    const [connection] = await db.select().from(toolConnections).where(eq(toolConnections.id, connected.connectionId));
+    expect(connection.status).toBe("active");
+    expect(await service.peekOAuthState(state)).toBeNull();
+    expect(await db.select().from(activityLog).where(and(
+      eq(activityLog.companyId, company.id), eq(activityLog.entityId, connected.connectionId),
+      eq(activityLog.action, "tool_app.oauth_failed"),
+    ))).toHaveLength(0);
+    expect(JSON.stringify([warning.mock.calls, errorLog.mock.calls])).not.toContain("Provider-controlled audit error");
+    expect(errorLog).toHaveBeenCalledWith(
+      expect.objectContaining({ code: "cloud_connector_callback_post_completion_failed" }), expect.any(String),
+    );
+  });
+
   it("activates allowed Drive write actions without approval defaults after a managed callback", async () => {
     const company = await createCompany(db);
     const userId = `drive-write-member-${randomUUID()}`;
