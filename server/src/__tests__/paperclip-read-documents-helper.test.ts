@@ -99,6 +99,17 @@ describe("paperclip read documents helper", () => {
     expect(result.code).toBe(0);
     const manifest = JSON.parse(result.stdout) as { outputRoot: string; documents: Array<{ issueId: string; key: string; latestRevisionId: string; latestRevisionNumber: number; bodyBytes: number; bodySha256: string; segments: Array<{ path: string; characters: number }> }> };
     expect(manifest.documents).toHaveLength(6);
+    expect(path.isAbsolute(manifest.outputRoot)).toBe(true);
+    for (const document of manifest.documents) {
+      for (const segment of document.segments) {
+        // Consumers such as file-read tools may resolve relative paths from a
+        // different root. The manifest must be directly usable without
+        // reconstructing an opaque task/workspace prefix.
+        expect(path.isAbsolute(segment.path)).toBe(true);
+        expect(path.relative(manifest.outputRoot, segment.path)).not.toMatch(/^\.\.(?:[\\/]|$)/);
+        await expect(fs.access(segment.path)).resolves.toBeUndefined();
+      }
+    }
     expect(requests).toHaveLength(6);
     expect(requests.every(request => request.method === "GET" && request.authorization === "Bearer fixture-key" && request.runId === "fixture-run")).toBe(true);
     expect(maximumActive).toBeGreaterThan(1);
@@ -108,14 +119,14 @@ describe("paperclip read documents helper", () => {
     expect(policy.latestRevisionNumber).toBe(3);
     expect(policy.bodyBytes).toBe(Buffer.byteLength(longBody));
     expect(policy.bodySha256).toBe((await import("node:crypto")).createHash("sha256").update(longBody).digest("hex"));
-    const segments = await Promise.all(policy.segments.map(segment => fs.readFile(path.join(cwd, segment.path), "utf8")));
+    const segments = await Promise.all(policy.segments.map(segment => fs.readFile(segment.path, "utf8")));
     expect(segments.join("")).toBe(longBody);
     expect(policy.segments.every((segment, index) => segment.characters <= 6000 && (index === 0 || segment.characters > 0))).toBe(true);
     expect(result.stdout).not.toContain(longBody);
-    expect(result.stdout).toContain(manifest.outputRoot);
+    expect(result.stdout).toContain(JSON.stringify(manifest.outputRoot));
     if (process.platform !== "win32") {
-      const rootStat = await fs.stat(path.join(cwd, manifest.outputRoot));
-      const firstSegment = await fs.stat(path.join(cwd, policy.segments[0]!.path));
+      const rootStat = await fs.stat(manifest.outputRoot);
+      const firstSegment = await fs.stat(policy.segments[0]!.path);
       expect(rootStat.mode & 0o777).toBe(0o700);
       expect(firstSegment.mode & 0o777).toBe(0o600);
     }

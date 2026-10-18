@@ -167,7 +167,7 @@ export async function run(args, env = process.env, cwd = process.cwd()) {
   const totalBytes = documents.reduce((sum, document) => sum + document.bodyBytes, 0);
   if (totalBytes > MAX_TOTAL_BYTES) throw new Error(`Requested documents exceed the ${MAX_TOTAL_BYTES}-byte total safety bound.`);
 
-  const outputRoot = path.join(cwd, `.paperclip-documents-${randomUUID()}`);
+  const outputRoot = path.resolve(cwd, `.paperclip-documents-${randomUUID()}`);
   await mkdir(outputRoot, { recursive: false, mode: 0o700 });
   try {
     const manifestDocuments = [];
@@ -179,7 +179,7 @@ export async function run(args, env = process.env, cwd = process.cwd()) {
       for (let index = 0; index < segments.length; index += 1) {
         const name = `segment-${String(index + 1).padStart(3, "0")}.txt`;
         await writePrivateFile(path.join(documentRoot, name), segments[index]);
-        segmentManifest.push({ path: path.relative(cwd, path.join(documentRoot, name)).split(path.sep).join("/"), characters: Array.from(segments[index]).length });
+        segmentManifest.push({ path: path.join(documentRoot, name), characters: Array.from(segments[index]).length });
       }
       manifestDocuments.push({
         requestedIssueId: document.requestedIssueId,
@@ -195,7 +195,7 @@ export async function run(args, env = process.env, cwd = process.cwd()) {
         segments: segmentManifest,
       });
     }
-    return { outputRoot: path.relative(cwd, outputRoot).split(path.sep).join("/"), documents: manifestDocuments };
+    return { outputRoot, documents: manifestDocuments };
   } catch (error) {
     await rm(outputRoot, { recursive: true, force: true }).catch(() => undefined);
     throw error;
