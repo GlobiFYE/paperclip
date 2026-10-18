@@ -2789,6 +2789,10 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
     const configWithVariables = reconcilePipelineStageConfigVariables(input.config, [title, input.instructionsBody]);
     const variables = sanitizePipelineRoutineVariables(configWithVariables.variables);
     const description = input.instructionsBody.trim();
+    // A custom automation id survives a settings save: recorded executions keep
+    // matching the stage, so run dispatch and case workspace sharing still find them.
+    const previousAutomationId = stageConfig(input.stage).onEnter?.id;
+    const automationIdPatch = previousAutomationId ? { id: previousAutomationId } : {};
 
     if (canReusePrevious) {
       const now = nowDate();
@@ -2818,6 +2822,7 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
         ...configWithVariables,
         onEnter: {
           type: "run_routine" as const,
+          ...automationIdPatch,
           routineId: revised.id,
           ...input.executionContext,
         },
@@ -2857,6 +2862,7 @@ export function pipelineService(db: Db, deps: { heartbeat?: IssueAssignmentWakeu
       ...configWithVariables,
       onEnter: {
         type: "run_routine" as const,
+        ...automationIdPatch,
         routineId: revised.id,
         ...input.executionContext,
       },

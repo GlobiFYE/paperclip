@@ -341,6 +341,40 @@ describeEmbeddedPostgres("pipeline executionWorkspaceScope: case", () => {
     expect(await onEnterOf()).not.toHaveProperty("executionWorkspaceScope");
   });
 
+  it("a stage settings save keeps a custom automation id, so the case still shares its workspace", async () => {
+    const { companyId, projectId, pipeline, byKey } = await seed({ scope: "case" });
+    const stageId = byKey.get("intake")!.id;
+    const [stage] = await db.select().from(pipelineStages).where(eq(pipelineStages.id, stageId));
+    const config = stage!.config as { onEnter: Record<string, unknown> };
+    await db
+      .update(pipelineStages)
+      .set({ config: { ...config, onEnter: { ...config.onEnter, id: "intake-custom" } } })
+      .where(eq(pipelineStages.id, stageId));
+
+    const created = await svc.ingestCase({ companyId, pipelineId: pipeline.id, caseKey: "T-9", title: "Ticket", actor: userActor });
+    const first = await latestStageIssue(created.case.id);
+    const workspaceId = await realiseWorkspace({ companyId, projectId, issueId: first.id });
+    await db.update(issues).set({ status: "done" }).where(eq(issues.id, first.id));
+
+    // What the settings form sends: automation rebuilt without the onEnter id.
+    const [agent] = await db.select().from(agents).where(eq(agents.companyId, companyId));
+    await svc.updateStage({
+      companyId,
+      pipelineId: pipeline.id,
+      stageId,
+      patch: { config: { automation: { assigneeAgentId: agent!.id, instructionsBody: "Edited instructions." } } },
+      actor: userActor,
+    });
+    const [saved] = await db.select().from(pipelineStages).where(eq(pipelineStages.id, stageId));
+    expect((saved!.config as { onEnter?: Record<string, unknown> }).onEnter).toMatchObject({
+      id: "intake-custom",
+      executionWorkspaceScope: "case",
+    });
+
+    const second = await move(companyId, created.case.id, "in_progress");
+    expect(second).toMatchObject({ executionWorkspaceId: workspaceId, executionWorkspacePreference: "reuse_existing" });
+  });
+
   it("a project-free scoped stage does not reuse the case's project workspace", async () => {
     const { companyId, projectId, pipeline, byKey } = await seed({ scope: "case" });
     const [agent] = await db.select().from(agents).where(eq(agents.companyId, companyId));
