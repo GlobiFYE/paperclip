@@ -12307,7 +12307,7 @@ export function issueRoutes(
       });
       const actor = getActorInfo(req);
       const runWorkspaceInheritanceSourceIssueId =
-        hasExplicitIssueWorkspaceCreateSelection(rawCreateBody)
+        isHostWatcherKeyActor(req) || hasExplicitIssueWorkspaceCreateSelection(rawCreateBody)
           ? null
           : await resolveRunIssueWorkspaceInheritanceSource(companyId, actor);
       // When this is genuinely the onboarding first task, the server owns the task
@@ -12463,9 +12463,15 @@ export function issueRoutes(
       );
       let deduplicationReason: "idempotency_key" | "recent_open_title" | null =
         null;
+      const hostWatcherScope = req.actor.type === "agent" && req.actor.source === "agent_key"
+        && req.actor.keyScope?.kind === "host_watcher" ? req.actor.keyScope : undefined;
       const createInput = {
         ...createBody,
-        workspaceSelectionActor: req.actor,
+        // The scope pins the parent and project, and the HTTP guard forbids
+        // client workspace fields. Let create() select that project's workspace
+        // internally without granting the watcher project:read.
+        workspaceSelectionActor: hostWatcherScope ? undefined : req.actor,
+        hostWatcherScope,
         projectId: createAssignmentScope.projectId,
         ...(taskBridgeOriginForActor(req) ?? {}),
         ...(hostWatcherOriginForActor(req) ?? {}),

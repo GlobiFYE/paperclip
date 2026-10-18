@@ -1958,6 +1958,7 @@ type IssueCreateInput = Omit<typeof issues.$inferInsert, "companyId" | "title" |
   workspaceSelection?: TaskWorkspaceSelection;
   workspaceSelectionSource?: "explicit" | "channel";
   workspaceSelectionActor?: AuthorizationActor;
+  hostWatcherScope?: HostWatcherAgentKeyScope;
   title?: string;
   initialPlan?: string | null;
   labelIds?: string[];
@@ -9869,7 +9870,7 @@ export function issueService(db: Db) {
       dbOrTx: Db | DbTransaction = db,
     ) => {
       const {
-        workspaceSelection, workspaceSelectionSource = "explicit", workspaceSelectionActor,
+        workspaceSelection, workspaceSelectionSource = "explicit", workspaceSelectionActor, hostWatcherScope,
         initialPlan,
         labelIds: inputLabelIds,
         blockedByIssueIds,
@@ -9924,6 +9925,28 @@ export function issueService(db: Db) {
       }
       const persist = async (tx: DbTransaction) => {
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`issue-privacy-tree:${companyId}`}, 0))`);
+        if (hostWatcherScope?.service === "fleet_hourly") {
+          if (issueData.parentId !== hostWatcherScope.issueId
+            || issueData.projectId !== hostWatcherScope.projectId
+            || issueData.assigneeAgentId !== hostWatcherScope.assigneeAgentId
+            || issueData.originKind !== "host_watcher"
+            || issueData.originId !== issueData.createdByAgentId) {
+            throw conflict("Host watcher work order no longer matches its fixed scope");
+          }
+          // The HTTP guard's parent read can become stale before this write.
+          // Hold the parent lock through INSERT so a board close cannot race it.
+          const [parent] = await tx.select({
+            projectId: issues.projectId,
+            status: issues.status,
+            hiddenAt: issues.hiddenAt,
+          }).from(issues).where(and(
+            eq(issues.id, hostWatcherScope.issueId), eq(issues.companyId, companyId),
+          )).for("update");
+          if (!parent || parent.projectId !== hostWatcherScope.projectId
+            || parent.hiddenAt || parent.status === "done" || parent.status === "cancelled") {
+            throw conflict("Host watcher parent is no longer open in the fixed project");
+          }
+        }
         await assertExecutionTaskParent(tx as unknown as Db, companyId, issueData.parentId);
         if (issueData.conversationAgentId && issueData.conversationUserId) {
           const identity = `conversation:${companyId}:${issueData.conversationAgentId}:${issueData.conversationUserId}`;

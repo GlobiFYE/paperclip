@@ -7,7 +7,7 @@ import { and, eq } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   agentApiKeys, agents, authUsers, companies, companyMemberships, createDb,
-  heartbeatRuns, issueComments, issueExecutionDecisions, issues, projects,
+  heartbeatRuns, issueComments, issueExecutionDecisions, issues, projects, projectWorkspaces,
 } from "@paperclipai/db";
 import type { HostWatcherAgentKeyScope } from "@paperclipai/shared";
 import { createLocalAgentJwt } from "../agent-auth-jwt.js";
@@ -271,6 +271,10 @@ describeDb("host watcher scoped keys on real issue routes and test DB", () => {
   });
 
   it("fleet can comment on its parent and create one bounded work order", async () => {
+    const [workspace] = await db.insert(projectWorkspaces).values({
+      companyId, projectId: fleetProjectId, name: "Fleet project default", isPrimary: true,
+      cwd: process.cwd(),
+    }).returning({ id: projectWorkspaces.id });
     const parentUrl = `/api/issues/${targets.fleet.issueId}`;
     expect((await request(app).post(`${parentUrl}/comments`).set("Authorization", auth("fleet"))
       .send({ body: "Hourly findings: one stuck task" })).status).toBe(201);
@@ -300,6 +304,7 @@ describeDb("host watcher scoped keys on real issue routes and test DB", () => {
     expect(order).toMatchObject({
       originKind: "host_watcher", originId: serviceAgents.fleet, parentId: targets.fleet.issueId,
       projectId: fleetProjectId, assigneeAgentId: targets.fleet.assigneeAgentId,
+      projectWorkspaceId: workspace!.id,
     });
     expect((await request(app).post(path).set("Authorization", auth("fleet")).send(body)).status).toBe(403);
     await expect(db.insert(issues).values({
@@ -314,6 +319,22 @@ describeDb("host watcher scoped keys on real issue routes and test DB", () => {
     expect(replacement.status, JSON.stringify(replacement.body)).toBe(201);
     expect((await request(app).patch(parentUrl).set("Authorization", auth("fleet"))
       .send({ status: "done" })).status).toBe(403);
+  });
+
+  it("rechecks a closed fleet parent inside the create transaction", async () => {
+    const parentId = targets.fleet.issueId;
+    try {
+      await db.update(issues).set({ status: "done" }).where(eq(issues.id, parentId));
+      await expect(issueService(db).create(companyId, {
+        title: "[watch][hourly] stale parent", description: "No order may be created",
+        status: "todo", priority: "high", parentId, projectId: fleetProjectId,
+        assigneeAgentId: targets.fleet.assigneeAgentId,
+        originKind: "host_watcher", originId: serviceAgents.fleet,
+        createdByAgentId: serviceAgents.fleet, hostWatcherScope: scopes.fleet!,
+      })).rejects.toThrow("Host watcher parent is no longer open in the fixed project");
+    } finally {
+      await db.update(issues).set({ status: "backlog" }).where(eq(issues.id, parentId));
+    }
   });
 
   it("fails closed on an invalid stored scope and keeps one active key per service identity", async () => {
