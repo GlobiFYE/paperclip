@@ -21,6 +21,7 @@ import { sql } from "drizzle-orm";
 import { museIdentity, museCredentialHash } from "../services/muse-identity.js";
 import * as museIdentityModule from "../services/muse-identity.js";
 import { museTransportRoutes, museBoardRoutes } from "../routes/muse.js";
+import { projectRoutes } from "../routes/projects.js";
 import { activityRoutes } from "../routes/activity.js";
 import * as activityLogModule from "../services/activity-log.js";
 import { errorHandler } from "../middleware/error-handler.js";
@@ -91,6 +92,169 @@ describe("personal Muse control plane",()=>{
     const [assignment]=await db.select().from(assignments).where(eq(assignments.runId,runId));
     return {...f,runId,issue,port,ref,assignment,sent,detach};
   }
+  function projectWriteExecution(f: Awaited<ReturnType<typeof active>>) {
+    const digest="0".repeat(64),now=Date.now();
+    const context={
+      prompt:{revision:PAPERCLIP_EXECUTION_PROMPT_REVISION,text:PAPERCLIP_EXECUTION_PROMPT,digest:nativeRuntimePromptDigest()},
+      instructions:{entryPath:"AGENTS.md",bundle:{schema:NATIVE_RUNTIME_ASSET_SCHEMA,digest,manifestDigest:digest,rootPath:"/synthetic/muse-jwt-instructions",fileCount:1,totalBytes:4}},
+      skills:[],mcp:{assignmentSetId:"none",digest,bindingId:null},
+    };
+    const execution=parseNativeExecutionInput({
+      schema:"paperclip.native-execution-input.v8",
+      binding:{companyId:f.company.id,agentId:f.agent.id,runId:f.runId,issueId:f.issue.id,executionWorkspaceId:randomUUID()},
+      task:{identifier:f.issue.identifier??"MUSE-JWT",title:f.issue.title,description:null,prompt:"Read the current actor.",workMode:"standard"},
+      provider:{kind:"muse",model:null,bridgeRevision:"muse-v1",binding:{companyId:f.company.id,agentId:f.agent.id,bindingId:f.binding.id,bindingGeneration:f.binding.generation,acceptByUnixMs:now+600000,expiresAtUnixMs:now+3600000}},
+      workspace:{access:"none",cwd:null,repoUrl:null,repoRef:null,branchName:null},
+      session:{normalizedSessionId:f.ref.normalizedSessionId,driverKind:"muse_external",protocolVersion:1,lifecyclePolicy:{mode:"per_turn",idleTimeoutMs:null}},
+      executionMode:"default",planningContext:null,
+      completionContract:{id:randomUUID(),sha256:"sha256:"+digest,schemaVersion:"paperclip.completion-contract.v1",contract:{revision:"1",objective:"Read the actor",criteria:[{id:"actor",requirement:"Read the actor"}]}},
+      runtimeContext:{...context,aggregateDigest:canonicalNativeRuntimeContextDigest(context)},interactionResponses:[],credentialBindings:[],
+    });
+    if(execution.schema!=="paperclip.native-execution-input.v8")throw new Error("Muse JWT fixture is not V8");
+    return execution;
+  }
+  it.each([
+    { wait: "task", fault: "assignment_expired", replay: false },
+    { wait: "task", fault: "grant_revoked", replay: false },
+    { wait: "receipt", fault: "assignment_expired", replay: true },
+    { wait: "receipt", fault: "grant_revoked", replay: true },
+    { wait: "task", fault: "unchanged", replay: false },
+    { wait: "receipt", fault: "unchanged", replay: true },
+  ] as const)("rechecks Muse project-write authority after a real $wait lock wait ($fault, replay=$replay)", async ({ wait, fault, replay }) => {
+    const f = await active(await oauthFixture(true));
+    const previousSecret = process.env.PAPERCLIP_AGENT_JWT_SECRET;
+    process.env.PAPERCLIP_AGENT_JWT_SECRET = randomBytes(32).toString("hex");
+    let releaseAfterAuth = () => {}, releaseHolder = () => {};
+    let holder: Promise<void> | undefined;
+    let operation: Promise<{ response?: { status: number; body: Record<string, unknown> }; error?: unknown }> | undefined;
+    try {
+      await ensureHumanRoleDefaultGrants(db, { companyId: f.company.id, principalId: f.operatorId, membershipRole: "owner", grantedByUserId: f.operatorId });
+      expect((await f.broker.act(f.subject, { version: 1, command: "accept", assignmentId: f.assignment.id, requestId: randomUUID() })).status).toBe("accepted");
+      // The strict V8 profile is an HTTP authentication fixture, not a provider
+      // launch, scheduler admission, or release of the accepted Muse holds.
+      const execution = projectWriteExecution(f);
+      await db.update(heartbeatRuns).set({ runnerProfileJson: { nativeExecutionInput: execution } }).where(eq(heartbeatRuns.id, f.runId));
+      await expect(f.broker.assertRunAuthority(execution)).resolves.toBeUndefined();
+      const token = createLocalAgentJwt(f.agent.id, f.company.id, "paperclip_runner", f.runId, f.operatorId, undefined, f.operatorId);
+      expect(typeof token).toBe("string");
+      let armed = false, authenticated = () => {};
+      let observedActor: unknown;
+      const reachedAuth = new Promise<void>(resolve => { authenticated = resolve; });
+      const afterAuth = new Promise<void>(resolve => { releaseAfterAuth = resolve; });
+      const app = express();
+      app.use(express.json());
+      app.use(actorMiddleware(db, { deploymentMode: "authenticated", resolveSession: async () => null }));
+      app.use((req, _res, next) => {
+        if (!armed) { next(); return; }
+        observedActor = req.actor;
+        authenticated();
+        void afterAuth.then(() => next(), next);
+      });
+      app.use("/api", projectRoutes(db));
+      app.use(errorHandler);
+      const input = { name: "Muse project authority canary", description: "A bounded project result", idempotencyKey: randomUUID() };
+      const receiptKey = `project:${f.company.id}:${f.agent.id}:${f.issue.id}:${input.idempotencyKey}`;
+      const send = (body = input) => request(app).post(`/api/companies/${f.company.id}/projects`)
+        .set("Authorization", "Bearer " + token).set("X-Paperclip-Run-Id", f.runId).send(body);
+      let priorId: string | undefined;
+      if (replay) {
+        const first = await send();
+        expect(first.status).toBe(201);
+        priorId = first.body.id;
+        expect(typeof priorId).toBe("string");
+        const duplicate = await send();
+        expect(duplicate.status).toBe(200);
+        expect(duplicate.body.id).toBe(priorId);
+      }
+      const snapshot = async () => ({
+        projects: await db.select().from(projects).where(eq(projects.companyId, f.company.id)).orderBy(projects.id),
+        activity: await db.select().from(activityLog).where(eq(activityLog.companyId, f.company.id)).orderBy(activityLog.id),
+        run: (await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.runId)))[0],
+        assignment: await db.select({ status: assignments.status, acceptedResultAt: assignments.acceptedResultAt, finalizedAt: assignments.finalizedAt }).from(assignments).where(eq(assignments.id, f.assignment.id)),
+        holds: await db.select().from(externalAgentHolds).where(eq(externalAgentHolds.assignmentId, f.assignment.id)).orderBy(externalAgentHolds.id),
+      });
+      const before = await snapshot();
+      const oldReceipts = before.activity.filter(row => row.action === "project.created" && row.details?.idempotencyKey === receiptKey);
+      expect(oldReceipts).toHaveLength(replay ? 1 : 0);
+      expect(before.projects).toHaveLength(replay ? 1 : 0);
+      armed = true;
+      operation = send().then(response => ({ response: { status: response.status, body: response.body } }), error => ({ error }));
+      await expect.poll(() => observedActor !== undefined, { timeout: 5000, interval: 25 }).toBe(true);
+      await reachedAuth;
+      expect(observedActor).toMatchObject({ type: "agent", source: "agent_jwt", companyId: f.company.id, agentId: f.agent.id, runId: f.runId, authorizingUserId: f.operatorId });
+      // The holder starts only after real middleware authorization. Holding it
+      // before the request could block middleware instead of the project path.
+      let locked = () => {}, holderPid = 0;
+      const ready = new Promise<void>(resolve => { locked = resolve; });
+      const gate = new Promise<void>(resolve => { releaseHolder = resolve; });
+      holder = db.transaction(async tx => {
+        holderPid = (await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`))[0].pid;
+        if (wait === "task") await tx.select({ id: issues.id }).from(issues).where(and(eq(issues.companyId, f.company.id), eq(issues.id, f.issue.id))).for("update");
+        else await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${receiptKey}, 0))`);
+        locked();
+        await gate;
+      });
+      await ready;
+      releaseAfterAuth();
+      await expect.poll(async () => {
+        const [observed] = wait === "task"
+          ? await db.execute<{ waiting: boolean }>(sql`select exists(select 1 from pg_stat_activity waiter
+              inner join pg_locks waiting on waiting.pid=waiter.pid and waiting.locktype='transactionid' and not waiting.granted
+              inner join pg_locks held on held.pid=${holderPid} and held.locktype='transactionid' and held.granted and held.transactionid=waiting.transactionid
+              where waiter.datname=current_database() and ${holderPid}=any(pg_blocking_pids(waiter.pid))
+                and exists(select 1 from pg_locks tuple_lock where tuple_lock.pid=waiter.pid and tuple_lock.locktype='tuple'
+                  and tuple_lock.relation='issues'::regclass and tuple_lock.mode in ('ExclusiveLock','AccessExclusiveLock') and tuple_lock.granted)) as waiting`)
+          : await db.execute<{ waiting: boolean }>(sql`select exists(select 1 from pg_stat_activity waiter
+              inner join pg_locks waiting on waiting.pid=waiter.pid and waiting.locktype='advisory' and not waiting.granted
+              inner join pg_locks held on held.pid=${holderPid} and held.locktype='advisory' and held.granted
+                and held.database=waiting.database and held.classid=waiting.classid and held.objid=waiting.objid and held.objsubid=waiting.objsubid
+              where waiter.datname=current_database() and ${holderPid}=any(pg_blocking_pids(waiter.pid))) as waiting`);
+        return observed.waiting;
+      }, { timeout: 5000, interval: 25 }).toBe(true);
+      await expect(f.broker.assertRunAuthority(execution)).resolves.toBeUndefined();
+      if (fault === "assignment_expired") await db.update(assignments).set({ expiresAt: new Date(Date.now() - 1000) }).where(eq(assignments.id, f.assignment.id));
+      if (fault === "grant_revoked") await db.update(mcpOauthGrants).set({ revokedAt: new Date() }).where(eq(mcpOauthGrants.id, f.binding.grantId!));
+      if (fault === "unchanged") await expect(f.broker.assertRunAuthority(execution)).resolves.toBeUndefined();
+      else await expect(f.broker.assertRunAuthority(execution)).rejects.toMatchObject({ status: 403 });
+      releaseHolder();
+      await holder;
+      const outcome = await operation;
+      expect(outcome.error).toBeUndefined();
+      armed = false;
+      if (fault !== "unchanged") {
+        // The old route returns 201/200 here; denial must precede any effect or replay.
+        expect(outcome.response?.status).toBe(403);
+        expect(outcome.response?.body).toEqual({ error: "Muse native tool authority is unavailable" });
+        expect(await snapshot()).toEqual(before);
+      } else {
+        expect(outcome.response?.status).toBe(replay ? 200 : 201);
+        const id = outcome.response?.body.id;
+        expect(typeof id).toBe("string");
+        if (replay) expect(id).toBe(priorId);
+        const committed = await snapshot();
+        expect(committed.projects).toHaveLength(1);
+        expect(committed.projects[0].id).toBe(id);
+        expect(committed.activity.filter(row => row.action === "project.created" && row.details?.idempotencyKey === receiptKey)).toHaveLength(1);
+        const duplicate = await send();
+        expect(duplicate.status).toBe(200);
+        expect(duplicate.body.id).toBe(id);
+        expect(await snapshot()).toEqual(committed);
+        const conflict = await send({ ...input, name: input.name + " changed" });
+        expect(conflict.status).toBe(409);
+        expect(await snapshot()).toEqual(committed);
+        expect(committed.holds).toEqual(before.holds);
+        expect(committed.assignment).toEqual(before.assignment);
+        expect(committed.run).toEqual(before.run);
+      }
+    } finally {
+      releaseAfterAuth();
+      releaseHolder();
+      await Promise.allSettled([holder, operation].filter(value => value !== undefined));
+      if (previousSecret === undefined) delete process.env.PAPERCLIP_AGENT_JWT_SECRET;
+      else process.env.PAPERCLIP_AGENT_JWT_SECRET = previousSecret;
+      await f.detach();
+    }
+  }, 15000);
   it("authenticates current Muse V8 JWT actors and denies changed native bindings and grants",async()=>{
     const f=await active(await oauthFixture(true)),previousSecret=process.env.PAPERCLIP_AGENT_JWT_SECRET;
     process.env.PAPERCLIP_AGENT_JWT_SECRET=randomBytes(32).toString("hex");
