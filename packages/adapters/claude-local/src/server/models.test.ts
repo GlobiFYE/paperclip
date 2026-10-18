@@ -88,7 +88,7 @@ describe("claude_local model catalog override", () => {
     expect(warnSpy).toHaveBeenCalled();
   });
 
-  it("retries a transient read error on the next lookup, without caching it by mtime", async () => {
+  it("retries a transient read error after a short backoff, without requiring an mtime change", async () => {
     const file = await makeOverrideFile(JSON.stringify({
       version: 1,
       direct: [{ id: "claude-operator-model", label: "Operator Model" }],
@@ -101,19 +101,29 @@ describe("claude_local model catalog override", () => {
       throw Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
     });
 
-    const first = await listClaudeModels();
-    expect(first).toEqual(claudeFallbackModels);
-    expect(warnSpy).toHaveBeenCalledWith(
-      "[paperclip] Claude model catalog override unreadable, using bundled defaults",
-      expect.objectContaining({ path: file }),
-    );
+    vi.useFakeTimers();
+    try {
+      const first = await listClaudeModels();
+      expect(first).toEqual(claudeFallbackModels);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
 
-    readSpy.mockRestore();
+      readSpy.mockRestore();
 
-    // Same file, same mtime (it never changed) — still recovers because a read
-    // error isn't cached the way a parse/validation error is.
-    const second = await listClaudeModels();
-    expect(second).toEqual([{ id: "claude-operator-model", label: "Operator Model" }]);
+      // Still within the backoff window: a burst of same-request lookups (the pool model
+      // endpoint calls resolveClaudeReasoningEfforts once per model per member) shares the
+      // one read attempt and warning above instead of repeating both per call.
+      const duringBackoff = await listClaudeModels();
+      expect(duringBackoff).toEqual(claudeFallbackModels);
+      expect(warnSpy).toHaveBeenCalledTimes(1);
+
+      // Same file, same mtime (it never changed) — recovers once the backoff window
+      // elapses, because a read error isn't cached the way a parse/validation error is.
+      vi.advanceTimersByTime(5_001);
+      const second = await listClaudeModels();
+      expect(second).toEqual([{ id: "claude-operator-model", label: "Operator Model" }]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("re-reads the override file only after its mtime changes", async () => {

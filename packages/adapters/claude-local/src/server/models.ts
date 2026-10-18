@@ -26,6 +26,14 @@ type CatalogCacheEntry =
   | { path: string; mtimeMs: number; kind: "invalid" };
 let catalogCache: CatalogCacheEntry | null = null;
 
+// A read error (e.g. permissions) isn't cached by mtime like a parse error, since fixing it
+// doesn't change mtime — but `resolveClaudeReasoningEfforts` is called once per model per pool
+// member, so a single request can call `loadModelCatalog` dozens of times. This bounds retries
+// (and the matching warning) to once per window instead of once per call, while still recovering
+// on its own shortly after the file becomes readable again, no mtime change required.
+const CATALOG_READ_ERROR_RETRY_MS = 5_000;
+let readErrorBackoff: { path: string; expiresAt: number } | null = null;
+
 function resolveModelCatalogOverridePath(): string {
   const configured = process.env.PAPERCLIP_CLAUDE_MODEL_CATALOG_FILE?.trim();
   if (configured) return path.resolve(configured);
@@ -46,10 +54,15 @@ function loadModelCatalog(): ClaudeModelCatalog {
     stat = fs.statSync(overridePath);
   } catch {
     catalogCache = null;
+    readErrorBackoff = null;
     return DEFAULT_CLAUDE_MODEL_CATALOG;
   }
   if (catalogCache && catalogCache.path === overridePath && catalogCache.mtimeMs === stat.mtimeMs) {
     return catalogCache.kind === "parsed" ? catalogCache.catalog : DEFAULT_CLAUDE_MODEL_CATALOG;
+  }
+  const now = Date.now();
+  if (readErrorBackoff && readErrorBackoff.path === overridePath && readErrorBackoff.expiresAt > now) {
+    return DEFAULT_CLAUDE_MODEL_CATALOG;
   }
   let raw: string;
   try {
@@ -59,11 +72,13 @@ function loadModelCatalog(): ClaudeModelCatalog {
       path: overridePath,
       error: error instanceof Error ? error.message : String(error),
     });
-    // Not cached: a read error (e.g. a permissions problem) doesn't change mtimeMs, so
-    // caching it by mtime would keep returning the bundled default even after the
-    // underlying problem is fixed. Every lookup retries the read instead.
+    // Not cached by mtime (a read error like a permissions problem doesn't change it), but
+    // backed off for a short, fixed window so a burst of same-request lookups shares one
+    // read attempt and one warning instead of one each.
+    readErrorBackoff = { path: overridePath, expiresAt: now + CATALOG_READ_ERROR_RETRY_MS };
     return DEFAULT_CLAUDE_MODEL_CATALOG;
   }
+  readErrorBackoff = null;
 
   try {
     const parsed = claudeModelCatalogSchema.parse(JSON.parse(raw));
@@ -249,6 +264,7 @@ export async function refreshClaudeModels(): Promise<AdapterModel[]> {
 export function resetClaudeModelsCacheForTests() {
   discoveryCache = null;
   catalogCache = null;
+  readErrorBackoff = null;
 }
 
 /** Check whether a model ID is a Bedrock-native identifier (not an Anthropic API short name). */
