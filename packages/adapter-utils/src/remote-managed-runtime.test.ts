@@ -220,6 +220,80 @@ describe("remote managed runtime", () => {
     );
   });
 
+  it("does not replace a successful restoration result when runtime cleanup fails", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-remote-runtime-cleanup-failure-"));
+    cleanupDirs.push(rootDir);
+    const workspaceDir = path.join(rootDir, "workspace");
+    const homeDir = path.join(rootDir, "home");
+    await mkdir(workspaceDir, { recursive: true });
+    await mkdir(homeDir, { recursive: true });
+    runSshCommand.mockRejectedValueOnce(new Error("fixture cleanup failed"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const prepared = await prepareRemoteManagedRuntime({
+      spec: {
+        host: "127.0.0.1",
+        port: 2222,
+        username: "fixture",
+        remoteWorkspacePath: "/app",
+        remoteCwd: "/app",
+        privateKey: "PRIVATE KEY",
+        knownHosts: "KNOWN HOSTS",
+        strictHostKeyChecking: true,
+      },
+      runId: "run-cleanup-failed",
+      adapterKey: "codex",
+      workspaceLocalDir: workspaceDir,
+      workspaceRemoteDir: "/app",
+      syncWorkspace: false,
+      assets: [{ key: "home", localDir: homeDir }],
+    });
+
+    await expect(prepared.restoreWorkspace()).resolves.toBeUndefined();
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("run-cleanup-failed"));
+    warnSpy.mockRestore();
+  });
+
+  it("preserves the restoration error when runtime cleanup also fails", async () => {
+    const rootDir = await mkdtemp(path.join(os.tmpdir(), "paperclip-remote-runtime-double-failure-"));
+    cleanupDirs.push(rootDir);
+    const workspaceDir = path.join(rootDir, "workspace");
+    const homeDir = path.join(rootDir, "home");
+    await mkdir(workspaceDir, { recursive: true });
+    await mkdir(homeDir, { recursive: true });
+    runSshCommand.mockRejectedValueOnce(new Error("fixture cleanup failed"));
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const prepared = await prepareRemoteManagedRuntime({
+      spec: {
+        host: "127.0.0.1",
+        port: 2222,
+        username: "fixture",
+        remoteWorkspacePath: "/app",
+        remoteCwd: "/app",
+        privateKey: "PRIVATE KEY",
+        knownHosts: "KNOWN HOSTS",
+        strictHostKeyChecking: true,
+      },
+      runId: "run-double-failed",
+      adapterKey: "codex",
+      workspaceLocalDir: workspaceDir,
+      workspaceRemoteDir: "/app",
+      syncWorkspace: false,
+      assets: [{
+        key: "home",
+        localDir: homeDir,
+        restore: async () => {
+          throw new Error("fixture restore failed first");
+        },
+      }],
+    });
+
+    await expect(prepared.restoreWorkspace()).rejects.toThrow("fixture restore failed first");
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("run-double-failed"));
+    warnSpy.mockRestore();
+  });
+
   it("rejects a run id that could escape its run-scoped directory", async () => {
     await expect(prepareRemoteManagedRuntime({
       spec: {
@@ -240,6 +314,37 @@ describe("remote managed runtime", () => {
     })).rejects.toThrow("runId is not a simple path segment");
     expect(syncDirectoryToSsh).not.toHaveBeenCalled();
     expect(runSshCommand).not.toHaveBeenCalled();
+  });
+
+  it("rejects an in-place persistence path that could escape before transfer", async () => {
+    await expect(prepareRemoteManagedRuntime({
+      spec: {
+        host: "127.0.0.1",
+        port: 2222,
+        username: "fixture",
+        remoteWorkspacePath: "/app",
+        remoteCwd: "/app",
+        privateKey: "PRIVATE KEY",
+        knownHosts: "KNOWN HOSTS",
+        strictHostKeyChecking: true,
+      },
+      runId: "run-safe",
+      adapterKey: "codex",
+      workspaceLocalDir: "/local/workspace",
+      workspaceRemoteDir: "/app",
+      syncWorkspace: false,
+      assets: [{
+        key: "home",
+        localDir: "/local/home",
+        inPlaceSshPersistence: { scope: "agent-1", directories: ["../sessions"] },
+      }],
+    })).rejects.toThrow("in-place SSH persistent directory is not a simple path segment");
+    expect(syncDirectoryToSsh).not.toHaveBeenCalled();
+    expect(runSshCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      "rm -rf -- '/app/.paperclip-runtime/runs/run-safe/codex'",
+      { maxBuffer: 1024 * 1024 },
+    );
   });
 
   it("removes a partial run-scoped runtime after in-place SSH asset staging fails", async () => {

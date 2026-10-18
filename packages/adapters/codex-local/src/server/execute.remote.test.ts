@@ -617,6 +617,11 @@ describe("codex remote execution", () => {
     };
     expect(homeSyncArgs.localDir).toContain("paperclip-codex-home-sync");
     expect(homeSyncArgs.remoteDir).toBe("/app/.paperclip-runtime/runs/run-in-place/codex/home");
+    expect(runSshCommand).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining("/.paperclip-runtime/persistent/codex/agent-1/home/sessions"),
+      { maxBuffer: 1024 * 1024 },
+    );
     const call = runChildProcess.mock.calls[0] as unknown as
       | [string, string, string[], { env: Record<string, string>; remoteExecution?: { remoteCwd: string } | null }]
       | undefined;

@@ -1087,7 +1087,11 @@ describe("ssh env-lab fixture", () => {
         workspaceLocalDir: localWorkspace,
         workspaceRemoteDir: started.workspaceDir,
         syncWorkspace: false,
-        assets: [{ key: "home", localDir: homeA }],
+        assets: [{
+          key: "home",
+          localDir: homeA,
+          inPlaceSshPersistence: { scope: "agent-1", directories: ["sessions"] },
+        }],
       }),
       prepareRemoteManagedRuntime({
         spec,
@@ -1096,7 +1100,11 @@ describe("ssh env-lab fixture", () => {
         workspaceLocalDir: localWorkspace,
         workspaceRemoteDir: started.workspaceDir,
         syncWorkspace: false,
-        assets: [{ key: "home", localDir: homeB }],
+        assets: [{
+          key: "home",
+          localDir: homeB,
+          inPlaceSshPersistence: { scope: "agent-1", directories: ["sessions"] },
+        }],
       }),
     ]);
 
@@ -1107,12 +1115,27 @@ describe("ssh env-lab fixture", () => {
     );
     expect(content.stdout).toBe("run = 'a'\nrun = 'b'\n");
 
+    await runSshCommand(
+      config,
+      `printf "saved session\\n" > ${JSON.stringify(path.posix.join(preparedA.assetDirs.home!, "sessions", "session.jsonl"))}`,
+    );
+    const persisted = await runSshCommand(
+      config,
+      `cat ${JSON.stringify(path.posix.join(preparedB.assetDirs.home!, "sessions", "session.jsonl"))}`,
+    );
+    expect(persisted.stdout).toBe("saved session\n");
+
     await Promise.all([preparedA.restoreWorkspace(), preparedB.restoreWorkspace()]);
     const cleanup = await runSshCommand(
       config,
       `test ! -e ${JSON.stringify(preparedA.runtimeRootDir)} && test ! -e ${JSON.stringify(preparedB.runtimeRootDir)}`,
     );
     expect(cleanup.stderr).toBe("");
+    const durableSession = await runSshCommand(
+      config,
+      `cat ${JSON.stringify(path.posix.join(started.workspaceDir, ".paperclip-runtime", "persistent", "codex", "agent-1", "home", "sessions", "session.jsonl"))}`,
+    );
+    expect(durableSession.stdout).toBe("saved session\n");
   }, SSH_FIXTURE_TEST_TIMEOUT_MS);
 
   it("preserves nested per-run files across sequential SSH restores with stale baselines", async () => {
