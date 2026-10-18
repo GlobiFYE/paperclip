@@ -61,6 +61,7 @@ test("manifest round-trips and missing reads null", () => {
     nonce: "rtest" + Date.now().toString(16), qemuPid: 1, qemuStartTime: 12345, hostfwdPort: 2,
     overlayPath: "/o", runDir: "/r", owner: "claude", startedAt: new Date().toISOString(),
   };
+  expect(manifestPath(m.nonce).startsWith(tmpScratch)).toBe(true);
   writeManifest(m);
   expect(readManifest(m.nonce)).toEqual(m);
   expect(readManifest("rnot-a-real-nonce")).toBeNull();

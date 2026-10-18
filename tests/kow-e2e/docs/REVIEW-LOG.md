@@ -160,3 +160,28 @@ VM-gated items NOT booted here — the parent verifies live: A7's actual
 permission behavior against real kowd/upstream file modes, the C4 exact
 `path_prefix` value kow stores, and the C7 all-line A5 aggregation against real
 upstream output.
+
+## 2026-10-19 — Greptile P2 round (safe-refresh + test isolation)
+
+Three P2 Greptile findings fixed (5/5, last open P2s) in `harness/setup-base.ts`
++ `tests/lib.test.ts`. `bun test` 11/11 green; `~/.cache/paperclip-kow-smoketest/runs/`
+unchanged before/after the run.
+
+- **P2 (setup-base, failed refresh deletes working image)** — removed the
+  `rmSync(dest)` that destroyed a stale-but-present cache before downloading its
+  replacement. `dest` is now never deleted; a freshly downloaded candidate is
+  verified for BOTH size and sha256 and only then `renameSync`d over `dest`. A
+  bad existing image plus a failed/mismatched download now leaves `dest` intact
+  and `die()`s with a message noting the cached image was left untouched.
+- **P2 (setup-base, concurrent runs clobber shared download)** — the fixed
+  `${dest}.part` is replaced by a per-process unique temp
+  (`${dest}.<pid>.<rand>.part`), so two concurrent `setup` runs no longer write
+  the same file; each verifies its own temp and atomically renames over `dest`. A
+  `process.on("exit")` handler removes the unique temp on every exit path
+  (including the internal `die()` in curl/sha failures). The idempotent
+  already-cached-and-valid fast path is unchanged.
+- **P2 (lib.test, unit tests leave fake runs)** — the `beforeAll`/`afterAll`
+  `mkdtempSync`+`rmSync` isolation via `PKST_SCRATCH` was already present and
+  working; the round-trip test now asserts `manifestPath(nonce)` resolves under
+  the temp scratch BEFORE it writes, so a broken isolation fails loudly instead
+  of silently polluting the real runs dir.

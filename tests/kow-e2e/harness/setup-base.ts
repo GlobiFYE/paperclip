@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, statSync, renameSync, rmSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { dirname } from "node:path";
 import { baseImg } from "./lib.ts";
 
@@ -57,8 +58,7 @@ function expectedSha(): string {
 
 function main() {
   const dest = baseImg();
-  const destDir = dirname(dest);
-  mkdirSync(destDir, { recursive: true });
+  mkdirSync(dirname(dest), { recursive: true });
 
   const want = expectedSha();
 
@@ -68,24 +68,29 @@ function main() {
       console.log(JSON.stringify({ ok: true, path: dest, bytes, sha256: want, cached: true }, null, 2));
       return;
     }
-    rmSync(dest);
   }
 
-  const part = `${dest}.part`;
-  if (existsSync(part)) rmSync(part);
-  curlDownload(`${BASE_URL}/${IMAGE_NAME}`, part);
+  const tmp = `${dest}.${process.pid}.${randomBytes(6).toString("hex")}.part`;
+  process.on("exit", () => {
+    try {
+      if (existsSync(tmp)) rmSync(tmp, { force: true });
+    } catch {}
+  });
 
-  const bytes = statSync(part).size;
+  const haveExisting = existsSync(dest);
+  const keptNote = haveExisting ? "; existing cached image left untouched" : "";
+
+  curlDownload(`${BASE_URL}/${IMAGE_NAME}`, tmp);
+
+  const bytes = statSync(tmp).size;
   if (bytes < MIN_BYTES) {
-    rmSync(part);
-    die(`downloaded image is too small (${bytes} bytes); aborting`);
+    die(`downloaded image is too small (${bytes} bytes); aborting${keptNote}`);
   }
-  const got = sha256Of(part);
+  const got = sha256Of(tmp);
   if (got !== want) {
-    rmSync(part);
-    die(`sha256 mismatch: got ${got}, expected ${want}`);
+    die(`sha256 mismatch: got ${got}, expected ${want}${keptNote}`);
   }
-  renameSync(part, dest);
+  renameSync(tmp, dest);
 
   console.log(JSON.stringify({ ok: true, path: dest, bytes, sha256: want, cached: false }, null, 2));
 }
