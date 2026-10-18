@@ -1,4 +1,5 @@
 import { validateGitWorkspaceContents, type GitWorkspaceContents } from "./git-workspace-contents.js";
+import { recoverGitExpirationLocks, type GitExpirationLockLocation } from "./git-workspace-expiration-locks.js";
 import fs from "node:fs/promises";
 import { constants } from "node:fs";
 import os from "node:os";
@@ -33,16 +34,17 @@ export type GitCacheRestoration = {
   gitBranchOwnershipVersion: 1;
   verifiedAt: string;
   restoredAt?: string;
+  contentsRestoredAt?: string | null;
   contents?: GitWorkspaceContents;
 };
 export type GitCacheExpiration = {
   schema: "paperclip.git-cache-expiration.v1"; generation: number; workspaceRemoved: boolean;
-  worktreeTrash: string; worktreeAdmin: string; baseTrash: string | null; completed: boolean;
+  worktreeTrash: string; worktreeAdmin: string; baseTrash: string | null; completed: boolean; lockToken?: string;
 };
 type Workspace = {
   id: string; companyId: string; projectId: string | null; sourceIssueId: string | null; repoUrl: string | null;
   mode: string | null; strategyType: string | null; branchName: string | null;
-  cwd: string | null; providerRef: string | null; metadata: Record<string, unknown> | null;
+  cwd: string | null; providerRef: string | null; status?: string; metadata: Record<string, unknown> | null;
 };
 
 function managedSourcePaths(workspace: Workspace) {
@@ -89,7 +91,8 @@ export function readGitCacheRestoration(workspace: Workspace): GitCacheRestorati
     || (recipe.sourceKind === "isolated_remote" ? recipe.sourcePath !== recordedIsolatedRemoteSource(workspace)
       : recipe.sourceKind !== "managed_project" || recordedIsolatedRemoteSource(workspace) !== null || !managedSourcePaths(workspace).includes(recipe.sourcePath))
     || !shaPattern.test(recipe.commit) || !Number.isFinite(Date.parse(recipe.verifiedAt))
-    || (recipe.restoredAt !== undefined && !Number.isFinite(Date.parse(recipe.restoredAt)))) {
+    || (recipe.restoredAt !== undefined && !Number.isFinite(Date.parse(recipe.restoredAt)))
+    || (recipe.contentsRestoredAt != null && !Number.isFinite(Date.parse(recipe.contentsRestoredAt)))) {
     throw new GitCacheRestorationFailure();
   }
   validateGitWorkspaceContents(recipe.contents);
@@ -386,12 +389,45 @@ export function readGitCacheExpiration(workspace: Workspace): GitCacheExpiration
   const recipe = readGitCacheRestoration(workspace);
   if (!recipe || state.schema !== "paperclip.git-cache-expiration.v1" || !Number.isSafeInteger(state.generation)
     || state.generation !== workspace.metadata?.lifecycleGeneration
+    || (state.lockToken !== undefined && !/^[a-f0-9]{64}$/.test(state.lockToken))
     || state.worktreeTrash !== path.join(path.dirname(recipe.worktreePath), `.expired-git-worktree-${workspace.id}-${state.generation}`)
     || path.dirname(state.worktreeAdmin) !== path.join(recipe.sourcePath, ".git", "worktrees")
     || (state.baseTrash !== null && state.baseTrash !== path.join(path.dirname(recipe.sourcePath), `.expired-git-base-${workspace.id}-${state.generation}`))) {
     throw new GitCacheRestorationFailure();
   }
   return state;
+}
+
+export function gitCacheExpirationLockLocations(workspace: Workspace): GitExpirationLockLocation[] {
+  const state = readGitCacheExpiration(workspace);
+  const recipe = readGitCacheRestoration(workspace);
+  if (!state || !recipe || !state.lockToken || state.completed) return [];
+  const branchPath = (branch: string) => {
+    if (!branch || branch.split("/").some(part => !part || part === "." || part === "..") || branch.includes("\\")) throw new GitCacheRestorationFailure();
+    return `refs/heads/${branch}.lock`;
+  };
+  const locations: GitExpirationLockLocation[] = [
+    ...["index.lock", "HEAD.lock"].map(name => ({ root: recipe.sourcePath,
+      relativePath: path.relative(recipe.sourcePath, path.join(state.worktreeAdmin, name)), checkout: null })),
+    { root: recipe.sourcePath, relativePath: path.join(".git", branchPath(recipe.branchName)), checkout: null },
+  ];
+  for (const checkout of recipe.contents?.checkouts ?? []) {
+    for (const name of ["index.lock", "HEAD.lock", ...(checkout.branchName ? [branchPath(checkout.branchName)] : [])]) {
+      locations.push({ root: recipe.worktreePath, relativePath: path.join(PROJECT_REPOSITORIES_DIR, checkout.name, ".git", name), checkout: checkout.name });
+    }
+  }
+  return locations;
+}
+
+export async function recoverGitCacheExpirationLocks(workspace: Workspace) {
+  const state = readGitCacheExpiration(workspace);
+  if (!state?.lockToken || state.completed || !["archived", "cleanup_failed"].includes(workspace.status ?? "")) return;
+  const recipe = readGitCacheRestoration(workspace)!;
+  if (await fs.lstat(recipe.sourcePath).then(() => true, (error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  })) await verifiedGitCacheSource(workspace, recipe.sourcePath);
+  await recoverGitExpirationLocks(gitCacheExpirationLockLocations(workspace), state.lockToken);
 }
 
 // Both restart recovery and reopening finish only recorded, uniquely named trash.
@@ -478,7 +514,9 @@ export function savedGitWorkspaceRestoration(input: { metadata?: Record<string, 
     || value.worktreePath !== input.cwd || value.sourcePath !== input.baseCwd
     || value.repoUrl !== input.repoUrl || value.branchName !== input.branchName
     || !isRuntimeOwnedGitBranch(input.metadata)
-    || (value.restoredAt !== undefined && !Number.isFinite(Date.parse(value.restoredAt)))) throw new GitCacheRestorationFailure();
+    || (value.restoredAt !== undefined && !Number.isFinite(Date.parse(value.restoredAt)))
+    || (value.contentsRestoredAt != null && !Number.isFinite(Date.parse(value.contentsRestoredAt)))) throw new GitCacheRestorationFailure();
   validateGitWorkspaceContents(value.contents);
-  return { commit: value.commit, restored: value.restoredAt !== undefined, contents: value.contents };
+  return { commit: value.commit, restored: value.restoredAt !== undefined, contents: value.contents,
+    contentsRestored: value.contentsRestoredAt === undefined ? value.restoredAt !== undefined : value.contentsRestoredAt !== null };
 }

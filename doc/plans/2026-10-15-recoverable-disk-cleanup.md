@@ -47,6 +47,10 @@ The remaining implementation gap is exact nested commit and local settings recov
 Current work builds on master `1f27427ffdefaf5fb2760d1d53c0d78cb9683d4c`, branch
 `codex/worktree-nested-restoration`. Serving SHA observed before work:
 `27ab902d3db2770ada79c9f42a9c06e1d346f34b`. No deployment or real reclamation yet.
+Review: [PR #16691](https://github.com/paperclipai/paperclip/pull/16691).
+Its first head `4696ba2fd171ec3970b7e116bcb5f77fe9331785` passed CI. Greptile
+found historical project-selection and failed-provision retry gaps; both now have
+fixes and real lifecycle controls. The updated head still needs review and CI.
 
 | Required outcome | Current evidence | Remaining gap | Next action / owner |
 | --- | --- | --- | --- |
@@ -69,6 +73,23 @@ in 16.94s. All five content controls passed again after the bounded-read fix.
 Full workspace typecheck and build passed. The broad local test run was stopped
 after approximately 12 minutes of unrelated serial server tests; mandatory
 parallel CI remains required before merge. No full-suite local pass is claimed.
+
+Review fixes preserve saved project ref/cwd selection through normal preparation
+and subsequent expiration. A separate durable contents checkpoint survives failed
+provisioning and transaction rollback, and heartbeat persistence retains it. Native
+cleanup locks now have persisted random ownership and atomic publication; actual
+child-process exits prove worker and reopening recovery without removing foreign
+locks. The integrated lifecycle file passed 42 cases in 91.66s; 46 preparation,
+credential, contents, and Git controls passed in 24.41s. The final heartbeat
+checkpoint persistence case passed separately in 8.17s. Server typecheck passed.
+The representative crash experiment took 20.84s, mostly fixture Git/process work
+(72% tests, 21% transforms); it justified the integrated regression run.
+
+The live pre-cleanup baseline records 50 old terminal workspaces in 74.543s,
+including 19 with nested copies and 21 dirty controls. Evidence is
+`/tmp/paperclip-cleanup-20261017/eligible-baseline.jsonl`; no file contents or
+credentials are printed. The ordinary staging UI is authenticated and reachable.
+Current disk observation: 129,519,296,512 bytes used and 17,779,265,536 free (88%).
 
 Live skip inspection found ordinary linked-worktree FETCH_HEAD files blocking
 45 of 200 sampled worker events. The local baseline reproduced rejection in

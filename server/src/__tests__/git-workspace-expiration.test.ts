@@ -1,9 +1,10 @@
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { createRequire } from "node:module";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { companies, projects, projectWorkspaces, issues, executionWorkspaces, agents, heartbeatRuns, nativeRunFinalizations, workspaceRuntimeServices, createDb } from "@paperclipai/db";
@@ -13,8 +14,11 @@ import { materializeManagedProjectWorkspace } from "../services/managed-reposito
 import { materializeIsolatedRemoteWorkspaceSource } from "../services/isolated-remote-workspace-source.js";
 import { realizeExecutionWorkspace, ensurePersistedExecutionWorkspaceAvailable } from "../services/workspace-runtime.js";
 import { executionWorkspaceService } from "../services/execution-workspaces.js";
-import { prepareProjectRepositoryWorkspaces } from "../services/heartbeat/workspaces.js";
+import { prepareProjectRepositoryWorkspaces, mergeExecutionWorkspaceMetadataForPersistence } from "../services/heartbeat/workspaces.js";
 import { expireReconstructableGitWorkspace } from "../services/git-workspace-expiration.js";
+import * as activityLog from "../services/activity-log.js";
+import { readGitCacheRestoration } from "../services/git-workspace-restoration.js";
+import { gitCacheExpirationLockLocations, readGitCacheExpiration } from "../services/git-workspace-restoration.js";
 
 const gitEnv = { ...process.env, GIT_AUTHOR_NAME: "Fixture", GIT_AUTHOR_EMAIL: "fixture@example.test",
   GIT_COMMITTER_NAME: "Fixture", GIT_COMMITTER_EMAIL: "fixture@example.test", GIT_TERMINAL_PROMPT: "0" };
@@ -122,6 +126,29 @@ describeEmbeddedPostgres("reconstructable Git expiration", () => {
     expect(git(f.cwd, "rev-parse", "HEAD")).toBe(f.commitA);
   });
 
+  it("preserves the contents checkpoint through normal runtime metadata persistence", async () => {
+    const f = await fixture();
+    const settingsPath = path.join(f.cwd, ".claude/settings.local.json");
+    await fs.mkdir(path.dirname(settingsPath));
+    await fs.writeFile(settingsPath, "original settings\n");
+    expect((await f.expire({ expireBase: false })).expired).toBe(true);
+    const service = executionWorkspaceService(db);
+    const stored = (await service.getStoredById(f.companyId, f.workspaceId))!;
+    const input = { db, base: f.base, workspace: stored,
+      issue: { id: f.issueId, identifier: "GC-1", title: "Resumed task" },
+      agent: { id: null, name: "Fixture", companyId: f.companyId }, skipHostProvision: true };
+    const restored = (await ensurePersistedExecutionWorkspaceAvailable(input))!;
+    await service.update(f.workspaceId, { metadata: mergeExecutionWorkspaceMetadataForPersistence({
+      existingMetadata: stored.metadata, source: restored.source, createdByRuntime: restored.branchCreatedByRuntime,
+      strategyType: restored.strategy, configSnapshot: null, shouldReuseExisting: true,
+      baseRef: restored.repoRef, baseRefSha: restored.baseRefSha,
+    }) });
+    expect((await f.row()).metadata?.gitCacheRestoration).toMatchObject({ contentsRestoredAt: expect.any(String) });
+    await fs.writeFile(settingsPath, "later task settings\n");
+    await ensurePersistedExecutionWorkspaceAvailable({ ...input, workspace: (await service.getStoredById(f.companyId, f.workspaceId))! });
+    expect(await fs.readFile(settingsPath, "utf8")).toBe("later task settings\n");
+  });
+
   async function nestedFixture() {
     const f = await fixture(true);
     const nestedSource = path.join(path.dirname(f.source), "nested-author");
@@ -146,6 +173,97 @@ describeEmbeddedPostgres("reconstructable Git expiration", () => {
     await fs.writeFile(nestedSettingsPath, settings, { mode: 0o640 });
     return { ...f, nestedSource, nestedRemote, nestedA, preparation, nested: nested!, settings, settingsPath, nestedSettingsPath };
   }
+
+  async function crashWithExpirationLocks(f: Awaited<ReturnType<typeof nestedFixture>>, beforePublication = false) {
+    expect(await f.expire({ beforeDelete: async () => { throw new Error("stop_before_locks"); } }))
+      .toMatchObject({ expired: false, skipReason: "stop_before_locks" });
+    const row = await f.row();
+    const locations = gitCacheExpirationLockLocations(row);
+    const token = readGitCacheExpiration(row)!.lockToken!;
+    const module = new URL("../services/git-workspace-expiration-locks.ts", import.meta.url).href;
+    const child = spawnSync(process.execPath, ["--import", createRequire(import.meta.url).resolve("tsx"), "--input-type=module", "-e", `
+      import fs from 'node:fs/promises';
+      import { acquireGitExpirationLocks } from ${JSON.stringify(module)};
+      ${beforePublication ? "fs.link = async () => process.exit(71);" : ""}
+      await acquireGitExpirationLocks(${JSON.stringify(locations)}, ${JSON.stringify(token)});
+      process.exit(71);
+    `], { encoding: "utf8" });
+    expect(child.stderr).toBe("");
+    expect(child.status).toBe(71);
+    return locations;
+  }
+
+  it("recovers expiration-owned main and nested locks after process exit before retrying cleanup", async () => {
+    const f = await nestedFixture();
+    const locations = await crashWithExpirationLocks(f);
+    for (const location of locations) expect(await exists(path.join(location.root, location.relativePath))).toBe(true);
+    expect(await f.expire()).toMatchObject({ expired: true });
+    expect(await f.reopen()).toMatchObject({ ok: true, reopened: true });
+    expect(git(f.cwd, "rev-parse", "HEAD")).toBe(f.commitA);
+    expect(git(f.nested.cwd, "rev-parse", "HEAD")).toBe(f.nestedA);
+    expect(await fs.readFile(f.nestedSettingsPath)).toEqual(f.settings);
+  });
+
+  it("ordinary reopening recovers process-abandoned main and nested locks", async () => {
+    const f = await nestedFixture();
+    const locations = await crashWithExpirationLocks(f);
+    expect(await f.reopen()).toMatchObject({ ok: true, reopened: true });
+    for (const location of locations) expect(await exists(path.join(location.root, location.relativePath))).toBe(false);
+    await fs.writeFile(path.join(f.nested.cwd, "continued.txt"), "continued after crash\n");
+    git(f.nested.cwd, "add", "."); git(f.nested.cwd, "commit", "-m", "Continued after crash");
+    expect(git(f.nested.cwd, "rev-parse", "HEAD")).not.toBe(f.nestedA);
+    expect(await fs.readFile(f.settingsPath)).toEqual(f.settings);
+  });
+
+  it("recovers an unpublished lock temporary file and a surviving branch lock after rename", async () => {
+    const f = await nestedFixture();
+    const locations = await crashWithExpirationLocks(f, true);
+    for (const location of locations) expect(await exists(path.join(location.root, location.relativePath))).toBe(false);
+    expect(await f.reopen()).toMatchObject({ ok: true });
+    const firstAdmin = path.dirname(path.join(locations[0]!.root, locations[0]!.relativePath));
+    expect((await fs.readdir(firstAdmin)).filter(name => name.startsWith(".paperclip-expiration-"))).toEqual([]);
+
+    const g = await nestedFixture();
+    const remaining = await crashWithExpirationLocks(g);
+    const state = readGitCacheExpiration(await g.row())!;
+    await fs.rename(g.cwd, state.worktreeTrash);
+    expect(await g.reopen()).toMatchObject({ ok: true });
+    for (const location of remaining) expect(await exists(path.join(location.root, location.relativePath))).toBe(false);
+    expect(git(g.cwd, "rev-parse", "HEAD")).toBe(g.commitA);
+    expect(git(g.nested.cwd, "rev-parse", "HEAD")).toBe(g.nestedA);
+  });
+
+  it("retains lock ownership when rollback is interrupted before releasing native locks", async () => {
+    const f = await nestedFixture();
+    const unlink = fs.unlink.bind(fs);
+    const failure = vi.spyOn(fs, "unlink").mockImplementation(async target => {
+      if (path.basename(String(target)) === "HEAD.lock") throw new Error("lock_release_failed");
+      return unlink(target);
+    });
+    expect(await f.expire({ beforeDelete: async () => { await fs.writeFile(f.settingsPath, "changed during expiration\n"); } }))
+      .toMatchObject({ expired: false, skipReason: "lock_release_failed" });
+    expect((await f.row()).status).toBe("archived");
+    expect(readGitCacheExpiration(await f.row())?.lockToken).toMatch(/^[a-f0-9]{64}$/);
+    failure.mockRestore();
+    expect(await f.expire()).toMatchObject({ expired: false, skipReason: "local_settings_changed" });
+    expect((await f.row()).status).toBe("active");
+    expect((await f.row()).metadata?.gitCacheExpiration).toBeUndefined();
+    expect(await fs.readFile(f.settingsPath, "utf8")).toBe("changed during expiration\n");
+    await fs.writeFile(path.join(f.nested.cwd, "continued.txt"), "continued after rollback\n");
+    git(f.nested.cwd, "add", "."); git(f.nested.cwd, "commit", "-m", "Continued after rollback");
+  });
+
+  it("preserves a foreign Git lock when recovering an interrupted expiration", async () => {
+    const f = await nestedFixture();
+    const locations = await crashWithExpirationLocks(f);
+    const target = path.join(locations[0]!.root, locations[0]!.relativePath);
+    await fs.writeFile(target, "foreign Git lock\n");
+    expect(await f.expire()).toMatchObject({ expired: false, skipReason: "git_expiration_lock_conflict" });
+    expect(await f.reopen()).toMatchObject({ ok: false, code: "rebuild_failed" });
+    expect(await fs.readFile(target, "utf8")).toBe("foreign Git lock\n");
+    expect(await fs.readFile(f.settingsPath)).toEqual(f.settings);
+    expect(git(f.nested.cwd, "rev-parse", "HEAD")).toBe(f.nestedA);
+  });
 
   it("restores nested checkout commits and local settings after upstream advances", async () => {
     const f = await nestedFixture();
@@ -197,6 +315,61 @@ describeEmbeddedPostgres("reconstructable Git expiration", () => {
     expect(await fs.readFile(observed, "utf8")).toBe("restored before provision");
   });
 
+  it.each(["failed_provision", "transaction_rollback"])("retries %s without discarding its restored workspace edits", async failure => {
+    const f = await nestedFixture();
+    const probe = path.join(path.dirname(f.source), "provision-retry.cjs");
+    const observed = path.join(path.dirname(f.source), "provision-retry.txt");
+    const changedSettings = "settings updated by provisioning\n";
+    await fs.writeFile(probe, `const fs = require('node:fs');
+      if (!fs.existsSync(${JSON.stringify(observed)})) {
+        fs.writeFileSync(${JSON.stringify(f.settingsPath)}, ${JSON.stringify(changedSettings)});
+        fs.writeFileSync(${JSON.stringify(observed)}, 'first attempt');
+        process.exit(1);
+      }
+      if (fs.readFileSync(${JSON.stringify(f.settingsPath)}, 'utf8') !== ${JSON.stringify(changedSettings)}) throw Error('lost provision edits');
+      fs.writeFileSync(${JSON.stringify(observed)}, 'second attempt succeeded');`);
+    const [primary] = await db.insert(projectWorkspaces).values({ companyId: f.companyId, projectId: f.projectId!,
+      name: "Primary repository", cwd: f.baseCwd, repoUrl: f.base.repoUrl, isPrimary: true }).returning();
+    await db.update(issues).set({ projectId: f.projectId }).where(eq(issues.id, f.issueId));
+    const row = await f.row();
+    await db.update(executionWorkspaces).set({ projectWorkspaceId: primary!.id, metadata: { ...row.metadata,
+      config: { provisionCommand: `node ${JSON.stringify(probe)}` } } }).where(eq(executionWorkspaces.id, f.workspaceId));
+    expect((await f.expire()).expired).toBe(true);
+    if (failure === "transaction_rollback") {
+      const record = activityLog.logActivity;
+      vi.spyOn(activityLog, "logActivity").mockImplementation(async (...args) => {
+        if (args[1].action === "execution_workspace.reopen_failed") throw new Error("interrupted_reopen_transaction");
+        return record(...args);
+      });
+    }
+    expect(await f.reopen()).toMatchObject({ ok: false, code: "rebuild_failed" });
+    expect(await fs.readFile(f.settingsPath, "utf8")).toBe(changedSettings);
+    expect((await f.row()).metadata?.gitCacheRestoration).toMatchObject({ contentsRestoredAt: expect.any(String) });
+    expect((await f.row()).metadata?.gitCacheRestoration).not.toHaveProperty("restoredAt");
+    vi.restoreAllMocks();
+    expect(await f.reopen()).toMatchObject({ ok: true, reopened: true });
+    expect(await fs.readFile(observed, "utf8")).toBe("second attempt succeeded");
+    expect(git(f.nested.cwd, "rev-parse", "HEAD")).toBe(f.nestedA);
+    expect(await fs.readFile(f.settingsPath, "utf8")).toBe(changedSettings);
+  });
+
+  it("resets the contents checkpoint before retrying a missing restored workspace", async () => {
+    const f = await nestedFixture();
+    expect((await f.expire()).expired).toBe(true);
+    expect(await f.reopen()).toMatchObject({ ok: true });
+    expect((await f.row()).metadata?.gitCacheRestoration).toMatchObject({ contentsRestoredAt: expect.any(String), restoredAt: expect.any(String) });
+    await fs.rm(f.cwd, { recursive: true });
+    await db.update(executionWorkspaces).set({ status: "archived" }).where(eq(executionWorkspaces.id, f.workspaceId));
+    await fs.rename(f.nestedRemote, `${f.nestedRemote}.offline`);
+    expect(await f.reopen()).toMatchObject({ ok: false, code: "rebuild_failed" });
+    expect(await exists(f.cwd)).toBe(true);
+    expect((await f.row()).metadata?.gitCacheRestoration).toMatchObject({ contentsRestoredAt: null, restoredAt: expect.any(String) });
+    await fs.rename(`${f.nestedRemote}.offline`, f.nestedRemote);
+    expect(await f.reopen()).toMatchObject({ ok: true, reopened: true });
+    expect(git(f.nested.cwd, "rev-parse", "HEAD")).toBe(f.nestedA);
+    expect(await fs.readFile(f.settingsPath)).toEqual(f.settings);
+  });
+
   it("resumes settings publication after linking but before temporary-file removal", async () => {
     const f = await nestedFixture();
     const settingsDirectory = await fs.realpath(path.dirname(f.settingsPath));
@@ -223,12 +396,38 @@ describeEmbeddedPostgres("reconstructable Git expiration", () => {
     expect((await fs.stat(f.settingsPath)).mode & 0o777).toBe(0o600);
   });
 
-  it("restores a historical checkout after its project branch selection changes", async () => {
+  it.each(["repoRef", "cwd"])("keeps the restored checkout through preparation after project %s changes", async selection => {
+    const f = await nestedFixture();
+    await fs.writeFile(path.join(f.nestedSource, "nested.txt"), "nested B\n");
+    git(f.nestedSource, "add", "."); git(f.nestedSource, "commit", "-m", "Nested B");
+    git(f.nestedSource, "push", f.nestedRemote, "HEAD:refs/heads/release");
+    expect((await f.expire()).expired).toBe(true);
+    const updated = await db.update(projectWorkspaces).set(selection === "repoRef" ? { repoRef: "release" } : { cwd: f.nestedSource })
+      .where(eq(projectWorkspaces.id, f.preparation.workspaces[0]!.id)).returning();
+    expect(await f.reopen()).toMatchObject({ ok: true });
+    const row = await f.row();
+    const prepared = await prepareProjectRepositoryWorkspaces({ ...f.preparation, workspaces: updated,
+      restoredContents: readGitCacheRestoration(row)?.contents });
+    expect(prepared).toEqual([f.nested]);
+    expect(git(f.nested.cwd, "rev-parse", "HEAD")).toBe(f.nestedA);
+    expect(await fs.readFile(f.nestedSettingsPath)).toEqual(f.settings);
+    expect(await exists(path.join(f.cwd, ".paperclip-runtime", "detached-repositories"))).toBe(false);
+    await db.update(executionWorkspaces).set({ metadata: { ...row.metadata, reopenPendingConsumption: false } })
+      .where(eq(executionWorkspaces.id, f.workspaceId));
+    expect(await f.expire()).toMatchObject({ expired: true });
+  });
+
+  it("does not replace a missing restored checkout or admit a changed repository", async () => {
     const f = await nestedFixture();
     expect((await f.expire()).expired).toBe(true);
-    await db.update(projectWorkspaces).set({ repoRef: "release" }).where(eq(projectWorkspaces.id, f.preparation.workspaces[0]!.id));
     expect(await f.reopen()).toMatchObject({ ok: true });
-    expect(git(f.nested.cwd, "rev-parse", "HEAD")).toBe(f.nestedA);
+    const restoredContents = readGitCacheRestoration(await f.row())?.contents;
+    await expect(prepareProjectRepositoryWorkspaces({ ...f.preparation, restoredContents,
+      workspaces: [{ ...f.preparation.workspaces[0]!, repoUrl: pathToFileURL(f.source).href }] })).rejects.toThrow("could not be restored");
+    await fs.rename(f.nested.cwd, `${f.nested.cwd}.retained`);
+    await expect(prepareProjectRepositoryWorkspaces({ ...f.preparation, restoredContents })).rejects.toThrow("could not be restored");
+    expect(await exists(f.nested.cwd)).toBe(false);
+    expect(git(`${f.nested.cwd}.retained`, "rev-parse", "HEAD")).toBe(f.nestedA);
   });
 
   it("retries a partial nested restoration when upstream returns", async () => {

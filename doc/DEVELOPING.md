@@ -2655,6 +2655,10 @@ are bound to the company, workspace, and relative path and require the instance
 secrets master key. The worker rechecks the complete saved contents before deletion.
 A changed workspace is retained and made usable instead of deleting newer work.
 Interrupted settings publication and partial nested restoration are retryable.
+Normal preparation retains the saved nested repository selection when project
+ref or path settings change. A durable contents checkpoint lets provisioning
+retry without overwriting files it changed. Expiration records ownership before
+publishing native Git locks; restart recovery removes only those owned locks.
 Inaccessible upstream produces an explicit
 retryable restoration failure. It never substitutes the default branch.
 Reopening failures reject the consuming request with HTTP 409 before saving a

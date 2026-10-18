@@ -109,6 +109,17 @@ export function validateGitWorkspaceContents(contents: GitWorkspaceContents | un
   }
 }
 
+export function selectRestoredProjectRepositories<T extends { id: string; repoUrl: string | null; repoRef: string | null; cwd?: string | null }>(sources: T[], contents?: GitWorkspaceContents): T[] {
+  validateGitWorkspaceContents(contents);
+  for (const checkout of contents?.checkouts ?? []) {
+    if (!sources.some(source => source.id === checkout.source.id && source.repoUrl === checkout.source.repoUrl)) throw new GitCacheRestorationFailure();
+  }
+  return sources.map(source => {
+    const saved = contents?.checkouts.find(checkout => checkout.source.id === source.id)?.source;
+    return saved ? { ...source, repoRef: saved.repoRef, cwd: saved.cwd } : source;
+  });
+}
+
 export async function readManagedCheckoutContents(checkout: string, name: string, source: ManagedCheckoutSource, signal?: AbortSignal): Promise<ManagedCheckoutContents> {
   const commit = (await gitCacheCommand(checkout, ["rev-parse", "HEAD"], signal)).trim();
   const branchName = (await gitCacheCommand(checkout, ["symbolic-ref", "--quiet", "--short", "HEAD"], signal).catch(() => "")).trim() || null;

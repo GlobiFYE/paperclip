@@ -1,6 +1,8 @@
-import { captureGitWorkspaceContents, assertGitWorkspaceContentsUnchanged, readManagedCheckoutContents, type ManagedCheckoutContents } from "./git-workspace-contents.js";
+import { captureGitWorkspaceContents, assertGitWorkspaceContentsUnchanged, readManagedCheckoutContents, selectRestoredProjectRepositories, type ManagedCheckoutContents } from "./git-workspace-contents.js";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { randomBytes } from "node:crypto";
+import { acquireGitExpirationLocks } from "./git-workspace-expiration-locks.js";
 import { and, eq, ne, sql } from "drizzle-orm";
 import { executionWorkspaces, issues, heartbeatRuns, nativeRunFinalizations, environmentLeases,
   workspaceRuntimeServices, issueRecoveryActions, projectWorkspaces, withDedicatedDbConnection, type Db } from "@paperclipai/db";
@@ -9,7 +11,7 @@ import { withIsolatedRepositorySourceLock, verifiedRecordedIsolatedRemoteSource 
 import { managedProjectCheckoutName } from "./managed-project-checkout-name.js";
 import type { GitRemoteAuthProvider } from "./git-credentials.js";
 import { assertReproducibleGitFiles, assertReproducibleBaseGitStorage, assertReproducibleManagedCheckout, inspectGitCacheRecipe, readGitCacheRestoration,
-  verifyRemoteGitCommit, GitCacheRestorationFailure, type ManagedCheckoutProver, gitCacheCommand, readGitCacheExpiration, finishGitCacheTrash, type GitCacheExpiration, GIT_CACHE_RESTORATION_KEY, GIT_CACHE_EXPIRATION_REASON } from "./git-workspace-restoration.js";
+  verifyRemoteGitCommit, gitCacheExpirationLockLocations, recoverGitCacheExpirationLocks, GitCacheRestorationFailure, type ManagedCheckoutProver, gitCacheCommand, readGitCacheExpiration, finishGitCacheTrash, type GitCacheExpiration, GIT_CACHE_RESTORATION_KEY, GIT_CACHE_EXPIRATION_REASON } from "./git-workspace-restoration.js";
 
 async function allocatedBytes(target: string, shouldContinue: () => boolean): Promise<number> {
   if (!shouldContinue()) throw new Error("scan_stopped");
@@ -143,7 +145,7 @@ function managedCheckoutProver(db: Db, workspace: Workspace, auth: GitRemoteAuth
     rows ??= db.select({ id: projectWorkspaces.id, repoUrl: projectWorkspaces.repoUrl, repoRef: projectWorkspaces.repoRef,
       cwd: projectWorkspaces.cwd }).from(projectWorkspaces)
       .where(and(eq(projectWorkspaces.companyId, workspace.companyId), eq(projectWorkspaces.projectId, workspace.projectId)));
-    const source = (await rows).find(row => row.repoUrl
+    const source = selectRestoredProjectRepositories(await rows, readGitCacheRestoration(workspace)?.contents).find(row => row.repoUrl
       && managedProjectCheckoutName({ id: row.id, repoUrl: row.repoUrl, repoRef: row.repoRef, cwd: row.cwd }) === name);
     if (!source?.repoUrl) throw new Error("unknown_managed_checkout");
     await assertReproducibleManagedCheckout(checkoutPath, { repoUrl: source.repoUrl, resolveGitAuth: auth, signal });
@@ -199,7 +201,7 @@ export async function expireReconstructableGitWorkspace(db: Db, snapshot: Worksp
           }
           state = { schema: "paperclip.git-cache-expiration.v1", generation, workspaceRemoved: false,
             worktreeTrash: path.join(path.dirname(recipe.worktreePath), `.expired-git-worktree-${workspace.id}-${generation}`),
-            worktreeAdmin, baseTrash: null, completed: false };
+            worktreeAdmin, baseTrash: null, completed: false, lockToken: randomBytes(32).toString("hex") };
           if (await exists(state.worktreeTrash)) throw new Error("unknown_worktree_trash");
           // Commit the immutable restoration recipe BEFORE touching disk. The separate
           // lifecycle-lock connection remains held through deletion and final state.
@@ -213,11 +215,16 @@ export async function expireReconstructableGitWorkspace(db: Db, snapshot: Worksp
           [workspace] = await db.update(executionWorkspaces).set({ metadata: { ...workspace!.metadata, [EXPIRATION_KEY]: state }, updatedAt: new Date() })
             .where(eq(executionWorkspaces.id, snapshot.id)).returning();
         };
-        await options.beforeDelete?.(workspace);
+        if (!state.lockToken) {
+          state.lockToken = randomBytes(32).toString("hex");
+          await persist();
+        }
+        await recoverGitCacheExpirationLocks(workspace!);
+        const lockLocations = gitCacheExpirationLockLocations(workspace!);
+        await options.beforeDelete?.(workspace!);
         if (!await isGitWorkspaceExpirationEligible(tx, workspace, options.now)) throw new Error("live_or_unresolved_consumer");
         if (!state.workspaceRemoved && present) {
-          const { acquireGitWorktreeCleanupLock } = await import("./workspace-runtime.js");
-          const locks = [await acquireGitWorktreeCleanupLock(recipe.worktreePath)];
+          const locks = [await acquireGitExpirationLocks(lockLocations.filter(location => location.checkout === null), state.lockToken)];
           try {
             try {
               checkouts.clear();
@@ -225,13 +232,15 @@ export async function expireReconstructableGitWorkspace(db: Db, snapshot: Worksp
                 verifyFetchedCommit: (commit, signal) => verifyRemoteGitCommit(recipe.repoUrl, commit, auth, signal) });
               for (const checkout of checkouts.values()) {
                 const cwd = path.join(recipe.worktreePath, ".paperclip-repositories", checkout.name);
-                locks.push(await acquireGitWorktreeCleanupLock(cwd));
+                locks.push(await acquireGitExpirationLocks(lockLocations.filter(location => location.checkout === checkout.name), state.lockToken));
                 if ((await gitCacheCommand(cwd, ["status", "--porcelain=v1", "--untracked-files=all", "-z"], options.signal)).length) throw new Error("managed_checkouts_changed");
                 checkouts.set(checkout.name, await readManagedCheckoutContents(cwd, checkout.name, checkout.source, options.signal));
               }
               await assertGitWorkspaceContentsUnchanged(recipe.worktreePath, identity, recipe.contents, [...checkouts.values()]);
+              if ((await gitCacheCommand(recipe.worktreePath, ["symbolic-ref", "--short", "HEAD"], options.signal)).trim() !== recipe.branchName) throw new Error("branch_identity_changed");
               if ((await gitCacheCommand(recipe.worktreePath, ["rev-parse", "HEAD"], options.signal)).trim() !== recipe.commit) throw new Error("head_changed");
             } catch (error) {
+              for (const lock of [...locks].reverse()) await lock.release();
               const metadata: Record<string, unknown> = { ...workspace.metadata, lifecycleGeneration: state.generation + 1,
                 [GIT_CACHE_RESTORATION_KEY]: { ...recipe, restoredAt: new Date().toISOString() } };
               delete metadata[EXPIRATION_KEY];

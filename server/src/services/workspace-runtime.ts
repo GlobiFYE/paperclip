@@ -37,7 +37,7 @@ import {
   type WorkspaceRuntimeDesiredState,
   type WorkspaceRuntimeServiceStateMap,
 } from "@paperclipai/shared";
-import { and, desc, eq, gte, inArray, isNull, lte, ne, or } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { asNumber, asString, parseObject, renderTemplate } from "../adapters/utils.js";
 import { conflict, unprocessable } from "../errors.js";
 import { resolveHomeAwarePath } from "../home-paths.js";
@@ -3771,6 +3771,7 @@ export async function realizeExecutionWorkspace(input: {
 
 export async function ensurePersistedExecutionWorkspaceAvailable(input: {
   prepareRestoredLocalSource?: (sourceCwd: string) => Promise<() => Promise<void>>;
+  persistContentsRestoredAt?: (at: string | null) => Promise<void>;
   db?: Db | null;
   base: ExecutionWorkspaceInput;
   workspace: {
@@ -3855,6 +3856,22 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     workspaceId: input.workspace.id, cwd, baseCwd, repoUrl: input.workspace.repoUrl ?? input.base.repoUrl,
     branchName: input.workspace.branchName ?? null });
   const savedCommit = restoration?.commit ?? null;
+  let currentRecipe = input.workspace.metadata?.gitCacheRestoration;
+  const persistContentsRestoredAt = async (at: string | null) => {
+    if (!restoration?.contents || !input.workspace.id) return;
+    if (input.persistContentsRestoredAt) await input.persistContentsRestoredAt(at);
+    else {
+      if (!input.db) throw new GitCacheRestorationFailure();
+      const updated = await input.db.update(executionWorkspaces).set({
+        metadata: sql`jsonb_set(${executionWorkspaces.metadata}, '{gitCacheRestoration,contentsRestoredAt}', ${JSON.stringify(at)}::jsonb)`,
+      }).where(and(eq(executionWorkspaces.id, input.workspace.id), eq(executionWorkspaces.companyId, input.agent.companyId),
+        sql`${executionWorkspaces.metadata}->'gitCacheRestoration' = ${JSON.stringify(currentRecipe)}::jsonb`))
+        .returning({ id: executionWorkspaces.id });
+      if (updated.length !== 1) throw new GitCacheRestorationFailure();
+    }
+    currentRecipe = { ...currentRecipe as Record<string, unknown>, contentsRestoredAt: at };
+    input.workspace.metadata!.gitCacheRestoration = currentRecipe;
+  };
   const restoreContents = async () => {
     if (!restoration?.contents || !input.workspace.id) return;
     await restoreGitWorkspaceContents({ cwd, companyId: input.agent.companyId, workspaceId: input.workspace.id,
@@ -3872,6 +3889,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
           eq(projectWorkspaces.projectId, input.workspace.projectId)));
         if (!row || row.repoUrl !== source.repoUrl) throw new GitCacheRestorationFailure();
       }, prepareLocalSource: input.prepareRestoredLocalSource });
+    await persistContentsRestoredAt(new Date().toISOString());
   };
   const repoRoot = await runGit(["rev-parse", "--show-toplevel"], baseCwd);
   await input.beforeSourceCopy?.(repoRoot, realized.worktreePath ?? cwd);
@@ -3954,7 +3972,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     realized.warnings = [...repairWarnings, ...baseRefreshWarnings, ...baseDrift.warnings];
     realized.baseRefSha = refresh.baseRefSha ?? recordedBaseRefSha ?? baseDrift.branchBaseRefSha ?? baseDrift.currentBaseRefSha;
     await input.afterSourceCopy?.(repoRoot, realized.worktreePath ?? cwd);
-    if (restoration && !restoration.restored) await restoreContents();
+    if (restoration && !restoration.contentsRestored) await restoreContents();
     await provisionExecutionWorktree({
       skipHostProvision: input.skipHostProvision,
       strategy: {
@@ -3979,6 +3997,7 @@ export async function ensurePersistedExecutionWorkspaceAvailable(input: {
     throw new Error(`Execution workspace "${cwd}" is missing and cannot be restored because no branch name is recorded.`);
   }
 
+  await persistContentsRestoredAt(null);
   await fs.mkdir(path.dirname(worktreePath), { recursive: true });
   await runGit(["worktree", "prune"], repoRoot).catch(() => {});
   if (savedCommit) {
