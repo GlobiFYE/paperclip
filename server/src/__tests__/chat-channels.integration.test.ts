@@ -2786,6 +2786,37 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       await expect(gateway.executeTool({ sessionToken: session.token, tool: tool.name, parameters: assessment, idempotencyKey })).rejects.toThrow();
       expect(summaryAttempts).toBe(2);
     }, 25_000);
+    it.each([403, 401])("preserves GitHub connection intent after publication HTTP %s", async status => {
+      const f = await toolReplyFixture();
+      const initialEndpoint = await f.service.get(f.endpoint.id);
+      const toolsBefore = await githubBotToolsForSession(db, f.session);
+      expect(toolsBefore).toHaveLength(7);
+      const runtime = f.runtime.endpoints.get(f.endpoint.id)!;
+      runtime.postError = Object.assign(new Error("Provider rejected publication"), { status });
+      const comment = await issueService(db).addComment(f.conversation.issueId!, "Rejected response",
+        { userId: "owner-user" }, { authorType: "user" });
+      await f.service.publishComment(f.endpoint.id, f.conversation.id, comment.id);
+      expect(await readChatPublicationsByCommentId(comment.id)).toEqual([
+        expect.objectContaining({ state: "failed", attempts: 1, nextAttemptAt: null }),
+      ]);
+      expect((await readToolConnectionsById(f.endpoint.connectionId))[0]).toMatchObject({
+        status: "active", enabled: true, healthStatus: status === 401 ? "degraded" : "healthy",
+      });
+      expect(await f.service.get(f.endpoint.id)).toMatchObject({ status: status === 401 ? "attention" : initialEndpoint.status });
+      expect(await githubBotToolsForSession(db, f.session)).toEqual(status === 401 ? [] : toolsBefore);
+      runtime.postError = null;
+      const next = await issueService(db).addComment(f.conversation.issueId!, "Independent response",
+        { userId: "owner-user" }, { authorType: "user" });
+      const writesBefore = runtime.posts.length;
+      await f.service.publishComment(f.endpoint.id, f.conversation.id, next.id);
+      if (status === 403) {
+        expect((await readChatPublicationsByCommentId(next.id))[0]).toMatchObject({ state: "published" });
+        expect(runtime.posts.length).toBe(writesBefore + 1);
+      } else {
+        expect(runtime.posts).toHaveLength(writesBefore);
+        expect(f.runtime.endpoints.has(f.endpoint.id)).toBe(false);
+      }
+    });
     it("lists each GitHub bot tool once when an inline thread shares the task", async () => {
       const f = await toolReplyFixture("github:paperclipai/paperclip:418");
       const { id: _id, ...conversation } = f.conversation;
@@ -26551,6 +26582,9 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
               .from(chatEndpoints)
               .where(eq(chatEndpoints.id, endpoint.id));
             expect(currentEndpoint?.status).toBe("attention");
+            expect((await readToolConnectionsById(endpoint.connectionId))[0]).toMatchObject({
+              status: "active", enabled: true, healthStatus: "degraded",
+            });
           } else {
             const [resource] = await db
               .select({ availability: chatEndpointResources.availability })
@@ -27857,7 +27891,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       }),
       expectedAttempts: 1,
       expectedDiagnostic:
-        /Receipt reaction failed after 1 attempt \(endpoint_attention\): GitHub reaction forbidden/,
+        /Receipt reaction failed after 1 attempt \(failed\): GitHub reaction forbidden/,
     },
     {
       label: "retries a GitHub 429 receipt reaction with bounded backoff",
@@ -39698,8 +39732,8 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
           expect(runtime.endpoints.has(endpoint.id)).toBe(false);
           const [connection] = await readToolConnectionsById(endpoint.connectionId);
           expect(connection).toMatchObject({
-            status: "disabled",
-            enabled: false,
+            status: "active",
+            enabled: true,
             healthStatus: "degraded",
           });
         }
@@ -39743,8 +39777,8 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       expectedEndpointStatus: "attention",
       expectedConversationState: "active",
       expectedConnection: {
-        status: "disabled",
-        enabled: false,
+        status: "active",
+        enabled: true,
         healthStatus: "degraded",
       },
       expectedResourceAvailability: "available",
@@ -41821,7 +41855,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         failedOpen.event.openModal = vi.fn(async () => {
           throw Object.assign(new Error("Slack Web API rejected modal"), {
             code: "slack_webapi_platform_error",
-            data: { error: "expired_trigger_id", ok: false },
+            data: { error: "missing_scope", ok: false },
           });
         });
         await callbacks.onAction(
