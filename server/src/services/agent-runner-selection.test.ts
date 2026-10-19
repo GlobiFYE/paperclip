@@ -81,6 +81,10 @@ describe("server-owned Codex runner selection", () => {
     expect(resolveNewAgentRunner({ adapterType: "codex_local", target, runner: "legacy", adapterConfig: { extraArgs: ["--search"] } }).adapterType).toBe("codex_local");
     expect(resolveNewAgentRunner({ adapterType: "paperclip_runner", runner: "legacy", adapterConfig: { provider: "codex", model: "gpt-5.6-sol", lifecycleMode: "per_turn", codexPermissionMode: "never", modelReasoningEffort: "high" } })).toEqual({ adapterType: "codex_local", adapterConfig: { model: "gpt-5.6-sol", modelReasoningEffort: "high", dangerouslyBypassApprovalsAndSandbox: false } });
   });
+  it("preserves an explicit dangerouslyBypassSandbox opt-in alias", () => {
+    expect(resolveNewAgentRunner({ adapterType: "codex_local", runner: "legacy", adapterConfig: { dangerouslyBypassSandbox: true, lifecycleMode: "per_turn" } }))
+      .toEqual({ adapterType: "codex_local", adapterConfig: { dangerouslyBypassSandbox: true, dangerouslyBypassApprovalsAndSandbox: true } });
+  });
   it("preserves explicit legacy permission policy alongside compatible native lifecycle defaults", () => {
     expect(resolveNewAgentRunner({ adapterType: "codex_local", runner: "legacy", adapterConfig: { dangerouslyBypassApprovalsAndSandbox: false, lifecycleMode: "per_turn" } }))
       .toEqual({ adapterType: "codex_local", adapterConfig: { dangerouslyBypassApprovalsAndSandbox: false } });

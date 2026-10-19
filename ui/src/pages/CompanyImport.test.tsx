@@ -1296,6 +1296,44 @@ describe("CompanyImport", () => {
     expect(lastImportMeta().adapterOverrides?.coder?.adapterConfig).not.toHaveProperty("codexLegacySandboxBypass");
   });
 
+  it.each(["claude_local", "opencode_local"] as const)("preserves a saved %s skip-permissions opt-in during an ordinary import edit", async (adapterType) => {
+    mockOptionalCompany.mockReturnValue({ selectedCompanyId: "company-1" });
+    mockAdaptersApi.list.mockResolvedValue([
+      { type: "claude_local", disabled: false },
+      { type: "opencode_local", disabled: false },
+    ]);
+    const preview = buildPreviewResult();
+    preview.manifest.agents[0]!.adapterType = adapterType;
+    preview.manifest.agents[0]!.adapterConfig = {
+      model: adapterType === "claude_local" ? "claude-sonnet-5" : "openrouter/example/model",
+      dangerouslySkipPermissions: true,
+    };
+    mockCompaniesApi.importPreview.mockResolvedValue(preview);
+    await renderPage();
+    await enterGithubUrl();
+    await clickButton(text => text === "Preview import");
+    await clickButton(text => text.includes("configure adapter"));
+    if (adapterType === "claude_local") {
+      // Change an unrelated field so the import sends an explicit override.
+      await act(async () => container.querySelector<HTMLButtonElement>('[aria-label="Model"]')!.click());
+      const defaultModel = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')].find(option => option.textContent?.trim() === "Default");
+      expect(defaultModel).toBeTruthy();
+      await act(async () => defaultModel!.click());
+    } else {
+      // OpenCode's only create-mode adapter field is this toggle; flip it back
+      // to true so the edit does not change the saved opt-in.
+      const toggle = container.querySelector<HTMLButtonElement>('[aria-label="Skip permissions"]');
+      expect(toggle?.getAttribute("aria-checked")).toBe("true");
+      await act(async () => toggle!.click());
+      await flushReact();
+      await act(async () => toggle!.click());
+      await flushReact();
+    }
+    await clickButton(text => text.startsWith("Import 3 file"));
+    await settle();
+    expect(lastImportMeta().adapterOverrides?.coder?.adapterConfig).toMatchObject({ dangerouslySkipPermissions: true });
+  });
+
   it.each(["model-clear", "effort-clear", "env-remove", "legacy-model", "changed-harness"] as const)("preserves native Codex source configuration during an ordinary import edit (%s)", async edit => {
     mockOptionalCompany.mockReturnValue({ selectedCompanyId: "company-1" });
     mockAdaptersApi.list.mockResolvedValue([

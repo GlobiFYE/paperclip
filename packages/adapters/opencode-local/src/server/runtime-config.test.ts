@@ -75,6 +75,37 @@ describe("prepareOpenCodeRuntimeConfig", () => {
     await expect(fs.access(prepared.env.XDG_CONFIG_HOME)).rejects.toThrow();
   });
 
+  it("registers custom providers without granting permissions when the flag is absent", async () => {
+    const configHome = await makeConfigHome({ permission: { read: "allow" } });
+    const providers = {
+      bifrost: {
+        npm: "@ai-sdk/openai-compatible",
+        models: { "example/model-a": {} },
+      },
+    };
+
+    const prepared = await prepareOpenCodeRuntimeConfig({
+      env: {
+        XDG_CONFIG_HOME: configHome,
+        PAPERCLIP_OPENCODE_PROVIDERS: JSON.stringify(providers),
+      },
+      config: {},
+    });
+    cleanupPaths.add(prepared.env.XDG_CONFIG_HOME);
+
+    expect(prepared.env.XDG_CONFIG_HOME).not.toBe(configHome);
+    const runtimeConfig = JSON.parse(
+      await fs.readFile(path.join(prepared.env.XDG_CONFIG_HOME, "opencode", "opencode.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(runtimeConfig.provider).toMatchObject({ bifrost: providers.bifrost });
+    expect(runtimeConfig.permission).toEqual({ read: "allow" });
+    expect(runtimeConfig.permission).not.toBe("allow");
+    expect(prepared.notes).not.toContain(
+      "Injected runtime OpenCode config with permission=allow for all tools and connections.",
+    );
+    await prepared.cleanup();
+  });
+
   it("merges custom providers from PAPERCLIP_OPENCODE_PROVIDERS into the config", async () => {
     const configHome = await makeConfigHome({ permission: { read: "allow" } });
     const providers = {
