@@ -312,6 +312,8 @@ Native input v9 adds configured Claude effort while retaining v1–v8 readers.
 It carries the explicit home mode from v7; v8 Muse remains separate. The shared
 executor retains master's provider and cleanup behavior. Copilot's shared source
 attestation advances from pending profile 21 to 22 without replacing historical
-fixtures. Pi advances from master's profile 23 to 26 to bind the combined source.
+fixtures. Pi advances from master's profile 24 to 27 to bind the combined source,
+including master's OpenRouter attribution. The prior branch profile 24 is
+preserved separately from master's published profile 24.
 Provider executable bytes remain unchanged. These new source identities require
 fresh compatibility checks; earlier provider runs retain their original identities.

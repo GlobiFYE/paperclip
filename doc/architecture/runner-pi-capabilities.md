@@ -1,6 +1,19 @@
 # Pi rich ACP runtime
 
-## Current source integration — 2026-10-12
+## Current source integration — 2026-10-19
+
+The composed Claude source declares **Pi profile 27**
+(`sha256:b1b75a1ae3ac498eb07b95b96bebf4da86227b83d09276076dd5c222e3964dba`)
+and **Copilot profile 22**, still pending qualification
+(`sha256:9027ee2bdf9180e3267b7d05b56b0703943251a29713c393f7a3f2ef1072efd2`).
+These identities bind the shared Claude effort and lifecycle changes plus
+master's OpenRouter attribution. Provider executable closures, model/effort
+options and qualification boundaries are unchanged. Current package and source
+checks remain separate from retained provider execution results, which keep
+their literal profile/source identities. Earlier immutable fixtures remain
+historical; they are not accepted as the current source identity.
+
+## Historical source integration — 2026-10-12
 
 Pi profile 25 (`sha256:dd67387487dadb08da76534c057dc0aa059f7698d1779cbd5fc452813828167a`)
 advances the shared sandbox source attestation after Claude settings initialization
