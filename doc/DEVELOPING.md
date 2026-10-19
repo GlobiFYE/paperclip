@@ -579,6 +579,11 @@ lock, preserves pause and retirement, and records the correction in the same
 transaction. It preserves run history and does not invent a heartbeat timestamp.
 The latest failed or timed-out run produces an error status. This adds no timer,
 provider call, or automatic workspace wake. Idle sleep checks remain independent.
+Failed lease history uses the same exact cleanup proof as idle sleep. Cleanup
+queues are checked separately from retained run metadata. Recovery queries have
+a two-second statement timeout, and the repair stops starting new candidates
+after five seconds. A repair failure is logged without rejecting the rest of
+orphan recovery.
 
 ```sh
 pnpm exec vitest run server/src/services/heartbeat/agent-status.test.ts server/src/__tests__/heartbeat-agent-status-recovery.test.ts

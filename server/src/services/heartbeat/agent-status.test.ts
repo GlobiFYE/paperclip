@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import {
   activityLog, agentInstructionWorkingCopies, agents, agentWakeupRequests, companies,
-  createDb, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, environmentLeases, heartbeatRuns,
+  createDb, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, environmentLeases, environments, heartbeatRuns,
   issues, nativeRunFinalizations, type Db,
 } from "@paperclipai/db";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "../../__tests__/helpers/embedded-postgres.js";
-import { createHeartbeatAgentStatus } from "./agent-status.js";
+import { createHeartbeatAgentStatus, settledAgentWorkCondition } from "./agent-status.js";
 
 const support = await getEmbeddedPostgresTestSupport();
 const describePostgres = support.supported ? describe : describe.skip;
@@ -29,6 +29,7 @@ describePostgres("heartbeat agent status", () => {
     live.clear();
     await db.delete(nativeRunFinalizations);
     await db.delete(environmentLeases);
+    await db.delete(environments);
     await db.delete(activityLog);
     await db.delete(agentInstructionWorkingCopies);
     await db.delete(heartbeatRuns);
@@ -139,6 +140,58 @@ describePostgres("heartbeat agent status", () => {
     expect(await reconcile()).toEqual([]);
   });
 
+  it("accepts proved-settled failed local lease history before a later shutdown", async () => {
+    const { companyId, agentId, runId } = await seed("failed");
+    const [environment] = await db.insert(environments).values({ name: "Local", driver: "local" }).returning();
+    await db.insert(environmentLeases).values({ companyId, heartbeatRunId: runId, environmentId: environment!.id,
+      status: "failed", leasePolicy: "ephemeral", provider: "local", releasedAt: old(), metadata: { driver: "local" } });
+    await db.insert(heartbeatRuns).values({ companyId, agentId, invocationSource: "automation", status: "interrupted",
+      runtimeMode: "legacy", startedAt: old(), finishedAt: new Date(Date.now() - 30 * 60_000) });
+    expect(await reconcile()).toEqual([agentId]);
+    expect((await agent(agentId)).status).toBe("idle");
+  });
+
+  it.each(["valid", "wrong_run", "missing_receipt", "pending_cleanup"])("requires exact failed remote cleanup proof: %s", async kind => {
+    const { companyId, agentId, runId } = await seed();
+    const leaseId = randomUUID();
+    const receipt = { schema: "paperclip.remote-termination.v1", companyId, runId: kind === "wrong_run" ? randomUUID() : runId,
+      leaseId, provider: "daytona", providerLeaseId: "synthetic-allocation", state: "destroyed" };
+    await db.insert(environmentLeases).values({ id: leaseId, companyId, heartbeatRunId: runId,
+      status: "failed", leasePolicy: "ephemeral", provider: "daytona", providerLeaseId: "synthetic-allocation",
+      releasedAt: old(), cleanupStatus: "success", metadata: {
+        ...(kind === "missing_receipt" ? {} : { remoteExecutionTermination: receipt }),
+        ...(kind === "pending_cleanup" ? { pendingCleanupInFlight: true } : {}),
+      } });
+    expect(await reconcile()).toEqual(kind === "valid" ? [agentId] : []);
+  });
+
+  it("does not probe cleanup once per retained finished run", async () => {
+    const { companyId, agentId } = await seed();
+    await db.execute(sql`INSERT INTO heartbeat_runs (company_id, agent_id, invocation_source, status,
+      started_at, finished_at, created_at, updated_at)
+      SELECT ${companyId}::uuid, ${agentId}::uuid, 'automation', 'succeeded',
+        ${old().toISOString()}::timestamptz, ${old().toISOString()}::timestamptz,
+        ${old().toISOString()}::timestamptz, ${old().toISOString()}::timestamptz
+      FROM generate_series(1, 10000)`);
+    await db.execute(sql`ANALYZE heartbeat_runs`);
+    const predicate = and(eq(agents.id, agentId), settledAgentWorkCondition(live, new Date()));
+    const result = await db.execute(sql`EXPLAIN (ANALYZE, FORMAT JSON)
+      SELECT ${agents.id} FROM ${agents} WHERE ${predicate}`);
+    const plan = result[0]!["QUERY PLAN"] as Array<{ Plan: Record<string, unknown> }>;
+    const scans: Record<string, number[]> = {};
+    function visit(node: Record<string, unknown>) {
+      const relation = node["Relation Name"] as string | undefined;
+      if (relation) (scans[relation] ??= []).push(Number(node["Actual Loops"]));
+      for (const child of (node.Plans ?? []) as Record<string, unknown>[]) visit(child);
+    }
+    visit(plan[0]!.Plan);
+    for (const table of ["native_run_finalizations", "environment_leases"]) {
+      expect(scans[table]?.length).toBeGreaterThan(0);
+      expect(Math.max(...scans[table]!)).toBeLessThanOrEqual(1);
+    }
+    expect(await reconcile()).toEqual([agentId]);
+  });
+
   it("retains unfinished instruction copyback", async () => {
     const { companyId, agentId, runId } = await seed();
     await db.insert(agentInstructionWorkingCopies).values({ companyId, agentId, runId,
@@ -186,11 +239,12 @@ describePostgres("heartbeat agent status", () => {
 
   it("rechecks admission that commits after candidate selection", async () => {
     const { companyId, agentId } = await seed();
+    let transactions = 0;
     const raced = new Proxy(db, {
       get(target, property, receiver) {
         if (property !== "transaction") return Reflect.get(target, property, receiver);
         return async (callback: Parameters<Db["transaction"]>[0]) => {
-          await db.insert(heartbeatRuns).values({ companyId, agentId, invocationSource: "on_demand", status: "queued" });
+          if (++transactions === 2) await db.insert(heartbeatRuns).values({ companyId, agentId, invocationSource: "on_demand", status: "queued" });
           return db.transaction(callback);
         };
       },

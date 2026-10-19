@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { agents, companies, createDb, EMBEDDED_POSTGRES_TEST_TIMEOUT_MS, heartbeatRuns, type Db } from "@paperclipai/db";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { heartbeatService } from "../services/heartbeat.js";
@@ -47,5 +47,25 @@ describePostgres("heartbeat recovery of a stranded agent", () => {
     const replacement = heartbeatService(db);
     expect(await replacement.reapOrphanedRuns()).toEqual({ reaped: 0, runIds: [] });
     expect(await inspect()).toEqual({ version: 1, backgroundWork: "none" });
+  });
+
+  it("keeps unrelated recovery available when the correction audit fails", async () => {
+    const companyId = randomUUID(), agentId = randomUUID();
+    const old = new Date(Date.now() - 60 * 60_000);
+    await db.insert(companies).values({ id: companyId, name: "Audit failure", issuePrefix: "ADTF" });
+    await db.insert(agents).values({ id: agentId, companyId, name: "Worker", role: "engineer",
+      status: "running", adapterType: "process", updatedAt: old });
+    await db.execute(sql`ALTER TABLE activity_log ADD CONSTRAINT reject_status_repair CHECK (action <> 'agent.status_reconciled') NOT VALID`);
+    const service = heartbeatService(db);
+    try {
+      expect(await service.reapOrphanedRuns()).toEqual({ reaped: 0, runIds: [] });
+      expect(await db.select().from(agents).where(eq(agents.id, agentId)))
+        .toEqual([expect.objectContaining({ status: "running" })]);
+    } finally {
+      await db.execute(sql`ALTER TABLE activity_log DROP CONSTRAINT reject_status_repair`);
+    }
+    expect(await service.reapOrphanedRuns()).toEqual({ reaped: 0, runIds: [] });
+    expect(await db.select().from(agents).where(eq(agents.id, agentId)))
+      .toEqual([expect.objectContaining({ status: "idle" })]);
   });
 });

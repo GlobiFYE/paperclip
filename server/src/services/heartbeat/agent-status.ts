@@ -4,7 +4,7 @@ import { trackAgentFirstHeartbeat } from "@paperclipai/shared/telemetry";
 import { getTelemetryClient } from "../../telemetry.js";
 import { logActivity, publishActivity, type ActivityPublication } from "../activity-log.js";
 import { publishLiveEvent } from "../live-events.js";
-import { finishedIdleRun, finishedIdleWake } from "../idle-work-proof.js";
+import { finishedIdleRun, finishedIdleWake, finishedFailedIdleLease } from "../idle-work-proof.js";
 
 type Outcome = "succeeded" | "interrupted" | "failed" | "cancelled" | "timed_out";
 
@@ -34,6 +34,42 @@ function publishStatus(agent: typeof agents.$inferSelect, outcome: string) {
       outcome,
     },
   });
+}
+
+export function settledAgentWorkCondition(liveRunIds: ReadonlySet<string>, now: Date) {
+  const localRuns = liveRunIds.size > 0
+    ? sql`AND NOT EXISTS (SELECT 1 FROM heartbeat_runs r
+        WHERE r.id IN (${sql.join([...liveRunIds].map(id => sql`${id}::uuid`), sql`, `)})
+          AND r.company_id = ${agents.companyId} AND r.agent_id = ${agents.id})`
+    : sql``;
+  return sql`NOT EXISTS (SELECT 1 FROM heartbeat_runs r
+      WHERE r.company_id = ${agents.companyId} AND r.agent_id = ${agents.id}
+        AND r.status IN ('running', 'queued'))
+    AND NOT EXISTS (SELECT 1 FROM heartbeat_runs r
+      WHERE r.company_id = ${agents.companyId} AND r.agent_id = ${agents.id}
+        AND ((${sql.raw(finishedIdleRun("r"))}) IS NOT TRUE
+          OR r.controller_lease_expires_at > ${now.toISOString()}::timestamptz))
+    ${localRuns}
+    AND NOT EXISTS (SELECT 1 FROM native_run_finalizations f
+      JOIN heartbeat_runs r ON r.id = f.run_id AND r.company_id = f.company_id
+      WHERE f.company_id = ${agents.companyId} AND r.agent_id = ${agents.id}
+        AND (f.phase NOT IN ('committed', 'terminal_failure')
+          OR f.lease_expires_at > ${now.toISOString()}::timestamptz OR f.next_attempt_at IS NOT NULL))
+    AND NOT EXISTS (SELECT 1 FROM environment_leases l
+      JOIN heartbeat_runs r ON r.id = l.heartbeat_run_id AND r.company_id = l.company_id
+      WHERE l.company_id = ${agents.companyId} AND r.agent_id = ${agents.id}
+        AND ((l.status NOT IN ('released', 'expired')
+            AND (${sql.raw(finishedFailedIdleLease("l"))}) IS NOT TRUE)
+          OR COALESCE(l.metadata->>'pendingCleanupInFlight', 'false') <> 'false'
+          OR COALESCE(l.metadata, '{}'::jsonb) ?| ARRAY['nativeWorkspaceExportResume', 'sandboxStopAndRetain']))
+    AND NOT EXISTS (SELECT 1 FROM agent_wakeup_requests w
+      WHERE w.company_id = ${agents.companyId} AND w.agent_id = ${agents.id}
+        AND (${sql.raw(finishedIdleWake("w"))}) IS NOT TRUE)
+    AND NOT EXISTS (SELECT 1 FROM agent_instruction_working_copies c
+      WHERE c.company_id = ${agents.companyId} AND c.agent_id = ${agents.id}
+        AND (c.state NOT IN ('saved', 'unchanged', 'resolved', 'unavailable', 'conflict')
+          OR c.process_stopped_at IS NULL OR c.next_attempt_at IS NOT NULL
+          OR c.receipt ? 'baseline' OR c.receipt->>'cleanupPending' = 'true'))`;
 }
 
 export function createHeartbeatAgentStatus(db: Db) {
@@ -71,46 +107,22 @@ export function createHeartbeatAgentStatus(db: Db) {
     publishStatus(result.updated, outcome);
   }
 
-  function noUnsettledWork(liveRunIds: ReadonlySet<string>, now: Date) {
-    const localRuns = liveRunIds.size > 0
-      ? sql`OR r.id IN (${sql.join([...liveRunIds].map(id => sql`${id}::uuid`), sql`, `)})`
-      : sql``;
-    return sql`NOT EXISTS (
-      SELECT 1 FROM heartbeat_runs r
-      WHERE r.company_id = ${agents.companyId} AND r.agent_id = ${agents.id}
-        AND ((${sql.raw(finishedIdleRun("r"))}) IS NOT TRUE
-          OR r.controller_lease_expires_at > ${now.toISOString()}::timestamptz
-          ${localRuns}
-          OR EXISTS (SELECT 1 FROM native_run_finalizations f
-            WHERE f.company_id = r.company_id AND f.run_id = r.id
-              AND (f.phase NOT IN ('committed', 'terminal_failure')
-                OR f.lease_expires_at > ${now.toISOString()}::timestamptz OR f.next_attempt_at IS NOT NULL))
-          OR EXISTS (SELECT 1 FROM environment_leases l
-            WHERE l.company_id = r.company_id AND l.heartbeat_run_id = r.id
-              AND (l.status NOT IN ('released', 'expired')
-                OR COALESCE(l.metadata->>'pendingCleanupInFlight', 'false') <> 'false'
-                OR COALESCE(l.metadata, '{}'::jsonb) ?| ARRAY['nativeWorkspaceExportResume', 'sandboxStopAndRetain']))))
-      AND NOT EXISTS (SELECT 1 FROM agent_wakeup_requests w
-        WHERE w.company_id = ${agents.companyId} AND w.agent_id = ${agents.id}
-          AND (${sql.raw(finishedIdleWake("w"))}) IS NOT TRUE)
-      AND NOT EXISTS (SELECT 1 FROM agent_instruction_working_copies c
-        WHERE c.company_id = ${agents.companyId} AND c.agent_id = ${agents.id}
-          AND (c.state NOT IN ('saved', 'unchanged', 'resolved', 'unavailable', 'conflict')
-            OR c.process_stopped_at IS NULL OR c.next_attempt_at IS NOT NULL
-            OR c.receipt ? 'baseline' OR c.receipt->>'cleanupPending' = 'true'))`;
-  }
-
   async function reconcileStrandedAgentStatuses(liveRunIds: () => ReadonlySet<string>) {
     const now = new Date();
     const cutoff = new Date(now.getTime() - RECONCILIATION_GRACE_MS);
-    const candidates = await db.select({ id: agents.id, companyId: agents.companyId }).from(agents)
+    const candidates = await db.transaction(async tx => {
+      await tx.execute(sql`SET LOCAL statement_timeout = '2s'`);
+      return tx.select({ id: agents.id, companyId: agents.companyId }).from(agents)
       .where(and(eq(agents.status, "running"), eq(agents.lifecycleState, "ready"),
-        lte(agents.updatedAt, cutoff), noUnsettledWork(liveRunIds(), now)))
+        lte(agents.updatedAt, cutoff), settledAgentWorkCondition(liveRunIds(), now)))
       .orderBy(asc(agents.updatedAt), asc(agents.id)).limit(RECONCILIATION_BATCH_SIZE);
+    });
     const reconciled: string[] = [];
     for (const candidate of candidates) {
+      if (Date.now() - now.getTime() > 5_000) break;
       const publications: ActivityPublication[] = [];
       const updated = await db.transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL statement_timeout = '2s'`);
         const [locked] = await tx.select({ id: agents.id }).from(agents).where(and(
           eq(agents.id, candidate.id), eq(agents.companyId, candidate.companyId),
         )).for("update", { skipLocked: true });
@@ -118,7 +130,7 @@ export function createHeartbeatAgentStatus(db: Db) {
         const [current] = await tx.select().from(agents).where(and(
           eq(agents.id, candidate.id), eq(agents.companyId, candidate.companyId),
           eq(agents.status, "running"), eq(agents.lifecycleState, "ready"),
-          lte(agents.updatedAt, cutoff), noUnsettledWork(liveRunIds(), now),
+          lte(agents.updatedAt, cutoff), settledAgentWorkCondition(liveRunIds(), now),
         ));
         if (!current) return null;
         const [lastRun] = await tx.select({ status: heartbeatRuns.status, error: heartbeatRuns.error })

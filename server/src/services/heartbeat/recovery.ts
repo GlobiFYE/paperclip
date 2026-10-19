@@ -2513,7 +2513,9 @@ export function createHeartbeatRecovery(db: Db, dependencies: HeartbeatRecoveryD
 
     await createHeartbeatAgentStatus(db).reconcileStrandedAgentStatuses(() => new Set([
       ...activeRunExecutions, ...runningProcesses.keys(), ...adapterExecutionControls.keys(),
-    ]));
+    ])).catch(() => {
+      logger.error({ errorKind: "agent_status_reconciliation_failed" }, "stranded agent status repair failed");
+    });
 
     return { reaped: reaped.length, runIds: reaped };
   }
