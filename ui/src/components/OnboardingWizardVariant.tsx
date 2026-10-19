@@ -1,4 +1,4 @@
-import { lazy } from "react";
+import { lazy, useEffect } from "react";
 import { useDialogActions, useDialogState } from "../context/DialogContext";
 import { useLocation } from "../lib/router";
 import { isOnboardingPath } from "../lib/onboarding-route";
@@ -15,6 +15,9 @@ export function OnboardingWizardVariant() {
   const { onboardingOpen, onboardingRouteDismissed } = useDialogState();
   const { closeOnboarding, setOnboardingRouteDismissed } = useDialogActions();
   const { pathname } = useLocation();
+  useEffect(() => {
+    setOnboardingRouteDismissed(false);
+  }, [pathname, setOnboardingRouteDismissed]);
   const requested = onboardingOpen || (isOnboardingPath(pathname) && !onboardingRouteDismissed);
   return <DeferredOverlay requested={requested} title="Setup" onClose={() => {
     closeOnboarding();

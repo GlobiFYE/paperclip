@@ -7,7 +7,8 @@ import { OnboardingWizardVariant } from "./OnboardingWizardVariant";
 
 const state = vi.hoisted(() => ({ onboardingOpen: false, onboardingRouteDismissed: false, pathname: "/PAP/issues/PAP-1" }));
 const mount = vi.hoisted(() => vi.fn());
-vi.mock("../context/DialogContext", () => ({ useDialogState: () => state, useDialogActions: () => ({ closeOnboarding: vi.fn(), setOnboardingRouteDismissed: vi.fn() }) }));
+const setDismissed = vi.hoisted(() => vi.fn());
+vi.mock("../context/DialogContext", () => ({ useDialogState: () => state, useDialogActions: () => ({ closeOnboarding: vi.fn(), setOnboardingRouteDismissed: setDismissed }) }));
 vi.mock("../lib/router", () => ({ useLocation: () => state }));
 vi.mock("./OnboardingWizard", () => ({
   OnboardingWizard: () => { mount(); return <div data-testid="wizard-capsule" />; },
@@ -21,8 +22,10 @@ describe("OnboardingWizardVariant", () => {
   }
   beforeEach(() => {
     state.onboardingOpen = false;
+    state.onboardingRouteDismissed = false;
     state.pathname = "/PAP/issues/PAP-1";
     mount.mockClear();
+    setDismissed.mockClear();
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -50,5 +53,16 @@ describe("OnboardingWizardVariant", () => {
     state.onboardingOpen = false;
     await renderVariant();
     expect(container.querySelector('[data-testid="wizard-capsule"]')).toBe(wizard);
+  });
+  it("resets route dismissal on navigation without undoing cancellation on the same path", async () => {
+    state.pathname = "/onboarding";
+    await renderVariant();
+    expect(setDismissed).toHaveBeenCalledExactlyOnceWith(false);
+    state.onboardingRouteDismissed = true;
+    await renderVariant();
+    expect(setDismissed).toHaveBeenCalledTimes(1);
+    state.pathname = "/PAP/issues/PAP-1";
+    await renderVariant();
+    expect(setDismissed).toHaveBeenCalledTimes(2);
   });
 });
