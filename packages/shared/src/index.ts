@@ -1,3 +1,4 @@
+export * from "./slack-app-manifest.js";
 export { composioAppSetupSchema, composioAppsRefreshSchema, composioAppsSyncSchema, composioAppAccountSchema, type ComposioAppSetupInput, type ComposioAppSetupResult, type ComposioAppAccountInput, type ComposioAppAccount, type ComposioAppSnapshot, type ComposioAppSyncState, type ComposioAppsResponse } from "./composio-app-setup.js";
 export { agentAdapterTypeSchema, optionalAgentAdapterTypeSchema } from "./adapter-type.js";
 export {
@@ -121,25 +122,6 @@ export {
   type AgentWorkEligibility,
 } from "./agent-eligibility.js";
 export {
-  computePipelineHealth,
-  groupWarningsByStage,
-  isPipelineTerminalStageKind,
-  type PipelineHealthAgentRef,
-  type PipelineHealthFailedAutomationInput,
-  type PipelineHealthInput,
-  type PipelineHealthPipelineRef,
-  type PipelineHealthReport,
-  type PipelineHealthStageInput,
-  type PipelineHealthStageRef,
-  type PipelineHealthWarning,
-  type PipelineHealthWarningCode,
-} from "./pipeline-health.js";
-export {
-  caseTypeMatchesPipeline,
-  deriveCaseType,
-  type CaseTypePipelineRef,
-} from "./pipeline-case-type.js";
-export {
   deriveResponsibleUser,
   deriveOriginatingActor,
   type ResponsibleUserAttribution,
@@ -238,36 +220,6 @@ export type {
 } from "./types/decision-training.js";
 export { DECISION_TRAINING_RETENTION_POLICY } from "./types/decision-training.js";
 
-export type {
-  PipelineAutomationRetryBlocker,
-  PipelineAutomationRetryCleanupOptions,
-  PipelineAutomationRetryEffectCounts,
-  PipelineAutomationRetryPlan,
-  PipelineAutomationRetryRequest,
-  PipelineAutomationRetryRoutineRef,
-  PipelineAutomationRetryScope,
-  PipelineAutomationRetryStageRef,
-  PipelineCaseAttachmentOutputItem,
-  PipelineCaseConversationSource,
-  PipelineCaseConversationSourceKind,
-  PipelineCaseConversationSourceLinkRole,
-  PipelineCaseConversationSourceReason,
-  PipelineCaseDocumentOutputItem,
-  PipelineCaseDocumentPayload,
-  PipelineCaseDocumentRevision,
-  PipelineCaseLiveness,
-  PipelineCaseLivenessState,
-  PipelineCaseOutputContextSummary,
-  PipelineCaseOutputContextSummaryItem,
-  PipelineCaseOutputItem,
-  PipelineCaseOutputItemBase,
-  PipelineCaseOutputKind,
-  PipelineCaseOutputSource,
-  PipelineCaseOutputSourceRole,
-  PipelineCaseOutputsResponse,
-  PipelineCaseWorkProductOutputItem,
-  PipelineStageAutomation,
-} from "./types/pipeline.js";
 export {
   analyzeFrontmatterBlock,
   asBoolean,
@@ -446,7 +398,6 @@ export {
   ISSUE_TREE_HOLD_RELEASE_POLICY_STRATEGIES,
   ISSUE_TREE_HOLD_STATUSES,
   ISSUE_CONTINUATION_SUMMARY_DOCUMENT_KEY,
-  PIPELINE_CASE_BODY_DOCUMENT_KEY,
   SYSTEM_ISSUE_DOCUMENT_KEYS,
   isSystemIssueDocumentKey,
   ISSUE_REFERENCE_SOURCE_KINDS,
@@ -583,9 +534,10 @@ export {
   PLUGIN_API_ROUTE_AUTH_MODES,
   PLUGIN_API_ROUTE_CHECKOUT_POLICIES,
   WORKSPACE_OVERVIEW_DEFAULT_LIMIT,
+  HEARTBEAT_RUN_LIST_DEFAULT_LIMIT,
+  HEARTBEAT_RUN_LIST_MAX_LIMIT,
   WORKSPACE_OVERVIEW_MAX_LIMIT,
   WORKSPACE_OVERVIEW_LINKED_ISSUE_LIMIT,
-  PIPELINE_AUTOMATION_DEFAULT_TITLE_TEMPLATE,
   PLUGIN_EVENT_TYPES,
   PLUGIN_BRIDGE_ERROR_CODES,
   type CompanyStatus,
@@ -1244,6 +1196,7 @@ export type {
   DocumentFormat,
   LegacyPlanDocument,
   IssueAttachment,
+  IssueCreationSource,
   IssueLabel,
   IssueTreeControlPreview,
   IssueTreeHold,
@@ -1266,6 +1219,9 @@ export type {
   BudgetIncidentResolutionInput,
   CostEvent,
   CostSummary,
+  CostDataQualityItem,
+  CostDataQualityReport,
+  CostDataQualityReason,
   IssueCostSummary,
   CostByAgent,
   CostByUser,
@@ -1992,7 +1948,10 @@ export {
   issueExecutionMonitorPolicySchema,
   issueExecutionStateSchema,
   resolveIssueRecoveryActionSchema,
+  isValidExistingBranchName,
   retryWorkspaceExportSchema,
+  reconstructWorkspaceSchema,
+  resumeWorkspaceFinalizationSchema,
   issueReviewRequestSchema,
   issueExecutionWorkspaceSettingsSchema,
   checkoutIssueSchema,
@@ -2278,15 +2237,6 @@ export {
   updateRoutineTriggerSchema,
   routineVariableSchema,
   runRoutineSchema,
-  pipelineAutomationRetryCleanupOptionsSchema,
-  pipelineAutomationRetryRequestSchema,
-  pipelineAutomationRetryScopeSchema,
-  pipelineStageAutomationSchema,
-  pipelineStageApproverSchema,
-  pipelineStageConfigSchema,
-  pipelineStageKindSchema,
-  pipelineStageOnEnterSchema,
-  pipelineStageVariableSchema,
   rotateRoutineTriggerSecretSchema,
   routineRevisionSnapshotRoutineV1Schema,
   routineRevisionSnapshotTriggerV1Schema,
@@ -2543,27 +2493,22 @@ export {
   ROUTINE_MENTION_SCHEME,
   SKILL_MENTION_SCHEME,
   USER_MENTION_SCHEME,
-  PIPELINE_MENTION_SCHEME,
   buildAgentMentionHref,
-  buildPipelineMentionHref,
   buildProjectMentionHref,
   buildRoutineMentionHref,
   buildSkillMentionHref,
   buildUserMentionHref,
   extractAgentMentionIds,
-  extractPipelineMentions,
   extractProjectMentionIds,
   extractRoutineMentionIds,
   extractSkillMentionIds,
   extractUserMentionIds,
   parseAgentMentionHref,
-  parsePipelineMentionHref,
   parseProjectMentionHref,
   parseRoutineMentionHref,
   parseSkillMentionHref,
   parseUserMentionHref,
   type ParsedAgentMention,
-  type ParsedPipelineMention,
   type ParsedProjectMention,
   type ParsedRoutineMention,
   type ParsedSkillMention,
@@ -2803,11 +2748,14 @@ export type { ExecutionContinuationEnvelope } from "./types/execution-continuati
 export type { ExecutionProjection, ExecutionReconciliation, ExecutionBlocker } from "./types/execution-projection.js";
 
 export { EXECUTION_RECONCILIATION_CAUSES, requiresExecutionReconciliation } from "./types/execution-projection.js";
+export * from "./types/voice-sessions.js";
+export * from "./validators/voice-sessions.js";
 
 export * from "./agent-appearance.js";
 export * from "./ai-connections.js";
 export * from "./ai-connection-router.js";
 export * from "./ai-connection-usage.js";
+export * from "./subscriptions.js";
 export * from "./types/email.js";
 export * from "./validators/email.js";
 export { configureRailwaySshSchema, type ConfigureRailwaySsh, type RailwaySshSetup } from "./railway-connection.js";
@@ -2851,5 +2799,29 @@ export { isAppAggregator, aggregatorManagementUrl, aggregatorAppsSyncSchema, agg
 
 export * from "./connection-instructions.js";
 export * from "./customer-success.js";
+export type { GitHubAppOwner, GitHubAppRegistrationInput, GitHubAppCloudState, GitHubAppWizardState } from "./types/github-app-setup.js";
 export * from "./decision-models.js";
 export { updatePrimaryAgentSchema, type UpdatePrimaryAgent, type PrimaryAgentPreference } from "./primary-agent.js";
+
+export * from "./agent-avatar-upload.js";
+
+export type { DotBinding, DotInvitation, DotConnection, DotPairing } from "./dot-invitations.js";
+export { agentHarnessType, agentRunner, paperclipRunnerProfileForHarness, paperclipRunnerSupportsPlatform, PAPERCLIP_RUNNER_MINIMUM_GLIBC_VERSION, type AgentRunnerChoice, type AgentRunner, type AgentRunnerAvailability } from "./agent-runner.js";
+export { EXTERNAL_AGENT_TOOL_GUIDANCE, DOT_AGENT_TOOL_GUIDANCE, GROK_BOT_AGENT_TOOL_GUIDANCE } from "./external-agent-guidance.js";
+
+export { AGENT_LIFECYCLE_STATES, type AgentLifecycleState, type AgentLifecycleOperation } from "./types/agent-lifecycle.js";
+
+export type { AgentLifecycleRequest, AgentLifecycleResult } from "./types/agent-lifecycle.js";
+
+export * from "./types/task-workspace.js";
+export * from "./validators/task-workspace.js";
+
+export { prepareWorkspaceRepositorySchema, type PrepareWorkspaceRepository } from "./validators/workspace-repository.js";
+
+export * from "./muse-protocol.js";
+export * from "./muse-invitations.js";
+export * from "./fast-response.js";
+
+export { HUMAN_TASK_ORIGIN_KINDS, isAgentCreatedIssue, type IssueCreationSourceFields } from "./issue-creation-source.js";
+
+export * from "./grok-bot.js";

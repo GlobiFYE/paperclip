@@ -8,7 +8,7 @@ import {
   normalizeHumanRole,
   resolveHumanInviteRole,
 } from "../services/company-member-roles.js";
-import { NEW_STANDARD_AGENT_DEFAULT_GRANT_KEYS, newStandardAgentGrantScope } from "../services/agent-permissions.js";
+import { NEW_STANDARD_AGENT_DEFAULT_GRANT_KEYS, newStandardAgentGrantScope } from "../lib/agent-permissions.js";
 
 const invitedAgentId = "agent-1";
 const defaultAgentGrants = NEW_STANDARD_AGENT_DEFAULT_GRANT_KEYS.map((permissionKey) => ({
@@ -106,7 +106,6 @@ describe("human invite roles", () => {
       { permissionKey: "environments:manage", scope: null },
       { permissionKey: "users:invite", scope: null },
       { permissionKey: "tasks:assign", scope: null },
-      { permissionKey: "pipelines:write", scope: null },
       { permissionKey: "tools:manage_connections", scope: null },
       { permissionKey: "tools:manage_profiles", scope: null },
       { permissionKey: "tools:manage_runtime", scope: null },
