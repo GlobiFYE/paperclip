@@ -1969,6 +1969,21 @@ type AcceptedPlanDecompositionInput = {
   actorAgentId?: string | null;
   actorUserId?: string | null;
   actorRunId?: string | null;
+  /**
+   * Last gate before a decomposition is claimed, run inside the transaction that
+   * claims it — so a caller metering creation pays for the whole wave before any of
+   * it exists, and a refusal (throw) rolls the claim back with nothing minted.
+   *
+   * Deliberately not per child. This decomposition is resumable: it creates one child
+   * per transaction and a retry continues from the claim's cursor. A per-child charge
+   * could therefore run out of budget at child three and leave a partial plan on the
+   * board, which is the outcome the whole-wave charge exists to prevent.
+   *
+   * Called only when a *new* claim is minted. A resume — same revision, same child set
+   * — finds the existing claim and is not charged again, because its children were
+   * paid for when the claim was taken, possibly by an earlier run.
+   */
+  assertDecompositionAllowed?: (tx: DbTransaction) => Promise<void>;
 };
 type AcceptedPlanDocumentInteraction = {
   id: string;
@@ -9465,6 +9480,10 @@ export function issueService(db: Db) {
 
         const now = new Date();
         if (!existing) {
+          // The whole wave, charged once, here — after the revision and the accepted
+          // confirmation have been validated, so a malformed request costs nothing, and
+          // before the claim exists, so a refusal leaves no decomposition to resume.
+          await data.assertDecompositionAllowed?.(tx);
           const [created] = await tx
             .insert(issuePlanDecompositions)
             .values({

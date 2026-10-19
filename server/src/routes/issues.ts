@@ -3823,6 +3823,12 @@ export function issueRoutes(
    * `undefined` when there is nothing to charge, so the optional hook never runs:
    * board and user creates are unaffected, and a create with no resolvable run is
    * allowed through uncounted rather than refused.
+   *
+   * Shared by all three minting routes — `POST /companies/:companyId/issues`,
+   * `POST /issues/:id/children` and the accepted-plan decomposition — so the
+   * parent-is-source-issue exemption and the 429 copy are defined once. A second
+   * derivation of either is how two of the three came to be uncounted in the first
+   * place.
    */
   function issueCreateRunBudgetHook(
     req: Request,
@@ -3832,6 +3838,13 @@ export function issueRoutes(
       parentIssueIdentifier?: string | null;
       title?: unknown;
       assigneeAgentId?: string | null;
+      /**
+       * Tasks this one request will mint, when that is not one. The decomposition
+       * route passes its child count so the whole wave is charged before the first
+       * child exists: charging per child would let the budget run out mid-wave and
+       * leave a partially built plan on the board.
+       */
+      units?: number;
     },
   ) {
     if (req.actor.type !== "agent") return undefined;
@@ -3852,6 +3865,7 @@ export function issueRoutes(
         parentIssueIdentifier: input.parentIssueIdentifier ?? null,
         title: typeof input.title === "string" ? input.title : null,
         assigneeAgentId: input.assigneeAgentId ?? null,
+        ...(input.units === undefined ? {} : { units: input.units }),
       });
       if (!decision || decision.allowed) return;
 
@@ -3861,6 +3875,50 @@ export function issueRoutes(
       // refusal row written from in here would roll back with it.
       throw new IssueCreateBudgetExceededError(decision, decision.sourceIssueId);
     };
+  }
+
+  /**
+   * Records a refusal thrown by the hook above and returns the 429 to throw.
+   *
+   * Runs only after the refused create's transaction has unwound — the throw is what
+   * rolls it back, and a refusal recorded inside it would roll back too, leaving a log
+   * line as the only trace that the budget bit. Shared by the three minting routes so
+   * the copy an agent reads, and the shape of the row an auditor reads, cannot differ
+   * depending on which door the refused create came through.
+   */
+  async function issueCreateOverBudgetError(
+    req: Request,
+    error: IssueCreateBudgetExceededError,
+    input: {
+      companyId: string;
+      parentIssueId: string | null;
+      parentIssueIdentifier?: string | null;
+      title?: unknown;
+      assigneeAgentId?: string | null;
+      units?: number;
+    },
+  ) {
+    await recordRefusedIssueCreate(db, {
+      companyId: input.companyId,
+      runId: req.actor.runId as string,
+      agentId: req.actor.agentId as string,
+      responsibleUserId: req.actor.onBehalfOfUserId ?? null,
+      parentIssueId: input.parentIssueId,
+      parentIssueIdentifier: input.parentIssueIdentifier ?? null,
+      title: typeof input.title === "string" ? input.title : null,
+      assigneeAgentId: input.assigneeAgentId ?? null,
+      ...(input.units === undefined ? {} : { units: input.units }),
+      sourceIssueId: error.sourceIssueId,
+      decision: error.decision,
+    });
+    const labels = await issueWriteDenialLabels(req, {
+      identifier: null,
+      assigneeAgentId: null,
+    });
+    const { error: message, details } = issueCreateLimitError(error.decision, {
+      actorLabel: labels.actorLabel,
+    });
+    return tooManyRequests(message, details);
   }
 
   function hasExplicitIssueWorkspaceCreateSelection(
@@ -11929,26 +11987,13 @@ export function issueRoutes(
         // now rolled back — no task was minted, and the charge went with it — so this
         // is the first moment the refusal can be recorded durably.
         if (error instanceof IssueCreateBudgetExceededError) {
-          await recordRefusedIssueCreate(db, {
+          throw await issueCreateOverBudgetError(req, error, {
             companyId,
-            runId: req.actor.runId as string,
-            agentId: req.actor.agentId as string,
-            responsibleUserId: req.actor.onBehalfOfUserId ?? null,
             parentIssueId: createBody.parentId ?? null,
             parentIssueIdentifier: createParent?.identifier ?? null,
-            title: typeof createBody.title === "string" ? createBody.title : null,
+            title: createBody.title,
             assigneeAgentId: createBody.assigneeAgentId ?? null,
-            sourceIssueId: error.sourceIssueId,
-            decision: error.decision,
           });
-          const labels = await issueWriteDenialLabels(req, {
-            identifier: null,
-            assigneeAgentId: null,
-          });
-          const { error: message, details } = issueCreateLimitError(error.decision, {
-            actorLabel: labels.actorLabel,
-          });
-          throw tooManyRequests(message, details);
         }
         // Concurrent onboarding creates can both pass the zero-count fast path;
         // the issues_onboarding_first_task_uq index rejects the loser here. Fail
@@ -12275,7 +12320,19 @@ export function issueRoutes(
         },
         actor,
       );
-      const { issue, parentBlockerAdded } = await svc.createChild(parent.id, {
+      // Same budget as `POST /companies/:companyId/issues`, same hook, because this is
+      // the same insert reached by another door — and an uncounted door bounds nothing.
+      // `createChild` forwards the hook to `create`, which runs it inside the insert
+      // transaction and after its own idempotency lookup, so a replayed child create
+      // still costs nothing.
+      const childCreateBudgetHook = issueCreateRunBudgetHook(req, {
+        companyId: parent.companyId,
+        parentIssueId: parent.id,
+        parentIssueIdentifier: parent.identifier ?? null,
+        title: createBody.title,
+        assigneeAgentId: createBody.assigneeAgentId ?? null,
+      });
+      const childCreateInput = {
         ...createBody,
         projectId: childAssignmentScope.projectId,
         ...(taskBridgeOriginForActor(req) ?? {}),
@@ -12299,8 +12356,26 @@ export function issueRoutes(
         actorAgentId: actor.agentId,
         actorUserId: actor.actorType === "user" ? actor.actorId : null,
         watchdogActorRunId: actor.runId,
-        assertCanReuseIssue: (existing) => assertCanReuseCreatedIssue(req, existing),
-      });
+        assertCanReuseIssue: (existing: IssueRouteSnapshot) =>
+          assertCanReuseCreatedIssue(req, existing),
+        assertCreateAllowed: childCreateBudgetHook,
+      };
+      let childCreateResult: Awaited<ReturnType<typeof svc.createChild>>;
+      try {
+        childCreateResult = await svc.createChild(parent.id, childCreateInput);
+      } catch (error) {
+        if (error instanceof IssueCreateBudgetExceededError) {
+          throw await issueCreateOverBudgetError(req, error, {
+            companyId: parent.companyId,
+            parentIssueId: parent.id,
+            parentIssueIdentifier: parent.identifier ?? null,
+            title: createBody.title,
+            assigneeAgentId: createBody.assigneeAgentId ?? null,
+          });
+        }
+        throw error;
+      }
+      const { issue, parentBlockerAdded } = childCreateResult;
       await externalObjectsSvc.syncIssueSafely(issue.id);
 
       await logActivity(db, {
@@ -12541,13 +12616,33 @@ export function issueRoutes(
         }
       }
 
-      const result = await svc.decomposeAcceptedPlan(sourceIssue.id, {
-        acceptedPlanRevisionId: req.body.acceptedPlanRevisionId,
-        children: normalizedChildren,
-        actorAgentId: actor.agentId,
-        actorUserId: actor.actorType === "user" ? actor.actorId : null,
-        actorRunId: actor.runId ?? null,
-      });
+      // One request, a whole wave of tasks — the highest-amplification create there is,
+      // and until now the only one charged nothing at all. `units` is the child count,
+      // so the budget is spent (or refused) whole rather than per child: this
+      // decomposition is resumable, and a per-child charge that ran out mid-wave would
+      // leave a half-built plan that a retry would then try to finish.
+      const decompositionBudget = {
+        companyId: sourceIssue.companyId,
+        parentIssueId: sourceIssue.id,
+        parentIssueIdentifier: sourceIssue.identifier ?? null,
+        units: normalizedChildren.length,
+      };
+      let result: Awaited<ReturnType<typeof svc.decomposeAcceptedPlan>>;
+      try {
+        result = await svc.decomposeAcceptedPlan(sourceIssue.id, {
+          acceptedPlanRevisionId: req.body.acceptedPlanRevisionId,
+          children: normalizedChildren,
+          actorAgentId: actor.agentId,
+          actorUserId: actor.actorType === "user" ? actor.actorId : null,
+          actorRunId: actor.runId ?? null,
+          assertDecompositionAllowed: issueCreateRunBudgetHook(req, decompositionBudget),
+        });
+      } catch (error) {
+        if (error instanceof IssueCreateBudgetExceededError) {
+          throw await issueCreateOverBudgetError(req, error, decompositionBudget);
+        }
+        throw error;
+      }
 
       await logActivity(db, {
         companyId: sourceIssue.companyId,

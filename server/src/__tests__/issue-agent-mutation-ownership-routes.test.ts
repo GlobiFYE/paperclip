@@ -1450,6 +1450,180 @@ describe("agent issue mutation checkout ownership", () => {
     );
   });
 
+  it("hands the child-create service a per-run budget hook naming the parent", async () => {
+    // `POST /issues/:id/children` reaches the same insert by another door. Leaving it
+    // uncharged bounds nothing: a run scoped elsewhere could mint unlimited rows under
+    // any issue it can write to, one route over from the budget that exists.
+    const app = await createApp(ownerActor(), createRunContextDb({ issueId }));
+
+    const res = await request(app)
+      .post(`/api/issues/${issueId}/children`)
+      .send({ title: "Child stage 1" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockIssueService.createChild).toHaveBeenCalledWith(
+      issueId,
+      expect.objectContaining({
+        title: "Child stage 1",
+        assertCreateAllowed: expect.any(Function),
+      }),
+    );
+
+    // The parent has to reach the counter, or the parent-is-source-issue exemption
+    // cannot fire and a run decomposing its own epic through this route is charged for
+    // work the create route gives it free.
+    const input = mockIssueService.createChild.mock.calls[0]?.[1] as {
+      assertCreateAllowed?: (tx: unknown) => Promise<void>;
+    };
+    await input.assertCreateAllowed?.({});
+    expect(mockObserveIssueCreate).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({
+        companyId,
+        runId: ownerRunId,
+        agentId: ownerAgentId,
+        parentIssueId: issueId,
+        title: "Child stage 1",
+      }),
+    );
+  });
+
+  it("refuses a child create past the per-run budget without minting a child", async () => {
+    let inserted = false;
+    mockIssueService.createChild.mockImplementation(async (
+      _parentId: string,
+      input: Record<string, unknown>,
+    ) => {
+      await (input.assertCreateAllowed as ((tx: unknown) => Promise<void>) | undefined)?.({});
+      inserted = true;
+      return { issue: makeIssue({ parentId: issueId }), parentBlockerAdded: false };
+    });
+    mockObserveIssueCreate.mockResolvedValue({
+      allowed: false,
+      mode: "enforce",
+      count: 41,
+      cap: 40,
+      enforceAt: "2026-10-17T00:00:00.000Z",
+    });
+    const app = await createApp(ownerActor(), createRunContextDb({ issueId }));
+
+    const res = await request(app)
+      .post(`/api/issues/${issueId}/children`)
+      .send({ title: "Throwaway child 18" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(429);
+    expect(res.body.details).toMatchObject({
+      code: "issue_create_cap_exceeded",
+      cap: 40,
+      count: 41,
+      mode: "enforce",
+    });
+    expect(inserted).toBe(false);
+    expect(mockRecordRefusedIssueCreate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        companyId,
+        runId: ownerRunId,
+        agentId: ownerAgentId,
+        parentIssueId: issueId,
+        title: "Throwaway child 18",
+        decision: expect.objectContaining({ allowed: false, count: 41, cap: 40 }),
+      }),
+    );
+  });
+
+  it("does not charge board child creates against any run budget", async () => {
+    const res = await request(await createApp(boardActor()))
+      .post(`/api/issues/${issueId}/children`)
+      .send({ title: "Board-created child" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(mockObserveIssueCreate).not.toHaveBeenCalled();
+  });
+
+  it("charges an accepted-plan decomposition for every child it will mint", async () => {
+    const app = await createApp(ownerActor(), createRunContextDb({ issueId }));
+
+    const res = await request(app)
+      .post(`/api/issues/${issueId}/accepted-plan-decompositions`)
+      .send({
+        acceptedPlanRevisionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        children: [
+          { title: "Stage 1" },
+          { title: "Stage 2" },
+          { title: "Stage 3" },
+        ],
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    const input = mockIssueService.decomposeAcceptedPlan.mock.calls[0]?.[1] as {
+      assertDecompositionAllowed?: (tx: unknown) => Promise<void>;
+    };
+    expect(input.assertDecompositionAllowed).toEqual(expect.any(Function));
+
+    // Three children, three slots, charged before the first one exists. Charging one
+    // per child as the service walks the wave would let a decomposition be refused at
+    // child three and leave a half-built tree behind.
+    await input.assertDecompositionAllowed?.({});
+    expect(mockObserveIssueCreate).toHaveBeenCalledWith(
+      {},
+      expect.objectContaining({ parentIssueId: issueId, units: 3 }),
+    );
+  });
+
+  it("refuses an over-budget decomposition without minting any of its children", async () => {
+    let mintedChildren = 0;
+    mockIssueService.decomposeAcceptedPlan.mockImplementation(async (
+      _sourceIssueId: string,
+      input: Record<string, unknown>,
+    ) => {
+      // Stands in for the service's own ordering: the whole wave is charged inside the
+      // transaction that claims the decomposition, before any child is created.
+      await (input.assertDecompositionAllowed as ((tx: unknown) => Promise<void>) | undefined)?.({});
+      const children = input.children as Record<string, unknown>[];
+      mintedChildren = children.length;
+      return {
+        decomposition: { id: "decomposition-1", status: "completed", childIssueIds: [] },
+        childIssueIds: [],
+        newlyCreatedIssues: [],
+      };
+    });
+    mockObserveIssueCreate.mockResolvedValue({
+      allowed: false,
+      mode: "enforce",
+      count: 43,
+      cap: 40,
+      enforceAt: "2026-10-17T00:00:00.000Z",
+    });
+    const app = await createApp(ownerActor(), createRunContextDb({ issueId }));
+
+    const res = await request(app)
+      .post(`/api/issues/${issueId}/accepted-plan-decompositions`)
+      .send({
+        acceptedPlanRevisionId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        children: [{ title: "Stage 1" }, { title: "Stage 2" }, { title: "Stage 3" }],
+      });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(429);
+    expect(res.body.details).toMatchObject({
+      code: "issue_create_cap_exceeded",
+      cap: 40,
+      count: 43,
+    });
+    expect(mintedChildren).toBe(0);
+    expect(mockRecordRefusedIssueCreate).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        companyId,
+        runId: ownerRunId,
+        agentId: ownerAgentId,
+        parentIssueId: issueId,
+        units: 3,
+        decision: expect.objectContaining({ allowed: false, count: 43 }),
+      }),
+    );
+  });
+
   it("does not charge board creates against any run budget", async () => {
     const res = await request(await createApp(boardActor()))
       .post(`/api/companies/${companyId}/issues`)

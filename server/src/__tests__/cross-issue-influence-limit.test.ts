@@ -278,10 +278,18 @@ function issueCreateDb(
       }),
     }),
     insert: () => ({
-      values: async (value: Record<string, unknown>) => {
-        inserted.push(value);
-        if (value.action === "issue.issue_create_observed") counts.create += 1;
-        if (value.action === "issue.cross_issue_influence_observed") counts.influence += 1;
+      // Drizzle's `values` takes a row or an array of rows, and the create ledger uses
+      // both: one row for a single create, `units` rows for a batch charge. Flatten so
+      // `inserted` counts rows either way — a double that modelled only the single-row
+      // call would make a batch look like one ledger entry.
+      values: async (
+        value: Record<string, unknown> | Record<string, unknown>[],
+      ) => {
+        for (const row of Array.isArray(value) ? value : [value]) {
+          inserted.push(row);
+          if (row.action === "issue.issue_create_observed") counts.create += 1;
+          if (row.action === "issue.cross_issue_influence_observed") counts.influence += 1;
+        }
       },
     }),
   };
@@ -332,6 +340,56 @@ describe("per-run issue-create budget", () => {
       count: ISSUE_CREATE_RUN_LIMIT * 10 + 1,
       cap: ISSUE_CREATE_RUN_LIMIT,
     });
+  });
+
+  it("charges a batch of creates as one all-or-nothing decision", () => {
+    const now = ISSUE_CREATE_RUN_ENFORCE_AT;
+    // An accepted-plan decomposition mints a whole wave of children from one request,
+    // and it may not be refused halfway: a plan that stops at child three leaves a
+    // partial tree nobody asked for. So the batch is weighed whole — `units` moves the
+    // count by the number of tasks the request will mint, not by one.
+    expect(evaluateIssueCreateLimit({ priorCount: 10, units: 5, now })).toMatchObject({
+      allowed: true,
+      mode: "enforce",
+      count: 15,
+      cap: 40,
+    });
+
+    // Lands exactly on the cap: allowed, the same way a single create at 40 is.
+    expect(evaluateIssueCreateLimit({
+      priorCount: ISSUE_CREATE_RUN_LIMIT - 2,
+      units: 2,
+      now,
+    })).toMatchObject({ allowed: true, count: 40, cap: 40 });
+
+    // One over: the whole batch is refused, and the count it reports is the total the
+    // batch would have reached — not `priorCount + 1`, which would understate it and
+    // make the 429 copy describe a smaller request than the agent actually made.
+    expect(evaluateIssueCreateLimit({
+      priorCount: ISSUE_CREATE_RUN_LIMIT - 2,
+      units: 3,
+      now,
+    })).toMatchObject({ allowed: false, count: 41, cap: 40 });
+
+    // Room for some of the batch is not room for the batch. Refusing whole is the
+    // point: a partial decomposition is the failure mode this guards against.
+    expect(evaluateIssueCreateLimit({ priorCount: 39, units: 10, now }))
+      .toMatchObject({ allowed: false, count: 49, cap: 40 });
+
+    // Still log_only before the flip, batch or not.
+    expect(evaluateIssueCreateLimit({
+      priorCount: 39,
+      units: 10,
+      now: new Date(ISSUE_CREATE_RUN_ENFORCE_AT.getTime() - 1),
+    })).toMatchObject({ allowed: true, mode: "log_only", count: 49 });
+  });
+
+  it("treats an omitted unit count as a single create", () => {
+    const now = ISSUE_CREATE_RUN_ENFORCE_AT;
+    expect(evaluateIssueCreateLimit({ priorCount: 7, now }))
+      .toEqual(evaluateIssueCreateLimit({ priorCount: 7, units: 1, now }));
+    expect(evaluateRunWriteLimit({ priorCount: 2, cap: 3, enforceAt: now, now }))
+      .toEqual(evaluateRunWriteLimit({ priorCount: 2, units: 1, cap: 3, enforceAt: now, now }));
   });
 
   it("allows the fortieth create and fails closed on the forty-first after the flip", () => {

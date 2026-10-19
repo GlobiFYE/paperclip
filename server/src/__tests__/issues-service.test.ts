@@ -6512,6 +6512,68 @@ describeEmbeddedPostgres("accepted plan decomposition", () => {
       .then((rows) => rows[0] ?? null);
   }
 
+  it("charges the decomposition once, when the claim is minted, not again on each resume", async () => {
+    const { sourceIssueId, acceptedPlanRevisionId, assigneeAgentId } = await seedAcceptedPlanIssue();
+    const children = [
+      { title: "Stage 1", status: "todo" as const, workMode: "standard" as const, priority: "medium" as const },
+      { title: "Stage 2", status: "todo" as const, workMode: "standard" as const, priority: "medium" as const },
+      { title: "Stage 3", status: "todo" as const, workMode: "standard" as const, priority: "medium" as const },
+    ];
+    const charges: number[] = [];
+    const assertDecompositionAllowed = async () => {
+      charges.push(charges.length + 1);
+    };
+
+    await svc.decomposeAcceptedPlan(sourceIssueId, {
+      acceptedPlanRevisionId,
+      children,
+      actorAgentId: assigneeAgentId,
+      assertDecompositionAllowed,
+    });
+    // Three children, one charge. The caller passes its whole child count as the
+    // amount, so the wave is paid for up front rather than one child at a time.
+    expect(charges).toHaveLength(1);
+
+    // A retry of the same revision and child set resumes the existing claim and mints
+    // nothing new, so it must not be charged again — the budget bounds tasks minted,
+    // and a resumed decomposition mints none it has not already paid for.
+    const second = await svc.decomposeAcceptedPlan(sourceIssueId, {
+      acceptedPlanRevisionId,
+      children,
+      actorAgentId: assigneeAgentId,
+      assertDecompositionAllowed,
+    });
+    expect(second.newlyCreatedIssues).toHaveLength(0);
+    expect(charges).toHaveLength(1);
+  });
+
+  it("mints no child when the decomposition charge refuses the whole wave", async () => {
+    const { sourceIssueId, acceptedPlanRevisionId, assigneeAgentId } = await seedAcceptedPlanIssue();
+    const children = [
+      { title: "Stage 1", status: "todo" as const, workMode: "standard" as const, priority: "medium" as const },
+      { title: "Stage 2", status: "todo" as const, workMode: "standard" as const, priority: "medium" as const },
+    ];
+
+    // A refusal has to be all-or-nothing: the claim row is what a later retry resumes
+    // from, so a refusal that left one behind would leave a partial plan that the next
+    // attempt would happily finish for free.
+    await expect(svc.decomposeAcceptedPlan(sourceIssueId, {
+      acceptedPlanRevisionId,
+      children,
+      actorAgentId: assigneeAgentId,
+      assertDecompositionAllowed: async () => {
+        throw new Error("per-run task-creation budget exceeded");
+      },
+    })).rejects.toThrow(/budget exceeded/);
+
+    expect(await getAcceptedPlanClaim(sourceIssueId)).toBeNull();
+    const childrenRows = await db
+      .select({ id: issues.id })
+      .from(issues)
+      .where(eq(issues.parentId, sourceIssueId));
+    expect(childrenRows).toHaveLength(0);
+  });
+
   it("reuses the same child issue set on repeat decomposition attempts for an accepted plan revision", async () => {
     const { companyId, sourceIssueId, acceptedPlanRevisionId, assigneeAgentId } = await seedAcceptedPlanIssue();
 

@@ -106,13 +106,21 @@ export function runScopeIsIssue(
  */
 export function evaluateRunWriteLimit(input: {
   priorCount: number;
+  /**
+   * How many writes this one decision pays for. One, except where a single request
+   * mints a whole wave — an accepted-plan decomposition creates up to 25 children and
+   * may not be refused halfway, because a plan that stops at child three leaves a
+   * partial tree nobody asked for. Weighing the batch whole makes "all of it or none
+   * of it" a property of the decision rather than of the caller's error handling.
+   */
+  units?: number;
   cap: number;
   enforceAt: Date;
   now?: Date;
 }): CrossIssueInfluenceDecision {
   const now = input.now ?? new Date();
   const mode = now >= input.enforceAt ? "enforce" : "log_only";
-  const nextCount = input.priorCount + 1;
+  const nextCount = input.priorCount + Math.max(1, input.units ?? 1);
   return {
     allowed: mode === "log_only" || nextCount <= input.cap,
     mode,
@@ -135,6 +143,7 @@ export function evaluateCrossIssueInfluenceLimit(input: {
 
 export function evaluateIssueCreateLimit(input: {
   priorCount: number;
+  units?: number;
   now?: Date;
 }): CrossIssueInfluenceDecision {
   return evaluateRunWriteLimit({
@@ -274,6 +283,8 @@ type IssueCreateLedgerInput = {
   parentIssueIdentifier?: string | null;
   title?: string | null;
   assigneeAgentId?: string | null;
+  /** Tasks this one charge pays for; see `evaluateRunWriteLimit`. */
+  units?: number;
 };
 
 /**
@@ -309,6 +320,7 @@ function issueCreateLedgerRow(input: IssueCreateLedgerInput & {
       parentIssueIdentifier: input.parentIssueIdentifier ?? null,
       title: input.title ?? null,
       assigneeAgentId: input.assigneeAgentId ?? null,
+      units: Math.max(1, input.units ?? 1),
       count: input.decision.count,
       cap: input.decision.cap,
       mode: input.decision.mode,
@@ -407,6 +419,12 @@ export async function observeIssueCreate(
     parentIssueIdentifier?: string | null;
     title?: string | null;
     assigneeAgentId?: string | null;
+    /**
+     * How many tasks this request will mint. Defaults to one. An accepted-plan
+     * decomposition passes its whole child count so the budget is weighed — and spent
+     * — once, up front, instead of per child as the wave is built.
+     */
+    units?: number;
     now?: Date;
   },
 ): Promise<(CrossIssueInfluenceDecision & { sourceIssueId: string | null }) | null> {
@@ -472,7 +490,8 @@ export async function observeIssueCreate(
       eq(activityLog.action, ISSUE_CREATE_ACTIVITY),
     ))
     .then((rows) => Number(rows[0]?.count ?? 0));
-  const decision = evaluateIssueCreateLimit({ priorCount, now: input.now });
+  const units = Math.max(1, input.units ?? 1);
+  const decision = evaluateIssueCreateLimit({ priorCount, units, now: input.now });
 
   // Only the charge goes in the caller's transaction. A refusal must not: the caller
   // refuses by throwing, the throw rolls this transaction back, and a refusal row
@@ -482,9 +501,11 @@ export async function observeIssueCreate(
   // this transaction still holds `FOR UPDATE`. So the caller records refusals through
   // `recordRefusedIssueCreate` once its transaction is gone.
   if (decision.allowed) {
-    await tx.insert(activityLog).values(
-      issueCreateLedgerRow({ ...input, sourceIssueId, decision, run }),
-    );
+    // One row per task the charge pays for. The tally above is `count(*)` filtered by
+    // action, so a batch recorded as a single row would hand the run back `units - 1`
+    // slots it had already spent — and the next batch would read the same low count.
+    const row = issueCreateLedgerRow({ ...input, units, sourceIssueId, decision, run });
+    await tx.insert(activityLog).values(Array.from({ length: units }, () => row));
   }
 
   const logContext = {
@@ -494,6 +515,7 @@ export async function observeIssueCreate(
     agentId: input.agentId,
     sourceIssueId,
     parentIssueId: input.parentIssueId ?? null,
+    units,
     count: decision.count,
     cap: decision.cap,
     mode: decision.mode,

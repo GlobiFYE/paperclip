@@ -662,7 +662,13 @@ wake the assignee, and a non-assignee comment cannot mint a mention grant.
 
 Agent-authored issue creation is counted separately. A run may attempt at most 40 issue creates,
 on its own counter and its own rollout; a create whose parent is the run's source issue is not
-counted, so decomposition under an epic the run owns is unbounded. The create counter is keyed on
+counted, so decomposition under an epic the run owns is unbounded. The counter covers every route
+that mints a task — root creation, child creation, and accepted-plan decomposition — on one shared
+budget, because a cap that bounds one door and not the others bounds nothing. An accepted-plan
+decomposition is charged for its whole child set in a single all-or-nothing decision taken when the
+decomposition is claimed, before any child exists: the decomposition is resumable from its claim, so
+a per-child charge could run out mid-wave and leave a partially built plan on the board. A resume of
+an existing claim mints nothing new and is not charged again. The create counter is keyed on
 the heartbeat run rather than an issue, because the charge is taken before the insert — a refused
 create mints no issue to key it on. A create the server cannot attribute to a persisted run is
 logged and allowed rather than refused: creation was never gated here, so refusing it would deny a

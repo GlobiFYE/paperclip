@@ -420,6 +420,207 @@ describeEmbeddedPostgres("cross-issue influence limit PostgreSQL serialization",
     }
   });
 
+  // An accepted-plan decomposition mints a wave of children from one request. The
+  // tally is `count(*)` of ledger rows, so a batch charge that wrote one row for N
+  // children would undercount by N-1 and hand the run its budget back for free.
+  it("writes one ledger row per task a batch charge pays for", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const sourceIssueId = randomUUID();
+    const foreignParentId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `C${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      defaultResponsibleUserId: "board-user",
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "Planner",
+      role: "engineer",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      status: "running",
+      responsibleUserId: "board-user",
+      contextSnapshot: { issueId: sourceIssueId },
+    });
+    await db.insert(issues).values([
+      { id: sourceIssueId, companyId, title: "The epic this run owns" },
+      { id: foreignParentId, companyId, title: "Someone else's epic" },
+    ]);
+
+    const base = {
+      companyId,
+      runId,
+      agentId,
+      parentIssueId: foreignParentId,
+      now: ISSUE_CREATE_RUN_ENFORCE_AT,
+    };
+
+    await expect(charge({ ...base, units: 6, title: "Decomposition of six" }))
+      .resolves.toMatchObject({ allowed: true, count: 6 });
+
+    const afterBatch = await db
+      .select({ details: activityLog.details })
+      .from(activityLog)
+      .where(and(eq(activityLog.runId, runId), eq(activityLog.action, "issue.issue_create_observed")));
+    expect(afterBatch).toHaveLength(6);
+    // Every row names the batch it belonged to, so an auditor reading the ledger can
+    // tell six children of one decomposition from six unrelated creates.
+    for (const row of afterBatch) {
+      expect(row.details as Record<string, unknown>).toMatchObject({
+        title: "Decomposition of six",
+        units: 6,
+        parentIssueId: foreignParentId,
+      });
+    }
+
+    // The batch is visible to the next charge's tally — otherwise a run could repeat
+    // the batch forever, each one reading a prior count of zero.
+    await expect(charge({ ...base, title: "The seventh" }))
+      .resolves.toMatchObject({ allowed: true, count: 7 });
+  });
+
+  it("refuses an over-budget batch whole and leaves no partial charge behind", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const sourceIssueId = randomUUID();
+    const foreignParentId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `C${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      defaultResponsibleUserId: "board-user",
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "Planner",
+      role: "engineer",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      status: "running",
+      responsibleUserId: "board-user",
+      contextSnapshot: { issueId: sourceIssueId },
+    });
+    await db.insert(issues).values([
+      { id: sourceIssueId, companyId, title: "The epic this run owns" },
+      { id: foreignParentId, companyId, title: "Someone else's epic" },
+    ]);
+    // Two slots left in the budget.
+    await db.insert(activityLog).values(
+      Array.from({ length: ISSUE_CREATE_RUN_LIMIT - 2 }, () => ({
+        companyId,
+        actorType: "agent" as const,
+        actorId: agentId,
+        agentId,
+        runId,
+        action: "issue.issue_create_observed",
+        entityType: "heartbeat_run",
+        entityId: runId,
+        details: {},
+      })),
+    );
+
+    const base = {
+      companyId,
+      runId,
+      agentId,
+      parentIssueId: foreignParentId,
+      now: ISSUE_CREATE_RUN_ENFORCE_AT,
+    };
+
+    // Three children into two slots. Partially charging it would be the worst of both:
+    // the ledger says two tasks exist and the caller still has to refuse the third,
+    // leaving a half-built tree. So nothing is charged at all.
+    await expect(charge({ ...base, units: 3, title: "Decomposition of three" }))
+      .resolves.toMatchObject({
+        allowed: false,
+        count: ISSUE_CREATE_RUN_LIMIT + 1,
+        cap: ISSUE_CREATE_RUN_LIMIT,
+      });
+    const afterRefusal = await db
+      .select({ id: activityLog.id })
+      .from(activityLog)
+      .where(and(eq(activityLog.runId, runId), eq(activityLog.action, "issue.issue_create_observed")));
+    expect(afterRefusal).toHaveLength(ISSUE_CREATE_RUN_LIMIT - 2);
+
+    // The two slots are still there: a refused batch spends nothing, so a smaller
+    // decomposition that does fit still goes through.
+    await expect(charge({ ...base, units: 2, title: "Decomposition of two" }))
+      .resolves.toMatchObject({ allowed: true, count: ISSUE_CREATE_RUN_LIMIT });
+  });
+
+  it("leaves a batch under the run's own issue free, however large", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const sourceIssueId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `C${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      defaultResponsibleUserId: "board-user",
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "Planner",
+      role: "engineer",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      status: "running",
+      responsibleUserId: "board-user",
+      contextSnapshot: { issueId: sourceIssueId },
+    });
+    await db.insert(issues).values({ id: sourceIssueId, companyId, title: "The epic this run owns" });
+
+    // The whole point of the parent-is-source-issue exemption: a planning run turning
+    // its own accepted plan into 25 stage tasks is doing its job, not amplifying.
+    await expect(charge({
+      companyId,
+      runId,
+      agentId,
+      parentIssueId: sourceIssueId,
+      units: 25,
+      title: "Every stage of my own epic",
+      now: ISSUE_CREATE_RUN_ENFORCE_AT,
+    })).resolves.toBeNull();
+
+    const recorded = await db
+      .select({ id: activityLog.id })
+      .from(activityLog)
+      .where(eq(activityLog.runId, runId));
+    expect(recorded).toHaveLength(0);
+  });
+
   // The point of a *separate* budget: the two counters must not see each
   // other's rows. The tally is a COUNT filtered by `action`, so a dropped filter would
   // fold creates into the shared 20 and silently refuse a correct planning run.
