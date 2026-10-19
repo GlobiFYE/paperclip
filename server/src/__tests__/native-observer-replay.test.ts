@@ -217,7 +217,12 @@ describe("native event replay observation evidence", () => {
       await Promise.all([...wss.clients].map(socket => {
         const closed = new Promise<void>(resolve => socket.on("close", resolve)); socket.terminate(); return closed;
       }));
-      server.emit("close"); // Also clears the production WebSocket heartbeat timer.
+      // Closing the real WebSocket server emits its close event and clears the
+      // production heartbeat timer. Closing only HTTP would leave it running.
+      await new Promise<void>((resolve, reject) => {
+        (wss as typeof wss & { close(callback: (error?: Error) => void): void })
+          .close(error => error ? reject(error) : resolve());
+      });
       if (server.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
       await visibilityDb.$client.end();
     }
