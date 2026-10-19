@@ -742,6 +742,7 @@ function AdapterPickerList({
                       showCreateRunPolicySection={false}
                       hideInstructionsFile
                       sectionLayout="cards"
+                      showSecretSources
                     />
                   </div>
                 )}
