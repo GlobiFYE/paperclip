@@ -2913,7 +2913,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
   const historyPending = initialHistoryPending || planLoading || transcriptHistoryPending;
   useEffect(() => {
     recordIssueDetailReadiness({ plan: !planLoading, transcripts: !transcriptHistoryPending, history: !historyPending });
-  }, [planLoading, transcriptHistoryPending, historyPending]);
+  }, [issueId, planLoading, transcriptHistoryPending, historyPending]);
   const historyError =
     initialHistoryError ||
     planError ||

@@ -1591,7 +1591,7 @@ const IssueDetailChatTab = memo(function IssueDetailChatTab({
   const resolvedLinkedRuns = linkedRuns ?? [];
   useEffect(() => {
     recordIssueDetailReadiness({ activity: !activityPending, "linked-runs": !linkedRunsPending, runtime: runtimeSelectionKnown });
-  }, [activityPending, linkedRunsPending, runtimeSelectionKnown]);
+  }, [issueId, issueQueryRef, activityPending, linkedRunsPending, runtimeSelectionKnown]);
   const retryFailedRun = useMutation({
     mutationFn: async (runId: string) => {
       const failedRun = resolvedLinkedRuns.find((run) => run.runId === runId);
@@ -3368,7 +3368,7 @@ export function TaskDetailSurface({ conversation, tasksTab }: { tasksTab?: TaskS
   } = useIssueWorkProducts(issueId);
   useEffect(() => {
     recordIssueDetailReadiness({ issue: !!loadedIssue, comments: !commentsLoading, interactions: !interactionsLoading, attachments: !attachmentsLoading, "work-products": !workProductsLoading });
-  }, [loadedIssue, commentsLoading, interactionsLoading, attachmentsLoading, workProductsLoading]);
+  }, [issueId, loadedIssue, commentsLoading, interactionsLoading, attachmentsLoading, workProductsLoading]);
 
   const { data: liveRunCount = 0 } = useQuery<LiveRunForIssue[], Error, number>(
     {

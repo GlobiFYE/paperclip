@@ -63,6 +63,8 @@ the 15-second request deadline.
 `plan-startup.spec.ts` also opens tasks with and without a saved plan while
 blocking the separate plan endpoint. Both must reveal the saved conversation
 from the task response without issuing that redundant read.
+It also checks task-list navigation, where a list-only snapshot needs one normal
+plan fetch and must still show a saved plan when present.
 Videos and per-frame `layout.json` measurements are written under each test's
 output directory. The two-pixel assertion measures a logical row's viewport
 offset; total scroll offset legitimately changes when history is prepended.
