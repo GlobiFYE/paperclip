@@ -4083,6 +4083,7 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
 
   it("drains late legacy settlement before releasing its source and scheduling one continuation", async () => {
     const f = await seedRunFixture({ runtimeMode: "legacy", adapterType: "codex_local", agentStatus: "running" });
+    await db.update(heartbeatRuns).set({ scopeKind: "issue", issueId: f.issueId }).where(eq(heartbeatRuns.id, f.runId));
     const { leaseId } = await seedEnvironmentLeaseFixture({ ...f, provider: "daytona", driver: "sandbox" });
     await db.update(environmentLeases).set({ providerLeaseId: randomUUID(), metadata: { driver: "sandbox" } })
       .where(eq(environmentLeases.id, leaseId));
@@ -4119,7 +4120,8 @@ describeEmbeddedPostgres("heartbeat orphaned process recovery", () => {
       expect(release).toHaveBeenCalledOnce();
       const runs = await selectRecoveryRunsByAgent(f.agentId);
       expect(runs).toHaveLength(2);
-      expect(runs.find(run => run.id !== f.runId)).toMatchObject({ status: "scheduled_retry", scheduledRetryAttempt: 1 });
+      expect(runs.find(run => run.id !== f.runId)).toMatchObject({ status: "scheduled_retry", scheduledRetryAttempt: 1,
+        scopeKind: "issue", issueId: f.issueId });
       const reloaded = heartbeatService(db, { environmentRuntime: runtime });
       await reloaded.drainRunningRunsForShutdown("SIGTERM", new Date(), [f.runId]);
       expect(await selectRecoveryRunsByAgent(f.agentId)).toHaveLength(2);
