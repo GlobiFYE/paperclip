@@ -1019,8 +1019,9 @@ Migration 0355 extends connector invalidation to tool definitions and
 configuration. Statement triggers cover applications, connections, catalogs,
 profiles and entries, bindings, policies, and MCP gateways. They ignore health
 bookkeeping and trust-rule usage counters. Profile creation alone does not change
-an agent's runtime; its assignment does. Credential-only fields remain outside
-this migration's coverage.
+an agent's runtime; its assignment does. Entry changes resolve standing profile
+bindings; policies resolve old and new agent selectors. Both retain scoped
+recipients. Credential-only fields remain outside this migration's coverage.
 
 ## Retired Pipelines storage
 

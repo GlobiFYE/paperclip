@@ -138,17 +138,22 @@ These changes use the same content-free journal, atomic commit behavior, and
 transaction coalescing. Bulk discovery invalidates once per company per committed
 chunk instead of once per tool. Unchanged rediscovery, health bookkeeping, and
 trust-rule usage counters do not request preparation. Binding and installation
-notifications retain the scoped recipients described above. Definition changes
-use synchronous company-wide fanout with the same documented company-size cost.
+notifications retain the scoped recipients described above. Profile-entry changes
+notify agents from the old and new profiles' standing bindings. Policies use
+their old and new `agentId` and `agentIds` selectors, including their intersection
+when both are set. Unscoped policies and company-bound profiles retain atomic
+company fanout. Other definition changes still use conservative company-wide
+fanout with the same documented company-size cost.
 
 Profile entry mutations lock referenced applications, connections, and catalog
 rows before the parent profile. They then change the entries and parent in one
 transaction, using the reserved connection for validation and profile reads.
 Profile replacement uses the same order. Setup finalization and
 catalog publication can run concurrently without acquiring these locks in the
-opposite order. Policy reorder locks all affected policies in ID order before
-changing priorities. Connection removal locks the managed profile before deleting
-its entries in the same transaction.
+opposite order. Policy reorder locks all affected policies in ID order and changes
+their priorities in one statement so scoped agent locks are ordered across the
+set. Connection removal locks the managed profile before deleting its entries in
+the same transaction.
 
 The bounded assignment snapshot remains the API described above. An invalidation
 can advance its revision without changing its assignment fields. Consumers must

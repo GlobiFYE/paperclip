@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, sql } from "drizzle-orm";
-import { agents, companies, createDb, plugins, toolApplications, toolConnections, toolCatalogEntries, toolProfiles, toolProfileEntries, toolPolicies, resourceLifecycleEvents, type Db } from "@paperclipai/db";
+import { agents, companies, createDb, plugins, toolApplications, toolConnections, toolCatalogEntries, toolProfiles, toolProfileEntries, toolProfileBindings, toolPolicies, resourceLifecycleEvents, type Db } from "@paperclipai/db";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { getEmbeddedPostgresTestSupport, startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { toolAccessService } from "../services/tool-access.js";
@@ -184,7 +184,7 @@ describeDatabase("tool definition runtime synchronization", () => {
     expect(used.config).toMatchObject({ trustRule: { hitCount: 1, lastHitAt: expect.any(String) } });
     expect(await events()).toEqual(before);
     await db.update(toolPolicies).set({ config: { ...used.config, trustRule: { ...(used.config?.trustRule as object), revokedAt: new Date().toISOString() } } }).where(eq(toolPolicies.id, rule.id));
-    expect(await events()).toHaveLength(before.length + 2);
+    expect((await events()).slice(before.length).map(row => row.resourceId)).toEqual([agentId]);
   });
   it.each(["profile entry add", "profile entry edit", "profile entry delete", "profile replacement"] as const)("orders %s before action finalization and runtime fanout", async change => {
     await db.update(toolConnections).set({ config: { url: "https://mcp.example.test/mcp" } }).where(eq(toolConnections.id, connectionId));
@@ -296,6 +296,119 @@ describeDatabase("tool definition runtime synchronization", () => {
       if (change === "edit" || change === "replace") expect(rows[0].effect).toBe("exclude");
     } finally { clearTimeout(timer); await single.$client.end({ timeout: 1 }); await settled; }
   }, 10000);
+
+  it.each(["entry", "policy"] as const)("keeps repeated single-agent %s changes scoped and atomic", async change => {
+    const [profile] = await db.insert(toolProfiles).values({ companyId, profileKey: "scoped", name: "Scoped" }).returning();
+    await db.insert(toolProfileBindings).values({ companyId, profileId: profile.id, targetType: "agent", targetId: agentId });
+    const [entry] = await db.insert(toolProfileEntries).values({ companyId, profileId: profile.id, selectorType: "connection", connectionId }).returning();
+    const [policy] = await db.insert(toolPolicies).values({ companyId, name: "Scoped", policyType: "deny", selectors: { agentId } }).returning();
+    for (let index = 0; index < 4; index++) {
+      const before = (await events()).length;
+      if (change === "entry") await db.update(toolProfileEntries).set({ effect: index % 2 ? "include" : "exclude" }).where(eq(toolProfileEntries.id, entry.id));
+      else await db.update(toolPolicies).set({ description: `Edit ${index}` }).where(eq(toolPolicies.id, policy.id));
+      expect((await events()).slice(before).map(row => row.resourceId)).toEqual([agentId]);
+    }
+    const before = await events();
+    await expect(db.transaction(async tx => {
+      await tx.update(toolPolicies).set({ description: "Rolled back" }).where(eq(toolPolicies.id, policy.id));
+      await tx.update(toolProfileEntries).set({ effect: "exclude" }).where(eq(toolProfileEntries.id, entry.id));
+      throw new Error("rollback");
+    })).rejects.toThrow("rollback");
+    expect(await events()).toEqual(before);
+  });
+
+  it("uses old and new policy selectors with the execution match semantics", async () => {
+    const [policy] = await db.insert(toolPolicies).values({ companyId, name: "Retarget", policyType: "deny", selectors: { agentId } }).returning();
+    const write = async (selectors: Record<string, unknown>, expected: string[]) => {
+      const before = (await events()).length;
+      await db.update(toolPolicies).set({ selectors }).where(eq(toolPolicies.id, policy.id));
+      expect((await events()).slice(before).map(row => row.resourceId).sort()).toEqual(expected.sort());
+    };
+    await write({ agentId: peerId }, [agentId, peerId]);
+    await write({ agentIds: [agentId] }, [agentId, peerId]);
+    await write({ agentId, agentIds: [peerId] }, [agentId]);
+    await write({ agentIds: ` ${peerId} ` }, [peerId]);
+    await write({ agentIds: [" ", null, agentId] }, [agentId, peerId]);
+    await write({ agentId: randomUUID() }, [agentId]);
+    await write({ agentIds: [] }, [agentId, peerId]);
+    await write({ agentId: "invalid" }, [agentId, peerId]);
+    const before = (await events()).length;
+    await db.delete(toolPolicies).where(eq(toolPolicies.id, policy.id));
+    expect(await events()).toHaveLength(before);
+  });
+
+  it("uses both profile-entry parents and skips profiles outside standing assignments", async () => {
+    const profiles = await db.insert(toolProfiles).values(["first", "second", "unassigned"].map(profileKey => ({ companyId, profileKey, name: profileKey }))).returning();
+    await db.insert(toolProfileBindings).values([
+      { companyId, profileId: profiles[0].id, targetType: "agent", targetId: agentId },
+      { companyId, profileId: profiles[1].id, targetType: "agent", targetId: peerId },
+      { companyId, profileId: profiles[2].id, targetType: "project", targetId: randomUUID() },
+    ]);
+    const [entry] = await db.insert(toolProfileEntries).values({ companyId, profileId: profiles[0].id, selectorType: "connection", connectionId }).returning();
+    let before = (await events()).length;
+    await db.update(toolProfileEntries).set({ profileId: profiles[1].id }).where(eq(toolProfileEntries.id, entry.id));
+    expect((await events()).slice(before).map(row => row.resourceId).sort()).toEqual([agentId, peerId].sort());
+    before = (await events()).length;
+    await db.update(toolProfileEntries).set({ profileId: profiles[2].id }).where(eq(toolProfileEntries.id, entry.id));
+    expect((await events()).slice(before).map(row => row.resourceId)).toEqual([peerId]);
+    before = (await events()).length;
+    await db.delete(toolProfileEntries).where(eq(toolProfileEntries.id, entry.id));
+    expect(await events()).toHaveLength(before);
+  });
+
+  it("coalesces scoped definitions and preserves explicit company recipients", async () => {
+    const [profile] = await db.insert(toolProfiles).values({ companyId, profileKey: "coalesced", name: "Coalesced" }).returning();
+    await db.insert(toolProfileBindings).values({ companyId, profileId: profile.id, targetType: "agent", targetId: agentId });
+    const [entry] = await db.insert(toolProfileEntries).values({ companyId, profileId: profile.id, selectorType: "connection", connectionId }).returning();
+    const [policy] = await db.insert(toolPolicies).values({ companyId, name: "Coalesced", policyType: "deny", selectors: { agentId } }).returning();
+    let before = (await events()).length;
+    await db.transaction(async tx => {
+      await tx.update(toolProfileEntries).set({ effect: "exclude" }).where(eq(toolProfileEntries.id, entry.id));
+      await tx.update(toolPolicies).set({ description: "Scoped" }).where(eq(toolPolicies.id, policy.id));
+    });
+    expect((await events()).slice(before).map(row => row.resourceId)).toEqual([agentId]);
+    await db.insert(toolProfileBindings).values({ companyId, profileId: profile.id, targetType: "company", targetId: companyId });
+    before = (await events()).length;
+    await db.transaction(async tx => {
+      await tx.update(toolProfileEntries).set({ effect: "include" }).where(eq(toolProfileEntries.id, entry.id));
+      await tx.update(toolPolicies).set({ description: "Company" }).where(eq(toolPolicies.id, policy.id));
+    });
+    expect((await events()).slice(before).map(row => row.resourceId).sort()).toEqual([agentId, peerId].sort());
+  });
+
+  it("orders scoped policy reorder before company agent fanout", async () => {
+    const [lower, higher] = [agentId, peerId].sort();
+    const policies = await db.insert(toolPolicies).values([higher, lower].map((target, index) => ({ companyId, name: `Scoped ${index}`, policyType: "deny", priority: (index + 5) * 100, selectors: { agentId: target } }))).returning();
+    let locked!: () => void; let release!: () => void;
+    const held = new Promise<void>(resolve => { locked = resolve; });
+    const resume = new Promise<void>(resolve => { release = resolve; });
+    const blocker = db.transaction(async tx => {
+      await tx.select().from(agents).where(eq(agents.id, lower)).for("no key update");
+      locked(); await resume;
+    });
+    await held;
+    const pids: number[] = [];
+    const run = (work: (client: Db) => Promise<unknown>) => db.transaction(async tx => {
+      await tx.execute(sql`SET LOCAL lock_timeout = '8s'`);
+      const [row] = await tx.execute(sql`SELECT pg_backend_pid() AS pid`);
+      pids.push(Number(row.pid));
+      return work(tx as unknown as Db);
+    });
+    const waitForLock = (index: number) => vi.waitFor(async () => {
+      expect(pids.length).toBeGreaterThan(index);
+      const [row] = await db.execute(sql`SELECT wait_event_type FROM pg_stat_activity WHERE pid = ${pids[index]}`);
+      expect(row.wait_event_type).toBe("Lock");
+    }, { timeout: 5000 });
+    const settings = Promise.allSettled([run(client => client.update(toolConnections).set({ name: "Settings race" }).where(eq(toolConnections.id, connectionId)))]);
+    let reorder: Promise<PromiseSettledResult<unknown>[]> | undefined;
+    try {
+      await waitForLock(0);
+      reorder = Promise.allSettled([run(client => toolAccessPolicyService(client).reorderPolicies(companyId, { policyIds: policies.map(row => row.id) }))]);
+      await waitForLock(1);
+    } finally { release(); await blocker; }
+    for (const result of [...await settings, ...await reorder!]) if (result.status === "rejected") throw result.reason;
+    expect((await toolAccessPolicyService(db).listPolicies(companyId)).map(row => row.id)).toEqual(policies.map(row => row.id));
+  }, 15000);
 
   it("journals application and connection configuration", async () => {
     const before = (await events()).length;

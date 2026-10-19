@@ -1,3 +1,26 @@
+CREATE OR REPLACE FUNCTION paperclip_connector_policy_targets(p_company uuid, selectors jsonb)
+RETURNS TABLE(target_type text, target_id text)
+LANGUAGE plpgsql IMMUTABLE SET search_path = public, pg_temp AS $$
+DECLARE single_agent text := CASE WHEN jsonb_typeof(selectors->'agentId') = 'string' THEN nullif(selectors->>'agentId', '') END;
+  many_agents text[];
+BEGIN
+  SELECT array_agg(value#>>'{}') INTO many_agents
+    FROM jsonb_array_elements(CASE jsonb_typeof(selectors->'agentIds')
+      WHEN 'array' THEN selectors->'agentIds'
+      WHEN 'string' THEN jsonb_build_array(btrim(selectors->>'agentIds')) ELSE '[]'::jsonb END) value
+    WHERE jsonb_typeof(value) = 'string' AND btrim(value#>>'{}') <> '';
+  IF single_agent IS NOT NULL THEN
+    IF coalesce(cardinality(many_agents), 0) = 0 OR single_agent = ANY(many_agents) THEN
+      RETURN QUERY SELECT 'agent'::text, single_agent;
+    END IF;
+  ELSIF coalesce(cardinality(many_agents), 0) > 0 THEN
+    RETURN QUERY SELECT 'agent'::text, unnest(many_agents);
+  ELSE
+    RETURN QUERY SELECT 'company'::text, p_company::text;
+  END IF;
+END;
+$$;
+--> statement-breakpoint
 CREATE OR REPLACE FUNCTION paperclip_connector_runtime_changed() RETURNS trigger
 LANGUAGE plpgsql SET search_path = public, pg_temp AS $$
 DECLARE company uuid; query text; target record; candidate uuid;
@@ -11,8 +34,26 @@ BEGIN
     old_projection := old_projection || ' #- ''{config,trustRule,hitCount}'' #- ''{config,trustRule,lastHitAt}''';
     new_projection := new_projection || ' #- ''{config,trustRule,hitCount}'' #- ''{config,trustRule,lastHitAt}''';
   END IF;
-  IF TG_TABLE_NAME IN ('tool_profile_bindings', 'tool_connection_installs') THEN
-    IF TG_OP = 'INSERT' THEN query := 'SELECT company_id, target_type, target_id FROM new_rows';
+  IF TG_TABLE_NAME IN ('tool_profile_bindings', 'tool_connection_installs', 'tool_profile_entries', 'tool_policies') THEN
+    IF TG_TABLE_NAME IN ('tool_profile_entries', 'tool_policies') THEN
+      IF TG_OP = 'INSERT' THEN query := 'SELECT to_jsonb(n) AS row_data FROM new_rows n';
+      ELSIF TG_OP = 'DELETE' THEN query := 'SELECT to_jsonb(o) AS row_data FROM old_rows o';
+      ELSE query := format('WITH changed AS (
+        SELECT to_jsonb(o) AS previous, to_jsonb(n) AS current FROM old_rows o FULL JOIN new_rows n ON o.%I = n.%I
+        WHERE %s IS DISTINCT FROM %s)
+        SELECT previous AS row_data FROM changed WHERE previous IS NOT NULL UNION
+        SELECT current AS row_data FROM changed WHERE current IS NOT NULL', TG_ARGV[0], TG_ARGV[0], old_projection, new_projection);
+      END IF;
+      IF TG_TABLE_NAME = 'tool_profile_entries' THEN
+        query := 'SELECT b.company_id, b.target_type, b.target_id FROM (' || query || ') changed
+          JOIN tool_profile_bindings b ON b.company_id = (row_data->>''company_id'')::uuid
+          AND b.profile_id = (row_data->>''profile_id'')::uuid';
+      ELSE
+        query := 'SELECT (row_data->>''company_id'')::uuid AS company_id, t.target_type, t.target_id
+          FROM (' || query || ') changed CROSS JOIN LATERAL
+          paperclip_connector_policy_targets((row_data->>''company_id'')::uuid, row_data->''selectors'') t';
+      END IF;
+    ELSIF TG_OP = 'INSERT' THEN query := 'SELECT company_id, target_type, target_id FROM new_rows';
     ELSIF TG_OP = 'DELETE' THEN query := 'SELECT company_id, target_type, target_id FROM old_rows';
     ELSE query := format('WITH changed AS (
       SELECT o.company_id AS old_company, o.target_type AS old_type, o.target_id AS old_target,

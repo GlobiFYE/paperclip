@@ -43,8 +43,9 @@ standing assignments through `ctx.agents.getRuntime`; this does not grant tool
 execution access or replace task-specific authorization.
 
 [Tool-definition runtime tests](../../server/src/__tests__/agent-runtime-tool-definitions.test.ts)
-cover catalog and action-policy invalidation, ignored bookkeeping, and profile
-entry edits concurrent with setup finalization using PostgreSQL. They do not
+cover catalog invalidation, scoped policy/profile-entry recipients, ignored
+bookkeeping, and profile-entry edits concurrent with setup finalization using
+PostgreSQL. They do not
 qualify live provider access.
 
 Manual: Grant one agent access, leave another excluded, and exercise off, ask, and allowed states for a harmless action. Reload between changes. Verify actual denied calls stay denied and ask-first creates a decision rather than executing early.

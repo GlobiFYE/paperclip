@@ -798,12 +798,11 @@ export function toolAccessPolicyService(db: Db) {
       }
 
       const now = new Date();
-      for (const [index, policyId] of uniquePolicyIds.entries()) {
-        await tx
-          .update(toolPolicies)
-          .set({ priority: (index + 1) * 100, updatedAt: now })
-          .where(eq(toolPolicies.id, policyId));
-      }
+      await tx.execute(sql`UPDATE tool_policies
+        SET priority = (requested.ordinality * 100)::integer, updated_at = ${now.toISOString()}
+        FROM jsonb_array_elements_text(${JSON.stringify(uniquePolicyIds)}::jsonb)
+          WITH ORDINALITY AS requested(id, ordinality)
+        WHERE tool_policies.company_id = ${companyId} AND tool_policies.id = requested.id::uuid`);
       return tx
         .select()
         .from(toolPolicies)
