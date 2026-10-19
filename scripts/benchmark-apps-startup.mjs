@@ -44,9 +44,14 @@ catch (error) {
 }
 const browser = await chromium.launch();
 const samples = [];
+const variants = process.env.PAPERCLIP_APPS_BENCH_BASELINE_DIST ? [
+  { label: "baseline-paired", dist: process.env.PAPERCLIP_APPS_BENCH_BASELINE_DIST },
+  { label: "candidate-paired", dist: process.env.PAPERCLIP_APPS_BENCH_CANDIDATE_DIST },
+] : [{ label: phase, dist: null }];
 try {
   for (const scenario of ["cold", "in-app"]) {
     for (let run = 0; run < 5; run++) {
+      for (const variant of variants) {
       const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, serviceWorkers: "block" });
       await context.addInitScript(({ fixture }) => {
         const entries = fixture.tasks.map((task, index) => ({
@@ -60,6 +65,14 @@ try {
           .observe({ type: "longtask", buffered: true });
       }, { fixture });
       const page = await context.newPage();
+      if (variant.dist) {
+        // Select only the production document. Assets and APIs still travel
+        // through the real local server with the same network profile.
+        const html = await fs.readFile(`${variant.dist}/index.html`, "utf8");
+        await page.route(url => url.origin === target.origin &&
+          ["apps", "dashboard"].some(name => url.pathname === `/${fixture.company.issuePrefix}/${name}`),
+        route => route.fulfill({ status: 200, contentType: "text/html", body: html }));
+      }
       const cdp = await context.newCDPSession(page);
       await cdp.send("Network.enable");
       await cdp.send("Performance.enable");
@@ -71,6 +84,10 @@ try {
         await page.getByRole("link", { name: "Connectors", exact: true }).first().waitFor({ timeout: 90_000 });
         await page.waitForTimeout(2_000);
       }
+      const initialMetrics = await cdp.send("Performance.getMetrics");
+      const scriptDurationAtStart = scenario === "in-app"
+        ? initialMetrics.metrics.find(metric => metric.name === "ScriptDuration")?.value ?? 0
+        : 0;
       const records = [];
       const requests = [];
       page.on("request", request => {
@@ -106,16 +123,17 @@ try {
       const metrics = await cdp.send("Performance.getMetrics");
       const longTasks = await page.evaluate(() => window.__appsLongTasks);
       const recentRecords = records.filter(record => record.path.endsWith("/issues/summaries") || fixture.tasks.some(task => record.path === `/api/issues/${task.id}`));
-      samples.push({ scenario, run: run + 1, usableMs, sidebarReadyMs: sidebarReady, recentBytes: recentRecords.reduce((n, r) => n + r.decodedBytes, 0),
+      samples.push({ variant: variant.label, scenario, run: run + 1, usableMs, sidebarReadyMs: sidebarReady, recentBytes: recentRecords.reduce((n, r) => n + r.decodedBytes, 0),
         apiRequests: requests.length,
         recentRequests: requests.filter(record => record.path.endsWith("/issues/summaries") || fixture.tasks.some(task => record.path === `/api/issues/${task.id}`)).length,
         records, requests,
         longTaskMs: longTasks.filter(task => scenario === "cold" || task.start >= observedNavigationStart).reduce((n, task) => n + task.duration, 0),
-        scriptDurationSeconds: metrics.metrics.find(metric => metric.name === "ScriptDuration")?.value ?? null,
+        scriptDurationSeconds: (metrics.metrics.find(metric => metric.name === "ScriptDuration")?.value ?? 0) - scriptDurationAtStart,
       });
-      if (run === 0) await page.screenshot({ path: `${directory}/${phase}-${scenario}.png`, fullPage: true });
+      if (run === 0) await page.screenshot({ path: `${directory}/${variant.label}-${scenario}.png`, fullPage: true });
       await context.close();
-      console.log(`${phase} ${scenario} ${run + 1}: connectors=${Math.round(usableMs)}ms recent=${samples.at(-1).recentRequests} requests/${samples.at(-1).recentBytes} bytes`);
+      console.log(`${variant.label} ${scenario} ${run + 1}: connectors=${Math.round(usableMs)}ms recent=${samples.at(-1).recentRequests} requests/${samples.at(-1).recentBytes} bytes`);
+      }
     }
   }
 } finally { await browser.close(); }

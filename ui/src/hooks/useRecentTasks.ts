@@ -70,13 +70,23 @@ export function useRecentTasks({
 
   const queryIds = useMemo(() => entries.map((entry) => entry.id).sort(), [entries]);
   const membership = JSON.stringify(queryIds);
+  const scope = JSON.stringify([storageKey, queryIds]);
+  const summaryKey = queryKeys.issues.summaryBatch(companyId ?? "__none__", userId, queryIds);
+  // A cached omission predates IDs that the user has just added back. Only a
+  // response completed during this visit to the batch may remove those IDs.
+  const batchVisit = useMemo(() => ({
+    initialUpdateCount: queryClient.getQueryState(summaryKey)?.dataUpdateCount ?? 0,
+    // The serialized scope includes the account, company, and sorted ID set.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [queryClient, scope]);
   const summaryQuery = useQuery({
-    queryKey: queryKeys.issues.summaryBatch(companyId ?? "__none__", userId, queryIds),
+    queryKey: summaryKey,
     queryFn: ({ signal }) => issuesApi.summaries(companyId!, queryIds, { signal }),
     enabled: Boolean(companyId && queryIds.length),
     retry: false,
     staleTime: 30_000,
   });
+  const updateCount = queryClient.getQueryState(summaryKey)?.dataUpdateCount ?? 0;
   const summaries = summaryQuery.isSuccess ? summaryQuery.data : undefined;
   const confirmed = new Map((summaries ?? []).filter((issue) => issue.companyId === companyId)
     .map((issue) => [issue.id, issue]));
@@ -85,19 +95,23 @@ export function useRecentTasks({
     return issue ? mergeRecentTaskSnapshot(entry, issue) : entry;
   });
   const processed = useRef<{ scope: string; revision: number } | null>(null);
-  const scope = JSON.stringify([storageKey, queryIds]);
 
   useEffect(() => {
     if (!storageKey || !companyId || !summaries) return;
-    if (processed.current?.scope === scope && processed.current.revision === summaryQuery.dataUpdatedAt) return;
-    processed.current = { scope, revision: summaryQuery.dataUpdatedAt };
+    if (processed.current?.scope === scope && processed.current.revision === updateCount) return;
+    processed.current = { scope, revision: updateCount };
     const returnedIds = new Set(summaries.filter((issue) => issue.companyId === companyId).map((issue) => issue.id));
     updateRecentTaskSnapshots(storageKey, companyId, summaries);
+    const omittedIds = new Set(queryIds.filter((id) => !returnedIds.has(id)));
+    if (omittedIds.size && updateCount <= batchVisit.initialUpdateCount) {
+      void summaryQuery.refetch({ cancelRefetch: false });
+      return;
+    }
     // Never prune IDs added after this particular batch was requested.
-    pruneRecentTasks(storageKey, companyId, new Set(queryIds.filter((id) => !returnedIds.has(id))));
+    pruneRecentTasks(storageKey, companyId, omittedIds);
     // A storage notification must not republish the same successful revision.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [companyId, scope, summaryQuery.dataUpdatedAt, summaries, storageKey]);
+  }, [batchVisit, companyId, scope, updateCount, summaries, storageKey]);
 
   useEffect(() => {
     if (!storageKey || !companyId || !summaries) return;

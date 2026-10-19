@@ -223,4 +223,41 @@ describe("recent task synchronization", () => {
     expect(readRecentTasks(getRecentTasksStorageKey("company-1", "user-2"), "company-1")[0]?.id).toBe("issue-2");
     expect(summaries.mock.calls.map(call => call[1])).toEqual([["issue-1"], ["issue-2"]]);
   });
+
+  it("refreshes a cached omission when the user revisits an accessible task", async () => {
+    const first = task(10, "First");
+    const second = { ...task(20, "Second"), id: "issue-2" };
+    recordRecentTask(first, "user-1");
+    recordRecentTask(second, "user-1");
+    summaries.mockResolvedValue([second]);
+    const cache = client();
+    await act(async () => root.render(<QueryClientProvider client={cache}><RecentTasks name="revisited" /></QueryClientProvider>));
+    await flush();
+    expect(readRecentTasks(storageKey, "company-1").map(entry => entry.id)).toEqual([second.id]);
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    expect(cache.getQueryState(queryKeys.issues.summaryBatch("company-1", "user-1", [second.id]))?.status).toBe("success");
+    summaries.mockResolvedValue([first, second]);
+    await act(async () => { recordRecentTask(first, "user-1", 30); });
+    await flush();
+    expect(readRecentTasks(storageKey, "company-1").map(entry => entry.id).sort()).toEqual([first.id, second.id]);
+    expect(summaries.mock.calls.filter(call => call[1].length === 2)).toHaveLength(2);
+  });
+
+  it("keeps a revisited task when refreshing its cached omission fails", async () => {
+    const first = task(10, "First");
+    const second = { ...task(20, "Second"), id: "issue-2" };
+    recordRecentTask(first, "user-1");
+    recordRecentTask(second, "user-1");
+    summaries.mockResolvedValue([second]);
+    const cache = client();
+    await act(async () => root.render(<QueryClientProvider client={cache}><RecentTasks name="retry-failed" /></QueryClientProvider>));
+    await flush();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    summaries.mockRejectedValue(new ApiError("Unavailable", 500, null));
+    await act(async () => { recordRecentTask(first, "user-1", 30); });
+    await flush();
+    expect(readRecentTasks(storageKey, "company-1").map(entry => entry.id).sort()).toEqual([first.id, second.id]);
+    expect(cache.getQueryState(queryKeys.issues.summaryBatch("company-1", "user-1", [first.id, second.id]))?.status).toBe("error");
+    expect(summaries.mock.calls.filter(call => call[1].length === 2)).toHaveLength(2);
+  });
 });
