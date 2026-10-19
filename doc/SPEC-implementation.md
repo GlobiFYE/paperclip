@@ -1934,9 +1934,10 @@ connection is unusable. Known destination failures quarantine only that resource
 provider rate limits retain their retry deadlines. Confirmed authentication
 failures put the endpoint in attention and mark connection health failed without
 changing the connection's enabled setting. Admission and background reconciliation
-block sends, assigned channel tools, and runtime restart until credentials are
-repaired. Explicit disable, disconnect, and
-provider installation revocation retain their existing behavior.
+block sends, assigned channel tools, and background receiver restart until
+credentials are repaired. Signed provider lifecycle events remain admissible so
+installation revocation still takes effect during an authentication stop.
+Explicit disable and disconnect retain their existing behavior.
 
 ### Task-bound email
 

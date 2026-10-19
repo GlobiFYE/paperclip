@@ -787,7 +787,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       )
       .then((rows) => rows[0]);
     if (
-      (endpoint.status === "attention" && connection?.healthStatus === "failed") ||
+      (leasedChatProvider(endpoint.provider) && endpoint.status === "attention" && connection?.healthStatus === "failed") ||
       credentialFingerprint(connection?.refs ?? []) !== context.credentialFingerprint
     ) {
       return null;
@@ -817,7 +817,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       return null;
     }
     return record &&
-      !(record.endpoint.status === "attention" && record.connectionHealthStatus === "failed") &&
+      !(leasedChatProvider(record.endpoint.provider) && record.endpoint.status === "attention" && record.connectionHealthStatus === "failed") &&
       allowedStatuses.includes(record.endpoint.status) &&
       runtimeGeneration(record.endpoint.setup) === context.generation &&
       credentialFingerprint(record.credentialSecretRefs) ===
@@ -904,7 +904,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         record.endpoint.status === "archived" ||
         record.endpoint.status === "paused" ||
         record.endpoint.status === "draft" ||
-        (record.endpoint.status === "attention" && record.connectionHealthStatus === "failed")
+        (leasedChatProvider(record.endpoint.provider) && record.endpoint.status === "attention" && record.connectionHealthStatus === "failed")
       ) {
         throw conflict("Chat endpoint runtime is not available in this state", {
           code: "chat_endpoint_runtime_unavailable",

@@ -2815,6 +2815,18 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       } else {
         expect(runtime.posts).toHaveLength(writesBefore);
         expect(f.runtime.endpoints.has(f.endpoint.id)).toBe(false);
+        f.setInstallationAvailable(false);
+        const deleted = await f.service.handleWebhook(f.endpoint.publicId, "github", signedGitHubWebhookRequest({
+          event: "installation", delivery: randomUUID(), webhookSecret: f.webhookSecret,
+          payload: { action: "deleted", installation: { id: 2468 } },
+        }));
+        expect(deleted.status).toBe(202);
+        expect(await f.service.get(f.endpoint.id)).toMatchObject({ status: "revoked" });
+        expect((await readToolConnectionsById(f.endpoint.connectionId))[0]).toMatchObject({ status: "disabled", enabled: false });
+        expect(await f.service.listResources(f.endpoint.id)).toEqual(expect.arrayContaining([
+          expect.objectContaining({ availability: "unavailable" }),
+        ]));
+        expect((await readChatConversationsById(f.conversation.id))[0]).toMatchObject({ state: "unavailable" });
       }
     });
     it("lists each GitHub bot tool once when an inline thread shares the task", async () => {
