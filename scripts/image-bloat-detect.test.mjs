@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { analyzeBloat } from "./image-bloat-detect.mjs";
+import { analyzeBloat, findContentDuplicates, parseDeepScanOutput } from "./image-bloat-detect.mjs";
 
 describe("analyzeBloat", () => {
   const base = {
@@ -86,5 +86,64 @@ describe("analyzeBloat", () => {
     const pnpm = [...base.manifest.pnpm, { name: "brand-new-cli", version: "3.0.0", sizeBytes: 10 * 1024 * 1024, dir: "brand-new-cli@3.0.0" }];
     const changed = analyzeBloat({ ...base, manifest: { ...base.manifest, global, pnpm }, budget: report });
     assert.ok(changed.budgetViolations.some((v) => v.includes("new duplicate package across trees: brand-new-cli")));
+  });
+
+  it("reports nothing about content duplicates unless --deep is selected", () => {
+    assert.equal(analyzeBloat(base).contentDuplicates, null);
+  });
+
+  it("groups identical file content across paths when --deep is selected", () => {
+    const contentHashes = [
+      { hash: "a1".repeat(32), path: "/app/node_modules/pkg/dist/bundle.js" },
+      { hash: "a1".repeat(32), path: "/usr/local/lib/node_modules/pkg/dist bundle.js" },
+      { hash: "b2".repeat(32), path: "/opt/paperclip-runner/unique.js" },
+    ];
+    const report = analyzeBloat({ ...base, deep: true, contentHashes });
+    assert.deepEqual(report.contentDuplicates, [
+      {
+        hash: "a1".repeat(32),
+        paths: [
+          "/app/node_modules/pkg/dist/bundle.js",
+          "/usr/local/lib/node_modules/pkg/dist bundle.js",
+        ],
+      },
+    ]);
+  });
+});
+
+describe("deep content scan parsing", () => {
+  it("parses sha256sum output, keeps paths with spaces, skips stray lines", () => {
+    const entries = parseDeepScanOutput(
+      ["abc123  /app/node_modules/a bundle.js", "def456  /app/b.js", "not a hash line", ""].join("\n"),
+    );
+    assert.deepEqual(entries, []);
+    const real = parseDeepScanOutput(
+      [
+        `${"a1".repeat(32)}  /app/node_modules/pkg/dist/bundle.js`,
+        `${"a1".repeat(32)}  /usr/local/lib/node_modules/pkg/dist bundle.js`,
+        "warning: /missing: No such file or directory",
+      ].join("\n"),
+    );
+    assert.deepEqual(real, [
+      { hash: "a1".repeat(32), path: "/app/node_modules/pkg/dist/bundle.js" },
+      { hash: "a1".repeat(32), path: "/usr/local/lib/node_modules/pkg/dist bundle.js" },
+    ]);
+  });
+
+  it("groups duplicates only when the same hash spans more than one path", () => {
+    assert.deepEqual(
+      findContentDuplicates([
+        { hash: "h1", path: "/a.js" },
+        { hash: "h2", path: "/b.js" },
+      ]),
+      [],
+    );
+    assert.deepEqual(
+      findContentDuplicates([
+        { hash: "h1", path: "/a.js" },
+        { hash: "h1", path: "/b.js" },
+      ]),
+      [{ hash: "h1", paths: ["/a.js", "/b.js"] }],
+    );
   });
 });

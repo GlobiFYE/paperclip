@@ -1,3 +1,5 @@
+import os from "node:os";
+import path from "node:path";
 import type {
   AdapterEnvironmentCheck,
   AdapterEnvironmentTestContext,
@@ -18,6 +20,8 @@ import {
   runAdapterExecutionTargetProcess,
   describeAdapterExecutionTarget,
   resolveAdapterExecutionTargetCwd,
+  prepareAdapterExecutionTargetRuntime,
+  runtimeAssetDir,
 } from "@paperclipai/adapter-utils/execution-target";
 import { discoverPiModelsCached } from "./models.js";
 import { parsePiJsonl } from "./parse.js";
@@ -133,8 +137,49 @@ export async function testEnvironment(
   // pi harness routed through a gateway provider sees "No models available"
   // during lifecycle verification and the probe fails.
   const preparedRuntimeConfig = await preparePiRuntimeConfig({ env });
+  let preparedRemoteRuntime: Awaited<ReturnType<typeof prepareAdapterExecutionTargetRuntime>> | null = null;
   try {
     if (preparedRuntimeConfig.agentConfigDir) env.PI_CODING_AGENT_DIR = preparedRuntimeConfig.agentConfigDir;
+
+    // Remote targets run the probe inside the sandbox, so the managed agent
+    // config dir must exist there. Stage it as a runtime asset (the same shape
+    // execute.ts ships) and repoint PI_CODING_AGENT_DIR at the in-sandbox copy
+    // before runtimeEnv is computed. Without this, a remote probe with
+    // PAPERCLIP_PI_PROVIDERS set can never see models.json and fails with
+    // "No models available".
+    if (targetIsRemote && preparedRuntimeConfig.agentConfigDir) {
+      try {
+        preparedRemoteRuntime = await prepareAdapterExecutionTargetRuntime({
+          runId,
+          target,
+          adapterKey: "pi",
+          workspaceLocalDir: path.join(os.tmpdir(), "paperclip-pi-envtest-workspace"),
+          syncWorkspace: false,
+          installCommand: SANDBOX_INSTALL_COMMAND,
+          detectCommand: command,
+          assets: [
+            {
+              key: "agentConfig",
+              localDir: preparedRuntimeConfig.agentConfigDir,
+            },
+          ],
+          workspaceRestoreRetryDelaysMs: [],
+        });
+        env.PI_CODING_AGENT_DIR = runtimeAssetDir(preparedRemoteRuntime, "agentConfig", cwd);
+      } catch (err) {
+        // Staging failing must surface as a check (the probe would fail anyway),
+        // not abort the whole environment test.
+        preparedRemoteRuntime = null;
+        delete env.PI_CODING_AGENT_DIR;
+        checks.push({
+          code: "pi_agent_config_stage_failed",
+          level: "error",
+          message: "Failed to stage the managed Pi agent config into the remote target.",
+          detail: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
     const runtimeEnv = normalizeEnv(ensurePathInEnv({ ...process.env, ...env }));
 
     const cwdInvalid = checks.some((check) => check.code === "pi_cwd_invalid");
@@ -346,6 +391,9 @@ export async function testEnvironment(
       testedAt: new Date().toISOString(),
     };
   } finally {
+    // Tear down the in-sandbox runtime (agent config copy) before removing the
+    // local temp dir, mirroring the execute path's restore order.
+    await preparedRemoteRuntime?.restoreWorkspace().catch(() => undefined);
     await preparedRuntimeConfig.cleanup();
   }
 }

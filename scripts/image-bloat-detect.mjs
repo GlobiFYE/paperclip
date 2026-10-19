@@ -32,6 +32,15 @@ const NON_TARGET_PLATFORM = /(musl|darwin|win32|windows|freebsd|openbsd|netbsd|a
 const MODE_REWRITE = /(chmod\s+(-R|--recursive)|chown\s+(-R|--recursive))/i;
 const MODE_REWRITE_MIN_BYTES = 10 * 1024 * 1024;
 
+// --deep content scan: hash every file larger than this size under the node
+// trees the bloat signals actually live in, and report identical content at
+// multiple paths. Sub-64KiB files are noise (thousands of tiny .js stubs)
+// and are excluded to keep the scan bounded.
+const DEEP_SCAN_ROOTS = ["/usr/local/lib/node_modules", "/app/node_modules", "/app/dist", "/opt/paperclip-runner"];
+const DEEP_MIN_FILE_BYTES = 64 * 1024;
+const DEEP_MAX_GROUPS = 20;
+const DEEP_MAX_PATHS = 8;
+
 // Collected inside the image by `docker run --entrypoint node` reading this
 // script on stdin. Emits one JSON object on stdout.
 const MANIFEST_SCRIPT = `
@@ -120,7 +129,7 @@ function runDocker(args, { input } = {}) {
   return result.stdout;
 }
 
-export function collectImageMetrics(image) {
+export function collectImageMetrics(image, { deep = false } = {}) {
   assert.match(image ?? "", /^\S+$/, "image must be a non-empty ref");
   const sizeBytes = Number(runDocker(["image", "inspect", "-f", "{{.Size}}", image]).trim());
 
@@ -135,10 +144,49 @@ export function collectImageMetrics(image) {
 
   const manifest = JSON.parse(runDocker(["run", "--rm", "-i", "--entrypoint", "node", image], { input: MANIFEST_SCRIPT }));
 
-  return { image, sizeBytes, history, manifest };
+  // --deep: a second, in-image pass hashes files large enough to matter and
+  // lets analyzeBloat group identical content across paths. A root that is
+  // absent in this image is skipped (find stderr is dropped, `|| true` keeps
+  // the exit code 0).
+  const contentHashes = deep ? runDeepContentScan(image) : [];
+
+  return { image, sizeBytes, history, manifest, contentHashes };
 }
 
-export function analyzeBloat({ sizeBytes, history = [], manifest = {}, budget = null, deep = false }) {
+export function parseDeepScanOutput(stdout) {
+  const entries = [];
+  for (const line of String(stdout).split("\n")) {
+    // sha256sum text-mode line: 64 hex chars, two spaces, path (which may
+    // itself contain spaces, so the path is the greedy remainder).
+    const match = /^([0-9a-f]{64})  (\S.*)$/.exec(line);
+    if (match) entries.push({ hash: match[1], path: match[2] });
+  }
+  return entries;
+}
+
+function runDeepContentScan(image) {
+  const roots = DEEP_SCAN_ROOTS.map((root) => JSON.stringify(root)).join(" ");
+  const script = `find ${roots} -type f -size +${DEEP_MIN_FILE_BYTES}c -exec sha256sum {} + 2>/dev/null || true`;
+  const stdout = runDocker(["run", "--rm", "--entrypoint", "sh", image, "-c", script]);
+  return parseDeepScanOutput(stdout);
+}
+
+// Group in-image file hashes that appear at more than one path, largest path
+// sets first, bounded to a report-sized shape.
+export function findContentDuplicates(contentHashes) {
+  const byHash = new Map();
+  for (const entry of contentHashes) {
+    const paths = byHash.get(entry.hash);
+    if (paths) paths.push(entry.path);
+    else byHash.set(entry.hash, [entry.path]);
+  }
+  return [...byHash.entries()]
+    .filter(([, paths]) => paths.length > 1)
+    .map(([hash, paths]) => ({ hash, paths: [...paths].sort().slice(0, DEEP_MAX_PATHS) }))
+    .slice(0, DEEP_MAX_GROUPS);
+}
+
+export function analyzeBloat({ sizeBytes, history = [], manifest = {}, contentHashes = [], budget = null, deep = false }) {
   const modeRewriteLayers = history
     .filter((layer) => MODE_REWRITE.test(layer.createdBy) && layer.sizeBytes >= MODE_REWRITE_MIN_BYTES)
     .map((layer) => ({ sizeBytes: layer.sizeBytes, createdBy: layer.createdBy.trim() }));
@@ -173,7 +221,7 @@ export function analyzeBloat({ sizeBytes, history = [], manifest = {}, budget = 
     modeRewriteLayers,
     nonTargetPlatformPackages,
     duplicatePackagesAcrossTrees,
-    contentDuplicates: deep ? [] : null,
+    contentDuplicates: deep ? findContentDuplicates(contentHashes) : null,
   };
 
   if (budget) {
@@ -211,8 +259,20 @@ async function main() {
   const deep = process.argv.includes("--deep");
   if (!image) throw new Error("Usage: node scripts/image-bloat-detect.mjs --image <ref> [--check <file> | --record-budget <file>] [--deep]");
 
-  const budget = budgetPath ? JSON.parse(readFileSync(budgetPath, "utf8")) : null;
-  const metrics = collectImageMetrics(image);
+  let budget = null;
+  if (budgetPath) {
+    let raw;
+    try {
+      raw = readFileSync(budgetPath, "utf8");
+    } catch (error) {
+      // First-time recording: the baseline file does not exist yet, so there
+      // is nothing to compare against — record a fresh baseline below. A
+      // missing --check file is a real usage error.
+      if (!recordBudget) throw error;
+    }
+    if (raw !== undefined) budget = JSON.parse(raw);
+  }
+  const metrics = collectImageMetrics(image, { deep });
   const report = analyzeBloat({ ...metrics, budget, deep });
   report.image = image;
 

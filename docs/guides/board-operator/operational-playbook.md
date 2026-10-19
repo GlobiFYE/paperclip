@@ -48,13 +48,19 @@ Routines are first-class scheduled work that runs without human intervention. Th
 
 ### Creating a Routine
 
+Routines are created in the UI or via the API — the CLI (`paperclipai routines`) only carries maintenance commands such as `disable-all`. To create one through the API:
+
 ```sh
-# Via CLI
-paperclipai routines:create \
-  --name "Daily Operations Report" \
-  --cron "0 8 * * *" \
-  --instructions "Generate daily operations report" \
-  --assign-to ceo-agent
+# 1. Create the routine
+ROUTINE_ID=$(curl -s -X POST "$PAPERCLIP_API/api/companies/co-123/routines" \
+  -H "Content-Type: application/json" \
+  -d '{"title": "Daily Operations Report", "description": "Generate daily operations report", "assigneeAgentId": "<agent-id>"}' \
+  | python3 -c "import json,sys; print(json.load(sys.stdin)['id'])")
+
+# 2. Attach the cron trigger (schedules live on the routine, not the create call)
+curl -s -X POST "$PAPERCLIP_API/api/routines/$ROUTINE_ID/triggers" \
+  -H "Content-Type: application/json" \
+  -d '{"kind": "schedule", "cronExpression": "0 8 * * *", "timezone": "America/Denver"}'
 ```
 
 ### Routine Lifecycle
@@ -106,10 +112,10 @@ Company goal
 ### Setting Goals
 
 ```sh
-paperclipai goals:create \
+paperclipai goal create \
+  --company-id co-123 \
   --title "Ship v1.0" \
-  --description "Launch public beta" \
-  --company co-123
+  --description "Launch public beta"
 ```
 
 Goals appear in agent heartbeats, helping them understand the "why" behind their work.
@@ -152,15 +158,13 @@ A company package includes:
 ### Using Templates
 
 ```sh
-# Export a proven configuration
-paperclipai companies:export \
-  --company-id co-123 \
-  --output-dir ./my-template
+# Export a proven configuration to a local directory
+paperclipai company export co-123 \
+  --out ./my-template
 
-# Import into a new environment
-paperclipai companies:import \
-  --package-dir ./my-template \
-  --target-org org-456
+# Import into a new environment (create a fresh company, or merge into an existing one)
+paperclipai company import ./my-template \
+  --target new
 ```
 
 Templates follow the [Agent Companies specification](/companies/companies-spec) and work from local directories or GitHub.
