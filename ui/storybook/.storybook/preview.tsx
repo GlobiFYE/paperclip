@@ -4,6 +4,8 @@ import { MINIMAL_VIEWPORTS } from "storybook/viewport";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   CONNECTABLE_APP_DEFINITIONS,
+  instanceExperimentalSettingsSchema,
+  instanceGeneralSettingsSchema,
   type WorkTimelineResult,
 } from "@paperclipai/shared";
 import { MemoryRouter } from "@/lib/router";
@@ -152,15 +154,13 @@ function installStorybookApiFixtures() {
       });
     }
 
+    const experimentalSettings = () => instanceExperimentalSettingsSchema.parse({
+      enableIsolatedWorkspaces: true,
+      autoRestartDevServerWhenIdle: false,
+      enableManagedSandboxOnly: onboardingFixtureState.environments !== "local",
+    });
     if (url.pathname === "/api/instance/settings/experimental") {
-      return Response.json({
-        enableIsolatedWorkspaces: true,
-        autoRestartDevServerWhenIdle: false,
-        // The cloud-tenant shape, and what the onboarding connect step resolves
-        // its login environment through: without it the step looks for a local
-        // default and never finds the managed sandbox.
-        enableManagedSandboxOnly: onboardingFixtureState.environments !== "local",
-      });
+      return Response.json(experimentalSettings());
     }
 
     if (url.pathname === "/api/health") {
@@ -168,7 +168,15 @@ function installStorybookApiFixtures() {
     }
 
     if (url.pathname === "/api/instance/settings") {
-      return Response.json({});
+      // Full app-shell stories render pages that read these nested settings.
+      return Response.json({
+        id: "00000000-0000-4000-8000-000000000001",
+        defaultEnvironmentId: null,
+        general: instanceGeneralSettingsSchema.parse({}),
+        experimental: experimentalSettings(),
+        createdAt: "2026-10-08T00:00:00.000Z",
+        updatedAt: "2026-10-08T00:00:00.000Z",
+      });
     }
 
     // The connect step's provider sign-in is gated on a *sandbox* environment
@@ -735,10 +743,12 @@ function StorybookProviders({
   children,
   theme,
   initialViewportWidth,
+  initialEntries,
 }: {
   children: ReactNode;
   theme: "light" | "dark";
   initialViewportWidth?: number;
+  initialEntries?: string[];
 }) {
   const [queryClient] = useState(
     () =>
@@ -786,7 +796,7 @@ function StorybookProviders({
   return (
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
-        <MemoryRouter initialEntries={["/PAP/storybook"]}>
+        <MemoryRouter initialEntries={initialEntries ?? ["/PAP/storybook"]}>
           <CompanyProvider>
             <EditorAutocompleteProvider>
               <ToastProvider>
@@ -818,7 +828,7 @@ const preview: Preview = {
       const initialViewportWidth = context.parameters.waitForViewport && typeof width === "string" && /^\d+px$/.test(width)
         ? Number.parseInt(width, 10) : undefined;
       return (
-        <StorybookProviders key={`${context.id}:${theme}`} theme={theme} initialViewportWidth={initialViewportWidth}>
+        <StorybookProviders key={`${context.id}:${theme}`} theme={theme} initialViewportWidth={initialViewportWidth} initialEntries={context.parameters.initialEntries}>
           <Story />
         </StorybookProviders>
       );
@@ -840,6 +850,73 @@ const preview: Preview = {
     },
   },
   parameters: {
+    options: {
+      storySort: {
+        order: [
+          "Overview",
+          "Getting started and access",
+          [
+            "Onboarding and first work",
+            "Login, invitations, and access",
+            "Companies and portability"
+          ],
+          "Tasks and conversations",
+          [
+            "Task creation and lifecycle",
+            "Delegation, dependencies, and signoff",
+            "Inbox, decisions, and search",
+            "Agent conversations and project handoff",
+            "Questions and approvals",
+            "Steering and queued messages",
+            "Documents, attachments, and work products"
+          ],
+          "Agents and reusable capabilities",
+          [
+            "Hiring, configuration, and organization",
+            "Runs, harnesses, and model accounts",
+            "Skills and Skill Studio",
+            "Team packages and installation"
+          ],
+          "Projects and execution",
+          [
+            "Projects and repositories",
+            "Goals and work alignment",
+            "Workspaces, services, and files",
+            "Execution environments",
+            "Recovery"
+          ],
+          "Apps, channels, and extensions",
+          [
+            "Connection setup",
+            "App access and action permissions",
+            "External chat and email",
+            "Tool gateways and access profiles",
+            "Secrets and proposals",
+            "Plugins"
+          ],
+          "Automation and structured work",
+          [
+            "Routines, schedules, and triggers",
+            "Pipelines, review queues, and learnings",
+            "Cases",
+            "Status cards"
+          ],
+          "Oversight and operation",
+          [
+            "Costs and budgets",
+            "Dashboards and audit trails",
+            "Navigation, profile, and announcements",
+            "Instance operations",
+            "CLI/API and local worktrees"
+          ],
+          "Contributor surfaces",
+          [
+            "Developer previews and diagnostic labs"
+          ],
+          "Foundations"
+        ],
+      },
+    },
     actions: { argTypesRegex: "^on[A-Z].*" },
     a11y: {
       test: "error",
