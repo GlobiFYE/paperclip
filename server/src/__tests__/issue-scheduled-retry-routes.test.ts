@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import express from "express";
 import request from "supertest";
 import { and, eq, inArray } from "drizzle-orm";
@@ -8,6 +10,7 @@ import {
   agents,
   agentWakeupRequests,
   companies,
+  companyMemberships,
   createDb,
   environmentLeases,
   heartbeatRunEvents,
@@ -23,6 +26,7 @@ import {
 } from "./helpers/embedded-postgres.js";
 import { errorHandler } from "../middleware/index.js";
 import { issueRoutes } from "../routes/issues.js";
+import { runningProcesses } from "../adapters/index.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -55,6 +59,7 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
     await db.delete(heartbeatRuns);
     await db.delete(agentWakeupRequests);
     await db.delete(agents);
+    await db.delete(companyMemberships);
     await db.delete(companies);
   });
 
@@ -206,6 +211,51 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
 
     return { companyId, agentId, issueId, sourceRunId, retryRunId, scheduledRetryAt };
   }
+
+  it.each(["post", "patch"] as const)("keeps a retry's live process and saved work owner when a %s comment arrives", async method => {
+    const f = await seedIssueWithRetry({ retryStatus: "running" });
+    await db.insert(companyMemberships).values({
+      companyId: f.companyId, principalType: "user", principalId: "board-user",
+      membershipRole: "admin", status: "active",
+    });
+    const child = spawn(process.execPath, ["-e", `
+      process.on('message', message => {
+        if (message === 'continue-work') process.send('work-continues');
+      });
+      process.send('ready');
+    `], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
+    const exited = once(child, "exit");
+    try {
+      await once(child, "message", { signal: AbortSignal.timeout(5_000) });
+      runningProcesses.set(f.retryRunId, { child, graceSec: 1, processGroupId: null });
+      await db.update(heartbeatRuns).set({
+        startedAt: new Date(), runtimeModeResolvedAt: new Date(), processPid: child.pid,
+      }).where(eq(heartbeatRuns.id, f.retryRunId));
+      const app = createApp(boardActor(f.companyId));
+
+      const res = method === "post"
+        ? await request(app).post(`/api/issues/${f.issueId}/comments`).send({ body: "Verified source recovery; continue the original work." })
+        : await request(app).patch(`/api/issues/${f.issueId}`).send({ comment: "Verified source recovery; continue the original work." });
+
+      expect(res.status, JSON.stringify(res.body)).toBe(method === "post" ? 201 : 200);
+      const progress = once(child, "message", { signal: AbortSignal.timeout(5_000) });
+      child.send("continue-work");
+      expect((await progress)[0]).toBe("work-continues");
+      const [savedIssue] = await db.select().from(issues).where(eq(issues.id, f.issueId));
+      const [savedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.retryRunId));
+      expect(savedIssue).toMatchObject({ status: "in_progress", executionRunId: f.retryRunId });
+      expect(savedRun).toMatchObject({ status: "running", processPid: child.pid });
+      expect(await db.select().from(issueComments).where(eq(issueComments.issueId, f.issueId)))
+        .toHaveLength(1);
+      expect(await db.select().from(heartbeatRuns).where(and(
+        eq(heartbeatRuns.companyId, f.companyId), eq(heartbeatRuns.status, "running"),
+      ))).toHaveLength(1);
+    } finally {
+      runningProcesses.delete(f.retryRunId);
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+      await exited;
+    }
+  });
 
   it("surfaces the current scheduled retry in the issue read model", async () => {
     const { companyId, issueId, agentId, sourceRunId, retryRunId, scheduledRetryAt } = await seedIssueWithRetry();
