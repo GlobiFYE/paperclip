@@ -58,7 +58,8 @@ describe("native event replay observation evidence", () => {
 
   afterAll(async () => { await temporary?.cleanup(); });
 
-  async function replay(id: string, viewerCount: number, cadenceMs: number | null): Promise<ObserverReplayMeasurement> {
+  async function replay(id: string, viewerCount: number, cadenceMs: number | null,
+    firstBatchDelayAfterWorkMs = 0): Promise<ObserverReplayMeasurement> {
     const runId = randomUUID(), issueId = randomUUID(), sessionId = randomUUID();
     const sourceInstanceId = randomUUID(), completionContractId = randomUUID();
     const identity = { companyId, agentId, issueId, runId, sessionId };
@@ -101,6 +102,9 @@ describe("native event replay observation evidence", () => {
     });
     let polling = false;
     let pollWork = Promise.resolve();
+    let completedPollBatches = 0;
+    let pollingFailure: unknown;
+    const workFinished = Promise.withResolvers<void>();
     let activeViewers = 0;
     let minViewers = viewerCount;
     try {
@@ -148,29 +152,49 @@ describe("native event replay observation evidence", () => {
       polling = cadenceMs !== null;
       pollWork = (async () => {
         while (polling) {
+          // Controlled slow-read regression: keep the first batch pending past
+          // work completion and the minimum window, while retaining real reads.
+          if (completedPollBatches === 0 && firstBatchDelayAfterWorkMs > 0) {
+            await workFinished.promise;
+            await delay(firstBatchDelayAfterWorkMs);
+          }
           await Promise.all(pollOffsets.map(async offsets => {
             offsets.push(performance.now() - started);
             await pollPort.replayEvents({ runId, sourceInstanceId, afterSourceSeq: 0, limit: 100 });
           }));
+          completedPollBatches += 1;
           if (polling) await delay(cadenceMs!);
         }
-      })();
+      })().catch(error => { pollingFailure = error; polling = false; });
       for (const event of events) expect((await port.appendEvent(event)).disposition).toBe("committed");
       await expect.poll(() => received.every(messages => messages.length === expectedDeliveries)).toBe(true);
       for (const event of events) expect((await port.appendEvent(event)).disposition).toBe("duplicate");
       // This synchronous guard catches duplicate publication even if an async
       // authorization queue has not reached the client by the final pong.
       expect(signals).toHaveLength(expectedDeliveries);
-      // Give every case the same minimum observation window, including the control.
-      await delay(Math.max(0, 60 - (performance.now() - started)));
-      polling = false;
-      await pollWork;
       // A pong follows earlier server frames; duplicate replay must add none.
       await Promise.all(sockets.map(async socket => {
         const pong = once(socket, "pong"); socket.ping(); await pong;
       }));
       await Promise.all(deliveryReads);
-      const interval = { startedAt, finishedAt: new Date().toISOString(), wallMs: performance.now() - started };
+      // Work timing stops before the deliberate observation extension. This
+      // preserves timing differences even when both runs finish within 60 ms.
+      const workMs = performance.now() - started;
+      workFinished.resolve();
+      // Give every case the same minimum observation window, including the control.
+      await delay(Math.max(0, 60 - (performance.now() - started)));
+      if (cadenceMs !== null) {
+        // Read offsets count starts, not completions. Slow database reads must
+        // finish two batches before the observation window can close.
+        await expect.poll(() => {
+          if (pollingFailure) throw pollingFailure;
+          return completedPollBatches;
+        }, { timeout: 5_000 }).toBeGreaterThanOrEqual(2);
+      }
+      polling = false;
+      await pollWork;
+      if (pollingFailure) throw pollingFailure;
+      const interval = { startedAt, finishedAt: new Date().toISOString(), wallMs: performance.now() - started, workMs };
       measuring = false;
       queries.total = queries.persistence + queries.viewerDelivery + queries.polling + queries.visibilityProof;
 
@@ -201,7 +225,7 @@ describe("native event replay observation evidence", () => {
           transport: "authenticated_websocket",
           polling: { applicability: cadenceMs === null ? "not_applicable" : "applicable",
             reason: cadenceMs !== null ? "scheduled_log_reads" : viewerCount === 0 ? "no_viewers" : "push_only",
-            cadenceMs, offsetsMs: pollOffsets },
+            cadenceMs, firstBatchDelayAfterWorkMs, completedBatches: completedPollBatches, offsetsMs: pollOffsets },
         },
         correctness: { committedEvents: events.length, durableEvents: rows.length, duplicateReceipts: events.length,
           deliveriesPerViewer: received.map(messages => messages.length), durableOutput: true,
@@ -210,6 +234,7 @@ describe("native event replay observation evidence", () => {
     } finally {
       measuring = false;
       polling = false;
+      workFinished.resolve();
       unsubscribe();
       await pollWork;
       for (const socket of sockets) socket.terminate();
@@ -233,16 +258,24 @@ describe("native event replay observation evidence", () => {
     const first = await replay("push-a", 2, null);
     const second = await replay("push-b", 2, null);
     const polled = await replay("polled", 2, 20);
+    const slowPolled = await replay("slow-first-poll", 2, 20, 100);
     const comparisons = [
       compareObserverReplays(first, second),
       compareObserverReplays(zero, first),
       compareObserverReplays(first, polled),
       compareObserverReplays(zero, first, "observation_load"),
       compareObserverReplays(zero, polled, "observation_load"),
+      compareObserverReplays(polled, slowPolled),
     ];
-    expect(comparisons.map(pair => pair.status)).toEqual(["matched", "unmatched", "unmatched", "observation_experiment", "observation_experiment"]);
+    expect(comparisons.map(pair => pair.status)).toEqual(["matched", "unmatched", "unmatched", "observation_experiment", "observation_experiment", "unmatched"]);
+    expect(comparisons[5].differences).toEqual(["polling"]);
     expect(comparisons[1].wallTimeRatio).toBeNull();
     expect(comparisons[2].differences).toEqual(["polling"]);
+    // Equal observation windows must not hide different work-completion times.
+    expect(compareObserverReplays(
+      { ...first, interval: { ...first.interval, wallMs: 60, workMs: 15 } },
+      { ...second, interval: { ...second.interval, wallMs: 60, workMs: 45 } },
+    )).toMatchObject({ timingBasis: "interval.workMs", wallTimeRatio: 3 });
     expect(first.queries.viewerDelivery).toBeGreaterThan(zero.queries.viewerDelivery);
     expect(zero.queries.polling).toBe(0);
     expect(polled.queries.polling).toBeGreaterThan(0);
@@ -257,7 +290,7 @@ describe("native event replay observation evidence", () => {
       node: process.version, platform: process.platform,
       queryScope: "Drizzle statement attempts during ingestion, duplicate replay, and viewer/poll drain, including separately counted delivery-time visibility proofs; excludes seed, handshake, post-interval proof reads, and driver-internal SQL",
       scope: "Synthetic local production persistence and authorized WebSocket delivery; no browser, provider, hosted latency, or exact historical query-count claim",
-      cases: [zero, first, second, polled], comparisons,
+      cases: [zero, first, second, polled, slowPolled], comparisons,
     })}\n`);
   }, 30_000);
 });

@@ -8,6 +8,8 @@ export interface ObserverLoad {
     applicability: "applicable" | "not_applicable";
     reason: "scheduled_log_reads" | "push_only" | "no_viewers";
     cadenceMs: number | null;
+    firstBatchDelayAfterWorkMs: number;
+    completedBatches: number;
     offsetsMs: number[][];
   };
 }
@@ -17,7 +19,7 @@ export interface ObserverReplayMeasurement {
   fixture: string;
   zeroViewerControlId: string;
   observers: ObserverLoad;
-  interval: { startedAt: string; finishedAt: string; wallMs: number };
+  interval: { startedAt: string; finishedAt: string; wallMs: number; workMs: number };
   queries: { persistence: number; viewerDelivery: number; polling: number; visibilityProof: number; total: number };
   correctness: {
     committedEvents: number;
@@ -44,6 +46,7 @@ export function compareObserverReplays(
   // Actual offsets describe scheduling jitter. Compare the configured cadence,
   // not the number of reads accumulated in differently sized timing windows.
   if (baseline.observers.polling.cadenceMs !== candidate.observers.polling.cadenceMs ||
+      baseline.observers.polling.firstBatchDelayAfterWorkMs !== candidate.observers.polling.firstBatchDelayAfterWorkMs ||
       baseline.observers.polling.applicability !== candidate.observers.polling.applicability) differences.push("polling");
   const stable = [baseline, candidate].every(({ observers }) =>
     [observers.activeViewers, observers.activeSubscribers].every(count =>
@@ -55,7 +58,8 @@ export function compareObserverReplays(
   return {
     baselineId: baseline.id, candidateId: candidate.id, axis, status, differences,
     // Never attribute a performance ratio to a confounded implementation pair.
-    wallTimeRatio: status === "matched" && baseline.interval.wallMs > 0
-      ? candidate.interval.wallMs / baseline.interval.wallMs : null,
+    timingBasis: "interval.workMs",
+    wallTimeRatio: status === "matched" && baseline.interval.workMs > 0
+      ? candidate.interval.workMs / baseline.interval.workMs : null,
   };
 }

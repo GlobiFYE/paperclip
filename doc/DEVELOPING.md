@@ -2560,6 +2560,15 @@ Drizzle statement attempts on the measured connections, including authorization,
 duplicate replay, and separately counted delivery-time visibility proof reads.
 Seed, handshake, post-interval proof reads, and driver SQL are outside that count.
 
+`interval.workMs` stops after event ingestion, delivery, duplicate replay, and
+visibility proofs. Performance comparisons use this elapsed time. The separate
+`interval.wallMs` includes the minimum observation window and polling drain, so
+that deliberate wait cannot hide work-time differences. Polling cases wait for
+two completed read batches with a bounded deadline before stopping observation.
+The `slow-first-poll` regression delays its first batch until 100 ms after work
+completion and still requires two completed real reads per viewer. That injected
+delay is explicit in the polling evidence and comparison matching rules.
+
 Every viewer-sensitive case names its zero-viewer control. The report shows a
 matched push pair, unmatched viewer-count and polling pairs, and explicit
 observation-load experiments. Unmatched pairs have no timing ratio. A different
