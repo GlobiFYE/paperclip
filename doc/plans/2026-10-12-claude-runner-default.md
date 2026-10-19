@@ -1608,5 +1608,26 @@ master CI batch experienced simultaneous runner shutdowns; the independent
 short UUID fixture-prefix collision and all failed job logs were preserved
 before retrying. Security review also identified native hire credential routing;
 the existing host-setting guard now covers native runners and retains the saved
-harness for partial credential-reference edits. Local broad verification after
-that fix was stopped under memory pressure; cloud CI is the remaining gate.
+harness for partial credential-reference edits. The first local route-test attempt hit a 30-second hook timeout. A resource-
+pressure hypothesis was disproved by the system memory check. Serial reruns with
+a longer hook budget passed all 122 credential/permission cases; another 232
+snapshot/environment cases and direct server TypeScript checking passed.
+Cloud CI remains the final verification gate.
+
+
+### Final master reconciliation — 2026-10-19
+
+The stack now incorporates origin/master `9179d8dcc3e908c217fde4f63c9d08ccf8132eeb`,
+including task-loading improvements, native progress polling, skill retention,
+permission handling, and OpenRouter attribution. Both independently authored Pi
+profile 24 declarations remain immutable. Combined source attestations use Pi
+profile 27 (`sha256:b1b75a1ae3ac498eb07b95b96bebf4da86227b83d09276076dd5c222e3964dba`);
+Copilot remains profile 22 and Claude's effort input remains v9. Focused protocol
+verification passed 155 cases (one skipped), an additional 18 Pi attestation
+cases passed (one skipped), and 91 evaluation/catalog checks passed. Rust format
+checking ran locally; Rust compilation and Docker work remain in cloud CI.
+
+The earlier API pair and four-target package results retain their exact source
+identities above. They are not relabeled as results for this final merge. A new
+cloud package qualification covers the changed shared runtime, with the final
+preview/runtime/check identities recorded in the PR bodies and dated handoff.
