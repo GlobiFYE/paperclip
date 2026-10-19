@@ -2042,7 +2042,7 @@ function StreamlinedIssuesList({
         )}
       />
 
-      {(isLoading || externalObjectFilterLoading) && <PageSkeleton variant="issues-list" />}
+      {((viewState.viewMode === "list" && isLoading) || externalObjectFilterLoading) && <PageSkeleton variant="issues-list" />}
       {error && <p className="text-sm text-destructive">{error.message}</p>}
       {!searchWithinLoadedIssues && normalizedIssueSearch.length > 0 && searchedIssues.length === ISSUE_SEARCH_RESULT_LIMIT && (
         <p className="text-xs text-muted-foreground">
