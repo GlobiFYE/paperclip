@@ -197,6 +197,49 @@ describe.skipIf(!support.supported)("heartbeat run-control database wiring", () 
     return run;
   }
 
+  it.each(["queued", "running", "cancelled", "succeeded"] as const)("does not supersede a retry that becomes %s between lookup and the cancellation fence", async status => {
+    const { company, agent } = await fixture();
+    const [run] = await db.insert(heartbeatRuns).values({
+      companyId: company.id, agentId: agent.id, status: "scheduled_retry",
+      runtimeMode: "legacy", runtimeModeResolvedAt: new Date(),
+      scheduledRetryReason: "execution_reconciliation_continuation",
+    }).returning();
+    const deps = callbacks(db);
+    const originalGetRun = deps.getRun.getMockImplementation()!;
+    deps.getRun.mockImplementationOnce(async id => {
+      const snapshot = await originalGetRun(id);
+      await db.update(heartbeatRuns).set({ status, startedAt: new Date() }).where(eq(heartbeatRuns.id, id));
+      return snapshot;
+    });
+
+    const control = createHeartbeatRunControl(db, deps);
+    const result = await control.cancelRunInternal(run.id, undefined, { expectedStatus: "scheduled_retry" });
+
+    expect(result).toBeNull();
+    expect(await originalGetRun(run.id)).toMatchObject({ status, resultJson: null });
+    expect(deps.envOrchestrator.releaseForRun).not.toHaveBeenCalled();
+    expect(deps.options.closeWarmNativeSessionsForRun).not.toHaveBeenCalled();
+    expect(deps.appendRunEvent).not.toHaveBeenCalled();
+
+    // An actual Stop still has authority over promoted, nonterminal work.
+    if (status === "queued" || status === "running") {
+      expect(await control.cancelRunInternal(run.id)).toMatchObject({ status: "cancelled" });
+    }
+  });
+
+  it("can supersede a retry that is still scheduled", async () => {
+    const { company, agent } = await fixture();
+    const [run] = await db.insert(heartbeatRuns).values({
+      companyId: company.id, agentId: agent.id, status: "scheduled_retry",
+      runtimeMode: "legacy", runtimeModeResolvedAt: new Date(),
+    }).returning();
+    const deps = callbacks(db);
+
+    expect(await createHeartbeatRunControl(db, deps).cancelRunInternal(
+      run.id, undefined, { expectedStatus: "scheduled_retry" },
+    )).toMatchObject({ status: "cancelled" });
+  });
+
   it.each(["ephemeral", "reuse_by_environment"] as const)("keeps %s cancellation eligible for retention when teardown loses the task lock", async leasePolicy => {
     const { company, agent } = await fixture();
     const [issue] = await db.insert(issues).values({ companyId: company.id, title: "Retain cancelled work",
