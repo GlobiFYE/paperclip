@@ -8304,12 +8304,13 @@ describeEmbeddedPostgres("tool access service", () => {
       expect(fixture.calls).toEqual(["read_doc"]);
     });
 
-    it.each(["managed", "customer"] as const)("blocks the auth retry and updates listing after %s refresh narrows consent", async (mode) => {
+    it.each(["managed", "customer"] as const)("blocks explicit retry and updates listing after %s refresh narrows consent", async (mode) => {
       const fixture = await connectWorkspace(mode);
       const tool = (await fixture.gateway.listToolsForSession(fixture.session.token)).find((item) => item.upstreamToolName === "docs__read_doc")!;
       expect(tool).toBeTruthy();
       const scopes = ["https://www.googleapis.com/auth/gmail.readonly"];
       fixture.expireNextCall(scopes);
+      await expect(fixture.gateway.executeTool({ sessionToken: fixture.session.token, tool: tool.name, parameters: {} })).rejects.toMatchObject({ reasonCode: "oauth_refreshed_retry_required" });
       await expect(fixture.gateway.executeTool({ sessionToken: fixture.session.token, tool: tool.name, parameters: {} })).rejects.toMatchObject({ reasonCode: "oauth_insufficient_scope" });
       expect(fixture.calls).toEqual(["read_doc"]); // No second tools/call after the 401 refresh removed Docs permission.
       const [grant] = await db.select().from(connectionGrants).where(and(eq(connectionGrants.connectionId, fixture.connected.connectionId), eq(connectionGrants.status, "active")));
