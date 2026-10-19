@@ -2552,7 +2552,9 @@ authenticated WebSocket paths. Its `OBSERVER_REPLAY` JSON line follows the
 existing benchmark stdout convention. Each case records the measured interval,
 active viewers and subscribers, polling cadence and actual read offsets, timing,
 query counts, and event/log/delivery/duplicate-replay assertions. Push-only cases
-mark polling as not applicable. The polling fixture reads the production replay
+mark polling as not applicable. Subscriber counts include one diagnostic listener
+that checks duplicate publication synchronously and does no database work.
+The polling fixture reads the production replay
 port; it does not model the full browser query graph. Query counts include
 Drizzle statement attempts on the measured connections, including authorization,
 duplicate replay, and separately counted delivery-time visibility proof reads.

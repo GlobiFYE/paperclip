@@ -17,6 +17,7 @@ import type { LiveEvent } from "@paperclipai/shared";
 import type { PrpEvent } from "../vendor/paperclip-runner/index.js";
 import { setupLiveEventsWebSocketServer } from "../realtime/live-events-ws.js";
 import { PaperclipControlPlanePort } from "../services/native-runtime/paperclip-control-plane-port.js";
+import { subscribeCompanyLiveEvents } from "../services/live-events.js";
 import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { compareObserverReplays, type ObserverReplayMeasurement } from "./helpers/observer-replay-report.js";
 
@@ -94,6 +95,10 @@ describe("native event replay observation evidence", () => {
       logQuery() { if (measuring) queries.visibilityProof += 1; },
     } });
     const pollOffsets: number[][] = Array.from({ length: viewerCount }, () => []);
+    const signals: LiveEvent[] = [];
+    const unsubscribe = subscribeCompanyLiveEvents(companyId, event => {
+      if (event.type === "heartbeat.run.event" && event.payload.runId === runId) signals.push(event);
+    });
     let polling = false;
     let pollWork = Promise.resolve();
     let activeViewers = 0;
@@ -153,6 +158,9 @@ describe("native event replay observation evidence", () => {
       for (const event of events) expect((await port.appendEvent(event)).disposition).toBe("committed");
       await expect.poll(() => received.every(messages => messages.length === expectedDeliveries)).toBe(true);
       for (const event of events) expect((await port.appendEvent(event)).disposition).toBe("duplicate");
+      // This synchronous guard catches duplicate publication even if an async
+      // authorization queue has not reached the client by the final pong.
+      expect(signals).toHaveLength(expectedDeliveries);
       // Give every case the same minimum observation window, including the control.
       await delay(Math.max(0, 60 - (performance.now() - started)));
       polling = false;
@@ -188,7 +196,8 @@ describe("native event replay observation evidence", () => {
         interval, queries,
         observers: {
           activeViewers: { start: viewerCount, end: activeViewers, min: minViewers, max: viewerCount },
-          activeSubscribers: { start: viewerCount, end: wss.clients.size, min: minViewers, max: viewerCount },
+          activeSubscribers: { start: viewerCount + 1, end: wss.clients.size + 1, min: minViewers + 1, max: viewerCount + 1 },
+          diagnosticSubscribers: 1,
           transport: "authenticated_websocket",
           polling: { applicability: cadenceMs === null ? "not_applicable" : "applicable",
             reason: cadenceMs !== null ? "scheduled_log_reads" : viewerCount === 0 ? "no_viewers" : "push_only",
@@ -201,6 +210,7 @@ describe("native event replay observation evidence", () => {
     } finally {
       measuring = false;
       polling = false;
+      unsubscribe();
       await pollWork;
       for (const socket of sockets) socket.terminate();
       // Wait for server-side close handlers to remove the subscriptions.

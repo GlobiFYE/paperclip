@@ -2,6 +2,7 @@
 export interface ObserverLoad {
   activeViewers: { start: number; end: number; min: number; max: number };
   activeSubscribers: { start: number; end: number; min: number; max: number };
+  diagnosticSubscribers: number;
   transport: "authenticated_websocket";
   polling: {
     applicability: "applicable" | "not_applicable";
@@ -37,7 +38,7 @@ export function compareObserverReplays(
 ) {
   const differences: string[] = [];
   if (baseline.fixture !== candidate.fixture) differences.push("fixture");
-  for (const field of ["activeViewers", "activeSubscribers", "transport"] as const) {
+  for (const field of ["activeViewers", "activeSubscribers", "diagnosticSubscribers", "transport"] as const) {
     if (JSON.stringify(baseline.observers[field]) !== JSON.stringify(candidate.observers[field])) differences.push(field);
   }
   // Actual offsets describe scheduling jitter. Compare the configured cadence,
