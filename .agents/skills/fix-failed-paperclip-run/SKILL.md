@@ -1,9 +1,9 @@
 ---
-name: fix-paperclip-task
+name: fix-failed-paperclip-run
 description: Diagnose and fix failed, stuck, slow, or incorrectly blocked Paperclip tasks and runs. Use with a task/run URL or failure report to trace the root cause, prove a regression red then green, check second-order effects, verify the real workflow, and deliver a PR with passing checks.
 ---
 
-# Fix Paperclip Task
+# Fix Failed Paperclip Run
 
 Own the failure from evidence through a tested repair and a green PR. A diagnosis,
 a proposed plan, a successful provider turn, and a passing unit test are intermediate
