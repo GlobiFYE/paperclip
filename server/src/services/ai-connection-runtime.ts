@@ -39,6 +39,7 @@ export const AI_AUTH_ENV_KEYS = [
   "OPENAI_API_KEY",
   "CODEX_API_KEY",
   "OPENROUTER_API_KEY",
+  "OPENCODE_API_KEY",
   "XAI_API_KEY",
   "GROK_API_KEY",
   "CODEX_HOME",
@@ -202,7 +203,7 @@ export function managedAiSessionFingerprintConfig(
   }
   const managed = config.managedAiConnection as Record<string, unknown> | undefined;
   if (managed?.sessionIdentity) {
-    for (const key of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY", "OPENROUTER_API_KEY", "XAI_API_KEY", "GROK_API_KEY", "OPENCODE_AUTH_JSON", "OPENCODE_CONFIG_CONTENT"]) {
+    for (const key of ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "OPENAI_API_KEY", "CODEX_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_API_KEY", "XAI_API_KEY", "GROK_API_KEY", "OPENCODE_AUTH_JSON", "OPENCODE_CONFIG_CONTENT"]) {
       if (env[key]) env[key] = "<managed-ai-credential>";
     }
   }
@@ -337,6 +338,15 @@ export async function prepareManagedAiRuntime(
     if (!routing && input.binding.provider === "openrouter") {
       env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
         provider: { openrouter: { options: { apiKey: value } } },
+      });
+      env.OPENCODE_DISABLE_PROJECT_CONFIG = "true";
+    }
+    if (!routing && input.binding.provider === "opencode") {
+      // The capability above writes OPENCODE_API_KEY. This mirrors the
+      // OpenRouter block so the harness also receives a provider document for
+      // the OpenCode Go gateway instead of falling back to ambient config.
+      env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
+        provider: { "opencode-go": { options: { apiKey: value } } },
       });
       env.OPENCODE_DISABLE_PROJECT_CONFIG = "true";
     }
