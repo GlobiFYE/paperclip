@@ -41,6 +41,25 @@ describe("Sentry navigation links", () => {
     expect(result.tags).not.toHaveProperty("task_identifier");
   });
 
+  it.each([17, 210])("keeps navigation for a saved %i-character company prefix within tag limits", async length => {
+    vi.stubEnv("PAPERCLIP_PUBLIC_URL", "https://paperclip.example.com");
+    const companyPrefix = "A".repeat(length);
+    const taskIdentifier = `${companyPrefix}-42`;
+    setSentryRunLinkResolver(async () => ({ ...identity, companyPrefix, taskIdentifier }));
+    const linked = await addSentryRunLinks({ tags: { run_id: runId } });
+    const taskUrl = `https://paperclip.example.com/${companyPrefix}/issues/${taskIdentifier}`;
+    expect(linked).toHaveProperty("contexts.paperclip.taskUrl", taskUrl);
+    expect(linked).toHaveProperty("contexts.paperclip.runPageUrl");
+    if (length === 17) {
+      expect(linked.tags).toHaveProperty("task_identifier", taskIdentifier);
+      expect(linked.tags).toHaveProperty("task_url", taskUrl);
+    } else {
+      expect(linked.tags).not.toHaveProperty("task_identifier");
+      expect(linked.tags).not.toHaveProperty("task_url");
+      expect(linked.tags).not.toHaveProperty("run_url");
+    }
+  });
+
   it.each(["https://user:secret@example.com", "https://example.com?secret=token", "https://example.com/#private", "https://example.com/private", "ftp://example.com", "invalid", ""])("omits unsafe instance origins without a database lookup: %s", async origin => {
     vi.stubEnv("PAPERCLIP_PUBLIC_URL", origin);
     const resolve = vi.fn(async () => identity);

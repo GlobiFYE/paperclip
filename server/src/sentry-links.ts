@@ -59,7 +59,7 @@ export async function addSentryRunLinks<T extends LinkableEvent>(event: T): Prom
       lookup,
       new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 1_000); }),
     ]);
-    if (!links || !/^[A-Z][A-Z0-9]{0,15}$/.test(links.companyPrefix) || !UUID.test(links.agentId) ||
+    if (!links || !/^[A-Z][A-Z0-9]*$/.test(links.companyPrefix) || !UUID.test(links.agentId) ||
         (companyId && links.companyId !== companyId) || (agentId && links.agentId !== agentId)) return event;
     const prefix = `/${links.companyPrefix}`;
     const runUrl = new URL(`${prefix}/agents/${links.agentId}/runs/${runId}`, base).href;
@@ -72,7 +72,7 @@ export async function addSentryRunLinks<T extends LinkableEvent>(event: T): Prom
     event.tags = { ...event.tags,
       ...(runUrl.length <= 200 ? { run_url: runUrl } : {}),
       ...(taskUrl && taskUrl.length <= 200 ? { task_url: taskUrl } : {}),
-      ...(identifier && taskKey === identifier ? { task_identifier: identifier } : {}),
+      ...(identifier && identifier.length <= 200 && taskKey === identifier ? { task_identifier: identifier } : {}),
     };
     event.contexts = { ...event.contexts, paperclip: {
       ...event.contexts?.paperclip,
