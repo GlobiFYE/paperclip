@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Advisory LLM analysis pass for the image-bloat detector. Feeds the Dockerfile
-// diff, the lockfile diff, and the deterministic detector report to a model via
-// the homelab LiteLLM gateway and asks it to predict which changes are likely to
+// diff, the lockfile diff, and the deterministic detector report to a model via a
+// LiteLLM-compatible gateway and asks it to predict which changes are likely to
 // add duplicated bytes (and suggest fixes).
 //
 // This is advisory only and is deliberately kept OUT of `docker build`:
@@ -9,7 +9,12 @@
 //   - an LLM call makes the build non-deterministic and network-dependent.
 // Run it as a pre-push/CI step *around* the build, never inside it.
 //
-// Skips cleanly (exit 0, one note) when no gateway key is configured.
+// It is opt-in and endpoint-explicit: the repo diffs and the bearer key are only
+// ever sent to the host named by LITELLM_BASE_URL. There is no default endpoint,
+// so a contributor cannot silently ship repository content to a third-party host
+// — without LITELLM_BASE_URL the pass skips with a note. Set LITELLM_BASE_URL to
+// a gateway you control (or one the project has vetted) before the diffs leave
+// the machine.
 //
 // Usage:
 //   node scripts/image-bloat-llm.mjs \
@@ -20,8 +25,12 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
-const DEFAULT_BASE_URL = "https://litellm.big.netlobo.com/v1";
 const DEFAULT_MODEL = "qwen3.8-27b-w4a16";
+
+// No DEFAULT_BASE_URL on purpose: the repo diffs and the bearer key are only
+// ever sent to a host the operator explicitly names via LITELLM_BASE_URL. A
+// hard-coded default would let a contributor ship repository content to a
+// third-party endpoint they did not choose.
 
 function readArg(flag) {
   const index = process.argv.indexOf(flag);
@@ -67,10 +76,13 @@ export function buildPrompt({ dockerfileDiff, lockfileDiff, detectorReport }) {
 
 export async function analyzeWithLLM({ dockerfileDiff, lockfileDiff, detectorReport, fetchImpl = fetch } = {}) {
   const key = envKey();
+  const baseUrl = (process.env.LITELLM_BASE_URL ?? "").replace(/\/+$/, "");
   if (!key) {
     return { skipped: true, note: "no LiteLLM key configured (IMAGE_BLOAT_LLM_KEY / LITELLM_KEY_PI); skipping advisory LLM pass" };
   }
-  const baseUrl = (process.env.LITELLM_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
+  if (!baseUrl) {
+    return { skipped: true, note: "no LiteLLM endpoint configured (LITELLM_BASE_URL); skipping advisory LLM pass — repo diffs are only sent to an explicitly named gateway" };
+  }
   const model = process.env.IMAGE_BLOAT_LLM_MODEL ?? DEFAULT_MODEL;
 
   const response = await fetchImpl(`${baseUrl}/chat/completions`, {

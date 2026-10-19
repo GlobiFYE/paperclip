@@ -15,23 +15,27 @@ const {
   stagedModelsSnapshots,
 } = vi.hoisted(() => {
   const restoreWorkspace = vi.fn(async () => undefined);
-  const remoteAgentConfigDir = "/remote/workspace/.paperclip-runtime/pi/agentConfig";
+  const remoteAgentConfigBase = "/remote/workspace/.paperclip-runtime/pi";
   // Snapshot the staged models.json content at staging time: the real
   // preparePiRuntimeConfig temp dir is deleted by cleanup before assertions
-  // run, so capture the bytes when the "upload" happens.
-  const stagedModelsSnapshots: unknown[] = [];
+  // run, so capture the bytes when the "upload" happens. The destination is
+  // per-run (agentConfig-<runId>), mirroring the production isolation fix.
+  const stagedModelsSnapshots: { key: string; models: unknown }[] = [];
+  const preparedAssetDirs: Record<string, string> = {};
   const prepare = vi.fn(async (input: { assets?: { key: string; localDir: string }[] }) => {
     for (const asset of input.assets ?? []) {
-      if (asset.key !== "agentConfig") continue;
-      stagedModelsSnapshots.push(
-        JSON.parse(readFileSync(path.join(asset.localDir, "models.json"), "utf8")),
-      );
+      if (!asset.key.startsWith("agentConfig")) continue;
+      preparedAssetDirs[asset.key] = `${remoteAgentConfigBase}/${asset.key}`;
+      stagedModelsSnapshots.push({
+        key: asset.key,
+        models: JSON.parse(readFileSync(path.join(asset.localDir, "models.json"), "utf8")),
+      });
     }
     const prepared: PreparedAdapterExecutionTargetRuntime = {
       target: { kind: "local" },
       workspaceRemoteDir: null,
       runtimeRootDir: null,
-      assetDirs: { agentConfig: remoteAgentConfigDir },
+      assetDirs: preparedAssetDirs,
       additionalSourceDirs: {},
       additionalSourceFailures: [],
       workspaceSyncSnapshot: null,
@@ -98,8 +102,6 @@ import { testEnvironment } from "./test.js";
 import type { AdapterSshExecutionTarget } from "@paperclipai/adapter-utils/execution-target";
 import type { AdapterEnvironmentTestContext } from "@paperclipai/adapter-utils";
 
-const REMOTE_AGENT_CONFIG_DIR = "/remote/workspace/.paperclip-runtime/pi/agentConfig";
-
 const remoteTarget: AdapterSshExecutionTarget = {
   kind: "remote",
   transport: "ssh",
@@ -164,20 +166,25 @@ describe("pi environment test (remote target)", () => {
         }
       | undefined;
     expect(prepareInput?.syncWorkspace).toBe(false);
-    const agentConfigAsset = prepareInput?.assets?.find((asset) => asset.key === "agentConfig");
+    const agentConfigAsset = prepareInput?.assets?.find((asset) => asset.key.startsWith("agentConfig-"));
     expect(agentConfigAsset?.localDir).toBeTruthy();
-    const stagedModels = stagedModelsSnapshots[0] as
+    const staged = stagedModelsSnapshots[0];
+    expect(staged?.key).toBe(agentConfigAsset?.key);
+    const stagedModels = staged?.models as
       | { providers?: Record<string, { baseUrl?: string }> }
       | undefined;
     expect(stagedModels?.providers?.tensorix?.baseUrl).toBe(
       "http://gateway.example.svc.cluster.local:8080/anthropic",
     );
 
-    // The probe env is repointed at the in-sandbox copy of the config.
+    // The probe env is repointed at the in-sandbox copy of the config, in a
+    // per-run directory (concurrent checks must not share a destination).
     const probeCall = runAdapterExecutionTargetProcess.mock.calls[0] as unknown as
       | [string, unknown, string, string[], { env: Record<string, string> }]
       | undefined;
-    expect(probeCall?.[4].env.PI_CODING_AGENT_DIR).toBe(REMOTE_AGENT_CONFIG_DIR);
+    expect(probeCall?.[4].env.PI_CODING_AGENT_DIR).toBe(
+      `/remote/workspace/.paperclip-runtime/pi/${agentConfigAsset!.key}`,
+    );
     expect(probeCall?.[4].env.PAPERCLIP_PI_PROVIDERS).toBeTruthy();
 
     // The hello probe runs in the sandbox and passes with the shipped config.

@@ -224,7 +224,7 @@ node scripts/image-bloat-detect.mjs --image <built-image> --check scripts/image-
 
 `--check` fails on: image growth over the recorded budget, a new duplicate package installed in more than one node_modules tree, a new non-target platform package (musl / darwin / win32 / other libc), or a new mode-rewrite layer (`chmod`/`chown -R`). Record the budget with `--record-budget scripts/image-bloat-budget.json` after an intentionally-shrunk build, and only update it when a change removes bytes.
 
-Then run the advisory LLM pass — it predicts which parts of the diff are likely to add duplicated bytes, and skips cleanly with a note when no LiteLLM key is configured:
+Then run the advisory LLM pass — it predicts which parts of the diff are likely to add duplicated bytes. It is endpoint-explicit and opt-in: it only sends the repo diffs and the bearer key to the gateway named by `LITELLM_BASE_URL` (no third-party default is shipped), and skips cleanly with a note when no key or no `LITELLM_BASE_URL` is configured:
 
 ```sh
 node scripts/image-bloat-llm.mjs \

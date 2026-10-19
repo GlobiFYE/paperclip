@@ -36,7 +36,7 @@ const MODE_REWRITE_MIN_BYTES = 10 * 1024 * 1024;
 // trees the bloat signals actually live in, and report identical content at
 // multiple paths. Sub-64KiB files are noise (thousands of tiny .js stubs)
 // and are excluded to keep the scan bounded.
-const DEEP_SCAN_ROOTS = ["/usr/local/lib/node_modules", "/app/node_modules", "/app/dist", "/opt/paperclip-runner"];
+const DEEP_SCAN_ROOTS = ["/usr/local/lib/node_modules", "/app/node_modules", "/app/server/dist", "/opt/paperclip-runner"];
 const DEEP_MIN_FILE_BYTES = 64 * 1024;
 const DEEP_MAX_GROUPS = 20;
 const DEEP_MAX_PATHS = 8;

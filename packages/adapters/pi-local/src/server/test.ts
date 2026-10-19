@@ -148,6 +148,12 @@ export async function testEnvironment(
     // PAPERCLIP_PI_PROVIDERS set can never see models.json and fails with
     // "No models available".
     if (targetIsRemote && preparedRuntimeConfig.agentConfigDir) {
+      // Give this check its own remote agent-config directory. The SSH runtime
+      // root is `<remoteCwd>/.paperclip-runtime/pi` (the runId only scopes the
+      // workspace, not the asset root), so a fixed `agentConfig` key would make
+      // concurrent checks against the same environment overwrite each other's
+      // models.json. A per-run key keeps each probe isolated.
+      const agentConfigKey = `agentConfig-${runId}`;
       try {
         preparedRemoteRuntime = await prepareAdapterExecutionTargetRuntime({
           runId,
@@ -159,13 +165,13 @@ export async function testEnvironment(
           detectCommand: command,
           assets: [
             {
-              key: "agentConfig",
+              key: agentConfigKey,
               localDir: preparedRuntimeConfig.agentConfigDir,
             },
           ],
           workspaceRestoreRetryDelaysMs: [],
         });
-        env.PI_CODING_AGENT_DIR = runtimeAssetDir(preparedRemoteRuntime, "agentConfig", cwd);
+        env.PI_CODING_AGENT_DIR = runtimeAssetDir(preparedRemoteRuntime, agentConfigKey, cwd);
       } catch (err) {
         // Staging failing must surface as a check (the probe would fail anyway),
         // not abort the whole environment test.
