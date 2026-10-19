@@ -5,7 +5,7 @@ import { constants } from "node:fs";
 import path from "node:path";
 import { runSetupTokenLogin } from "@paperclipai/adapter-claude-local/server";
 import { runDeviceLogin } from "@paperclipai/adapter-codex-local/server";
-import { ensureCommandResolvable, resolveCommandForLogs } from "@paperclipai/adapter-utils/server-utils";
+import { ensureCommandResolvable, resolveCommandForLogs, resolveWindowsCmdShell } from "@paperclipai/adapter-utils/server-utils";
 import { resolveCodexCommand } from "../vendor/paperclip-runner/index.js";
 
 export type LocalBrowserLoginState = {
@@ -17,7 +17,8 @@ export type LocalBrowserLoginState = {
   abort: () => void;
 };
 
-const CONPTY_OSC_RE = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)/g;
+const CONPTY_NON_HYPERLINK_OSC_RE = /\x1b\](?!8;)[^\x07\x1b]*(?:\x07|\x1b\\)/g;
+const CONPTY_HYPERLINK_OPEN_RE = /\x1b\]8;[^;\x07\x1b]*;[^\x07\x1b]+(?:\x07|\x1b\\)/g;
 const CONPTY_CURSOR_POSITION_RE = /\x1b\[[0-9;]*[Hf]/g;
 const CONPTY_INCOMPLETE_TAIL_RE = /\x1b(?:\][^\x07\x1b]*\x1b?|\[[0-9;?]*)?$/;
 const CONPTY_MAX_PENDING_CHARS = 4096;
@@ -29,7 +30,10 @@ export function createConPtyTextNormalizer(): (chunk: string) => string {
     const tail = CONPTY_INCOMPLETE_TAIL_RE.exec(text);
     pending = tail && tail[0].length <= CONPTY_MAX_PENDING_CHARS ? tail[0] : "";
     if (pending) text = text.slice(0, text.length - pending.length);
-    return text.replace(CONPTY_OSC_RE, "").replace(CONPTY_CURSOR_POSITION_RE, "\r\n");
+    return text
+      .replace(CONPTY_NON_HYPERLINK_OSC_RE, "")
+      .replace(CONPTY_HYPERLINK_OPEN_RE, "\r\n$&")
+      .replace(CONPTY_CURSOR_POSITION_RE, "\r\n");
   };
 }
 
@@ -112,7 +116,7 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
         }
         if (controller.signal.aborted) throw new Error("Local sign-in cancelled before launch");
         const [file, argv] = /\.(cmd|bat)$/i.test(command)
-          ? [process.env.ComSpec || "cmd.exe", ["/d", "/s", "/c", command, ...args]]
+          ? [resolveWindowsCmdShell(env), ["/d", "/s", "/c", command, ...args]]
           : [command, args];
         return new Promise((resolve, reject) => {
           try {

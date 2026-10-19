@@ -13,6 +13,7 @@ vi.mock("../vendor/paperclip-runner/index.js", () => ({
 
 const conpty = vi.hoisted(() => ({
   url: "https://claude.com/cai/oauth/authorize?client_id=cid&code=abcdefgh&code_challenge=E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM&code_challenge_method=S256&redirect_uri=https%3A%2F%2Fplatform.claude.com%2Foauth%2Fcode%2Fcallback&response_type=code&scope=user&state=0123456789abcdef",
+  display: undefined as string | undefined,
   spawns: [] as Array<{ file: string; args: string[]; env: Record<string, string | undefined> }>,
   writes: [] as string[],
   kills: 0,
@@ -30,7 +31,7 @@ vi.mock("node-pty", () => ({
       for (const listener of exitListeners) listener({ exitCode });
     };
     const words = (text: string) => text.replaceAll(" ", "\x1b[1C");
-    const prompt = `\x1b[?25l\x1b[2J\x1b[m\x1b[H\x1b]0;claude\x07${words("Welcome to Claude Code")}\r\n\x1b[20;2H·\x1b[m\x1b[1C${words("Opening browser to sign in…")}\x1b]7501;?\x07\x1b[38;2;153;153;153m\bBrowser didn't open? Use the url below to sign in (c to copy)\x1b]8;id=u-1;${conpty.url}\x1b\\\x1b[22;1H${conpty.url}\x1b[m\x1b]8;;\x1b\\\x1b[25;2H${words("Paste code here if prompted >")}`;
+    const prompt = `\x1b[?25l\x1b[2J\x1b[m\x1b[H\x1b]0;claude\x07${words("Welcome to Claude Code")}\r\n\x1b[20;2H·\x1b[m\x1b[1C${words("Opening browser to sign in…")}\x1b]7501;?\x07\x1b[38;2;153;153;153m\bBrowser didn't open? Use the url below to sign in (c to copy)\x1b]8;id=u-1;${conpty.url}\x1b\\\x1b[22;1H${conpty.display ?? conpty.url}\x1b[m\x1b]8;;\x1b\\\x1b[25;2H${words("Paste code here if prompted >")}`;
     const split = prompt.indexOf("\x1b[25;2H") + 4;
     setTimeout(() => { emit(prompt.slice(0, split)); emit(prompt.slice(split)); }, 0);
     return {
@@ -285,16 +286,16 @@ describe.skipIf(process.platform === "win32")("local browser subscription login"
 });
 
 describe("ConPTY output normalization", () => {
-  it("turns cursor positions into line breaks, drops OSC sequences, and holds split sequences", () => {
+  it("turns cursor positions into line breaks, keeps hyperlinks, drops other OSC sequences, and holds split sequences", () => {
     const normalize = createConPtyTextNormalizer();
-    expect(normalize("a\x1b]8;id=1;https://x.test/\x1b\\\x1b[22;1Hhttps://x.test/\x1b]8;;\x1b\\\x1b[25")).toBe("a\r\nhttps://x.test/");
+    expect(normalize("a\x1b]8;id=1;https://x.test/\x1b\\\x1b[22;1Hhttps://x.test/\x1b]8;;\x1b\\\x1b[25")).toBe("a\r\n\x1b]8;id=1;https://x.test/\x1b\\\r\nhttps://x.test/\x1b]8;;\x1b\\");
     expect(normalize(";2HPaste\x1b[1Ccode\x1b]0;tit")).toBe("\r\nPaste\x1b[1Ccode");
     expect(normalize("le\x07!")).toBe("!");
   });
 });
 
 describe.runIf(process.platform === "win32")("local Claude subscription login on Windows", () => {
-  afterEach(() => { conpty.spawns.length = 0; conpty.writes.length = 0; conpty.kills = 0; });
+  afterEach(() => { conpty.display = undefined; conpty.spawns.length = 0; conpty.writes.length = 0; conpty.kills = 0; });
 
   async function windowsCli(name: "claude.exe" | "claude.cmd" | null) {
     root ??= await realpath(await mkdtemp(path.join(os.tmpdir(), "paperclip-browser-login-")));
@@ -328,13 +329,23 @@ describe.runIf(process.platform === "win32")("local Claude subscription login on
     expect(JSON.stringify(login)).not.toContain("sk-ant-oat01-");
   });
 
-  it("runs an npm-installed claude.cmd shim through the command interpreter", async () => {
+  it("reads the full hyperlink URL when the visible link text is shortened", async () => {
+    const { home } = await windowsCli("claude.exe");
+    conpty.display = "https://claude.com/cai/oauth/authorize?client_id=cid…";
+    const login = startLocalBrowserLogin("anthropic", home);
+    try {
+      await vi.waitFor(() => expect(login.authorizationUrl).toBe(conpty.url), { timeout: 5000 });
+    } finally { login.abort(); }
+  });
+
+  it("runs an npm-installed claude.cmd shim through cmd.exe even when ComSpec names another shell", async () => {
     const { bin, home } = await windowsCli("claude.cmd");
+    vi.stubEnv("ComSpec", "C:\\Program Files\\PowerShell\\7\\pwsh.exe");
     const login = startLocalBrowserLogin("anthropic", home);
     try {
       await vi.waitFor(() => expect(login.authorizationUrl).toBe(conpty.url), { timeout: 5000 });
       const [launch] = conpty.spawns;
-      expect(launch.file).toBe(process.env.ComSpec || "cmd.exe");
+      expect(launch.file.toLowerCase()).toBe(path.join(process.env.SystemRoot || "C:\\Windows", "System32", "cmd.exe").toLowerCase());
       expect(launch.args.slice(0, 3)).toEqual(["/d", "/s", "/c"]);
       expect(launch.args[3].toLowerCase()).toBe(path.join(bin, "claude.cmd").toLowerCase());
       expect(launch.args.slice(4)).toEqual(["setup-token"]);
