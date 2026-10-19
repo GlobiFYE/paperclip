@@ -32,6 +32,17 @@ export function isQualifiableDaytonaSnapshot(
     && (!template || (template.templateKind === "snapshot" && template.bindingField === "snapshot"));
 }
 
+/** Keep an invalidated snapshot binding distinct from an environment that has
+ * never required an immutable qualification. A failed probe cannot unpin a run.
+ */
+export function hasSandboxSnapshotQualification(environment: Environment, companyId: string): boolean {
+  const proofs = environment.metadata?.[SANDBOX_PLATFORM_PROBE_METADATA_KEY];
+  if (!proofs || typeof proofs !== "object" || Array.isArray(proofs)) return false;
+  const proof = (proofs as Record<string, unknown>)[companyId];
+  return !!proof && typeof proof === "object" && !Array.isArray(proof)
+    && (proof as Record<string, unknown>).v === 2;
+}
+
 /** Discovery reads only saved, company-scoped proof. Execution pins the same
  * provider ID rather than resolving the mutable name again. A new config or
  * captured template needs a new probe; deleting the pinned snapshot fails at
@@ -45,7 +56,7 @@ export function qualifiedSandboxSnapshotId(
   const proof = (proofs as Record<string, unknown>)[companyId];
   if (!proof || typeof proof !== "object" || Array.isArray(proof)) return null;
   const value = proof as Record<string, unknown>;
-  if (value.v !== 2 || value.companyId !== companyId
+  if (value.v !== 2 || value.invalidated === true || value.companyId !== companyId
     || value.baseConfigFingerprint !== fingerprintEnvironmentSandboxProviderConfig(environment.config as SandboxEnvironmentConfig)
     || value.runtimeConfigFingerprint !== fingerprintEnvironmentSandboxProviderConfig(config)
     || value.snapshot !== config.snapshot || JSON.stringify(value.template) !== JSON.stringify(template)) return null;

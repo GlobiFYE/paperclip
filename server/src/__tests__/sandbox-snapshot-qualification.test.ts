@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Environment, SandboxEnvironmentConfig } from "@paperclipai/shared";
 import { fingerprintEnvironmentSandboxProviderConfig as fingerprint, SANDBOX_PLATFORM_PROBE_METADATA_KEY } from "../services/environment-custom-image-runtime.js";
-import { qualifiedSandboxSnapshotId, type SandboxTemplateIdentity } from "../services/sandbox-snapshot-qualification.js";
+import { hasSandboxSnapshotQualification, qualifiedSandboxSnapshotId, type SandboxTemplateIdentity } from "../services/sandbox-snapshot-qualification.js";
 
 function fixture() {
   const config = { provider: "daytona", snapshot: "managed-snapshot", apiKey: "fixture-account" } as SandboxEnvironmentConfig;
@@ -17,6 +17,13 @@ describe("qualified snapshot execution binding", () => {
   it("pins the measured provider ID without a network lookup", () => {
     const f = fixture();
     expect(qualifiedSandboxSnapshotId(f.environment, "company", f.config, f.template)).toBe(f.identity.id);
+  });
+  it("keeps a revoked proof as a required qualification without accepting it", () => {
+    const f = fixture();
+    Object.assign(f.proof, { invalidated: true });
+    expect(hasSandboxSnapshotQualification(f.environment, "company")).toBe(true);
+    expect(hasSandboxSnapshotQualification(f.environment, "foreign-company")).toBe(false);
+    expect(qualifiedSandboxSnapshotId(f.environment, "company", f.config, f.template)).toBeNull();
   });
   it.each(["company", "base-config", "account", "template", "snapshot", "image", "provider", "identity"])("rejects changed %s", change => {
     const f = fixture();

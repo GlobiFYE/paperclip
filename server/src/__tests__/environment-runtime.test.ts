@@ -354,6 +354,32 @@ describeEmbeddedPostgres("environmentRuntimeService", () => {
     expect(acquired.lease.metadata?.snapshot).toBe(expectedSnapshot);
   });
 
+  it.each(["failed-probe", "config-change", "config-and-metadata-change"] as const)("refuses a mutable snapshot after %s invalidates its proof", async invalidation => {
+    const { companyId, environment: baseEnvironment, runId } = await seedEnvironment();
+    const config = { provider: "daytona", snapshot: "managed-snapshot", reuseLease: false };
+    const svc = environmentService(db);
+    await svc.update(baseEnvironment.id, { driver: "sandbox", config });
+    const proof = { v: 2, companyId, snapshot: config.snapshot, template: null,
+      snapshotIdentity: { provider: "daytona", requestedRef: config.snapshot,
+        id: "a6b9e7d0-f886-471a-b461-640dd03e8d0f", name: config.snapshot,
+        organizationId: "provider-account", createdAt: "2026-10-07T23:19:57.133Z" },
+    };
+    expect(await svc.recordSandboxPlatformProbe({ environmentId: baseEnvironment.id, companyId, config, proof })).toBe(true);
+    if (invalidation === "failed-probe") {
+      await svc.recordSandboxPlatformProbe({ environmentId: baseEnvironment.id, companyId, config, proof: null });
+    } else {
+      await svc.update(baseEnvironment.id, { config: { ...config, snapshot: "replacement-name" },
+        ...(invalidation === "config-and-metadata-change" ? { metadata: { userNote: "retained" } } : {}) });
+    }
+    const environment = (await svc.getById(baseEnvironment.id))!;
+    expect((environment.metadata?.paperclipSandboxPlatformProbes as Record<string, any>)[companyId]).toMatchObject({ v: 2, invalidated: true });
+    const acquire = vi.fn();
+    const runtime = environmentRuntimeService(db, { pluginWorkerManager: { call: acquire } as never });
+    await expect(runtime.acquireRunLease({ companyId, environment, issueId: null, heartbeatRunId: runId,
+      persistedExecutionWorkspace: null, adapterType: "paperclip_runner" })).rejects.toThrow("sandbox_snapshot_qualification_required");
+    expect(acquire).not.toHaveBeenCalled();
+  });
+
   function insertReusableExecutionWorkspace(executionWorkspaceId: string, companyId: string, projectId: string) {
     return db.insert(executionWorkspaces).values({
       id: executionWorkspaceId,

@@ -46,7 +46,7 @@ import {
 } from "@paperclipai/adapter-utils/acpx-engine/startup-timing";
 import { environmentService } from "./environments.js";
 import { instanceSettingsService } from "./instance-settings.js";
-import { qualifiedSandboxSnapshotId, type SandboxTemplateIdentity } from "./sandbox-snapshot-qualification.js";
+import { hasSandboxSnapshotQualification, qualifiedSandboxSnapshotId, type SandboxTemplateIdentity } from "./sandbox-snapshot-qualification.js";
 import { verifyNativeHarnessBackupStamp } from "./native-runtime/native-harness-backup-stamp.js";
 import {
   collectEnvironmentSecretRefs,
@@ -1874,6 +1874,10 @@ function createSandboxEnvironmentDriver(
       }
       const pinnedSnapshotId = input.adapterType === "paperclip_runner"
         ? qualifiedSandboxSnapshotId(configuredEnvironment, input.companyId, parsed.config, selectedTemplate.value) : null;
+      if (input.adapterType === "paperclip_runner" && !pinnedSnapshotId
+        && hasSandboxSnapshotQualification(configuredEnvironment, input.companyId)) {
+        throw new Error("sandbox_snapshot_qualification_required: The snapshot qualification is missing or stale. Test this environment again before running Paperclip Runner.");
+      }
       if (input.configuredEnvironment) parsed.config = { ...parsed.config, reuseLease: storedParsed.config.reuseLease };
       if (pinnedSnapshotId) parsed.config = { ...parsed.config, snapshot: pinnedSnapshotId };
 
