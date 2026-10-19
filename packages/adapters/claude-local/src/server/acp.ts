@@ -670,13 +670,13 @@ export async function probeClaudeAcpSandboxLogin(input: {
   }
 
   Object.assign(env, claudeSandboxPermissionEnv({
-    dangerouslySkipPermissions: asBoolean(config.dangerouslySkipPermissions, true), targetIsSandbox,
+    dangerouslySkipPermissions: asBoolean(config.dangerouslySkipPermissions, false), targetIsSandbox,
   }));
   const args = ["--print", "-", "--output-format", "stream-json", "--verbose"];
   if (config.managedAiConnection) args.push("--setting-sources", "user");
   args.push(
     ...buildClaudeProbePermissionArgs({
-      dangerouslySkipPermissions: asBoolean(config.dangerouslySkipPermissions, true),
+      dangerouslySkipPermissions: asBoolean(config.dangerouslySkipPermissions, false),
       targetIsRemote,
       localProcessUid: process.getuid?.() ?? null,
     }),

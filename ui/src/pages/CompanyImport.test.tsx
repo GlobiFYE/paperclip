@@ -1219,7 +1219,7 @@ describe("CompanyImport", () => {
     { sourceType: "codex_local", sourceRunner: undefined, runner: "legacy" as const, sourcePolicy: { extraArgs: ["--sandbox", "read-only"] }, expectedBypass: false },
     { sourceType: "codex_local", sourceRunner: undefined, runner: "legacy" as const, sourcePolicy: { args: ["-c", "approval_policy=on-request"] }, expectedBypass: false },
     { sourceType: "codex_local", sourceRunner: undefined, runner: "legacy" as const, sourcePolicy: { extraArgs: [], args: ["--profile", "restricted"] }, expectedBypass: false },
-    { sourceType: "codex_local", sourceRunner: undefined, runner: "legacy" as const, sourcePolicy: { extraArgs: ["--color", "never"], args: ["--sandbox", "read-only"] }, expectedBypass: true },
+    { sourceType: "codex_local", sourceRunner: undefined, runner: "legacy" as const, sourcePolicy: { extraArgs: ["--color", "never"], args: ["--sandbox", "read-only"] }, expectedBypass: false },
     { sourceType: "codex_local", sourceRunner: undefined, runner: "legacy" as const, sourcePolicy: { extraArgs: ["-c", "sandbox_workspace_write.network_access=false"] }, expectedBypass: false },
     { sourceType: "codex_local", sourceRunner: undefined, runner: "legacy" as const, sourcePolicy: { dangerouslyBypassApprovalsAndSandbox: true, extraArgs: ["--sandbox", "read-only"] }, expectedBypass: true },
     { sourceType: "codex_local", sourceRunner: undefined, runner: "legacy" as const, sourcePolicy: { dangerouslyBypassSandbox: true, args: ["--sandbox", "read-only"] }, expectedBypass: true },
