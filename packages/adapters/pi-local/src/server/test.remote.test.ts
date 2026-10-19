@@ -9,6 +9,7 @@ const {
   ensureAdapterExecutionTargetCommandResolvable,
   maybeRunSandboxInstallCommand,
   runAdapterExecutionTargetProcess,
+  runAdapterExecutionTargetShellCommand,
   describeAdapterExecutionTarget,
   resolveAdapterExecutionTargetCwd,
   runtimeAssetDir,
@@ -58,6 +59,13 @@ const {
       }),
       stderr: "",
     })),
+    runAdapterExecutionTargetShellCommand: vi.fn(async () => ({
+      exitCode: 0,
+      signal: null,
+      timedOut: false,
+      stdout: "",
+      stderr: "",
+    })),
     describeAdapterExecutionTarget: vi.fn(() => "env:fixture"),
     resolveAdapterExecutionTargetCwd: vi.fn(
       (_target: unknown, _configCwd: string, _fallback: string) => "/remote/workspace",
@@ -84,6 +92,7 @@ vi.mock("@paperclipai/adapter-utils/execution-target", async () => {
     ensureAdapterExecutionTargetCommandResolvable,
     maybeRunSandboxInstallCommand,
     runAdapterExecutionTargetProcess,
+    runAdapterExecutionTargetShellCommand,
     describeAdapterExecutionTarget,
     resolveAdapterExecutionTargetCwd,
     runtimeAssetDir,
@@ -191,6 +200,16 @@ describe("pi environment test (remote target)", () => {
     expect(runAdapterExecutionTargetProcess).toHaveBeenCalledTimes(1);
     expect(result.status).toBe("pass");
     expect(result.checks.some((check) => check.code === "pi_hello_probe_passed")).toBe(true);
+
+    // The per-run remote agent config directory is removed after the probe
+    // (restoreWorkspace is a no-op with syncWorkspace:false), so repeated
+    // checks do not accumulate abandoned settings dirs on the remote host.
+    const cleanupCall = runAdapterExecutionTargetShellCommand.mock.calls[0] as unknown as
+      | [string, unknown, string, { cwd: string; env: Record<string, string>; timeoutSec?: number }]
+      | undefined;
+    expect(cleanupCall?.[2]).toBe(
+      `rm -rf -- '/remote/workspace/.paperclip-runtime/pi/${agentConfigAsset!.key}'`,
+    );
   });
 
   it("does not stage a runtime when PAPERCLIP_PI_PROVIDERS is unset", async () => {
@@ -205,6 +224,7 @@ describe("pi environment test (remote target)", () => {
       );
 
       expect(prepareAdapterExecutionTargetRuntime).not.toHaveBeenCalled();
+      expect(runAdapterExecutionTargetShellCommand).not.toHaveBeenCalled();
       const probeCall = runAdapterExecutionTargetProcess.mock.calls[0] as unknown as
         | [string, unknown, string, string[], { env: Record<string, string> }]
         | undefined;

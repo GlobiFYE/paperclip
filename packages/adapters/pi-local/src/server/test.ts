@@ -18,6 +18,7 @@ import {
   maybeRunSandboxInstallCommand,
   ensureAdapterExecutionTargetDirectory,
   runAdapterExecutionTargetProcess,
+  runAdapterExecutionTargetShellCommand,
   describeAdapterExecutionTarget,
   resolveAdapterExecutionTargetCwd,
   prepareAdapterExecutionTargetRuntime,
@@ -138,6 +139,7 @@ export async function testEnvironment(
   // during lifecycle verification and the probe fails.
   const preparedRuntimeConfig = await preparePiRuntimeConfig({ env });
   let preparedRemoteRuntime: Awaited<ReturnType<typeof prepareAdapterExecutionTargetRuntime>> | null = null;
+  let remoteAgentConfigDir: string | null = null;
   try {
     if (preparedRuntimeConfig.agentConfigDir) env.PI_CODING_AGENT_DIR = preparedRuntimeConfig.agentConfigDir;
 
@@ -172,6 +174,7 @@ export async function testEnvironment(
           workspaceRestoreRetryDelaysMs: [],
         });
         env.PI_CODING_AGENT_DIR = runtimeAssetDir(preparedRemoteRuntime, agentConfigKey, cwd);
+        remoteAgentConfigDir = env.PI_CODING_AGENT_DIR;
       } catch (err) {
         // Staging failing must surface as a check (the probe would fail anyway),
         // not abort the whole environment test.
@@ -397,6 +400,19 @@ export async function testEnvironment(
       testedAt: new Date().toISOString(),
     };
   } finally {
+    // Remove the per-run agent config directory from the remote host. With
+    // syncWorkspace:false, restoreWorkspace() is a no-op, so without this each
+    // check would leave an abandoned <remoteCwd>/.paperclip-runtime/pi/
+    // agentConfig-<runId> tree behind. Best effort: a failed cleanup must not
+    // fail the environment check.
+    if (targetIsRemote && remoteAgentConfigDir) {
+      await runAdapterExecutionTargetShellCommand(
+        runId,
+        target,
+        `rm -rf -- '${remoteAgentConfigDir.replace(/'/g, "'\"'\"'")}'`,
+        { cwd, env: {}, timeoutSec: 15 },
+      ).catch(() => undefined);
+    }
     // Tear down the in-sandbox runtime (agent config copy) before removing the
     // local temp dir, mirroring the execute path's restore order.
     await preparedRemoteRuntime?.restoreWorkspace().catch(() => undefined);
