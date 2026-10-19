@@ -728,6 +728,20 @@ The event never includes an API key or an access token. These references grant
 no access. A bot must authenticate to the correct instance and pass its existing
 company, run-output, and private-task access checks.
 
+Server events associated with a saved run also include `task_url` and `run_url`
+tags for the normal company-prefixed board pages, plus `task_identifier` when
+available. The `paperclip` context contains the same navigation links as
+`taskUrl` and `runPageUrl`; the existing `runUrl` remains an API reference.
+This enrichment applies to run failures, adapter Stop timeouts, and server errors
+with authenticated run context. It resolves the saved company, agent, and task
+instead of copying request URLs, queries, or bodies. Taskless runs receive only a
+run link. Missing or unsafe `PAPERCLIP_PUBLIC_URL` values omit these links.
+The optional indexed metadata lookup has a one-second reporting deadline; a
+failed or slow lookup preserves the original event without navigation links.
+URLs longer than Sentry's 200-character tag limit remain in context only.
+Links require the viewer's normal Paperclip access and apply to newly captured
+events; existing Sentry events are not rewritten.
+
 The bot should use the exact run ID to read `GET /api/heartbeat-runs/{runId}`,
 `GET /api/heartbeat-runs/{runId}/events`, and
 `GET /api/heartbeat-runs/{runId}/log`. These retain the saved result, run context,

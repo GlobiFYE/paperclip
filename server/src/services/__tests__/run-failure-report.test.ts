@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import os from "node:os";
+import { eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { agents, applyPendingMigrations, authUsers, closeRegisteredClients, companies, companySecrets, createDb, dotAgentBindings,
   dotRunnerAssignments, grokBotDispatches, grokBotRoutines, heartbeatRuns, issues, mcpOauthClients, mcpOauthGrants, nativeRunFinalizations,
@@ -30,6 +31,7 @@ vi.mock("../../log-redaction.js", async (importOriginal) => {
 });
 
 import { reportRunFailure, waitForPendingRunFailureReports } from "../run-failure-report.js";
+import { createSentryRunLinkResolver } from "../sentry-run-links.js";
 import { controllerLeaseLossCancellation } from "../run-cancellation.js";
 import { REDACTED_EVENT_VALUE } from "../../redaction.js";
 
@@ -126,6 +128,27 @@ describeEmbeddedPostgres("reportRunFailure", () => {
       ...overrides,
     } as unknown as typeof heartbeatRuns.$inferSelect;
   }
+
+  it("resolves canonical task navigation from company-scoped saved run metadata", async () => {
+    await seedCompanyAndAgent();
+    const [task] = await db.insert(issues).values({ companyId, title: "Fixture task", identifier: "TEAM-42" }).returning();
+    await db.update(companies).set({ issuePrefix: "TEAM" }).where(eq(companies.id, companyId));
+    const [run] = await db.insert(heartbeatRuns).values({ ...buildRun(), nativeIssueId: task!.id }).returning();
+    const resolve = createSentryRunLinkResolver(db);
+    expect(await resolve({ runId: run!.id, companyId, agentId })).toEqual(expect.objectContaining({
+      companyId, agentId, companyPrefix: "TEAM", taskId: task!.id, taskIdentifier: "TEAM-42",
+    }));
+    expect(await resolve({ runId: run!.id, companyId: randomUUID() })).toBeNull();
+    expect(await resolve({ runId: run!.id, agentId: randomUUID() })).toBeNull();
+    const [other] = await db.insert(companies).values({ name: "Other", issuePrefix: "OTHER" }).returning();
+    const [otherTask] = await db.insert(issues).values({ id: randomUUID(), companyId: other!.id, title: "Other task", identifier: "OTHER-1" }).returning();
+    const [taskless] = await db.insert(heartbeatRuns).values({ ...buildRun(), nativeIssueId: null }).returning();
+    expect(await resolve({ runId: taskless!.id })).toMatchObject({ taskId: null, taskIdentifier: null });
+    await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: otherTask!.id } }).where(eq(heartbeatRuns.id, taskless!.id));
+    expect(await resolve({ runId: taskless!.id })).toMatchObject({ taskId: null, taskIdentifier: null });
+    await db.update(heartbeatRuns).set({ contextSnapshot: { issueId: task!.id } }).where(eq(heartbeatRuns.id, taskless!.id));
+    expect(await resolve({ runId: taskless!.id })).toMatchObject({ taskId: task!.id, taskIdentifier: "TEAM-42" });
+  });
 
   it.each([undefined, "", "off", "true", "invalid"])("does no reporting work without an explicit valid mode: %s", async mode => {
     vi.stubEnv("PAPERCLIP_SENTRY_RUN_FAILURES", mode);
