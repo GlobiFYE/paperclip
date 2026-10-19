@@ -798,11 +798,27 @@ describeEmbeddedPostgres("heartbeat resolved dependency wake reconciliation", ()
     );
     const recovery = recoveryService(db, { enqueueWakeup });
 
-    for (let pass = 0; pass < 5; pass += 1) {
-      const result = await recovery.reconcileResolvedDependencyWakeBackstop();
-      expect(result.healed).toBe(pass < 2 ? 1 : 0);
-    }
+    const firstPass = await recovery.reconcileStrandedAssignedIssues();
+    expect(firstPass.blockedWorkspaceValidationEscalated).toBe(0);
+    expect(
+      (await recovery.reconcileResolvedDependencyWakeBackstop()).healed,
+    ).toBe(1);
+
+    const secondPass = await recovery.reconcileStrandedAssignedIssues();
+    expect(secondPass.blockedWorkspaceValidationEscalated).toBe(0);
+    expect(
+      (await recovery.reconcileResolvedDependencyWakeBackstop()).healed,
+    ).toBe(1);
+
+    const thirdPass = await recovery.reconcileStrandedAssignedIssues();
+    expect(thirdPass.escalated).toBe(1);
+    expect(thirdPass.blockedWorkspaceValidationEscalated).toBe(1);
+    expect(thirdPass.issueIds).toContain(blockedIssueId);
+    expect(
+      (await recovery.reconcileResolvedDependencyWakeBackstop()).healed,
+    ).toBe(0);
     expect(enqueueWakeup).toHaveBeenCalledTimes(2);
+
     const wakes = await db
       .select({ status: agentWakeupRequests.status })
       .from(agentWakeupRequests)
@@ -815,11 +831,6 @@ describeEmbeddedPostgres("heartbeat resolved dependency wake reconciliation", ()
     expect(wakes).toHaveLength(2);
     expect(wakes.every((wake) => wake.status === "failed")).toBe(true);
 
-    const reconciled = await recovery.reconcileStrandedAssignedIssues();
-
-    expect(reconciled.escalated).toBe(1);
-    expect(reconciled.blockedWorkspaceValidationEscalated).toBe(1);
-    expect(reconciled.issueIds).toContain(blockedIssueId);
     const actions = await db
       .select()
       .from(issueRecoveryActions)
@@ -842,8 +853,8 @@ describeEmbeddedPostgres("heartbeat resolved dependency wake reconciliation", ()
       );
     expect(edges).toHaveLength(0);
 
-    const repeated = await recovery.reconcileStrandedAssignedIssues();
-    expect(repeated.blockedWorkspaceValidationEscalated).toBe(0);
+    const fourthPass = await recovery.reconcileStrandedAssignedIssues();
+    expect(fourthPass.blockedWorkspaceValidationEscalated).toBe(0);
     const actionsAfterRepeat = await db
       .select()
       .from(issueRecoveryActions)

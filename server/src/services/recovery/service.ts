@@ -124,6 +124,7 @@ import {
   ISSUE_BLOCKERS_RESOLVED_WAKE_REASON,
   buildIssueBlockersResolvedWakeStateKey,
   findExistingIssueBlockersResolvedWakeForReadyState,
+  hasExhaustedIssueBlockersResolvedWakeRetries,
 } from "../issue-dependency-wakeups.js";
 import { evaluateAgentInvokabilityFromDb } from "../agent-invokability.js";
 import { isHeartbeatWakeOnDemandEnabled } from "../heartbeat-policy.js";
@@ -5691,6 +5692,17 @@ export function recoveryService(
           !latestRun ||
           latestRun.status !== "failed" ||
           latestRun.errorCode !== "workspace_validation_failed"
+        ) {
+          continue;
+        }
+
+        if (
+          !(await hasExhaustedIssueBlockersResolvedWakeRetries(db, {
+            companyId,
+            dependentIssueId: candidate.id,
+            blockerIssueIds: readiness.blockerIssueIds,
+            blockedTransitionAt: candidate.blockedTransitionAt,
+          }))
         ) {
           continue;
         }
