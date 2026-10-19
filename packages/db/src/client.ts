@@ -360,6 +360,25 @@ export async function resolveCurrentDatabaseCredential(
   return nextUrl;
 }
 
+/**
+ * Return `baseUrl` with the file-backed password copied in (target-checked),
+ * preserving every other part of `baseUrl` — notably connection options such as
+ * `?sslmode=require` — so a rotated password is used without dropping TLS or
+ * timeout settings that only `DATABASE_URL` carries. Returns `baseUrl` unchanged
+ * when the source is unreadable, unparseable, or points at a different database
+ * (a repointed file).
+ */
+export async function mergeDatabaseCredentialPassword(
+  baseUrl: string,
+  credentialSource: CredentialSource,
+): Promise<string> {
+  const fileUrl = await resolveCurrentDatabaseCredential(credentialSource, baseUrl);
+  if (!fileUrl) return baseUrl;
+  const base = new URL(baseUrl);
+  base.password = new URL(fileUrl).password;
+  return base.toString();
+}
+
 export type CredentialReloadResult =
   | { status: "no-source" }
   | { status: "unchanged" }

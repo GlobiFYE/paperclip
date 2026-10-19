@@ -2,6 +2,7 @@ export {
   createDb,
   reloadDatabaseCredential,
   resolveCurrentDatabaseCredential,
+  mergeDatabaseCredentialPassword,
   type CredentialReloadResult,
   withDedicatedDbConnection,
   closeRegisteredClients,

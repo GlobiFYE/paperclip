@@ -45,7 +45,7 @@ import { and, eq } from "drizzle-orm";
 import {
   createDb,
   reloadDatabaseCredential,
-  resolveCurrentDatabaseCredential,
+  mergeDatabaseCredentialPassword,
   type CredentialSource,
   ensurePostgresDatabase,
   formatEmbeddedPostgresError,
@@ -452,8 +452,7 @@ async function startServerWithDatabaseTeardown(
     // reachable even when DATABASE_URL omits the password.
     let migrationConnectionString = migrationUrl;
     if (!config.databaseMigrationUrl && databaseCredentialSource) {
-      const resolvedMigration = await resolveCurrentDatabaseCredential(databaseCredentialSource, migrationUrl);
-      if (resolvedMigration) migrationConnectionString = resolvedMigration;
+      migrationConnectionString = await mergeDatabaseCredentialPassword(migrationUrl, databaseCredentialSource);
     }
     migrationSummary = await ensureMigrations(migrationConnectionString, "PostgreSQL");
 
@@ -874,11 +873,11 @@ async function startServerWithDatabaseTeardown(
       const retention = generalSettings.backupRetention;
       const verifyCheckpoint = trigger === "idle" || existsSync(idleBackupWakeMarker(config.databaseBackupDir));
 
-      // Resolve the current file-backed credential (target-checked) so backups
-      // track the rotated password instead of the URL captured at startup.
+      // Copy the current file-backed password into the startup URL (target-
+      // checked) so backups track the rotated password while keeping the
+      // connection options (e.g. sslmode) that only DATABASE_URL carries.
       const backupConnectionString = databaseCredentialSource
-        ? (await resolveCurrentDatabaseCredential(databaseCredentialSource, activeDatabaseConnectionString)) ??
-          activeDatabaseConnectionString
+        ? await mergeDatabaseCredentialPassword(activeDatabaseConnectionString, databaseCredentialSource)
         : activeDatabaseConnectionString;
       const result = await runDatabaseBackup({
         connectionString: backupConnectionString,
