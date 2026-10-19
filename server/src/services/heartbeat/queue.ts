@@ -36,6 +36,7 @@ import { getExecutionBlocker, hasPendingRunCleanup } from "../execution-blocker.
 import { validateNativeWorkspaceReconstruction } from "../native-runtime/native-workspace-reconstruction.js";
 import { isConversationAdapter } from "../conversation-continuation.js";
 import { recordExecutionWait } from "../execution-wait.js";
+import { deferQueuedRunForProviderQuotaHold } from "../provider-quota-dispatch-hold.js";
 import {
   getNativeReviewAssignment,
   readNativeReviewAssignmentContext,
@@ -1123,6 +1124,38 @@ export function createHeartbeatQueue(db: Db, dependencies: HeartbeatQueueDepende
         );
         return null;
       }
+    }
+
+    // Terminal admission decisions above remain authoritative during an
+    // active provider hold. Only runnable work should wait for quota reset.
+    const providerQuotaDeferral = await deferQueuedRunForProviderQuotaHold(db, {
+      run,
+      agent,
+    });
+    if (providerQuotaDeferral) {
+      await appendRunEvent(providerQuotaDeferral.run, {
+        eventType: "lifecycle",
+        stream: "system",
+        level: "info",
+        message:
+          "Provider dispatch deferred until the captured quota reset instant",
+        payload: {
+          providerQuotaHoldId: providerQuotaDeferral.hold.id,
+          providerQuotaSourceRunId: providerQuotaDeferral.hold.sourceRunId,
+          providerQuotaHoldUntil:
+            providerQuotaDeferral.hold.holdUntil.toISOString(),
+        },
+      });
+      logger.info(
+        {
+          runId: run.id,
+          agentId: run.agentId,
+          holdId: providerQuotaDeferral.hold.id,
+          holdUntil: providerQuotaDeferral.hold.holdUntil,
+        },
+        "claimQueuedRun: deferred by provider quota dispatch hold",
+      );
+      return null;
     }
 
     const claimedAt = new Date();
