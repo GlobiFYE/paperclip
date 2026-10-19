@@ -327,24 +327,30 @@ function parseDatabaseTarget(url: string): { host: string; port: number; user: s
   };
 }
 
-export async function reloadDatabaseCredential(db: Db): Promise<void> {
+export interface ReloadCredentialResult {
+  reloaded: boolean;
+  reason?: string;
+}
+
+export async function reloadDatabaseCredential(db: Db): Promise<ReloadCredentialResult> {
   const meta = db as Db & CredentialMeta;
-  if (!meta.credentialSource) return;
+  if (!meta.credentialSource) return { reloaded: false, reason: "no credential source configured" };
   const nextUrl = await meta.credentialSource();
-  if (nextUrl === meta.lastCredentialUrl) return;
+  if (nextUrl === meta.lastCredentialUrl) return { reloaded: false, reason: "credential unchanged" };
   meta.lastCredentialUrl = nextUrl;
   const next = parseDatabaseTarget(nextUrl);
   const current = parseDatabaseTarget(meta.credentialUrl ?? "");
-  if (!next || !current) return;
+  if (!next || !current) return { reloaded: false, reason: "could not parse database URL" };
   if (
     next.host !== current.host ||
     next.port !== current.port ||
     next.user !== current.user ||
     next.database !== current.database
   ) {
-    return;
+    return { reloaded: false, reason: "database target changed; keeping existing pool" };
   }
   await (db.$client as unknown as { close: () => Promise<void> }).close();
+  return { reloaded: true };
 }
 
 export async function getPostgresDataDirectory(url: string): Promise<string | null> {

@@ -2171,8 +2171,12 @@ async function startServerWithDatabaseTeardown(
     process.on("SIGHUP", () => {
       void (async () => {
         try {
-          await reloadDatabaseCredential(db);
-          logger.info(`SIGHUP: reloaded database credential from ${config.databaseUrlFile}`);
+          const result = await reloadDatabaseCredential(db);
+          if (result.reloaded) {
+            logger.info(`SIGHUP: reloaded database credential from ${config.databaseUrlFile}`);
+          } else {
+            logger.info(`SIGHUP: credential reload skipped: ${result.reason}`);
+          }
         } catch (error) {
           logger.warn({ err: error }, "SIGHUP: database credential reload failed; keeping the existing pool");
         }

@@ -930,6 +930,17 @@ export function createVaultProvider(
                 // an orphaned write from a failed DB save left Vault at or
                 // past ctx.version. Write on top of the current Vault version
                 // so rotation re-aligns instead of bricking.
+                if (existing.version < ctx.version - 1) {
+                  logger.warn(
+                    {
+                      mount,
+                      path,
+                      vaultVersion: existing.version,
+                      paperclipVersion: ctx.version,
+                    },
+                    "vault createVersion: Vault is more than one version behind Paperclip; writing on top",
+                  );
+                }
                 ({ version } = await gateway.putKv({
                   mount,
                   path,
