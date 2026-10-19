@@ -651,7 +651,7 @@ conversation lifecycles, and protection against replaying superseded requests.
 
 Human invitations default to the Operator role. Its default grants allow agent
 creation and configuration, skill editing, environment management, invitations,
-task assignment, pipeline editing, connection and tool management/use, and tool
+task assignment, connection and tool management/use, and tool
 and agent-action audit views. Operators do not receive `joins:approve` or
 `users:manage_permissions`. Explicit invitation grants remain authoritative.
 Creating a human invitation also requires any of these two membership powers
@@ -1400,6 +1400,20 @@ as execution. Codex CLI defaults permit workspace writes and network access for
 Paperclip coordination without disabling its sandbox; explicit operator
 restrictions and execution-target network denials remain effective.
 
+### Experimental personal Muse Runner provider
+
+The `paperclip_runner` adapter can select `provider: "muse"` behind the default-off
+Muse and native Runner gates. This connects personal Meta Muse through a
+company- and named-agent-bound receiver, distinct from human-authorized MCP.
+Pairing, detector contact, and a verified background reply are separate setup
+milestones. Idle first-party collaboration retains both agent and authorizing
+user permissions; task execution additionally requires the admitted native run.
+Only one assignment may execute per connection, and unresolved remote work or
+native effects block overlap across cancellation, reconnect, and provider changes.
+Remote interruption and external usage remain unconfirmed or unavailable unless
+supported by evidence. Release requires the live journeys and bounded cadence
+qualification in [Personal Muse receiver](muse-personal-agent.md).
+
 ## 11.2 Process Adapter
 
 Config shape:
@@ -1912,6 +1926,19 @@ when the run fails, before generic recovery retries. Reconnect preserves account
 identity and permissions. Compatible legacy agents may explicitly adopt a
 validated connection inline; late failures must not invalidate newer credentials.
 
+### External channel failure scope
+
+Publication, provider-reply, and form-open permission failures fail the affected
+operation. An unclassified provider 403 does not establish that the whole
+connection is unusable. Known destination failures quarantine only that resource;
+provider rate limits retain their retry deadlines. Confirmed authentication
+failures put the endpoint in attention and mark connection health failed without
+changing the connection's enabled setting. Admission and background reconciliation
+block sends, assigned channel tools, and background receiver restart until
+credentials are repaired. Signed provider lifecycle events remain admissible so
+installation revocation still takes effect during an authentication stop.
+Explicit disable and disconnect retain their existing behavior.
+
 ### Task-bound email
 
 AgentMail is a default connection and does not require the experimental chat
@@ -2084,6 +2111,12 @@ unavailable. Preserve current ownership and newer-work fences. See
   and history. New key collisions cannot overwrite unrelated skills. Only changed package
   bytes or executable modes create versions. Library reads, tests, and subsequent unpinned
   runs use local installed snapshots; pinned/active runs retain their versions.
+- Runtime version directories are disposable caches. An hourly, bounded sweep may
+  evict non-current copies unused for one hour, preserving active and unresolved
+  execution pins. Selection, materialization, and pin persistence serialize with
+  eviction across processes. Missing copies rebuild from immutable database bytes
+  without upstream access. See [recoverable disk cleanup](recoverable-disk-cleanup.md)
+  for rollout controls, legacy grace periods, and interrupted cleanup recovery.
 - Manually selected sources retain reviewed selection, with new candidates checked by default and
   explicit folder exclusions retained. Upstream deletion keeps installed content with
   removed status; moves are removal plus discovery. Deselect retains content
@@ -2286,3 +2319,10 @@ reservation per attempt. Failed downloads and package fallback keep the full
 reservation. Successfully linked small imports refund unused measured work.
 Completed bindings do not reset company credits; waiting jobs retry on refill.
 The company_skill_import_budgets table stores no credentials or source contents.
+
+### Retired Pipelines experiment (2026-10-19)
+
+Pipelines, its review queue and learnings, stage automation, REST API, CLI commands,
+and experimental setting are removed. Existing database tables and records remain
+for data preservation; there is no migration that drops or rewrites them. The
+independent Cases and Routines features remain available.
