@@ -3117,7 +3117,7 @@ export async function lockToolConnectionRuntimeInputs(client: ToolAccessMutation
   await lockManagedAppPolicies(client, companyId, connectionId);
 }
 
-async function lockProfileEntryReferences(client: ToolAccessMutationDb, companyId: string, entries: CreateToolProfileEntryForProfile[]) {
+async function lockProfileEntryReferences(client: ToolAccessMutationDb, companyId: string, entries: Pick<CreateToolProfileEntryForProfile, "applicationId" | "connectionId" | "catalogEntryId">[]) {
   const applicationIds = [...new Set(entries.flatMap(entry => entry.applicationId ? [entry.applicationId] : []))];
   const connectionIds = [...new Set(entries.flatMap(entry => entry.connectionId ? [entry.connectionId] : []))];
   const catalogIds = [...new Set(entries.flatMap(entry => entry.catalogEntryId ? [entry.catalogEntryId] : []))];
@@ -19698,31 +19698,46 @@ export function toolAccessService(
       if (input.entries) {
         await assertProfileEntryInputs(db, existing.companyId, input.entries);
       }
-      await db.transaction(async tx => {
-        const db = tx as unknown as Db;
-        await lockProfileEntryReferences(tx, existing.companyId, input.entries ?? []);
-        await tx.select({ id: toolProfiles.id }).from(toolProfiles).where(eq(toolProfiles.id, profileId)).for("no key update");
-        await db
-          .update(toolProfiles)
-          .set({
-            profileKey: input.profileKey ?? existing.profileKey,
-            name: input.name ?? existing.name,
-            description: input.description ?? existing.description,
-            status: input.status ?? existing.status,
-            defaultAction: input.defaultAction ?? existing.defaultAction,
-            metadata: input.metadata ?? existing.metadata,
-            updatedAt: new Date(),
-          })
-          .where(eq(toolProfiles.id, profileId));
-        if (input.entries) {
-          await replaceProfileEntries(
-            existing.companyId,
-            profileId,
-            input.entries,
-            tx,
-          );
+      const referencesChanged = new Error("Tool profile references changed");
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await db.transaction(async tx => {
+            const db = tx as unknown as Db;
+            const readReferences = () => tx.select({ applicationId: toolProfileEntries.applicationId, connectionId: toolProfileEntries.connectionId, catalogEntryId: toolProfileEntries.catalogEntryId })
+              .from(toolProfileEntries).where(and(eq(toolProfileEntries.companyId, existing.companyId), eq(toolProfileEntries.profileId, profileId)))
+              .orderBy(toolProfileEntries.id);
+            const oldReferences = input.entries ? await readReferences() : [];
+            await lockProfileEntryReferences(tx, existing.companyId, [...oldReferences, ...(input.entries ?? [])]);
+            const [current] = await tx.select().from(toolProfiles).where(eq(toolProfiles.id, profileId)).for("no key update");
+            if (!current) throw notFound("Tool profile not found");
+            if (input.entries && JSON.stringify(await readReferences()) !== JSON.stringify(oldReferences)) throw referencesChanged;
+            await db
+              .update(toolProfiles)
+              .set({
+                profileKey: input.profileKey ?? current.profileKey,
+                name: input.name ?? current.name,
+                description: input.description ?? current.description,
+                status: input.status ?? current.status,
+                defaultAction: input.defaultAction ?? current.defaultAction,
+                metadata: input.metadata ?? current.metadata,
+                updatedAt: new Date(),
+              })
+              .where(eq(toolProfiles.id, profileId));
+            if (input.entries) {
+              await replaceProfileEntries(
+                existing.companyId,
+                profileId,
+                input.entries,
+                tx,
+              );
+            }
+          });
+          break;
+        } catch (error) {
+          if (error !== referencesChanged) throw error;
+          if (attempt >= 2) throw conflict("Tool profile entries changed during replacement", { retryable: true });
         }
-      });
+      }
       return profileDetails(profileId, existing.companyId);
     },
 

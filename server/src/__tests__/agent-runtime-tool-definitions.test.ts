@@ -415,6 +415,102 @@ describeDatabase("tool definition runtime synchronization", () => {
     expect((await toolAccessPolicyService(db).listPolicies(companyId)).map(row => row.id)).toEqual(policies.map(row => row.id));
   }, 15000);
 
+  it("locks old profile references before replacement and application deletion", async () => {
+    const [application] = await db.insert(toolApplications).values({ companyId, name: "Old application", type: "mcp_http" }).returning();
+    const [profile] = await db.insert(toolProfiles).values({ companyId, profileKey: "old-reference", name: "Old reference" }).returning();
+    await db.insert(toolProfileBindings).values({ companyId, profileId: profile.id, targetType: "agent", targetId: agentId });
+    await db.insert(toolProfileEntries).values({ companyId, profileId: profile.id, selectorType: "application", applicationId: application.id });
+    let locked!: () => void; let release!: () => void;
+    const held = new Promise<void>(resolve => { locked = resolve; });
+    const resume = new Promise<void>(resolve => { release = resolve; });
+    const blocker = db.transaction(async tx => {
+      await tx.select().from(agents).where(eq(agents.id, [agentId, peerId].sort()[0])).for("no key update");
+      locked(); await resume;
+    });
+    await held;
+    const pids: number[] = [];
+    const run = (work: (service: ReturnType<typeof toolAccessService>) => Promise<unknown>) => db.transaction(async tx => {
+      await tx.execute(sql`SET LOCAL lock_timeout = '8s'`);
+      const [row] = await tx.execute(sql`SELECT pg_backend_pid() AS pid`);
+      pids.push(Number(row.pid));
+      return work(toolAccessService(tx as unknown as Db));
+    });
+    const waitForLock = (index: number) => vi.waitFor(async () => {
+      expect(pids.length).toBeGreaterThan(index);
+      const [row] = await db.execute(sql`SELECT wait_event_type FROM pg_stat_activity WHERE pid = ${pids[index]}`);
+      expect(row.wait_event_type).toBe("Lock");
+    }, { timeout: 5000 });
+    const replacement = Promise.allSettled([run(service => service.updateProfile(profile.id, { name: "Replacement", entries: [] }))]);
+    let deletion: Promise<PromiseSettledResult<unknown>[]> | undefined;
+    try {
+      await waitForLock(0);
+      deletion = Promise.allSettled([run(service => service.deleteApplication(application.id))]);
+      await waitForLock(1);
+    } finally { release(); await blocker; }
+    for (const result of [...await replacement, ...await deletion!]) if (result.status === "rejected") throw result.reason;
+    expect(await db.select().from(toolApplications).where(eq(toolApplications.id, application.id))).toHaveLength(0);
+    expect(await db.select().from(toolProfileEntries).where(eq(toolProfileEntries.profileId, profile.id))).toHaveLength(0);
+    expect((await db.select().from(toolProfiles).where(eq(toolProfiles.id, profile.id)))[0].name).toBe("Replacement");
+  }, 15000);
+
+  it("retries changed old references before taking profile runtime locks", async () => {
+    const [oldApp, newApp] = await db.insert(toolApplications).values(["Old retry app", "New retry app"].map(name => ({ companyId, name, type: "mcp_http" }))).returning();
+    const [profile] = await db.insert(toolProfiles).values({ companyId, profileKey: "retry-references", name: "Retry references" }).returning();
+    await db.insert(toolProfileBindings).values({ companyId, profileId: profile.id, targetType: "agent", targetId: agentId });
+    const [entry] = await db.insert(toolProfileEntries).values({ companyId, profileId: profile.id, selectorType: "application", applicationId: oldApp.id }).returning();
+    const single = createDb(database.connectionString, { maxConnections: 1 });
+    await single.execute(sql`SET lock_timeout = '8s'`);
+    const [replacementPid] = await single.execute(sql`SELECT pg_backend_pid() AS pid`);
+    let refLocked!: () => void; let releaseRef!: () => void;
+    const refsHeld = new Promise<void>(resolve => { refLocked = resolve; });
+    const refsResume = new Promise<void>(resolve => { releaseRef = resolve; });
+    const refBlocker = db.transaction(async tx => {
+      await tx.select().from(toolApplications).where(eq(toolApplications.id, oldApp.id)).for("update");
+      refLocked(); await refsResume;
+    });
+    await refsHeld;
+    const replacement = Promise.allSettled([toolAccessService(single).updateProfile(profile.id, { name: "Retried replacement", entries: [] })]);
+    const waitForLock = (pid: number, query?: string) => vi.waitFor(async () => {
+      const [row] = await db.execute(sql`SELECT wait_event_type, query FROM pg_stat_activity WHERE pid = ${pid}`);
+      expect(row.wait_event_type).toBe("Lock");
+      if (query) expect(row.query).toContain(query);
+    }, { timeout: 5000 });
+    let agentBlocker: Promise<unknown> | undefined; let releaseAgent: (() => void) | undefined;
+    let deletion: Promise<PromiseSettledResult<unknown>[]> | undefined;
+    let deletionPid: number | undefined;
+    try {
+      await waitForLock(Number(replacementPid.pid));
+      await toolAccessService(db).updateProfileEntry(entry.id, { applicationId: newApp.id });
+      await toolAccessService(db).updateProfile(profile.id, { description: "Concurrent description" });
+      let agentLocked!: () => void;
+      const agentHeld = new Promise<void>(resolve => { agentLocked = resolve; });
+      const agentResume = new Promise<void>(resolve => { releaseAgent = resolve; });
+      agentBlocker = db.transaction(async tx => {
+        await tx.select().from(agents).where(eq(agents.id, [agentId, peerId].sort()[0])).for("no key update");
+        agentLocked(); await agentResume;
+      });
+      await agentHeld;
+      releaseRef(); await refBlocker;
+      await waitForLock(Number(replacementPid.pid), 'update "tool_profiles"');
+      deletion = Promise.allSettled([db.transaction(async tx => {
+        await tx.execute(sql`SET LOCAL lock_timeout = '8s'`);
+        const [row] = await tx.execute(sql`SELECT pg_backend_pid() AS pid`);
+        deletionPid = Number(row.pid);
+        return toolAccessService(tx as unknown as Db).deleteApplication(newApp.id);
+      })]);
+      await vi.waitFor(() => expect(deletionPid).toBeDefined(), { timeout: 5000 });
+      await waitForLock(deletionPid!);
+      releaseAgent!(); await agentBlocker;
+      for (const result of [...await replacement, ...await deletion]) if (result.status === "rejected") throw result.reason;
+      expect((await db.select().from(toolProfiles).where(eq(toolProfiles.id, profile.id)))[0]).toMatchObject({ name: "Retried replacement", description: "Concurrent description" });
+      expect(await db.select().from(toolProfileEntries).where(eq(toolProfileEntries.profileId, profile.id))).toHaveLength(0);
+      expect(await db.select().from(toolApplications).where(eq(toolApplications.id, newApp.id))).toHaveLength(0);
+    } finally {
+      releaseRef(); releaseAgent?.(); await refBlocker; await agentBlocker; await replacement; await deletion;
+      await single.$client.end({ timeout: 1 });
+    }
+  }, 20000);
+
   it("journals application and connection configuration", async () => {
     const before = (await events()).length;
     await db.update(toolApplications).set({ name: "Changed application" }).where(eq(toolApplications.id, applicationId));

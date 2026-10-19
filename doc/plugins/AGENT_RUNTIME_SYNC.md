@@ -148,7 +148,10 @@ fanout with the same documented company-size cost.
 Profile entry mutations lock referenced applications, connections, and catalog
 rows before the parent profile. They then change the entries and parent in one
 transaction, using the reserved connection for validation and profile reads.
-Profile replacement uses the same order. Setup finalization and
+Profile replacement locks both old and new references before the parent. It
+rechecks the reference set under the parent lock and retries up to three times
+if a concurrent entry edit changes it. Continued churn returns a conflict.
+Setup finalization and
 catalog publication can run concurrently without acquiring these locks in the
 opposite order. Policy reorder locks all affected policies in ID order and changes
 their priorities in one statement so scoped agent locks are ordered across the
