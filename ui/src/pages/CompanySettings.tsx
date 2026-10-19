@@ -1,3 +1,6 @@
+import { translateUiLiteral } from "@/i18n/LegacyLiteralLocalizer";
+import { useTranslation } from "react-i18next";
+import { UiLocaleSelect } from "@/components/UiLocaleSelect";
 import { ChangeEvent, useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
@@ -39,6 +42,7 @@ export function CompanySettings() {
     selectedCompanyId,
     setSelectedCompanyId
   } = useCompany();
+  const { i18n } = useTranslation();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
@@ -196,9 +200,9 @@ export function CompanySettings() {
   useEffect(() => {
     setBreadcrumbs([
       { label: selectedCompany?.name ?? "Company", href: "/dashboard" },
-      { label: "Settings" }
+      { label: translateUiLiteral("Settings") }
     ]);
-  }, [setBreadcrumbs, selectedCompany?.name]);
+  }, [setBreadcrumbs, selectedCompany?.name, i18n.resolvedLanguage]);
 
   if (!selectedCompany) {
     return (
@@ -220,6 +224,7 @@ export function CompanySettings() {
       <div className="flex items-center gap-2">
         <SlidersHorizontal className="h-5 w-5 text-muted-foreground" />
         <h1 className="text-lg font-semibold">General</h1>
+        <UiLocaleSelect />
       </div>
 
       {/* General */}
