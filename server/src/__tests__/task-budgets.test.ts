@@ -274,4 +274,25 @@ describe("task budgets with real accounting", () => {
     expect((await f.service.summary(f.companyId, f.a.id, f.board)).policies[0].scopeName).toBe("Root");
   });
 
+  it("holds active unqualified work when a cap is added and retains qualified work", async () => {
+    const f = await fixture(); const outside = await f.task("Previously uncapped work");
+    const run = await f.run(outside.id);
+    await f.service.patch(f.companyId, outside.id, { maxTokens: 1000, expectedRevisions: { total_tokens: 0 } }, f.board);
+    expect(await f.service.getInvocationBlock(f.companyId, outside.id)).toMatchObject({ code: "task_budget_usage_unavailable" });
+    const stopped = vi.fn(async () => {});
+    await processTaskBudgetEffects(db, { cancelRun: stopped, resumeIssue: async () => {} }, f.companyId);
+    expect(stopped).toHaveBeenCalledWith(run.id);
+    const qualified = await f.task("Qualified active work");
+    const qualifiedRun = await f.run(qualified.id);
+    await f.service.captureRun(f.companyId, qualifiedRun.id, { billedCents: "included_zero", totalTokens: "reported", reportingBoundary: "run_end" });
+    await f.service.patch(f.companyId, qualified.id, { maxTokens: 1000, expectedRevisions: { total_tokens: 0 } }, f.board);
+    expect(await f.service.getInvocationBlock(f.companyId, qualified.id)).toBeNull();
+  });
+
+  it("denies capped admission until historical initialization is complete", async () => {
+    const f = await fixture();
+    await db.update(taskBudgetAccountingState).set({ state: "pending" }).where(eq(taskBudgetAccountingState.companyId, f.companyId));
+    expect(await f.service.getInvocationBlock(f.companyId, f.a.id)).toMatchObject({ code: "task_budget_accounting_initializing" });
+  });
+
 });

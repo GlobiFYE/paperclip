@@ -931,6 +931,7 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
         return (await hydrateIncidentRows([{ ...incident, status: "dismissed", resolvedAt: new Date() }]))[0]!;
       }
       if (input.action === "raise_budget_and_resume") {
+        if ((input.amount ?? 0) > 2_147_483_647) throw unprocessable("Legacy budget limits must fit their supported amount range");
         const nextAmount = Math.max(0, Math.floor(input.amount ?? 0));
         const observed = await computeObservedSpend(db, policy);
         if (policy.unpricedUsagePolicy !== "allow" && observed.unpricedEventCount > 0) {

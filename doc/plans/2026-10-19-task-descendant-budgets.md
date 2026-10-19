@@ -1,8 +1,8 @@
 # Task budgets that include descendant work
 
-Status: implementation in progress. Branch: `codex/task-descendant-budgets`.
+Status: implementation complete; verification and review in progress. Branch: `codex/task-descendant-budgets`.
 Original baseline: `72ff3a9f27e581a27acb49771e8658bbb0bbaa47`.
-Implementation rebased onto master `0ed760ce9a9fd1babd74a29f68c2352ccebc340a`.
+Implementation rebased onto master `9966f31bee4647530e110d1c0b55b444b46330f8`.
 
 ## Outcome and acceptance
 
@@ -386,10 +386,9 @@ historical attribution, repair, qualified configurations and reporting delay.
   Initial missing-token accounting correctly failed closed and led to a Codex
   ACP normalization regression test. Native attempts failed before provider work
   because the Runner binary is not yet built; they are not qualification passes.
-- Current delivery gate: rebase onto current master (the supplied checkout was
-  October 5), regenerate the migration/contracts against that source, then rerun
-  affected checks and live/native acceptance. Broader runtime tests have one
-  unrelated Gemini resume timeout still to classify. No PR opened yet.
+- The original checkout was October 5. Rebase and migration/contract regeneration
+  against current master are complete. Original-baseline native attempts and the
+  Gemini timeout below remain historical evidence, not final qualification.
 
 - Current-master implementation uses the canonical durable provider receipt ledger,
   exact fractional cents, and company accounting row lock. Generated migration
@@ -420,3 +419,24 @@ historical attribution, repair, qualified configurations and reporting delay.
   lost PostgreSQL microseconds; both now compare timestamps inside PostgreSQL.
   An older broad adapter run had a Gemini resume timeout; it is not claimed fixed
   by this feature. Current broad tests must classify their own failures.
+
+- Final acceptance also proved a successful native Claude manager turn: the parent
+  finished, its receipt settled, and its backlog child retained the 1,000-token cap.
+  The earlier native Codex delegation created the child but then failed native
+  finalization and entered cleanup quarantine. Its missing accounting correctly
+  holds that branch. No quarantine was cleared to manufacture a pass.
+- Applying a new cap to active work now uses the metering capability captured at
+  actual dispatch. Unqualified active work becomes incomplete and receives a
+  scoped stop. Qualified active work continues within its observed limit. Explicit
+  initialization holds prevent admission while historical attribution is pending.
+- The correct-metric UI funding repair resumed one legacy Codex run, reused its
+  session, succeeded and settled its new receipt. The fixture was then marked done.
+  All isolated qualification agents were paused and the temporary encrypted Claude
+  credential copy was deleted. No credential is stored in this repository.
+- Review PR: https://github.com/paperclipai/paperclip/pull/16853 (draft). The
+  repository preparation/check workflow is running against its latest head.
+- The full local command reported four chat integration failures in its 1,347-case
+  first suite (two 15-second timeouts and two asynchronous Slack assertions). All
+  four pass in a focused current-source reproduction; that does not explain the
+  original failures or make the full run green. Full logs remain preserved in
+  /tmp/task-budget-final-tests.log and /tmp/task-budget-chat-failure-repro.log.

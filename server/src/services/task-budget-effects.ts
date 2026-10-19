@@ -50,14 +50,15 @@ export async function processTaskBudgetEffects(db: Db, hooks: TaskBudgetEffectHo
               eq(heartbeatRuns.companyId, effect.companyId), inArray(heartbeatRuns.status, ["queued", "running"]),
               or(runIds.length ? inArray(heartbeatRuns.id, runIds) : undefined,
                 ids.length ? sql`${heartbeatRuns.contextSnapshot}->>'issueId' in (${sql.join(ids.map(id => sql`${id}`), sql`, `)})` : undefined)));
-            const wakes = ids.length ? await db.select({ id: agentWakeupRequests.id, payload: agentWakeupRequests.payload }).from(agentWakeupRequests)
+            const wakes = ids.length ? await db.select({ id: agentWakeupRequests.id,
+              issueId: sql<string>`coalesce(${agentWakeupRequests.payload}->>'issueId', ${agentWakeupRequests.payload}->>'taskId', ${agentWakeupRequests.payload}#>>'{_paperclipWakeContext,issueId}')` }).from(agentWakeupRequests)
               .where(and(eq(agentWakeupRequests.companyId, effect.companyId), inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"]),
                 isNull(agentWakeupRequests.runId), sql`coalesce(${agentWakeupRequests.payload}->>'issueId', ${agentWakeupRequests.payload}->>'taskId',
                   ${agentWakeupRequests.payload}#>>'{_paperclipWakeContext,issueId}') in (${sql.join(ids.map(id => sql`${id}`), sql`, `)})`)) : [];
             const interruptedIssues = new Set<string>(payload.issueIds ?? []);
             for (const run of active) if (typeof run.context?.issueId === "string") interruptedIssues.add(run.context.issueId);
             for (const wake of wakes) {
-              const issueId = wake.payload?.issueId ?? wake.payload?.taskId;
+              const issueId = wake.issueId;
               if (typeof issueId === "string") interruptedIssues.add(issueId);
             }
             payload = { issueIds: [...interruptedIssues], runIds: active.map(row => row.id), wakeupIds: wakes.map(row => row.id) };

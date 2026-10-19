@@ -2763,10 +2763,11 @@ export function heartbeatService(
         const fundingBlock = issueId ? await db.transaction(async transaction => {
           const tx = transaction as unknown as Db;
           await lockTaskBudgetCompany(tx, run.companyId);
-          await taskBudgetService(tx).captureRun(run.companyId, run.id);
+          const support = taskBudgetMeteringSupport(agent.adapterType, { config: runtimeConfig, executionTarget }, nativeProvider);
+          await taskBudgetService(tx).captureRun(run.companyId, run.id, support);
           return await budgetServiceInTransaction(tx).getInvocationBlock(run.companyId, run.agentId, { issueId })
             ?? await taskBudgetService(tx).getInvocationBlock(run.companyId, issueId,
-              taskBudgetMeteringSupport(agent.adapterType, { config: runtimeConfig, executionTarget }, nativeProvider));
+              support);
         }) : null;
         if (fundingBlock) {
           await cancelRunInternal(run.id, fundingBlock.reason, { errorCode: "task_budget_hold", suppressImmediateRecovery: true });

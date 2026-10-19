@@ -35,7 +35,7 @@ export type UpsertBudgetPolicy = z.infer<typeof upsertBudgetPolicySchema>;
 
 export const resolveBudgetIncidentSchema = z.object({
   action: z.enum(BUDGET_INCIDENT_RESOLUTION_ACTIONS),
-  amount: z.number().int().nonnegative().max(2_147_483_647).optional(),
+  amount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
   decisionNote: z.string().optional().nullable(),
 }).superRefine((value, ctx) => {
   if (value.action === "raise_budget_and_resume" && typeof value.amount !== "number") {

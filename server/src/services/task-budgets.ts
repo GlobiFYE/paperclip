@@ -90,6 +90,14 @@ export function taskBudgetService(db: Db) {
     if (!anyPolicy) return null;
     const ancestry = await taskBudgetAncestors(tx, companyId, issueId);
     const policies = (await policiesForScopes(tx, companyId, ancestry.map(row => row.id))).filter(row => row.isActive);
+    if (policies.length) {
+      const [state] = await tx.select({ state: taskBudgetAccountingState.state }).from(taskBudgetAccountingState)
+        .where(eq(taskBudgetAccountingState.companyId, companyId));
+      if (state?.state !== "ready") return { code: "task_budget_accounting_initializing", scopeType: "issue",
+        scopeId: issueId, scopeName: ancestry[0].title, metric: policies[0].metric as BudgetMetric,
+        policyId: policies[0].id, policyRevision: policies[0].revision, observedAmount: null, amount: policies[0].amount,
+        reason: "Task accounting is initializing. Retry after historical usage is ready." };
+    }
     for (const ancestor of ancestry.slice().reverse()) {
       for (const metric of METRICS) {
         const policy = policies.find(row => row.scopeId === ancestor.id && row.metric === metric);
@@ -160,6 +168,7 @@ export function taskBudgetService(db: Db) {
     await lockTaskBudgetCompany(tx, companyId);
     const ancestry = await taskBudgetAncestors(tx, companyId, issueId);
     const policies = await policiesForScopes(tx, companyId, ancestry.map(row => row.id));
+    const changedMetrics = new Set<BudgetMetric>();
     for (const [field, metric] of [["maxCostCents", "billed_cents"], ["maxTokens", "total_tokens"]] as const) {
       const amount = input[field];
       if (amount === undefined) continue;
@@ -203,6 +212,7 @@ export function taskBudgetService(db: Db) {
       else await tx.insert(budgetPolicies).values({ companyId, scopeType: "issue", scopeId: issueId, metric,
         windowKind: "lifetime", amount: amount!, revision, createdByUserId: attribution.updatedByUserId,
         createdByAgentId: attribution.updatedByAgentId, createdByRunId: attribution.updatedByRunId, ...attribution });
+      if (amount !== null) changedMetrics.add(metric);
       if (current) {
         const incidents = await tx.select().from(budgetIncidents).where(and(eq(budgetIncidents.policyId, current.id), eq(budgetIncidents.status, "open")));
         await tx.update(budgetIncidents).set({ status: "resolved", resolvedAt: new Date(), updatedAt: new Date() })
@@ -217,6 +227,26 @@ export function taskBudgetService(db: Db) {
         ...(actor.type === "agent" ? { agentId: actor.agentId, runId: actor.runId } : {}), issueId,
         action: "budget.policy_upserted", entityType: "issue", entityId: issueId,
         details: { scopeType: "issue", metric, amount, revision } });
+    }
+    if (changedMetrics.size) {
+      const current = await tx.execute(sql`WITH RECURSIVE tree(id) AS (
+        SELECT id FROM issues WHERE company_id = ${companyId} AND id = ${issueId}
+        UNION SELECT child.id FROM issues child JOIN tree ON child.parent_id = tree.id WHERE child.company_id = ${companyId}
+      ) SELECT r.id FROM heartbeat_runs r JOIN tree ON tree.id::text = coalesce(r.context_snapshot->>'issueId', r.native_issue_id::text)
+        WHERE r.company_id = ${companyId} AND r.status IN ('queued', 'running')`);
+      for (const run of Array.from(current as unknown as Array<{ id: string }>)) await captureTaskBudgetRun(tx, companyId, run.id);
+      const active = await tx.select({ context: taskBudgetRunContexts }).from(taskBudgetRunAncestors)
+        .innerJoin(taskBudgetRunContexts, eq(taskBudgetRunContexts.id, taskBudgetRunAncestors.contextId))
+        .innerJoin(heartbeatRuns, eq(heartbeatRuns.id, taskBudgetRunContexts.liveRunId))
+        .where(and(eq(taskBudgetRunAncestors.companyId, companyId), eq(taskBudgetRunAncestors.ancestorIssueId, issueId), inArray(heartbeatRuns.status, ["queued", "running"])));
+      for (const { context } of active) {
+        const support = context.normalization?.meteringSupport as TaskBudgetMeteringSupport | undefined;
+        const costUnsupported = changedMetrics.has("billed_cents") && context.costState !== "complete" && (!support || support.billedCents === "unsupported");
+        const tokenUnsupported = changedMetrics.has("total_tokens") && context.tokenState !== "complete" && (!support || support.totalTokens === "unsupported");
+        if (costUnsupported || tokenUnsupported) await tx.update(taskBudgetRunContexts).set({
+          ...(costUnsupported ? { costState: "incomplete" } : {}), ...(tokenUnsupported ? { tokenState: "incomplete" } : {}), updatedAt: new Date(),
+        }).where(eq(taskBudgetRunContexts.id, context.id));
+      }
     }
     await evaluatePolicies(tx, companyId, [issueId]);
   }
@@ -289,9 +319,13 @@ export function taskBudgetService(db: Db) {
       return policy ? summary(companyId, issueId) : null;
     },
     getInvocationBlock: (companyId: string, issueId: string, metering?: string | TaskBudgetMeteringSupport) => invocationBlock(db, companyId, issueId, metering),
-    captureRun: (companyId: string, runId: string) => db.transaction(async tx => {
+    captureRun: (companyId: string, runId: string, meteringSupport?: TaskBudgetMeteringSupport) => db.transaction(async tx => {
       await lockTaskBudgetCompany(tx as unknown as Db, companyId);
-      return captureTaskBudgetRun(tx as unknown as Db, companyId, runId);
+      const context = await captureTaskBudgetRun(tx as unknown as Db, companyId, runId);
+      if (context && meteringSupport) await tx.update(taskBudgetRunContexts).set({
+        normalization: { ...context.normalization, meteringSupport }, updatedAt: new Date(),
+      }).where(eq(taskBudgetRunContexts.id, context.id));
+      return context;
     }),
     recordRunUsage: (sample: TaskRunUsageSample) => db.transaction(async transaction => {
       const tx = transaction as unknown as Db;
