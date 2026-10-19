@@ -1937,7 +1937,8 @@ checks those archives before upload; the sandbox checks all received hashes
 before extraction. Normal full pack admission still runs afterward.
 
 Historical v1 `provider-pack.tar.zst` receipts remain readable. Missing sidecars,
-remote zstd, or the Node 18+ helper retain directory staging; invalid sidecars fail
+remote zstd, compatible GNU tar/checksum tools, or the Node 18+ helper retain
+directory staging; invalid sidecars fail
 closed. Keep transport files outside the pack so they cannot include themselves.
 Matching staged/preinstalled packs remain preferred and never transfer archives.
 Daytona detects gzip/zstd headers and skips redundant transport compression.

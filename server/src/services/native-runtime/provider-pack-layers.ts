@@ -6,6 +6,7 @@ import { join, posix } from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { CommandManagedRuntimeRunner } from "@paperclipai/adapter-utils/command-managed-runtime";
 import type { NativeRunTrace } from "./native-run-trace.js";
+import { providerPackExtractionProbe } from "./provider-pack-extraction.js";
 
 type Archive = { sha256: string; bytes: number };
 type FileLayer = Archive & { path: string; mode: number; archive: Archive };
@@ -112,7 +113,7 @@ export async function stageProviderPackLayers(input: {
   // Respect the per-argument Linux limit; unusual packs retain directory staging.
   if (Buffer.byteLength(spec) > 120_000) return false;
   const capability = await measure("provider_pack.archive.probe", () => runner.execute({
-    command: "sh", args: ["-c", "command -v zstd >/dev/null 2>&1 && node -e 'process.exit(Number(process.versions.node.split(\".\")[0])>=18?0:1)'"],
+    command: "sh", args: ["-c", `${providerPackExtractionProbe} && node -e 'process.exit(Number(process.versions.node.split(".")[0])>=18?0:1)'`],
     bypassSession: true, timeoutMs: 10_000,
   }));
   if (capability.exitCode !== 0 || capability.timedOut) return false;

@@ -35,7 +35,7 @@ const tar = await Promise.all(["gtar", "tar"].map(async name => {
   catch { return null; }
 })).then(names => names.find(Boolean));
 
-async function runner(root: string, corrupt = false) {
+async function runner(root: string, corrupt = false, toolPath?: string) {
   const bin = path.join(root, "commands");
   await fs.mkdir(bin);
   const resolved = (await exec("sh", ["-c", 'command -v "$1"', "sh", tar!])).stdout.trim();
@@ -52,7 +52,7 @@ async function runner(root: string, corrupt = false) {
   });
   const execute = vi.fn<CommandManagedRuntimeRunner["execute"]>(async input => {
     try {
-      const result = await exec(input.command, input.args ?? [], { env: { ...process.env, PATH: `${bin}:${process.env.PATH}` } });
+      const result = await exec(input.command, input.args ?? [], { env: { ...process.env, PATH: toolPath ?? `${bin}:${process.env.PATH}` } });
       return { exitCode: 0, signal: null, pid: null, startedAt: null, timedOut: false, stdout: result.stdout, stderr: result.stderr };
     } catch (error) {
       return { exitCode: 1, signal: null, pid: null, startedAt: null, timedOut: false, stdout: "", stderr: String(error) };
@@ -209,4 +209,33 @@ it("keeps the directory fallback when the remote has no zstd", async () => {
   const remote = { syncIn: vi.fn(), execute: vi.fn().mockResolvedValue({ exitCode: 127, timedOut: false }) };
   expect(await stageProviderPackArchive({ archive, runner: remote, targetPath: "/unused" })).toBe(false);
   expect(remote.syncIn).not.toHaveBeenCalled();
+});
+
+it.skipIf(!tar || !hasZstd).each([
+  ["v1", "bsd-tar"], ["v2", "bsd-tar"],
+  ["v1", "older-gnu-tar"], ["v2", "older-gnu-tar"],
+  ["v1", "missing-sha256sum"], ["v2", "missing-sha256sum"],
+])("keeps %s on directory staging with %s before creating a target or uploading", async (version, unsupported) => {
+  const { root, archive } = version === "v1" ? await fixture() : await layeredFixture();
+  const tools = path.join(root, "tools");
+  await fs.mkdir(tools);
+  await fs.symlink(process.execPath, path.join(tools, "node"));
+  for (const name of ["sh", "zstd", "cut", ...(unsupported === "missing-sha256sum" ? [] : ["sha256sum"])]) {
+    const resolved = (await exec("sh", ["-c", 'command -v "$1"', "sh", name])).stdout.trim();
+    await fs.symlink(resolved, path.join(tools, name));
+  }
+  if (unsupported === "bsd-tar") {
+    await fs.writeFile(path.join(tools, "tar"), "#!/bin/sh\nprintf 'bsdtar 3.8.2\\n'\n", { mode: 0o755 });
+  } else if (unsupported === "older-gnu-tar") {
+    await fs.writeFile(path.join(tools, "tar"), '#!/bin/sh\nif [ "$1" = "--version" ]; then printf "tar (GNU tar) 1.30\\n"; else exit 64; fi\n', { mode: 0o755 });
+  } else {
+    const resolved = (await exec("sh", ["-c", 'command -v "$1"', "sh", tar!])).stdout.trim();
+    await fs.symlink(resolved, path.join(tools, "tar"));
+  }
+  const remote = await runner(root, false, tools);
+  const targetPath = path.join(root, "fresh");
+  expect(await stageProviderPackArchive({ archive, runner: remote, targetPath })).toBe(false);
+  expect(remote.execute).toHaveBeenCalledOnce();
+  expect(remote.syncIn).not.toHaveBeenCalled();
+  await expect(fs.lstat(targetPath)).rejects.toMatchObject({ code: "ENOENT" });
 });

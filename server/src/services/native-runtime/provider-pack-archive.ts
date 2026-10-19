@@ -4,6 +4,7 @@ import { open, readFile } from "node:fs/promises";
 import type { CommandManagedRuntimeRunner } from "@paperclipai/adapter-utils/command-managed-runtime";
 import type { NativeRunTrace } from "./native-run-trace.js";
 import { readProviderPackLayers, stageProviderPackLayers } from "./provider-pack-layers.js";
+import { providerPackExtractionProbe } from "./provider-pack-extraction.js";
 
 const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
@@ -52,7 +53,7 @@ export async function stageProviderPackArchive(input: {
   const archivePath = `${input.targetPath}.upload-${randomUUID()}.tar.zst`;
   const measure = <T>(name: string, fn: () => Promise<T>) => input.trace ? input.trace.measure(name, fn) : fn();
   const capability = await measure("provider_pack.archive.probe", () => input.runner.execute({
-    command: "sh", args: ["-c", "command -v zstd >/dev/null 2>&1"],
+    command: "sh", args: ["-c", providerPackExtractionProbe],
     bypassSession: true, timeoutMs: 10_000,
   }));
   if (capability.exitCode !== 0 || capability.timedOut) return false;

@@ -11,7 +11,11 @@ remain intact. The stale stacked-branch workflow assertion is excluded.
 The original branch is preserved as
 `archive/claude-startup-latency-pre-master-20261019` at
 `ca3833fe8e4ca8f9fcc47e66041cb0f3cbab3b31`. The dated evidence below describes
-its tested deployments, not a deployment of the rebased source. Fresh local verification passed 38 archive/provider tests and all token gates.
+its tested deployments, not a deployment of the rebased source. Fresh local verification passed 44 archive/provider tests and all token gates.
+Review found that custom hosts with incompatible tar or no checksum utility
+could enter archive staging and fail. Both archive formats now check the full
+extraction tool set before staging. Six isolated-PATH regressions cover BSD tar,
+older GNU tar, and missing sha256sum; unsupported hosts retain directory staging.
 The first cloud policy job used the old stacked base from its push event and
 incorrectly counted master's lockfile changes; a new push after retargeting uses
 the current master base. Fresh source
