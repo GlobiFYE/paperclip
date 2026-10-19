@@ -32,6 +32,16 @@ const runIngestion = (root) =>
     encoding: "utf8",
   });
 
+test("21st Dev retains its reviewed credential guidance after regeneration", (t) => {
+  const root = makeFixture();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const definitionPath = path.join(root, "packages/shared/src/app-definitions/21st-dev.json");
+  const expected = JSON.parse(fs.readFileSync(definitionPath, "utf8"));
+  const result = runIngestion(root);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.deepEqual(JSON.parse(fs.readFileSync(definitionPath, "utf8")), expected);
+});
+
 test("provider overrides keep manifest branding and pass normal review validation", (t) => {
   const root = makeFixture();
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

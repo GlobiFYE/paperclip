@@ -1003,6 +1003,7 @@ const researchManifest = JSON.parse(
   ),
 );
 const categoryBySlug = {
+  "21st-dev": "developer",
   airtable: "data",
   asana: "productivity",
   beehiiv: "content",
@@ -1196,6 +1197,17 @@ const apiKeyMethodFor = (
   );
 };
 const specialMethodsFor = (entry) => {
+  if (entry.slug === "21st-dev") return [
+    apiKeyMethodFor(entry, "mcp-api-key", entry.serverUrl, {
+      credentialFields: [{"key": "authorization", "label": "21st Dev API key", "type": "password", "required": true, "placeholder": "Paste your 21st Dev API key", "secret": true, "helperMd": "Create a fresh API key for the account agents should use at https://21st.dev/mcp. The account controls component retrieval, library/profile changes and hosted AI access. Check get_usage.aiGenerationEnabled before generation; Paperclip cannot enable paid capabilities or increase a key’s permissions."}],
+      label: "Connect with an API key",
+      whenToUse: "Connect the hosted 21st MCP server with your account's API key.",
+      keyPlacement: { location: "header", name: "x-api-key", prefix: "" },
+      guidanceMd: "Sign in at 21st.dev/mcp, create a fresh API key for the account agents should use, and paste it below. Keys from the retired Magic console no longer work.",
+      consoleLinks: { keys: "https://21st.dev/mcp", docs: entry.docsUrl },
+      warnings: ["Component retrieval depends on your account's access. Hosted generation requires AI access and credits; check get_usage.aiGenerationEnabled before generating. Refresh tools or reconnect after enabling AI access."],
+    }),
+  ];
   if (entry.slug === "asana") return [
     oauthMethodFor(entry, "managed", entry.serverUrl, {
       label: "Sign in with Asana",
@@ -1783,7 +1795,7 @@ for (const entry of researchManifest.entries) {
     schemaVersion: 1,
     slug: entry.slug,
     name: entry.name,
-    description: ({ neon: "Manage Postgres projects and branches, run SQL, and inspect schemas in Neon.", gauge: "Track how AI answers mention your brand, research keywords and traffic, and run content workflows.", superagent: "Review security findings, start red-team reports, and score content and packages before agents trust them.", mem0: "Remember preferences, conversations, events, and agent state.", zep: "Retrieve temporal graph memory and authorized business context.", supermemory: "Search and save shared memories, documents, and profiles.", honcho: "Remember conversations and retrieve context about peers.", telem: "Search the web and read pages across many search providers with one API key." })[entry.slug] ?? (entry.slug === "fireflies"
+    description: ({ "21st-dev": "Search UI components, retrieve code, and generate designs with 21st Dev.", neon: "Manage Postgres projects and branches, run SQL, and inspect schemas in Neon.", gauge: "Track how AI answers mention your brand, research keywords and traffic, and run content workflows.", superagent: "Review security findings, start red-team reports, and score content and packages before agents trust them.", mem0: "Remember preferences, conversations, events, and agent state.", zep: "Retrieve temporal graph memory and authorized business context.", supermemory: "Search and save shared memories, documents, and profiles.", honcho: "Remember conversations and retrieve context about peers.", telem: "Search the web and read pages across many search providers with one API key." })[entry.slug] ?? (entry.slug === "fireflies"
       ? "Search meeting transcripts, read summaries and action items, and connect meeting-ready routines."
       : `Connect ${entry.name}'s provider-hosted MCP server.`),
     categories: [categoryBySlug[entry.slug] ?? "other"],
