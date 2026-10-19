@@ -247,6 +247,8 @@ Queued and running retries retain their execution and receive the comment throug
 normal wake coalescing. Supersession rechecks the scheduled status atomically with
 the cancellation fence; a concurrent promotion must not cancel the active run or
 move its task back to `todo`. Explicit Stop and Interrupt keep their authority.
+Once cancellation wins that fence, due-retry promotion respects its claim until
+the cancellation owner finishes settlement.
 
 Recovery instructions in a wake describe only an active or escalated recovery
 action. Resolving or cancelling that action removes its repair instructions from

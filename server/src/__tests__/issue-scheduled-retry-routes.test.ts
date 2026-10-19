@@ -27,6 +27,7 @@ import {
 import { errorHandler } from "../middleware/index.js";
 import { issueRoutes } from "../routes/issues.js";
 import { runningProcesses } from "../adapters/index.js";
+import { heartbeatService } from "../services/heartbeat.js";
 
 const embeddedPostgresSupport = await getEmbeddedPostgresTestSupport();
 const describeEmbeddedPostgres = embeddedPostgresSupport.supported ? describe : describe.skip;
@@ -225,6 +226,7 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
       process.send('ready');
     `], { stdio: ["ignore", "ignore", "pipe", "ipc"] });
     const exited = once(child, "exit");
+    const heartbeat = heartbeatService(db);
     try {
       await once(child, "message", { signal: AbortSignal.timeout(5_000) });
       runningProcesses.set(f.retryRunId, { child, graceSec: 1, processGroupId: null });
@@ -238,6 +240,7 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
         : await request(app).patch(`/api/issues/${f.issueId}`).send({ comment: "Verified source recovery; continue the original work." });
 
       expect(res.status, JSON.stringify(res.body)).toBe(method === "post" ? 201 : 200);
+      await heartbeat.drainActiveRunExecutions();
       const progress = once(child, "message", { signal: AbortSignal.timeout(5_000) });
       child.send("continue-work");
       expect((await progress)[0]).toBe("work-continues");
@@ -251,6 +254,7 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
         eq(heartbeatRuns.companyId, f.companyId), eq(heartbeatRuns.status, "running"),
       ))).toHaveLength(1);
     } finally {
+      await heartbeat.drainActiveRunExecutions();
       runningProcesses.delete(f.retryRunId);
       if (child.exitCode === null && child.signalCode === null) child.kill();
       await exited;

@@ -20,6 +20,7 @@ import { createHeartbeatRunPreparation } from "./run-preparation.js";
 import { createHeartbeatLifecycle, type HeartbeatLifecycleDependencies } from "./run-lifecycle.js";
 import { createHeartbeatRunControl, type HeartbeatRunControlDependencies } from "./run-control.js";
 import { preserveCancelledNativeWorkspaces } from "../native-runtime/native-failed-workspace-recovery.js";
+import { createPostgresRunDispatchAdapter } from "../../modules/run-dispatch/adapters/postgres.js";
 
 vi.mock("../live-events.js", () => ({ publishLiveEvent: vi.fn() }));
 vi.mock("../adapter-execution-control.js", async (importOriginal) => {
@@ -238,6 +239,45 @@ describe.skipIf(!support.supported)("heartbeat run-control database wiring", () 
     expect(await createHeartbeatRunControl(db, deps).cancelRunInternal(
       run.id, undefined, { expectedStatus: "scheduled_retry" },
     )).toMatchObject({ status: "cancelled" });
+  });
+
+  it("blocks promotion after guarded cancellation wins but before it settles", async () => {
+    const { company, agent } = await fixture();
+    await db.update(companies).set({ defaultResponsibleUserId: "operator" }).where(eq(companies.id, company.id));
+    const [issue] = await db.insert(issues).values({
+      companyId: company.id, title: "Keep the cancellation claim", status: "in_progress", assigneeAgentId: agent.id,
+    }).returning();
+    const [run] = await db.insert(heartbeatRuns).values({
+      companyId: company.id, agentId: agent.id, issueId: issue.id, status: "scheduled_retry",
+      runtimeMode: "legacy", runtimeModeResolvedAt: new Date(), responsibleUserId: "operator",
+      scheduledRetryAt: new Date(), scheduledRetryReason: "transient_failure", contextSnapshot: { issueId: issue.id },
+    }).returning();
+    await db.update(issues).set({ executionRunId: run.id }).where(eq(issues.id, issue.id));
+    const deps = callbacks(db);
+    const settle = deps.setRunStatusFromLive.getMockImplementation()!;
+    let claimed!: () => void, release!: () => void;
+    const claimReached = new Promise<void>(resolve => { claimed = resolve; });
+    const continueSettlement = new Promise<void>(resolve => { release = resolve; });
+    deps.setRunStatusFromLive.mockImplementation(async (...args) => {
+      claimed();
+      await continueSettlement;
+      return settle(...args);
+    });
+    const cancellation = createHeartbeatRunControl(db, deps).cancelRunInternal(
+      run.id, undefined, { expectedStatus: "scheduled_retry" },
+    );
+    try {
+      await Promise.race([claimReached, cancellation.then(() => { throw new Error("Cancellation did not reach settlement"); })]);
+      expect((await deps.getRun(run.id))?.resultJson?.startupCancellation).toBeTruthy();
+      expect(await createPostgresRunDispatchAdapter(db).promoteOrCancelDueRetry({
+        companyId: company.id, runId: run.id, now: new Date(),
+      })).toMatchObject({ outcome: "not_promoted" });
+      expect(await deps.getRun(run.id)).toMatchObject({ status: "scheduled_retry" });
+    } finally {
+      release();
+      await cancellation;
+    }
+    expect(await deps.getRun(run.id)).toMatchObject({ status: "cancelled" });
   });
 
   it.each(["ephemeral", "reuse_by_environment"] as const)("keeps %s cancellation eligible for retention when teardown loses the task lock", async leasePolicy => {
