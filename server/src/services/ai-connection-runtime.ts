@@ -1,3 +1,4 @@
+import { OPENROUTER_ATTRIBUTION_HEADERS } from "@paperclipai/shared/openrouter-attribution";
 import { createHash } from "node:crypto";
 import { HttpError, unprocessable } from "../errors.js";
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
@@ -50,6 +51,7 @@ export const AI_AUTH_ENV_KEYS = [
   "OPENCODE_CONFIG_DIR",
   "PAPERCLIP_OPENCODE_PROVIDERS",
   "ANTHROPIC_BASE_URL",
+  "ANTHROPIC_CUSTOM_HEADERS",
   "OPENAI_BASE_URL",
   "XAI_BASE_URL",
   "CLAUDE_CODE_USE_BEDROCK",
@@ -336,7 +338,7 @@ export async function prepareManagedAiRuntime(
     }
     if (!routing && input.binding.provider === "openrouter") {
       env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
-        provider: { openrouter: { options: { apiKey: value } } },
+        provider: { openrouter: { options: { apiKey: value, headers: OPENROUTER_ATTRIBUTION_HEADERS } } },
       });
       env.OPENCODE_DISABLE_PROJECT_CONFIG = "true";
     }
