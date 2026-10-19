@@ -271,6 +271,13 @@ fn verified_turn_controls(
     Ok(controls)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AcpxToolDelivery {
+    Delivered,
+    Expired,
+    AlreadyRecorded,
+}
+
 pub struct AcpxProviderSession {
     transport: AcpxSidecarTransport,
     config: AcpxProviderSessionConfig,
@@ -763,7 +770,10 @@ impl AcpxProviderSession {
         Ok(Some(reconciled_events))
     }
 
-    pub fn deliver_tool_result(&mut self, result: &ToolResult) -> Result<(), LocalRunnerError> {
+    pub fn deliver_tool_result(
+        &mut self,
+        result: &ToolResult,
+    ) -> Result<AcpxToolDelivery, LocalRunnerError> {
         self.ensure_open()?;
         let mut next_state = self.state.clone();
         if next_state.pending_tool(&result.call_id).is_some() {
@@ -785,13 +795,13 @@ impl AcpxProviderSession {
             ))
         })?;
         if duplicate {
-            return Ok(());
+            return Ok(AcpxToolDelivery::AlreadyRecorded);
         }
         if detached {
             self.state = next_state;
             self.tool_bridge = next_bridge;
             self.reserved_tool_bridge = next_reserved_bridge;
-            return Ok(());
+            return Ok(AcpxToolDelivery::AlreadyRecorded);
         }
         let turn_id = self.ensure_active_turn()?.to_owned();
         let resolution = if result.is_error {
@@ -824,11 +834,19 @@ impl AcpxProviderSession {
             Ok(response) => response,
             Err(error) => return Err(self.fail_closed(error)),
         };
-        self.verify_resolution(&response, "tool")?;
+        let expired = response.get("expired").and_then(Value::as_bool) == Some(true)
+            && response.get("resolved").and_then(Value::as_bool) == Some(false);
+        if !expired {
+            self.verify_resolution(&response, "tool")?;
+        }
         self.state = next_state;
         self.tool_bridge = next_bridge;
         self.reserved_tool_bridge = next_reserved_bridge;
-        Ok(())
+        Ok(if expired {
+            AcpxToolDelivery::Expired
+        } else {
+            AcpxToolDelivery::Delivered
+        })
     }
 
     pub fn resolve_permission(

@@ -5,6 +5,7 @@ import { acpxProfileActivity, type AcpxActivityAdapter, type AcpxToolEvidence } 
 import { resolvePiThinkingLevel } from "../drivers/acpx/pi-thinking.js";
 import { createHash, randomUUID } from "node:crypto";
 import { resolveCompletionContinuation } from "../drivers/completion-continuation.js";
+import { ExpiredAcpxTools } from "./acpx-expired-tools.js";
 import { createInterface } from "node:readline";
 import { deliverAcpxResponse, requireAcpxResponseDelivery } from "../drivers/acpx/response-delivery.js";
 import { createAcpxSidecarHostEnvironment } from "../drivers/acpx/environment.js";
@@ -168,6 +169,7 @@ let initializedModel: string | null = null;
 let inputClosed = false;
 const tools = new Map<string, PendingTool>();
 const normalizingTools = new Set<string>();
+const expiredTools = new ExpiredAcpxTools();
 const inputs = new Map<string, PendingInput>();
 const permissions = new Map<string, PendingPermission>();
 
@@ -483,6 +485,9 @@ async function dispatch(
     const callId = boundedIdentity(request.params.callId, "callId");
     const expectedTurnId = boundedIdentity(request.params.turnId, "turnId");
     const pending = tools.get(callId);
+    if (!pending && expiredTools.acknowledge(callId, expectedTurnId)) {
+      return { resolved: false, expired: true };
+    }
     if (
       !pending ||
       pending.turnId !== expectedTurnId ||
@@ -706,6 +711,7 @@ async function waitForTool(call: RunnerToolCall): Promise<unknown> {
   if (tools.size + normalizingTools.size >= MAX_PENDING_TOOLS) {
     throw new Error("ACPX pending tool limit reached");
   }
+  expiredTools.assertCapacity(tools.size + normalizingTools.size);
   if (
     operationId === PRP_COMPLETION_TOOL_NAME ||
     operationId === PRP_BLOCK_TOOL_NAME
@@ -765,6 +771,7 @@ async function waitForTool(call: RunnerToolCall): Promise<unknown> {
       const abort = () => {
         const pending = tools.get(callId);
         if (!pending || !tools.delete(callId)) return;
+        expiredTools.remember(callId, activeTurnId);
         pending.cleanup();
         reject(new Error("ACPX tool call was cancelled"));
       };
@@ -797,6 +804,7 @@ async function waitForTool(call: RunnerToolCall): Promise<unknown> {
     const abort = () => {
       const pending = tools.get(callId);
       if (!pending || !tools.delete(callId)) return;
+      expiredTools.remember(callId, activeTurnId);
       pending.cleanup();
       reject(new Error("ACPX tool call was cancelled"));
     };
@@ -955,6 +963,7 @@ function rejectTurnWaiters(terminalTurnId: string, message: string): void {
   }
   for (const [callId, pending] of tools) {
     if (pending.turnId !== terminalTurnId || !tools.delete(callId)) continue;
+    expiredTools.remember(callId, pending.turnId);
     pending.cleanup();
     pending.reject(new Error(message));
   }
