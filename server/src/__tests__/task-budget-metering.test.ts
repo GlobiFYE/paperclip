@@ -19,4 +19,11 @@ describe("authoritative task budget metering", () => {
     expect(taskBudgetMeteringSupport("claude_local", { config: {} }, "aws_agentcore"))
       .toMatchObject({ billedCents: "unsupported", totalTokens: "unsupported" });
   });
+  it("keeps ambient native authentication unclassified for dollar caps", () => {
+    expect(taskBudgetMeteringSupport("paperclip_runner", { config: { provider: "codex" } }))
+      .toMatchObject({ billedCents: "unsupported", totalTokens: "reported" });
+    expect(taskBudgetMeteringSupport("paperclip_runner", { config: { provider: "acpx", acpxAgent: "claude" } }))
+      .toMatchObject({ billedCents: "unsupported", totalTokens: "reported" });
+  });
+
 });

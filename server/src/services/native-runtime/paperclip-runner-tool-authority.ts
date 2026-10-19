@@ -1490,7 +1490,8 @@ export class PaperclipRunnerToolAuthority {
         },
       });
     }
-    return { ...result, budget: await taskBudgetService(this.db).summary(this.binding.companyId, childId) };
+    return { ...result, budget: await taskBudgetService(this.db).summary(this.binding.companyId, childId,
+      { type: "agent", agentId: this.binding.agentId, runId: this.binding.runId }) };
   }
 
 

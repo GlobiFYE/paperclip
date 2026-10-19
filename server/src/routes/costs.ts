@@ -384,6 +384,11 @@ export function costRoutes(
     assertCompanyAccess(req, companyId);
     if (!(await assertCompanyCostReadAllowed(req, res, companyId))) return;
     const overview = await budgets.overview(companyId);
+    if (req.actor.type === "agent") {
+      overview.policies = overview.policies.filter(policy => policy.scopeType !== "issue");
+      overview.activeIncidents = overview.activeIncidents.filter(incident => incident.scopeType !== "issue");
+      overview.pendingApprovalCount = overview.activeIncidents.filter(incident => incident.approvalStatus === "pending").length;
+    }
     res.json(overview);
   });
 

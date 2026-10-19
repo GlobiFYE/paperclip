@@ -4,7 +4,6 @@ import { companies } from "./companies.js";
 import { heartbeatRuns } from "./heartbeat_runs.js";
 import { costEvents } from "./cost_events.js";
 
-// Historical source identities deliberately have no cascading task/run foreign key.
 export const taskBudgetAccountingState = pgTable("task_budget_accounting_state", {
   companyId: uuid("company_id").primaryKey().references(() => companies.id, { onDelete: "cascade" }),
   state: text("state").notNull().default("pending"),

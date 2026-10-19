@@ -1,8 +1,8 @@
 # Task budgets that include descendant work
 
 Status: implementation in progress. Branch: `codex/task-descendant-budgets`.
-Baseline: `72ff3a9f27e581a27acb49771e8658bbb0bbaa47`.
-Reference discussion: `codex://threads/01a10cc6-bee4-7033-9581-fc8d2bc6da6a`.
+Original baseline: `72ff3a9f27e581a27acb49771e8658bbb0bbaa47`.
+Implementation rebased onto master `0ed760ce9a9fd1babd74a29f68c2352ccebc340a`.
 
 ## Outcome and acceptance
 
@@ -181,9 +181,13 @@ persist incidents and effects; commit before publishing/cancelling. Normalize
 cumulative cents before calculating delta, avoiding independent fragment rounding.
 Streaming 100k then 140k then repeated final 140k charges 100k,40k,0.
 
-Route managed final accounting from updateRuntimeState through the same service.
-Runtime aggregate counters increment only by committed deltas. Final receipt
-reconciles previous samples instead of charging a full run again.
+Current-master integration: `run-cost-accounting.ts` remains the sole financial
+writer for managed provider receipts. Persist normalized `totalTokens` alongside
+the existing exact billed-cost event. Then settle the captured task context and
+attribute the same event to its immutable ancestors. Never insert a second cost
+event for task enforcement. The cumulative sample API above is a trusted internal
+path for unmanaged sources; reject it once canonical run accounting owns the run.
+Runtime aggregate counters retain the canonical accounting implementation.
 
 Track each metric as pending, complete, or incomplete. Pending active execution
 is allowed; incomplete means the reporting boundary passed without valid final
@@ -196,7 +200,7 @@ duplicates and preserve separately attributable supplemental costs.
 
 ## Transactions and authority
 
-Use a short company-keyed transaction advisory lock for task budget policies,
+Use the existing company `FOR NO KEY UPDATE` accounting lock for task budget policies,
 ancestry/deletion, admission/context capture, usage accounting, and gate changes.
 Acquire it before participating issue/run/policy row locks; audit native mutation
 receipts for inverse order. Never hold it across provider calls, HTTP, waiting,
@@ -273,7 +277,7 @@ queued matching uses authoritative current task ancestry.
 
 Resume: recheck every other cap, accounting and manual/governance gate; resume
 only unfinished budget-interrupted work. Exclude backlog/done/cancelled/manual
-pauses. Dedupe wakes by effect/task. Revalidate stale effects so an old stop does
+pauses. Dedupe wakes by original stop/task across repeated repairs. Revalidate stale effects so an old stop does
 not cancel newly admitted later-funded execution. Lease recovery survives restart.
 
 ## UI, tools and CLI
@@ -386,3 +390,33 @@ historical attribution, repair, qualified configurations and reporting delay.
   October 5), regenerate the migration/contracts against that source, then rerun
   affected checks and live/native acceptance. Broader runtime tests have one
   unrelated Gemini resume timeout still to classify. No PR opened yet.
+
+- Current-master implementation uses the canonical durable provider receipt ledger,
+  exact fractional cents, and company accounting row lock. Generated migration
+  0355 widens task-safe limits and adds lineage, receipt attribution, initialization
+  and durable effects; the generator pruned the sixth snapshot as required.
+- Current focused qualification: 21 accounting/metering cases pass, including
+  canonical receipt dedupe, fractional-cent threshold crossing, terminal missing
+  usage, authority, branch moves, revision conflicts, repair and privacy. The UI
+  CAS regression also passes: polling cannot replace the revision captured at Edit.
+- All six real local paths now passed: Codex CLI/ACP/native and Claude CLI/ACP/native.
+  Each produced persisted tokens and exhausted a one-token task cap. Native Codex
+  dollar caps remain unsupported because the canonical runtime does not classify
+  its billed cost; native Claude requires explicit supported billing credentials.
+  These were subscription qualification runs, not proof of metered API billing.
+- A native manager used its real create_task tool to create a backlog child assigned
+  to another worker with a 1,000-token own cap under a 500,000-token parent. The child
+  and cap persisted together. Browser Properties edits survived reload: raising
+  dollars retained the token hold, and raising tokens cleared it.
+- Current broad evidence: full workspace typecheck and build passed. Full test:run
+  remains in progress. Final source checks and remote review are still required.
+- Preserved failures: old-baseline native attempts had no built binary; a later
+  ambient Claude native attempt could not access login credentials. Explicit local
+  encrypted credential configuration allowed qualification. The first shared-root
+  six-lane attempt correctly held siblings on missing usage; final qualification
+  used independent roots. Cold fixture imports timed out until the fixture loaded
+  the same lifecycle assembly before timed cases and supplied its explicit empty
+  receipt index instead of scanning the developer spool. Two cutover comparisons
+  lost PostgreSQL microseconds; both now compare timestamps inside PostgreSQL.
+  An older broad adapter run had a Gemini resume timeout; it is not claimed fixed
+  by this feature. Current broad tests must classify their own failures.

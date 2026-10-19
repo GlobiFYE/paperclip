@@ -1,3 +1,4 @@
+import { taskBudgetService } from "../task-budgets.js";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { measureRunPhase } from "../execution-preparation-timing.js";
 import { parseNativeSessionGoalControl } from "./scheduling.js";
@@ -163,7 +164,7 @@ export interface HeartbeatRuntimeExecutionInput {
   control: {
     executionControl: ReturnType<typeof createAdapterExecutionControl>;
     executionPhaseContext: Parameters<typeof withAdapterExecutionPhase>[0];
-    dispatchResolvedInteractionContinuationWithAtomicGate: <T>(dispatch: (markDispatchStarted: () => void) => Promise<T>) => Promise<
+    dispatchResolvedInteractionContinuationWithAtomicGate: <T>(dispatch: (markDispatchStarted: () => void) => Promise<T>, nativeProvider?: string) => Promise<
       { dispatched: true; resultPromise: Promise<T> } | { dispatched: false }
     >;
   };
@@ -232,9 +233,9 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
   const { nativeInstructionWorkingCopy, collectStoppedInstructions, nativeInstructionReservation, releaseInstructionCopy } = input.instructions;
   const { providerTraceCapture, nativeRunnerPreparationSpans, attestedQuestionResponseAtMs, attemptStartedAtMs, environmentAcquireStartedAtMs, environmentRealizeEndedAtMs } = input.trace;
   const { executionControl, executionPhaseContext, dispatchResolvedInteractionContinuationWithAtomicGate } = input.control;
-  const dispatchWithTiming: HeartbeatRuntimeExecutionInput["control"]["dispatchResolvedInteractionContinuationWithAtomicGate"] = dispatch => {
+  const dispatchWithTiming: HeartbeatRuntimeExecutionInput["control"]["dispatchResolvedInteractionContinuationWithAtomicGate"] = (dispatch, nativeProvider) => {
     const providerDispatch = AsyncLocalStorage.bind(dispatch);
-    return measureRunPhase("execution.dispatch_admission", () => dispatchResolvedInteractionContinuationWithAtomicGate(providerDispatch));
+    return measureRunPhase("execution.dispatch_admission", () => dispatchResolvedInteractionContinuationWithAtomicGate(providerDispatch, nativeProvider));
   };
   const { identityRedactor, appendIdentityRedactedLog, onLog, onAdapterEvent, onAdapterMeta } = input.output;
   const { executionWorkspacesSvc, instanceSettings, envOrchestrator, upsertTaskSession, getRun, cancelRunInternal, enqueueWakeup, persistRunProcessMetadata, recordCurrentHeartbeatRunRuntimeProgress, dispatchPendingNativeStatusWakeups } = input.services;
@@ -703,6 +704,7 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
               },
             });
           },
+          nativeExecution.provider.kind,
         );
       if (!guardedDispatch.dispatched) return { dispatched: false };
       input.effects.onNativeDispatchStarted();
@@ -728,7 +730,11 @@ export async function executeHeartbeatRuntime(db: Db, input: HeartbeatRuntimeExe
       // adapters need it in their prompt, but the authoritative answers
       // remain on the interaction instead of being duplicated in the
       // heartbeat run snapshot.
+      const funding = issueId ? await taskBudgetService(db).executionSummary(agent.companyId, issueId) : null;
       const adapterContext: Record<string, unknown> = {
+        ...(funding ? { paperclipTaskBudget: { remaining: funding.remaining,
+          policies: funding.policies.filter(policy => policy.isActive).map(policy => ({ scopeId: policy.scopeId,
+            scopeName: policy.scopeId === issueId ? policy.scopeName : "Enclosing task", metric: policy.metric, amount: policy.amount, observedAmount: policy.observedAmount })) } } : {}),
         ...context,
         ...(legacyQuestionResponse
           ? {

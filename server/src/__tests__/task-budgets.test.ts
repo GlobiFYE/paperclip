@@ -1,3 +1,4 @@
+import "../services/agent-lifecycle.js";
 import { accountRunCost } from "../services/run-cost-accounting.js";
 import { costService } from "../services/costs.js";
 import { initializeTaskBudgetAccounting } from "../services/task-budget-accounting.js";
@@ -214,8 +215,9 @@ describe("task budgets with real accounting", () => {
       usageJson: { provider: "openai", model: "fixture", billingType: "subscription_included", inputTokens: 10,
         cachedInputTokens: 100, outputTokens: 5, accountingReceiptReady: true, ledgerScope: { issueId: f.a.id } },
     }).where(eq(heartbeatRuns.id, run.id));
-    expect(await accountRunCost(db, run.id)).toBe(true);
-    expect(await accountRunCost(db, run.id)).toBe(false);
+    expect(await accountRunCost(db, run.id, {}, new Map())).toBe(true);
+    expect(await accountRunCost(db, run.id, {}, new Map())).toBe(false);
+    await expect(f.report(run.id, 0, 115)).rejects.toMatchObject({ status: 409 });
     expect(await db.select().from(costEvents).where(eq(costEvents.heartbeatRunId, run.id))).toHaveLength(1);
     expect((await f.service.summary(f.companyId, f.root.id)).descendantUsage).toMatchObject({ billedCents: 0, totalTokens: 115 });
     expect(await f.service.getInvocationBlock(f.companyId, f.b.id)).toBeNull();
@@ -233,6 +235,43 @@ describe("task budgets with real accounting", () => {
     await costs.createEvent(f.companyId, { agentId: f.worker.id, issueId: f.a.id, provider: "fixture", model: "fixture",
       totalTokens: 0, costCents: "0.0000001", occurredAt: new Date(), billingType: "metered_api" });
     expect(await f.service.getInvocationBlock(f.companyId, f.b.id)).toMatchObject({ code: "task_budget_exhausted", metric: "billed_cents" });
+  });
+
+  it("resumes the unfinished task whose settled receipt crossed the limit", async () => {
+    const f = await fixture();
+    await f.service.patch(f.companyId, f.root.id, { maxTokens: 1, expectedRevisions: { total_tokens: 1 } }, f.board);
+    const run = await f.run(f.a.id);
+    await db.update(heartbeatRuns).set({ status: "succeeded" }).where(eq(heartbeatRuns.id, run.id));
+    await f.report(run.id, 0, 1);
+    const resumed: string[] = [];
+    const hooks = { cancelRun: async () => {}, resumeIssue: async (id: string) => { resumed.push(id); } };
+    await processTaskBudgetEffects(db, hooks, f.companyId);
+    expect(resumed).toEqual([]);
+    await f.service.patch(f.companyId, f.root.id, { maxTokens: 2, expectedRevisions: { total_tokens: 2 } }, f.board);
+    await processTaskBudgetEffects(db, hooks, f.companyId);
+    expect(resumed).toEqual([f.a.id]);
+  });
+
+  it("reconciles a canonical run after authoritative pricing repairs its ledger", async () => {
+    const f = await fixture(); const run = await f.run(f.a.id);
+    await db.update(heartbeatRuns).set({ status: "succeeded", finishedAt: new Date(), costAccountingPending: true,
+      usageJson: { provider: "fixture", model: "fixture", billingType: "metered_api", costStatus: "unpriced",
+        inputTokens: 10, cachedInputTokens: 0, outputTokens: 5, accountingReceiptReady: true,
+        ledgerScope: { issueId: f.a.id } },
+    }).where(eq(heartbeatRuns.id, run.id));
+    await accountRunCost(db, run.id, {}, new Map());
+    expect(await f.service.getInvocationBlock(f.companyId, f.a.id)).toMatchObject({ code: "task_budget_usage_unavailable", metric: "billed_cents" });
+    await db.update(costEvents).set({ costCents: 1, costStatus: "reported" }).where(eq(costEvents.heartbeatRunId, run.id));
+    await f.service.evaluatePolicies(f.companyId, [f.root.id]);
+    expect(await f.service.getInvocationBlock(f.companyId, f.a.id)).toBeNull();
+    expect((await f.service.summary(f.companyId, f.root.id)).descendantUsage).toMatchObject({ billedCents: 1, totalTokens: 15 });
+  });
+
+  it("does not expose ancestor titles through an agent's budget summary", async () => {
+    const f = await fixture(); const run = await f.run(f.root.id, f.manager.id);
+    const summary = await f.service.summary(f.companyId, f.a.id, { type: "agent", agentId: f.manager.id, runId: run.id });
+    expect(summary.policies.map(policy => policy.scopeName)).toEqual(["Enclosing task", "Enclosing task"]);
+    expect((await f.service.summary(f.companyId, f.a.id, f.board)).policies[0].scopeName).toBe("Root");
   });
 
 });

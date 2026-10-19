@@ -1,3 +1,4 @@
+import { taskBudgetMeteringSupport } from "./task-budget-metering.js";
 import { compareCents, centsToUnits } from "@paperclipai/shared";
 import { and, asc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
@@ -12,7 +13,7 @@ import { logActivity } from "./activity-log.js";
 import { authorizationService } from "./authorization.js";
 import {
   attributeTaskCostEvent, captureTaskBudgetRun, initializeTaskBudgetAccounting, lockTaskBudgetCompany,
-  recordTaskRunUsageInTransaction, taskBudgetAncestors, taskBudgetUsage, type TaskRunUsageSample,
+  recordTaskRunUsageInTransaction, settleTaskBudgetRunFromLedger, taskBudgetAncestors, taskBudgetUsage, type TaskRunUsageSample,
 } from "./task-budget-accounting.js";
 
 export type TaskBudgetActor = { type: "board"; userId?: string | null }
@@ -77,14 +78,13 @@ export function taskBudgetService(db: Db) {
       resource: { type: "issue", companyId, issueId, parentIssueId: ancestry[0].parentId, assigneeAgentId: ancestry[0].assigneeAgentId },
     });
     if (!decision.allowed) throw forbidden(decision.explanation);
-    const { budgetService } = await import("./budgets.js");
-    if (await budgetService(tx).getInvocationBlock(companyId, actor.agentId, { issueId: String(sourceTask), projectId: run.contextSnapshot?.projectId as string | null })) {
+    const { budgetServiceInTransaction } = await import("./budgets.js");
+    if (await budgetServiceInTransaction(tx).getInvocationBlock(companyId, actor.agentId, { issueId: String(sourceTask), projectId: run.contextSnapshot?.projectId as string | null })) {
       throw forbidden("The manager's execution is blocked by a budget or pause gate");
     }
   }
 
   async function invocationBlock(tx: Db, companyId: string, issueId: string, metering?: string | TaskBudgetMeteringSupport): Promise<TaskBudgetBlock | null> {
-    // Keep uncapped installations on the existing cheap path.
     const [anyPolicy] = await tx.select({ id: budgetPolicies.id }).from(budgetPolicies).where(and(
       eq(budgetPolicies.companyId, companyId), eq(budgetPolicies.scopeType, "issue"), eq(budgetPolicies.isActive, true))).limit(1);
     if (!anyPolicy) return null;
@@ -98,11 +98,12 @@ export function taskBudgetService(db: Db) {
         const missing = incomplete(usage, metric);
         const value = observed(usage, metric);
         if (!missing && (metric === "billed_cents" ? compareCents(usage.billedCentsExact, policy.amount) < 0 : value < policy.amount)) continue;
+        const scopeName = ancestor.id === issueId ? ancestor.title : "Enclosing task";
         return { code: missing ? "task_budget_usage_unavailable" : "task_budget_exhausted", scopeType: "issue",
-          scopeId: ancestor.id, scopeName: ancestor.title, metric, policyId: policy.id, policyRevision: policy.revision,
+          scopeId: ancestor.id, scopeName, metric, policyId: policy.id, policyRevision: policy.revision,
           observedAmount: missing ? null : value, amount: policy.amount,
-          reason: missing ? `Usage reporting for ${ancestor.title} is incomplete. Repair accounting before continuing.`
-            : `${ancestor.title} reached its ${metric === "billed_cents" ? "dollar" : "token"} budget, including delegated work.` };
+          reason: missing ? `Usage reporting for ${scopeName} is incomplete. Repair accounting before continuing.`
+            : `${scopeName} reached its ${metric === "billed_cents" ? "dollar" : "token"} budget, including delegated work.` };
       }
     }
     const unsupported = policies.find(policy => typeof metering === "string"
@@ -111,14 +112,14 @@ export function taskBudgetService(db: Db) {
     if (unsupported) {
       const policy = unsupported;
       return { code: "task_budget_metering_unsupported", scopeType: "issue", scopeId: policy.scopeId,
-        scopeName: ancestry.find(row => row.id === policy.scopeId)?.title ?? "Task", metric: policy.metric as BudgetMetric,
+        scopeName: policy.scopeId === issueId ? ancestry[0].title : "Enclosing task", metric: policy.metric as BudgetMetric,
         policyId: policy.id, policyRevision: policy.revision, observedAmount: null, amount: policy.amount,
         reason: `This runtime cannot report authoritative ${policy.metric === "billed_cents" ? "billed cost" : "token usage"} for task budgets. Choose a supported runtime and billing mode.` };
     }
     return null;
   }
 
-  async function evaluatePolicies(tx: Db, companyId: string, scopeIds: string[]) {
+  async function evaluatePolicies(tx: Db, companyId: string, scopeIds: string[], sourceIssueId?: string | null) {
     const policies = (await policiesForScopes(tx, companyId, scopeIds)).filter(row => row.isActive);
     for (const policy of policies) {
       const usage = await taskBudgetUsage(tx, companyId, policy.scopeId);
@@ -149,6 +150,7 @@ export function taskBudgetService(db: Db) {
       }
       if (hard || missing) {
         await tx.insert(taskBudgetEffects).values({ companyId, scopeId: policy.scopeId, kind: "stop",
+          payload: { issueIds: sourceIssueId ? [sourceIssueId] : [] },
           dedupeKey: `stop:${policy.id}:${policy.revision}:${missing ? `incomplete:${usage.incompleteCostRunIds.concat(usage.incompleteTokenRunIds).sort().join(":")}:${usage.unknownCost}:${usage.unknownTokens}` : "exhausted"}` }).onConflictDoNothing();
       }
     }
@@ -165,6 +167,7 @@ export function taskBudgetService(db: Db) {
       const current = policies.find(row => row.scopeId === issueId && row.metric === metric);
       if (input.expectedRevisions[metric] !== (current?.revision ?? 0)) throw conflict("The task budget changed; reload before saving", { code: "task_budget_stale_revision" });
       await authorizeManager(tx, companyId, issueId, actor, metric);
+      if (current?.isActive && amount === current.amount) continue;
       if (actor.type === "agent") {
         if (amount === null) throw forbidden("Only the board may remove task caps");
         const targetUsage = await taskBudgetUsage(tx, companyId, issueId);
@@ -242,6 +245,14 @@ export function taskBudgetService(db: Db) {
         });
       }
     }
+    if (!blockers.length && policies.some(policy => policy.isActive) && ancestry[0].assigneeAgentId) {
+      const [runtime] = await db.select({ adapterType: agents.adapterType, config: agents.adapterConfig }).from(agents)
+        .where(and(eq(agents.companyId, companyId), eq(agents.id, ancestry[0].assigneeAgentId)));
+      if (runtime) {
+        const block = await invocationBlock(db, companyId, issueId, taskBudgetMeteringSupport(runtime.adapterType, { config: runtime.config }));
+        if (block) blockers.push(block);
+      }
+    }
     for (const blocker of blockers) if (blocker.code === "task_budget_usage_unavailable") remaining[blocker.metric] = null;
     const total = await taskBudgetUsage(db, companyId, issueId);
     const direct = await taskBudgetUsage(db, companyId, issueId, true);
@@ -254,6 +265,14 @@ export function taskBudgetService(db: Db) {
       }
       permissions[metric] = { canSet: allowed, canIncrease: allowed, canRemove: actor?.type === "board" };
     }
+    if (actor?.type === "agent") {
+      for (const policy of policies) if (policy.scopeId !== issueId) policy.scopeName = "Enclosing task";
+      for (const blocker of blockers) if (blocker.scopeId !== issueId) {
+        blocker.scopeName = "Enclosing task";
+        blocker.reason = blocker.code === "task_budget_usage_unavailable" ? "Enclosing task usage reporting is incomplete. Repair accounting before continuing."
+          : "An enclosing task budget holds this work. Inspect the governing budget before continuing.";
+      }
+    }
     return { issueId, companyId, policies, ownPolicies: policies.filter(row => row.scopeId === issueId), directUsage: direct,
       descendantUsage: { billedCents: total.billedCents - direct.billedCents, totalTokens: total.totalTokens - direct.totalTokens,
         incompleteCostRunIds: total.incompleteCostRunIds.filter(id => !direct.incompleteCostRunIds.includes(id)),
@@ -264,6 +283,11 @@ export function taskBudgetService(db: Db) {
 
   return {
     summary,
+    executionSummary: async (companyId: string, issueId: string) => {
+      const [policy] = await db.select({ id: budgetPolicies.id }).from(budgetPolicies).where(and(
+        eq(budgetPolicies.companyId, companyId), eq(budgetPolicies.scopeType, "issue"), eq(budgetPolicies.isActive, true))).limit(1);
+      return policy ? summary(companyId, issueId) : null;
+    },
     getInvocationBlock: (companyId: string, issueId: string, metering?: string | TaskBudgetMeteringSupport) => invocationBlock(db, companyId, issueId, metering),
     captureRun: (companyId: string, runId: string) => db.transaction(async tx => {
       await lockTaskBudgetCompany(tx as unknown as Db, companyId);
@@ -288,7 +312,7 @@ export function taskBudgetService(db: Db) {
         }
         const scopes = await tx.select({ id: taskBudgetRunAncestors.ancestorIssueId }).from(taskBudgetRunAncestors)
           .where(eq(taskBudgetRunAncestors.contextId, result.context.id));
-        await evaluatePolicies(tx, sample.companyId, scopes.map(row => row.id));
+        await evaluatePolicies(tx, sample.companyId, scopes.map(row => row.id), result.context.issueId);
         const stoppedScopes = sample.isFinal && scopes.length ? await tx.select({ scopeId: taskBudgetEffects.scopeId }).from(taskBudgetEffects)
           .where(and(eq(taskBudgetEffects.companyId, sample.companyId), eq(taskBudgetEffects.kind, "stop"),
             inArray(taskBudgetEffects.scopeId, scopes.map(row => row.id)))) : [];
@@ -305,7 +329,7 @@ export function taskBudgetService(db: Db) {
       await attributeTaskCostEvent(tx, event);
       const scopes = await tx.select({ id: costEventTaskScopes.ancestorIssueId }).from(costEventTaskScopes)
         .where(eq(costEventTaskScopes.costEventId, event.id));
-      await evaluatePolicies(tx, event.companyId, scopes.map(row => row.id));
+      await evaluatePolicies(tx, event.companyId, scopes.map(row => row.id), event.issueId);
     }),
     patch: async (companyId: string, issueId: string, input: TaskBudgetPatchInput, actor: TaskBudgetActor) => {
       if (!(await initializeTaskBudgetAccounting(db, companyId))) throw conflict("Task accounting is initializing; retry shortly", { code: "task_budget_accounting_initializing" });
@@ -313,7 +337,6 @@ export function taskBudgetService(db: Db) {
       return summary(companyId, issueId, actor);
     },
     createPolicies: async (companyId: string, issueId: string, input: TaskBudgetCreateInput, actor: TaskBudgetActor) => {
-      // Called inside the task creation transaction, before its wake is published.
       if (!(await initializeTaskBudgetAccounting(db, companyId))) throw conflict("Task accounting is initializing; retry creation");
       await patchInTransaction(db, companyId, issueId, { ...input, expectedRevisions: { billed_cents: 0, total_tokens: 0 } }, actor);
     },
@@ -383,8 +406,21 @@ export function taskBudgetService(db: Db) {
         .where(and(inArray(approvals.id, approvalsToCancel), inArray(approvals.status, ["pending", "revision_requested"])));
     },
     evaluatePolicies: (companyId: string, scopeIds: string[]) => db.transaction(async tx => {
-      await lockTaskBudgetCompany(tx as unknown as Db, companyId);
-      await evaluatePolicies(tx as unknown as Db, companyId, scopeIds);
+      const db = tx as unknown as Db;
+      await lockTaskBudgetCompany(db, companyId);
+      const repaired = scopeIds.length ? await db.selectDistinct({ runId: taskBudgetRunContexts.liveRunId }).from(taskBudgetRunAncestors)
+        .innerJoin(taskBudgetRunContexts, eq(taskBudgetRunContexts.id, taskBudgetRunAncestors.contextId))
+        .where(and(eq(taskBudgetRunAncestors.companyId, companyId), inArray(taskBudgetRunAncestors.ancestorIssueId, scopeIds),
+          eq(taskBudgetRunContexts.costState, "incomplete"), sql`${taskBudgetRunContexts.normalization}->>'ledgerManaged' = 'true'`,
+          sql`exists (select 1 from heartbeat_runs r where r.id = ${taskBudgetRunContexts.liveRunId} and r.cost_accounted_at is not null)`,
+          sql`exists (select 1 from cost_events e where e.company_id = ${companyId} and e.heartbeat_run_id = ${taskBudgetRunContexts.sourceRunId})`,
+          sql`not exists (select 1 from cost_events e where e.company_id = ${companyId} and e.heartbeat_run_id = ${taskBudgetRunContexts.sourceRunId}
+            and e.billing_type <> 'subscription_included' and (e.cost_status <> 'reported' or e.billing_type = 'unknown'))`)).limit(100) : [];
+      for (const row of repaired) {
+        const [run] = row.runId ? await db.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.id, row.runId))) : [];
+        if (run) await settleTaskBudgetRunFromLedger(db, run);
+      }
+      await evaluatePolicies(db, companyId, scopeIds);
     }),
   };
 }

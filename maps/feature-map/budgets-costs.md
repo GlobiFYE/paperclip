@@ -13,7 +13,7 @@ Agent access: [companion](../agent-access-map/budgets-costs.md).
 ## Sub-features
 
 - `cost-reporting`: inspect spend by the offered time range and resource dimensions.
-- `budgets`: configure supported company/project/agent limits and inspect usage.
+- `budgets`: configure supported company/project/agent limits and optional lifetime task dollar/token caps shared with all delegated descendants.
 - `incidents`: distinguish warnings, hard stops, and manual pauses.
 - `resolution`: raise or resolve a budget incident through authorized controls and verify resumption.
 
@@ -25,7 +25,7 @@ Use Activity → Costs/Budgets in the streamlined shell, `/costs` in the product
 
 ### `budget-enforcement`
 
-Open the governing budget configuration and any resulting budget incident card.
+Open task Properties → Budget, or expand Budget while creating a task. Inspect the governing ancestor and available funds; use the incident card when a limit stops work. Task limits do not reserve funds. In-flight usage can exceed a limit before reporting.
 
 ## Driving it with Playwright and the Paperclip CLI
 
@@ -42,7 +42,7 @@ or unavailable cost data without treating missing data as zero spend.
 
 ### `budget-enforcement`
 
-Automated: [budget service](../../server/src/__tests__/budgets-service.test.ts) exercises soft incidents, hard stops, scope, and valid budget raises.
+Automated: [task ledger and authorization](../../server/src/__tests__/task-budgets.test.ts) covers descendant charges, replay, exact cents, moves, missing usage, and effect recovery. [Budget service](../../server/src/__tests__/budgets-service.test.ts) exercises soft incidents, hard stops, scope, and valid budget raises.
 
 Manual: Create a small fixture budget, cross its threshold with synthetic recorded spend, and verify the warning or hard-stop state. Attempt new work and confirm it is gated. Raise the correct budget through an authorized action and verify eligible continuation without clearing unrelated manual pauses.
 

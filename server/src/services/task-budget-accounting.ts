@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { and, asc, eq, gt, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, or, sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   companies, costEvents, costEventTaskScopes, taskBudgetEffects, heartbeatRuns, issues, taskBudgetAccountingState,
@@ -63,7 +63,6 @@ export async function attributeTaskCostEvent(db: Db, event: typeof costEvents.$i
   }))).onConflictDoNothing();
 }
 
-/** Each call owns one bounded batch; callers retry until ready. */
 export async function initializeTaskBudgetAccounting(db: Db, companyId: string) {
   return db.transaction(async transaction => {
     const tx = transaction as unknown as Db;
@@ -77,7 +76,6 @@ export async function initializeTaskBudgetAccounting(db: Db, companyId: string) 
         ? sql`(${costEvents.createdAt}, ${costEvents.id}) > (select cursor_created_at, cursor_id from task_budget_accounting_state where company_id = ${companyId})` : undefined,
     )).orderBy(asc(costEvents.createdAt), asc(costEvents.id)).limit(250);
     for (const event of batch) {
-      // A deleted legacy task cannot be reconstructed; preserve available evidence.
       const [source] = event.issueId ? await tx.select({ id: issues.id }).from(issues)
         .where(and(eq(issues.companyId, companyId), eq(issues.id, event.issueId))) : [];
       if (source) await attributeTaskCostEvent(tx, { ...event, heartbeatRunId: null }, "legacy_current_hierarchy");
@@ -86,13 +84,11 @@ export async function initializeTaskBudgetAccounting(db: Db, companyId: string) 
     const active = batch.length < 250 ? await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns)
       .leftJoin(taskBudgetRunContexts, and(eq(taskBudgetRunContexts.companyId, heartbeatRuns.companyId), eq(taskBudgetRunContexts.sourceRunId, heartbeatRuns.id)))
       .where(and(eq(heartbeatRuns.companyId, companyId), inArray(heartbeatRuns.status, ["queued", "running"]),
-        lte(heartbeatRuns.createdAt, state.cutoverAt), isNull(taskBudgetRunContexts.id),
+        sql`${heartbeatRuns.createdAt} <= (select cutover_at from task_budget_accounting_state where company_id = ${companyId})`, isNull(taskBudgetRunContexts.id),
         sql`coalesce(${heartbeatRuns.contextSnapshot}->>'issueId', ${heartbeatRuns.nativeIssueId}::text) is not null`)).limit(250) : [];
     for (const run of active) await captureTaskBudgetRun(tx, companyId, run.id);
     const ready = batch.length < 250 && active.length < 250;
     await tx.update(taskBudgetAccountingState).set({ state: ready ? "ready" : "pending",
-      // Keep Postgres microseconds in the cursor; JavaScript Dates truncate them
-      // and can repeatedly select the same rows at a batch boundary.
       ...(last ? { cursorCreatedAt: sql`(select created_at from cost_events where id = ${last.id} and company_id = ${companyId})`, cursorId: last.id } : {}), completedAt: ready ? new Date() : null,
     }).where(eq(taskBudgetAccountingState.companyId, companyId));
     return ready;
@@ -106,7 +102,7 @@ export async function taskBudgetUsage(db: Db, companyId: string, scopeId: string
     totalTokens: sql<number>`coalesce(sum(${costEvents.totalTokens}), 0)::double precision`,
     legacy: sql<boolean>`coalesce(bool_or(${costEventTaskScopes.provenance} = 'legacy_current_hierarchy'), false)`,
     unknownTokens: sql<number>`count(*) filter (where ${costEvents.totalTokens} is null and ${costEvents.usageReceiptId} is null)::int`,
-    unknownCost: sql<number>`count(*) filter (where ${costEvents.usageReceiptId} is null and ${costEvents.costStatus} <> 'reported' and ${costEvents.billingType} <> 'subscription_included')::int`,
+    unknownCost: sql<number>`count(*) filter (where ${costEvents.usageReceiptId} is null and (${costEvents.costStatus} <> 'reported' or ${costEvents.billingType} = 'unknown') and ${costEvents.billingType} <> 'subscription_included')::int`,
   }).from(costEventTaskScopes).innerJoin(costEvents, and(eq(costEvents.id, costEventTaskScopes.costEventId),
     eq(costEvents.companyId, costEventTaskScopes.companyId))).where(and(eq(costEventTaskScopes.companyId, companyId),
     eq(costEventTaskScopes.ancestorIssueId, scopeId), directOnly ? eq(costEventTaskScopes.depth, 0) : undefined));
@@ -171,6 +167,11 @@ export async function recordTaskRunUsageInTransaction(db: Db, sample: TaskRunUsa
   const [run] = await db.select({ agentId: heartbeatRuns.agentId }).from(heartbeatRuns)
     .where(and(eq(heartbeatRuns.companyId, sample.companyId), eq(heartbeatRuns.id, sample.runId)));
   if (!run) throw notFound("Usage run not found");
+  const [managed] = await db.select({ pending: heartbeatRuns.costAccountingPending, accountedAt: heartbeatRuns.costAccountedAt })
+    .from(heartbeatRuns).where(and(eq(heartbeatRuns.companyId, sample.companyId), eq(heartbeatRuns.id, sample.runId)));
+  if (context.normalization?.ledgerManaged === true || managed?.pending || managed?.accountedAt) {
+    throw conflict("Managed run accounting is owned by its canonical usage receipt");
+  }
   const [liveIssue] = await db.select({ id: issues.id }).from(issues).where(and(eq(issues.companyId, sample.companyId), eq(issues.id, context.issueId)));
   const rawPrevious = context.normalization ?? {};
   const componentDelta = (field: "inputTokens" | "cachedInputTokens" | "outputTokens") => {
@@ -198,15 +199,13 @@ export async function recordTaskRunUsageInTransaction(db: Db, sample: TaskRunUsa
   return { event, duplicate: false, context: updated };
 }
 
-/** Reuse the canonical run ledger; task accounting never inserts a second
- * financial charge for a managed run. Called under the company accounting lock. */
 export async function settleTaskBudgetRunFromLedger(db: Db, run: typeof heartbeatRuns.$inferSelect, noProviderWork = false) {
   const context = await captureTaskBudgetRun(db, run.companyId, run.id);
   if (!context) return;
   const events = await db.select().from(costEvents).where(and(eq(costEvents.companyId, run.companyId), eq(costEvents.heartbeatRunId, run.id)));
   const [money] = await db.select({ total: sql<string>`coalesce(sum(${costEvents.costCents}), 0)::text` }).from(costEvents)
     .where(and(eq(costEvents.companyId, run.companyId), eq(costEvents.heartbeatRunId, run.id)));
-  const costComplete = noProviderWork || events.length > 0 && events.every(event => event.billingType === "subscription_included" || event.costStatus === "reported");
+  const costComplete = noProviderWork || events.length > 0 && events.every(event => event.billingType === "subscription_included" || event.costStatus === "reported" && event.billingType !== "unknown");
   const tokenComplete = noProviderWork || events.length > 0 && events.every(event => event.totalTokens !== null);
   const tokens = noProviderWork ? 0 : events.reduce((total, event) => total + (event.totalTokens ?? 0), 0);
   await db.update(taskBudgetRunContexts).set({

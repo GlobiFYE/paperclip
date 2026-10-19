@@ -1083,7 +1083,8 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
       }
     },
     upsertPolicy: (companyId: string, input: BudgetPolicyUpsertInput, actorUserId: string | null) =>
-      mutate(companyId, (service) => service.upsertPolicy(companyId, input, actorUserId)),
+      input.scopeType === "issue" ? reads.upsertPolicy(companyId, input, actorUserId)
+        : mutate(companyId, (service) => service.upsertPolicy(companyId, input, actorUserId)),
     evaluateCostEvent: (event: typeof costEvents.$inferSelect) =>
       mutate(event.companyId, (service) => service.evaluateCostEvent(event)),
     getInvocationBlock: (companyId: string, agentId: string | null, context?: { issueId?: string | null; projectId?: string | null }) =>

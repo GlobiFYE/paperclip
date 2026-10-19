@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { BudgetMetric, TaskBudgetPatchInput } from "@paperclipai/shared";
+import type { BudgetMetric, BudgetPolicySummary, TaskBudgetPatchInput } from "@paperclipai/shared";
 import { budgetsApi } from "../api/budgets";
 import { queryKeys } from "../lib/queryKeys";
 import { budgetInputValue, formatBudgetAmount, parseBudgetInput } from "../lib/task-budget-format";
@@ -13,6 +13,7 @@ export function TaskBudgetPanel({ issueId }: { issueId: string }) {
   const { data, error, isPending } = useQuery({ queryKey: queryKeys.budgets.task(issueId),
     queryFn: () => budgetsApi.task(issueId), refetchInterval: 15000 });
   const [editing, setEditing] = useState(false);
+  const [editBaseline, setEditBaseline] = useState<BudgetPolicySummary[]>([]);
   const [dollars, setDollars] = useState("");
   const [tokens, setTokens] = useState("");
   useEffect(() => {
@@ -37,7 +38,7 @@ export function TaskBudgetPanel({ issueId }: { issueId: string }) {
   const submit = () => {
     const changes: TaskBudgetPatchInput = { expectedRevisions: {} };
     for (const [metric, field, draft] of [["billed_cents", "maxCostCents", dollars], ["total_tokens", "maxTokens", tokens]] as const) {
-      const policy = data.ownPolicies.find(row => row.metric === metric);
+      const policy = editBaseline.find(row => row.metric === metric);
       const amount = draft.trim() ? parseBudgetInput(metric, draft) : null;
       const existing = policy?.isActive ? policy.amount : null;
       if (amount !== existing) {
@@ -51,7 +52,7 @@ export function TaskBudgetPanel({ issueId }: { issueId: string }) {
   return <section className="space-y-3 text-xs" aria-label="Task budget">
     <div className="flex items-center justify-between gap-3">
       <span className="font-medium">Budget</span>
-      {canEdit && !editing ? <Button size="sm" variant="ghost" onClick={() => setEditing(true)}>{hasPolicies ? "Edit" : "Set budget"}</Button> : null}
+      {canEdit && !editing ? <Button size="sm" variant="ghost" onClick={() => { setEditBaseline(data.ownPolicies); setEditing(true); }}>{hasPolicies ? "Edit" : "Set budget"}</Button> : null}
     </div>
     {data.initialization === "pending" ? <p className="text-muted-foreground">Preparing historical usage…</p> : null}
     {data.primaryBlocker ? <p role="status" className="text-destructive">{data.primaryBlocker.reason}</p> : null}

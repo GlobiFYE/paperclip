@@ -38,26 +38,35 @@ have additional board gates.
 
 Review: `baseline`.
 
-API: `present` — representative operation IDs:
+API: `present` — task operations:
 
-- `GET /api/companies/{companyId}/budgets/overview`.
-- `POST /api/companies/{companyId}/budgets/policies`.
+- `GET /api/issues/{id}/budget`.
+- `PATCH /api/issues/{id}/budget` with an expected revision per changed metric.
+- Task creation and `create_task` accept optional dollar/token caps atomically.
+- Existing company/project/agent policies use the budget policy endpoints.
 
-Agent access: `restricted` — Agent-readable overview where allowed; board-only
-configuration.
+Agent access: `partial` — task reads/updates use REST, native call_api, and CLI
+`cost budget task` / `task:update`; native get_task_context includes the summary.
 
-Policy: Reading costs uses company/resource cost policy. Budget policies and incident
-resolution require a board actor.
+Policy: Company and task read authorization applies. Board actors supply outer
+funding and may remove caps. An active registered run owning a strict ancestor
+may allocate another worker's descendant caps within remaining enclosing funds,
+subject to task assignment authority. Workers cannot increase their own caps,
+escape their funding branch, or certify missing runtime usage. Company/project/
+agent policy changes and incident decisions remain board-only.
 
-Evidence: `source-only` — [implementation](../../server/src/routes/costs.ts#L346) at the
-reviewed commit above.
+Evidence: `source-only` — [routes](../../server/src/routes/costs.ts),
+[policy authority](../../server/src/services/task-budgets.ts), and
+[database integration tests](../../server/src/__tests__/task-budgets.test.ts).
+The database tests exercise allowed/denied actors; they are not an agent credential
+acceptance claim.
 
-Verification: `not-run` — assert the documented agent denial with an owned test fixture;
-verify any listed agent request/result path separately. A delegated operation needs its
-own policy and access review.
+Verification: `not-run` — read through an actual run, allocate a child's cap, reject self
+funding and stale revisions, and verify persisted ancestry and enforcement.
 
-Gaps: Read API exists; no agent-write path for budget policies, including agents with
-ordinary company access.
+Gaps: Live qualification is configuration-specific. Dollar caps require an
+authoritative billed-cost receipt or proven included billing; token caps require
+complete canonical usage. Unsupported and missing metering hold execution.
 
 ## `incidents`
 

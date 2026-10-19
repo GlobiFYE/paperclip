@@ -1,3 +1,4 @@
+import { budgetServiceInTransaction } from "./budgets.js";
 import { taskBudgetService } from "./task-budgets.js";
 import { processTaskBudgetEffects } from "./task-budget-effects.js";
 import { taskBudgetMeteringSupport } from "./task-budget-metering.js";
@@ -2763,7 +2764,7 @@ export function heartbeatService(
           const tx = transaction as unknown as Db;
           await lockTaskBudgetCompany(tx, run.companyId);
           await taskBudgetService(tx).captureRun(run.companyId, run.id);
-          return await budgetService(tx).getInvocationBlock(run.companyId, run.agentId, { issueId })
+          return await budgetServiceInTransaction(tx).getInvocationBlock(run.companyId, run.agentId, { issueId })
             ?? await taskBudgetService(tx).getInvocationBlock(run.companyId, issueId,
               taskBudgetMeteringSupport(agent.adapterType, { config: runtimeConfig, executionTarget }, nativeProvider));
         }) : null;
