@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { chatConversations, chatEndpoints, chatMessageLinks, heartbeatRuns, issueComments, runIdentityContexts, type Db } from "@paperclipai/db";
 import type { ChatProvider } from "@paperclipai/shared";
 import { forbidden } from "../../errors.js";
@@ -9,7 +9,7 @@ type Run = Pick<typeof heartbeatRuns.$inferSelect,
 type Context = typeof runIdentityContexts.$inferSelect;
 
 export async function chatRunSourceMessageId(db: Db, run: Run, options: { context?: Context | null; allowLegacyWakeComment?: boolean; provider?: ChatProvider } = {}): Promise<string | null> {
-  const legacyMessageId = options.allowLegacyWakeComment && typeof run.contextSnapshot?.wakeCommentId === "string"
+  let legacyMessageId = options.allowLegacyWakeComment && typeof run.contextSnapshot?.wakeCommentId === "string"
     ? run.contextSnapshot.wakeCommentId : null;
   if (!run.activeIdentityContextId) {
     return legacyMessageId;
@@ -47,7 +47,7 @@ export async function chatRunSourceMessageId(db: Db, run: Run, options: { contex
       )).limit(1);
       if (!run.responsibleUserId || message?.authorUserId !== run.responsibleUserId) throw forbidden("Chat requester provenance changed");
     }
-    if (!origin.parentContextId) return !acceptedMessageSeen && origin.runId === run.id ? legacyMessageId : null;
+    if (!origin.parentContextId) return !acceptedMessageSeen ? legacyMessageId : null;
     if (seen.has(origin.id) || seen.size >= 100) throw forbidden("Chat source provenance could not be verified");
     seen.add(origin.id);
     const [parent] = await db.select().from(runIdentityContexts).where(and(
@@ -55,8 +55,16 @@ export async function chatRunSourceMessageId(db: Db, run: Run, options: { contex
       eq(runIdentityContexts.companyId, run.companyId),
       eq(runIdentityContexts.status, "accepted"),
     )).limit(1);
-    if (!parent || parent.responsibleUserId !== run.responsibleUserId) throw forbidden("Chat requester provenance changed");
-    const [sourceRun] = await db.select({ issueId: boundRunIssueIdSql() }).from(heartbeatRuns).where(and(
+    if (!parent) throw forbidden("Chat requester provenance changed");
+    if (parent.responsibleUserId !== run.responsibleUserId) {
+      if (acceptedMessageSeen) return null;
+      throw forbidden("Chat requester provenance changed");
+    }
+    const [sourceRun] = await db.select({
+      issueId: boundRunIssueIdSql(),
+      responsibleUserId: heartbeatRuns.responsibleUserId,
+      wakeCommentId: sql<unknown>`${heartbeatRuns.contextSnapshot}->'wakeCommentId'`,
+    }).from(heartbeatRuns).where(and(
       eq(heartbeatRuns.id, parent.runId),
       eq(heartbeatRuns.companyId, run.companyId),
       eq(heartbeatRuns.agentId, run.agentId),
@@ -64,6 +72,8 @@ export async function chatRunSourceMessageId(db: Db, run: Run, options: { contex
     if (!sourceRun || !boundRunIssueId(run) || sourceRun.issueId !== boundRunIssueId(run)) {
       throw forbidden("Chat tools cannot be inherited by another task");
     }
+    if (options.allowLegacyWakeComment && !acceptedMessageSeen && sourceRun.responsibleUserId === run.responsibleUserId &&
+        typeof sourceRun.wakeCommentId === "string") legacyMessageId ??= sourceRun.wakeCommentId;
     origin = parent;
   }
 }

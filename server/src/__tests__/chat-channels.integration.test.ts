@@ -2789,13 +2789,17 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       await expect(gateway.executeTool({ sessionToken: session.token, tool: tool.name, parameters: assessment, idempotencyKey })).rejects.toThrow();
       expect(summaryAttempts).toBe(2);
     }, 25_000);
-    it.each([false, true])("keeps GitHub review tools callable through a later native task gateway (board follow-up: %s)", async boardFollowUp => {
+    it.each([
+      { boardFollowUp: false, legacyOrigin: false },
+      { boardFollowUp: true, legacyOrigin: false },
+      { boardFollowUp: false, legacyOrigin: true },
+    ])("keeps GitHub review tools callable through a later native task gateway (board follow-up: $boardFollowUp, legacy origin: $legacyOrigin)", async ({ boardFollowUp, legacyOrigin }) => {
       vi.stubEnv("PAPERCLIP_API_URL", "https://paperclip.example.test");
       onTestFinished(() => vi.unstubAllEnvs());
       const f = await publicationRetryFixture();
       const identity = await initializeRunIdentity(db, {
         companyId: f.companyId, runId: f.run.id, issueId: f.conversation.issueId!,
-        responsibleUserId: "owner-user", messageIds: [String(f.run.contextSnapshot?.wakeCommentId)], cause: "instruction",
+        responsibleUserId: "owner-user", messageIds: legacyOrigin ? [] : [String(f.run.contextSnapshot?.wakeCommentId)], cause: "instruction",
       });
       vi.stubGlobal("fetch", f.providerFetch);
       onTestFinished(() => vi.unstubAllGlobals());
