@@ -2544,6 +2544,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
   const [selectedPendingKey, setSelectedPendingKey] = useState<string | null>(
     null,
   );
+  const [takeoverScrollKey, setTakeoverScrollKey] = useState<string | null>(null);
   const knownPendingKeysRef = useRef<Set<string>>(new Set());
   const lastInputUserCommentRef = useRef(latestUserCommentId);
   useEffect(() => {
@@ -2567,6 +2568,22 @@ export function TaskChatThread(props: TaskChatThreadProps) {
     pendingComposerInputs.find((input) => input.key === selectedPendingKey) ??
     currentPendingInputs[0] ??
     null;
+  useEffect(() => {
+    if (
+      !takeoverScrollKey ||
+      takeoverMode !== "open" ||
+      selectedPendingKey !== takeoverScrollKey
+    ) {
+      return;
+    }
+    const frame = window.requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLElement>('[data-testid="task-chat-composer-takeover"]')
+        ?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      setTakeoverScrollKey(null);
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [selectedPendingKey, takeoverMode, takeoverScrollKey]);
   const interactionDraftKey = selectedPendingInput
     ? `paperclip:task-input:${issueId ?? "unknown"}:${selectedPendingInput.key}`
     : undefined;
@@ -2710,8 +2727,14 @@ export function TaskChatThread(props: TaskChatThreadProps) {
   );
 
   const reopenToolReview = useCallback((interactionId: string) => {
-    setSelectedPendingKey(pendingComposerInputs.find(input => input.kind === "durable" && input.interaction.id === interactionId)?.key ?? `interaction:${interactionId}`);
+    const key =
+      pendingComposerInputs.find(
+        (input) =>
+          input.kind === "durable" && input.interaction.id === interactionId,
+      )?.key ?? `interaction:${interactionId}`;
+    setSelectedPendingKey(key);
     setTakeoverMode("open");
+    setTakeoverScrollKey(key);
   }, [pendingComposerInputs]);
 
   const renderInteraction = useCallback(
@@ -2823,6 +2846,7 @@ export function TaskChatThread(props: TaskChatThreadProps) {
               dismissQuestion(selectedPendingInput.interaction.id);
               setSelectedPendingKey(null);
             }
+            setTakeoverScrollKey(null);
             setTakeoverMode("normal");
           },
           onSkip: () => skipPendingInput(selectedPendingInput),
