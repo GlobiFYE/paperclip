@@ -2100,7 +2100,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       // The step offers a shortlist — the recommended tiles, plus the curated
       // second tier behind its disclosure — while the snap's idea of "visible"
       // is every registered adapter (`moreAdapters`). An adapter in the second
-      // but in neither row — a saved `gemini_local`, which is neither
+      // but in neither row — a saved `kimi_local`, which is neither
       // recommended nor in `ONBOARDING_MORE_ADAPTER_TYPES` — therefore satisfies
       // the snap, which leaves it alone, while the screen it is supposed to be
       // chosen on never shows it. Nothing is highlighted, the canvas is shut,
@@ -2108,10 +2108,10 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       // against an adapter the customer has not seen on this screen.
       //
       // The untouchable half of this test is the snap: it must leave the saved
-      // `gemini_local` alone (that is what makes the case reachable at all), so
+      // `kimi_local` alone (that is what makes the case reachable at all), so
       // the assertion below is about the gate agreeing with the screen.
-      mockAdapterRegistry.list = [{ type: "claude_local" }, { type: "gemini_local" }];
-      const { root } = await openStep4({ adapterType: "gemini_local" });
+      mockAdapterRegistry.list = [{ type: "claude_local" }, { type: "kimi_local" }];
+      const { root } = await openStep4({ adapterType: "kimi_local" });
 
       const tiles = [...document.body.querySelectorAll("button[aria-checked]")];
       expect(tiles.length, "the row should still offer what it has").toBeGreaterThan(0);
@@ -2119,7 +2119,7 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
         tiles.some((t) => t.getAttribute("aria-checked") === "true"),
         "the saved adapter is in no row, so nothing should read as chosen",
       ).toBe(false);
-      // Neither tier offers it: `gemini_local` is outside the curated second
+      // Neither tier offers it: `kimi_local` is outside the curated second
       // tier, so there is not even a disclosure to open looking for it.
       expect(document.body.textContent).not.toContain("More adapters");
 
@@ -2254,6 +2254,92 @@ describe("OnboardingWizard restore-gate (stale localStorage across accounts)", (
       } finally {
         if (models) mockAgentsApi.adapterModels.mockImplementation(models);
       }
+    });
+
+    it("connects Gemini with a key the customer types, never through a browser sign-in", async () => {
+      // Gemini is offered as a second-tier source, and its credential model is
+      // fixed: it takes an API key on this step. The panel it would otherwise
+      // share with the two recommended sources is a managed subscription flow,
+      // and running Gemini through it would start a login nothing can finish —
+      // the adapter brings its own key slot (`GEMINI_API_KEY`) instead. The
+      // negative half is the assertion that matters: registering the adapter
+      // must not put a sign-in card (or a started login) on this step.
+      mockAdapterRegistry.list = [
+        { type: "claude_local" },
+        { type: "codex_local" },
+        { type: "gemini_local" },
+      ];
+      const { root } = await openStep4();
+
+      const disclosure = [...document.body.querySelectorAll("button")].find(
+        (b) => b.textContent?.trim() === "More adapters",
+      );
+      expect(disclosure, "Gemini is offered behind the disclosure").toBeTruthy();
+      await act(async () => {
+        disclosure!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      for (let i = 0; i < 4; i++) await flushReact();
+
+      const tile = [...document.body.querySelectorAll('[role="radio"]')].find(
+        (t) => (t.getAttribute("aria-label") ?? "").startsWith("Gemini"),
+      );
+      expect(tile, "the disclosure should reveal the Gemini tile").toBeTruthy();
+      await act(async () => {
+        tile!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      for (let i = 0; i < 10; i++) await flushReact();
+
+      expect(
+        document.body.querySelector('input[type="password"]'),
+        "Gemini takes its key on the step",
+      ).toBeTruthy();
+      expect(document.body.textContent).toContain(
+        "Provide your Gemini API key to connect",
+      );
+      expect(document.body.textContent).not.toContain("Preparing browser sign-in");
+      expect(document.body.textContent).not.toContain("Sign in to");
+      expect(document.body.textContent).not.toContain("claude auth login");
+      expect(managedApi.startLocalLogin).not.toHaveBeenCalled();
+      expect(mockAgentsApi.startClaudeSetupTokenLogin).not.toHaveBeenCalled();
+
+      await act(async () => root.unmount());
+    });
+
+    it("offers Grok and Gemini behind the More adapters disclosure", async () => {
+      // The second tier is curated rather than registry-driven: an adapter is
+      // only reachable here once someone adds it to the list. The two new
+      // members have to show up as sources — named after the provider, not the
+      // adapter type — inside the same disclosure OpenCode uses.
+      mockAdapterRegistry.list = [
+        { type: "claude_local" },
+        { type: "codex_local" },
+        { type: "grok_local" },
+        { type: "gemini_local" },
+      ];
+      const { root } = await openStep4();
+
+      const disclosure = [...document.body.querySelectorAll("button")].find(
+        (b) => b.textContent?.trim() === "More adapters",
+      );
+      expect(disclosure, "Grok and Gemini are offered behind the disclosure").toBeTruthy();
+      expect(disclosure!.getAttribute("aria-expanded")).toBe("false");
+      await act(async () => {
+        disclosure!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      });
+      for (let i = 0; i < 4; i++) await flushReact();
+      expect(disclosure!.getAttribute("aria-expanded")).toBe("true");
+
+      const labels = [...document.body.querySelectorAll('[role="radio"]')].map(
+        (t) => t.getAttribute("aria-label") ?? "",
+      );
+      expect(labels.some((label) => label.startsWith("Grok"))).toBe(true);
+      expect(labels.some((label) => label.startsWith("Gemini"))).toBe(true);
+      // The negative half: the tile reads the customer's provider name, never
+      // the registry type id.
+      expect(labels.join(" ")).not.toContain("grok_local");
+      expect(labels.join(" ")).not.toContain("gemini_local");
+
+      await act(async () => root.unmount());
     });
 
     it("creates the OpenCode Go connection when the key card's provider is switched", async () => {

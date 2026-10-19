@@ -165,9 +165,12 @@ const ONBOARDING_EXCLUDED_ADAPTER_TYPES = new Set([
  * the curated second tier: every other registered adapter — the CLIs this step
  * has never walked anyone through, and every external/plugin type — stays out.
  * A new entry lands here deliberately, next to the hint and the model default
- * it needs, rather than appearing the day a registry entry changes.
+ * it needs, rather than appearing the day a registry entry changes. Not every
+ * entry needs both in this file: Grok's default model (`grok-build`) comes from
+ * its adapter build config, and Gemini's from `buildAdapterConfig` below, so
+ * neither is pinned here.
  */
-const ONBOARDING_MORE_ADAPTER_TYPES = new Set(["opencode_local"]);
+const ONBOARDING_MORE_ADAPTER_TYPES = new Set(["opencode_local", "grok_local", "gemini_local"]);
 
 function restoreOnboardingAdapterType(savedAdapterType: unknown, provider?: unknown): AdapterType {
   if (savedAdapterType === "paperclip_runner" && (provider === undefined || provider === "codex")) return "codex_local";
@@ -265,6 +268,8 @@ const MODEL_SOURCE_INLINE_MARKS: Record<string, ComponentType<{ className?: stri
 const API_KEY_ENV_KEYS: Record<string, string> = {
   claude_local: ANTHROPIC_API_KEY_ENV_KEY,
   codex_local: "OPENAI_API_KEY",
+  grok_local: "XAI_API_KEY",
+  gemini_local: "GEMINI_API_KEY",
 };
 
 /** The two providers the OpenCode harness can run. Its connect step asks which. */
@@ -748,7 +753,7 @@ function OnboardingWizardInner({
     : savedKeys.options[0]?.id;
   const selectedApiKey = savedKeys.options.find((option) => option.id === selectedApiKeyId);
   const credentialMode = credentialModeChoice ?? (
-    adapterType === "opencode_local"
+    adapterType === "opencode_local" || adapterType === "gemini_local"
       ? "api"
       : (savedKeys.subscriptions.length > 0 || (adapterType === "claude_local" && savedKeys.storedLogin.data))
         ? "subscription" : savedKeys.options.length ? "api" : "subscription"
