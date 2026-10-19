@@ -108,7 +108,29 @@ held responses. No agent run was started.
   error. Connector search/navigation and the synthetic connector remain usable.
 - This is local verification, not a staging deployment or proof of historical
   staging latency. Disk cleanup, workspace caching, route-splitting ownership,
-  dependencies, migrations, telemetry and merging remain outside this PR.
+  dependencies, migrations and telemetry remain outside this PR. Merging was
+  excluded from the original handoff; the user later authorized a merge after
+  the PR checks pass. Staging deployment remains excluded.
+
+## PR check repair
+
+At `453d488398`, every CI lane passed except serialized server shard 7/9.
+The [failed job](https://github.com/paperclipai/paperclip/actions/runs/39285071851/job/118169386829)
+reported one failure among 176 tests: the compact issue-list cache capacity test
+expected 256 entries and found 238. Its 261 HTTP requests took 5,631 ms, crossing
+the cache's 5,000 ms expiry. The production cache correctly prunes expired rows.
+The capacity assertion therefore depended on runner speed.
+
+The test now holds `Date.now()` fixed while it fills and checks the cache, then
+restores the clock in `finally`. Real HTTP, database operations and timers still
+run. This isolates capacity eviction from expiry without changing production
+behavior. The earlier CI failure remains recorded here; a successful rerun does
+not erase it.
+
+The focused local rerun passed all 29 tests across the issue-list assignee/filter
+and summary-route suites with real embedded PostgreSQL. `git diff --check` passed.
+The next remote CI run qualifies this test-only repair; the application build
+and browser measurements above remain unchanged.
 
 ## Preview and reproduction
 
