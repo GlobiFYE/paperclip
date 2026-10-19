@@ -133,8 +133,9 @@ try {
         try {
           await response.finished();
           const body = await response.body();
+          const sizes = await response.request().sizes();
           const completedMs = performance.now() - started;
-          records.push({ path: url.pathname, status: response.status(), decodedBytes: body.byteLength, completedMs });
+          records.push({ path: url.pathname, status: response.status(), decodedBytes: body.byteLength, encodedBytes: sizes.responseBodySize, completedMs });
           if (url.pathname.endsWith("/issues/summaries")) sidebarReady = completedMs;
           if (fixture.tasks.some(task => url.pathname === `/api/issues/${task.id}`)) {
             detailCompleted++;
@@ -153,6 +154,7 @@ try {
       const longTasks = await page.evaluate(() => window.__appsLongTasks);
       const recentRecords = records.filter(record => record.path.endsWith("/issues/summaries") || fixture.tasks.some(task => record.path === `/api/issues/${task.id}`));
       samples.push({ variant: variant.label, scenario, run: run + 1, usableMs, sidebarReadyMs: sidebarReady, recentBytes: recentRecords.reduce((n, r) => n + r.decodedBytes, 0),
+        recentEncodedBytes: recentRecords.reduce((n, r) => n + r.encodedBytes, 0),
         apiRequests: requests.length,
         recentRequests: requests.filter(record => record.path.endsWith("/issues/summaries") || fixture.tasks.some(task => record.path === `/api/issues/${task.id}`)).length,
         records, requests,
