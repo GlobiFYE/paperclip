@@ -168,8 +168,19 @@ function isBedrockAuth(env: Record<string, string>): boolean {
   );
 }
 
+function isFoundryAuth(env: Record<string, string>): boolean {
+  return env.CLAUDE_CODE_USE_FOUNDRY === "1" || env.CLAUDE_CODE_USE_FOUNDRY === "true";
+}
+
+function resolveClaudeBiller(env: Record<string, string>): string {
+  if (isBedrockAuth(env)) return "aws_bedrock";
+  if (isFoundryAuth(env)) return "microsoft_foundry";
+  return "anthropic";
+}
+
 function resolveClaudeBillingType(env: Record<string, string>): "api" | "subscription" | "metered_api" {
   if (isBedrockAuth(env)) return "metered_api";
+  if (isFoundryAuth(env)) return "metered_api";
   return hasNonEmptyEnvValue(env, "ANTHROPIC_API_KEY") ? "api" : "subscription";
 }
 
@@ -973,7 +984,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
     const accountingLog = createUsageCheckpointLog(onLog, ctx.onUsage, stdout => {
       const parsed = consumeAccounting(stdout);
       return { usage: parsed.usage ?? undefined, usageBasis: "per_run", costUsd: parsed.costUsd,
-        provider: "anthropic", biller: isBedrockAuth(effectiveEnv) ? "aws_bedrock" : "anthropic",
+        provider: "anthropic", biller: resolveClaudeBiller(effectiveEnv),
         billingType, model: Object.keys(parseObject(parsed.resultJson?.modelUsage)).length > 1 ? "mixed" : parsed.model || model,
           usageByModel: claudeModelReceipts(parsed.resultJson?.modelUsage), complete: parsed.resultJson !== null };
     });
@@ -1032,7 +1043,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         usage: parsedStream.usage ?? undefined,
         usageBasis: "per_run",
         provider: "anthropic",
-        biller: isBedrockAuth(effectiveEnv) ? "aws_bedrock" : "anthropic",
+        biller: resolveClaudeBiller(effectiveEnv),
         model: Object.keys(parseObject(parsedStream.resultJson?.modelUsage)).length > 1 ? "mixed" : parsedStream.model || model,
         usageByModel: claudeModelReceipts(parsedStream.resultJson?.modelUsage),
         billingType,
@@ -1102,7 +1113,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
         usage: parsedStream.usage ?? undefined,
         usageBasis: "per_run",
         provider: "anthropic",
-        biller: isBedrockAuth(effectiveEnv) ? "aws_bedrock" : "anthropic",
+        biller: resolveClaudeBiller(effectiveEnv),
         model: Object.keys(parseObject(parsedStream.resultJson?.modelUsage)).length > 1 ? "mixed" : parsedStream.model || model,
         usageByModel: claudeModelReceipts(parsedStream.resultJson?.modelUsage),
         billingType,
@@ -1289,7 +1300,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
       sessionParams: resolvedSessionParams,
       sessionDisplayId: resolvedSessionId,
       provider: "anthropic",
-      biller: isBedrockAuth(effectiveEnv) ? "aws_bedrock" : "anthropic",
+      biller: resolveClaudeBiller(effectiveEnv),
       model: Object.keys(parseObject(parsed.modelUsage)).length > 1 ? "mixed" : parsedStream.model || asString(parsed.model, model),
       billingType,
       costUsd: parsedStream.costUsd,
@@ -1337,7 +1348,7 @@ export async function execute(ctx: AdapterExecutionContext): Promise<AdapterExec
           errorMessage,
           errorCode: "claude_cli_version_incompatible",
           provider: "anthropic",
-          biller: isBedrockAuth(effectiveEnv) ? "aws_bedrock" : "anthropic",
+          biller: resolveClaudeBiller(effectiveEnv),
           model,
           billingType,
           resultJson: {
