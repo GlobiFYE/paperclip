@@ -200,7 +200,7 @@ export function createChatPublicationFailures(db: Db, options: PublicationFailur
         await tx
           .update(toolConnections)
           .set({
-            healthStatus: "degraded",
+            healthStatus: "failed",
             healthMessage: "Provider credentials or permissions need attention",
             lastError: failure,
             healthCheckedAt: new Date(),

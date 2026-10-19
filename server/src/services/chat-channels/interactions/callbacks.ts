@@ -423,7 +423,7 @@ export function createChatInteractionCallbacks(db: Db, options: InteractionCallb
             await tx
               .update(toolConnections)
               .set({
-                healthStatus: "degraded",
+                healthStatus: "failed",
                 healthMessage:
                   "Provider credentials or permissions need attention",
                 lastError: failure,

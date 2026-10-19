@@ -2800,7 +2800,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         expect.objectContaining({ state: "failed", attempts: 1, nextAttemptAt: null }),
       ]);
       expect((await readToolConnectionsById(f.endpoint.connectionId))[0]).toMatchObject({
-        status: "active", enabled: true, healthStatus: status === 401 ? "degraded" : "healthy",
+        status: "active", enabled: true, healthStatus: status === 401 ? "failed" : "healthy",
       });
       expect(await f.service.get(f.endpoint.id)).toMatchObject({ status: status === 401 ? "attention" : initialEndpoint.status });
       expect(await githubBotToolsForSession(db, f.session)).toEqual(status === 401 ? [] : toolsBefore);
@@ -26583,7 +26583,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
               .where(eq(chatEndpoints.id, endpoint.id));
             expect(currentEndpoint?.status).toBe("attention");
             expect((await readToolConnectionsById(endpoint.connectionId))[0]).toMatchObject({
-              status: "active", enabled: true, healthStatus: "degraded",
+              status: "active", enabled: true, healthStatus: "failed",
             });
           } else {
             const [resource] = await db
@@ -39598,10 +39598,20 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       expectedResourceAvailability: "available",
     },
     {
+      provider: "slack",
       label: "authentication failures as endpoint attention",
       error: Object.assign(new Error("provider token expired"), {
         status: 401,
       }),
+      expectedPublicationState: "failed",
+      expectedEndpointStatus: "attention",
+      expectedConversationState: "active",
+      expectedResourceAvailability: "available",
+    },
+    {
+      provider: "discord",
+      label: "Discord authentication failures as endpoint attention",
+      error: Object.assign(new Error("provider token expired"), { status: 401 }),
       expectedPublicationState: "failed",
       expectedEndpointStatus: "attention",
       expectedConversationState: "active",
@@ -39663,6 +39673,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
   ])(
     "classifies publication $label",
     async ({
+      provider = "slack",
       error,
       expectedConversationState,
       expectedEndpointStatus,
@@ -39671,20 +39682,21 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     }) => {
       const fixture = await seedCompany();
       const { callbacks, endpoint, runtime, service } =
-        await configuredSlackEndpoint(fixture);
+        await (provider === "discord" ? configuredDiscordEndpoint(fixture) : configuredSlackEndpoint(fixture));
       try {
-        const channelId = `C-PUBLICATION-ERROR-${randomUUID().slice(0, 8)}`;
+        const channelId = provider === "discord" ? "333333333333333329" : `C-PUBLICATION-ERROR-${randomUUID().slice(0, 8)}`;
         const channel = makeThread({
           channelId,
-          id: `slack:${channelId}:4200.1`,
+          id: provider === "discord" ? `discord:1457808928258658549:${channelId}:555555555555555596` : `slack:${channelId}:4200.1`,
           name: "publication-errors",
         });
         await deliverMessage({
           callbacks,
           endpointId: endpoint.id,
+          provider: provider as "slack" | "discord",
           thread: channel.thread,
           message: makeMessage({
-            id: "4200.1",
+            id: provider === "discord" ? "555555555555555596" : "4200.1",
             text: "@maya exercise provider failure handling",
             mentioned: true,
           }),
@@ -39734,8 +39746,11 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
           expect(connection).toMatchObject({
             status: "active",
             enabled: true,
-            healthStatus: "degraded",
+            healthStatus: "failed",
           });
+          await service.reconcileProviderRuntimes();
+          expect(runtime.endpoints.has(endpoint.id)).toBe(false);
+          expect((await service.get(endpoint.id)).status).toBe("attention");
         }
       } finally {
         await retirePublicationFixture(service, endpoint.id);
@@ -39779,7 +39794,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       expectedConnection: {
         status: "active",
         enabled: true,
-        healthStatus: "degraded",
+        healthStatus: "failed",
       },
       expectedResourceAvailability: "available",
       runtimeRetained: false,

@@ -1932,9 +1932,10 @@ Publication, provider-reply, and form-open permission failures fail the affected
 operation. An unclassified provider 403 does not establish that the whole
 connection is unusable. Known destination failures quarantine only that resource;
 provider rate limits retain their retry deadlines. Confirmed authentication
-failures pause the endpoint and degrade connection health without changing the
-connection's enabled setting. Endpoint admission still blocks sends and assigned
-channel tools until credentials are repaired. Explicit disable, disconnect, and
+failures put the endpoint in attention and mark connection health failed without
+changing the connection's enabled setting. Admission and background reconciliation
+block sends, assigned channel tools, and runtime restart until credentials are
+repaired. Explicit disable, disconnect, and
 provider installation revocation retain their existing behavior.
 
 ### Task-bound email

@@ -85,6 +85,8 @@ For publication failures, reject one operation with a provider 403 and verify
 that its failure remains visible while unrelated tools and publications continue.
 Repeat with an authentication failure: the endpoint must require attention and
 stop provider traffic, while the connection's enabled setting remains unchanged.
+Reconcile persistent receivers and restart the service; authentication failures
+must remain stopped while transient disconnections can still recover.
 The PostgreSQL suite uses controlled provider failures for these cases; live
 provider credential repair remains a separate acceptance check.
 
