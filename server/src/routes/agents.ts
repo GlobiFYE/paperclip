@@ -2630,11 +2630,13 @@ export function agentRoutes(
     adapterType: string,
     adapterConfig: Record<string, unknown>,
     allowPlainCredentials = false,
+    harnessConfig = adapterConfig,
   ) {
-    if (req.actor.type !== "agent" || !adapterType.endsWith("_local")) return;
+    if (req.actor.type !== "agent" || (!adapterType.endsWith("_local") && adapterType !== "paperclip_runner")) return;
+    const harness = agentHarnessType(adapterType, harnessConfig);
     const changedKeys = LOCAL_ADAPTER_HOST_COMMAND_KEYS.filter((key) =>
       adapterConfig[key] !== undefined &&
-      (key !== "env" || !containsOnlyLocalAdapterCredentialRefs(adapterType, adapterConfig.env, allowPlainCredentials)),
+      (key !== "env" || !containsOnlyLocalAdapterCredentialRefs(harness, adapterConfig.env, allowPlainCredentials)),
     );
     if (changedKeys.length === 0) return;
     throw forbidden(
@@ -5329,6 +5331,8 @@ export function agentRoutes(
           req,
           requestedAdapterType,
           changingAdapterType ? rawEffectiveAdapterConfig : (requestedAdapterConfig ?? {}),
+          false,
+          rawEffectiveAdapterConfig,
         );
       }
       const existingRunnerProvider =
