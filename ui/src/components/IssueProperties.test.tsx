@@ -19,6 +19,8 @@ import { IssueProperties } from "./IssueProperties";
 import { applyOptimisticIssueFieldUpdate } from "../lib/optimistic-issue-comments";
 import { queryKeys } from "../lib/queryKeys";
 
+vi.mock("./TaskBudgetPanel", () => ({ TaskBudgetPanel: () => null }));
+
 const mockAgentsApi = vi.hoisted(() => ({
   list: vi.fn(),
   adapterModels: vi.fn(),

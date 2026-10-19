@@ -1,3 +1,6 @@
+import { taskBudgetService } from "./task-budgets.js";
+import { lockTaskBudgetCompany, initializeTaskBudgetAccounting } from "./task-budget-accounting.js";
+import type { TaskBudgetCreateInput } from "@paperclipai/shared";
 import { measureRunTransaction } from "./execution-transaction-timing.js";
 import { measureRunPhase } from "./execution-preparation-timing.js";
 import { automaticReadRecoveryCleanupCondition, touchedByUserCondition } from "./issue-participation.js";
@@ -1958,6 +1961,7 @@ type IssueCreateInput = Omit<typeof issues.$inferInsert, "companyId" | "title" |
   workspaceSelectionSource?: "explicit" | "channel";
   workspaceSelectionActor?: AuthorizationActor;
   title?: string;
+  budget?: TaskBudgetCreateInput;
   initialPlan?: string | null;
   labelIds?: string[];
   blockedByIssueIds?: string[];
@@ -9875,6 +9879,7 @@ export function issueService(db: Db) {
         inheritExecutionWorkspaceFromIssueId,
         skipExecutionWorkspaceInheritance,
         watchdog,
+        budget,
         watchdogActorRunId,
         actorRunId,
         actorResponsibleUserId,
@@ -9921,7 +9926,11 @@ export function issueService(db: Db) {
       ) {
         throw unprocessable("in_progress issues require an assignee");
       }
+      if (budget && !(await initializeTaskBudgetAccounting(dbOrTx as Db, companyId))) throw conflict("Task accounting is initializing; retry creation");
+      const budgetFingerprint = budget ? `task-budget:${JSON.stringify({ maxCostCents: budget.maxCostCents ?? null, maxTokens: budget.maxTokens ?? null })}` : null;
       const persist = async (tx: DbTransaction) => {
+        await lockTaskBudgetCompany(tx as unknown as Db, companyId);
+        await taskBudgetService(tx as unknown as Db).guardDelegation(companyId, issueData.parentId, issueData.createdByAgentId, actorRunId);
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`issue-privacy-tree:${companyId}`}, 0))`);
         await assertExecutionTaskParent(tx as unknown as Db, companyId, issueData.parentId);
         if (issueData.conversationAgentId && issueData.conversationUserId) {
@@ -10010,6 +10019,10 @@ export function issueService(db: Db) {
           if (existingIssue) deduplicationReason = "recent_open_title";
         }
         if (existingIssue) {
+          if (deduplicationReason === "idempotency_key" && (budgetFingerprint || existingIssue.originFingerprint.startsWith("task-budget:"))
+            && existingIssue.originFingerprint !== (budgetFingerprint ?? "default") && !issueData.originFingerprint) {
+            throw conflict("Task creation budget differs from the original request");
+          }
           // A duplicate may have a different scope or assignee than the proposed task.
           await assertCanReuseIssue?.(existingIssue);
           if (idempotencyKey) {
@@ -10342,6 +10355,7 @@ export function issueService(db: Db) {
           privacyParentIssueId,
           titleNeedsGeneration,
           originRunId: issueData.originRunId ?? actorRunId ?? null,
+          originFingerprint: issueData.originFingerprint ?? budgetFingerprint ?? "default",
           responsibleUserId,
           requestDepth: clampIssueRequestDepth(issueData.requestDepth),
           originKind: issueData.originKind ?? "manual",
@@ -10400,6 +10414,9 @@ export function issueService(db: Db) {
           agentId: issueData.createdByAgentId ?? null,
           userId: issueData.createdByUserId ?? null,
         });
+        if (budget) await taskBudgetService(tx as unknown as Db).createPolicies(companyId, issue.id, budget,
+          issueData.createdByAgentId ? { type: "agent", agentId: issueData.createdByAgentId, runId: actorRunId ?? null }
+            : { type: "board", userId: issueData.createdByUserId });
         await recordChatHandoff(tx, issue, actorRunId);
         if (idempotencyKey) {
           await tx.insert(issueCreateIdempotencyKeys).values({
@@ -10797,8 +10814,20 @@ export function issueService(db: Db) {
       dbOrTx: any = db,
       postCommitActivityPublications?: ActivityPublication[],
       postCommitActions?: IssuePostCommitAction[],
-      options: { bindRuntimeSharedWorkspace?: boolean } = {},
-    ) => {
+      options: { bindRuntimeSharedWorkspace?: boolean; budgetLocked?: boolean } = {},
+    ): Promise<(IssueWithLabels & { blockedByIssueIds?: string[]; changes: ReturnType<typeof buildIssueChanges> }) | null> => {
+      if (data.parentId !== undefined && !options.budgetLocked && dbOrTx === db) {
+        const publications = postCommitActivityPublications ?? [];
+        const actions = postCommitActions ?? [];
+        const result = await db.transaction(async tx => {
+          const [source] = await tx.select({ companyId: issues.companyId }).from(issues).where(eq(issues.id, id));
+          if (source) await lockTaskBudgetCompany(tx as unknown as Db, source.companyId);
+          return issueService(tx as unknown as Db).update(id, data, tx, publications, actions, { ...options, budgetLocked: true });
+        });
+        if (!postCommitActivityPublications) for (const publication of publications) publishActivity(publication);
+        if (!postCommitActions) await executeIssuePostCommitActions(db, actions);
+        return result;
+      }
       const ownedActivityPublications: ActivityPublication[] = [];
       const activityPublications =
         postCommitActivityPublications ?? ownedActivityPublications;
@@ -10821,6 +10850,8 @@ export function issueService(db: Db) {
         .then((rows: Array<typeof issues.$inferSelect>) => rows[0] ?? null);
       if (!existing) return null;
       if (data.parentId !== undefined && data.parentId !== existing.parentId) {
+        await lockTaskBudgetCompany(dbOrTx as Db, existing.companyId);
+        await taskBudgetService(dbOrTx as Db).guardStructureChange(existing.companyId, id, data.parentId, data.actorAgentId);
         await assertExecutionTaskParent(dbOrTx, existing.companyId, data.parentId);
       }
       if (existing.conversationAgentId) {
@@ -11601,6 +11632,11 @@ export function issueService(db: Db) {
 
     remove: (id: string) =>
       db.transaction(async (tx) => {
+        const [budgetIssue] = await tx.select({ companyId: issues.companyId }).from(issues).where(eq(issues.id, id));
+        if (budgetIssue) {
+          await lockTaskBudgetCompany(tx as unknown as Db, budgetIssue.companyId);
+          await taskBudgetService(tx as unknown as Db).guardStructureChange(budgetIssue.companyId, id, undefined);
+        }
         const attachmentAssetIds = await tx
           .select({ assetId: issueAttachments.assetId })
           .from(issueAttachments)
@@ -11631,6 +11667,7 @@ export function issueService(db: Db) {
           throw err;
         }
 
+        if (removedIssue) await taskBudgetService(tx as unknown as Db).retireTask(removedIssue.companyId, id);
         if (removedIssue && attachmentAssetIds.length > 0) {
           await tx.delete(assets).where(
             inArray(
@@ -11659,13 +11696,21 @@ export function issueService(db: Db) {
       agentId: string,
       expectedStatuses: string[],
       checkoutRunId: string | null,
-    ) => {
+      budgetLocked = false,
+    ): Promise<IssueWithLabels> => {
+      if (!budgetLocked) return db.transaction(async tx => {
+        const [source] = await tx.select({ companyId: issues.companyId }).from(issues).where(eq(issues.id, id));
+        if (source) await lockTaskBudgetCompany(tx as unknown as Db, source.companyId);
+        return issueService(tx as unknown as Db).checkout(id, agentId, expectedStatuses, checkoutRunId, true);
+      });
       const issueCompany = await db
         .select({ companyId: issues.companyId })
         .from(issues)
         .where(eq(issues.id, id))
         .then((rows) => rows[0] ?? null);
       if (!issueCompany) throw notFound("Issue not found");
+      const taskBudgetBlock = await taskBudgetService(db).getInvocationBlock(issueCompany.companyId, id);
+      if (taskBudgetBlock) throw conflict(taskBudgetBlock.reason, taskBudgetBlock);
       await assertAssignableAgent(db, issueCompany.companyId, agentId, {
         kind: "work",
       });
@@ -11808,7 +11853,7 @@ export function issueService(db: Db) {
           )
           .returning()
           .then((rows) => rows[0] ?? null);
-        if (adopted) return adopted;
+        if (adopted) return (await withIssueLabels(db, [adopted]))[0];
       }
 
       if (

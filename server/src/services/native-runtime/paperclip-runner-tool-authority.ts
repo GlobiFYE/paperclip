@@ -8,6 +8,9 @@ import type { NativeRuntimeContextSnapshot } from "../../vendor/paperclip-runner
 import { assertCanManageIssueMonitor, eligibleIssueMonitorWait, prepareIssueMonitorUpdate, setTaskMonitorSchema, summarizeIssueMonitor } from "../issue-monitors.js";
 import { readTaskQuestionContext } from "../issue-question-context.js";
 import { isConversation } from "../agent-conversations.js";
+import { taskBudgetService } from "../task-budgets.js";
+import { taskBudgetCreateSchema } from "@paperclipai/shared";
+import { lockTaskBudgetCompany, initializeTaskBudgetAccounting } from "../task-budget-accounting.js";
 import { setIssueTitle } from "../issue-title.js";
 import { externalObjectService } from "../external-objects.js";
 import { instanceSettingsService } from "../instance-settings.js";
@@ -643,6 +646,8 @@ export class PaperclipRunnerToolAuthority {
           acceptedPlan: await this.#acceptedPlan(context.run.contextSnapshot, context.issue),
           sourcePlanApproval: await this.#sourcePlanApproval(context),
           childReviewOutcomes: await this.#readableChildReviewOutcomes(context.run),
+          budget: await taskBudgetService(this.db).summary(this.binding.companyId, this.binding.issueId,
+            { type: "agent", agentId: this.binding.agentId, runId: this.binding.runId }),
           ...(this.binding.nativeReview ? {
             assignedReview: (await getNativeReviewAssignment(this.db, {
               ...this.binding, contextSnapshot: this.binding.nativeReview,
@@ -1285,6 +1290,8 @@ export class PaperclipRunnerToolAuthority {
 
   async #createTask(input: Record<string, unknown>, identityContextId: string | null): Promise<unknown> {
     const idempotencyKey = requiredString(input.idempotencyKey);
+    const budget = input.budget === undefined ? undefined : taskBudgetCreateSchema.parse(input.budget);
+    if (budget && !(await initializeTaskBudgetAccounting(this.db, this.binding.companyId))) throw new Error("task_budget_accounting_initializing");
     if (input.status !== undefined && input.status !== "backlog" && input.status !== "todo") {
       throw new Error("paperclip_runner_tool_input_invalid");
     }
@@ -1340,6 +1347,11 @@ export class PaperclipRunnerToolAuthority {
       return { projectId, trust };
     };
     let publication: Awaited<ReturnType<typeof persistActivity>>["publication"] | null = null;
+    const taskFunding = async (tx: Db, taskId: string) => {
+      const budget = await taskBudgetService(tx).executionSummary(this.binding.companyId, taskId,
+        { type: "agent", agentId: this.binding.agentId, runId: this.binding.runId });
+      return budget ? { budget } : {};
+    };
     const result = await this.#withMutationReceipt("create_task", idempotencyKey, input, async (tx, context) => {
       const { projectId, trust } = await authorizeCreate(tx, context);
       const conversation = Boolean(context.issue.conversationAgentId);
@@ -1352,6 +1364,7 @@ export class PaperclipRunnerToolAuthority {
           throw new Error("paperclip_runner_tool_idempotency_conflict");
         }
         return {
+          ...await taskFunding(tx, existingChild.id),
           commandId: `create-task:${existingChild.id}`,
           disposition: "duplicate",
           stateRevision: existingChild.statusVersion,
@@ -1377,6 +1390,7 @@ export class PaperclipRunnerToolAuthority {
           executionPolicy: { ...normalizeIssueExecutionPolicy({ authorizationPolicy: { trustPreset: trust.preset, trustBoundary: trust.boundary } }) },
           sourceTrust: buildLowTrustSourceTrust({ issueId, runId: this.binding.runId, agentId: this.binding.agentId }),
         } : {}),
+        budget,
         initialPlan: nullableProviderId(input.initialPlan),
         title: requiredString(input.title),
         description: input.description === null || input.description === undefined
@@ -1436,6 +1450,7 @@ export class PaperclipRunnerToolAuthority {
       const wakeId = `created-child:${child.id}`;
       const shouldWake = !deduplicated && childStatus === "todo" && Boolean(child.assigneeAgentId);
       return {
+        ...await taskFunding(tx, child.id),
         commandId: `create-task:${child.id}`,
         disposition: deduplicated ? "duplicate" : "applied",
         stateRevision: childStatusVersion,
@@ -2322,6 +2337,7 @@ export class PaperclipRunnerToolAuthority {
       }
     };
     return this.db.transaction(async tx => {
+      if (operationId === "create_task" || operationId === "reassign_task") await lockTaskBudgetCompany(tx as unknown as Db, this.binding.companyId);
       if (operationId === "create_task") {
         await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`issue-privacy-tree:${this.binding.companyId}`}, 0))`);
       }

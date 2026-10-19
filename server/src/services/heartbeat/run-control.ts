@@ -1311,6 +1311,7 @@ export function createHeartbeatRunControl(db: Db, dependencies: HeartbeatRunCont
   }
 
   async function cancelBudgetScopeWork(scope: BudgetEnforcementScope) {
+    if (scope.scopeType === "issue") throw new Error("Task budget cancellation requires its scoped effect worker");
     const runIds = scope.scopeType === "project"
       ? await listProjectScopedRunIds(scope.companyId, scope.scopeId, scope.createdBefore)
       : await db.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(and(

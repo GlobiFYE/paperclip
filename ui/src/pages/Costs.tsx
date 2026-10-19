@@ -592,6 +592,7 @@ export function Costs({
   const budgetPolicies = budgetData?.policies ?? [];
   const activeBudgetIncidents = budgetData?.activeIncidents ?? [];
   const budgetPoliciesByScope = useMemo(() => ({
+    issue: [...new Map(budgetPolicies.filter(policy => policy.scopeType === "issue").map(policy => [policy.scopeId, policy])).values()],
     company: budgetPolicies.filter((policy) => policy.scopeType === "company"),
     agent: budgetPolicies.filter((policy) => policy.scopeType === "agent"),
     project: budgetPolicies.filter((policy) => policy.scopeType === "project"),
@@ -991,19 +992,19 @@ export function Costs({
               ) : null}
 
               <div className="space-y-5">
-                {(["company", "agent", "project"] as const).map((scopeType) => {
+                {(["company", "agent", "project", "issue"] as const).map((scopeType) => {
                   const rows = budgetPoliciesByScope[scopeType];
                   if (rows.length === 0) return null;
                   return (
                     <section key={scopeType} className="space-y-3">
                       <div>
-                        <h2 className="text-lg font-semibold capitalize">{scopeType === "company" ? "organization" : scopeType} budgets</h2>
+                        <h2 className="text-lg font-semibold capitalize">{scopeType === "company" ? "organization" : scopeType === "issue" ? "task" : scopeType} budgets</h2>
                         <p className="text-sm text-muted-foreground">
                           {scopeType === "company"
                             ? "Organization-wide monthly policy."
                             : scopeType === "agent"
                               ? "Recurring monthly spend policies for individual agents."
-                              : "Lifetime spend policies for execution-bound projects."}
+                              : scopeType === "issue" ? "Lifetime limits shared with delegated work." : "Lifetime spend policies for execution-bound projects."}
                         </p>
                       </div>
                       <div className="grid gap-4 xl:grid-cols-2">

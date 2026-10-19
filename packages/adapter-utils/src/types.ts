@@ -31,6 +31,7 @@ export interface AdapterRuntime {
 // ---------------------------------------------------------------------------
 
 export interface UsageSummary {
+  totalTokens?: number;
   /** Uncached input plus cache writes; excludes cache reads. Total tokens are input + cachedInput + output. */
   inputTokens: number;
   outputTokens: number;

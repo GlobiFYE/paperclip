@@ -1,3 +1,5 @@
+import { settleTaskBudgetRunFromLedger } from "./task-budget-accounting.js";
+import { taskBudgetService } from "./task-budgets.js";
 import { usdToUnits, unitsToCents } from "@paperclipai/shared";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { accountingRuntimeBaselines, budgetReservations, agentRuntimeState, agents, costEvents, heartbeatRuns, nativeRunFinalizations, issues, projects, type Db } from "@paperclipai/db";
@@ -69,7 +71,10 @@ export async function accountRunCost(db: Db, runId: string, hooks: BudgetService
     await tx.update(heartbeatRuns).set({ costAccountingPending: false, costAccountedAt: new Date() }).where(eq(heartbeatRuns.id, run.id));
     await tx.update(budgetReservations).set({ state: preProviderFailure ? "released" : "settled", settledAt: new Date() })
       .where(and(eq(budgetReservations.companyId, run.companyId), eq(budgetReservations.runId, run.id), eq(budgetReservations.state, "held")));
-    if (preProviderFailure) return true;
+    if (preProviderFailure) {
+      await settleTaskBudgetRunFromLedger(tx, run, true);
+      return true;
+    }
     const usage = object(run.usageJson);
     const scope = object(usage.ledgerScope);
     // Deleted attribution targets become unallocated; a deletion must never
@@ -99,6 +104,8 @@ export async function accountRunCost(db: Db, runId: string, hooks: BudgetService
       model: text(usage.model) ?? "unknown", billingType,
       costStatus: (costUsd === null || usage.costStatus === "unpriced") && billingType !== "subscription_included" && hasBillableEvidence ? "unpriced" : usage.costStatus === "estimated" ? "estimated" : "reported",
       inputTokens: amount(usage.inputTokens) ?? 0, cachedInputTokens: amount(usage.cachedInputTokens) ?? 0, outputTokens: amount(usage.outputTokens) ?? 0,
+      totalTokens: [usage.inputTokens, usage.cachedInputTokens, usage.outputTokens].every(value => typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
+        ? Number(usage.inputTokens) + Number(usage.cachedInputTokens) + Number(usage.outputTokens) : null,
       costCents, occurredAt: run.finishedAt ?? run.createdAt,
     };
     const parts = Array.isArray(usage.usageByModel) ? usage.usageByModel.map(object) : [];
@@ -120,7 +127,10 @@ export async function accountRunCost(db: Db, runId: string, hooks: BudgetService
         await createCostEventInTransaction(tx, run.companyId, {
           ...receipt, idempotencyKey: `heartbeat:${run.id}:model:${index}`, model: text(part.model)!,
           inputTokens: amount(partUsage.inputTokens) ?? 0, cachedInputTokens: amount(partUsage.cachedInputTokens) ?? 0,
-          outputTokens: amount(partUsage.outputTokens) ?? 0, costCents: partCents,
+          outputTokens: amount(partUsage.outputTokens) ?? 0,
+          totalTokens: [partUsage.inputTokens, partUsage.cachedInputTokens, partUsage.outputTokens].every(value => typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
+            ? Number(partUsage.inputTokens) + Number(partUsage.cachedInputTokens) + Number(partUsage.outputTokens) : null,
+          costCents: partCents,
         }, publications);
       }
     } else {
@@ -144,6 +154,10 @@ export async function accountRunCost(db: Db, runId: string, hooks: BudgetService
       updatedAt: new Date(),
     }).where(eq(agentRuntimeState.agentId, run.agentId));
     await tx.update(heartbeatRuns).set({ costAccountingPending: false, costAccountedAt: new Date(), accountingProjectionVersion: "v2", accountingLastError: null, accountingLastAttemptAt: new Date() }).where(eq(heartbeatRuns.id, run.id));
+    await settleTaskBudgetRunFromLedger(tx, run);
+    const scopeIds = await tx.execute(sql`select ancestor_issue_id as id from task_budget_run_ancestors a join task_budget_run_contexts c on c.id = a.context_id
+      where c.company_id = ${run.companyId} and c.source_run_id = ${run.id}`);
+    await taskBudgetService(tx).evaluatePolicies(run.companyId, Array.from(scopeIds as unknown as Array<{ id: string }>).map(row => row.id));
     return true;
   });
   for (const file of recoveredFiles) {
@@ -151,6 +165,7 @@ export async function accountRunCost(db: Db, runId: string, hooks: BudgetService
     catch (error) { logger.warn({ err: error, runId }, "Accounting committed; recovered receipt cleanup will retry"); }
   }
   await deliverBudgetEnforcement(db, hooks, identity.companyId);
+  await hooks.deliverTaskBudgetEffects?.(identity.companyId);
   return accounted;
 }
 

@@ -9,6 +9,10 @@ import { accountingIntegrityService } from "../services/accounting-integrity.js"
 import { costDataQualityReport } from "../services/cost-data-quality.js";
 import { billingReconciliationService } from "../services/billing-reconciliation.js";
 import { adjustCostSchema, importBillingInvoiceSchema, repairAccountingSchema, retryAccountingSchema } from "@paperclipai/shared";
+import { and, eq } from "drizzle-orm";
+import { taskBudgetRunContexts } from "@paperclipai/db";
+import { taskBudgetService, type TaskBudgetActor } from "../services/task-budgets.js";
+import { taskBudgetPatchSchema } from "@paperclipai/shared";
 import { Router } from "express";
 import { z } from "zod";
 import type { Db } from "@paperclipai/db";
@@ -188,6 +192,26 @@ export function costRoutes(
     return false;
   }
 
+  function taskBudgetActor(req: Parameters<typeof assertCompanyAccess>[0]): TaskBudgetActor {
+    if (req.actor.type === "board") return { type: "board", userId: req.actor.userId };
+    if (req.actor.type === "agent" && req.actor.agentId) return { type: "agent", agentId: req.actor.agentId, runId: req.actor.runId ?? null };
+    throw badRequest("A board or authenticated agent identity is required");
+  }
+
+  router.get("/issues/:id/budget", async (req, res) => {
+    const issue = await getAccessibleResource(req, res, resolveIssueByRef(req.params.id as string), "Task not found");
+    if (!issue || !(await assertIssueCostReadAllowed(req, res, issue))) return;
+    res.json(await taskBudgetService(db).summary(issue.companyId, issue.id, taskBudgetActor(req)));
+  });
+
+  router.patch("/issues/:id/budget", validate(taskBudgetPatchSchema), async (req, res) => {
+    const issue = await getAccessibleResource(req, res, resolveIssueByRef(req.params.id as string), "Task not found");
+    if (!issue || !(await assertIssueCostReadAllowed(req, res, issue))) return;
+    const summary = await taskBudgetService(db).patch(issue.companyId, issue.id, req.body, taskBudgetActor(req));
+    await heartbeat.drainTaskBudgetEffects(issue.companyId);
+    res.json(summary);
+  });
+
   router.post("/companies/:companyId/cost-events", validate(createCostEventSchema), async (req, res) => {
     const companyId = req.params.companyId as string;
     assertCompanyAccess(req, companyId);
@@ -198,11 +222,23 @@ export function costRoutes(
     }
 
     const actor = getActorInfo(req);
+    if (req.actor.type === "agent" && req.actor.runId) {
+      if (req.body.heartbeatRunId && req.body.heartbeatRunId !== req.actor.runId) {
+        res.status(403).json({ error: "Cost attribution must use the authenticated run" }); return;
+      }
+      const [context] = await db.select().from(taskBudgetRunContexts).where(and(eq(taskBudgetRunContexts.companyId, companyId), eq(taskBudgetRunContexts.sourceRunId, req.actor.runId)));
+      if (context && (await taskBudgetService(db).summary(companyId, context.issueId)).policies.some(policy => policy.isActive)) {
+        res.status(409).json({ error: "Capped model-run usage is recorded by the runtime; do not report it again", details: { code: "task_budget_server_owned_usage" } }); return;
+      }
+    }
+
     const event = await costs.createEvent(companyId, {
       ...req.body,
+      ...(req.actor.type === "agent" && req.actor.runId ? { heartbeatRunId: req.actor.runId } : {}),
       occurredAt: new Date(req.body.occurredAt),
     }, { actorType: actor.actorType, actorId: actor.actorId, agentId: actor.agentId });
 
+    await heartbeat.drainTaskBudgetEffects(companyId);
     res.status(201).json(event);
   });
 
@@ -348,6 +384,11 @@ export function costRoutes(
     assertCompanyAccess(req, companyId);
     if (!(await assertCompanyCostReadAllowed(req, res, companyId))) return;
     const overview = await budgets.overview(companyId);
+    if (req.actor.type === "agent") {
+      overview.policies = overview.policies.filter(policy => policy.scopeType !== "issue");
+      overview.activeIncidents = overview.activeIncidents.filter(incident => incident.scopeType !== "issue");
+      overview.pendingApprovalCount = overview.activeIncidents.filter(incident => incident.approvalStatus === "pending").length;
+    }
     res.json(overview);
   });
 
@@ -359,6 +400,7 @@ export function costRoutes(
       const companyId = req.params.companyId as string;
       assertCompanyAccess(req, companyId);
       const summary = await budgets.upsertPolicy(companyId, req.body, req.actor.userId ?? "board");
+      await heartbeat.drainTaskBudgetEffects(companyId);
       res.json(summary);
     },
   );
@@ -372,6 +414,7 @@ export function costRoutes(
       const incidentId = req.params.incidentId as string;
       assertCompanyAccess(req, companyId);
       const incident = await budgets.resolveIncident(companyId, incidentId, req.body, req.actor.userId ?? "board");
+      await heartbeat.drainTaskBudgetEffects(companyId);
       res.json(incident);
     },
   );

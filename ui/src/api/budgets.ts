@@ -1,4 +1,6 @@
 import type {
+  TaskBudgetSummary,
+  TaskBudgetPatchInput,
   BudgetIncident,
   BudgetIncidentResolutionInput,
   BudgetOverview,
@@ -8,6 +10,8 @@ import type {
 import { api } from "./client";
 
 export const budgetsApi = {
+  task: (issueId: string) => api.get<TaskBudgetSummary>(`/issues/${issueId}/budget`),
+  updateTask: (issueId: string, data: TaskBudgetPatchInput) => api.patch<TaskBudgetSummary>(`/issues/${issueId}/budget`, data),
   overview: (companyId: string) =>
     api.get<BudgetOverview>(`/companies/${companyId}/budgets/overview`),
   upsertPolicy: (companyId: string, data: BudgetPolicyUpsertInput) =>

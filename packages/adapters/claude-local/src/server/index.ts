@@ -132,3 +132,5 @@ export const sessionCodec: AdapterSessionCodec = {
     );
   },
 };
+
+export { resolveClaudeAcpBillingIdentity } from "./acp.js";

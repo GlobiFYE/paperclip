@@ -1,21 +1,11 @@
+import { budgetInputValue, parseBudgetInput, formatBudgetAmount } from "../lib/task-budget-format";
 import { useState } from "react";
 import type { BudgetIncident } from "@paperclipai/shared";
 import { AlertOctagon, AlertTriangle, ArrowUpRight, PauseCircle } from "lucide-react";
-import { formatCents } from "../lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-
-function centsInputValue(value: number) {
-  return (value / 100).toFixed(2);
-}
-
-function parseDollarInput(value: string) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return null;
-  return Math.round(parsed * 100);
-}
 
 function incidentStateLabel(incident: BudgetIncident) {
   if (incident.status === "resolved") return "Resolved";
@@ -38,11 +28,11 @@ export function BudgetIncidentCard({
 }) {
   const isWarning = incident.thresholdType === "soft";
   const [draftAmount, setDraftAmount] = useState(
-    centsInputValue(isWarning
+    budgetInputValue(incident.metric, isWarning
       ? Math.max(incident.amountObserved, incident.amountLimit) + 1000
       : Math.max(incident.amountObserved + 1000, incident.amountLimit)),
   );
-  const parsed = parseDollarInput(draftAmount);
+  const parsed = parseBudgetInput(incident.metric, draftAmount);
   const stateLabel = incidentStateLabel(incident);
 
   return (
@@ -63,8 +53,8 @@ export function BudgetIncidentCard({
             <CardTitle className={isWarning ? "mt-1 text-base" : "mt-1 text-base text-red-950 dark:text-red-50"}>{incident.scopeName}</CardTitle>
             <CardDescription className={isWarning ? "mt-1" : "mt-1 text-red-900/75 dark:text-red-100/70"}>
               {incident.thresholdType === "hard" && incident.amountObserved < incident.amountLimit
-                ? `Accounting is incomplete. Known spend is ${formatCents(incident.amountObserved)}; review pending or unpriced usage in the budget policy.`
-                : `Spending reached ${formatCents(incident.amountObserved)} against a limit of ${formatCents(incident.amountLimit)}.`}
+                ? `Accounting is incomplete. Known spend is ${formatBudgetAmount(incident.metric, incident.amountObserved)}; review pending or unpriced usage in the budget policy.`
+                : `${incident.metric === "total_tokens" ? "Usage" : "Spending"} reached ${formatBudgetAmount(incident.metric, incident.amountObserved)} against a limit of ${formatBudgetAmount(incident.metric, incident.amountLimit)}.`}
             </CardDescription>
           </div>
           {isWarning ? (
@@ -99,7 +89,7 @@ export function BudgetIncidentCard({
 
         <div className="rounded-xl border border-border/60 bg-background/60 p-3">
           <label className="text-(length:--text-micro) uppercase tracking-(--tracking-caps) text-muted-foreground">
-            New budget (USD)
+            {incident.metric === "total_tokens" ? "New token limit" : "New budget (USD)"}
           </label>
           <div className="mt-2 flex flex-col gap-3 sm:flex-row">
             <Input

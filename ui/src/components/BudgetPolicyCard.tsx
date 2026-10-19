@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+import { TaskBudgetPanel } from "./TaskBudgetPanel";
 import { centsToUsd, usdToCents } from "@paperclipai/shared";
 import { useEffect, useId, useState } from "react";
 import type { BudgetPolicySummary } from "@paperclipai/shared";
@@ -29,7 +31,7 @@ function statusTone(status: BudgetPolicySummary["status"]) {
   return "text-emerald-700 dark:text-emerald-200 border-emerald-500/30 bg-emerald-500/10";
 }
 
-export function BudgetPolicyCard({
+function LegacyBudgetPolicyCard({
   summary,
   onSave,
   onUnpricedUsagePolicyChange,
@@ -264,4 +266,12 @@ export function BudgetPolicyCard({
       </CardContent>
     </Card>
   );
+}
+
+export function BudgetPolicyCard(props: Parameters<typeof LegacyBudgetPolicyCard>[0]) {
+  if (props.summary.scopeType === "issue") return <Card>
+    <CardHeader><CardTitle><Link to={`/issues/${props.summary.scopeId}`}>{props.summary.scopeName}</Link></CardTitle></CardHeader>
+    <CardContent><TaskBudgetPanel issueId={props.summary.scopeId} /></CardContent>
+  </Card>;
+  return <LegacyBudgetPolicyCard {...props} />;
 }

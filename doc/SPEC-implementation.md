@@ -50,6 +50,18 @@ These decisions close open questions from `SPEC.md` for V1.
 | Budget enforcement | Soft alerts + hard limit auto-pause |
 | Deployment modes | Canonical model is `local_trusted` + `authenticated` with `private/public` exposure policy (see `doc/DEPLOYMENT-MODES.md`) |
 
+Task budgets additionally support optional lifetime billed-cent and total-token
+caps, including every delegated descendant. Caps share ancestor funds without
+reserving allocations. Either metric can hold execution. The board controls
+outer funding; a registered run owning a strict ancestor may allocate another
+worker's child caps within remaining funding. Usage receipts and the original
+funding ancestry survive retries, reopening, and task moves/deletion. Missing
+or unsupported metering holds capped execution; observed limits may be exceeded
+by in-flight work before usage is reported. See
+[the implementation plan](plans/2026-10-19-task-descendant-budgets.md).
+
+
+
 Low-trust agent presets are containment controls for hostile automated work, not
 general project or issue privacy controls. The core preset resolver contract is
 documented in `doc/LOW-TRUST-PRESETS.md`.

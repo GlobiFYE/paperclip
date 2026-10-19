@@ -1,3 +1,5 @@
+import { taskBudgetService } from "./task-budgets.js";
+import { taskBudgetUsage } from "./task-budget-accounting.js";
 import { compareCents, normalizeCents } from "@paperclipai/shared";
 import { and, desc, eq, gte, inArray, lt, ne, sql, or, isNull, type SQL } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
@@ -12,6 +14,7 @@ import {
   heartbeatRuns,
   nativeRunFinalizations,
   projects,
+  issues,
 } from "@paperclipai/db";
 import type {
   BudgetIncident,
@@ -25,8 +28,9 @@ import type {
   BudgetScopeType,
   BudgetThresholdType,
   BudgetWindowKind,
+  TaskBudgetMeteringSupport,
 } from "@paperclipai/shared";
-import { HttpError, notFound, unprocessable } from "../errors.js";
+import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
 import { withAccountingTransaction } from "./accounting-transaction.js";
 import { logActivity, type LogActivityInput, type ActivityPublication } from "./activity-log.js";
@@ -52,6 +56,7 @@ export type BudgetEnforcementScope = {
 };
 
 export type BudgetServiceHooks = {
+  deliverTaskBudgetEffects?: (companyId: string) => Promise<void>;
   cancelWorkForScope?: (scope: BudgetEnforcementScope) => Promise<void>;
 };
 
@@ -131,6 +136,17 @@ async function resolveScopeRecord(db: Db, scopeType: BudgetScopeType, scopeId: s
     };
   }
 
+  if (scopeType === "issue") {
+    const [issue] = await db.select({ companyId: issues.companyId, name: issues.title }).from(issues).where(eq(issues.id, scopeId));
+    if (!issue) {
+      const [policy] = await db.select({ companyId: budgetPolicies.companyId }).from(budgetPolicies).where(and(eq(budgetPolicies.scopeType, "issue"), eq(budgetPolicies.scopeId, scopeId)));
+      if (!policy) throw notFound("Task budget not found");
+      return { companyId: policy.companyId, name: "Deleted task", paused: false, pauseReason: null };
+    }
+    const block = await taskBudgetService(db).getInvocationBlock(issue.companyId, scopeId);
+    return { ...issue, paused: Boolean(block), pauseReason: block ? "budget" : null };
+  }
+
   const row = await db
     .select({
       companyId: projects.companyId,
@@ -178,7 +194,7 @@ type ObservedSpend = { windowStart: Date; windowEnd: Date; total: number; totalE
 async function computeObservedSpends(db: Db, policies: SpendPolicy[]): Promise<ObservedSpend[]> {
   const now = new Date();
   const windows = policies.map(policy => resolveWindow(policy.windowKind as BudgetWindowKind, now));
-  const billable = policies.map((policy, index) => ({ policy, index })).filter(({ policy }) => policy.metric === "billed_cents");
+  const billable = policies.map((policy, index) => ({ policy, index })).filter(({ policy }) => policy.metric === "billed_cents" && policy.scopeType !== "issue");
   const ledgerColumns: Record<string, SQL> = {};
   const pendingColumns: Record<string, SQL> = {};
   const ledgerPredicates: SQL[] = [], pendingPredicates: SQL[] = [];
@@ -209,12 +225,22 @@ async function computeObservedSpends(db: Db, policies: SpendPolicy[]): Promise<O
   }
   const [ledger = {}] = billable.length ? await db.select(ledgerColumns).from(costEvents).where(or(...ledgerPredicates)) : [];
   const [pending = {}] = billable.length ? await db.select(pendingColumns).from(heartbeatRuns).where(or(...pendingPredicates)) : [];
-  return policies.map((_, index) => ({
+  return Promise.all(policies.map(async (policy, index) => {
+    if (policy.scopeType === "issue") {
+      const usage = await taskBudgetUsage(db, policy.companyId, policy.scopeId);
+      const tokens = policy.metric === "total_tokens";
+      return { windowStart: windows[index].start, windowEnd: windows[index].end,
+        total: tokens ? usage.totalTokens : usage.billedCents,
+        totalExact: tokens ? String(usage.totalTokens) : usage.billedCentsExact,
+        unpricedEventCount: tokens ? usage.unknownTokens : usage.unknownCost,
+        pendingRunCount: tokens ? usage.incompleteTokenRunIds.length : usage.incompleteCostRunIds.length, recoveringRunCount: 0 };
+    }
+    return ({
     windowStart: windows[index].start, windowEnd: windows[index].end,
     total: Number(ledger[`total${index}`] ?? 0), totalExact: normalizeCents(String(ledger[`total${index}`] ?? 0)),
     unpricedEventCount: Number(ledger[`unpriced${index}`] ?? 0), pendingRunCount: Number(pending[`pending${index}`] ?? 0),
     recoveringRunCount: Number(pending[`recovering${index}`] ?? 0),
-  }));
+  }); }));
 }
 
 export async function computeObservedSpend(db: Db, policy: SpendPolicy) {
@@ -281,6 +307,7 @@ async function markApprovalStatus(
 export function budgetServiceInTransaction(db: Db, publications: ActivityPublication[] = []) {
   const recordActivity = (input: LogActivityInput) => logActivity(db, input, publications);
   async function pauseScopeForBudget(policy: PolicyRow) {
+    if (policy.scopeType === "issue") return;
     const now = new Date();
     if (policy.scopeType === "agent") return;
 
@@ -376,6 +403,7 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
       amount > 0 ? Number(((observedAmount / amount) * 100).toFixed(2)) : 0;
     return {
       policyId: policy.id,
+      revision: policy.revision,
       companyId: policy.companyId,
       scopeType: policy.scopeType as BudgetScopeType,
       scopeId: policy.scopeId,
@@ -557,6 +585,10 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
   }
 
   async function reconcileScope(companyId: string, scopeType: BudgetScopeType, scopeId: string) {
+    if (scopeType === "issue") {
+      await taskBudgetService(db).evaluatePolicies(companyId, [scopeId]);
+      return taskBudgetService(db).getInvocationBlock(companyId, scopeId);
+    }
     const scope = await resolveScopeRecord(db, scopeType, scopeId);
     if (scope.companyId !== companyId) throw notFound("Budget scope not found");
     const policies = await db.select().from(budgetPolicies).where(and(
@@ -621,6 +653,16 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
       input: BudgetPolicyUpsertInput,
       actorUserId: string | null,
     ): Promise<BudgetPolicySummary> => {
+      if (input.scopeType === "issue") {
+        if (input.expectedRevision === undefined) throw unprocessable("Expected task budget revision is required");
+        const metric = input.metric ?? "billed_cents";
+        const summary = await taskBudgetService(db).patch(companyId, input.scopeId, {
+          [metric === "billed_cents" ? "maxCostCents" : "maxTokens"]: input.isActive === false ? null : input.amount,
+          expectedRevisions: { [metric]: input.expectedRevision },
+        }, { type: "board", userId: actorUserId });
+        return summary.ownPolicies.find(row => row.metric === metric)!;
+      }
+      if (input.metric && input.metric !== "billed_cents") throw unprocessable("Token policies require a task scope");
       const scope = await resolveScopeRecord(db, input.scopeType, input.scopeId);
       if (scope.companyId !== companyId) {
         throw unprocessable("Budget scope does not belong to company");
@@ -837,7 +879,7 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
     getInvocationBlock: async (
       companyId: string,
       agentId: string | null,
-      context?: { issueId?: string | null; projectId?: string | null },
+      context?: { issueId?: string | null; projectId?: string | null; taskMetering?: TaskBudgetMeteringSupport },
     ) => {
       const scopes: Array<{ scopeType: BudgetScopeType; scopeId: string }> = [
         { scopeType: "company", scopeId: companyId }, ...(agentId ? [{ scopeType: "agent" as const, scopeId: agentId }] : []),
@@ -849,6 +891,9 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
       for (const { scopeType, scopeId } of scopes) {
         const block = await reconcileScope(companyId, scopeType, scopeId);
         if (block) return block;
+      }
+      if (context?.issueId) {
+        return taskBudgetService(db).getInvocationBlock(companyId, context.issueId, context.taskMetering);
       }
       return null;
     },
@@ -868,7 +913,22 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
       if (incident.companyId !== companyId) throw notFound("Budget incident not found");
 
       const policy = await getPolicyRow(incident.policyId);
+      if (policy.scopeType === "issue") {
+        if (incident.policyRevision !== policy.revision) throw conflict("This task budget incident has been superseded");
+        if (input.action === "raise_budget_and_resume") {
+          if (typeof input.amount !== "number" || input.amount <= (await computeObservedSpend(db, policy)).total) throw unprocessable("New budget must exceed current observed usage");
+          const summary = await taskBudgetService(db).patch(companyId, policy.scopeId, {
+            [policy.metric === "billed_cents" ? "maxCostCents" : "maxTokens"]: input.amount,
+            expectedRevisions: { [policy.metric]: policy.revision },
+          }, { type: "board", userId: actorUserId });
+          return (await hydrateIncidentRows([{ ...incident, status: "resolved", resolvedAt: new Date() }]))[0]!;
+        }
+        await db.update(budgetIncidents).set({ status: "dismissed", resolvedAt: new Date(), updatedAt: new Date() }).where(eq(budgetIncidents.id, incident.id));
+        await markApprovalStatus(db, incident.approvalId, "rejected", input.decisionNote, actorUserId);
+        return (await hydrateIncidentRows([{ ...incident, status: "dismissed", resolvedAt: new Date() }]))[0]!;
+      }
       if (input.action === "raise_budget_and_resume") {
+        if ((input.amount ?? 0) > 2_147_483_647) throw unprocessable("Legacy budget limits must fit their supported amount range");
         const nextAmount = Math.max(0, Math.floor(input.amount ?? 0));
         const observed = await computeObservedSpend(db, policy);
         if (policy.unpricedUsagePolicy !== "allow" && observed.unpricedEventCount > 0) {
@@ -1021,10 +1081,11 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
       }
     },
     upsertPolicy: (companyId: string, input: BudgetPolicyUpsertInput, actorUserId: string | null) =>
-      mutate(companyId, (service) => service.upsertPolicy(companyId, input, actorUserId)),
+      input.scopeType === "issue" ? reads.upsertPolicy(companyId, input, actorUserId)
+        : mutate(companyId, (service) => service.upsertPolicy(companyId, input, actorUserId)),
     evaluateCostEvent: (event: typeof costEvents.$inferSelect) =>
       mutate(event.companyId, (service) => service.evaluateCostEvent(event)),
-    getInvocationBlock: (companyId: string, agentId: string | null, context?: { issueId?: string | null; projectId?: string | null }) =>
+    getInvocationBlock: (companyId: string, agentId: string | null, context?: { issueId?: string | null; projectId?: string | null; taskMetering?: TaskBudgetMeteringSupport }) =>
       mutate(companyId, (service) => service.getInvocationBlock(companyId, agentId, context), agentId),
     resolveIncident: (companyId: string, incidentId: string, input: BudgetIncidentResolutionInput, actorUserId: string) =>
       mutate(companyId, (service) => service.resolveIncident(companyId, incidentId, input, actorUserId)),

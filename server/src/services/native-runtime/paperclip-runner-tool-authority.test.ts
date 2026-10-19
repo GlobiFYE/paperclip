@@ -3,7 +3,7 @@ import * as cloudIdentity from "../cloud-runtime-identity.js";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import { LOW_TRUST_REVIEW_PRESET, upsertIssueDocumentSchema } from "@paperclipai/shared";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   activityLog,
   agents,
@@ -1146,6 +1146,44 @@ describe("PaperclipRunnerToolAuthority", () => {
         markdown: credentialDocumentBody,
       },
     });
+  });
+
+  it("serializes native and direct creates in the same company without reversing privacy locks", async () => {
+    let releasePrivacy!: () => void;
+    let markLocked!: () => void;
+    const locked = new Promise<void>(resolve => { markLocked = resolve; });
+    const release = new Promise<void>(resolve => { releasePrivacy = resolve; });
+    const holder = db.transaction(async tx => {
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${`issue-privacy-tree:${companyId}`}, 0))`);
+      markLocked(); await release;
+    });
+    await locked;
+    const authority = new PaperclipRunnerToolAuthority(db, { companyId, agentId, issueId, runId, workMode: "standard" });
+    const native = authority.execute({ tool: "create_task", callId: "lock-order-child", arguments: {
+      idempotencyKey: "lock-order-child", title: "Native lock order child", status: "backlog",
+    } });
+    const pending: Promise<unknown>[] = [native];
+    try {
+      await vi.waitFor(async () => {
+        const rows = await db.execute(sql`select count(*) as count from pg_stat_activity where datname = current_database() and wait_event in ('advisory', 'transactionid', 'tuple')`);
+        expect(Number(rows[0].count)).toBeGreaterThanOrEqual(1);
+      }, { timeout: 5000 });
+      const direct = issueService(db).create(companyId, { title: "Direct lock order child", status: "backlog" });
+      pending.push(direct);
+      await vi.waitFor(async () => {
+        const rows = await db.execute(sql`select count(*) as count from pg_stat_activity where datname = current_database() and wait_event in ('advisory', 'transactionid', 'tuple')`);
+        expect(Number(rows[0].count)).toBeGreaterThanOrEqual(2);
+      }, { timeout: 5000 });
+      releasePrivacy(); await holder;
+      const [nativeResult, directResult] = await Promise.all([native, direct]);
+      expect(nativeResult).toMatchObject({ disposition: "applied", task: { parentId: issueId } });
+      expect(directResult.title).toBe("Direct lock order child");
+    } finally {
+      releasePrivacy(); await holder; await Promise.allSettled(pending);
+      const created = await db.select({ id: issues.id }).from(issues).where(and(eq(issues.companyId, companyId),
+        inArray(issues.title, ["Native lock order child", "Direct lock order child"])));
+      for (const row of created) await issueService(db).remove(row.id);
+    }
   });
 
   it("creates ordinary children, preserves blockers, and deduplicates across runs", async () => {

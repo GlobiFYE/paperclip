@@ -9,6 +9,11 @@ import type {
 } from "../constants.js";
 
 export interface BudgetPolicy {
+  revision?: number;
+  createdByAgentId: string | null;
+  updatedByAgentId: string | null;
+  createdByRunId: string | null;
+  updatedByRunId: string | null;
   id: string;
   companyId: string;
   scopeType: BudgetScopeType;
@@ -29,6 +34,7 @@ export interface BudgetPolicy {
 }
 
 export interface BudgetPolicySummary {
+  revision?: number;
   policyId: string;
   companyId: string;
   scopeType: BudgetScopeType;
@@ -57,6 +63,7 @@ export interface BudgetPolicySummary {
 }
 
 export interface BudgetIncident {
+  policyRevision?: number;
   id: string;
   companyId: string;
   policyId: string;
@@ -88,6 +95,7 @@ export interface BudgetOverview {
 }
 
 export interface BudgetPolicyUpsertInput {
+  expectedRevision?: number;
   scopeType: BudgetScopeType;
   scopeId: string;
   metric?: BudgetMetric;

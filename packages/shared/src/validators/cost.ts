@@ -18,6 +18,7 @@ const costEventFields = z.object({
   inputTokens: z.number().int().nonnegative().max(2_147_483_647).optional().default(0),
   cachedInputTokens: z.number().int().nonnegative().max(2_147_483_647).optional().default(0),
   outputTokens: z.number().int().nonnegative().max(2_147_483_647).optional().default(0),
+  totalTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable().optional(),
   costCents: exactCentsSchema,
   providerRequestId: z.string().min(1).max(250).nullable().optional(),
   pricingProvenance: pricingProvenanceSchema.nullable().optional(),

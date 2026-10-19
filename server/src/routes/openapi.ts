@@ -1,5 +1,6 @@
 import { MUSE_ASSET_VERSION, museStopBoundarySchema, museDetectorCleanupAttestationSchema, createGrokInvitationSchema, configureGrokRoutineSchema, verifyGrokRoutineSchema, recoverGrokRoutineSchema, pairGrokBindingSchema, stopGrokWorkSchema, retryGrokDeliverySchema, updateFastResponseSchema } from "@paperclipai/shared";
 import { slackTestMessageSchema, slackTestMessageResultSchema, slackManagerAuthorizationSchema, slackSetupOptionsSchema, slackManagedProvisionSchema, slackManagedResultSchema, slackRegistrationSchema, slackSetupActionSchema, slackInstallAuthorizationSchema, slackRegistrationStateSchema, slackAppConfigurationSchema, slackAvatarStateSchema, slackAccountStateSchema } from "@paperclipai/shared";
+import { taskBudgetPatchSchema } from "@paperclipai/shared";
 import { experimentalApiMetadata } from "./experimental-api-metadata.js";
 import {
   experimentalApiPaths,
@@ -10237,6 +10238,16 @@ registerCurrentRoute({
   path: "/api/companies/{companyId}/folders/{folderId}",
   tags: ["folders"],
   summary: "Delete a folder",
+});
+
+registerCurrentRoute({
+  method: "get", path: "/api/issues/{id}/budget", tags: ["costs"],
+  summary: "Read task lifetime budgets, inherited caps, charged usage, and accounting blockers",
+});
+registerCurrentRoute({
+  method: "patch", path: "/api/issues/{id}/budget", tags: ["costs"],
+  summary: "Change task lifetime dollar/token caps with expected revisions; board or authorized delegating owner",
+  body: taskBudgetPatchSchema,
 });
 
 registerCurrentRoute({

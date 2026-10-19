@@ -1,4 +1,6 @@
 import { usePrimaryAgentPresentation } from "./primary-agent/PrimaryAgentPresentation";
+import { Input } from "./ui/input";
+import { parseBudgetInput } from "../lib/task-budget-format";
 import { useWorkspaceIsolationControls } from "@/hooks/useWorkspaceIsolationControls";
 import { useState, useEffect, useRef, useCallback, useMemo, type CSSProperties, type DragEvent } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -115,6 +117,8 @@ function useVisualViewportLayout(enabled: boolean) {
 
 interface IssueDraft {
   isPrivate?: boolean;
+  budgetDollars?: string;
+  budgetTokens?: string;
   title: string;
   description: string;
   status: string;
@@ -287,6 +291,9 @@ export function NewIssueDialog() {
   const { pushToast } = useToastActions();
   const { enabled: streamlinedUiEnabled } = useStreamlinedUiEnabled();
   const [title, setTitle] = useState("");
+  const [budgetDollars, setBudgetDollars] = useState("");
+  const [budgetTokens, setBudgetTokens] = useState("");
+  const [budgetError, setBudgetError] = useState<string | null>(null);
   const [hasTitle, setHasTitle] = useState(false);
   const [description, setDescription] = useState("");
   const titleRef = useRef("");
@@ -535,10 +542,12 @@ export function NewIssueDialog() {
         workMode,
         isPrivate,
         composerSettings,
+        budgetDollars, budgetTokens,
       });
     },
     [
       newIssueOpen,
+      budgetDollars, budgetTokens,
       scheduleSave,
       status,
       priority,
@@ -610,6 +619,9 @@ export function NewIssueDialog() {
     executionWorkspaceDefaultProjectId.current = null;
 
     const draft = loadDraft();
+    setBudgetDollars(draft?.budgetDollars ?? "");
+    setBudgetTokens(draft?.budgetTokens ?? "");
+    setBudgetError(null);
     defaultProjectPendingRef.current = newIssueDefaults.projectId === undefined && !newIssueDefaults.parentId;
     defaultAssigneePendingRef.current = !newIssueDefaults.assigneeAgentId && !newIssueDefaults.assigneeUserId;
     setComposerSettings(null);
@@ -758,6 +770,7 @@ export function NewIssueDialog() {
   }, []);
 
   function reset() {
+    setBudgetDollars(""); setBudgetTokens(""); setBudgetError(null);
     createRequestRef.current = null;
     setIssueText("", "");
     setStatus("todo");
@@ -834,7 +847,14 @@ export function NewIssueDialog() {
     const assigneeAdapterOverrides = settings
       ? mergeComposerRunSettings(inheritedOverrides, assigneeAdapterType ?? undefined, settings)
       : inheritedOverrides;
+    const maxCostCents = budgetDollars.trim() ? parseBudgetInput("billed_cents", budgetDollars) : undefined;
+    const maxTokens = budgetTokens.trim() ? parseBudgetInput("total_tokens", budgetTokens) : undefined;
+    if (maxCostCents === null || maxTokens === null) {
+      setBudgetError("Enter a positive dollar amount and a whole token count.");
+      return;
+    }
     const createData = {
+      ...(maxCostCents !== undefined || maxTokens !== undefined ? { budget: { maxCostCents, maxTokens } } : {}),
       companyId: effectiveCompanyId,
       stagedFiles,
       ...(currentTitle ? { title: currentTitle } : {}),
@@ -1242,6 +1262,19 @@ export function NewIssueDialog() {
                         {parentPrivacyError ? <Button variant="ghost" size="sm" onClick={() => void refetchParentPrivacy()}>Retry</Button> : null}
                       </div>
                     ) : null}
+                    <details className="mt-3 text-xs">
+                      <summary className="cursor-pointer text-muted-foreground">Budget</summary>
+                      <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                        <label className="flex flex-col gap-1">Dollar limit (USD)
+                          <Input aria-label="New task dollar limit" inputMode="decimal" value={budgetDollars} onChange={event => setBudgetDollars(event.target.value)} placeholder="Inherited" />
+                        </label>
+                        <label className="flex flex-col gap-1">Token limit
+                          <Input aria-label="New task token limit" inputMode="numeric" value={budgetTokens} onChange={event => setBudgetTokens(event.target.value)} placeholder="Inherited" />
+                        </label>
+                      </div>
+                      <p className="mt-2 text-muted-foreground">Lifetime limits include all delegated work.</p>
+                    </details>
+                    {budgetError ? <p role="alert" className="mt-2 text-xs text-destructive">{budgetError}</p> : null}
                     {worktreeSelectionIncomplete && !worktreesLoading ? (
                       <p role="alert" className="mb-2 text-xs text-destructive">
                         {worktreesError ? "Couldn't check the selected worktree. Retry in Worktrees or choose New worktree."
