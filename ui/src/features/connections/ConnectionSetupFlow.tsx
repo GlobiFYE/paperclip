@@ -1514,6 +1514,7 @@ function StandardConnectionSetupFlow({
       const details = error instanceof ApiError && error.body && typeof error.body === "object"
         ? (error.body as { details?: { code?: unknown } }).details
         : null;
+      if (connectEntry?.slug === "google-workspace") workspaceSelectionRef.current = null;
       if (automaticOAuthEntry) {
         setOAuthPhase("error");
         onPhaseChange?.("needs_retry");
@@ -2208,7 +2209,7 @@ function StandardConnectionSetupFlow({
   if (workspaceConsent) return <GoogleWorkspaceServicesDialog
     connection={workspaceConnection}
     initial={workspaceDraft}
-    onCancel={selection => { if (selection) setWorkspaceDraft(selection); setWorkspaceConsent(null); setOAuthPhase("entry"); }}
+    onCancel={selection => { if (selection) setWorkspaceDraft(selection); setWorkspaceConsent(null); setOAuthPhase("entry"); onPhaseChange?.("requested"); }}
     onContinue={selection => {
       workspaceSelectionRef.current = selection;
       setWorkspaceDraft(selection);

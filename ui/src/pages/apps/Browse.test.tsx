@@ -901,6 +901,7 @@ describe("Connectors landing page", () => {
       listConnectionsMock.mockResolvedValue({ connections });
       const client = await renderBrowse();
 
+      await clickButton("2 connections");
       expect(container.textContent).toContain("Visible Notion account");
       expect(container.textContent).toContain("Saved Google account");
       expect(container.textContent).toContain(rowKind === "catalog" ? "Notion" : "My tools");

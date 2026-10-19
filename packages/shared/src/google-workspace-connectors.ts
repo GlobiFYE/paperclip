@@ -79,7 +79,8 @@ const SERVICE_PROFILES: Readonly<Record<Exclude<GoogleWorkspaceConnectorProfileI
 export const GOOGLE_WORKSPACE_CONNECTOR_PROFILES = {
   ...SERVICE_PROFILES,
   "workspace.all": def("google-workspace", "https://workspacemcp.googleapis.com/mcp/v1",
-    [...new Set(Object.values(SERVICE_PROFILES).flatMap((profile) => profile.scopes))]),
+    // Keep the original broker/envelope contract stable as legacy profiles evolve.
+    [...new Set(Object.entries(SERVICE_PROFILES).filter(([id]) => id !== "gmail.archive").flatMap(([, profile]) => profile.scopes))]),
 };
 
 export const GOOGLE_WORKSPACE_SERVICES = {

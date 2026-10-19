@@ -29,9 +29,10 @@ describe("combined Google Workspace consent", () => {
     expect(googleWorkspaceEffectiveScopes([scope("documents")], [scope("documents.readonly")])).toEqual([scope("documents.readonly")]);
   });
   it("requests the existing union with one profile and preserves legacy definitions", () => {
-    const expected = [...new Set(Object.entries(profiles).filter(([key]) => key !== "workspace.all").flatMap(([, value]) => value.scopes))];
+    const expected = [...new Set(Object.entries(profiles).filter(([key]) => key !== "workspace.all" && key !== "gmail.archive").flatMap(([, value]) => value.scopes))];
     expect(profiles["workspace.all"].scopes).toEqual(expected);
     expect(expected).toHaveLength(21);
+    expect(expected).not.toContain(scope("gmail.modify"));
     const app = getConnectableAppDefinition("google-workspace")!;
     expect(app.methods).toHaveLength(2);
     expect(app.methods.filter((method) => method.connectorProfile)).toHaveLength(1);
