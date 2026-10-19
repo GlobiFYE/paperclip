@@ -86,6 +86,9 @@ export function useRecentTasks({
     retry: false,
     staleTime: 30_000,
   });
+  // Observe completion even when structural sharing preserves the data object.
+  // The successful-update counter itself is only available on the cache state.
+  const fetchingSummaries = summaryQuery.isFetching;
   const updateCount = queryClient.getQueryState(summaryKey)?.dataUpdateCount ?? 0;
   const summaries = summaryQuery.isSuccess ? summaryQuery.data : undefined;
   const confirmed = new Map((summaries ?? []).filter((issue) => issue.companyId === companyId)
@@ -111,7 +114,7 @@ export function useRecentTasks({
     pruneRecentTasks(storageKey, companyId, omittedIds);
     // A storage notification must not republish the same successful revision.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [batchVisit, companyId, scope, updateCount, summaries, storageKey]);
+  }, [batchVisit, companyId, fetchingSummaries, scope, updateCount, summaries, storageKey]);
 
   useEffect(() => {
     if (!storageKey || !companyId || !summaries) return;

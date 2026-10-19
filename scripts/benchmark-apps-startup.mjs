@@ -42,12 +42,21 @@ catch (error) {
   fixture = { company, tasks, application, connection, agent, userId: session?.user?.id ?? null };
   await fs.writeFile(fixturePath, JSON.stringify(fixture, null, 2));
 }
-const browser = await chromium.launch();
-const samples = [];
 const variants = process.env.PAPERCLIP_APPS_BENCH_BASELINE_DIST ? [
   { label: "baseline-paired", dist: process.env.PAPERCLIP_APPS_BENCH_BASELINE_DIST },
   { label: "candidate-paired", dist: process.env.PAPERCLIP_APPS_BENCH_CANDIDATE_DIST },
 ] : [{ label: phase, dist: null }];
+if (variants.length > 1) {
+  if (!variants[1].dist) throw new Error("Paired mode requires PAPERCLIP_APPS_BENCH_CANDIDATE_DIST");
+  const serverAssets = process.env.PAPERCLIP_APPS_BENCH_SERVER_DIST
+    ? `${process.env.PAPERCLIP_APPS_BENCH_SERVER_DIST}/assets`
+    : new URL("../ui/dist/assets/", import.meta.url);
+  // Preserve both content-addressed asset sets in the loopback server's
+  // static directory. Selecting an HTML document alone is insufficient.
+  for (const variant of variants) await fs.cp(`${variant.dist}/assets`, serverAssets, { recursive: true, force: false });
+}
+const browser = await chromium.launch();
+const samples = [];
 try {
   for (const scenario of ["cold", "in-app"]) {
     for (let run = 0; run < 5; run++) {
@@ -80,9 +89,29 @@ try {
       await cdp.send("Network.emulateNetworkConditions", { offline: false, latency: 50, downloadThroughput: 9 * 1024 * 1024 / 8, uploadThroughput: 1.5 * 1024 * 1024 / 8 });
       await cdp.send("Emulation.setCPUThrottlingRate", { rate: 4 });
       if (scenario === "in-app") {
+        const initialDetails = new Set();
+        let finishInitialRefresh;
+        const initialRefresh = new Promise(resolve => { finishInitialRefresh = resolve; });
+        const observeInitialRefresh = async response => {
+          const path = new URL(response.url()).pathname;
+          if (path.endsWith("/issues/summaries")) {
+            await response.finished();
+            finishInitialRefresh();
+          } else if (fixture.tasks.some(task => path === `/api/issues/${task.id}`)) {
+            await response.finished();
+            initialDetails.add(path);
+            if (initialDetails.size === fixture.tasks.length) finishInitialRefresh();
+          }
+        };
+        page.on("response", observeInitialRefresh);
         await page.goto(new URL(`/${fixture.company.issuePrefix}/dashboard`, target).href);
         await page.getByRole("link", { name: "Connectors", exact: true }).first().waitFor({ timeout: 90_000 });
+        await Promise.race([initialRefresh, new Promise((_, reject) => {
+          const timeout = setTimeout(() => reject(new Error("Initial recent-task refresh did not finish")), 90_000);
+          timeout.unref();
+        })]);
         await page.waitForTimeout(2_000);
+        page.off("response", observeInitialRefresh);
       }
       const initialMetrics = await cdp.send("Performance.getMetrics");
       const scriptDurationAtStart = scenario === "in-app"
@@ -138,5 +167,5 @@ try {
   }
 } finally { await browser.close(); }
 await fs.writeFile(`${directory}/${phase}.json`, JSON.stringify({ phase, origin, revision: execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim(),
-  browser: "Chromium", viewport: "1440x1000", profile: "50ms latency; 9Mbps down; 1.5Mbps up; 4x CPU", samples,
+  browser: browser.version(), viewport: "1440x1000", profile: "50ms latency; 9Mbps down; 1.5Mbps up; 4x CPU", samples,
 }, null, 2));

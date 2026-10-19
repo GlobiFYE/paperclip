@@ -260,4 +260,21 @@ describe("recent task synchronization", () => {
     expect(cache.getQueryState(queryKeys.issues.summaryBatch("company-1", "user-1", [first.id, second.id]))?.status).toBe("error");
     expect(summaries.mock.calls.filter(call => call[1].length === 2)).toHaveLength(2);
   });
+
+  it("prunes a revisited task when a fresh response repeats the cached omission", async () => {
+    const first = task(10, "First");
+    const second = { ...task(20, "Second"), id: "issue-2" };
+    recordRecentTask(first, "user-1");
+    recordRecentTask(second, "user-1");
+    const rows = [second];
+    summaries.mockResolvedValue(rows);
+    const cache = client();
+    await act(async () => root.render(<QueryClientProvider client={cache}><RecentTasks name="still-missing" /></QueryClientProvider>));
+    await flush();
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+    await act(async () => { recordRecentTask(first, "user-1", 30); });
+    await flush();
+    expect(summaries.mock.calls.filter(call => call[1].length === 2)).toHaveLength(2);
+    expect(readRecentTasks(storageKey, "company-1").map(entry => entry.id)).toEqual([second.id]);
+  });
 });
