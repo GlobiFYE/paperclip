@@ -2044,6 +2044,12 @@ function StreamlinedIssuesList({
 
       {((viewState.viewMode === "list" && isLoading) || externalObjectFilterLoading) && <PageSkeleton variant="issues-list" />}
       {error && <p className="text-sm text-destructive">{error.message}</p>}
+      {viewState.viewMode === "board" && !searchWithinLoadedIssues && boardIssueQueries.some((query) => query.isPending) && (
+        <p role="status" className="text-sm text-muted-foreground">Loading task columns...</p>
+      )}
+      {viewState.viewMode === "board" && !searchWithinLoadedIssues && boardIssueQueries.some((query) => query.isError) && (
+        <p role="alert" className="text-sm text-destructive">Some task columns failed to load. Refresh to retry.</p>
+      )}
       {!searchWithinLoadedIssues && normalizedIssueSearch.length > 0 && searchedIssues.length === ISSUE_SEARCH_RESULT_LIMIT && (
         <p className="text-xs text-muted-foreground">
           Showing up to {ISSUE_SEARCH_RESULT_LIMIT} matches. Refine the search to narrow further.
