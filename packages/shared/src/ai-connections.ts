@@ -152,9 +152,16 @@ export function isAiConnectionCompatible(
   runnerProvider?: unknown,
   acpxAgent?: unknown,
 ): boolean {
+  // Routed accounts and fixed bindings carry identity only. The service checks
+  // the routed target and the grant separately, so the model namespace check
+  // must not reject a valid raw model id such as `anthropic/claude-sonnet-4`.
+  if ("routing" in requirement && requirement.routing)
+    return isAiConnectionCompatibleAdapter(requirement, adapterType, runnerProvider, acpxAgent);
+  if ("mode" in requirement && requirement.mode !== "responsible_user" && requirement.method === "api_key")
+    return isAiConnectionCompatibleAdapter(requirement, adapterType, runnerProvider, acpxAgent);
   if (!isAiConnectionCompatibleAdapter(requirement, adapterType, runnerProvider, acpxAgent)) return false;
-  // OpenRouter and OpenCode Go each publish their own catalog, so a binding to
-  // one of them is only valid when the model is namespaced under that provider.
+  // OpenRouter and OpenCode Go each publish their own catalog, so a native
+  // binding is only valid when the model is namespaced under that provider.
   // The other BYO harnesses accept any model id.
   if (requirement.provider === "openrouter") return typeof model === "string" && model.startsWith("openrouter/");
   if (requirement.provider === "opencode") return typeof model === "string" && model.startsWith("opencode-go/");
