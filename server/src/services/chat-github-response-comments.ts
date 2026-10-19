@@ -277,6 +277,11 @@ export function githubResponseCommentService(db: Db, fetchImpl = fetch) {
     let receipt: { id: string; url: string } | undefined;
     for (const link of links) {
       if (!link.deliveryId) continue;
+      const responseForRequest = async () => (await db.select({ result: chatActions.result }).from(chatActions).where(and(
+        eq(chatActions.companyId, input.companyId), eq(chatActions.endpointId, input.endpointId),
+        eq(chatActions.deliveryId, link.deliveryId!), eq(chatActions.kind, "github_response_comment"),
+      )).limit(1))[0];
+      if ((await responseForRequest())?.result?.final === true) continue;
       const assertRun = async () => {
         const source = await context(link.deliveryId!);
         const [current] = await db.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.id, run.id), eq(heartbeatRuns.companyId, input.companyId)));
@@ -285,6 +290,7 @@ export function githubResponseCommentService(db: Db, fetchImpl = fetch) {
             source.endpoint.id !== input.endpointId || source.conversation.issueId !== input.issueId ||
             boundRunIssueId(current) !== input.issueId)
           throw forbidden("GitHub failure authority changed");
+        if ((await responseForRequest())?.result?.final === true) throw forbidden("GitHub request already has a final response");
         if (await githubRunReplyState(db, input) !== "none") throw conflict("GitHub reply is still being resolved");
       };
       receipt = await acknowledge(link.deliveryId, input.body, assertRun);

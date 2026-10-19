@@ -83,6 +83,9 @@ the review in the original conversation. Revoke the linked identity and check
 that the next call fails. Repeat the boundary checks with another task, agent,
 company, and requester. The channel and provenance fixtures above cover these
 contracts with synthetic providers; record a live journey separately.
+For a long-lived task, repeat more than 100 continuations and check that tool
+access remains available. Fail a later GitHub run after a final answer and
+check that the earlier answer remains intact.
 
 ### `endpoint-management`
 

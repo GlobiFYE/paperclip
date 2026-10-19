@@ -41,6 +41,16 @@ const support = await getEmbeddedPostgresTestSupport();
     expect(await chatRunSourceMessageId(db, run)).toBe(f.messageId);
   });
 
+  it("keeps valid channel authority after more than 100 continuations", async () => {
+    const f = await fixture();
+    const runs = Array.from({ length: 120 }, () => ({ id: randomUUID(), companyId: f.company.id, agentId: f.agent.id, status: "succeeded", nativeIssueId: f.issue.id, responsibleUserId: "requester" }));
+    await db.insert(heartbeatRuns).values(runs);
+    const ids = runs.map(() => randomUUID());
+    await db.insert(runIdentityContexts).values(runs.map((run, index) => ({ id: ids[index], companyId: f.company.id, runId: run.id, revision: 1, responsibleUserId: "requester", parentContextId: index ? ids[index - 1] : f.context.id, cause: "monitor", correlationId: "dispatch" })));
+    const [run] = await db.update(heartbeatRuns).set({ activeIdentityContextId: ids.at(-1)! }).where(eq(heartbeatRuns.id, runs.at(-1)!.id)).returning();
+    expect(await chatRunSourceMessageId(db, run)).toBe(f.messageId);
+  });
+
   it("stops at a new accepted message instead of borrowing an earlier person's origin", async () => {
     const f = await fixture();
     const messageId = randomUUID();

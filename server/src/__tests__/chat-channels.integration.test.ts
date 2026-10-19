@@ -3315,6 +3315,18 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         expect(fallback.state).toBe(expected === "none" ? "published" : "cancelled");
       },
     );
+    it("preserves an earlier final GitHub answer when a later continuation fails", async () => {
+      const f = await toolReplyFixture();
+      const identity = await initializeRunIdentity(db, { companyId: f.companyId, runId: f.run.id, issueId: f.conversation.issueId!, responsibleUserId: "owner-user", messageIds: [String(f.run.contextSnapshot?.wakeCommentId)], cause: "instruction" });
+      await githubChatReviewService(db, f.providerFetch).execute(f.session, "comment", { body: "Earlier final answer", idempotencyKey: randomUUID() });
+      await db.update(heartbeatRuns).set({ status: "succeeded" }).where(eq(heartbeatRuns.id, f.run.id));
+      const [later] = await db.insert(heartbeatRuns).values({ companyId: f.companyId, agentId: f.assignedAgentId, status: "failed", nativeIssueId: f.conversation.issueId, contextSnapshot: {} }).returning();
+      await initializeRunIdentity(db, { companyId: f.companyId, runId: later.id, issueId: f.conversation.issueId!, responsibleUserId: "owner-user", parentContextId: identity.id, cause: "monitor" });
+      const writes = f.responseWrites.length;
+      await expect(githubResponseCommentService(db, f.providerFetch).failRun({ companyId: f.companyId, endpointId: f.endpoint.id, issueId: f.conversation.issueId!, runId: later.id, body: "Later run failed" })).rejects.toMatchObject({ status: 403 });
+      expect(f.responseWrites).toHaveLength(writes);
+      expect([...f.responseComments.values()][0].body).toContain("Earlier final answer");
+    });
     it("rechecks a GitHub fallback after waiting for the credential lane", async () => {
       const f = await toolReplyFixture();
       await db.update(heartbeatRuns).set({ status: "failed" }).where(eq(heartbeatRuns.id, f.run.id));

@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { chatConversations, chatEndpoints, chatMessageLinks, heartbeatRuns, issueComments, runIdentityContexts, type Db } from "@paperclipai/db";
 import type { ChatProvider } from "@paperclipai/shared";
 import { forbidden } from "../../errors.js";
@@ -43,12 +43,13 @@ export async function chatRunSourceMessageId(db: Db, run: Run, options: { contex
       const [message] = await db.select({ authorUserId: issueComments.authorUserId }).from(issueComments).where(and(
         eq(issueComments.id, origin.messageId), eq(issueComments.companyId, run.companyId),
         eq(issueComments.issueId, boundRunIssueId(run) ?? "00000000-0000-0000-0000-000000000000"),
-        eq(issueComments.authorType, "user"), isNull(issueComments.deletedAt),
+        or(eq(issueComments.authorType, "user"), and(isNull(issueComments.authorType), isNull(issueComments.authorAgentId))),
+        isNull(issueComments.deletedAt),
       )).limit(1);
       if (!run.responsibleUserId || message?.authorUserId !== run.responsibleUserId) throw forbidden("Chat requester provenance changed");
     }
     if (!origin.parentContextId) return !acceptedMessageSeen ? legacyMessageId : null;
-    if (seen.has(origin.id) || seen.size >= 100) throw forbidden("Chat source provenance could not be verified");
+    if (seen.has(origin.id)) throw forbidden("Chat source provenance could not be verified");
     seen.add(origin.id);
     const [parent] = await db.select().from(runIdentityContexts).where(and(
       eq(runIdentityContexts.id, origin.parentContextId),

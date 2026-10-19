@@ -81,11 +81,9 @@ async function lockIdentityTask(
       and(eq(heartbeatRuns.id, runId), eq(heartbeatRuns.companyId, companyId)),
     );
   const issueId = run?.nativeIssueId ?? run?.issueId ?? run?.contextSnapshot?.issueId ?? run?.contextSnapshot?.taskId;
-  if (
-    issueId !== undefined &&
-    issueId !== null &&
-    (typeof issueId !== "string" || !isUuidLike(issueId))
-  ) {
+  const legacyIssueId = run?.contextSnapshot?.issueId ?? run?.contextSnapshot?.taskId;
+  if ([issueId, legacyIssueId].some(id => id !== undefined && id !== null &&
+      (typeof id !== "string" || !isUuidLike(id)))) {
     throw forbidden("Run task identity is invalid");
   }
   if (typeof issueId === "string")
