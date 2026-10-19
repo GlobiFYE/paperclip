@@ -1552,6 +1552,10 @@ export function heartbeatService(
     return recovery.sweepStaleIssueLocks();
   }
 
+  async function sweepOrphanClaimedWakes() {
+    return recovery.sweepOrphanClaimedWakes();
+  }
+
   function issueIdFromRunContext(contextSnapshot: unknown) {
     const context = parseObject(contextSnapshot);
     return (
@@ -4034,6 +4038,8 @@ export function heartbeatService(
     resumeExecutionWaitComments,
 
     sweepStaleIssueLocks,
+
+    sweepOrphanClaimedWakes,
 
     reconcileResolvedDependencyWakes,
 
