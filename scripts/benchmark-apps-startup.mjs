@@ -51,9 +51,16 @@ if (variants.length > 1) {
   const serverAssets = process.env.PAPERCLIP_APPS_BENCH_SERVER_DIST
     ? `${process.env.PAPERCLIP_APPS_BENCH_SERVER_DIST}/assets`
     : new URL("../ui/dist/assets/", import.meta.url);
+  await fs.mkdir(serverAssets, { recursive: true });
+  const serverAssetsPath = await fs.realpath(serverAssets);
   // Preserve both content-addressed asset sets in the loopback server's
   // static directory. Selecting an HTML document alone is insufficient.
-  for (const variant of variants) await fs.cp(`${variant.dist}/assets`, serverAssets, { recursive: true, force: false });
+  for (const variant of variants) {
+    const sourceAssetsPath = await fs.realpath(`${variant.dist}/assets`);
+    if (sourceAssetsPath !== serverAssetsPath) {
+      await fs.cp(sourceAssetsPath, serverAssetsPath, { recursive: true, force: false });
+    }
+  }
 }
 const browser = await chromium.launch();
 const samples = [];

@@ -84,6 +84,10 @@ held responses. No agent run was started.
   belongs in the PR handoff; focused passes do not replace it.
 - Review regressions cover cached revisits, repeated omissions, in-app scripting
   scope and preparing both paired-build asset sets. Review/check status is on the PR.
+- The asset preparer canonicalizes paths and skips copying onto itself. A real
+  filesystem probe reproduced `ERR_FS_CP_EINVAL` without the guard, then executed
+  the actual preparation block with `ui/dist` as candidate/server. It preserved
+  candidate files and prepared the complete baseline asset union.
 - Setup failures are retained in local logs: an initial build had concurrent
   writers; a compiled workspace server needs the TS loader for source exports;
   an archived UI needs tracked announcement assets. Successful builds use one
