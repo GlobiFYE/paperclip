@@ -523,7 +523,7 @@ function Setup({
         !blocking(tested) &&
         (!connectionAdapter ||
           tested.checks.some((check) =>
-            check.code.endsWith("hello_probe_passed"),
+            check.code.endsWith("hello_probe_passed") || check.code === "ai_connection_api_key_reverified",
           ))
       ) ? config : null;
     } catch (cause) {
