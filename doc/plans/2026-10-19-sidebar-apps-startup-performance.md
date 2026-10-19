@@ -25,9 +25,9 @@ Initial checkout: clean at `0ed760ce9a`. Branch:
 [#16849](https://github.com/paperclipai/paperclip/pull/16849) landed during this
 work. The branch was rebased onto `9179d8dcc3`; the primary comparison includes
 that same route splitting on both sides. Tested application source:
-`0833da6927f5563c9a48d179e2b1bf0fd99f711d`. After measurement, request validation
-was tightened to reject mixed scalar/array or nested query syntax under Express's
-simple parser. Valid summary requests and the SQL/response path are unchanged.
+`085f7a6f1e2cac82be323ab099820767597936eb`. This includes strict rejection of mixed
+scalar/array or nested query syntax under Express's simple parser. Later edits
+only update the evidence; earlier trials remain in the sample record.
 
 ## Evidence
 
@@ -35,7 +35,7 @@ The [sample record](2026-10-19-sidebar-apps-startup-evidence.json) contains ever
 primary sample, endpoint counts, prior trials, source revisions, environment and
 browser-journey assertions. Earlier noisy trials remain visible.
 
-Primary comparison: production UI at `9179d8dcc3` versus `0833da6927`, sharing
+Primary comparison: production UI at `9179d8dcc3` versus `085f7a6f1e`, sharing
 the same final API and persistent synthetic fixture. The full-detail handler is
 unchanged. Five cold and five in-app samples per revision alternate in the same
 Chromium build. Profile: 1440x1000, 50ms latency, 9Mbps down, 1.5Mbps up, 4x CPU;
@@ -46,26 +46,36 @@ Usability requires the existing connector list and search controls; no
 
 | Median | Baseline | Candidate |
 | --- | ---: | ---: |
-| Cold Apps usable | 3904ms | 3994ms |
-| In-app Apps usable | 1031ms | 1017ms |
-| Sidebar refresh complete after navigation | 3363ms | 3325ms |
-| Recent-task request span | 280ms | 256ms |
+| Cold Apps usable | 3748ms | 3668ms |
+| In-app Apps usable | 1019ms | 783ms |
+| Sidebar refresh complete after navigation | 3157ms | 3170ms |
+| Recent-task request span | 246ms | 244ms |
 | Recent-task requests, cold | 5 full details | 1 summary; 0 details |
-| Recent-task decoded body bytes | 45,441 | 1,159 |
-| Recent-task encoded body bytes | 5,714 | 373 |
+| Recent-task decoded body bytes | 45,442 | 1,160 |
+| Recent-task encoded body bytes | 5,715 | 372 |
 | All API requests, cold | 35 | 31 |
-| Cold long-task time | 2130ms | 2226ms |
-| Cold scripting time | 2.231s | 2.318s |
-| In-app long-task time | 578ms | 589ms |
-| In-app scripting time | 0.732s | 0.769s |
+| Cold long-task time | 1942ms | 1923ms |
+| Cold scripting time | 2.120s | 2.025s |
+| In-app long-task time | 546ms | 479ms |
+| In-app scripting time | 0.677s | 0.620s |
 
-Encoded bytes fell 93.5%; decoded bytes fell 97.4%; request span fell 8.6%.
-Cold readiness rose 90ms (2.3%); in-app readiness fell 15ms (1.4%). Sample ranges
-overlap; candidate cold loads were faster in three of five pairs. These results
-establish smaller task refreshes, not an overall Apps speedup. Modestly higher
-CPU measurements remain visible above. Warm navigation reuses fresh sidebar
+Encoded bytes fell 93.5%; decoded bytes fell 97.4%. The request span is essentially
+unchanged (246ms to 244ms), so no meaningful local API latency gain is claimed.
+Cold readiness fell 79ms (2.1%); in-app readiness fell 236ms (23.2%) in this run.
+Earlier aligned trials had both positive and negative readiness changes; all
+samples remain visible. The reliable result is smaller task refreshes, not an
+established overall Apps speedup. Final response timestamps are captured before
+body/size evidence extraction. Earlier trials included that collection overhead
+in response timings and are preliminary.
+Warm navigation reuses fresh sidebar
 data without a refresh. Each candidate cold load made one session and one
 health request. Focused socket tests also prove the initial exemption/recovery.
+
+The final unthrottled smoke completed its first summary before the socket opened,
+then made the required domain catch-up batch. It recorded two summary requests,
+zero passive details, and one session/health request each. The timing trace is
+in `finalSmoke` in the sample record. Each refresh uses one batch; removing this
+second refresh would break the required fetch-to-subscription reconciliation.
 
 The real browser journey passed: five recent tasks; connector search and
 permissions; task navigation and return; rename; inbox archive; pause/restart of
@@ -105,7 +115,7 @@ held responses. No agent run was started.
 Running preview: http://127.0.0.1:3214/APP/apps
 
 The final production UI and compiled server use the PR head, with the TS loader
-for workspace dependency exports. The performance comparison used `0833da6927`.
+for workspace dependency exports. The performance comparison used `085f7a6f1e`.
 The final preview also includes the strict query guard. Configuration/evidence:
 `/tmp/paperclip-apps-perf-20261019/`; disposable database port 55489. Fixture:
 one synthetic company, five tasks, a disabled draft connector and a paused agent
