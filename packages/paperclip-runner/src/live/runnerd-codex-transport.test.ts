@@ -288,6 +288,66 @@ it("replaces an owned v1 runner with fresh v2 authorization before warm attachme
   }
 }, 30_000);
 
+it.each(["resolved", "rejected"] as const)(
+  "retains a live authenticated runner when remote supervision is %s without exit proof",
+  async outcome => {
+    const directory = await mkdtemp(join(tmpdir(), "runnerd-uncertain-health-"));
+    const children: ReturnType<typeof spawn>[] = [];
+    const exits: Promise<void>[] = [];
+    const probeError = new Error("remote health probe unavailable");
+    let failObservation!: () => void;
+    const bundle = createCapabilityRunnerdCodexTransport({
+      runnerBinary: defaultCapabilityRunnerdBinary(),
+      codexCommand: fakeCodex,
+      codexArgs: fakeCodexArgs(directory),
+      stateDirectory: directory,
+      lifecyclePolicy: { mode: "warm", idleTimeoutMs: 60_000 },
+      runnerReconnectGraceMs: 1_000,
+      runnerProcessLauncher: spec => {
+        const child = spawn(spec.command, [...spec.args], {
+          cwd: spec.cwd, env: spec.environment, stdio: "ignore",
+        });
+        children.push(child);
+        exits.push(new Promise(resolveExit => child.once("exit", () => resolveExit())));
+        const completion = new Promise<durableControlPlane.RunnerProcessResult>((resolveObservation, rejectObservation) => {
+          child.once("error", rejectObservation);
+          failObservation = () => {
+            if (outcome === "rejected") rejectObservation(probeError);
+            else resolveObservation({ code: null, signal: null, stdout: "", stderr: "remote health probe unavailable" });
+          };
+        });
+        return { child, completion, isExitConfirmed: () => false };
+      },
+    });
+    try {
+      await bundle.transport.request("thread/start", { cwd: directory });
+      const notifications = (async () => {
+        for await (const _event of bundle.transport.notifications()) {}
+      })();
+      const failure = notifications.catch(error => error as Error);
+      failObservation();
+      const error = await failure;
+      expect(error).toMatchObject({ message: expect.stringContaining("runner_process_termination_unconfirmed") });
+      if (outcome === "rejected") expect(error).toHaveProperty("cause", probeError);
+      expect(children).toHaveLength(1);
+      expect(bundle.transport.processInfo()).toMatchObject({ exited: false });
+      expect(() => process.kill(children[0]!.pid!, 0)).not.toThrow();
+    } finally {
+      const providerPid = bundle.evidence().codexPid;
+      if (providerPid) {
+        try { process.kill(providerPid, "SIGKILL"); } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
+        }
+      }
+      await bundle.transport.detachControllerForRestart!();
+      for (const child of children) child.kill("SIGKILL");
+      await Promise.all(exits);
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+  15_000,
+);
+
 // The retained-settlement maintenance family ("settles only retained control
 // authority without starting another provider turn") lives in
 // runnerd-codex-transport-settlement.test.ts so vitest can run its ~160s of

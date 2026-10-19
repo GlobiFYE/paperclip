@@ -11013,6 +11013,7 @@ export function createRemoteRunnerProcessLauncher(input: {
 }): (spec: RunnerProcessLaunchSpec) => RunnerProcessHandle {
   const runner = input.runner;
   return (spec) => {
+    let exitConfirmed = false;
     let launchedIdentity: {
       nonce: string;
       pid: number;
@@ -11130,7 +11131,7 @@ export function createRemoteRunnerProcessLauncher(input: {
             : "runner_remote_process_launch_failed",
         );
       }
-      let identity: { pid: number; startedAt: string };
+      let identity: Awaited<ReturnType<typeof waitForRemoteRunnerProcessIdentity>>;
       try {
         identity = await waitForRemoteRunnerProcessIdentity({
           runner,
@@ -11177,19 +11178,27 @@ export function createRemoteRunnerProcessLauncher(input: {
       });
 
       while (true) {
-        const observed = await runner.execute({
-          command: "sh",
-          args: [
-            "-c",
-            REMOTE_RUNNER_IDENTITY_CHECK_SCRIPT,
-            "paperclip-runner-monitor",
-            input.processIdentityPath,
-            identityNonce,
-            input.runnerInstanceId,
-            String(identity.pid),
-          ],
-          bypassSession: true,
-          timeoutMs: 10_000,
+        const observed = await readRemoteRunnerRecoveryProbe({
+          runner,
+          stage: "process_verification",
+          deadline: Date.now() + REMOTE_RUNNER_RECOVERY_PROBE_BUDGET_MS,
+          readOnly: true,
+          request: {
+            command: "sh",
+            args: [
+              "-c",
+              REMOTE_RECOVERY_PROCESS_CHECK_SCRIPT + (identity.processStartFingerprint
+                ? `; if ${REMOTE_RUNNER_PROCESS_FINGERPRINT_SCRIPT}; then :; else exit 46; fi; test "$process_fingerprint" = "$5" || exit 47`
+                : ""),
+              "paperclip-runner-monitor",
+              input.processIdentityPath,
+              identityNonce,
+              input.runnerInstanceId,
+              String(identity.pid),
+              ...(identity.processStartFingerprint ? [identity.processStartFingerprint] : []),
+            ],
+            bypassSession: true,
+          },
         });
         if (observed.exitCode === 0 && !observed.timedOut) {
           await new Promise<void>((resolve) =>
@@ -11197,8 +11206,14 @@ export function createRemoteRunnerProcessLauncher(input: {
           );
           continue;
         }
+        if (observed.exitCode !== 45) {
+          throw new RemoteRunnerRecoveryError({
+            stage: "process_verification",
+            reason: remoteRecoveryProbeReason("process_verification", observed.exitCode, observed.timedOut),
+          });
+        }
+        exitConfirmed = true;
         child.exitCode = null;
-        const identityMismatch = observed.exitCode === 4;
         const diagnostic = await runner
           .execute({
             command: "sh",
@@ -11241,13 +11256,11 @@ export function createRemoteRunnerProcessLauncher(input: {
           code: null,
           signal: null,
           stdout: "",
-          stderr: identityMismatch
-            ? "runner_remote_process_identity_mismatch"
-            : diagnosticTail || stateSummary,
+          stderr: diagnosticTail || stateSummary,
         };
       }
     })();
-    return { child, completion };
+    return { child, completion, isExitConfirmed: () => exitConfirmed };
   };
 }
 
