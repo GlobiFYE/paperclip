@@ -142,7 +142,7 @@ describe("ModelSourceTiles keyboard navigation", () => {
     await pressArrow("ArrowRight");
 
     expect(picked(), "either arrow enters the row from its near end").toBe(
-      "Claude Code, Subscription",
+      "Claude Code Subscription",
     );
     // The caret is not there yet: it is posed from the frame after the commit
     // above, so that `popLayout` cannot leave it on a tile the row replaced.
@@ -154,7 +154,7 @@ describe("ModelSourceTiles keyboard navigation", () => {
 
     expect(document.activeElement).toBe(tiles()[0]);
     expect(document.activeElement?.getAttribute("aria-label")).toBe(
-      "Claude Code, Subscription",
+      "Claude Code Subscription",
     );
   });
 
@@ -166,13 +166,13 @@ describe("ModelSourceTiles keyboard navigation", () => {
     await flushFrame();
 
     expect(document.activeElement).toBe(tiles()[1]);
-    expect(document.activeElement?.getAttribute("aria-label")).toBe("OpenAI, Subscription");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("OpenAI Subscription");
 
     await pressArrow("ArrowRight");
     await flushFrame();
 
     expect(document.activeElement).toBe(tiles()[2]);
-    expect(document.activeElement?.getAttribute("aria-label")).toBe("Gemini, Subscription");
+    expect(document.activeElement?.getAttribute("aria-label")).toBe("Gemini Subscription");
   });
 
   it("wraps at the end of the row and keeps the caret on the wrapped-to tile", async () => {
@@ -184,13 +184,13 @@ describe("ModelSourceTiles keyboard navigation", () => {
     expect(
       document.activeElement?.getAttribute("aria-label"),
       "three tiles is short enough that stopping at the edges just reads as the key having failed",
-    ).toBe("Gemini, Subscription");
+    ).toBe("Gemini Subscription");
 
     await pressArrow("ArrowRight");
     await flushFrame();
 
     expect(document.activeElement?.getAttribute("aria-label")).toBe(
-      "Claude Code, Subscription",
+      "Claude Code Subscription",
     );
     expect(document.activeElement).toBe(tiles()[0]);
   });
@@ -203,7 +203,7 @@ describe("ModelSourceTiles keyboard navigation", () => {
       await flushFrame();
 
       expect(picked()).toBe(
-        key === "ArrowDown" ? "Claude Code, Subscription" : "Gemini, Subscription",
+        key === "ArrowDown" ? "Claude Code Subscription" : "Gemini Subscription",
       );
       expect(document.activeElement).toBe(
         tiles().find((tile) => tile.getAttribute("aria-checked") === "true"),
@@ -222,7 +222,7 @@ describe("ModelSourceTiles keyboard navigation", () => {
     expect(
       picked(),
       "collapsed, the row is a statement rather than a choice, so there is nothing to move",
-    ).toBe("OpenAI, Subscription");
+    ).toBe("OpenAI Subscription");
     expect(document.activeElement).toBe(pickedTile);
   });
 });

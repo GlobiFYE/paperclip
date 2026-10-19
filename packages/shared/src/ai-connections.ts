@@ -138,13 +138,15 @@ export function isAiConnectionCompatible(
   const candidates = "mode" in requirement && requirement.mode === "responsible_user"
     ? Object.values(methods)
     : requirement.method ? [methods[requirement.method]] : [];
-  // Only OpenRouter namespaces its model IDs with a required prefix. OpenCode Go
-  // and the other BYO harnesses accept `opencode-go/<id>` or `provider/model`.
-  return (
-    candidates.some((method) => method?.adapters.includes(adapterType)) &&
-    (requirement.provider !== "openrouter" ||
-      (typeof model === "string" && model.startsWith("openrouter/")))
-  );
+  // OpenRouter and OpenCode Go each publish their own catalog, so a binding to
+  // one of them is only valid when the model is namespaced under that provider.
+  // The other BYO harnesses accept any model id.
+  const modelMatchesProvider = requirement.provider === "openrouter"
+    ? typeof model === "string" && model.startsWith("openrouter/")
+    : requirement.provider === "opencode"
+      ? typeof model === "string" && model.startsWith("opencode-go/")
+      : true;
+  return candidates.some((method) => method?.adapters.includes(adapterType)) && modelMatchesProvider;
 }
 export type AiConnectionUnavailableReason =
   | "responsible_user_missing"

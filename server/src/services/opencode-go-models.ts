@@ -2,6 +2,12 @@ import type { AdapterModel } from "@paperclipai/adapter-utils";
 
 const OPENCODE_GO_MODELS_URL = "https://opencode.ai/inference/go/v1/models";
 
+/** OpenCode Go model IDs carry the gateway namespace (`opencode-go/<id>`). */
+export function isOpenCodeGoModelId(value: string): boolean {
+  return value.startsWith("opencode-go/") && value.length > "opencode-go/".length;
+}
+
+
 let cached: { until: number; models: AdapterModel[] } | undefined;
 let pending: Promise<AdapterModel[]> | undefined;
 

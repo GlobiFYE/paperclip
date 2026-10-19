@@ -79,7 +79,7 @@ export function CredentialTag({ mode }: { mode: ModelConnectionMode }) {
  * them being read.
  */
 function accessibleName(source: ModelSource, mode: ModelConnectionMode | null): string {
-  return mode ? `${source.label}, ${CREDENTIAL_TAG_LABEL[mode]}` : source.label;
+  return mode ? `${source.label} ${CREDENTIAL_TAG_LABEL[mode]}` : source.label;
 }
 
 function ModelSourceTile({

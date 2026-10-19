@@ -78,7 +78,6 @@ export function AiConnectionField({
   routerAdapterType?: string;
 }) {
   const providers = aiProvidersForAdapter(adapterType);
-  const provider = providers[0];
   const returnFocus = useRef<HTMLElement | null>(null);
   const restoreFocus = (event: Event) => { event.preventDefault(); returnFocus.current?.focus(); };
   const [adopting, setAdopting] = useState(false);
@@ -86,6 +85,11 @@ export function AiConnectionField({
   const [connecting, setConnecting] = useState(false);
   const [advancedSetup, setAdvancedSetup] = useState(false);
   const [reconnecting, setReconnecting] = useState<AiManagedConnectionSummary>();
+  // The bound or reconnecting account owns the provider. OpenCode reaches both
+  // OpenRouter and OpenCode Go, so defaulting to the first entry would show a
+  // Go account OpenRouter's default and reconnect it as OpenRouter.
+  const boundProvider = value && value.mode !== "router" ? value.provider : undefined;
+  const provider = reconnecting?.provider ?? boundProvider ?? providers[0];
   const [allAgents, setAllAgents] = useState(true);
   const [savedAccount, setSavedAccount] = useState<{ connectionId: string; grantId: string; method: AiAuthMethod }>();
   const changeBinding = (next: AiRuntimeConnectionBinding) => {
@@ -123,7 +127,7 @@ export function AiConnectionField({
   };
   const method: AiAuthMethod = (value && value.mode !== "router" && value.mode !== "responsible_user" ? value.method : undefined)
     ?? accounts.data?.connections.find((account) => providers.includes(account.provider) && account.isDefault)?.method
-    ?? (providers.some((candidate) => AI_CONNECTION_CAPABILITIES[candidate].methods.subscription) ? "subscription" : "api_key");
+    ?? (provider && AI_CONNECTION_CAPABILITIES[provider].methods.subscription ? "subscription" : "api_key");
   const compatiblePools = agentId ? accounts.data?.pools?.filter(pool => pool.enabled && pool.members.some(member => isAiConnectionCompatible(member.binding, routerAdapterType ?? adapterType, member.profile.model, member.profile.provider, member.profile.acpxAgent))) ?? [] : [];
   if (!provider) return null;
   if (legacy && !value && !adopting)

@@ -752,12 +752,14 @@ function OnboardingWizardInner({
     ? selectedSavedKey.id
     : savedKeys.options[0]?.id;
   const selectedApiKey = savedKeys.options.find((option) => option.id === selectedApiKeyId);
-  const credentialMode = credentialModeChoice ?? (
-    adapterType === "opencode_local" || adapterType === "gemini_local"
-      ? "api"
-      : (savedKeys.subscriptions.length > 0 || (adapterType === "claude_local" && savedKeys.storedLogin.data))
+  // Gemini and OpenCode have no subscription path, so a saved preference can
+  // never move them to the subscription form: the API-key field would vanish.
+  const credentialMode = adapterType === "opencode_local" || adapterType === "gemini_local"
+    ? "api"
+    : credentialModeChoice ?? (
+      (savedKeys.subscriptions.length > 0 || (adapterType === "claude_local" && savedKeys.storedLogin.data))
         ? "subscription" : savedKeys.options.length ? "api" : "subscription"
-  );
+    );
   const [createdCompanyPrefix, setCreatedCompanyPrefix] = useState<
     string | null
   >((saved?.createdCompanyPrefix as string) ?? null);
@@ -1005,7 +1007,8 @@ function OnboardingWizardInner({
     data: adapterModels,
     error: adapterModelsError,
     isLoading: adapterModelsLoading,
-    isFetching: adapterModelsFetching
+    isFetching: adapterModelsFetching,
+    refetch: refetchAdapterModels,
   } = useQuery({
     // The wizard doesn't expose an environment selector, so models always
     // resolve against the local Paperclip host (environmentId = null).
@@ -3122,6 +3125,13 @@ function OnboardingWizardInner({
                                 {adapterModelsError instanceof Error
                                   ? adapterModelsError.message
                                   : "Failed to load models."}
+                                <button
+                                  type="button"
+                                  className="ml-1 underline"
+                                  onClick={() => { void refetchAdapterModels(); }}
+                                >
+                                  Retry
+                                </button>
                               </span>
                             )}
                           </label>
