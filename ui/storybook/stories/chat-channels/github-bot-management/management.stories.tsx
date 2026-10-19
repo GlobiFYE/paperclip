@@ -381,6 +381,21 @@ export const ReconnectFailed: Story = {
     await expect(canvas.getByRole("button", { name: "Reconnect saved App" })).toBeEnabled();
   },
 };
+export const PrivateKeyLoaded: Story = {
+  name: "04 Recovery / Private key loaded",
+  args: { state: "disconnected" },
+  parameters: reconnectRoute,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(await canvas.findByRole("button", { name: "Replace App credentials…" }));
+    await userEvent.upload(canvas.getByLabelText("Upload private key PEM file"), new File([
+      "-----BEGIN RSA PRIVATE KEY-----\nfixture-only\n-----END RSA PRIVATE KEY-----",
+    ], "storybook-fixture.pem", { type: "application/x-pem-file" }));
+    await expect(await canvas.findByText("Private key loaded. Paste or upload another key to replace it.")).toBeVisible();
+    await expect(canvas.getByLabelText("Private key", { exact: true })).toHaveValue("");
+    await expect(canvas.getByRole("button", { name: "Verify and reconnect" })).toBeEnabled();
+  },
+};
 export const ReconnectChecking: Story = {
   name: "04 Recovery / Checking saved App",
   args: { state: "repair-checking" },

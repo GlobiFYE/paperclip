@@ -48,6 +48,7 @@ export function GitHubAppRecovery({ endpoint, reconnect, onConnect, onExit }: {
 }) {
   const [replace, setReplace] = useState(!reconnect);
   const [credentials, setCredentials] = useState<GitHubAppCredentials>({ appId: endpoint.botExternalId ?? "", privateKey: "", webhookSecret: "" });
+  const [privateKeyDraft, setPrivateKeyDraft] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const [fileError, setFileError] = useState("");
@@ -55,6 +56,7 @@ export function GitHubAppRecovery({ endpoint, reconnect, onConnect, onExit }: {
   const appName = endpoint.botLabel ?? endpoint.setup?.github?.appName ?? "your existing App";
   const appIdInvalid = !!credentials.appId.trim() && !/^\d+$/.test(credentials.appId.trim());
   const keyInvalid = !!credentials.privateKey.trim() && !/-----BEGIN (?:RSA )?PRIVATE KEY-----/.test(credentials.privateKey);
+  const keyLoaded = !!credentials.privateKey.trim() && !keyInvalid && !privateKeyDraft;
   const incomplete = replace && (!credentials.appId.trim() || !credentials.privateKey.trim() || appIdInvalid || keyInvalid || (needsWebhookSecret && !credentials.webhookSecret.trim()));
   const actionLabel = pending ? "Checking GitHub…" : replace ? (reconnect ? "Verify and reconnect" : "Connect existing App") : "Reconnect saved App";
   async function connect() {
@@ -103,11 +105,13 @@ export function GitHubAppRecovery({ endpoint, reconnect, onConnect, onExit }: {
           try {
             const privateKey = await file.text();
             setCredentials(current => ({ ...current, privateKey }));
+            setPrivateKeyDraft("");
           } catch { setFileError("Could not read this file. Try again or paste the key below."); }
         }} />
-        <Input id="github-private-key" type="password" autoComplete="off" placeholder="Or paste the complete PEM key" aria-describedby="github-private-key-help" disabled={pending} value={credentials.privateKey} aria-invalid={keyInvalid}
-          onPaste={event => { event.preventDefault(); setCredentials({ ...credentials, privateKey: event.clipboardData.getData("text") }); }}
-          onChange={event => setCredentials({ ...credentials, privateKey: event.target.value })} />
+        <Input id="github-private-key" type="password" autoComplete="off" placeholder={keyLoaded ? "Paste a replacement PEM key" : "Or paste the complete PEM key"} aria-describedby="github-private-key-help" disabled={pending} value={privateKeyDraft} aria-invalid={keyInvalid}
+          onPaste={event => { event.preventDefault(); setCredentials({ ...credentials, privateKey: event.clipboardData.getData("text") }); setPrivateKeyDraft(""); setFileError(""); }}
+          onChange={event => { setPrivateKeyDraft(event.target.value); setCredentials({ ...credentials, privateKey: event.target.value }); }} />
+        {keyLoaded && <p role="status" className="text-sm">Private key loaded. Paste or upload another key to replace it.</p>}
         {keyInvalid && <p role="alert" className="text-sm text-destructive">Use a PEM private key, including its BEGIN and END lines. A token or client secret won’t work here.</p>}
         {fileError && <p role="alert" className="text-sm text-destructive">{fileError}</p>}
         <a className="inline-flex items-center gap-1 text-sm underline" href="https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/managing-private-keys-for-github-apps" target="_blank" rel="noreferrer">GitHub’s private key instructions<ExternalLink className="size-3.5" /></a>
