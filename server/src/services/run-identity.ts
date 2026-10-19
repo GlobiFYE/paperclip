@@ -10,6 +10,7 @@ import {
   type Db,
 } from "@paperclipai/db";
 import { conflict, forbidden } from "../errors.js";
+import { boundRunIssueId } from "./run-task-binding.js";
 import { isUuidLike } from "@paperclipai/shared";
 import { queuedCommentIdsFromRunContext, queuedCommentIdsFromWakePayload } from "./issue-queued-comment-queue.js";
 
@@ -71,14 +72,15 @@ async function lockIdentityTask(
 ) {
   const [run] = await executor
     .select({
-      context: heartbeatRuns.contextSnapshot,
-      issueId: heartbeatRuns.nativeIssueId,
+      contextSnapshot: heartbeatRuns.contextSnapshot,
+      nativeIssueId: heartbeatRuns.nativeIssueId,
+      issueId: heartbeatRuns.issueId,
     })
     .from(heartbeatRuns)
     .where(
       and(eq(heartbeatRuns.id, runId), eq(heartbeatRuns.companyId, companyId)),
     );
-  const issueId = run?.context?.issueId ?? run?.context?.taskId ?? run?.issueId;
+  const issueId = run?.nativeIssueId ?? run?.issueId ?? run?.contextSnapshot?.issueId ?? run?.contextSnapshot?.taskId;
   if (
     issueId !== undefined &&
     issueId !== null &&
@@ -151,7 +153,7 @@ async function activate(executor: Executor, context: RunIdentityContext) {
       ),
     )
     .returning();
-  const issueId = run?.contextSnapshot?.issueId ?? run?.contextSnapshot?.taskId;
+  const issueId = run ? boundRunIssueId(run) : null;
   if (typeof issueId === "string")
     await executor
       .update(issues)
@@ -319,8 +321,7 @@ export async function prepareSteeredIdentity(
     throw forbidden("Steering requires an authenticated message author");
   if (
     run.status !== "running" ||
-    (run.contextSnapshot?.issueId !== input.issueId &&
-      run.contextSnapshot?.taskId !== input.issueId)
+    boundRunIssueId(run) !== input.issueId
   ) {
     throw conflict("Steering targets a different or inactive execution");
   }

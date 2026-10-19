@@ -1,0 +1,69 @@
+import { and, eq, isNull } from "drizzle-orm";
+import { chatConversations, chatEndpoints, chatMessageLinks, heartbeatRuns, issueComments, runIdentityContexts, type Db } from "@paperclipai/db";
+import type { ChatProvider } from "@paperclipai/shared";
+import { forbidden } from "../../errors.js";
+import { boundRunIssueId, boundRunIssueIdSql } from "../run-task-binding.js";
+
+type Run = Pick<typeof heartbeatRuns.$inferSelect,
+  "id" | "companyId" | "agentId" | "responsibleUserId" | "activeIdentityContextId" | "nativeIssueId" | "issueId" | "contextSnapshot">;
+type Context = typeof runIdentityContexts.$inferSelect;
+
+export async function chatRunSourceMessageId(db: Db, run: Run, options: { context?: Context | null; allowLegacyWakeComment?: boolean; provider?: ChatProvider } = {}): Promise<string | null> {
+  const legacyMessageId = options.allowLegacyWakeComment && typeof run.contextSnapshot?.wakeCommentId === "string"
+    ? run.contextSnapshot.wakeCommentId : null;
+  if (!run.activeIdentityContextId) {
+    return legacyMessageId;
+  }
+  let origin = options.context ?? (await db.select().from(runIdentityContexts).where(and(
+    eq(runIdentityContexts.id, run.activeIdentityContextId),
+    eq(runIdentityContexts.runId, run.id),
+    eq(runIdentityContexts.companyId, run.companyId),
+    eq(runIdentityContexts.status, "accepted"),
+  )).limit(1))[0];
+  if (!origin || origin.id !== run.activeIdentityContextId || origin.runId !== run.id ||
+      origin.companyId !== run.companyId || origin.status !== "accepted" ||
+      origin.responsibleUserId !== run.responsibleUserId) {
+    throw forbidden("Chat requester provenance changed");
+  }
+  const seen = new Set<string>();
+  let acceptedMessageSeen = false;
+  while (true) {
+    if (origin.messageId) {
+      acceptedMessageSeen = true;
+      if (!options.provider) return origin.messageId;
+      const [link] = await db.select({ issueId: chatConversations.issueId, provider: chatEndpoints.provider }).from(chatMessageLinks)
+        .innerJoin(chatConversations, and(eq(chatConversations.id, chatMessageLinks.conversationId), eq(chatConversations.companyId, run.companyId)))
+        .innerJoin(chatEndpoints, and(eq(chatEndpoints.id, chatConversations.endpointId), eq(chatEndpoints.companyId, run.companyId)))
+        .where(and(eq(chatMessageLinks.companyId, run.companyId), eq(chatMessageLinks.commentId, origin.messageId), eq(chatMessageLinks.direction, "inbound"))).limit(1);
+      if (link) {
+        if (link.issueId !== boundRunIssueId(run)) throw forbidden("Chat request belongs to another task");
+        if (link.provider !== options.provider) return null;
+        return origin.messageId;
+      }
+      const [message] = await db.select({ authorUserId: issueComments.authorUserId }).from(issueComments).where(and(
+        eq(issueComments.id, origin.messageId), eq(issueComments.companyId, run.companyId),
+        eq(issueComments.issueId, boundRunIssueId(run) ?? "00000000-0000-0000-0000-000000000000"),
+        eq(issueComments.authorType, "user"), isNull(issueComments.deletedAt),
+      )).limit(1);
+      if (!run.responsibleUserId || message?.authorUserId !== run.responsibleUserId) throw forbidden("Chat requester provenance changed");
+    }
+    if (!origin.parentContextId) return !acceptedMessageSeen && origin.runId === run.id ? legacyMessageId : null;
+    if (seen.has(origin.id) || seen.size >= 100) throw forbidden("Chat source provenance could not be verified");
+    seen.add(origin.id);
+    const [parent] = await db.select().from(runIdentityContexts).where(and(
+      eq(runIdentityContexts.id, origin.parentContextId),
+      eq(runIdentityContexts.companyId, run.companyId),
+      eq(runIdentityContexts.status, "accepted"),
+    )).limit(1);
+    if (!parent || parent.responsibleUserId !== run.responsibleUserId) throw forbidden("Chat requester provenance changed");
+    const [sourceRun] = await db.select({ issueId: boundRunIssueIdSql() }).from(heartbeatRuns).where(and(
+      eq(heartbeatRuns.id, parent.runId),
+      eq(heartbeatRuns.companyId, run.companyId),
+      eq(heartbeatRuns.agentId, run.agentId),
+    )).limit(1);
+    if (!sourceRun || !boundRunIssueId(run) || sourceRun.issueId !== boundRunIssueId(run)) {
+      throw forbidden("Chat tools cannot be inherited by another task");
+    }
+    origin = parent;
+  }
+}

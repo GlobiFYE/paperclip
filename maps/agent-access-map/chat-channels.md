@@ -138,6 +138,19 @@ the current bot token without resolving unrelated webhook credentials. See the
 and [batch failure controls](../../server/src/services/connectors/slack-endpoint-preparation.test.ts).
 These local controls do not establish live Slack latency or provider access.
 
+Native tool gateways use the durable run task binding for discovery and policy
+checks, with legacy JSON task fields as a fallback. GitHub and Slack follow
+accepted request provenance across task continuations. GitHub can retain the
+originating conversation after a board follow-up from the same accepted user.
+An inherited origin cannot cross a task, agent, company, or requester boundary.
+Endpoint settings, linked identity, tool profiles, and invocation policy still
+apply on each call. The native tool contract rotates older provider sessions so
+an empty retained catalog is not reused. PostgreSQL fixtures cover discovery,
+review publication, Slack reads, and revocation in
+[channel integration](../../server/src/__tests__/chat-channels.integration.test.ts)
+and [provenance controls](../../server/src/services/chat-channels/run-origin.test.ts).
+These fixtures do not prove live provider delivery.
+
 Catalog authorization projection (2026-10-17): tool discovery uses the same live
 service-owned task, company, agent, requester, endpoint and credential checks as
 full authority resolution. It omits the revision digest and search-action token,
