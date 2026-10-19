@@ -1553,6 +1553,13 @@ configuration, and controller-owned credential or instruction resources use
 verified suspension and saved-history resume. This recovery can restart a
 provider; it does not suspend every healthy warm turn.
 
+Plugin sandbox reuse during acquisition uses the configured startup timeout or
+the provider's declared acquisition default, with the host RPC margin. Resume
+attempts and transient retries share that deadline. Providers without either
+timeout retain the one-minute host default. A resume failure still preserves
+the recorded sandbox unless the provider proves it lost and replacement passes
+the existing backup checks.
+
 For the native runner, warm mode requests a reusable sandbox lease **before**
 lease acquisition. The environment's explicit runner lifecycle overrides the
 agent default; an inherited lifecycle uses the current agent setting on each
