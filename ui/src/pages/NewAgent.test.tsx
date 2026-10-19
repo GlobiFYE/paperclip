@@ -183,6 +183,22 @@ describe("New agent setup", () => {
     expect(api.hire.mock.calls[0][1]).not.toHaveProperty("runner");
   });
 
+  it("finishes ordinary native Claude API setup when the key is verified without a CLI hello", async () => {
+    settings.getExperimental.mockResolvedValue({ enableNativeRunner: false });
+    state.adapters = (state.adapters as any[]).map(adapter => adapter.type === "claude_local"
+      ? { ...adapter, supportedRunners: ["paperclip", "legacy"], defaultRunner: "paperclip" } : adapter);
+    api.testEnvironment.mockResolvedValue({ ...pass, adapterType: "paperclip_runner", checks: [
+      { code: "acpx_runtime_ready", level: "info", message: "Runtime verified" },
+      { code: "ai_connection_api_key_reverified", level: "info", message: "Key verified" },
+    ] });
+    await render("claude_local");
+    await connect("Claude");
+    await click("Finish setup");
+    expect(api.testEnvironment).toHaveBeenCalledTimes(1);
+    expect(api.hire).toHaveBeenCalledTimes(1);
+    expect(api.hire.mock.calls[0][1]).not.toHaveProperty("runner");
+  });
+
   it("records an explicit legacy choice when it matches the Windows default, then preserves it on Linux", async () => {
     settings.get.mockResolvedValue({ defaultEnvironmentId: "local-1" });
     envApi.list.mockResolvedValue([
