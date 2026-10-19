@@ -18,6 +18,7 @@ import {
   createDb,
   environmentLeases,
   environments,
+  heartbeatRunEvents,
   heartbeatRuns,
   issueComments,
   issueInboxArchives,
@@ -158,9 +159,12 @@ describeEmbeddedPostgres("issue recovery actions", () => {
     await db.delete(issueRecoveryActions);
     await db.delete(issueComments);
     await db.delete(environmentLeases);
-    await db.delete(activityLog);
-    await db.delete(costEvents);
-    await db.delete(heartbeatRuns);
+    await vi.waitFor(async () => {
+      await db.delete(heartbeatRunEvents);
+      await db.delete(activityLog);
+      await db.delete(costEvents);
+      await db.delete(heartbeatRuns);
+    }, { timeout: 1_000, interval: 10 });
     await db.delete(agentWakeupRequests);
     await db.delete(environments);
     await db.delete(issueInboxArchives);
@@ -2309,6 +2313,10 @@ describeEmbeddedPostgres("issue recovery actions", () => {
     await db.update(issues).set({ status: "blocked" }).where(eq(issues.id, sourceIssueId));
     const firstRunId = randomUUID();
     await seedHeartbeatRun({ companyId, agentId: coderId, runId: firstRunId, issueId: sourceIssueId, status: "succeeded" });
+    await db.insert(heartbeatRunEvents).values({
+      companyId, agentId: coderId, runId: firstRunId, seq: 1,
+      eventType: "lifecycle", message: "Previous batch completed.",
+    });
     const action = await issueRecoveryActionService(db).upsertSourceScoped({
       companyId, sourceIssueId, kind: "deliberate_wait_without_target", ownerType: "agent",
       ownerAgentId: coderId, returnOwnerAgentId: coderId,
