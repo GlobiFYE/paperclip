@@ -21,6 +21,8 @@ export default function paperclipAttribution(pi) {
     const registry = context.modelRegistry;
     if (typeof registry.getProvider === "function") {
       for (const name of new Set(registry.getAll().map(model => model.provider))) {
+        const registered = registry.getRegisteredNativeProvider?.(name);
+        if (registered && patched.has(registered)) continue;
         const provider = registry.getProvider(name);
         if (!provider || patched.has(provider)) continue;
         const models = provider.getModels();

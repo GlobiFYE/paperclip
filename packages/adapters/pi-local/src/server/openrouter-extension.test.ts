@@ -48,9 +48,11 @@ describe("legacy Pi OpenRouter attribution extension", () => {
     const stream = vi.fn((_model: unknown, _input: unknown, _options: unknown) => "stream");
     const auth = { apiKey: {} };
     let provider = { id: "alias", auth, getModels: () => [model, other], stream, streamSimple: stream };
+    let registered: typeof provider | undefined;
     const registry = {
-      getAll: () => [model], getProvider: () => provider,
-      registerProvider: vi.fn((wrapped) => { provider = wrapped; }),
+      getAll: () => [model], getProvider: () => ({ ...provider }),
+      getRegisteredNativeProvider: () => registered,
+      registerProvider: vi.fn((wrapped) => { provider = wrapped; registered = wrapped; }),
     };
     apply(registry);
     apply(registry, "model_select");
