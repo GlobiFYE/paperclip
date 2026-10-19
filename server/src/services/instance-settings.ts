@@ -235,11 +235,11 @@ export function normalizeExperimentalSettings(raw: unknown): InstanceExperimenta
       enableMcpAggregators: true,
       enablePublicMcp: parsed.data.enablePublicMcp ?? false,
       enableOpenAiDot: parsed.data.enableOpenAiDot ?? false,
+      enableMuse: parsed.data.enableMuse ?? false,
       enableGrokBot: parsed.data.enableGrokBot ?? false,
       enableChatConnectors: parsed.data.enableChatConnectors ?? false,
       enableGitHubReviewBots: parsed.data.enableGitHubReviewBots ?? false,
       enableMemoryConnectors: parsed.data.enableMemoryConnectors ?? false,
-      enablePipelines: parsed.data.enablePipelines ?? false,
       enableCases: parsed.data.enableCases ?? false,
       enableAgentChat: parsed.data.enableAgentChat ?? false,
       enableCombinedInboxTasks: parsed.data.enableCombinedInboxTasks ?? false,
@@ -285,11 +285,11 @@ export function normalizeExperimentalSettings(raw: unknown): InstanceExperimenta
     enableMcpAggregators: true,
     enablePublicMcp: false,
     enableOpenAiDot: false,
+    enableMuse: false,
     enableGrokBot: false,
     enableChatConnectors: false,
     enableGitHubReviewBots: false,
     enableMemoryConnectors: false,
-    enablePipelines: false,
     enableCases: false,
     enableAgentChat: false,
     enableCombinedInboxTasks: false,
@@ -391,7 +391,7 @@ export function applyCloudCatalogDefaults(
  *
  * `updateExperimental` persists the whole normalized object, and the schema
  * normalizes an omitted flag to its self-hosted default. Without this step an
- * unrelated experimental write (say, turning on pipelines) would store
+ * unrelated experimental write (say, turning on Cases) would store
  * `enableNativeRunner: true` on a managed instance whose tenant row had never
  * mentioned the flag; every later read would then treat the stored boolean as
  * an explicit tenant choice and stop re-asserting the Cloud default.
