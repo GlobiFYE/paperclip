@@ -4620,8 +4620,8 @@ describeEmbeddedPostgres("environmentRuntimeService", () => {
   });
 
   it.each([
-    { label: "declared provider startup budget", timeoutMs: null, defaultAcquireTimeoutMs: 300_000 },
-    { label: "explicit startup budget", timeoutMs: 120_000, defaultAcquireTimeoutMs: 300_000 },
+    { label: "declared provider startup budget", timeoutMs: null, defaultAcquireTimeoutMs: 300_000, expectedRpcTimeoutMs: 330_000 },
+    { label: "explicit startup budget", timeoutMs: 120_000, defaultAcquireTimeoutMs: 300_000, expectedRpcTimeoutMs: 150_000 },
   ])("resumes the same sandbox after a slow start within its $label", async (options) => {
     const seeded = await seedReusablePluginSandboxLease("paperclip_runner", options);
     let signalResumeStarted!: () => void;
@@ -4646,6 +4646,7 @@ describeEmbeddedPostgres("environmentRuntimeService", () => {
       isRunning: () => true, call,
       getWorker: () => ({ supportedMethods: ["environmentResumeLease", "environmentReleaseLease", "environmentDestroyLease"] }),
     } as unknown as PluginWorkerManager });
+    const now = vi.spyOn(Date, "now").mockReturnValue(Date.now());
     const acquisition = runtime.acquireRunLease({
       companyId: seeded.companyId, environment: seeded.environment,
       issueId: null, agentId: seeded.agentId, adapterType: "paperclip_runner", heartbeatRunId: seeded.runId,
@@ -4656,11 +4657,13 @@ describeEmbeddedPostgres("environmentRuntimeService", () => {
       await vi.advanceTimersByTimeAsync(61_000);
     } finally {
       vi.useRealTimers();
+      now.mockRestore();
     }
     const result = await acquisition;
     expect(result.error).toBeNull();
     expect(result.value?.lease).toMatchObject({ id: seeded.reusableLease.id, providerLeaseId: seeded.reusableLease.providerLeaseId });
     expect(call).toHaveBeenCalledOnce();
+    expect(call.mock.calls[0]?.[3]).toBe(options.expectedRpcTimeoutMs);
     expect(await environmentService(db).getLeaseById(seeded.reusableLease.id)).toMatchObject({ status: "active", heartbeatRunId: seeded.runId });
   });
 
