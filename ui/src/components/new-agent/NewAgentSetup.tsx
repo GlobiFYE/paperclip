@@ -156,7 +156,6 @@ function Setup({
     createdAgentId ? "saved" : connectionAdapter ? "connect" : "runtime",
   );
   const [model, setModel] = useState("");
-  const efforts = isRunner ? [] : setupEfforts(adapterType, model);
   const [effort, setEffort] = useState("");
   const [modelOpen, setModelOpen] = useState(false);
   const [environmentOverride, setEnvironmentOverride] = useState("");
@@ -245,6 +244,7 @@ function Setup({
     enabled: Boolean(brandType) && showModel && !connectionModels,
     retry: false,
   });
+  const efforts = isRunner ? [] : setupEfforts(adapterType, model, connectionModels?.models ?? models.data ?? []);
   const companySecrets = useQuery({
     queryKey: queryKeys.secrets.list(companyId),
     queryFn: () => secretsApi.list(companyId),
@@ -914,7 +914,7 @@ function Setup({
                                   setModel(connectionModels?.resolveModel(value) ?? value);
                                   if (
                                     effort &&
-                                    !setupEfforts(adapterType, value).includes(
+                                    !setupEfforts(adapterType, value, connectionModels?.models ?? models.data ?? []).includes(
                                       effort,
                                     )
                                   )
