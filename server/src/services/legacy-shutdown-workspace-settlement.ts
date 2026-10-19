@@ -11,6 +11,20 @@ type Run = Pick<typeof heartbeatRuns.$inferSelect, "id" | "companyId">;
 const SETTLEMENT_RENEW_MS = 10_000;
 const SETTLEMENT_LEASE_MS = 30_000;
 
+function settlementRenewalFailureKind(error: unknown) {
+  for (let depth = 0; depth < 4 && error && typeof error === "object"; depth++) {
+    const value = error as { code?: unknown; cause?: unknown };
+    if (value.code === "55P03") return "lock_timeout";
+    if (value.code === "57014") return "statement_cancelled";
+    if (typeof value.code === "string" && (/^08[0-9A-Z]{3}$/.test(value.code)
+      || ["ECONNRESET", "ECONNREFUSED", "ETIMEDOUT", "CONNECT_TIMEOUT", "CONNECTION_CLOSED", "CONNECTION_ENDED", "CONNECTION_DESTROYED"].includes(value.code))) {
+      return "connection_failed";
+    }
+    error = value.cause;
+  }
+  return "unknown";
+}
+
 export function maintainLegacyShutdownWorkspaceSettlement(db: Db, run: Run) {
   let stopped = false;
   let pending: Promise<void> | null = null;
@@ -28,8 +42,8 @@ export function maintainLegacyShutdownWorkspaceSettlement(db: Db, run: Run) {
           sql`${environmentLeases.metadata}->'legacyShutdownWorkspaceSettlement'->>'state' = 'pending'`,
           sql`(${environmentLeases.metadata}->'legacyShutdownWorkspaceSettlement'->>'deadlineAt')::timestamptz > clock_timestamp()`,
         ));
-    }).catch(() => {
-        logger.warn({ runId: run.id }, "Shutdown workspace settlement lease renewal failed; source remains protected locally");
+    }).catch(error => {
+        logger.warn({ runId: run.id, errorKind: settlementRenewalFailureKind(error) }, "Shutdown workspace settlement lease renewal failed; source remains protected locally");
       }).finally(() => { pending = null; });
   };
   const timer = setInterval(renew, SETTLEMENT_RENEW_MS);

@@ -12,6 +12,7 @@ import type { NativeRestartRecoveryClaim, NativeRestartRecoveryDisposition } fro
 import { NATIVE_OWNERSHIP_UNVERIFIED_ERROR_CODE } from "../native-runtime/native-runner-ownership.js";
 import { allowLegacyShutdownWorkspaceCleanup, beginLegacyShutdownWorkspaceSettlement, finishLegacyShutdownWorkspaceSettlement, maintainLegacyShutdownWorkspaceSettlement, legacyShutdownWorkspaceResourceProtected, sweepLegacyShutdownWorkspaceSettlements } from "../legacy-shutdown-workspace-settlement.js";
 import { adapterExecutionControls, createAdapterExecutionControl } from "../adapter-execution-control.js";
+import { logger } from "../../middleware/logger.js";
 
 type Run = typeof heartbeatRuns.$inferSelect;
 
@@ -338,6 +339,7 @@ describePostgres("heartbeat recovery module ownership", () => {
 
   it("bounds a contended settlement renewal without blocking unrelated database work", async () => {
     const f = await seedShutdownSource();
+    const warning = vi.spyOn(logger, "warn");
     let unlock!: () => void;
     let locked!: () => void;
     const lockReady = new Promise<void>(resolve => { locked = resolve; });
@@ -355,14 +357,36 @@ describePostgres("heartbeat recovery module ownership", () => {
       expect(await db.select({ id: heartbeatRuns.id }).from(heartbeatRuns).where(eq(heartbeatRuns.id, f.run.id)))
         .toEqual([{ id: f.run.id }]);
       await stopRenewing();
+      expect(warning).toHaveBeenCalledWith({ runId: f.run.id, errorKind: "lock_timeout" },
+        "Shutdown workspace settlement lease renewal failed; source remains protected locally");
     } finally {
       unlock();
       await lock;
       await stopRenewing();
       vi.useRealTimers();
+      warning.mockRestore();
       await deleteShutdownSource(f);
     }
   });
+
+  it.each([["57014", "statement_cancelled"], ["08006", "connection_failed"], ["private-credential", "unknown"]])(
+    "reports renewal failure %s without raw database diagnostics", async (code, errorKind) => {
+      const run = { id: randomUUID(), companyId: randomUUID() };
+      const privateValue = "postgres://private-credential@example.invalid/database";
+      const failure = new Error(privateValue, { cause: { code, query: privateValue, params: [privateValue] } });
+      const dbBoundary = { transaction: vi.fn().mockRejectedValue(failure) } as unknown as Db;
+      const warning = vi.spyOn(logger, "warn").mockImplementation(() => undefined);
+      vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+      const stopRenewing = maintainLegacyShutdownWorkspaceSettlement(dbBoundary, run);
+      try {
+        await vi.advanceTimersByTimeAsync(10_000);
+        await stopRenewing();
+        expect(warning).toHaveBeenCalledExactlyOnceWith({ runId: run.id, errorKind },
+          "Shutdown workspace settlement lease renewal failed; source remains protected locally");
+        expect(JSON.stringify(warning.mock.calls)).not.toContain("private-credential");
+      } finally { await stopRenewing(); vi.useRealTimers(); warning.mockRestore(); }
+    },
+  );
 
   it("does not turn a stale pending snapshot into a repair hold after settlement", async () => {
     const f = await seedShutdownSource();
