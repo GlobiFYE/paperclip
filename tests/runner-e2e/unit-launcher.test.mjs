@@ -8,7 +8,7 @@ import { expect, it } from "vitest";
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
 it.skipIf(process.env.PAPERCLIP_UNIT_BOUNDARY_PROBE === "1")("runs the documented pnpm validation with clean test processes after parent and shim injection", () => {
-  const directory = realpathSync(mkdtempSync(path.join(tmpdir(), "runner-unit-boundary-")));
+  const directory = realpathSync(mkdtempSync(path.join(tmpdir(), "runner unit boundary-")));
   try {
     const preload = path.join(directory, "preload.cjs");
     const foreignModules = path.join(directory, "foreign-modules");
@@ -23,7 +23,7 @@ it.skipIf(process.env.PAPERCLIP_UNIT_BOUNDARY_PROBE === "1")("runs the documente
       encoding: "utf8",
       timeout: 90_000,
       env: { ...process.env, PAPERCLIP_UNIT_BOUNDARY_PROBE: "1",
-        NODE_PATH: foreignModules, NODE_OPTIONS: `--require=${preload}` },
+        NODE_PATH: foreignModules, NODE_OPTIONS: `--require=${JSON.stringify(preload)}` },
     });
     expect(result.error, `${result.stdout}\n${result.stderr}`).toBeUndefined();
     expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
