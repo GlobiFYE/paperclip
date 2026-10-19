@@ -329,6 +329,11 @@ describeDatabase("tool definition runtime synchronization", () => {
     await write({ agentId, agentIds: [peerId] }, [agentId]);
     await write({ agentIds: ` ${peerId} ` }, [peerId]);
     await write({ agentIds: [" ", null, agentId] }, [agentId, peerId]);
+    const whitespace = "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff";
+    await write({ agentIds: `${whitespace}${peerId}${whitespace}` }, [agentId, peerId]);
+    await write({ agentIds: [whitespace] }, [agentId, peerId]);
+    await write({ agentIds: [`${whitespace}${peerId}${whitespace}`] }, [agentId, peerId]);
+    await write({ agentIds: [agentId] }, [agentId]);
     await write({ agentId: randomUUID() }, [agentId]);
     await write({ agentIds: [] }, [agentId, peerId]);
     await write({ agentId: "invalid" }, [agentId, peerId]);

@@ -3,12 +3,13 @@ RETURNS TABLE(target_type text, target_id text)
 LANGUAGE plpgsql IMMUTABLE SET search_path = public, pg_temp AS $$
 DECLARE single_agent text := CASE WHEN jsonb_typeof(selectors->'agentId') = 'string' THEN nullif(selectors->>'agentId', '') END;
   many_agents text[];
+  trim_chars text := U&'\0009\000A\000B\000C\000D\0020\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000\FEFF';
 BEGIN
   SELECT array_agg(value#>>'{}') INTO many_agents
     FROM jsonb_array_elements(CASE jsonb_typeof(selectors->'agentIds')
       WHEN 'array' THEN selectors->'agentIds'
-      WHEN 'string' THEN jsonb_build_array(btrim(selectors->>'agentIds')) ELSE '[]'::jsonb END) value
-    WHERE jsonb_typeof(value) = 'string' AND btrim(value#>>'{}') <> '';
+      WHEN 'string' THEN jsonb_build_array(btrim(selectors->>'agentIds', trim_chars)) ELSE '[]'::jsonb END) value
+    WHERE jsonb_typeof(value) = 'string' AND btrim(value#>>'{}', trim_chars) <> '';
   IF single_agent IS NOT NULL THEN
     IF coalesce(cardinality(many_agents), 0) = 0 OR single_agent = ANY(many_agents) THEN
       RETURN QUERY SELECT 'agent'::text, single_agent;
