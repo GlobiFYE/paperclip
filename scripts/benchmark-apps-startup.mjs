@@ -131,6 +131,7 @@ try {
         if (path.startsWith("/api/")) requests.push({ path, startedMs: performance.now() - started });
       });
       let detailCompleted = 0;
+      let detailReadyMax = 0;
       let sidebarReady = null;
       let observedNavigationStart;
       const started = performance.now();
@@ -139,14 +140,15 @@ try {
         if (!url.pathname.startsWith("/api/")) return;
         try {
           await response.finished();
+          const completedMs = performance.now() - started;
           const body = await response.body();
           const sizes = await response.request().sizes();
-          const completedMs = performance.now() - started;
           records.push({ path: url.pathname, status: response.status(), decodedBytes: body.byteLength, encodedBytes: sizes.responseBodySize, completedMs });
           if (url.pathname.endsWith("/issues/summaries")) sidebarReady = completedMs;
           if (fixture.tasks.some(task => url.pathname === `/api/issues/${task.id}`)) {
             detailCompleted++;
-            if (detailCompleted === fixture.tasks.length) sidebarReady = completedMs;
+            detailReadyMax = Math.max(detailReadyMax, completedMs);
+            if (detailCompleted >= fixture.tasks.length) sidebarReady = detailReadyMax;
           }
         } catch { /* navigation cancellation has no completed response */ }
       });
