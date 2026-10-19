@@ -1,6 +1,8 @@
 export {
   createDb,
   reloadDatabaseCredential,
+  resolveCurrentDatabaseCredential,
+  type CredentialReloadResult,
   withDedicatedDbConnection,
   closeRegisteredClients,
   getPostgresDataDirectory,

@@ -1,6 +1,6 @@
 import net from "node:net";
 import { describe, expect, it } from "vitest";
-import { closeRegisteredClients, createDb, reloadDatabaseCredential, type Db } from "./client.js";
+import { closeRegisteredClients, createDb, reloadDatabaseCredential, withDedicatedDbConnection, type Db } from "./client.js";
 
 /**
  * A Postgres wire peer that requires cleartext password auth, so it observes
@@ -164,6 +164,47 @@ describe("credential reload", () => {
       await reloadDatabaseCredential(db);
       await run(db);
       expect(peer.passwords()).toEqual(["firstpw"]);
+    } finally {
+      await peer.close();
+      await closeRegisteredClients(peer.urlFor("ignored"));
+    }
+  }, 15000);
+
+  it("does not send a repointed file's password to the original server", async () => {
+    const peer = await startAuthCapturingPeer();
+    let sourceUrl = peer.urlFor("firstpw");
+    try {
+      const db = createDb(sourceUrl, { credentialSource: () => sourceUrl });
+      await run(db);
+      expect(peer.passwords()).toEqual(["firstpw"]);
+
+      // Repoint the file to a different database on the same server. The pool
+      // is not reset (target changed), but a brand-new connection (dedicated)
+      // now reads the repointed file. Its password must not be disclosed to the
+      // original server — an empty password is sent instead.
+      sourceUrl = peer.urlFor("secondpw", "otherdb");
+      await withDedicatedDbConnection(db, (dedicated) => dedicated.$client.unsafe("select 1"));
+      expect(peer.passwords()).not.toContain("secondpw");
+    } finally {
+      await peer.close();
+      await closeRegisteredClients(peer.urlFor("ignored"));
+    }
+  }, 15000);
+
+  it("reports the reload outcome (unchanged / reloaded / rejected)", async () => {
+    const peer = await startAuthCapturingPeer();
+    let sourceUrl = peer.urlFor("firstpw");
+    try {
+      const db = createDb(sourceUrl, { credentialSource: () => sourceUrl });
+      await run(db);
+
+      expect(await reloadDatabaseCredential(db)).toEqual({ status: "unchanged" });
+
+      sourceUrl = peer.urlFor("secondpw");
+      expect(await reloadDatabaseCredential(db)).toEqual({ status: "reloaded" });
+
+      sourceUrl = peer.urlFor("thirdpw", "otherdb");
+      expect(await reloadDatabaseCredential(db)).toEqual({ status: "rejected", reason: "target-mismatch" });
     } finally {
       await peer.close();
       await closeRegisteredClients(peer.urlFor("ignored"));
