@@ -5,9 +5,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OnboardingWizardVariant } from "./OnboardingWizardVariant";
 
-const state = vi.hoisted(() => ({ onboardingOpen: false, pathname: "/PAP/issues/PAP-1" }));
+const state = vi.hoisted(() => ({ onboardingOpen: false, onboardingRouteDismissed: false, pathname: "/PAP/issues/PAP-1" }));
 const mount = vi.hoisted(() => vi.fn());
-vi.mock("../context/DialogContext", () => ({ useDialogState: () => state }));
+vi.mock("../context/DialogContext", () => ({ useDialogState: () => state, useDialogActions: () => ({ closeOnboarding: vi.fn(), setOnboardingRouteDismissed: vi.fn() }) }));
 vi.mock("../lib/router", () => ({ useLocation: () => state }));
 vi.mock("./OnboardingWizard", () => ({
   OnboardingWizard: () => { mount(); return <div data-testid="wizard-capsule" />; },

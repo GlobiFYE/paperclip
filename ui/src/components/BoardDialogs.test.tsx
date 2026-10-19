@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { BoardDialogs } from "./BoardDialogs";
 
 const state = vi.hoisted(() => ({ newIssueOpen: false, newProjectOpen: false, newGoalOpen: false, newAgentOpen: false }));
-vi.mock("../context/DialogContext", () => ({ useDialogState: () => state }));
+vi.mock("../context/DialogContext", () => ({ useDialogState: () => state, useDialogActions: () => ({ closeNewIssue: vi.fn(), closeNewProject: vi.fn(), closeNewGoal: vi.fn(), closeNewAgent: vi.fn() }) }));
 vi.mock("./NewIssueDialog", () => ({ NewIssueDialog: () => <input aria-label="Task draft" /> }));
 vi.mock("./NewProjectDialog", () => ({ NewProjectDialog: () => <div>Project dialog</div> }));
 vi.mock("./NewGoalDialog", () => ({ NewGoalDialog: () => <div>Goal dialog</div> }));

@@ -1,8 +1,8 @@
-import { lazy, Suspense, useState } from "react";
-import { useDialogState } from "../context/DialogContext";
+import { lazy } from "react";
+import { useDialogActions, useDialogState } from "../context/DialogContext";
 import { useLocation } from "../lib/router";
 import { isOnboardingPath } from "../lib/onboarding-route";
-import { PaperclipLoading } from "./AnimatedPaperclipIcon";
+import { DeferredOverlay } from "./DeferredOverlay";
 
 const OnboardingWizard = lazy(() => import("./OnboardingWizard").then((module) => ({ default: module.OnboardingWizard })));
 
@@ -12,11 +12,12 @@ const OnboardingWizard = lazy(() => import("./OnboardingWizard").then((module) =
  * experimental flag.
  */
 export function OnboardingWizardVariant() {
-  const { onboardingOpen } = useDialogState();
+  const { onboardingOpen, onboardingRouteDismissed } = useDialogState();
+  const { closeOnboarding, setOnboardingRouteDismissed } = useDialogActions();
   const { pathname } = useLocation();
-  const requested = onboardingOpen || isOnboardingPath(pathname);
-  const [activated, setActivated] = useState(requested);
-  if (requested && !activated) setActivated(true);
-  if (!requested && !activated) return null;
-  return <Suspense fallback={<div className="fixed inset-0 z-50 bg-background"><PaperclipLoading /></div>}><OnboardingWizard /></Suspense>;
+  const requested = onboardingOpen || (isOnboardingPath(pathname) && !onboardingRouteDismissed);
+  return <DeferredOverlay requested={requested} title="Setup" onClose={() => {
+    closeOnboarding();
+    if (isOnboardingPath(pathname)) setOnboardingRouteDismissed(true);
+  }}><OnboardingWizard /></DeferredOverlay>;
 }
