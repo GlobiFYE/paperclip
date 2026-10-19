@@ -32,6 +32,11 @@ export function isCloudManagedInstance(
   );
 }
 
+export function isCloudStagingInstance(env: CloudInstanceEnv = process.env): boolean {
+  const host = normalizeOptionalEnvValue(env.PAPERCLIP_PRIMARY_HOST);
+  return isCloudManagedInstance(env) && host !== null && /^[a-z0-9-]+\.staging\.paperclip\.app$/i.test(host);
+}
+
 /**
  * Public stack metadata injected by the Paperclip Cloud provisioner.
  *
