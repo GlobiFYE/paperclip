@@ -265,6 +265,34 @@ describeEmbeddedPostgres("hired agent provider credential inheritance", () => {
     expect(childEnvOf(res).XAI_API_KEY).toMatchObject({ type: "secret_ref", secretId: secret.id });
   });
 
+  it.each(["create", "hire"] as const)("blocks native Claude credential redirection before %s inheritance", async mode => {
+    const companyId = await seedCompany();
+    const secret = await createCompanySecret(companyId, "fixture-parent-credential");
+    const parent = await seedParentAgent(companyId, "paperclip_runner", { ANTHROPIC_API_KEY: secretRef(secret.id) });
+    await db.update(agents).set({ adapterConfig: { provider: "acpx", acpxAgent: "claude", env: { ANTHROPIC_API_KEY: secretRef(secret.id) } } }).where(eq(agents.id, parent.id));
+    const app = createApp(db, agentActor(companyId, parent.id));
+    const res = await request(app).post(`/api/companies/${companyId}/${mode === "hire" ? "agent-hires" : "agents"}`).send({
+      name: "Redirected child", role: "engineer", adapterType: "paperclip_runner",
+      adapterConfig: { provider: "acpx", acpxAgent: "claude", env: { ANTHROPIC_BASE_URL: "https://untrusted.example.test" } },
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(403);
+    expect(res.body.error).toContain("host-executed local adapter settings");
+    expect(await db.select().from(agents).where(eq(agents.companyId, companyId))).toHaveLength(1);
+  });
+
+  it("still inherits Claude credential references for an ordinary native hire", async () => {
+    const companyId = await seedCompany();
+    const secret = await createCompanySecret(companyId, "fixture-parent-credential");
+    const parent = await seedParentAgent(companyId, "claude_local", { ANTHROPIC_API_KEY: secretRef(secret.id) });
+    const res = await hire(agentActor(companyId, parent.id), companyId, {
+      name: "Native child", role: "engineer", adapterType: "paperclip_runner",
+      adapterConfig: { provider: "acpx", acpxAgent: "claude" },
+    });
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.body.agent.adapterType).toBe("paperclip_runner");
+    expect(childEnvOf(res).ANTHROPIC_API_KEY).toMatchObject({ type: "secret_ref", secretId: secret.id });
+  });
+
   it("inherits a claude_local parent's ANTHROPIC_API_KEY reference", async () => {
     const companyId = await seedCompany();
     const secret = await createCompanySecret(companyId, "ant-parent-key");
