@@ -47,8 +47,11 @@ export async function chatRunSourceMessageId(db: Db, run: Run, options: { contex
         isNull(issueComments.deletedAt),
       )).limit(1);
       if (!run.responsibleUserId || message?.authorUserId !== run.responsibleUserId) throw forbidden("Chat requester provenance changed");
+      // This verified board message may continue its same-user channel history,
+      // but its own wake metadata is not the earlier channel request.
+      legacyMessageId = null;
     }
-    if (!origin.parentContextId) return !acceptedMessageSeen ? legacyMessageId : null;
+    if (!origin.parentContextId) return legacyMessageId;
     if (seen.has(origin.id)) throw forbidden("Chat source provenance could not be verified");
     seen.add(origin.id);
     const [parent] = await db.select().from(runIdentityContexts).where(and(
@@ -73,7 +76,7 @@ export async function chatRunSourceMessageId(db: Db, run: Run, options: { contex
     if (!sourceRun || !boundRunIssueId(run) || sourceRun.issueId !== boundRunIssueId(run)) {
       throw forbidden("Chat tools cannot be inherited by another task");
     }
-    if (options.allowLegacyWakeComment && !acceptedMessageSeen && sourceRun.responsibleUserId === run.responsibleUserId &&
+    if (options.allowLegacyWakeComment && sourceRun.responsibleUserId === run.responsibleUserId &&
         typeof sourceRun.wakeCommentId === "string") legacyMessageId ??= sourceRun.wakeCommentId;
     origin = parent;
   }

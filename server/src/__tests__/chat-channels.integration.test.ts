@@ -2793,6 +2793,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
       { boardFollowUp: false, legacyOrigin: false },
       { boardFollowUp: true, legacyOrigin: false },
       { boardFollowUp: false, legacyOrigin: true },
+      { boardFollowUp: true, legacyOrigin: true },
     ])("keeps GitHub review tools callable through a later native task gateway (board follow-up: $boardFollowUp, legacy origin: $legacyOrigin)", async ({ boardFollowUp, legacyOrigin }) => {
       vi.stubEnv("PAPERCLIP_API_URL", "https://paperclip.example.test");
       onTestFinished(() => vi.unstubAllEnvs());

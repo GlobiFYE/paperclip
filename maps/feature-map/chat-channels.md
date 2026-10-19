@@ -79,7 +79,8 @@ For GitHub and Slack tool continuity, start a task from the channel, then admit
 a later monitor or retry run for the same task. Check that the later run can
 discover and call its channel tools without a new inbound message. For GitHub,
 also continue from a board message by the same accepted requester and complete
-the review in the original conversation. Revoke the linked identity and check
+the review in the original conversation, including when the original source is
+recorded only in legacy wake metadata. Revoke the linked identity and check
 that the next call fails. Repeat the boundary checks with another task, agent,
 company, and requester. The channel and provenance fixtures above cover these
 contracts with synthetic providers; record a live journey separately.
