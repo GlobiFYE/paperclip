@@ -26,7 +26,7 @@ export function maintainLegacyShutdownWorkspaceSettlement(db: Db, run: Run) {
           sql`${environmentLeases.metadata}->'legacyShutdownWorkspaceSettlement'->>'runId' = ${run.id}`,
           sql`${environmentLeases.metadata}->'legacyShutdownWorkspaceSettlement'->>'controllerBootId' = ${legacyControllerBootId}`,
           sql`${environmentLeases.metadata}->'legacyShutdownWorkspaceSettlement'->>'state' = 'pending'`,
-          sql`${environmentLeases.metadata}->'legacyShutdownWorkspaceSettlement'->>'deadlineAt' > ${new Date().toISOString()}`,
+          sql`(${environmentLeases.metadata}->'legacyShutdownWorkspaceSettlement'->>'deadlineAt')::timestamptz > clock_timestamp()`,
         ));
     }).catch(() => {
         logger.warn({ runId: run.id }, "Shutdown workspace settlement lease renewal failed; source remains protected locally");
