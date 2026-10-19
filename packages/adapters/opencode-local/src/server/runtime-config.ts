@@ -280,11 +280,10 @@ function attributeOpenCodeProviders(providers: Record<string, unknown>): Record<
 }
 
 function mergeConfigObjects(base: Record<string, unknown>, override: Record<string, unknown>): Record<string, unknown> {
-  const result = { ...base };
-  for (const [key, value] of Object.entries(override)) {
-    const previous = result[key];
-    result[key] = isPlainObject(previous) && isPlainObject(value)
-      ? mergeConfigObjects(previous, value) : value;
-  }
-  return result;
+  const entries = Object.entries(override).map(([key, value]) => {
+    const previous = base[key];
+    return [key, isPlainObject(previous) && isPlainObject(value)
+      ? mergeConfigObjects(previous, value) : value];
+  });
+  return { ...base, ...Object.fromEntries(entries) };
 }
