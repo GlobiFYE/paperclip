@@ -1,3 +1,4 @@
+import { isOpenRouterUrl, openRouterAttributionHeaders } from "@paperclipai/adapter-utils/openrouter-attribution";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -129,9 +130,20 @@ export async function prepareOpenCodeRuntimeConfig(input: {
   const gatewayProvidersRaw = input.env.PAPERCLIP_OPENCODE_PROVIDERS ?? process.env.PAPERCLIP_OPENCODE_PROVIDERS;
   const configuredModel = parseConfiguredModelRef(input.config.model);
   const smallModel = (input.env.PAPERCLIP_OPENCODE_SMALL_MODEL ?? process.env.PAPERCLIP_OPENCODE_SMALL_MODEL)?.trim();
-  // Custom providers, model registration, and small_model are independent of the
-  // permission override. Only skip the temporary config when there is nothing to add.
-  if (!skipPermissions && gatewayProvidersRaw === undefined && !configuredModel && !smallModel) {
+  const inlineContent = input.env.OPENCODE_CONFIG_CONTENT ?? process.env.OPENCODE_CONFIG_CONTENT;
+  const skipPermissionsExplicit = typeof input.config.dangerouslySkipPermissions === "boolean";
+  // Custom providers, model registration, small_model, and the isolated inline
+  // config are independent of the permission override. An explicit permission
+  // policy also marks a deliberate configuration. Only skip the temporary config
+  // when the secure default applies and there is nothing else to prepare.
+  if (
+    !skipPermissions &&
+    !skipPermissionsExplicit &&
+    gatewayProvidersRaw === undefined &&
+    !configuredModel &&
+    !smallModel &&
+    !inlineContent
+  ) {
     return {
       env: input.env,
       notes: [],
@@ -160,9 +172,11 @@ export async function prepareOpenCodeRuntimeConfig(input: {
   }
 
   const existingConfig = await readJsonObject(runtimeConfigPath);
-  const notes = skipPermissions
-    ? ["Injected runtime OpenCode config with permission=allow for all tools and connections."]
-    : [];
+  const notes = [
+    skipPermissions
+      ? "Injected runtime OpenCode config with permission=allow for all tools and connections."
+      : "Prepared isolated OpenCode provider configuration.",
+  ];
 
   // Merge gateway/custom provider definitions supplied via PAPERCLIP_OPENCODE_PROVIDERS
   // (a JSON object in OpenCode's `provider` shape). OpenCode resolves a `--model
@@ -215,6 +229,17 @@ export async function prepareOpenCodeRuntimeConfig(input: {
     ...existingConfig,
     ...(skipPermissions ? { permission: "allow" } : {}),
   };
+  let inlineConfig: Record<string, unknown> | undefined;
+  if (inlineContent) {
+    try {
+      const parsed: unknown = JSON.parse(inlineContent);
+      if (isPlainObject(parsed)) inlineConfig = parsed;
+    } catch {
+      // OpenCode must still report invalid operator configuration.
+    }
+  }
+  nextProvider = attributeOpenCodeProviders(mergeConfigObjects(nextProvider,
+    isPlainObject(inlineConfig?.provider) ? inlineConfig.provider : {}));
   if (Object.keys(nextProvider).length > 0) {
     nextConfig.provider = nextProvider;
   }
@@ -235,6 +260,8 @@ export async function prepareOpenCodeRuntimeConfig(input: {
     env: {
       ...input.env,
       XDG_CONFIG_HOME: runtimeConfigHome,
+      ...(inlineContent ? { OPENCODE_CONFIG_CONTENT: inlineConfig
+        ? JSON.stringify({ ...inlineConfig, provider: nextProvider }) : inlineContent } : {}),
     },
     notes,
     hasRuntimeConfig: true,
@@ -262,4 +289,29 @@ export function prepareManagedOpenCodeRemoteHomes(input: {
     XDG_CACHE_HOME: path.posix.join(home, "cache"),
     XDG_STATE_HOME: path.posix.join(home, "state"),
   });
+}
+
+/** Native provider defaults and per-model headers can both carry harness attribution. */
+function attributeOpenCodeProviders(providers: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = { openrouter: {}, ...providers };
+  for (const [name, value] of Object.entries(result)) {
+    if (!isPlainObject(value)) continue;
+    const options = isPlainObject(value.options) ? value.options : {};
+    if (!isOpenRouterUrl(options.baseURL) && !(name === "openrouter" && options.baseURL === undefined)) continue;
+    const headers = isPlainObject(options.headers) ? options.headers as Record<string, string> : {};
+    const models = isPlainObject(value.models) ? Object.fromEntries(Object.entries(value.models).map(([id, model]) => [id,
+      isPlainObject(model) ? { ...model, headers: openRouterAttributionHeaders(isPlainObject(model.headers) ? model.headers as Record<string, string> : {}) } : model,
+    ])) : undefined;
+    result[name] = { ...value, options: { ...options, headers: openRouterAttributionHeaders(headers) }, ...(models ? { models } : {}) };
+  }
+  return result;
+}
+
+function mergeConfigObjects(base: Record<string, unknown>, override: Record<string, unknown>): Record<string, unknown> {
+  const entries = Object.entries(override).map(([key, value]) => {
+    const previous = base[key];
+    return [key, isPlainObject(previous) && isPlainObject(value)
+      ? mergeConfigObjects(previous, value) : value];
+  });
+  return { ...base, ...Object.fromEntries(entries) };
 }
