@@ -112,6 +112,7 @@ describeDatabase("new agent configuration defaults", () => {
     })).toMatchObject({ allowed: false, reason: "deny_scope" });
     for (const permissionKey of [
       "agents:create", "environments:manage", "tools:admin", "users:invite",
+      "users:manage_permissions", "joins:approve",
     ] as const) {
       expect(await accessService(db).hasPermission(companyId, "agent", standard.id, permissionKey)).toBe(false);
     }
