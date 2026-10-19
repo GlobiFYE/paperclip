@@ -155,15 +155,15 @@ provider-session identity, so an incompatible idle or recovered session is
 replaced on the next execution. An active turn is never mutated in place.
 
 `paperclip.native-execution-input.v5` remains the ordinary input format.
-Claude inputs with explicitly configured effort use v7 with the optional
-`provider.claudeEffort` field. V7 retains the compact v3 model envelope; effort
+Claude inputs with explicitly configured effort use v9 with the optional
+`provider.claudeEffort` field. V9 retains the compact v3 model envelope; effort
 is host configuration, never model-visible task text. V6 remains the separate
-OpenAI Dot format. Readers retain persisted v1-v6 contracts. Claude effort is
+OpenAI Dot format. Readers retain persisted v1-v8 contracts, including v7 home modes and v8 Muse. Claude effort is
 acknowledged on each ACP connection before prompting, bound into the session
 identity and recovery checkpoint, and cross-checked against the public provider
 descriptor. Missing effort retains the provider default; values are never clamped.
 
-The v5 input format It retains
+The v5 input format retains
 the v4 permission pinning and adds optional completion-source references;
 `paperclip.native-model-envelope.v3` is the corresponding explicit model
 projection. Readers continue to accept persisted v1-v4 inputs, and v5 readers
@@ -308,11 +308,10 @@ gate are exercised by the package-local deterministic conformance suite.
 
 ## Claude effort after the Codex default merge
 
-Native input v7 adds configured Claude effort while retaining v1–v6 readers,
-including v6 Dot and Grok Bot bindings. The shared executor retains the merged
-Codex close/cleanup implementation. Copilot's shared source attestation advances
-to pending profile 19 rather than overwriting the merged profile-18 fixture;
-its provider executable and permission closure are unchanged. Historical private
-Claude profile-18 evidence remains source-bound under its separate fixture name.
-Pi profile 25 retains its existing identity. These source identities require
-fresh packaged compatibility checks; earlier provider runs are not relabeled.
+Native input v9 adds configured Claude effort while retaining v1–v8 readers.
+It carries the explicit home mode from v7; v8 Muse remains separate. The shared
+executor retains master's provider and cleanup behavior. Copilot's shared source
+attestation advances from pending profile 21 to 22 without replacing historical
+fixtures. Pi advances from master's profile 23 to 26 to bind the combined source.
+Provider executable bytes remain unchanged. These new source identities require
+fresh compatibility checks; earlier provider runs retain their original identities.

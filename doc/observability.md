@@ -35,6 +35,33 @@ maintains as a dependency; once you install the packages below, they become
 normal dependencies of **your own** project, and your own Dependabot updates
 them.
 
+## Slack receipt reactions
+
+Slack stages its eyes reaction in the same transaction as the authorized task,
+comment, message link and wakeup intent. Transport starts after that commit,
+independently of attachment preparation, thread subscription and scheduler
+acceptance. Eyes acknowledge durable receipt; they do not certify agent startup.
+The existing action worker retains retries, credential fencing and exact-source
+cleanup when the final response is published.
+
+The Slack adapter also skips the SDK's two-second polling wait for optional link
+unfurls before message dispatch. Text, formatted content, link URLs and file
+download handles remain available. Paperclip does not consume that optional
+preview metadata for task admission.
+
+With an operator OTLP endpoint, the `paperclip.chat` tracer records
+`chat.slack.receipt` around each Slack reaction API attempt. Its closed attributes
+are `paperclip.chat.receipt.operation` (`add` or `remove`),
+`paperclip.chat.receipt.outcome` (`confirmed` or `failed`),
+`paperclip.chat.receipt.queue_ms` (action creation to transport), and
+`paperclip.chat.receipt.delivery_age_ms` (durable inbound receipt to provider
+confirmation or failure). `already_reacted` confirms an idempotent add.
+Delivery age excludes Slack-to-webhook transit and SDK parsing; the span duration
+measures provider I/O. A failed attempt is not an acknowledgement latency sample.
+No content, identifiers, credentials, URLs or exception text are added.
+Without the endpoint this instrumentation does no tracer lookup. Tracer errors
+cannot change reaction transport or settlement.
+
 ## Task detail loading
 
 `GET /api/issues/:id` returns `Server-Timing` with `paperclip_issue` for the
@@ -215,6 +242,14 @@ preparation, execution and settlement spans. They are controller work, not model
 turn time, and carry only the existing run hash. Nested phases overlap their
 containing backend or lifecycle intervals; do not add both durations.
 
+Before provider dispatch, `execution.usage_startup` measures durable usage-recorder
+initialization. `execution.mcp_handoff` measures native MCP server resolution or
+legacy managed MCP configuration. `execution.dispatch_admission` measures the
+final admission gate, including its nested `execution.budget_reservation` span.
+The admission span ends after the provider promise is handed off, not after the
+provider turn finishes. These spans use only the existing run hash. They close
+gaps between preparation and execution; their nested intervals are not additive.
+
 All preparation timing uses the endpoint gate, even when another library has
 registered a tracer provider. Tracer lookup, callback, status or ending failures
 cannot repeat work or replace its result or error. Automatic database children
@@ -254,7 +289,7 @@ attempt or owning phase:
 | `workspace.sources.*` | Source inventory queries, canonicalization, one filesystem alias scan, repository scan, and configured project scan. |
 | `workspace.readers`, `workspace.readers.*`, `workspace.access.*` | Retained-reader groups, identity, trust, project and source authorization, privacy and inventory reads. |
 | `workspace.provenance`, `workspace.notification`, `workspace.write` | Preserved ownership, notification statements, and record writes. |
-| `workspace.materialize.*`, `workspace.checkout.*` | Private source-directory setup and identity verification, existing checkout lookup, Git credential resolution, clone, requested-ref checkout, and atomic publication. The enclosing `heartbeat.prepare.workspace_source_materialize` includes the complete source-materialization path. |
+| `workspace.materialize.*`, `workspace.checkout.*` | Private source-directory setup and identity verification, existing checkout lookup, Git credential resolution, clone, optional pristine-object cache lookup/publication (`cache_lookup`, `cache_publish`), requested-ref checkout, and atomic publication. The enclosing `heartbeat.prepare.workspace_source_materialize` includes the complete source-materialization path. |
 | `runtime_selection.*` | Completion contracts, session/recovery reads, profiles, interaction materialization, backend discovery, bootstrap, run/coordinator writes, transaction entry/settlement, and workspace synchronization. |
 | `runtime_context.instructions`, `.skills`, `.mcp` | The three concurrent runtime-context branches. Their durations overlap. |
 | `runtime_context.asset_*` | Source reads, manifest hashing, cache lookup, cold materialization, and exact file verification on cold and warm paths. |
@@ -286,6 +321,24 @@ Asset writes and verification may add only non-negative integer
 `paperclip.execution.fileCount` and `paperclip.execution.bytes` attributes.
 The closed keys are declared in `EXECUTION_PREPARATION_SPAN_ATTRS` in
 `packages/adapter-utils/src/acpx-engine/startup-timing.ts`.
+Repository checkout cache phases also carry the closed
+`paperclip.execution.repositoryCache.outcome` value: `disabled`, `hit`, `miss`,
+`published`, `already_present`, `contended`, `capacity`, `budget`, `invalid`, or `error`.
+The clone span carries the boolean
+`paperclip.execution.repositoryCache.reference_supplied`, including `false` for
+a fallback clone. A lookup hit means a validated cache was found, and supplying
+a reference does not prove Git avoided a download. These attributes carry no
+cache keys, remote URLs, paths, refs, credentials, or error text.
+
+Pristine repository-object cache version 2 mirrors the fresh checkout's refs,
+including remote-tracking refs. Version 1 copied their objects into a bare
+repository but omitted the remote-tracking tips. Git could then download those
+objects again during negotiation. The version is part of the cache key, so the
+first checkout creates a new generation and later checkouts can reuse its tips.
+Existing generations remain under the same storage limits. Cached refs stay
+private to the company and credential scope. Task checkouts still authenticate
+online, use the current remote refs, and dissociate their objects from the cache.
+
 Other execution phases carry only the existing hashed run ID; manual boundaries
 have no attributes. Exceptions set status without exporting their messages.
 
@@ -354,6 +407,17 @@ above still apply.
 
 
 ## Native Runner Trace Spans
+
+Provider-pack fallback staging separates `provider_pack.archive.verify`
+(controller archive identity), `provider_pack.archive.probe` (remote helper support),
+`provider_pack.archive.reuse` (copy and hash image files),
+`provider_pack.archive.verify_missing` (verify only layers needing upload),
+`provider_pack.archive.transfer` (compressed file
+transfer), and `provider_pack.archive.extract` (received hash check and extraction).
+They are children of the existing pack selection/upload path and also appear in
+the local run timing log. Their fixed names add no paths, credentials, or content
+attributes. The operator endpoint gate remains unchanged. Source installs without
+prebuilt archives retain the existing directory upload span.
 
 The native provider lifecycle emits one foldable OpenTelemetry trace, linked to
 the server attempt described above. This is
@@ -478,9 +542,10 @@ environment variables: `SENTRY_DSN_FRONTEND` for the browser and
 `SENTRY_DSN_BACKEND` for the server. Each variable is optional. A
 specific variable always wins for its own component; a legacy variable,
 `SENTRY_DSN`, supplies a component that has no specific value set. An
-empty string counts as absent for all three variables. SDK configuration uses
-built-in Sentry options only. It adds no `beforeSend` hook. The run-failure
-reporter selects reportable outcomes before calling the SDK, as described below.
+empty string counts as absent for all three variables. The server's `beforeSend`
+hook adds normal task and run navigation links to events with saved run context.
+The run-failure reporter selects reportable outcomes before calling the SDK,
+as described below.
 
 The server is inactive when the backend DSN resolves to `null`; then it
 imports no Sentry package. The browser is inactive when the front-end DSN
@@ -596,12 +661,15 @@ loaded bundle, even if the server has since deployed another version.
 
 ### Privacy settings
 
-The feature uses built-in Sentry options only.
+Both runtimes use Sentry's privacy options. The server also adds saved-run
+navigation links through a bounded `beforeSend` hook.
 
 - `sendDefaultPii` is `false`, on both runtimes.
 - `tracesSampleRate` is `0`, on both runtimes. Paperclip sends no
   performance trace and no profile.
-- There is no `beforeSend` hook and no custom filter, on either runtime.
+- The server hook reads only saved run and company metadata for navigation.
+  It copies no request data and preserves the event if the lookup fails.
+  The browser adds no `beforeSend` hook. Neither runtime adds a custom filter.
 
 ### Server request data
 
@@ -674,6 +742,21 @@ Values with credentials, query parameters, fragments, or a path are omitted.
 The event never includes an API key or an access token. These references grant
 no access. A bot must authenticate to the correct instance and pass its existing
 company, run-output, and private-task access checks.
+
+Server events associated with a saved run also include `task_url` and `run_url`
+tags for the normal company-prefixed board pages, plus `task_identifier` when
+available. The `paperclip` context contains the same navigation links as
+`taskUrl` and `runPageUrl`; the existing `runUrl` remains an API reference.
+This enrichment applies to run failures, adapter Stop timeouts, and server errors
+with authenticated run context. It resolves the saved company, agent, and task
+instead of copying request URLs, queries, or bodies. Taskless runs receive only a
+run link. Missing or unsafe `PAPERCLIP_PUBLIC_URL` values omit these links.
+The optional indexed metadata lookup has a one-second reporting deadline and a
+limit of eight unfinished reads. A failed or slow lookup preserves the original
+event without navigation links.
+URLs longer than Sentry's 200-character tag limit remain in context only.
+Links require the viewer's normal Paperclip access and apply to newly captured
+events; existing Sentry events are not rewritten.
 
 The bot should use the exact run ID to read `GET /api/heartbeat-runs/{runId}`,
 `GET /api/heartbeat-runs/{runId}/events`, and
@@ -949,6 +1032,48 @@ counts; `acpPendingToolCount` keeps its finalization-time meaning. When tools ar
 pending, `acpPendingToolKinds` lists their ACP tool kinds as a sorted, comma-separated
 string drawn only from the closed ACP `ToolKind` enum plus `unknown`; the
 server drops the field if any other value appears.
+
+Claude ACP turns also run a stalled-tool watchdog. A pending tool call that gets
+no ACP update for 30 minutes (`stalledToolTimeoutSec`; kept at least 15 minutes
+above `MCP_TOOL_TIMEOUT` and `BASH_MAX_TIMEOUT_MS`) ends the turn through the
+same cancel and fail-fast deadline as a duplex channel loss. The run fails with
+`acpx_tool_stalled` instead of waiting for the wall-clock timeout, and records
+`acpStalledToolKind` (one closed `ToolKind` label or `unknown`) and
+`acpStalledToolSilentMs`. The stop-time fields above are measured when the
+watchdog fired. A live subagent's Task call keeps receiving heartbeats, so only
+a call that itself went silent trips the watchdog. A background subagent's Task
+call completes when the subagent starts, so the watchdog watches that subagent's
+own tool calls instead. Other ACP agents are watched only when
+`stalledToolTimeoutSec` is set.
+
+The engine also observes ACP permission requests without deciding them; ACPX's
+permission mode still decides each one. A stalled run records
+`acpStalledToolPermissionRequested` (whether the stalled call's permission
+request reached Paperclip) and `acpPendingToolPermissionRequestedCount` (how many
+pending calls had one). These fields record only that a request arrived, not
+that the reply reached the agent. A call whose request never arrived stalled
+before the request reached Paperclip. A call whose request arrived stalled
+later: on the reply's return trip, or after the agent received the decision.
+Both fields hold only a boolean and a count.
+
+A missing request is informative only if calls like it normally send one. So a
+stalled run also records `acpSettledSameKindToolCount` (how many finished calls
+of the stalled call's kind the run saw) and
+`acpSettledSameKindToolPermissionRequestedCount` (how many of those sent a
+permission request). These counts are supporting evidence, not proof of where
+the call stalled. The ACP kind is coarse, so peers of the same kind can be
+different tools with different permission rules. Read them this way:
+
+- All or nearly all finished peers sent a request, and the stalled call did not:
+  this supports a stall before the request reached Paperclip.
+- No finished peer sent a request: calls of that kind may skip the request, so
+  its absence on the stalled call says nothing about where it stalled.
+- Some finished peers sent a request and others did not: the counts do not show
+  whether the stalled call should have sent one. Compare the specific tools in
+  the run log before drawing a conclusion.
+- No finished peers (a count of zero): there is no comparison.
+
+Both fields hold only counts.
 
 ACP and legacy OpenCode results retain the adapter's resolved wall-clock timeout as
 `adapterExecutionTimeout` in the instance run result. Finalization uses it for

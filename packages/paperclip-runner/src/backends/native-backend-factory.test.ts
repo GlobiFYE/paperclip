@@ -10,7 +10,7 @@ import { NATIVE_RUNTIME_ASSET_SCHEMA, PAPERCLIP_EXECUTION_PROMPT, PAPERCLIP_EXEC
 const contextRoots: string[] = [];
 afterEach(() => { for (const root of contextRoots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
-function preparedExecution(base: NativeExecutionInput, version: "v5" | "v7" = "v5"): NativeExecutionInput {
+function preparedExecution(base: NativeExecutionInput, version: "v5" | "v7" | "v9" = "v5"): NativeExecutionInput {
   const root = mkdtempSync(join(tmpdir(), "paperclip-prepared-backend-"));
   contextRoots.push(root);
   writeFileSync(join(root, "AGENTS.md"), "Keep assigned instructions.");
@@ -21,7 +21,7 @@ function preparedExecution(base: NativeExecutionInput, version: "v5" | "v7" = "v
     skills: [], mcp: { assignmentSetId: "none", digest, bindingId: null },
   };
   return parseNativeExecutionInput({
-    ...base, schema: `paperclip.native-execution-input.${version}`, executionMode: "default", planningContext: null,
+    ...base, schema: `paperclip.native-execution-input.${version}`, ...(version === "v5" ? {} : { homeMode: "isolated" }), executionMode: "default", planningContext: null,
     runtimeContext: { ...context, aggregateDigest: canonicalNativeRuntimeContextDigest(context) },
     completionContract: { ...base.completionContract, contract: { ...base.completionContract.contract, criteria: [{ id: "objective", requirement: "Complete the task." }] } },
   });
@@ -597,7 +597,7 @@ describe("native backend factory", () => {
     ).toThrow("Codex native backend requires provider kind codex");
   });
 
-  it.each(["v5", "v7"] as const)("selects prepared transport for %s native input and retains prepared constraints", async version => {
+  it.each(["v5", "v7", "v9"] as const)("selects prepared transport for %s native input and retains prepared constraints", async version => {
     const input = preparedExecution(execution(), version);
     const transport = new FakeCodexTransport();
     const backend = createCodexNativeSessionBackend(input, {
@@ -626,12 +626,12 @@ describe("native backend factory", () => {
     );
   });
 
-  it("allows a completion-only turn after v7 Claude work without wrapping prepared input", async () => {
+  it("allows a completion-only turn after v9 Claude work without wrapping prepared input", async () => {
     const { qualificationModel: _model, reportedModelId: _reported, permissionPolicy: _policy, ...profile } = resolveQualifiedAcpxProfile("claude", "claude-opus-5-5");
     const input = preparedExecution({ ...acpxExecution("claude"), provider: {
       kind: "acpx", agent: "claude", model: "claude-opus-5-5", permissionMode: "approve-all", profile,
-    } }, "v7");
-    if (input.schema !== "paperclip.native-execution-input.v7" || input.provider.kind !== "acpx") throw new Error("invalid fixture");
+    } }, "v9");
+    if (input.schema !== "paperclip.native-execution-input.v9" || input.provider.kind !== "acpx") throw new Error("invalid fixture");
     input.provider.claudeEffort = "high";
     const transport = new FakeCodexTransport("thread-1", "provider-session-1", {
       kind: "acpx", normalizedSessionId: "session", acpxRecordId: "fixture-record",
@@ -667,7 +667,7 @@ describe("native backend factory", () => {
     }
   });
 
-  it.each(["v5", "v7"] as const)("projects %s OpenCode constraints to the prepared runtime boundary", version => {
+  it.each(["v5", "v7", "v9"] as const)("projects %s OpenCode constraints to the prepared runtime boundary", version => {
     const input = preparedExecution(opencodeExecution(), version);
     const backend = createOpenCodeNativeSessionBackend(input, {
       runtimeDirectory: "/tmp/paperclip-opencode-prepared-factory",
