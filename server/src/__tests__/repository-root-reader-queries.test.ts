@@ -11,6 +11,7 @@ import { agents, authUsers, companies, companyMemberships, createDb, executionWo
 import { executionWorkspaceRepositoryService } from "../services/execution-workspace-repositories.js";
 import { loadRepositoryRootReaders } from "../services/execution-workspace-root-readers.js";
 import { authorizationService, type AuthorizationActor } from "../services/authorization.js";
+import { deleteAgentDependencies } from "../services/agent-deletion.js";
 import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 
 let database: Awaited<ReturnType<typeof startEmbeddedPostgresTestDatabase>>;
@@ -63,7 +64,7 @@ it("bounds repeated-principal queries without loading retained run payloads", as
   expect(runs.every(query => !query.includes('"result_json"') && !query.includes('"runner_profile_json"'))).toBe(true);
 });
 
-it("rejects missing, foreign-company and mismatched retained run identities", async () => {
+it("rejects foreign-company and mismatched retained run identities", async () => {
   const invalidId = runIds[31];
   const otherCompanyId = randomUUID();
   await db.insert(companies).values({ id: otherCompanyId, name: "Foreign readers", issuePrefix: "FRQ" });
@@ -81,16 +82,90 @@ it("rejects missing, foreign-company and mismatched retained run identities", as
         .where(eq(heartbeatRuns.id, invalidId));
     }
   }
-  for (const change of [{ scopeId: randomUUID() }, { agentId: randomUUID() }, { issueId: randomUUID() }]) {
+  for (const change of [{ agentId: randomUUID() }, { issueId: randomUUID() }, { agentId: null }, { issueId: null }]) {
     try {
       await db.update(executionWorkspaceRepositoryAccess).set(change).where(eq(executionWorkspaceRepositoryAccess.scopeId, invalidId));
       await expect(service.guardForPublication(input())).rejects.toThrow("identity");
     } finally {
       await db.update(executionWorkspaceRepositoryAccess).set({ scopeId: invalidId, agentId, issueId })
-        .where(eq(executionWorkspaceRepositoryAccess.scopeId, "scopeId" in change ? change.scopeId : invalidId));
+        .where(eq(executionWorkspaceRepositoryAccess.scopeId, invalidId));
     }
   }
   await expect(service.guardForPublication(input())).resolves.toBeUndefined();
+});
+
+async function seedRetainedReader() {
+  const retainedAgentId = randomUUID(), retainedIssueId = randomUUID(), retainedRunId = randomUUID();
+  await db.insert(agents).values({ id: retainedAgentId, companyId, name: "Past reader", adapterType: "process" });
+  await db.insert(issues).values({ id: retainedIssueId, companyId, projectId, title: "Past task" });
+  await db.insert(heartbeatRuns).values({ id: retainedRunId, companyId, agentId: retainedAgentId,
+    responsibleUserId: userId, issueId: retainedIssueId, status: "succeeded", contextSnapshot: { issueId: retainedIssueId } });
+  await db.insert(executionWorkspaceRepositoryAccess).values({ companyId,
+    rootKey: createHash("sha256").update(cwd).digest("hex"), canonicalCwd: cwd, kind: "reader",
+    scopeId: retainedRunId, issueId: retainedIssueId, agentId: retainedAgentId, responsibleUserId: userId });
+  return { retainedAgentId, retainedIssueId, retainedRunId };
+}
+
+it.each(["run", "agent", "issue snapshot", "issue FK"])("admits a new reader after deleting a retained %s", async deletion => {
+  const { retainedAgentId, retainedIssueId, retainedRunId } = await seedRetainedReader();
+  try {
+    if (deletion === "agent") {
+      await db.transaction(async tx => {
+        await deleteAgentDependencies(tx as typeof db, companyId, retainedAgentId);
+        await tx.delete(agents).where(eq(agents.id, retainedAgentId));
+      });
+    } else if (deletion === "run") {
+      await db.delete(heartbeatRuns).where(eq(heartbeatRuns.id, retainedRunId));
+    } else {
+      if (deletion === "issue FK") {
+        await db.update(heartbeatRuns).set({ contextSnapshot: null }).where(eq(heartbeatRuns.id, retainedRunId));
+      }
+      await db.delete(issues).where(eq(issues.id, retainedIssueId));
+      const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, retainedRunId));
+      expect(run.issueId).toBeNull();
+      expect(run.contextSnapshot?.issueId).toBe(deletion === "issue snapshot" ? retainedIssueId : undefined);
+    }
+    const entries = await db.select().from(executionWorkspaceRepositoryAccess)
+      .where(eq(executionWorkspaceRepositoryAccess.scopeId, retainedRunId));
+    expect(entries).toHaveLength(1);
+    await expect(executionWorkspaceRepositoryService(db).guardForPublication(input())).resolves.toBeUndefined();
+    await expect(loadRepositoryRootReaders(db, companyId, entries, retainedRunId)).rejects.toThrow("identity");
+  } finally {
+    await db.delete(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.scopeId, retainedRunId));
+    await db.delete(heartbeatRuns).where(eq(heartbeatRuns.id, retainedRunId));
+    await db.delete(issues).where(eq(issues.id, retainedIssueId));
+    await db.delete(agents).where(eq(agents.id, retainedAgentId));
+  }
+});
+
+it("rejects foreign-company identities even when another retained identity was deleted", async () => {
+  const { retainedAgentId, retainedIssueId, retainedRunId } = await seedRetainedReader();
+  const otherCompanyId = randomUUID();
+  await db.insert(companies).values({ id: otherCompanyId, name: "Foreign orphan", issuePrefix: "FOR" });
+  try {
+    await db.delete(heartbeatRuns).where(eq(heartbeatRuns.id, retainedRunId));
+    for (const table of [agents, issues]) {
+      const idColumn = table.id;
+      const id = table === agents ? retainedAgentId : retainedIssueId;
+      await db.update(table).set({ companyId: otherCompanyId }).where(eq(idColumn, id));
+      try {
+        await expect(executionWorkspaceRepositoryService(db).guardForPublication(input())).rejects.toThrow("identity");
+      } finally {
+        await db.update(table).set({ companyId }).where(eq(idColumn, id));
+      }
+    }
+    await db.delete(issues).where(eq(issues.id, retainedIssueId));
+    await db.insert(heartbeatRuns).values({ id: retainedRunId, companyId: otherCompanyId, agentId: retainedAgentId,
+      responsibleUserId: userId, status: "succeeded", contextSnapshot: { issueId: retainedIssueId } });
+    await expect(executionWorkspaceRepositoryService(db).guardForPublication(input())).rejects.toThrow("identity");
+    await db.update(heartbeatRuns).set({ companyId, contextSnapshot: { issueId } }).where(eq(heartbeatRuns.id, retainedRunId));
+    await expect(executionWorkspaceRepositoryService(db).guardForPublication(input())).rejects.toThrow("identity");
+  } finally {
+    await db.delete(executionWorkspaceRepositoryAccess).where(eq(executionWorkspaceRepositoryAccess.scopeId, retainedRunId));
+    await db.delete(heartbeatRuns).where(eq(heartbeatRuns.id, retainedRunId));
+    await db.delete(issues).where(eq(issues.id, retainedIssueId));
+    await db.delete(agents).where(eq(agents.id, retainedAgentId));
+  }
 });
 
 it("keeps each retained run identity and policy distinct for the same principals", async () => {

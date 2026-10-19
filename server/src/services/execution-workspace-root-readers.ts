@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { inArray, sql } from "drizzle-orm";
 import { agents, heartbeatRuns, issues, projects, executionWorkspaceRepositoryAccess, type Db } from "@paperclipai/db";
 import { forbidden } from "../errors.js";
 import type { AuthorizationActor } from "./authorization.js";
@@ -19,7 +19,7 @@ export const rootReaderRunColumns = {
 
 // This snapshot belongs to one guarded operation. Never retain it across admissions
 // or publications: identities and permissions must be read again next time.
-export async function loadRepositoryRootReaders<T extends ReaderEntry>(db: ReaderDb, companyId: string, entries: T[]) {
+export async function loadRepositoryRootReaders<T extends ReaderEntry>(db: ReaderDb, companyId: string, entries: T[], requiredRunId?: string) {
   const runIds = [...new Set(entries.map(entry => entry.scopeId))];
   const agentIds = [...new Set(entries.flatMap(entry => entry.agentId ? [entry.agentId] : []))];
   const issueIds = [...new Set(entries.flatMap(entry => entry.issueId ? [entry.issueId] : []))];
@@ -28,30 +28,37 @@ export async function loadRepositoryRootReaders<T extends ReaderEntry>(db: Reade
   const issueRows = new Map<string, ReaderIssue>();
   await measureRunPhase("workspace.readers.identity", async () => {
     for (let offset = 0; offset < runIds.length; offset += 500) {
-      for (const row of await db.select(rootReaderRunColumns).from(heartbeatRuns).where(and(
-        eq(heartbeatRuns.companyId, companyId), inArray(heartbeatRuns.id, runIds.slice(offset, offset + 500))))) runs.set(row.id, row);
+      for (const row of await db.select(rootReaderRunColumns).from(heartbeatRuns)
+        .where(inArray(heartbeatRuns.id, runIds.slice(offset, offset + 500)))) runs.set(row.id, row);
     }
     for (let offset = 0; offset < agentIds.length; offset += 500) {
-      for (const row of await db.select({ id: agents.id, companyId: agents.companyId, permissions: agents.permissions }).from(agents).where(and(
-        eq(agents.companyId, companyId), inArray(agents.id, agentIds.slice(offset, offset + 500))))) agentRows.set(row.id, row);
+      for (const row of await db.select({ id: agents.id, companyId: agents.companyId, permissions: agents.permissions }).from(agents)
+        .where(inArray(agents.id, agentIds.slice(offset, offset + 500)))) agentRows.set(row.id, row);
     }
     for (let offset = 0; offset < issueIds.length; offset += 500) {
       for (const row of await db.select({ id: issues.id, companyId: issues.companyId, projectId: issues.projectId,
-        executionPolicy: issues.executionPolicy }).from(issues).where(and(
-        eq(issues.companyId, companyId), inArray(issues.id, issueIds.slice(offset, offset + 500))))) issueRows.set(row.id, row);
+        executionPolicy: issues.executionPolicy }).from(issues)
+        .where(inArray(issues.id, issueIds.slice(offset, offset + 500)))) issueRows.set(row.id, row);
     }
   });
-  return entries.map(entry => {
+  return entries.flatMap(entry => {
     const run = runs.get(entry.scopeId);
     const agent = entry.agentId ? agentRows.get(entry.agentId) : undefined;
     const issue = entry.issueId ? issueRows.get(entry.issueId) : undefined;
-    if (!run || !agent || !issue || run.agentId !== entry.agentId || run.responsibleUserId !== entry.responsibleUserId
-      || (run.nativeIssueId ?? run.contextSnapshot?.issueId ?? run.contextSnapshot?.taskId ?? run.issueId) !== entry.issueId) {
+    const runIssueId = run?.nativeIssueId ?? run?.contextSnapshot?.issueId ?? run?.contextSnapshot?.taskId ?? run?.issueId;
+    if (!entry.agentId || !entry.issueId
+      || (agent && agent.companyId !== companyId) || (issue && issue.companyId !== companyId)
+      || (run && (run.companyId !== companyId || run.agentId !== entry.agentId || run.responsibleUserId !== entry.responsibleUserId
+        || (runIssueId !== entry.issueId && (issue || runIssueId != null))))) {
       throw forbidden("Repository root retains a reader whose identity is no longer available");
+    }
+    if (!run || !agent || !issue) {
+      if (entry.scopeId === requiredRunId) throw forbidden("Repository root retains a reader whose identity is no longer available");
+      return [];
     }
     const actor: AuthorizationActor = { type: "agent", source: "agent_jwt", companyId,
       agentId: agent.id, runId: run.id, onBehalfOfUserId: entry.responsibleUserId === "local-board" ? null : entry.responsibleUserId };
-    return { entry, run, agent, issue, actor };
+    return [{ entry, run, agent, issue, actor }];
   });
 }
 
