@@ -39,6 +39,28 @@ describe("prepareOpenCodeRuntimeConfig", () => {
 
     expect(prepared.env).toEqual(env);
     expect(prepared.notes).toEqual([]);
+    expect(prepared.hasRuntimeConfig).toBe(false);
+    await prepared.cleanup();
+  });
+
+  it("reports a prepared runtime config when the host config already has the model", async () => {
+    const configHome = await makeConfigHome({
+      provider: {
+        openrouter: {
+          models: { "openai/gpt-oss-120b:nitro": { name: "GPT-OSS 120B (nitro)" } },
+        },
+      },
+    });
+
+    const prepared = await prepareOpenCodeRuntimeConfig({
+      env: { XDG_CONFIG_HOME: configHome },
+      config: { model: "openrouter/openai/gpt-oss-120b:nitro" },
+    });
+    cleanupPaths.add(prepared.env.XDG_CONFIG_HOME);
+
+    expect(prepared.hasRuntimeConfig).toBe(true);
+    expect(prepared.notes).toEqual([]);
+    expect(prepared.env.XDG_CONFIG_HOME).not.toBe(configHome);
     await prepared.cleanup();
   });
 

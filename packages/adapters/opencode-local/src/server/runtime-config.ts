@@ -6,6 +6,8 @@ import { asBoolean } from "@paperclipai/adapter-utils/server-utils";
 type PreparedOpenCodeRuntimeConfig = {
   env: Record<string, string>;
   notes: string[];
+  /** True when a temporary XDG config home was written and must follow the run. */
+  hasRuntimeConfig: boolean;
   cleanup: () => Promise<void>;
 };
 
@@ -118,6 +120,7 @@ export async function prepareOpenCodeRuntimeConfig(input: {
     return {
       env: input.env,
       notes: [],
+      hasRuntimeConfig: false,
       cleanup: async () => {},
     };
   }
@@ -132,6 +135,7 @@ export async function prepareOpenCodeRuntimeConfig(input: {
     return {
       env: input.env,
       notes: [],
+      hasRuntimeConfig: false,
       cleanup: async () => {},
     };
   }
@@ -233,6 +237,7 @@ export async function prepareOpenCodeRuntimeConfig(input: {
       XDG_CONFIG_HOME: runtimeConfigHome,
     },
     notes,
+    hasRuntimeConfig: true,
     cleanup: async () => {
       await fs.rm(runtimeConfigHome, { recursive: true, force: true });
     },
