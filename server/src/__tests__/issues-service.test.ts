@@ -4463,6 +4463,96 @@ describeEmbeddedPostgres("issueService blockers and dependency wake readiness", 
     expect((await svc.getRelationSummaries(issueId)).blockedBy.map((row) => row.id).sort()).toEqual([blockerA, blockerB]);
   });
 
+  it("removes a blocker delta while the removed blocker row is locked", async () => {
+    const { issueId, blockerA } = await seedDeltaIssues();
+    await svc.update(issueId, { blockedByIssueIds: [blockerA] });
+    const blockerLocked = deferred<void>();
+    const blockerCanUnlock = deferred<void>();
+    const lock = db.transaction(async (tx) => {
+      await tx.execute(sql`select id from issues where id = ${blockerA} for update`);
+      blockerLocked.resolve();
+      await blockerCanUnlock.promise;
+    });
+    await blockerLocked.promise;
+    const removal = svc.update(issueId, { removeBlockedByIssueIds: [blockerA] });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const result = await Promise.race([
+        removal,
+        new Promise<never>((_, reject) => {
+          timeout = setTimeout(() => reject(new Error("Blocker removal waited for the locked blocker row")), 10_000);
+        }),
+      ]);
+      expect(result?.blockedByIssueIds).toEqual([]);
+      expect(result?.changes.blockedByIssueIds).toEqual({ from: [blockerA], to: [] });
+      expect((await svc.getRelationSummaries(issueId)).blockedBy).toEqual([]);
+    } finally {
+      clearTimeout(timeout);
+      blockerCanUnlock.resolve();
+      await Promise.allSettled([lock, removal]);
+    }
+  });
+
+  it("does not deadlock crossed blocker delta removals when neither relation exists", async () => {
+    const { issueId: issueA, blockerA: issueB } = await seedDeltaIssues();
+    for (const id of [issueA, issueB]) {
+      expect(await svc.getRelationSummaries(id)).toEqual({ blockedBy: [], blocks: [] });
+    }
+    const blockerLocked = deferred<void>();
+    const blockerCanUnlock = deferred<void>();
+    const updates: Array<ReturnType<typeof svc.update>> = [];
+    const lock = db.transaction(async (tx) => {
+      await tx.execute(sql`select id from issues where id = ${issueB} for update`);
+      blockerLocked.resolve();
+      await blockerCanUnlock.promise;
+    });
+    const countLockWaiters = async () => {
+      const [row] = await db.execute(sql`
+        select count(*)::int as count from pg_stat_activity
+        where datname = current_database() and pid <> pg_backend_pid()
+          and wait_event_type = 'Lock'
+      `);
+      return Number(row!.count);
+    };
+    try {
+      await Promise.race([blockerLocked.promise, lock]);
+      const second = svc.update(issueB, { removeBlockedByIssueIds: [issueA] });
+      updates.push(second);
+      // Observe rejections immediately while the row locks establish ordering.
+      void Promise.allSettled([second]);
+      await vi.waitFor(async () => {
+        expect(await countLockWaiters()).toBe(1);
+      }, { timeout: 5_000 });
+
+      let firstSettled = false;
+      const first = svc.update(issueA, { removeBlockedByIssueIds: [issueB] });
+      updates.push(first);
+      void first.then(
+        () => { firstSettled = true; },
+        () => { firstSettled = true; },
+      );
+      // With the fix U1 finishes; the old code holds A and queues behind U2 on B.
+      await vi.waitFor(async () => {
+        const waiters = await countLockWaiters();
+        expect(firstSettled || waiters === 2).toBe(true);
+      }, { timeout: 5_000 });
+
+      blockerCanUnlock.resolve();
+      const results = await Promise.allSettled([first, second]);
+      for (const result of results) {
+        expect(result.status, result.status === "rejected"
+          ? String(result.reason.cause ?? result.reason) : undefined).toBe("fulfilled");
+        if (result.status === "fulfilled") expect(result.value?.blockedByIssueIds).toEqual([]);
+      }
+      for (const id of [issueA, issueB]) {
+        expect(await svc.getRelationSummaries(id)).toEqual({ blockedBy: [], blocks: [] });
+      }
+    } finally {
+      blockerCanUnlock.resolve();
+      await Promise.allSettled([lock, ...updates]);
+    }
+  });
+
   it("keeps blocker delta additions idempotent and preserves untouched relation metadata", async () => {
     const { issueId, blockerA, blockerB } = await seedDeltaIssues();
     await svc.update(issueId, { addBlockedByIssueIds: [blockerA, blockerA] });

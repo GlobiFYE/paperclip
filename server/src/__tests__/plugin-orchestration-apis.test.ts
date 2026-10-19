@@ -285,6 +285,27 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
     );
   });
 
+  it("omits previous blocker relation metadata from plugin issue update results", async () => {
+    const { companyId } = await seedCompanyAndAgent();
+    const services = buildHostServices(db, "plugin-record-id", "paperclip.missions", createEventBusStub());
+    const blocker = await services.issues.create({ companyId, title: "Blocker" });
+    const issue = await services.issues.create({
+      companyId,
+      title: "Blocked issue",
+      blockedByIssueIds: [blocker.id],
+    });
+
+    const updated = await services.issues.update({
+      companyId,
+      issueId: issue.id,
+      patch: { removeBlockedByIssueIds: [blocker.id] },
+    });
+
+    expect(updated).not.toHaveProperty("previousBlockedByRelations");
+    expect(updated).toMatchObject({ id: issue.id, blockedByIssueIds: [] });
+    expect((await services.issues.getRelations({ companyId, issueId: issue.id })).blockedBy).toEqual([]);
+  });
+
   it("enforces plugin origin namespaces", async () => {
     const { companyId } = await seedCompanyAndAgent();
     const services = buildHostServices(db, "plugin-record-id", "paperclip.missions", createEventBusStub());

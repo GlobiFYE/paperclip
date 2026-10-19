@@ -11161,7 +11161,10 @@ export function issueService(db: Db) {
           .then((rows: Array<typeof issues.$inferSelect>) => rows[0] ?? null);
         if (!receiptExisting) return null;
         if (blockerDelta) {
-          await lockBlockingIssues(id, existing.companyId, [...blockerDelta.add, ...blockerDelta.remove], tx);
+          // Only additions need blocker locks for the cycle check; locking removed blockers can deadlock crossed removals.
+          if (blockerDelta.add.length > 0) {
+            await lockBlockingIssues(id, existing.companyId, blockerDelta.add, tx);
+          }
           const current = await tx.select({ id: issueRelations.issueId }).from(issueRelations).where(and(
             eq(issueRelations.companyId, existing.companyId),
             eq(issueRelations.relatedIssueId, id),
