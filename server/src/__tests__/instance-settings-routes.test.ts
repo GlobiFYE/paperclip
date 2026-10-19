@@ -857,6 +857,39 @@ describe("instance settings routes", () => {
     });
   });
 
+  describe("Cloud staging experiments", () => {
+    afterEach(() => vi.unstubAllEnvs());
+
+    it("lets a staging admin change hidden experiments but keeps general settings locked", async () => {
+      vi.stubEnv("PAPERCLIP_CLOUD_TENANT_SERVER_TOKEN", "tenant-token");
+      vi.stubEnv("PAPERCLIP_PRIMARY_HOST", "team.staging.paperclip.app");
+      vi.stubEnv("PAPERCLIP_HIDDEN_SETTINGS", "instance.experimental,instance.experimental.*,instance.general.censorUsernameInLogs");
+      const app = createApp({ type: "board", userId: "admin-1", source: "session", isInstanceAdmin: true });
+      await request(app).patch("/api/instance/settings/experimental").send({ enableChatConnectors: true }).expect(200);
+      expect(mockInstanceSettingsService.updateExperimental).toHaveBeenCalledWith({ enableChatConnectors: true });
+      await request(app).patch("/api/instance/settings/general").send({ censorUsernameInLogs: true }).expect(403);
+      expect(mockInstanceSettingsService.updateGeneral).not.toHaveBeenCalled();
+    });
+
+    it("keeps production locked even with a staging request hostname", async () => {
+      vi.stubEnv("PAPERCLIP_CLOUD_TENANT_SERVER_TOKEN", "tenant-token");
+      vi.stubEnv("PAPERCLIP_PRIMARY_HOST", "team.paperclip.app");
+      vi.stubEnv("PAPERCLIP_HIDDEN_SETTINGS", "instance.experimental.*");
+      const app = createApp(localAdminActor());
+      await request(app).patch("/api/instance/settings/experimental")
+        .set("Host", "team.staging.paperclip.app").send({ enableChatConnectors: true }).expect(403);
+      expect(mockInstanceSettingsService.updateExperimental).not.toHaveBeenCalled();
+    });
+
+    it("still requires instance admin access on staging", async () => {
+      vi.stubEnv("PAPERCLIP_CLOUD_TENANT_SERVER_TOKEN", "tenant-token");
+      vi.stubEnv("PAPERCLIP_PRIMARY_HOST", "team.staging.paperclip.app");
+      const app = createApp({ type: "board", userId: "member-1", source: "session", isInstanceAdmin: false });
+      await request(app).patch("/api/instance/settings/experimental").send({ enableChatConnectors: true }).expect(403);
+      expect(mockInstanceSettingsService.updateExperimental).not.toHaveBeenCalled();
+    });
+  });
+
   describe("task drain", () => {
     const adminActor = {
       type: "board",
