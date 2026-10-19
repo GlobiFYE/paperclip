@@ -1739,7 +1739,7 @@ function buildIssueWakeDiagnosticsResponse(input: {
   maxWakeRequests?: number;
   maxActivityRecords?: number;
   lookbackDays?: number;
-}): IssueWakeDiagnosticsResponse {
+}): Omit<IssueWakeDiagnosticsResponse, "pendingWakeSummary"> {
   const issue = toIssueBlockerDiagnosticSummary(input.issue);
   const events: IssueWakeDiagnosticEvent[] = [
     ...input.wakeRequests.map((record) =>
@@ -9192,7 +9192,7 @@ export function issueRoutes(
       "issue wake diagnostics read",
     );
 
-    res.json(response);
+    res.json({ ...response, pendingWakeSummary: wakeDiagnostic.pendingWakeSummary } satisfies IssueWakeDiagnosticsResponse);
   });
 
   router.get("/issues/:id/diagnostics/subtree", async (req, res) => {

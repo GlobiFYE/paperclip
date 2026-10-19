@@ -1127,6 +1127,7 @@ export type {
   IssueWakeDiagnosticWakeFailureClass,
   IssueWakeDiagnosticWakeRequest,
   IssueWakeDiagnosticsResponse,
+  IssuePendingWakeSummary,
   IssueSubtreeDiagnosticNode,
   IssueSubtreeDiagnosticEdge,
   IssueSubtreeDiagnosticsResponse,
