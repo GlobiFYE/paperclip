@@ -179,6 +179,7 @@ import {
   GITHUB_CONNECTOR_PROFILES,
   GOOGLE_WORKSPACE_CONNECTOR_PROFILES,
   connectionIntentPayloadSchema,
+  connectionMethodAcceptsCustomerOAuthClient,
   credentialConfigPath,
   getAppDefinitionForUrl,
   getAvailableConnectionMethod,
@@ -431,6 +432,40 @@ function oauthProviderErrorMessage(
 ): string {
   if (!providerError) return fallback;
   return OAUTH_PROVIDER_ERROR_MESSAGES[providerError] ?? fallback;
+}
+
+function oauthEnvName(
+  provider: string,
+  suffix: "CLIENT_ID" | "CLIENT_SECRET",
+) {
+  return `PAPERCLIP_TOOL_OAUTH_${provider.replace(/[^a-z0-9]+/gi, "_").toUpperCase()}_${suffix}`;
+}
+
+/** The OAuth client this deployment configures for a provider in its environment. */
+export function deploymentOAuthClientConfig(provider: string) {
+  const clientIdEnv = oauthEnvName(provider, "CLIENT_ID");
+  const clientSecretEnv = oauthEnvName(provider, "CLIENT_SECRET");
+  return {
+    clientIdEnv,
+    clientSecretEnv,
+    clientId:
+      process.env[clientIdEnv] ??
+      process.env.PAPERCLIP_TOOL_OAUTH_CLIENT_ID ??
+      null,
+    clientSecret:
+      process.env[clientSecretEnv] ??
+      process.env.PAPERCLIP_TOOL_OAUTH_CLIENT_SECRET ??
+      null,
+  };
+}
+
+/** Marks an app whose own-OAuth-app sign-in uses the deployment's client, so setup does not ask for one. */
+export function appWithDeploymentOAuthClient<T extends AppDefinition>(app: T): T {
+  const customerClientMethods = app.methods.filter(connectionMethodAcceptsCustomerOAuthClient);
+  const client = deploymentOAuthClientConfig(app.slug);
+  if (customerClientMethods.length === 0 || !client.clientId) return app;
+  if (!client.clientSecret && customerClientMethods.some((method) => method.oauthClientSecretRequired)) return app;
+  return { ...app, deploymentOAuthClient: true };
 }
 
 /**
@@ -2841,6 +2876,18 @@ export async function loadGitHubGrantMetadata(
     lastAccessRefreshAt: accessRefreshStartedAt,
     webhookHealth: "pending",
   };
+}
+
+/** Account and installation access for a direct GitHub sign-in; an OAuth App token still proves identity without it. */
+async function directGitHubGrantMetadata(
+  connection: { config: unknown; transportConfig: unknown },
+  accessToken: string,
+) {
+  const sourceTemplateKey =
+    asRecord(connection.config).sourceTemplateKey ??
+    asRecord(connection.transportConfig).sourceTemplateKey;
+  if (sourceTemplateKey !== "github") return null;
+  return loadGitHubGrantMetadata(accessToken).catch(() => null);
 }
 
 function githubInstallationManagementUrl(value: unknown): string | null {
@@ -8830,30 +8877,6 @@ export function toolAccessService(
     return undefined;
   }
 
-  function oauthEnvName(
-    provider: string,
-    suffix: "CLIENT_ID" | "CLIENT_SECRET",
-  ) {
-    return `PAPERCLIP_TOOL_OAUTH_${provider.replace(/[^a-z0-9]+/gi, "_").toUpperCase()}_${suffix}`;
-  }
-
-  function oauthClientConfig(provider: string) {
-    const clientIdEnv = oauthEnvName(provider, "CLIENT_ID");
-    const clientSecretEnv = oauthEnvName(provider, "CLIENT_SECRET");
-    return {
-      clientIdEnv,
-      clientSecretEnv,
-      clientId:
-        process.env[clientIdEnv] ??
-        process.env.PAPERCLIP_TOOL_OAUTH_CLIENT_ID ??
-        null,
-      clientSecret:
-        process.env[clientSecretEnv] ??
-        process.env.PAPERCLIP_TOOL_OAUTH_CLIENT_SECRET ??
-        null,
-    };
-  }
-
   function isSmokeLabOAuthFixture(
     connection: typeof toolConnections.$inferSelect,
   ) {
@@ -8901,7 +8924,7 @@ export function toolAccessService(
         clientSecret: null,
       };
     }
-    return oauthClientConfig(provider);
+    return deploymentOAuthClientConfig(provider);
   }
 
   async function annotateSavedOAuthClientSecret(connections: ToolConnection[], viewerUserId?: string) {
@@ -10717,7 +10740,11 @@ export function toolAccessService(
     });
     const payload = (await response.json().catch(() => ({}))) as unknown;
     const record = asRecord(payload);
-    if (!response.ok || record.ok === false) {
+    // GitHub reports a rejected code or refresh token as HTTP 200 with an error field.
+    const errorInSuccessfulResponse =
+      response.ok && record.ok !== false && typeof record.error === "string";
+    if (!response.ok || record.ok === false || errorInSuccessfulResponse) {
+      const failureStatus = errorInSuccessfulResponse ? 400 : response.status;
       const providerError = normalizeOAuthProviderError(record.error);
       const message = oauthProviderErrorMessage(
         providerError,
@@ -10725,7 +10752,7 @@ export function toolAccessService(
       );
       if (
         input.grantType === "refresh_token" &&
-        providerError === "invalid_grant"
+        (providerError === "invalid_grant" || record.error === "bad_refresh_token")
       ) {
         throw new HttpError(
           422,
@@ -10733,14 +10760,14 @@ export function toolAccessService(
           {
             code: "oauth_reauthorization_required",
             providerError,
-            status: response.status,
+            status: failureStatus,
           },
         );
       }
       throw new HttpError(502, message, {
         code: "oauth_token_exchange_failed",
         providerError,
-        status: response.status,
+        status: failureStatus,
       });
     }
     const accessToken =
@@ -16261,6 +16288,7 @@ export function toolAccessService(
     const expiresAt = token.expiresIn
       ? new Date(connectedAt.getTime() + token.expiresIn * 1000).toISOString()
       : null;
+    const githubMetadata = await directGitHubGrantMetadata(connection, token.accessToken);
     if (stateRow.subjectUserId) {
       let personalCredentialSecretRefs: typeof connectionGrants.$inferSelect.credentialSecretRefs =
         [];
@@ -16375,6 +16403,8 @@ export function toolAccessService(
               tokenType: token.tokenType,
               refreshedAt: connectedAt.toISOString(),
             },
+            // A replaced token must not keep the previous account's GitHub identity.
+            github: githubMetadata ?? undefined,
           },
           credentialSecretRefs: nextCredentialSecretRefs,
           status: "active" as const,
@@ -17901,7 +17931,7 @@ export function toolAccessService(
       if (legacyShared && !grantId) return resolveCredentialHeaders(connection, actor);
       let grant = grantId ? allowed.find(candidate => candidate.id === grantId) : allowed.length === 1 ? allowed[0] : undefined;
       if (!grant) throw forbidden("Choose an active GitHub authorization you can use.");
-      if (asRecord(asRecord(connection.config).oauth).connectorProfile === "github.code") {
+      if (connection.authKind === "oauth") {
         grant = await refreshOAuthGrantCredentials({ companyId, connectionId, grantId: grant.id, actor, forceRefresh });
       }
       const ref = grant.credentialSecretRefs.find(ref => ref.configPath === "oauth.access_token" || /authorization|token|api_key/i.test(ref.configPath));
@@ -18013,7 +18043,15 @@ export function toolAccessService(
             } else {
               const headers = initialGrant
                 ? await (async () => {
-                    const ref = initialGrant.credentialSecretRefs.find(
+                    const grant = connection.authKind === "oauth"
+                      ? await refreshOAuthGrantCredentials({
+                          companyId,
+                          connectionId: connection.id,
+                          grantId: initialGrant.id,
+                          actor,
+                        })
+                      : initialGrant;
+                    const ref = grant.credentialSecretRefs.find(
                       (ref) =>
                         ref.configPath === "oauth.access_token" ||
                         /authorization|token|api_key/i.test(ref.configPath),
@@ -18024,7 +18062,7 @@ export function toolAccessService(
                       );
                     const secret = await resolveOAuthGrantSecret(
                       connection,
-                      initialGrant,
+                      grant,
                       ref,
                       actor,
                       undefined,
