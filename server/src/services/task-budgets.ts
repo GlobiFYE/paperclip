@@ -233,12 +233,13 @@ export function taskBudgetService(db: Db) {
         SELECT id FROM issues WHERE company_id = ${companyId} AND id = ${issueId}
         UNION SELECT child.id FROM issues child JOIN tree ON child.parent_id = tree.id WHERE child.company_id = ${companyId}
       ) SELECT r.id FROM heartbeat_runs r JOIN tree ON tree.id::text = coalesce(r.context_snapshot->>'issueId', r.native_issue_id::text)
-        WHERE r.company_id = ${companyId} AND r.status IN ('queued', 'running')`);
+        WHERE r.company_id = ${companyId} AND (r.status = 'running' OR (r.status = 'queued' AND r.started_at IS NOT NULL))`);
       for (const run of Array.from(current as unknown as Array<{ id: string }>)) await captureTaskBudgetRun(tx, companyId, run.id);
       const active = await tx.select({ context: taskBudgetRunContexts }).from(taskBudgetRunAncestors)
         .innerJoin(taskBudgetRunContexts, eq(taskBudgetRunContexts.id, taskBudgetRunAncestors.contextId))
         .innerJoin(heartbeatRuns, eq(heartbeatRuns.id, taskBudgetRunContexts.liveRunId))
-        .where(and(eq(taskBudgetRunAncestors.companyId, companyId), eq(taskBudgetRunAncestors.ancestorIssueId, issueId), inArray(heartbeatRuns.status, ["queued", "running"])));
+        .where(and(eq(taskBudgetRunAncestors.companyId, companyId), eq(taskBudgetRunAncestors.ancestorIssueId, issueId),
+          sql`(${heartbeatRuns.status} = 'running' or (${heartbeatRuns.status} = 'queued' and ${heartbeatRuns.startedAt} is not null))`));
       for (const { context } of active) {
         const support = context.normalization?.meteringSupport as TaskBudgetMeteringSupport | undefined;
         const costUnsupported = changedMetrics.has("billed_cents") && context.costState !== "complete" && (!support || support.billedCents === "unsupported");
@@ -279,7 +280,11 @@ export function taskBudgetService(db: Db) {
       const [runtime] = await db.select({ adapterType: agents.adapterType, config: agents.adapterConfig }).from(agents)
         .where(and(eq(agents.companyId, companyId), eq(agents.id, ancestry[0].assigneeAgentId)));
       if (runtime) {
-        const block = await invocationBlock(db, companyId, issueId, taskBudgetMeteringSupport(runtime.adapterType, { config: runtime.config }));
+        const [task] = await db.select({ overrides: issues.assigneeAdapterOverrides }).from(issues)
+          .where(and(eq(issues.companyId, companyId), eq(issues.id, issueId)));
+        const overrides = task?.overrides?.adapterConfig;
+        const config = { ...runtime.config, ...(overrides && typeof overrides === "object" && !Array.isArray(overrides) ? overrides : {}) };
+        const block = await invocationBlock(db, companyId, issueId, taskBudgetMeteringSupport(runtime.adapterType, { config }));
         if (block) blockers.push(block);
       }
     }
@@ -313,10 +318,10 @@ export function taskBudgetService(db: Db) {
 
   return {
     summary,
-    executionSummary: async (companyId: string, issueId: string) => {
+    executionSummary: async (companyId: string, issueId: string, actor?: TaskBudgetActor) => {
       const [policy] = await db.select({ id: budgetPolicies.id }).from(budgetPolicies).where(and(
         eq(budgetPolicies.companyId, companyId), eq(budgetPolicies.scopeType, "issue"), eq(budgetPolicies.isActive, true))).limit(1);
-      return policy ? summary(companyId, issueId) : null;
+      return policy ? summary(companyId, issueId, actor) : null;
     },
     getInvocationBlock: (companyId: string, issueId: string, metering?: string | TaskBudgetMeteringSupport) => invocationBlock(db, companyId, issueId, metering),
     captureRun: (companyId: string, runId: string, meteringSupport?: TaskBudgetMeteringSupport) => db.transaction(async tx => {

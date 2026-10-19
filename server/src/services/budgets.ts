@@ -1,5 +1,4 @@
 import { taskBudgetService } from "./task-budgets.js";
-import { taskBudgetMeteringSupport } from "./task-budget-metering.js";
 import { taskBudgetUsage } from "./task-budget-accounting.js";
 import { compareCents, normalizeCents } from "@paperclipai/shared";
 import { and, desc, eq, gte, inArray, lt, ne, sql, or, isNull, type SQL } from "drizzle-orm";
@@ -29,6 +28,7 @@ import type {
   BudgetScopeType,
   BudgetThresholdType,
   BudgetWindowKind,
+  TaskBudgetMeteringSupport,
 } from "@paperclipai/shared";
 import { conflict, HttpError, notFound, unprocessable } from "../errors.js";
 import { logger } from "../middleware/logger.js";
@@ -879,7 +879,7 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
     getInvocationBlock: async (
       companyId: string,
       agentId: string | null,
-      context?: { issueId?: string | null; projectId?: string | null },
+      context?: { issueId?: string | null; projectId?: string | null; taskMetering?: TaskBudgetMeteringSupport },
     ) => {
       const scopes: Array<{ scopeType: BudgetScopeType; scopeId: string }> = [
         { scopeType: "company", scopeId: companyId }, ...(agentId ? [{ scopeType: "agent" as const, scopeId: agentId }] : []),
@@ -893,10 +893,7 @@ export function budgetServiceInTransaction(db: Db, publications: ActivityPublica
         if (block) return block;
       }
       if (context?.issueId) {
-        const [runtime] = agentId ? await db.select({ adapterType: agents.adapterType, config: agents.adapterConfig }).from(agents)
-          .where(and(eq(agents.companyId, companyId), eq(agents.id, agentId))) : [];
-        return taskBudgetService(db).getInvocationBlock(companyId, context.issueId,
-          runtime ? taskBudgetMeteringSupport(runtime.adapterType, { config: runtime.config }) : undefined);
+        return taskBudgetService(db).getInvocationBlock(companyId, context.issueId, context.taskMetering);
       }
       return null;
     },
@@ -1088,7 +1085,7 @@ export function budgetService(db: Db, hooks: BudgetServiceHooks = {}) {
         : mutate(companyId, (service) => service.upsertPolicy(companyId, input, actorUserId)),
     evaluateCostEvent: (event: typeof costEvents.$inferSelect) =>
       mutate(event.companyId, (service) => service.evaluateCostEvent(event)),
-    getInvocationBlock: (companyId: string, agentId: string | null, context?: { issueId?: string | null; projectId?: string | null }) =>
+    getInvocationBlock: (companyId: string, agentId: string | null, context?: { issueId?: string | null; projectId?: string | null; taskMetering?: TaskBudgetMeteringSupport }) =>
       mutate(companyId, (service) => service.getInvocationBlock(companyId, agentId, context), agentId),
     resolveIncident: (companyId: string, incidentId: string, input: BudgetIncidentResolutionInput, actorUserId: string) =>
       mutate(companyId, (service) => service.resolveIncident(companyId, incidentId, input, actorUserId)),

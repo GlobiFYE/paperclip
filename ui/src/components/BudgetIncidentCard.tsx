@@ -2,21 +2,10 @@ import { budgetInputValue, parseBudgetInput, formatBudgetAmount } from "../lib/t
 import { useState } from "react";
 import type { BudgetIncident } from "@paperclipai/shared";
 import { AlertOctagon, AlertTriangle, ArrowUpRight, PauseCircle } from "lucide-react";
-import { formatCents } from "../lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-
-function centsInputValue(value: number) {
-  return (value / 100).toFixed(2);
-}
-
-function parseDollarInput(value: string) {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) return null;
-  return Math.round(parsed * 100);
-}
 
 function incidentStateLabel(incident: BudgetIncident) {
   if (incident.status === "resolved") return "Resolved";
@@ -39,7 +28,7 @@ export function BudgetIncidentCard({
 }) {
   const isWarning = incident.thresholdType === "soft";
   const [draftAmount, setDraftAmount] = useState(
-    centsInputValue(isWarning
+    budgetInputValue(incident.metric, isWarning
       ? Math.max(incident.amountObserved, incident.amountLimit) + 1000
       : Math.max(incident.amountObserved + 1000, incident.amountLimit)),
   );
@@ -65,7 +54,7 @@ export function BudgetIncidentCard({
             <CardDescription className={isWarning ? "mt-1" : "mt-1 text-red-900/75 dark:text-red-100/70"}>
               {incident.thresholdType === "hard" && incident.amountObserved < incident.amountLimit
                 ? `Accounting is incomplete. Known spend is ${formatBudgetAmount(incident.metric, incident.amountObserved)}; review pending or unpriced usage in the budget policy.`
-                : `Usage reached ${formatBudgetAmount(incident.metric, incident.amountObserved)} against a limit of ${formatBudgetAmount(incident.metric, incident.amountLimit)}.`}
+                : `${incident.metric === "total_tokens" ? "Usage" : "Spending"} reached ${formatBudgetAmount(incident.metric, incident.amountObserved)} against a limit of ${formatBudgetAmount(incident.metric, incident.amountLimit)}.`}
             </CardDescription>
           </div>
           {isWarning ? (

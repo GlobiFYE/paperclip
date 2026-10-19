@@ -71,9 +71,14 @@ export async function processTaskBudgetEffects(db: Db, hooks: TaskBudgetEffectHo
           inArray(agentWakeupRequests.id, targets.payload.wakeupIds), inArray(agentWakeupRequests.status, ["queued", "deferred_issue_execution"])));
         for (const runId of targets?.payload.runIds ?? []) await hooks.cancelRun(runId);
       } else if (effect.kind === "resume" && !block && scope) {
-        const stops = await db.select({ id: taskBudgetEffects.id, payload: taskBudgetEffects.payload }).from(taskBudgetEffects).where(and(
+        const stops = await db.select({ id: taskBudgetEffects.id, payload: taskBudgetEffects.payload, state: taskBudgetEffects.state }).from(taskBudgetEffects).where(and(
           eq(taskBudgetEffects.companyId, effect.companyId), eq(taskBudgetEffects.scopeId, effect.scopeId),
-          eq(taskBudgetEffects.kind, "stop"), eq(taskBudgetEffects.state, "done"))).orderBy(asc(taskBudgetEffects.createdAt), asc(taskBudgetEffects.id));
+          eq(taskBudgetEffects.kind, "stop"))).orderBy(asc(taskBudgetEffects.createdAt), asc(taskBudgetEffects.id));
+        if (stops.some(stop => stop.state !== "done")) {
+          await db.update(taskBudgetEffects).set({ state: "pending", leaseExpiresAt: null, lastError: "Budget stop effects are still settling" })
+            .where(and(eq(taskBudgetEffects.id, effect.id), eq(taskBudgetEffects.leaseExpiresAt, lease)));
+          continue;
+        }
         const interrupted = new Map<string, string>();
         for (const stop of stops) for (const issueId of stop.payload.issueIds ?? []) interrupted.set(issueId, stop.id);
         for (const [issueId, stopId] of interrupted) {

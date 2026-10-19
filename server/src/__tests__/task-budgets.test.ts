@@ -10,6 +10,7 @@ import { agents, approvals, budgetIncidents, budgetPolicies, companies, costEven
   issues, taskBudgetAccountingState, taskBudgetEffects, taskBudgetRunContexts } from "@paperclipai/db";
 import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
 import { taskBudgetService } from "../services/task-budgets.js";
+import { budgetService } from "../services/budgets.js";
 
 vi.mock("../services/activity-log.js", () => ({ logActivity: vi.fn(async () => undefined) }));
 vi.mock("../services/authorization.js", () => ({ authorizationService: () => ({ decide: async () => ({ allowed: true }) }) }));
@@ -293,6 +294,66 @@ describe("task budgets with real accounting", () => {
     const f = await fixture();
     await db.update(taskBudgetAccountingState).set({ state: "pending" }).where(eq(taskBudgetAccountingState.companyId, f.companyId));
     expect(await f.service.getInvocationBlock(f.companyId, f.a.id)).toMatchObject({ code: "task_budget_accounting_initializing" });
+  });
+
+  it("records a pending legacy receipt after its source task was deleted", async () => {
+    const f = await fixture();
+    const [run] = await db.insert(heartbeatRuns).values({ companyId: f.companyId, agentId: f.worker.id,
+      status: "succeeded", costAccountingPending: true, finishedAt: new Date(), contextSnapshot: { issueId: f.a1.id },
+      usageJson: { provider: "openai", model: "fixture", billingType: "subscription_included", inputTokens: 10,
+        cachedInputTokens: 0, outputTokens: 5, accountingReceiptReady: true, ledgerScope: { issueId: f.a1.id } },
+    }).returning();
+    await db.delete(issues).where(eq(issues.id, f.a1.id));
+    await accountRunCost(db, run.id, {}, new Map());
+    const [event] = await db.select().from(costEvents).where(eq(costEvents.heartbeatRunId, run.id));
+    expect(event).toMatchObject({ issueId: null, totalTokens: 15 });
+    const [context] = await db.select().from(taskBudgetRunContexts).where(eq(taskBudgetRunContexts.sourceRunId, run.id));
+    expect(context).toMatchObject({ issueId: f.a1.id, tokenState: "complete", normalization: { ancestryUnavailable: true } });
+    expect((await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, run.id)))[0].costAccountedAt).not.toBeNull();
+  });
+
+  it("defers restored funding until an earlier failed stop has settled", async () => {
+    const f = await fixture(); const active = await f.run(f.a.id); const billed = await f.run(f.b.id);
+    await f.report(billed.id, 2100, 10);
+    await db.update(heartbeatRuns).set({ status: "succeeded" }).where(eq(heartbeatRuns.id, billed.id));
+    await db.update(issues).set({ status: "done" }).where(eq(issues.id, f.b.id));
+    await processTaskBudgetEffects(db, { cancelRun: async () => { throw Error("provider stop interrupted"); }, resumeIssue: async () => {} }, f.companyId);
+    const [stop] = await db.select().from(taskBudgetEffects).where(and(eq(taskBudgetEffects.companyId, f.companyId), eq(taskBudgetEffects.kind, "stop")));
+    expect(stop.state).toBe("running");
+    await f.service.patch(f.companyId, f.root.id, { maxCostCents: null, maxTokens: null, expectedRevisions: { billed_cents: 1, total_tokens: 1 } }, f.board);
+    const resumed = new Map<string, string>();
+    const hooks = { cancelRun: async () => {}, resumeIssue: async (id: string, key: string) => { resumed.set(key, id); } };
+    await processTaskBudgetEffects(db, hooks, f.companyId);
+    expect(resumed.size).toBe(0);
+    await db.update(taskBudgetEffects).set({ leaseExpiresAt: new Date(0) }).where(eq(taskBudgetEffects.id, stop.id));
+    await processTaskBudgetEffects(db, hooks, f.companyId);
+    expect([...resumed.values()]).toEqual([f.a.id]);
+    expect(stop.payload.runIds).toContain(active.id);
+  });
+
+  it("checks task metering from the selected runtime instead of stored agent defaults", async () => {
+    const f = await fixture();
+    await db.update(agents).set({ adapterType: "paperclip_runner", adapterConfig: { provider: "codex" } }).where(eq(agents.id, f.worker.id));
+    await db.update(issues).set({ assigneeAdapterOverrides: { adapterConfig: { provider: "acpx", acpxAgent: "claude", env: { CLAUDE_CODE_OAUTH_TOKEN: "fixture-config-only" } } } }).where(eq(issues.id, f.a.id));
+    const service = budgetService(db);
+    expect(await service.getInvocationBlock(f.companyId, f.worker.id, { issueId: f.a.id })).toBeNull();
+    expect(await service.getInvocationBlock(f.companyId, f.worker.id, { issueId: f.a.id,
+      taskMetering: { billedCents: "included_zero", totalTokens: "reported", reportingBoundary: "run_end" } })).toBeNull();
+    expect(await service.getInvocationBlock(f.companyId, f.worker.id, { issueId: f.a.id,
+      taskMetering: { billedCents: "unsupported", totalTokens: "reported", reportingBoundary: "run_end" } })).toMatchObject({ code: "task_budget_metering_unsupported" });
+    expect((await f.service.summary(f.companyId, f.a.id)).primaryBlocker).toBeNull();
+  });
+
+  it("does not invent missing provider usage for queued work that never started", async () => {
+    const f = await fixture();
+    const [run] = await db.insert(heartbeatRuns).values({ companyId: f.companyId, agentId: f.worker.id,
+      status: "queued", contextSnapshot: { issueId: f.a.id } }).returning();
+    await db.delete(taskBudgetAccountingState).where(eq(taskBudgetAccountingState.companyId, f.companyId));
+    await initializeTaskBudgetAccounting(db, f.companyId);
+    await f.service.patch(f.companyId, f.a.id, { maxTokens: 1000, expectedRevisions: { total_tokens: 0 } }, f.board);
+    expect(await db.select().from(taskBudgetRunContexts).where(eq(taskBudgetRunContexts.sourceRunId, run.id))).toHaveLength(0);
+    await db.update(heartbeatRuns).set({ status: "cancelled" }).where(eq(heartbeatRuns.id, run.id));
+    expect(await f.service.getInvocationBlock(f.companyId, f.a.id)).toBeNull();
   });
 
 });

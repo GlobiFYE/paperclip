@@ -440,3 +440,33 @@ historical attribution, repair, qualified configurations and reporting delay.
   four pass in a focused current-source reproduction; that does not explain the
   original failures or make the full run green. Full logs remain preserved in
   /tmp/task-budget-final-tests.log and /tmp/task-budget-chat-failure-repro.log.
+
+- An isolated pre-355 database with existing company policies and incidents was
+  migrated using the production migrator. int32-limit values, reservation cents
+  0.1234567 and observed cents 1.2345678 remained exact. A 5-billion-token cap
+  inserted successfully; a second migrate was a no-op. Sanitized local proof:
+  /tmp/task-budget-evidence/migration-upgrade-proof.json.
+- First review identified seven issues. Active-cap metering and large incident
+  caps were already fixed in the intervening commit. Further repairs enforce
+  company-before-privacy locks for native creation; defer resume effects behind
+  unfinished stops; retain deleted legacy source identities while recording costs;
+  defer metering decisions to selected/resolved dispatch configuration; and format
+  incident repair defaults by metric. Regression cases exercise these paths.
+
+- The review repairs passed 60 backend cases, then 25 final task/creation cases
+  after adding the queued-work regression and fixing test fixture cleanup. The
+  controlled native/direct creation collision passes without changing the existing
+  child-count assertion. Never-started queued work does not create missing provider
+  usage; previously started recovery work still retains accounting obligations.
+- CI exposed a stable native create_task replay mismatch: a computed budget had
+  been appended after the stored mutation receipt. Budget context is now computed
+  within that receipt and omitted on uncapped companies' cheap path. The existing
+  Muse native/idle creation replay test passes. Muse idle creation now also takes
+  the company lock before privacy and agent admission locks.
+- All 96 cases in the affected UI suites pass. Existing dollar incident wording is
+  preserved. Properties unit tests isolate the new child panel; the dedicated
+  panel test still verifies revision conflicts, and rendered incident tests verify
+  valid token/dollar repair defaults.
+- The original broad local run also reported six workspace-runtime timing failures.
+  Their logs remain preserved; these are not declared fixed by focused budget
+  checks. Remote checks must be assessed at the final published head.

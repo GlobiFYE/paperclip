@@ -4,10 +4,11 @@ import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MemoryRouter } from "react-router-dom";
 import { expect, it, vi } from "vitest";
-import type { TaskBudgetSummary } from "@paperclipai/shared";
+import type { BudgetIncident, TaskBudgetSummary } from "@paperclipai/shared";
 import { budgetsApi } from "../api/budgets";
 import { queryKeys } from "../lib/queryKeys";
 import { TaskBudgetPanel } from "./TaskBudgetPanel";
+import { BudgetIncidentCard } from "./BudgetIncidentCard";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -57,5 +58,23 @@ it("keeps the edit's original revision when polling receives a concurrent change
     act(() => root.unmount());
     container.remove();
     client.clear();
+  }
+});
+
+it.each([["total_tokens", "501000"], ["billed_cents", "5010.00"]] as const)("opens a %s incident with a valid repair amount", async (metric, value) => {
+  const incident = { id: "incident", metric, thresholdType: "hard", scopeType: "issue", scopeId: "task", scopeName: "Funded task",
+    amountObserved: 500000, amountLimit: 500000, status: "open", approvalStatus: "pending" } as BudgetIncident;
+  const raised = vi.fn();
+  const container = document.createElement("div"); document.body.appendChild(container);
+  const root = createRoot(container);
+  try {
+    await act(async () => { root.render(<BudgetIncidentCard incident={incident} onRaiseAndResume={raised} onKeepPaused={() => {}} />); });
+    expect(container.querySelector("input")?.value).toBe(value);
+    const button = [...container.querySelectorAll("button")].find(node => node.textContent?.includes("Raise budget & resume"))!;
+    expect(button.disabled).toBe(false);
+    act(() => button.click());
+    expect(raised).toHaveBeenCalledWith(501000);
+  } finally {
+    act(() => root.unmount()); container.remove();
   }
 });

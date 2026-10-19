@@ -2765,9 +2765,7 @@ export function heartbeatService(
           await lockTaskBudgetCompany(tx, run.companyId);
           const support = taskBudgetMeteringSupport(agent.adapterType, { config: runtimeConfig, executionTarget }, nativeProvider);
           await taskBudgetService(tx).captureRun(run.companyId, run.id, support);
-          return await budgetServiceInTransaction(tx).getInvocationBlock(run.companyId, run.agentId, { issueId })
-            ?? await taskBudgetService(tx).getInvocationBlock(run.companyId, issueId,
-              support);
+          return await budgetServiceInTransaction(tx).getInvocationBlock(run.companyId, run.agentId, { issueId, taskMetering: support });
         }) : null;
         if (fundingBlock) {
           await cancelRunInternal(run.id, fundingBlock.reason, { errorCode: "task_budget_hold", suppressImmediateRecovery: true });

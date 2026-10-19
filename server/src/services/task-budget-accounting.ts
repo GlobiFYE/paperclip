@@ -6,6 +6,7 @@ import {
   taskBudgetRunAncestors, taskBudgetRunContexts, taskBudgetUsageReceipts,
 } from "@paperclipai/db";
 import { conflict, notFound, unprocessable } from "../errors.js";
+import { isUuidLike } from "@paperclipai/shared";
 
 export async function lockTaskBudgetCompany(db: Db, companyId: string) {
   const [company] = await db.select({ id: companies.id }).from(companies).where(eq(companies.id, companyId)).for("no key update");
@@ -35,11 +36,12 @@ export async function captureTaskBudgetRun(db: Db, companyId: string, runId: str
   const [run] = await db.select().from(heartbeatRuns).where(and(eq(heartbeatRuns.companyId, companyId), eq(heartbeatRuns.id, runId)));
   if (!run) throw notFound("Budget source run not found");
   const issueId = typeof run.contextSnapshot?.issueId === "string" ? run.contextSnapshot.issueId : run.nativeIssueId;
-  if (!issueId) return null;
-  const ancestors = await taskBudgetAncestors(db, companyId, issueId);
+  if (!issueId || !isUuidLike(issueId)) return null;
   const [issue] = await db.select().from(issues).where(and(eq(issues.companyId, companyId), eq(issues.id, issueId)));
+  const ancestors = issue ? await taskBudgetAncestors(db, companyId, issueId) : [{ id: issueId, depth: 0 }];
   const [context] = await db.insert(taskBudgetRunContexts).values({ companyId, sourceRunId: runId, liveRunId: runId,
-    issueId, projectId: issue.projectId, billingCode: issue.billingCode }).returning();
+    issueId, projectId: issue?.projectId ?? null, billingCode: issue?.billingCode ?? null,
+    ...(!issue ? { normalization: { ancestryUnavailable: true } } : {}) }).returning();
   await db.insert(taskBudgetRunAncestors).values(ancestors.map(ancestor => ({ companyId,
     contextId: context.id, ancestorIssueId: ancestor.id, depth: ancestor.depth })));
   return context;
@@ -83,7 +85,7 @@ export async function initializeTaskBudgetAccounting(db: Db, companyId: string) 
     const last = batch.at(-1);
     const active = batch.length < 250 ? await tx.select({ id: heartbeatRuns.id }).from(heartbeatRuns)
       .leftJoin(taskBudgetRunContexts, and(eq(taskBudgetRunContexts.companyId, heartbeatRuns.companyId), eq(taskBudgetRunContexts.sourceRunId, heartbeatRuns.id)))
-      .where(and(eq(heartbeatRuns.companyId, companyId), inArray(heartbeatRuns.status, ["queued", "running"]),
+      .where(and(eq(heartbeatRuns.companyId, companyId), sql`(${heartbeatRuns.status} = 'running' or (${heartbeatRuns.status} = 'queued' and ${heartbeatRuns.startedAt} is not null))`,
         sql`${heartbeatRuns.createdAt} <= (select cutover_at from task_budget_accounting_state where company_id = ${companyId})`, isNull(taskBudgetRunContexts.id),
         sql`coalesce(${heartbeatRuns.contextSnapshot}->>'issueId', ${heartbeatRuns.nativeIssueId}::text) is not null`)).limit(250) : [];
     for (const run of active) await captureTaskBudgetRun(tx, companyId, run.id);
