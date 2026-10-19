@@ -4,6 +4,7 @@ import { executeDaytonaTool, isDaytonaConnection, isCurrentDaytonaCatalogEntry }
 import { composeConnectionInstructions } from "./connection-instructions.js";
 import { isInsufficientConnectionScope, INSUFFICIENT_CONNECTION_SCOPE_MESSAGE } from "./connection-permission-errors.js";
 import { boundedMcpToolName } from "./mcp-tool-names.js";
+import { validateCatalogToolArguments } from "./mcp-tool-catalog.js";
 import { browserUseService } from "./browser-use.js";
 import { isBrowserUseConnection } from "./browser-use-client.js";
 import { COGNEE_STDIO_TEMPLATE, cogneeCloudUrl, callCogneeCloud } from "./cognee-connection.js";
@@ -382,6 +383,8 @@ interface ExecuteGatewayToolInput {
   gatewayPublicId?: string | null;
   tool: string;
   parameters?: unknown;
+  /** The generic MCP call wrapper retains the resolved tool's exact input schema. */
+  validateParametersSchema?: boolean;
   timeoutMs?: number;
   approvedActionRequestId?: string | null;
   idempotencyKey?: string | null;
@@ -8946,16 +8949,19 @@ export function createToolGatewayService(
       bearerToken: string;
       callerHeaders?: Record<string, string | string[] | undefined>;
       signal?: AbortSignal;
+      /** A catalog search delivered through MCP tools/call must also retain that token action gate. */
+      requireToolCallAction?: boolean;
     }): Promise<ToolGatewayDescriptor[]> {
       input.signal?.throwIfAborted();
       const session = await namedGatewaySessionFromBearer({
         gatewayId: input.gatewayId ?? null,
         gatewayPublicId: input.gatewayPublicId ?? null,
         bearerToken: input.bearerToken,
-        protocolMethod: "tools/list",
+        protocolMethod: input.requireToolCallAction ? "tools/call" : "tools/list",
         callerHeaders: input.callerHeaders,
       });
       await assertGatewayTokenAction(session, "tools/list");
+      if (input.requireToolCallAction) await assertGatewayTokenAction(session, "tools/call");
       const tools = await listToolsForContext(session, input.signal);
       await writeAudit({
         session,
@@ -10040,6 +10046,7 @@ export function createToolGatewayService(
         }
       }
       let tool = await findToolForSession(session, input.tool);
+      if (input.validateParametersSchema) validateCatalogToolArguments(tool, input.parameters ?? {});
       if (tool.providerType === "paperclip_slack_chat") {
         const definition = SLACK_TOOLS.find(t => t.name === tool.upstreamToolName);
         const args = definition?.schema.parse(input.parameters ?? {}) as Record<string, unknown> | undefined;
@@ -10164,6 +10171,7 @@ export function createToolGatewayService(
         virtualToolName = "run_tool";
         tool = targetTool;
         requestedParameters = targetParameters;
+        if (input.validateParametersSchema) validateCatalogToolArguments(tool, requestedParameters);
       }
 
       // Managed provider arguments are part of the governed call, not a
