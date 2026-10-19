@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AI_CONNECTION_CAPABILITIES,
@@ -85,11 +85,16 @@ export function AiConnectionField({
   const [connecting, setConnecting] = useState(false);
   const [advancedSetup, setAdvancedSetup] = useState(false);
   const [reconnecting, setReconnecting] = useState<AiManagedConnectionSummary>();
-  // The bound or reconnecting account owns the provider. OpenCode reaches both
-  // OpenRouter and OpenCode Go, so defaulting to the first entry would show a
-  // Go account OpenRouter's default and reconnect it as OpenRouter.
-  const boundProvider = value && value.mode !== "router" ? value.provider : undefined;
-  const provider = reconnecting?.provider ?? boundProvider ?? providers[0];
+  // The bound or reconnecting account owns the provider, but only while it can
+  // still run this harness. Switching adapters keeps the saved binding in
+  // place, so an account for the previous harness must not drive this form.
+  const boundProvider = value && value.mode !== "router" && providers.includes(value.provider) ? value.provider : undefined;
+  const reconnectingProvider = reconnecting && providers.includes(reconnecting.provider) ? reconnecting.provider : undefined;
+  const provider = reconnectingProvider ?? boundProvider ?? providers[0];
+  // An adapter change leaves the previous harness's reconnect state behind.
+  useEffect(() => {
+    setReconnecting(undefined);
+  }, [adapterType]);
   const [allAgents, setAllAgents] = useState(true);
   const [savedAccount, setSavedAccount] = useState<{ connectionId: string; grantId: string; method: AiAuthMethod }>();
   const changeBinding = (next: AiRuntimeConnectionBinding) => {
