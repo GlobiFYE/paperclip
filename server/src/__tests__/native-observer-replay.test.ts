@@ -90,6 +90,7 @@ describe("native event replay observation evidence", () => {
     });
     const sockets: WebSocket[] = [];
     const received: LiveEvent[][] = [];
+    const completedDeliveries: Promise<void>[] = [];
     const deliveryReads: Promise<void>[] = [];
     const visibilityDb = createDb(temporary.connectionString);
     const proofDb = drizzle(visibilityDb.$client, { schema, logger: {
@@ -123,6 +124,8 @@ describe("native event replay observation evidence", () => {
         const socket = new WebSocket(url);
         sockets.push(socket);
         const messages: LiveEvent[] = [];
+        const delivered = Promise.withResolvers<void>();
+        completedDeliveries.push(delivered.promise);
         received.push(messages);
         socket.on("message", bytes => {
           const event = JSON.parse(bytes.toString()) as LiveEvent;
@@ -132,6 +135,7 @@ describe("native event replay observation evidence", () => {
             const rows = await proofDb.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, runId));
             expect(rows.some(row => row.seq === event.payload.seq)).toBe(true);
           })());
+          if (messages.length === expectedDeliveries) delivered.resolve();
         });
         await once(socket, "open");
         activeViewers += 1;
@@ -167,7 +171,17 @@ describe("native event replay observation evidence", () => {
         }
       })().catch(error => { pollingFailure = error; polling = false; });
       for (const event of events) expect((await port.appendEvent(event)).disposition).toBe("committed");
-      await expect.poll(() => received.every(messages => messages.length === expectedDeliveries)).toBe(true);
+      // Observe delivery directly so a polling assertion's retry interval does
+      // not quantize work timing. Keep a bounded failure path for lost frames.
+      const deliveryDeadline = new AbortController();
+      try {
+        await Promise.race([
+          Promise.all(completedDeliveries),
+          delay(5_000, undefined, { signal: deliveryDeadline.signal }).then(() => {
+            throw new Error("replay viewer delivery deadline exceeded");
+          }),
+        ]);
+      } finally { deliveryDeadline.abort(); }
       for (const event of events) expect((await port.appendEvent(event)).disposition).toBe("duplicate");
       // This synchronous guard catches duplicate publication even if an async
       // authorization queue has not reached the client by the final pong.
