@@ -206,15 +206,17 @@ describeDatabase("agent runtime synchronization hooks", () => {
       await delivery.ready;
       await vi.waitFor(() => expect(call).toHaveBeenCalled(), { timeout: 5000 });
       const delivered = () => call.mock.calls.filter(call => call[2].companyId === companyId);
-      const initialCount = (await events()).length;
-      await vi.waitFor(() => expect(delivered()).toHaveLength(initialCount), { timeout: 5000 });
-      const before = delivered().length;
+      let committedEventId: string | undefined;
       await other.transaction(async tx => {
         await tx.update(agents).set({ name: "Independent writer" }).where(eq(agents.id, agentId));
-        expect(delivered()).toHaveLength(before);
+        const [event] = await tx.select({ id: resourceLifecycleEvents.id }).from(resourceLifecycleEvents)
+          .where(and(eq(resourceLifecycleEvents.companyId, companyId), eq(resourceLifecycleEvents.resourceType, "agent_runtime"), eq(resourceLifecycleEvents.resourceId, agentId)))
+          .orderBy(sql`${resourceLifecycleEvents.id} DESC`).limit(1);
+        committedEventId = String(event.id);
+        expect(delivered().map(call => call[2].id)).not.toContain(committedEventId);
       });
-      await vi.waitFor(() => expect(delivered().length).toBeGreaterThan(before), { timeout: 5000 });
-      expect(delivered().at(-1)![2]).toMatchObject({ companyId, resourceId: agentId, resourceType: "agent_runtime" });
+      await vi.waitFor(() => expect(delivered().map(call => call[2].id)).toContain(committedEventId), { timeout: 5000 });
+      expect(delivered().find(call => call[2].id === committedEventId)![2]).toMatchObject({ companyId, resourceId: agentId, resourceType: "agent_runtime" });
     } finally { delivery.dispose(); await coordinator.stop(); await other.$client.end(); }
   });
   it("recovers work committed during real listener connection loss without another write", async () => {
