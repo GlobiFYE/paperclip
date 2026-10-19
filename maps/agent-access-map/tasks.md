@@ -22,7 +22,10 @@ API: `present` — representative operation IDs:
 Agent access: `available` — Native create_task; REST / CLI / MCP.
 
 Policy: Company/task visibility, assignment/change policy, active-run checkout ownership
-and lifecycle rules.
+and lifecycle rules. Ordinary Board comments preserve queued/running retries;
+only a parked retry can be superseded. Explicit Stop/Interrupt retain their
+existing actor and execution authority. Agent comment tools do not acquire Board
+identity or cancellation authority through this behavior.
 
 Evidence: `source-only` — [implementation](../../server/src/routes/issues.ts) at the
 reviewed commit above.
@@ -36,6 +39,14 @@ Gaps: Creation is implemented; agent/user assignment and attachments may need
 narrower/different APIs.
 
 ## `organize`
+
+`GET /api/companies/{companyId}/issues/summaries?ids=...` reads up to five exact
+UUIDs and returns only navigation summaries. Normal company and task-read
+permissions apply to ordinary agent REST calls; task-bridge keys are denied.
+Hidden, missing, foreign and private inaccessible IDs are omitted without an
+existence disclosure. No dedicated CLI/native tool is added. Embedded database
+route tests cover same-company agent access and company/task-bridge denials;
+this does not establish a live native `call_api` journey.
 
 The issue-list API accepts optional `includeAgentCreatedTasks`; false restricts
 independent results to human creation before search/pagination. Omission retains
