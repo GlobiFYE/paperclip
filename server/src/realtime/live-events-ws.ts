@@ -6,7 +6,7 @@ import type { Duplex } from "node:stream";
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import { agentApiKeys, companyMemberships, instanceUserRoles, heartbeatRuns, issues, projects } from "@paperclipai/db";
-import type { DeploymentMode, LiveEvent } from "@paperclipai/shared";
+import { agentApiKeyScopeSchema, type DeploymentMode, type LiveEvent } from "@paperclipai/shared";
 import type { BetterAuthSessionResult } from "../auth/better-auth.js";
 import { logger } from "../middleware/logger.js";
 import { activityToastIdentity } from "./activity-toast-identity.js";
@@ -27,6 +27,7 @@ interface WsSocket {
 
 interface WsServer {
   clients: Set<WsSocket>;
+  close(callback?: () => void): void;
   on(event: "connection", listener: (socket: WsSocket, req: IncomingMessage) => void): void;
   on(event: "close", listener: () => void): void;
   handleUpgrade(
@@ -66,6 +67,8 @@ interface IncomingMessageWithContext extends IncomingMessage {
   paperclipWebSocketHandled?: boolean;
   paperclipUpgradeContext?: UpgradeContext;
 }
+
+const liveEventsWsRoutePath = "/api/companies/:companyId/events/ws";
 
 function hashToken(token: string) {
   return createHash("sha256").update(token).digest("hex");
@@ -220,7 +223,15 @@ async function authorizeUpgrade(
     .where(and(eq(agentApiKeys.keyHash, tokenHash), isNull(agentApiKeys.revokedAt)))
     .then((rows) => rows[0] ?? null);
 
-  if (!key || key.companyId !== companyId || key.scopeConfig) {
+  if (!key || key.companyId !== companyId) {
+    return null;
+  }
+
+  // This socket subscribes to events for the entire company. Narrow API keys
+  // cannot subscribe through an Upgrade,
+  // which bypasses the HTTP route middleware that enforces their scopes.
+  const scope = agentApiKeyScopeSchema.safeParse(key.scopeConfig ?? { kind: "standard" });
+  if (!scope.success || scope.data.kind !== "standard") {
     return null;
   }
 
@@ -392,7 +403,7 @@ export function setupLiveEventsWebSocketServer(
     }
 
     const onRawSocketError = (err: Error) => {
-      logger.warn({ err, path: req.url }, "live websocket upgrade socket error");
+      logger.warn({ err, path: liveEventsWsRoutePath }, "live websocket upgrade socket error");
     };
     const cleanupRawSocketListeners = () => {
       socket.off("error", onRawSocketError);
@@ -441,7 +452,7 @@ export function setupLiveEventsWebSocketServer(
         });
       })
       .catch((err) => {
-        logger.error({ err, path: req.url }, "failed websocket upgrade authorization");
+        logger.error({ err, path: liveEventsWsRoutePath }, "failed websocket upgrade authorization");
         rejectUpgrade(socket, "500 Internal Server Error", "upgrade failed");
       }));
   });
