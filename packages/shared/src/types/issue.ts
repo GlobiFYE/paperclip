@@ -370,7 +370,6 @@ export interface IssuePendingWakeSummary {
 }
 
 export interface IssueWakeDiagnosticsResponse {
-  /** Independent of bounded history; a point-in-time observation, not a lease. */
   pendingWakeSummary: IssuePendingWakeSummary;
   issue: IssueBlockerDiagnosticIssueSummary;
   diagnosis: string | null;

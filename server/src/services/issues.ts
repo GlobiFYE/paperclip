@@ -8728,8 +8728,6 @@ export function issueService(db: Db) {
       );
       const since = new Date(Date.now() - lookbackDays * 24 * 60 * 60 * 1000);
 
-      // This aggregate deliberately has no history window or row limit. Only
-      // outstanding statuses contribute; terminal history never affects it.
       const observedAt = new Date().toISOString();
       const pendingRows = await db
         .select({ status: agentWakeupRequests.status, count: sql<number>`count(*)`.mapWith(Number) })
