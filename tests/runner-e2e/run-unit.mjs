@@ -14,10 +14,6 @@ if (!existsSync(vitest)) {
   process.exit(2);
 }
 
-// Sanitize after pnpm has started this launcher, then bypass its generated
-// Vitest bin shim, which would reintroduce NODE_PATH. A fresh Node process also
-// keeps NODE_OPTIONS preloads/loaders out of test startup, not just process.env.
-// Installed-consumer admission remains strict; never sanitize inside its guard.
 const env = { ...process.env };
 delete env.NODE_PATH;
 delete env.NODE_OPTIONS;

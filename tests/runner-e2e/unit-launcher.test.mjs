@@ -33,9 +33,6 @@ it.skipIf(process.env.PAPERCLIP_UNIT_BOUNDARY_PROBE === "1")("runs the documente
     expect(tests.testResults).toHaveLength(1);
     expect(tests.testResults[0].name).toMatch(/installed-cli\.test\.ts$/);
     expect(result.stdout).toContain("native completion prerequisite admits an executed passing boundary");
-    // The preload must run in the package manager, but never in either test
-    // runner or Vitest's workers. This detects Node startup injection even if
-    // a test setup later deletes the environment variables.
     const preloads = readFileSync(log, "utf8").trim().split("\n").map(line => JSON.parse(line));
     expect(preloads.some(record => record.argv.some(arg => /pnpm(?:\.c?js)?$/.test(arg)))).toBe(true);
     expect(preloads.some(record => record.argv[1]?.endsWith("/run-unit.mjs")
