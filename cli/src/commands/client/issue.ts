@@ -51,6 +51,8 @@ interface IssueBaseOptions extends BaseClientOptions {
 }
 
 interface IssueCreateOptions extends BaseClientOptions {
+  maxCostCents?: string;
+  maxTokens?: string;
   title: string;
   description?: string;
   status?: string;
@@ -277,6 +279,8 @@ export function registerIssueCommands(program: Command): void {
   addCommonClientOptions(
     issue
       .command("create")
+      .option("--max-cost-cents <n>", "Lifetime billed cost cap including descendants")
+      .option("--max-tokens <n>", "Lifetime token cap including descendants")
       .description("Create an issue")
       .requiredOption("-C, --company-id <id>", "Company ID")
       .requiredOption("--title <title>", "Issue title")
@@ -300,6 +304,10 @@ export function registerIssueCommands(program: Command): void {
           }
           const ctx = resolveCommandContext(opts, { requireCompany: true });
           const payload = createIssueSchema.parse({
+            ...(opts.maxCostCents !== undefined || opts.maxTokens !== undefined ? { budget: {
+              maxCostCents: opts.maxCostCents === undefined ? undefined : Number(opts.maxCostCents),
+              maxTokens: opts.maxTokens === undefined ? undefined : Number(opts.maxTokens),
+            } } : {}),
             title: opts.title,
             description: opts.description,
             status: opts.status,

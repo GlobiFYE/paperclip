@@ -1,3 +1,7 @@
+import { taskBudgetService } from "./task-budgets.js";
+import { processTaskBudgetEffects } from "./task-budget-effects.js";
+import { taskBudgetMeteringSupport } from "./task-budget-metering.js";
+import { lockTaskBudgetCompany } from "./task-budget-accounting.js";
 import { createHeartbeatAgentStatus } from "./heartbeat/agent-status.js";
 import { heartbeatExternalProvider, nativeRuntimeHasInstructionFilesystem } from "./heartbeat/external-provider.js";
 import { dotRunnerBroker } from "./dot-runner-broker.js";
@@ -922,9 +926,26 @@ export function heartbeatService(
     },
   };
   const budgetHooks = {
+    deliverTaskBudgetEffects: (companyId: string) => drainTaskBudgetEffects(companyId),
     cancelWorkForScope: cancelBudgetScopeWork,
   };
   const budgets = budgetService(db, budgetHooks);
+  const taskBudgets = taskBudgetService(db);
+  async function drainTaskBudgetEffects(companyId?: string) {
+    await processTaskBudgetEffects(db, {
+      cancelRun: async runId => { await cancelRunInternal(runId, "Cancelled due to task budget hold", { errorCode: "task_budget_hold" }); },
+      resumeIssue: async (issueId, idempotencyKey) => {
+        const [issue] = await db.select().from(issues).where(eq(issues.id, issueId));
+        if (!issue?.assigneeAgentId) return;
+        const block = await budgets.getInvocationBlock(issue.companyId, issue.assigneeAgentId, { issueId, projectId: issue.projectId });
+        const manualHold = await treeControlSvc.getActivePauseHoldGate(issue.companyId, issueId);
+        if (block || manualHold) return;
+        await enqueueWakeup(issue.assigneeAgentId, { source: "assignment", triggerDetail: "system", reason: "task_budget_resumed",
+          idempotencyKey, requestedByActorType: "system", requestedByActorId: "budget_service",
+          payload: { issueId }, contextSnapshot: { issueId, source: "task_budget.resume" } });
+      },
+    }, companyId);
+  }
   const recovery = recoveryService(db, {
     enqueueWakeup,
     liveRunExecutions,
@@ -1392,6 +1413,8 @@ export function heartbeatService(
 
   // Earlier factories capture these callbacks before run-control construction.
   function cancelBudgetScopeWork(...args: Parameters<typeof runControl.cancelBudgetScopeWork>) {
+    const [scope] = args;
+    if (scope.scopeType === "issue") return taskBudgets.evaluatePolicies(scope.companyId, [scope.scopeId]).then(() => drainTaskBudgetEffects(scope.companyId));
     return runControl.cancelBudgetScopeWork(...args);
   }
 
@@ -1543,6 +1566,7 @@ export function heartbeatService(
   }
 
   async function reconcileStrandedAssignedIssues() {
+    await drainTaskBudgetEffects();
     return recovery.reconcileStrandedAssignedIssues({
       issueCreatedAtGte: await getWorktreeExecutionCutoff(),
     });
@@ -2730,10 +2754,24 @@ export function heartbeatService(
       }
       const dispatchResolvedInteractionContinuationAfterAdmission = async <T>(
         dispatch: (markDispatchStarted: () => void) => Promise<T>,
+        nativeProvider?: string,
       ): Promise<
         { dispatched: true; resultPromise: Promise<T> } | { dispatched: false }
       > => {
         await controllerLease.assertOwned("dispatching");
+        const fundingBlock = issueId ? await db.transaction(async transaction => {
+          const tx = transaction as unknown as Db;
+          await lockTaskBudgetCompany(tx, run.companyId);
+          await taskBudgetService(tx).captureRun(run.companyId, run.id);
+          return await budgetService(tx).getInvocationBlock(run.companyId, run.agentId, { issueId })
+            ?? await taskBudgetService(tx).getInvocationBlock(run.companyId, issueId,
+              taskBudgetMeteringSupport(agent.adapterType, { config: runtimeConfig, executionTarget }, nativeProvider));
+        }) : null;
+        if (fundingBlock) {
+          await cancelRunInternal(run.id, fundingBlock.reason, { errorCode: "task_budget_hold", suppressImmediateRecovery: true });
+          return { dispatched: false };
+        }
+
         // Recheck after workspace/credential preparation, immediately before the
         // provider handoff. Never hold validation locks while adapter code runs.
         await authorizeFailedChatRetryExecution();
@@ -4064,6 +4102,7 @@ export function heartbeatService(
       cancelInvocationsForAgentsInternal(agentIds, reason),
 
     cancelBudgetScopeWork,
+    drainTaskBudgetEffects,
 
     getRunIssueSummary,
 

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { numeric, index, integer, pgTable, text, timestamp, uuid, uniqueIndex } from "drizzle-orm/pg-core";
+import { bigint, numeric, index, integer, pgTable, text, timestamp, uuid, uniqueIndex } from "drizzle-orm/pg-core";
 import { approvals } from "./approvals.js";
 import { budgetPolicies } from "./budget_policies.js";
 import { companies } from "./companies.js";
@@ -17,8 +17,9 @@ export const budgetIncidents = pgTable(
     windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
     windowEnd: timestamp("window_end", { withTimezone: true }).notNull(),
     thresholdType: text("threshold_type").notNull(),
-    amountLimit: integer("amount_limit").notNull(),
+    amountLimit: bigint("amount_limit", { mode: "number" }).notNull(),
     amountObserved: numeric("amount_observed", { precision: 24, scale: 7, mode: "number" }).notNull(),
+    policyRevision: bigint("policy_revision", { mode: "number" }).notNull().default(1),
     status: text("status").notNull().default("open"),
     approvalId: uuid("approval_id").references(() => approvals.id),
     resolvedAt: timestamp("resolved_at", { withTimezone: true }),
@@ -33,10 +34,11 @@ export const budgetIncidents = pgTable(
       table.scopeId,
       table.status,
     ),
+    taskRevisionIdx: uniqueIndex("budget_incidents_task_revision_threshold_idx").on(table.policyId, table.policyRevision, table.windowStart, table.thresholdType).where(sql`${table.scopeType} = 'issue'`),
     policyWindowIdx: uniqueIndex("budget_incidents_policy_window_threshold_idx").on(
       table.policyId,
       table.windowStart,
       table.thresholdType,
-    ).where(sql`${table.status} = 'open'`),
+    ).where(sql`${table.status} = 'open' AND ${table.scopeType} <> 'issue'`),
   }),
 );

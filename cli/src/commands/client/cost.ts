@@ -1,3 +1,4 @@
+import { taskBudgetPatchSchema } from "@paperclipai/shared";
 import { Command } from "commander";
 import {
   addCommonClientOptions,
@@ -62,6 +63,18 @@ export function registerCostCommands(program: Command): void {
   addCompanyGet(finance, "by-kind", "Get finance summary by kind", "costs/finance-by-kind");
 
   const budget = program.command("budget").description("Budget policy and incident operations");
+  addCommonClientOptions(budget.command("task").argument("<issueId>").description("Read a task's own and inherited lifetime budgets")
+    .action(async (issueId: string, opts: BaseClientOptions) => {
+      try { const ctx = resolveCommandContext(opts); printOutput(await ctx.api.get(apiPath`/api/issues/${issueId}/budget`), { json: ctx.json }); }
+      catch (error) { handleCommandError(error); }
+    }));
+  addCommonClientOptions(budget.command("task:update").argument("<issueId>").description("Update task budgets with expected revisions")
+    .requiredOption("--payload-json <json>", "TaskBudgetPatchInput JSON")
+    .action(async (issueId: string, opts: JsonPayloadOptions) => {
+      try { const ctx = resolveCommandContext(opts); const input = taskBudgetPatchSchema.parse(parseJson(opts.payloadJson));
+        printOutput(await ctx.api.patch(apiPath`/api/issues/${issueId}/budget`, input), { json: ctx.json }); }
+      catch (error) { handleCommandError(error); }
+    }));
   addCompanyGet(budget, "overview", "Get budget overview", "budgets/overview");
   addCompanyPostJson(budget, "policy:upsert", "Create or update a budget policy", "budgets/policies");
 

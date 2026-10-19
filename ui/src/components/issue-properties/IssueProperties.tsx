@@ -2,6 +2,7 @@ import { isLockedIssueStub } from "@/components/LockedIssueChip";
 import { IssuePullRequestLinks } from "../IssuePullRequestLinks";
 import { useIssueWorkProducts } from "../../hooks/useIssueWorkProducts";
 import { getIssuePullRequests, pullRequestHref, pullRequestIdentity } from "../../lib/issue-pull-requests";
+import { TaskBudgetPanel } from "../TaskBudgetPanel";
 import { useWorkspaceIsolationControls } from "@/hooks/useWorkspaceIsolationControls";
 import { AgentIdentity } from "@/components/AgentIdentity";
 import { AgentAvatar } from "@/components/AgentAvatar";
@@ -2415,6 +2416,10 @@ export function IssueProperties({
         >
           {labelsContent}
         </PropertyPicker>
+      </PropertySection>
+
+      <PropertySection className="py-3" streamlined={streamlinedPropertiesEnabled}>
+        <TaskBudgetPanel issueId={issue.id} />
       </PropertySection>
 
       <PropertySection title="Relationships" streamlined={streamlinedPropertiesEnabled}>

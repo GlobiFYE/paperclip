@@ -130,6 +130,16 @@ export const createTaskAction = {
               "low"
             ]
           },
+          "budget": {
+            "type": "object",
+            "description": "Optional lifetime caps for this task and all delegated descendants. Enclosing caps remain authoritative; funds are shared, not reserved.",
+            "properties": {
+              "maxCostCents": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+              "maxTokens": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+            },
+            "additionalProperties": false,
+            "minProperties": 1
+          },
           "blockedByTaskIds": {
             "type": "array",
             "description": "Initial blocker task ids.",
@@ -283,6 +293,16 @@ export const createTaskAction = {
           },
           "priority": {
             "type": "string"
+          },
+          "budget": {
+            "type": "object",
+            "description": "Optional lifetime caps for this task and all delegated descendants. Enclosing caps remain authoritative; funds are shared, not reserved.",
+            "properties": {
+              "maxCostCents": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 },
+              "maxTokens": { "type": "integer", "minimum": 1, "maximum": 9007199254740991 }
+            },
+            "additionalProperties": false,
+            "minProperties": 1
           },
           "blockedByTaskIds": {
             "type": "array",

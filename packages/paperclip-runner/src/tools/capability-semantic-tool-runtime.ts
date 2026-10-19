@@ -1580,6 +1580,7 @@ function commandForOperation(
     case "create_task":
       return {
         kind: "create_task",
+        budget: input.budget as { maxCostCents?: number; maxTokens?: number } | undefined,
         status: input.status as "backlog" | "todo" | undefined,
         title: requireString(input.title),
         description: typeof input.description === "string" ? input.description : undefined,

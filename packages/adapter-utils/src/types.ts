@@ -32,6 +32,8 @@ export interface AdapterRuntime {
 
 export interface UsageSummary {
   /** Uncached input plus cache writes; excludes cache reads. Total tokens are input + cachedInput + output. */
+  /** Complete provider-normalized token count, with cache/reasoning categories counted once. */
+  totalTokens?: number;
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens?: number;

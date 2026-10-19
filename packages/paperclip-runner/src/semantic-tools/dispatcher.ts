@@ -392,6 +392,7 @@ export class CapabilitySemanticDispatcher {
       case "create_task":
         command = {
           kind: "create_task",
+          budget: input.budget as { maxCostCents?: number; maxTokens?: number } | undefined,
           status: optionalString(input.status) as "backlog" | "todo" | undefined,
           taskId,
           title: requiredString(input.title),

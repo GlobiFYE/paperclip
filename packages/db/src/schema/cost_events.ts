@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, uuid, text, timestamp, integer, index, numeric, uniqueIndex, check, jsonb } from "drizzle-orm/pg-core";
+import { bigint, pgTable, uuid, text, timestamp, integer, index, numeric, uniqueIndex, check, jsonb } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
 import { agents } from "./agents.js";
 import { issues } from "./issues.js";
@@ -35,11 +35,15 @@ export const costEvents = pgTable(
     inputTokens: integer("input_tokens").notNull().default(0),
     cachedInputTokens: integer("cached_input_tokens").notNull().default(0),
     outputTokens: integer("output_tokens").notNull().default(0),
+    totalTokens: bigint("total_tokens", { mode: "number" }),
+    usageReceiptId: uuid("usage_receipt_id"),
     costCents: numeric("cost_cents", { precision: 24, scale: 7, mode: "number" }).notNull(),
     occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
+    usageReceiptUq: uniqueIndex("cost_events_usage_receipt_uq").on(table.usageReceiptId),
+    companyCreatedIdx: index("cost_events_company_created_idx").on(table.companyId, table.createdAt, table.id),
     usageKindCheck: check("cost_events_usage_kind_check", sql`${table.usageKind} in ('decision', 'fast_response') or (${table.usageKind} = 'agent' and ${table.agentId} is not null)`),
     receiptUniqueIdx: uniqueIndex("cost_events_company_receipt_idx").on(table.companyId, table.idempotencyKey),
     providerRequestIdx: index("cost_events_provider_request_idx").on(table.companyId, table.biller, table.providerRequestId),

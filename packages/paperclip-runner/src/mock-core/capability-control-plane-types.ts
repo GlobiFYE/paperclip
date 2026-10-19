@@ -397,6 +397,7 @@ export type CapabilitySemanticCommand =
   | (CapabilityBaseCommand & { kind: "set_dependencies"; blockedByTaskIds: string[] })
   | (CapabilityBaseCommand & {
       kind: "create_task";
+      budget?: { maxCostCents?: number; maxTokens?: number };
       status?: "backlog" | "todo";
       title: string;
       description?: string | null;

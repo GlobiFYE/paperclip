@@ -8,6 +8,9 @@ import type { NativeRuntimeContextSnapshot } from "../../vendor/paperclip-runner
 import { assertCanManageIssueMonitor, eligibleIssueMonitorWait, prepareIssueMonitorUpdate, setTaskMonitorSchema, summarizeIssueMonitor } from "../issue-monitors.js";
 import { readTaskQuestionContext } from "../issue-question-context.js";
 import { isConversation } from "../agent-conversations.js";
+import { taskBudgetService } from "../task-budgets.js";
+import { taskBudgetCreateSchema } from "@paperclipai/shared";
+import { lockTaskBudgetCompany, initializeTaskBudgetAccounting } from "../task-budget-accounting.js";
 import { setIssueTitle } from "../issue-title.js";
 import { externalObjectService } from "../external-objects.js";
 import { instanceSettingsService } from "../instance-settings.js";
@@ -643,6 +646,8 @@ export class PaperclipRunnerToolAuthority {
           acceptedPlan: await this.#acceptedPlan(context.run.contextSnapshot, context.issue),
           sourcePlanApproval: await this.#sourcePlanApproval(context),
           childReviewOutcomes: await this.#readableChildReviewOutcomes(context.run),
+          budget: await taskBudgetService(this.db).summary(this.binding.companyId, this.binding.issueId,
+            { type: "agent", agentId: this.binding.agentId, runId: this.binding.runId }),
           ...(this.binding.nativeReview ? {
             assignedReview: (await getNativeReviewAssignment(this.db, {
               ...this.binding, contextSnapshot: this.binding.nativeReview,
@@ -1285,6 +1290,8 @@ export class PaperclipRunnerToolAuthority {
 
   async #createTask(input: Record<string, unknown>, identityContextId: string | null): Promise<unknown> {
     const idempotencyKey = requiredString(input.idempotencyKey);
+    const budget = input.budget === undefined ? undefined : taskBudgetCreateSchema.parse(input.budget);
+    if (budget && !(await initializeTaskBudgetAccounting(this.db, this.binding.companyId))) throw new Error("task_budget_accounting_initializing");
     if (input.status !== undefined && input.status !== "backlog" && input.status !== "todo") {
       throw new Error("paperclip_runner_tool_input_invalid");
     }
@@ -1377,6 +1384,7 @@ export class PaperclipRunnerToolAuthority {
           executionPolicy: { ...normalizeIssueExecutionPolicy({ authorizationPolicy: { trustPreset: trust.preset, trustBoundary: trust.boundary } }) },
           sourceTrust: buildLowTrustSourceTrust({ issueId, runId: this.binding.runId, agentId: this.binding.agentId }),
         } : {}),
+        budget,
         initialPlan: nullableProviderId(input.initialPlan),
         title: requiredString(input.title),
         description: input.description === null || input.description === undefined
@@ -1482,7 +1490,7 @@ export class PaperclipRunnerToolAuthority {
         },
       });
     }
-    return result;
+    return { ...result, budget: await taskBudgetService(this.db).summary(this.binding.companyId, childId) };
   }
 
 
@@ -2231,6 +2239,7 @@ export class PaperclipRunnerToolAuthority {
   ): Promise<unknown> {
     const mutate = async (tx: ExternalAdmissionTransaction) => {
       try {
+        if (operationId === "create_task" || operationId === "reassign_task") await lockTaskBudgetCompany(tx as unknown as Db, this.binding.companyId);
         const context = await this.#lockAuthorizedMutationContext(
           tx as unknown as Db,
         );

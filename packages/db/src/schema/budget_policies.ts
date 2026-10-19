@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, boolean, index, integer, pgTable, text, timestamp, uuid, uniqueIndex, numeric } from "drizzle-orm/pg-core";
+import { bigint, check, boolean, index, integer, pgTable, text, timestamp, uuid, uniqueIndex, numeric } from "drizzle-orm/pg-core";
 import { companies } from "./companies.js";
 
 export const budgetPolicies = pgTable(
@@ -11,7 +11,7 @@ export const budgetPolicies = pgTable(
     scopeId: uuid("scope_id").notNull(),
     metric: text("metric").notNull().default("billed_cents"),
     windowKind: text("window_kind").notNull(),
-    amount: integer("amount").notNull().default(0),
+    amount: bigint("amount", { mode: "number" }).notNull().default(0),
     reservationCents: numeric("reservation_cents", { precision: 24, scale: 7 }).notNull().default("0"),
     warnPercent: integer("warn_percent").notNull().default(80),
     hardStopEnabled: boolean("hard_stop_enabled").notNull().default(true),
@@ -20,6 +20,11 @@ export const budgetPolicies = pgTable(
     isActive: boolean("is_active").notNull().default(true),
     enforcementVersion: integer("enforcement_version").notNull().default(0),
     enforcementDeliveredVersion: integer("enforcement_delivered_version").notNull().default(0),
+    revision: bigint("revision", { mode: "number" }).notNull().default(1),
+    createdByAgentId: uuid("created_by_agent_id"),
+    updatedByAgentId: uuid("updated_by_agent_id"),
+    createdByRunId: uuid("created_by_run_id"),
+    updatedByRunId: uuid("updated_by_run_id"),
     createdByUserId: text("created_by_user_id"),
     updatedByUserId: text("updated_by_user_id"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

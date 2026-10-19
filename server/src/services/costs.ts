@@ -1,3 +1,4 @@
+import { taskBudgetService } from "./task-budgets.js";
 import { receiptFingerprint } from "./receipt-fingerprint.js";
 import { agentAvatarUrl, resolveAgentAppearance, createCostEventSchema, createServiceCostEventSchema, normalizeCents, isUuidLike, type MoneyInput, type CostByUserReport } from "@paperclipai/shared";
 import { and, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, ne, sql } from "drizzle-orm";
@@ -152,6 +153,7 @@ export async function createCostEventInTransaction(db: Db, companyId: string, da
       updatedAt: new Date(),
     }).where(and(eq(agentRuntimeState.agentId, event.agentId), eq(agentRuntimeState.companyId, companyId)));
   }
+  await taskBudgetService(db).attributeCostEvent(event);
   await budgetServiceInTransaction(db, publications).evaluateCostEvent(event);
   await logActivity(db, {
     companyId, actorType: actor?.actorType ?? "system", actorId: actor?.actorId ?? "cost_accounting", agentId: actor?.agentId ?? event.agentId,

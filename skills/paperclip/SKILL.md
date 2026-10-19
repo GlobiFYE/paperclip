@@ -787,3 +787,17 @@ provider, and keep the agent assigned with `continuationPolicy: "wake_assignee"`
 so the answer resumes verification. A handoff comment asking the user to comment
 back or reassign the task is not a confirmation card. The card records the user's
 answer; verify the provider's gate and publish result before continuing.
+**Task funding**
+
+Task budgets are optional lifetime dollar and token limits covering the task and
+all delegated descendants. Funds are shared, not reserved. A child without its
+own cap still shares every ancestor cap. Either metric can stop the branch;
+a limit is not a target to spend. Read `GET /api/issues/{id}/budget` before
+allocating work. `create_task` accepts `budget: { maxCostCents, maxTokens }`.
+Only allocate within the enclosing task's remaining funding. Workers cannot
+increase their own caps or move delegated work outside its funding branch.
+Request additional funding from the delegating owner or board. Missing usage
+requires receipt/accounting repair; raising a cap does not turn unknown usage
+into zero. Budget updates use `PATCH /api/issues/{id}/budget` with the expected
+revision for each changed metric. Preserve company, agent, project, approval,
+and manual pause gates when resuming work.

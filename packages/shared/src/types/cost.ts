@@ -24,6 +24,8 @@ export interface CostEvent {
   outputTokens: number;
   costCents: number;
   costCentsExact?: string;
+  totalTokens?: number | null;
+  usageReceiptId?: string | null;
   occurredAt: Date;
   createdAt: Date;
 }

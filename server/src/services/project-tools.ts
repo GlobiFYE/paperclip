@@ -39,6 +39,7 @@ export async function callProjectTool(input: {
     const key = z.string().min(1).max(150).parse(args.idempotencyKey);
     path = `/companies/${input.companyId}/issues`;
     body = createIssueSchema.parse({
+      budget: args.budget,
       title: args.title, description: args.description, priority: args.priority,
       projectId: args.projectId, initialPlan: args.initialPlan,
       assigneeAgentId: args.assigneeActorId ?? input.agentId,
