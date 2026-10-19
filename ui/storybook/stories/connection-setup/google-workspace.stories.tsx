@@ -8,8 +8,13 @@ const workspace = getAppStoreDefinition("google-workspace")!;
 const noop = () => {};
 
 const meta = {
-  title: "Apps/Connections/Google Workspace",
-  parameters: { layout: "fullscreen" },
+  id: "apps-connections-google-workspace",
+  title: "Apps, channels, and extensions/Connection setup/Google Workspace",
+  parameters: { layout: "fullscreen", paperclip: {
+    capabilities: ["connection-setup/catalog", "app-permissions/account-maintenance"],
+    status: "current", implementation: "production", boundary: "fixtures",
+    notes: "Production connection setup with simulated gallery metadata. Mutations are rejected; no successful Google grant or persistence is simulated.",
+  } },
   beforeEach: () => {
     const original = window.fetch;
     window.fetch = async (input, init) => {

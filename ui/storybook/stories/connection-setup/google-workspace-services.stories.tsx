@@ -1,12 +1,17 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
 import { expect, fn, userEvent, within } from "storybook/test";
 import { GoogleWorkspaceServicesDialog } from "@/features/connections/GoogleWorkspaceServices";
-import { ServiceConsent } from "../prototypes/google-workspace/ServiceConsent";
+import { ServiceConsent } from "../../prototypes/google-workspace/ServiceConsent";
 
 const meta = {
-  title: "Apps/Connections/Google Workspace/Service consent preview",
+  id: "apps-connections-google-workspace-service-consent-preview",
+  title: "Apps, channels, and extensions/Connection setup/Google Workspace service consent",
   component: ServiceConsent,
-  parameters: { layout: "fullscreen", docs: { description: { component: "Design preview, not the shipped OAuth flow. One Workspace catalog entry opens Paperclip’s shared dialog, service toggles derive a deduplicated scope set from the existing registry, and Google authorization is simulated without provider calls. Paperclip audiences/action policies remain separate. Real production readiness still requires server-side scope validation, request binding, granted-scope enforcement, staging reviewer proof, and Google review." } } },
+  parameters: { layout: "fullscreen", paperclip: {
+    capabilities: ["connection-setup/catalog", "app-permissions/account-maintenance"],
+    status: "current", implementation: "mixed", boundary: "fixtures",
+    notes: "Production service fields and picker with simulated journey callbacks. No provider authorization, persistence, or Google verification is established by these stories.",
+  }, docs: { description: { component: "The production service picker and fixture-backed journey previews. Google authorization is simulated without provider calls. Paperclip audiences and action policies remain separate." } } },
 } satisfies Meta<typeof ServiceConsent>;
 export default meta;
 type Story = StoryObj<typeof meta>;

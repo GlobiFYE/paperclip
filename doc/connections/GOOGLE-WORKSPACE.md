@@ -1,21 +1,15 @@
 # Google Workspace connections
 
 New Google Workspace setup uses one `google-workspace` connection and the
-`workspace.all` OAuth profile for these nine services:
-
-1. Gmail
-2. Google Drive
-3. Google Docs
-4. Google Sheets
-5. Google Slides
-6. Google Calendar
-7. Google Chat
-8. Google People
-9. Google Workspace Search
+`workspace.all` OAuth profile. Paperclip first offers Gmail, Drive (including
+Docs, Sheets, and Slides), and Calendar. All three start enabled with read and
+write access. Users can disable a group or choose read-only access. New setup
+does not offer Chat, Contacts/directory, or cross-service Search.
 
 The combined connection has one credential grant, capability catalog, policy
-profile, audit trail and reconnect lifecycle. It requests the existing 21-scope
-union, not additional permissions. Google's consent screen lets users decline
+profile, audit trail and reconnect lifecycle. It requests only the selected
+groups' scopes (nine scopes for the default selection), not the legacy full
+union. Google's consent screen also lets users decline
 permissions; discovery skips services without grants and excludes unsupported
 actions. The gateway checks actual grant scopes again before each call, including
 after refresh. Requested scopes alone never authorize an action.
@@ -54,8 +48,9 @@ client pair; that client's Cloud project must have every applicable MCP API and
 preview enrollment. Do not remove legacy enabled profiles while their grants are
 in use. This code change does not enable the broker profile or deploy any stack.
 
-The signed request and envelope authentication bind the exact 21-scope requested
-profile; the encrypted credential payload preserves Google's actual nonempty
+The signed request and envelope authentication bind the exact selected request;
+the legacy 21-scope profile remains supported for old clients. The encrypted
+credential payload preserves Google's actual nonempty
 subset. Missing scope evidence and scopes outside that reviewed union fail closed
 on authorization and refresh. Individual legacy profiles retain exact matching.
 For the new `google/workspace.all` profile only, HKDF info is SHA-256(AAD) to
@@ -80,19 +75,18 @@ Google's per-scope demonstration, justification or security-assessment obligatio
 Sources: [granular consent](https://developers.google.com/identity/protocols/oauth2/resources/granular-permissions),
 [Workspace MCP setup](https://developers.google.com/workspace/guides/configure-mcp-servers).
 
-## Temporary Connections page visibility hold
+## Connections catalog and rollout
 
-While Google OAuth verification is pending, the Connections landing page
-(`ui/src/pages/apps/Browse.tsx`) hides Google Workspace and the nine legacy entries,
-including their saved accounts. This is a display-only filter. App definitions,
-direct setup and management routes, OAuth profiles, saved credentials, and
-runtime tools remain unchanged. This is not an access-control restriction.
+The Connections page offers one Google Workspace card for new accounts. Saved
+individual-service accounts stay visible and retain their management routes.
+This replaces the earlier display-only Google visibility hold. Showing the card
+does not enable managed OAuth: signed instance-specific broker availability
+still controls it. A customer-owned OAuth app remains a separate setup method.
 
-Keep verification instances pinned to their pre-hold app release so reviewers
-can still find and test the integrations. After approval, remove the page's
-`GOOGLE_CONNECTOR_SLUGS` filter and update its visibility tests before upgrading
-those instances. Do not disable the shared definitions or broker profiles to
-control this page's visibility.
+Do not upgrade or unpin existing verification instances as an implementation
+step. Qualify the selected-scope flow on an isolated reviewer staging app first.
+See [service consent](GOOGLE-WORKSPACE-SERVICE-CONSENT.md) for the app/broker
+deployment order and live verification gates.
 
 ## Developer Preview enrollment
 
@@ -133,7 +127,9 @@ Google makes Workspace MCP generally available.
 | Google Workspace Search | `https://workspacemcp.googleapis.com/mcp/v1` | Search Workspace |
 
 Legacy product setup exposes capability choices under Change. The combined
-Workspace setup has one capability and defers permission selection to Google.
+Workspace setup has one capability and asks for service groups before Google
+consent. The endpoint table also documents legacy connections; it is not the
+new-account service list.
 When the managed method is
 available, it uses Paperclip by default. A small **Use your own Google OAuth app**
 link reveals the custom client fields; **Use Paperclip instead** returns to the
