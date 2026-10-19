@@ -121,10 +121,14 @@ export const AI_CONNECTION_CAPABILITIES: Record<
     },
   },
 };
-export function isAiConnectionCompatible(
+/**
+ * Whether a connection can run this harness at all, ignoring the current model.
+ * Pickers use this so a saved account stays selectable while the model belongs
+ * to another provider; the model check then runs on the binding that is saved.
+ */
+export function isAiConnectionCompatibleAdapter(
   requirement: AiConnectionMetadata | AiConnectionBinding,
   adapterType: string,
-  model?: unknown,
   runnerProvider?: unknown,
   acpxAgent?: unknown,
 ): boolean {
@@ -138,15 +142,23 @@ export function isAiConnectionCompatible(
   const candidates = "mode" in requirement && requirement.mode === "responsible_user"
     ? Object.values(methods)
     : requirement.method ? [methods[requirement.method]] : [];
+  return candidates.some((method) => method?.adapters.includes(adapterType));
+}
+
+export function isAiConnectionCompatible(
+  requirement: AiConnectionMetadata | AiConnectionBinding,
+  adapterType: string,
+  model?: unknown,
+  runnerProvider?: unknown,
+  acpxAgent?: unknown,
+): boolean {
+  if (!isAiConnectionCompatibleAdapter(requirement, adapterType, runnerProvider, acpxAgent)) return false;
   // OpenRouter and OpenCode Go each publish their own catalog, so a binding to
   // one of them is only valid when the model is namespaced under that provider.
   // The other BYO harnesses accept any model id.
-  const modelMatchesProvider = requirement.provider === "openrouter"
-    ? typeof model === "string" && model.startsWith("openrouter/")
-    : requirement.provider === "opencode"
-      ? typeof model !== "string" || model.startsWith("opencode-go/")
-      : true;
-  return candidates.some((method) => method?.adapters.includes(adapterType)) && modelMatchesProvider;
+  if (requirement.provider === "openrouter") return typeof model === "string" && model.startsWith("openrouter/");
+  if (requirement.provider === "opencode") return typeof model === "string" && model.startsWith("opencode-go/");
+  return true;
 }
 export type AiConnectionUnavailableReason =
   | "responsible_user_missing"

@@ -159,7 +159,6 @@ export function AiConnectionField({
       </label>}
       {value?.mode !== "router" && <AiConnectionSelect
         adapterType={adapterType}
-        model={model}
         requirement={{ companyId, provider }}
         connections={accounts.data?.connections ?? []}
         value={value}
