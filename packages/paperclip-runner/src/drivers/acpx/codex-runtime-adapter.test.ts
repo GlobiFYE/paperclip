@@ -34,6 +34,31 @@ const HANDLE: AcpRuntimeHandle = {
 };
 
 describe("Codex ACPX runtime adapter", () => {
+  it.each([false, true])("acknowledges configured Claude effort before admission (restoring=%s)", async restoring => {
+    const runtime = fakeRuntime();
+    const options = openOptions(fakeCommand());
+    options.profile = { ...options.profile, agent: "claude" };
+    options.claudeEffort = "high";
+    options.restoringSession = restoring;
+    options.refreshConsumedCommand = vi.fn(async () => undefined);
+    let created!: AcpRuntimeOptions;
+    vi.mocked(runtime.setConfigOption).mockImplementation(async input => {
+      const guard = created.protocolGuardFactory!();
+      guard("outbound", { id: 0, method: "session/load", params: { sessionId: "backend-1" } });
+      guard("inbound", { id: 0, result: { configOptions: [{ id: "effort", currentValue: "default" }] } });
+      guard("outbound", { id: 1, method: "session/set_config_option", params: { sessionId: "backend-1", configId: input.key, value: input.value } });
+      guard("inbound", { id: 1, result: { configOptions: [{ id: "effort", currentValue: input.value }] } });
+    });
+    const port = await openCodexAcpxRuntime(options, {
+      createRegistry: () => registry(), createStore: () => store(), createRuntime: value => { created = value; return runtime; },
+    });
+    expect(runtime.setConfigOption).toHaveBeenCalledExactlyOnceWith({ handle: HANDLE, key: "effort", value: "high" });
+    expect(await port.identity()).toMatchObject({ claudeEffort: "high" });
+    expect(options.refreshConsumedCommand).toHaveBeenCalledOnce();
+    expect(runtime.startTurn).not.toHaveBeenCalled();
+    await port.close({ reason: "test complete" });
+  });
+
   it("admits an exact Claude model through the real ACP without a user model allowlist", async () => {
     const root = await mkdtemp(join(tmpdir(), "preconfigured-claude-model-"));
     const home = join(root, "home"), cwd = join(root, "workspace"), config = join(home, ".claude");
