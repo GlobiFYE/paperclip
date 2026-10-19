@@ -9,6 +9,7 @@ import { executionWorkspaces, issues, heartbeatRuns, nativeRunFinalizations, env
 import { createGitRemoteAuthProvider } from "./git-credentials.js";
 import { withIsolatedRepositorySourceLock, verifiedRecordedIsolatedRemoteSource } from "./isolated-remote-workspace-source.js";
 import { managedProjectCheckoutName } from "./managed-project-checkout-name.js";
+import { pipelineCaseHoldsExecutionWorkspaceSql } from "./pipeline-case-workspace.js";
 import type { GitRemoteAuthProvider } from "./git-credentials.js";
 import { assertReproducibleGitFiles, assertReproducibleBaseGitStorage, assertReproducibleManagedCheckout, inspectGitCacheRecipe, readGitCacheRestoration,
   verifyRemoteGitCommit, gitCacheExpirationLockLocations, recoverGitCacheExpirationLocks, GitCacheRestorationFailure, type ManagedCheckoutProver, gitCacheCommand, readGitCacheExpiration, finishGitCacheTrash, type GitCacheExpiration, GIT_CACHE_RESTORATION_KEY, GIT_CACHE_EXPIRATION_REASON } from "./git-workspace-restoration.js";
@@ -88,7 +89,8 @@ export async function isGitWorkspaceExpirationEligible(tx: Tx, workspace: Worksp
       AND NOT EXISTS (SELECT 1 FROM ${workspaceRuntimeServices} WHERE company_id = ${workspace.companyId}
         AND (execution_workspace_id = ${workspace.id} OR cwd = ${workspace.cwd}
           OR left(cwd, length(${workspace.cwd}) + 1) = ${workspace.cwd} || '/') AND status <> 'stopped')
-
+      -- An open pipeline case that shares this workspace across its stages keeps it.
+      AND NOT ${pipelineCaseHoldsExecutionWorkspaceSql(workspace)}
     ) END AS allowed`);
   return rows[0]?.allowed === true;
 }
