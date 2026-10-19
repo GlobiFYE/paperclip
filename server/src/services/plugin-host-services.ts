@@ -2054,13 +2054,13 @@ export function buildHostServices(
         // issues are filtered at the SQL layer before they can reach a plugin.
         const readCondition = await issueReadSqlCondition(db, pluginIssuePrivacyActor);
         const limit = parseWindowValue(params.limit);
-        if (limit === 0) return [];
-        return (await issues.list(companyId, {
+        const queried = (await issues.list(companyId, {
           ...(params as any),
           readCondition,
-          limit: limit ?? undefined,
+          limit: limit === 0 ? 1 : limit ?? undefined,
           offset: parseWindowValue(params.offset) ?? 0,
         })) as Issue[];
+        return limit === 0 ? [] : queried;
       },
       async get(params) {
         const companyId = ensureCompanyId(params.companyId);

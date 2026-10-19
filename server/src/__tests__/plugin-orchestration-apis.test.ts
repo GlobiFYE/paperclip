@@ -182,6 +182,13 @@ describeEmbeddedPostgres("plugin orchestration APIs", () => {
 
     expect(await services.issues.list({ ...params, limit: 0 })).toEqual([]);
     expect(await services.issues.list({ ...params, limit: 1, offset: 5 })).toEqual([]);
+
+    await expect(
+      services.issues.list({ ...params, limit: 0, assigneeAgentId: "invalid-id" }),
+    ).rejects.toThrow("assigneeAgentId must be a UUID or 'null'");
+    await expect(
+      services.issues.list({ ...params, limit: 1, assigneeAgentId: "invalid-id" }),
+    ).rejects.toThrow("assigneeAgentId must be a UUID or 'null'");
   });
 
   it("returns plugin-safe execution workspace metadata scoped to the company", async () => {
