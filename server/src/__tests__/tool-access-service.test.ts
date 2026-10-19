@@ -2529,6 +2529,39 @@ describeEmbeddedPostgres("tool access service", () => {
     expect(reconnected.connection.agentInstructions).toEqual(settings);
   });
 
+  it.each(["user", "organization"] as const)("preserves the %s Workspace request when account-page reconnect omits a selection", async (kind) => {
+    const company = await createCompany(db);
+    const service = createTestToolAccessService(db);
+    const actor = { actorType: "user" as const, actorId: "board" };
+    const connected = await service.connectGalleryApp(company.id, {
+      galleryKey: "google-workspace", connectionMethodKey: "customer-workspace-oauth", grantKind: kind,
+      oauthClient: { clientId: "fixture-client", clientSecret: "fixture-secret" },
+    }, actor);
+    const requestedScopes = ["https://www.googleapis.com/auth/gmail.readonly"];
+    await db.update(toolConnections).set({ status: "active" }).where(eq(toolConnections.id, connected.connectionId));
+    await db.update(connectionGrants).set({
+      providerTenant: { oauth: { requestedScopes, scopes: [...requestedScopes, "https://www.googleapis.com/auth/documents"] } },
+      status: "needs_reauthorization",
+    }).where(and(eq(connectionGrants.connectionId, connected.connectionId), eq(connectionGrants.kind, kind)));
+    const started = await service.startOAuth(company.id, connected.connectionId, {
+      redirectUri: "https://paperclip.example.test/api/tools/oauth/callback", actor,
+    });
+    const url = new URL(started.authorizationUrl);
+    expect(url.searchParams.get("scope")?.split(" ")).toEqual(requestedScopes);
+    const [state] = await db.select().from(toolOauthStates).where(eq(toolOauthStates.state, url.searchParams.get("state")!));
+    expect(state.requestedScopes).toEqual(requestedScopes);
+    await db.update(connectionGrants).set({ providerTenant: {} })
+      .where(eq(connectionGrants.connectionId, connected.connectionId));
+    await expect(service.startOAuth(company.id, connected.connectionId, {
+      redirectUri: "https://paperclip.example.test/api/tools/oauth/callback", actor,
+    })).rejects.toMatchObject({ status: 400 });
+    const selected = await service.startOAuth(company.id, connected.connectionId, {
+      redirectUri: "https://paperclip.example.test/api/tools/oauth/callback", actor,
+      workspaceServices: { gmail: "read" },
+    });
+    expect(new URL(selected.authorizationUrl).searchParams.get("scope")?.split(" ")).toEqual(requestedScopes);
+  });
+
   it("binds selected Workspace service scopes to OAuth state and rejects other providers", async () => {
     const company = await createCompany(db);
     const service = createTestToolAccessService(db);

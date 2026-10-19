@@ -10,6 +10,9 @@ not offered. Existing individual-service connections remain compatible.
 It appears before creating an OAuth draft or starting reconnect. Cancel does
 not create a connection. Reconnect reads the current subject's grant and
 restores its saved request; failure to load never substitutes broader defaults.
+Account-page reconnect calls without a new selection also restore the exact
+subject's saved request on the server. Missing request/grant evidence blocks
+reconnect until a service choice is supplied; new-account defaults never replace it.
 The same service fields appear in Storybook's **Google Workspace → Service
 consent preview → Production picker**. Storybook callbacks do not grant access.
 

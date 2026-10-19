@@ -14734,12 +14734,33 @@ export function toolAccessService(
     const galleryMethod = galleryEntry
       ? connectionMethodForConnection(galleryEntry, connection)
       : null;
-    const requestedScopes = (() => {
+    const requestedScopes = await (async () => {
       if (input.workspaceServices && sourceTemplateKey !== "google-workspace") throw badRequest("Service selection requires Google Workspace");
       if (sourceTemplateKey === "google-workspace") {
         if (input.workspaceServices && input.scopes) throw badRequest("Choose services or scopes, not both");
-        const scopes = input.scopes ?? googleWorkspaceSelectedScopes(input.workspaceServices ?? GOOGLE_WORKSPACE_DEFAULT_SELECTION);
         const allowed = normalizeOauthScopes(galleryMethod?.defaults?.scopesHint);
+        let scopes = input.scopes ?? (input.workspaceServices ? googleWorkspaceSelectedScopes(input.workspaceServices) : undefined);
+        if (!scopes && connection.status !== "draft") {
+          // Account-page reconnect has no new service choice. Never replace its
+          // subject's saved request with the new-account write defaults.
+          const binding = actorBinding(input.actor);
+          const subjectUserId = input.subjectUserId ?? (binding.actorType === "user" ? binding.actorId : null);
+          const kind = connection.credentialPolicy === "per_user" ? "user"
+            : connection.credentialPolicy === "per_agent" ? "agent" : "organization";
+          const [grant] = await db.select().from(connectionGrants).where(and(
+            eq(connectionGrants.companyId, companyId),
+            eq(connectionGrants.connectionId, connection.id),
+            eq(connectionGrants.kind, kind),
+            kind === "user" ? eq(connectionGrants.subjectUserId, subjectUserId ?? "")
+              : kind === "agent" ? eq(connectionGrants.subjectAgentId, input.subjectAgentId ?? "")
+                : eq(connectionGrants.isDefault, true),
+          )).limit(1);
+          const saved = grant?.providerTenant?.oauth;
+          scopes = normalizeOauthScopes(saved?.requestedScopes ?? saved?.scopes)
+            .filter(scope => allowed.includes(scope));
+          if (scopes.length === 0) throw badRequest("Choose your Google Workspace services before reconnecting");
+        }
+        scopes ??= googleWorkspaceSelectedScopes(GOOGLE_WORKSPACE_DEFAULT_SELECTION);
         if (!isGoogleWorkspaceScopeGrant(scopes) || scopes.some(scope => !allowed.includes(scope))) throw badRequest("Select at least one supported Google service");
         return scopes;
       }
