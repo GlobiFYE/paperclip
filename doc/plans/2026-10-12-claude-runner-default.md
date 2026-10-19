@@ -1,5 +1,25 @@
 # Claude default: refreshed plan — 2026-10-15
 
+## Master refresh and local test drive — 2026-10-19
+
+Current work starts from master `56e09cd19f1757f44e4000cada1f3f2f6b4892a4`,
+including the merged startup transport fix. All three original PR tips are saved
+under `archive/claude-*-pre-refresh-20261019` before integration.
+
+| Required outcome | Current evidence | Remaining gap / next action |
+| --- | --- | --- |
+| Protocol prerequisite #15994 | 369 focused tests plus 72 catalog tests; Runner TypeScript checks/build pass | Fresh cloud CI/review; retain v7 home modes and v8 Muse, carry Claude effort in v9 |
+| Apple Silicon default #15993 | 285 server and 323 UI tests; UI typecheck pass | Fresh cloud CI/review; preserve all current-master behaviors |
+| Remaining defaults #15997 | Historical qualified builds and task pairs remain source-bound below | Integrate the updated prerequisite/default branches; rerun affected controls |
+| Local preview for the user | Existing installed Mac daemon and API-key access are available | Start an isolated current-source test drive, verify a native Claude task and revision, and leave its URL running |
+
+Pi's combined source attestation is profile 26; Copilot remains pending and moves
+to profile 22. Historical published identities are retained. New source evidence
+will not relabel earlier platform or subscription results. All Docker/Rust builds
+remain in cloud infrastructure. Use the existing API key and preserve the $50
+aggregate qualification ceiling, unknown-charge reservations, and disabled paid retries.
+
+
 This section supersedes the sequencing and baseline in the historical record below. Implementation is underway on the existing three-PR stack. The progress section below records current evidence; older entries are historical.
 
 ## Finish line and baseline

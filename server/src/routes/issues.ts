@@ -19,6 +19,8 @@ import { createIssueReadTiming } from "../services/issue-read-timing.js";
 import { isNativeWorkspaceExportRepairCause } from "@paperclipai/shared";
 import { resumeNativeWorkspaceAfterOwnerStop } from "../services/native-runtime/native-workspace-owner-recovery.js";
 import { retryNativeWorkspaceExport } from "../services/native-runtime/native-workspace-export-retry.js";
+import { reconstructNativeWorkspace, unreconciledNativeExportPredicate } from "../services/native-runtime/native-workspace-reconstruction.js";
+import { reconstructWorkspaceSchema } from "@paperclipai/shared";
 import { queuedInteractionId, readQueuedInteractionResponse, hasQueuedInteractionResponse } from "../services/queued-interaction-response.js";
 import { deliverConversationComments, isConversation } from "../services/agent-conversations.js";
 import { issueRecoveryActionReadModel } from "../services/issue-recovery-actions.js";
@@ -66,10 +68,6 @@ import {
   issues as issueRows,
   issueWorkProducts,
   instanceUserRoles,
-  pipelineCaseIssueLinks,
-  pipelineCases,
-  pipelineStages,
-  pipelines,
   projectWorkspaces,
   projectAccessMembers,
   projects,
@@ -434,53 +432,6 @@ const promoteLowTrustOutputSchema = z.object({
   title: z.string().trim().min(1).max(200),
   summary: z.string().trim().min(1).max(8_000),
 });
-
-async function listIssueLinkedCases(
-  db: Db,
-  companyId: string,
-  issueId: string,
-) {
-  const rows = await db
-    .select({
-      link: pipelineCaseIssueLinks,
-      case: pipelineCases,
-      pipeline: pipelines,
-      stage: pipelineStages,
-    })
-    .from(pipelineCaseIssueLinks)
-    .innerJoin(
-      pipelineCases,
-      eq(pipelineCaseIssueLinks.caseId, pipelineCases.id),
-    )
-    .innerJoin(pipelines, eq(pipelineCases.pipelineId, pipelines.id))
-    .innerJoin(pipelineStages, eq(pipelineCases.stageId, pipelineStages.id))
-    .where(
-      and(
-        eq(pipelineCaseIssueLinks.companyId, companyId),
-        eq(pipelineCaseIssueLinks.issueId, issueId),
-        eq(pipelineCases.companyId, companyId),
-        eq(pipelines.companyId, companyId),
-      ),
-    );
-  return rows.map((row) => ({
-    id: row.case.id,
-    caseKey: row.case.caseKey,
-    title: row.case.title,
-    status: row.case.terminalKind ?? "open",
-    role: row.link.role,
-    pipeline: {
-      id: row.pipeline.id,
-      key: row.pipeline.key,
-      name: row.pipeline.name,
-    },
-    stage: {
-      id: row.stage.id,
-      key: row.stage.key,
-      name: row.stage.name,
-      kind: row.stage.kind,
-    },
-  }));
-}
 
 type ParsedExecutionState = NonNullable<
   ReturnType<typeof parseIssueExecutionState>
@@ -7780,10 +7731,7 @@ export function issueRoutes(
           "This issue is linked to a closed workspace that cannot be reopened.",
       });
     } else {
-      res.status(503).json({
-        error:
-          "Could not reopen the workspace for this issue. Please try again.",
-      });
+      res.status(409).json({ error: result.message });
     }
     return null;
   }
@@ -9278,7 +9226,6 @@ export function issueRoutes(
       successfulRunHandoffStates,
       scheduledRetry,
       activeRecoveryAction,
-      linkedCases,
       inboxArchiveFields,
       externalChannelBinding,
       currentExecutionWorkspace,
@@ -9300,7 +9247,6 @@ export function issueRoutes(
       timing.time("handoff", () => listSuccessfulRunHandoffStates(db, issue.companyId, [issue.id])),
       timing.time("retry", () => svc.getCurrentScheduledRetry(issue.id)),
       timing.time("recovery", () => recoveryActionsSvc.getActiveForIssue(issue.companyId, issue.id)),
-      timing.time("cases", () => listIssueLinkedCases(db, issue.companyId, issue.id)),
       inboxArchiveFieldsPromise,
       timing.time("channel", () => getExternalChannelBindingSummary(db, issue.companyId, issue.id)),
       timing.time("workspace", () => issue.executionWorkspaceId
@@ -9355,7 +9301,6 @@ export function issueRoutes(
       mentionedProjects: visibleMentionedProjects,
       currentExecutionWorkspace: compactIssueExecutionWorkspace(currentExecutionWorkspace),
       workProducts,
-      linkedCases,
       externalChannelBinding,
       createdFrom,
     });
@@ -9504,11 +9449,11 @@ export function issueRoutes(
     });
     const retainedHolds = await db.select().from(issueRecoveryActions).where(and(
       eq(issueRecoveryActions.companyId, issue.companyId), eq(issueRecoveryActions.sourceIssueId, issue.id),
-      sql`${issueRecoveryActions.evidence}->'automaticRecovery'->>'replay' = 'blocked'`,
-      or(
+      or(unreconciledNativeExportPredicate(), and(
+        sql`${issueRecoveryActions.evidence}->'automaticRecovery'->>'replay' = 'blocked'`, or(
         sql`${issueRecoveryActions.evidence}->'workspaceRestoreRecovery'->>'schema' = ${LEGACY_WORKSPACE_RECOVERY_SCHEMA}`,
         inArray(issueRecoveryActions.cause, [...EXECUTION_RECONCILIATION_CAUSES]),
-      ),
+      ))),
     )).orderBy(desc(issueRecoveryActions.createdAt));
     res.json({
       active,
@@ -9537,6 +9482,17 @@ export function issueRoutes(
     const receipt = await retryNativeWorkspaceExport({ db, companyId: issue.companyId, issueId: issue.id,
       actionId: req.body.actionId, runId: req.body.runId, repairNote: req.body.repairNote,
       actorId: getActorInfo(req).actorId, environmentRuntime });
+    res.status(202).json(receipt);
+  });
+
+  router.post("/issues/:id/recovery-actions/reconstruct-workspace", validate(reconstructWorkspaceSchema), async (req, res) => {
+    assertBoard(req);
+    const issue = await getAccessibleResource(req, res, svc.getById(req.params.id as string), "Issue not found");
+    if (!issue || !(await assertIssueReadAllowed(req, res, issue))) return;
+    const decision = await access.decide({ actor: req.actor, action: "runtime:manage", resource: { type: "company", companyId: issue.companyId } });
+    if (!decision.allowed) throw forbidden(decision.explanation, authorizationDeniedDetails(decision));
+    const receipt = await reconstructNativeWorkspace({ db, companyId: issue.companyId, issueId: issue.id,
+      actorId: getActorInfo(req).actorId, request: req.body });
     res.status(202).json(receipt);
   });
 
