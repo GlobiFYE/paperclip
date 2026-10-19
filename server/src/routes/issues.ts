@@ -360,6 +360,7 @@ import {
   issueCreateLimitError,
   observeCrossIssueInfluence,
   observeIssueCreate,
+  observeIssueDocumentRevision,
   recordRefusedIssueCreate,
   type RunWriteTransaction,
   type CrossIssueInfluenceKind,
@@ -10844,6 +10845,10 @@ export function issueRoutes(
         });
       }
 
+      // Collected for the revision ledger below: an expiry is a terminal interaction
+      // mutation riding along with an uncharged write, and whether one fired is the
+      // fact that could later justify charging documents.
+      let expiredInteractionIds: string[] = [];
       if (!result.created) {
         const expiredInteractions = await issueThreadInteractionService(
           db,
@@ -10859,6 +10864,9 @@ export function issueRoutes(
             agentId: actor.agentId,
             userId: actor.actorType === "user" ? actor.actorId : null,
           },
+        );
+        expiredInteractionIds = expiredInteractions.map(
+          (interaction) => interaction.id,
         );
         await logExpiredRequestConfirmations({
           issue,
@@ -10880,6 +10888,26 @@ export function issueRoutes(
         actor,
         documentChanged: true,
       });
+
+      // Log-only, and last: the document, its annotations and any expiry have already
+      // committed, so nothing here can change what this request did or what it answers.
+      // Board and user writes are not recorded — this ledger exists to measure *agent*
+      // revision volume against the create budget, and the run row is what carries that.
+      if (req.actor.type === "agent" && actor.agentId && actor.runId) {
+        await observeIssueDocumentRevision(db, {
+          companyId: issue.companyId,
+          runId: actor.runId,
+          agentId: actor.agentId,
+          responsibleUserId: req.actor.onBehalfOfUserId ?? null,
+          issueId: issue.id,
+          issueIdentifier: issue.identifier ?? null,
+          documentKey: doc.key,
+          documentId: doc.id,
+          revisionNumber: doc.latestRevisionNumber ?? null,
+          created: result.created,
+          expiredInteractionIds,
+        });
+      }
 
       res.status(result.created ? 201 : 200).json(doc);
     },

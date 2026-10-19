@@ -770,8 +770,13 @@ path the evidence channel of last resort rather than an amplification vector. Th
 narrow, though not assignee-only: `assertAgentIssueMutationAllowed` admits the assignee, any
 same-company agent on an unassigned task, and a task-watchdog run inside its watched subtree — so the
 blast radius is bounded by the tasks an agent may already mutate and by one object per key, rather
-than by sole ownership. Document revisions are observed
-log-only so the decision can be revisited from data.
+than by sole ownership. Document revisions are observed log-only so the decision can be revisited
+from data: every agent-authored upsert records an `issue.document_revision_observed` row on the same
+run-keyed ledger as creates, carrying the document key, the revision number, whether the revision
+landed on the run's own source issue, and the ids of any stale `request_confirmation` the upsert
+expired. Nothing about it refuses or delays a write. Two findings in that ledger would reopen
+counting documents — a run writing more revisions than the create budget allows creates, or an
+expiry firing on an issue that is not the run's source issue; absent them the exemption stands.
 
 Agent @-mentions are context links only: they do not wake the mentioned agent,
 assign work, or forward comments to another task. Normal comment feedback still

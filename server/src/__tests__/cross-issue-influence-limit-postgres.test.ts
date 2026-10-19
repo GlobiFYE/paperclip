@@ -20,6 +20,7 @@ import {
   ISSUE_CREATE_RUN_LIMIT,
   observeCrossIssueInfluence,
   observeIssueCreate,
+  observeIssueDocumentRevision,
   recordRefusedIssueCreate,
 } from "../services/cross-issue-influence-limit.js";
 
@@ -498,6 +499,149 @@ describeEmbeddedPostgres("cross-issue influence limit PostgreSQL serialization",
       runId: spentCreatesRunId,
       agentId,
       targetIssueId,
+      kind: "comment",
+      now: CROSS_ISSUE_INFLUENCE_ENFORCE_AT,
+    })).resolves.toMatchObject({ count: 1, cap: CROSS_ISSUE_INFLUENCE_LIMIT, allowed: true });
+  });
+
+  /**
+   * The document-revision ledger against real SQL. The route suite can only prove the
+   * observer was handed the right arguments; only this one proves the row it writes is
+   * accepted by `activity_log` at all — `entity_id` is NOT NULL, `run_id` references
+   * `heartbeat_runs`, and `details` round-trips through jsonb.
+   */
+  it("records every document revision, caps none of them, and spends no budget", async () => {
+    const companyId = randomUUID();
+    const agentId = randomUUID();
+    const runId = randomUUID();
+    const sourceIssueId = randomUUID();
+    const foreignIssueId = randomUUID();
+
+    await db.insert(companies).values({
+      id: companyId,
+      name: "Paperclip",
+      issuePrefix: `C${companyId.replace(/-/g, "").slice(0, 6).toUpperCase()}`,
+      defaultResponsibleUserId: "board-user",
+    });
+    await db.insert(agents).values({
+      id: agentId,
+      companyId,
+      name: "Evidence Writer",
+      role: "engineer",
+      adapterType: "codex_local",
+      adapterConfig: {},
+      runtimeConfig: {},
+      permissions: {},
+    });
+    await db.insert(heartbeatRuns).values({
+      id: runId,
+      companyId,
+      agentId,
+      status: "running",
+      responsibleUserId: "board-user",
+      contextSnapshot: { issueId: sourceIssueId },
+    });
+    await db.insert(issues).values([
+      { id: sourceIssueId, companyId, title: "The issue this run owns" },
+      { id: foreignIssueId, companyId, title: "Another agent's issue" },
+    ]);
+
+    const revision = (overrides: Record<string, unknown> = {}) => ({
+      companyId,
+      runId,
+      agentId,
+      issueId: sourceIssueId,
+      issueIdentifier: null,
+      documentKey: "progress",
+      documentId: "document-1",
+      created: false,
+      ...overrides,
+    });
+
+    // One more revision than the create budget allows creates. Every one is recorded
+    // and not one is refused — a run looping on its evidence document is exactly the
+    // case this ledger must survive, and the count landing above 40 is the finding
+    // that would reopen charging.
+    for (let n = 1; n <= ISSUE_CREATE_RUN_LIMIT + 1; n += 1) {
+      await expect(observeIssueDocumentRevision(db, revision({ revisionNumber: n })))
+        .resolves.toBeUndefined();
+    }
+    // A revision on an issue outside the run's scope, with an expiry riding along:
+    // together the two facts that would justify revisiting the decision.
+    await observeIssueDocumentRevision(db, revision({
+      issueId: foreignIssueId,
+      documentKey: "ceo-review",
+      revisionNumber: 1,
+      created: true,
+      expiredInteractionIds: ["interaction-a"],
+    }));
+
+    const recorded = await db
+      .select({
+        action: activityLog.action,
+        entityType: activityLog.entityType,
+        entityId: activityLog.entityId,
+        responsibleUserId: activityLog.responsibleUserId,
+        details: activityLog.details,
+      })
+      .from(activityLog)
+      .where(and(
+        eq(activityLog.companyId, companyId),
+        eq(activityLog.runId, runId),
+        eq(activityLog.action, "issue.document_revision_observed"),
+      ));
+    expect(recorded).toHaveLength(ISSUE_CREATE_RUN_LIMIT + 2);
+    for (const row of recorded) {
+      expect(row.entityType).toBe("heartbeat_run");
+      // Keyed on the run, like the create ledger, so one query reads both.
+      expect(row.entityId).toBe(runId);
+      // Backfilled from the run when the caller does not supply one.
+      expect(row.responsibleUserId).toBe("board-user");
+    }
+
+    const onOwnIssue = recorded.filter(
+      (row) => (row.details as { issueId: string }).issueId === sourceIssueId,
+    );
+    expect(onOwnIssue).toHaveLength(ISSUE_CREATE_RUN_LIMIT + 1);
+    expect(onOwnIssue[0]!.details).toMatchObject({
+      sourceIssueId,
+      issueId: sourceIssueId,
+      documentKey: "progress",
+      documentId: "document-1",
+      created: false,
+      sameIssueAsRunScope: true,
+    });
+    for (const row of onOwnIssue) {
+      expect(row.details).not.toHaveProperty("expiredInteractionIds");
+    }
+
+    const offScope = recorded.find(
+      (row) => (row.details as { issueId: string }).issueId === foreignIssueId,
+    );
+    expect(offScope!.details).toMatchObject({
+      sourceIssueId,
+      issueId: foreignIssueId,
+      documentKey: "ceo-review",
+      created: true,
+      sameIssueAsRunScope: false,
+      expiredInteractionIds: ["interaction-a"],
+    });
+
+    // Forty-two observations later, both real budgets are untouched: each tally filters
+    // on its own action, so an uncharged ledger cannot spend a charged one.
+    await expect(charge({
+      companyId,
+      runId,
+      agentId,
+      parentIssueId: foreignIssueId,
+      title: "First create of the run",
+      now: ISSUE_CREATE_RUN_ENFORCE_AT,
+    })).resolves.toMatchObject({ count: 1, cap: ISSUE_CREATE_RUN_LIMIT, allowed: true });
+    await expect(observeCrossIssueInfluence(db, {
+      companyId,
+      runId,
+      agentId,
+      targetIssueId: foreignIssueId,
       kind: "comment",
       now: CROSS_ISSUE_INFLUENCE_ENFORCE_AT,
     })).resolves.toMatchObject({ count: 1, cap: CROSS_ISSUE_INFLUENCE_LIMIT, allowed: true });

@@ -162,6 +162,7 @@ const mockLogActivity = vi.hoisted(() => vi.fn(async () => undefined));
 const mockObserveCrossIssueInfluence = vi.hoisted(() => vi.fn(async () => null));
 const mockObserveIssueCreate = vi.hoisted(() =>
   vi.fn(async (): Promise<Record<string, unknown> | null> => null));
+const mockObserveIssueDocumentRevision = vi.hoisted(() => vi.fn(async () => undefined));
 const mockRecordRefusedIssueCreate = vi.hoisted(() => vi.fn(async () => undefined));
 
 const mockRetryWorkspaceExport = vi.hoisted(() => vi.fn());
@@ -209,6 +210,7 @@ function registerRouteMocks() {
   vi.doMock("../services/cross-issue-influence-limit.js", async () => ({
     observeCrossIssueInfluence: mockObserveCrossIssueInfluence,
     observeIssueCreate: mockObserveIssueCreate,
+    observeIssueDocumentRevision: mockObserveIssueDocumentRevision,
     recordRefusedIssueCreate: mockRecordRefusedIssueCreate,
     // Real class: the route branches on `instanceof`, so a stub would be a different
     // identity and the refusal would fall through to a 500 instead of a 429.
@@ -629,6 +631,8 @@ describe("agent issue mutation checkout ownership", () => {
     mockObserveCrossIssueInfluence.mockResolvedValue(null);
     mockObserveIssueCreate.mockReset();
     mockObserveIssueCreate.mockResolvedValue(null);
+    mockObserveIssueDocumentRevision.mockReset();
+    mockObserveIssueDocumentRevision.mockResolvedValue(undefined);
     mockRecordRefusedIssueCreate.mockReset();
     mockDocumentService.upsertIssueDocument.mockReset();
     mockWorkProductService.createForIssue.mockReset();
@@ -1146,6 +1150,119 @@ describe("agent issue mutation checkout ownership", () => {
         lockedDocumentStrategy: "create_new_document",
       }),
     );
+  });
+
+  /**
+   * Document upserts stay uncharged by decision (OIG-525): bounded by the tasks an
+   * agent may already mutate, idempotent per key, and the evidence channel a run whose
+   * comments are refused is told to fall back to. These tests cover the ledger that
+   * makes that decision revisitable from data — and, just as importantly, that it
+   * changed nothing about what the route answers.
+   */
+  const planDocument = {
+    id: "document-1",
+    key: "plan",
+    title: "Plan",
+    format: "markdown",
+    latestRevisionNumber: 2,
+  };
+
+  it("observes an agent document revision without changing what the PUT answers", async () => {
+    const app = await createApp(ownerActor(), createRunContextDb({ issueId }));
+
+    const res = await request(app)
+      .put(`/api/issues/${issueId}/documents/plan`)
+      .send({ format: "markdown", body: "# updated" });
+
+    // The regression that matters: a PUT that succeeded before still succeeds, with
+    // the same body, byte for byte.
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.text).toBe(JSON.stringify(planDocument));
+
+    expect(mockObserveIssueDocumentRevision).toHaveBeenCalledTimes(1);
+    expect(mockObserveIssueDocumentRevision).toHaveBeenCalledWith(
+      expect.anything(),
+      {
+        companyId,
+        runId: ownerRunId,
+        agentId: ownerAgentId,
+        responsibleUserId: null,
+        issueId,
+        issueIdentifier: "PAP-1649",
+        documentKey: "plan",
+        documentId: "document-1",
+        revisionNumber: 2,
+        created: false,
+        // No expiry fired, so nothing terminal rode along with this revision.
+        expiredInteractionIds: [],
+      },
+    );
+  });
+
+  it("observes a created document too, and still answers 201", async () => {
+    mockDocumentService.upsertIssueDocument.mockResolvedValue({
+      created: true,
+      document: { ...planDocument, latestRevisionNumber: 1 },
+    });
+    const app = await createApp(ownerActor(), createRunContextDb({ issueId }));
+
+    const res = await request(app)
+      .put(`/api/issues/${issueId}/documents/plan`)
+      .send({ format: "markdown", body: "# first" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(201);
+    expect(res.text).toBe(JSON.stringify({ ...planDocument, latestRevisionNumber: 1 }));
+    expect(mockObserveIssueDocumentRevision).toHaveBeenCalledTimes(1);
+    expect(mockObserveIssueDocumentRevision).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ created: true, revisionNumber: 1, expiredInteractionIds: [] }),
+    );
+    // A create cannot expire a stale confirmation: the route only runs the expiry on
+    // the update branch.
+    expect(mockIssueThreadInteractionService.expireStaleRequestConfirmationsForIssueDocument)
+      .not.toHaveBeenCalled();
+  });
+
+  it("records the confirmations an agent revision expired along the way", async () => {
+    // Expiring a pending `request_confirmation` is a terminal interaction mutation —
+    // the class charged as `interaction_resolution` elsewhere. Here it is same-issue
+    // and same-key scoped, so it is observed rather than charged; one firing on an
+    // issue outside the run's scope is what would reopen that.
+    mockIssueThreadInteractionService.expireStaleRequestConfirmationsForIssueDocument
+      .mockResolvedValueOnce([
+        { id: "interaction-a", kind: "request_confirmation", status: "expired" },
+        { id: "interaction-b", kind: "request_confirmation", status: "expired" },
+      ]);
+    const app = await createApp(ownerActor(), createRunContextDb({ issueId }));
+
+    const res = await request(app)
+      .put(`/api/issues/${issueId}/documents/plan`)
+      .send({ format: "markdown", body: "# answers the confirmation" });
+
+    // The expiry does not change the answer either.
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.text).toBe(JSON.stringify(planDocument));
+    expect(mockObserveIssueDocumentRevision).toHaveBeenCalledTimes(1);
+    expect(mockObserveIssueDocumentRevision).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        documentKey: "plan",
+        expiredInteractionIds: ["interaction-a", "interaction-b"],
+      }),
+    );
+  });
+
+  it("records nothing for a board document write", async () => {
+    // The ledger measures agent revision volume against a per-run budget, and a board
+    // write has no run to measure. Non-agent actors are deliberately not recorded.
+    const res = await request(await createApp(boardActor()))
+      .put(`/api/issues/${issueId}/documents/plan`)
+      .send({ format: "markdown", body: "# board revision" });
+
+    expect(res.status, JSON.stringify(res.body)).toBe(200);
+    expect(res.text).toBe(JSON.stringify(planDocument));
+    expect(mockDocumentService.upsertIssueDocument).toHaveBeenCalled();
+    expect(mockObserveIssueDocumentRevision).not.toHaveBeenCalled();
   });
 
   it("stores the authenticated agent run id when creating work products", async () => {

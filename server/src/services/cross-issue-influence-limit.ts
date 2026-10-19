@@ -39,6 +39,17 @@ const ISSUE_CREATE_ACTIVITY = "issue.issue_create_observed";
 const ISSUE_CREATE_REJECTED_ACTIVITY = "issue.issue_create_cap_rejected";
 
 /**
+ * The document-revision ledger. No budget pairs with it — see
+ * `observeIssueDocumentRevision` for why documents are observed and not charged, and
+ * for the two facts in this ledger that would reopen that decision.
+ *
+ * A distinct action, like the create actions above, because every tally in this file
+ * filters on `action` alone. Sharing one would fold uncharged observations into a
+ * budget's count.
+ */
+export const ISSUE_DOCUMENT_REVISION_ACTIVITY = "issue.document_revision_observed";
+
+/**
  * Every kind shares one per-run counter. `interaction_resolution` covers the
  * issue-thread accept/reject/respond/verdict routes: an open `anyone` resolver
  * audience is not a licence to resolve, wake, and spawn suggested tasks across
@@ -509,6 +520,164 @@ export async function observeIssueCreate(
   // `sourceIssueId` rides along so a caller recording the refusal after its rollback
   // describes the same attempt the charge would have, without re-reading the run row.
   return { ...decision, sourceIssueId };
+}
+
+/**
+ * Observes one agent-authored issue-document upsert. Charges nothing, ever.
+ *
+ * `PUT /issues/:id/documents/:key` is uncharged by decision, not by omission: the write
+ * is bounded by the tasks an agent may already mutate (the assignee, an unassigned task,
+ * or a watchdog run inside its subtree — narrow, though not assignee-only), a PUT is
+ * idempotent per key (N writes make N revisions of one object, not N board objects), and
+ * an agent whose run cannot comment is pointed at documents as its evidence channel of
+ * last resort — charging them would silence precisely the looping run whose forensic
+ * record is most valuable.
+ *
+ * That reasoning was sound and unmeasured, so this ledger exists to make it revisitable
+ * from data. It shares the create ledger's shape — `entityType: "heartbeat_run"`,
+ * `entityId: runId` — so one query over a run reads both. Two facts in it would reopen
+ * the question: a run writing more revisions than the create budget allows creates, or
+ * a revision whose stale-confirmation expiry fired on an issue that is not the run's
+ * source issue. `sameIssueAsRunScope` and `expiredInteractionIds` are recorded so both
+ * are answerable without re-deriving them from the issue graph.
+ *
+ * Three properties the route depends on:
+ *
+ * 1. **No cap and no counter.** Nothing is tallied, nothing is refused, no input
+ *    produces a different status code than it did before this ledger existed.
+ * 2. **No row lock.** Unlike `observeIssueCreate` this does not take the run row
+ *    `FOR UPDATE`: with no budget there is nothing to serialize, and locking a path
+ *    that never locked before would add contention for no benefit.
+ * 3. **It cannot throw.** A failed observation must not turn a committed document write
+ *    into a 500 — the write has already happened by the time this runs. Failures are
+ *    logged and swallowed, exactly as `recordRefusedIssueCreate` does.
+ */
+export async function observeIssueDocumentRevision(
+  db: Db,
+  input: {
+    companyId: string;
+    runId: string;
+    agentId: string;
+    responsibleUserId?: string | null;
+    issueId: string;
+    issueIdentifier?: string | null;
+    documentKey: string;
+    documentId?: string | null;
+    revisionNumber?: number | null;
+    created: boolean;
+    /** Ids of `request_confirmation`s the upsert expired, empty when none fired. */
+    expiredInteractionIds?: string[];
+  },
+): Promise<void> {
+  try {
+    // API-key callers control the run header, so a malformed value must never reach a
+    // PostgreSQL uuid cast. Not a denial: this observer refuses nothing (1).
+    if (!isUuidLike(input.runId)) {
+      logger.warn(
+        {
+          event: "issue_document_revision_observed",
+          companyId: input.companyId,
+          agentId: input.agentId,
+          issueId: input.issueId,
+        },
+        "document revision not observed: run id is not a usable identifier",
+      );
+      return;
+    }
+
+    const run = await db
+      .select({
+        responsibleUserId: heartbeatRuns.responsibleUserId,
+        contextSnapshot: heartbeatRuns.contextSnapshot,
+      })
+      .from(heartbeatRuns)
+      .where(and(
+        eq(heartbeatRuns.id, input.runId),
+        eq(heartbeatRuns.companyId, input.companyId),
+        eq(heartbeatRuns.agentId, input.agentId),
+      ))
+      .then((rows) => rows[0] ?? null);
+    if (!run) {
+      // Well formed, but no run of this agent in this company. `activity_log.run_id`
+      // references `heartbeat_runs`, so there is nothing to hang the row on.
+      logger.warn(
+        {
+          event: "issue_document_revision_observed",
+          companyId: input.companyId,
+          runId: input.runId,
+          agentId: input.agentId,
+          issueId: input.issueId,
+        },
+        "document revision not observed: run id matched no run of this agent",
+      );
+      return;
+    }
+
+    const sourceIssueId = readRunSourceIssueId(run.contextSnapshot);
+    // Reported rather than acted on, and read through the same two helpers the
+    // cross-issue guard branches on, so the ledger says what a charge *would* have
+    // decided here instead of an approximation of it.
+    const sameIssueAsRunScope = runScopeIsIssue(sourceIssueId, {
+      id: input.issueId,
+      identifier: input.issueIdentifier ?? null,
+    });
+    const expiredInteractionIds = input.expiredInteractionIds ?? [];
+
+    await db.insert(activityLog).values({
+      companyId: input.companyId,
+      actorType: "agent",
+      actorId: input.agentId,
+      agentId: input.agentId,
+      runId: input.runId,
+      responsibleUserId: input.responsibleUserId ?? run.responsibleUserId ?? null,
+      action: ISSUE_DOCUMENT_REVISION_ACTIVITY,
+      entityType: "heartbeat_run",
+      entityId: input.runId,
+      details: {
+        sourceIssueId,
+        issueId: input.issueId,
+        issueIdentifier: input.issueIdentifier ?? null,
+        documentKey: input.documentKey,
+        documentId: input.documentId ?? null,
+        revisionNumber: input.revisionNumber ?? null,
+        created: input.created,
+        sameIssueAsRunScope,
+        // Only when the expiry actually fired. An absent key reads as "no terminal
+        // interaction mutation rode along with this revision", which is the common
+        // case and the one the enforcement question does not turn on.
+        ...(expiredInteractionIds.length > 0 ? { expiredInteractionIds } : {}),
+      },
+    });
+
+    logger.info(
+      {
+        event: "issue_document_revision_observed",
+        companyId: input.companyId,
+        runId: input.runId,
+        agentId: input.agentId,
+        sourceIssueId,
+        issueId: input.issueId,
+        documentKey: input.documentKey,
+        revisionNumber: input.revisionNumber ?? null,
+        created: input.created,
+        sameIssueAsRunScope,
+        expiredInteractionIds,
+      },
+      "document revision observed",
+    );
+  } catch (err) {
+    logger.warn(
+      {
+        err,
+        event: "issue_document_revision_observed",
+        companyId: input.companyId,
+        runId: input.runId,
+        agentId: input.agentId,
+        issueId: input.issueId,
+      },
+      "document revision could not be observed",
+    );
+  }
 }
 
 export function crossIssueInfluenceLimitError(

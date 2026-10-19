@@ -14,6 +14,7 @@ import {
   issueCreateLimitError,
   observeCrossIssueInfluence,
   observeIssueCreate,
+  observeIssueDocumentRevision,
 } from "../services/cross-issue-influence-limit.ts";
 
 function counterDb(
@@ -531,5 +532,209 @@ describe("per-run issue-create budget", () => {
       now: ISSUE_CREATE_RUN_ENFORCE_AT,
     })).toBeNull();
     expect(noSuchRun.inserted).toEqual([]);
+  });
+});
+
+/**
+ * A fake db for the document-revision observer, shaped to catch the three things that
+ * observer must NOT do.
+ *
+ * `where()` returns a thenable *and* a `for()`, so taking the run-row lock resolves
+ * rows exactly as not taking it does — the only difference is `locked`, which the
+ * no-lock test below asserts. Likewise `select({ count })` answers normally and records
+ * the call, so a tally added later shows up as a failure rather than as a silent
+ * counter on a ledger that is supposed to count nothing. And `transaction` throws,
+ * because an observer that wrapped itself in one would be serializing on this path
+ * again by another route.
+ */
+function documentRevisionDb(
+  runOverrides: Record<string, unknown> | null = {},
+  options: { insertFails?: boolean } = {},
+) {
+  const inserted: Array<Record<string, unknown>> = [];
+  const tallies: string[] = [];
+  let locked = false;
+  const rows = () => (runOverrides === null ? [] : [{
+    responsibleUserId: "user-1",
+    contextSnapshot: { issueId: SOURCE_ISSUE_ID },
+    ...runOverrides,
+  }]);
+  const db = {
+    select: (selection: Record<string, unknown>) => ({
+      from: () => ({
+        where: () => {
+          if (Object.keys(selection).includes("count")) {
+            tallies.push("count");
+            return { then: (resolve: (r: unknown[]) => unknown) => resolve([{ count: 0 }]) };
+          }
+          return {
+            for: () => {
+              locked = true;
+              return { then: (resolve: (r: unknown[]) => unknown) => resolve(rows()) };
+            },
+            then: (resolve: (r: unknown[]) => unknown) => resolve(rows()),
+          };
+        },
+      }),
+    }),
+    insert: () => ({
+      values: async (value: Record<string, unknown>) => {
+        if (options.insertFails) throw new Error("activity_log insert failed");
+        inserted.push(value);
+      },
+    }),
+    transaction: () => {
+      throw new Error("the document-revision observer must not open a transaction");
+    },
+  };
+  return {
+    db,
+    inserted,
+    tallies,
+    get locked() {
+      return locked;
+    },
+  };
+}
+
+const revisionInput = {
+  companyId: COMPANY_ID,
+  runId: RUN_ID,
+  agentId: AGENT_ID,
+  issueId: SOURCE_ISSUE_ID,
+  issueIdentifier: "TASK-1",
+  documentKey: "plan",
+  documentId: "document-1",
+  revisionNumber: 7,
+  created: false,
+};
+
+describe("document-revision observer", () => {
+  it("records one row per revision, keyed on the run like the create ledger", async () => {
+    const fake = documentRevisionDb();
+
+    await expect(observeIssueDocumentRevision(fake.db as never, revisionInput))
+      .resolves.toBeUndefined();
+
+    expect(fake.inserted).toHaveLength(1);
+    expect(fake.inserted[0]).toMatchObject({
+      companyId: COMPANY_ID,
+      actorType: "agent",
+      actorId: AGENT_ID,
+      agentId: AGENT_ID,
+      runId: RUN_ID,
+      responsibleUserId: "user-1",
+      action: "issue.document_revision_observed",
+      // Same two fields as the create ledger, so one query over a run reads both.
+      entityType: "heartbeat_run",
+      entityId: RUN_ID,
+      details: expect.objectContaining({
+        issueId: SOURCE_ISSUE_ID,
+        issueIdentifier: "TASK-1",
+        documentKey: "plan",
+        documentId: "document-1",
+        revisionNumber: 7,
+        created: false,
+        sameIssueAsRunScope: true,
+        sourceIssueId: SOURCE_ISSUE_ID,
+      }),
+    });
+    // No decision, no cap, no mode: the row is an observation, and a `cap` on it would
+    // mean something decided it was allowed.
+    expect(fake.inserted[0].details).not.toHaveProperty("cap");
+    expect(fake.inserted[0].details).not.toHaveProperty("allowed");
+    // Nothing is tallied, so there is nothing a later revision could exceed.
+    expect(fake.tallies).toEqual([]);
+  });
+
+  it("does not lock the run row, because there is no budget to serialize", async () => {
+    // `observeIssueCreate` locks `heartbeat_runs` so concurrent creates from one run
+    // cannot both pass the same count. With no counter there is nothing to race for,
+    // and locking a path that never locked before would add contention for no benefit.
+    const fake = documentRevisionDb();
+
+    await observeIssueDocumentRevision(fake.db as never, revisionInput);
+
+    expect(fake.locked).toBe(false);
+    expect(fake.inserted).toHaveLength(1);
+  });
+
+  it("reports whether the revision landed on the run's own source issue", async () => {
+    // The fact a charge would branch on, recorded rather than acted on: a revision that
+    // is NOT on the run's source issue is one of the two findings that would reopen
+    // charging documents.
+    const foreign = documentRevisionDb();
+    await observeIssueDocumentRevision(foreign.db as never, {
+      ...revisionInput,
+      issueId: "99999999-9999-4999-8999-999999999999",
+      issueIdentifier: "TASK-999",
+    });
+    expect(foreign.inserted[0].details).toMatchObject({
+      sameIssueAsRunScope: false,
+      sourceIssueId: SOURCE_ISSUE_ID,
+      issueId: "99999999-9999-4999-8999-999999999999",
+    });
+
+    // Identifier match, since a context snapshot may carry either form.
+    const byIdentifier = documentRevisionDb({ contextSnapshot: { issueId: "task-1" } });
+    await observeIssueDocumentRevision(byIdentifier.db as never, revisionInput);
+    expect(byIdentifier.inserted[0].details).toMatchObject({ sameIssueAsRunScope: true });
+
+    // An unscoped run has no source issue, so no revision of it is same-issue.
+    const unscoped = documentRevisionDb({ contextSnapshot: {} });
+    await observeIssueDocumentRevision(unscoped.db as never, revisionInput);
+    expect(unscoped.inserted[0].details).toMatchObject({
+      sourceIssueId: null,
+      sameIssueAsRunScope: false,
+    });
+  });
+
+  it("records expired interaction ids only when the expiry actually fired", async () => {
+    // Expiring a pending `request_confirmation` is a terminal interaction mutation
+    // riding along with an uncharged write — the one fact that could justify charging.
+    const expired = documentRevisionDb();
+    await observeIssueDocumentRevision(expired.db as never, {
+      ...revisionInput,
+      expiredInteractionIds: ["interaction-1", "interaction-2"],
+    });
+    expect(expired.inserted[0].details).toMatchObject({
+      expiredInteractionIds: ["interaction-1", "interaction-2"],
+    });
+
+    const quiet = documentRevisionDb();
+    await observeIssueDocumentRevision(quiet.db as never, {
+      ...revisionInput,
+      expiredInteractionIds: [],
+    });
+    // Absent, not `[]`: a present-but-empty array would make every revision look like a
+    // row that was checked for an expiry by a query that only wanted the ones that had one.
+    expect(quiet.inserted[0].details).not.toHaveProperty("expiredInteractionIds");
+  });
+
+  it("observes nothing when the run id cannot be resolved, and still refuses nothing", async () => {
+    const malformed = documentRevisionDb();
+    await expect(observeIssueDocumentRevision(malformed.db as never, {
+      ...revisionInput,
+      runId: "attacker-controlled-run-id",
+    })).resolves.toBeUndefined();
+    expect(malformed.inserted).toEqual([]);
+
+    // `activity_log.run_id` references `heartbeat_runs`, so a row for a run that is not
+    // this agent's in this company has nothing to hang on.
+    const noSuchRun = documentRevisionDb(null);
+    await expect(observeIssueDocumentRevision(noSuchRun.db as never, revisionInput))
+      .resolves.toBeUndefined();
+    expect(noSuchRun.inserted).toEqual([]);
+  });
+
+  it("swallows a ledger failure rather than failing the write it is observing", async () => {
+    // The document, its annotations and any expiry have already committed by the time
+    // this runs. A throw here would turn a successful PUT into a 500 — the one thing
+    // this observer is not allowed to change.
+    const broken = documentRevisionDb({}, { insertFails: true });
+
+    await expect(observeIssueDocumentRevision(broken.db as never, revisionInput))
+      .resolves.toBeUndefined();
+    expect(broken.inserted).toEqual([]);
   });
 });
