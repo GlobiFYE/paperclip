@@ -8218,7 +8218,7 @@ export function issueRoutes(
     }
     const parsed = issueSummariesQuerySchema.safeParse(req.query);
     if (!parsed.success) {
-      res.status(400).json({ error: "ids must contain one to five comma-separated UUIDs" });
+      res.status(400).json({ error: "ids must be the only query parameter and contain one to five comma-separated UUIDs" });
       return;
     }
     const rows = await listIssueSummaries(db, companyId, parsed.data.ids, await issueReadSqlCondition(db, req.actor));

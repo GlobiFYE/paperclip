@@ -50,7 +50,7 @@ export const issueSummariesQuerySchema = z.object({
   ids: z.string().transform((value) => value.split(",").map((id) => id.trim().toLowerCase()))
     .pipe(z.array(z.string().guid()).min(1).max(ISSUE_SUMMARIES_MAX_IDS))
     .transform((ids) => [...new Set(ids)]),
-});
+}).strict();
 
 export const issueBlockedInboxStateSchema = z.enum([
   "needs_attention",

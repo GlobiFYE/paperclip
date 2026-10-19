@@ -1247,7 +1247,8 @@ bound. It returns accessible, non-hidden tasks in request order with only ID,
 company ID, title, identifier, status, update time, and external-conversation
 state. Missing, foreign-company and unauthorized tasks are omitted. Company
 access and normal task-read authorization apply; task-bridge keys are denied.
-Malformed, repeated, nested, empty and oversized ID parameters return `400`.
+Only the `ids` query parameter is accepted. Malformed, repeated, nested, empty
+and oversized ID parameters return `400`, including mixed scalar/nested syntax.
 Responses are private and not stored by HTTP caches. Reads do not trigger
 full-detail enrichment, workspace inspection or execution recovery.
 

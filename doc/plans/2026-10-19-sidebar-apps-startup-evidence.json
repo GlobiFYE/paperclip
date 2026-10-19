@@ -24,7 +24,8 @@
     "Refresh request elapsed time runs from first recent-task request start to last recent-task response completion. SidebarReady is relative to navigation.",
     "Encoded bytes are compressed HTTP response body bytes; decoded bytes are response-body bytes after decompression. HTTP headers are excluded.",
     "Scripting and long-task measurements include two seconds after visible readiness. Preliminary timing variability is retained.",
-    "This is local evidence, not a staging deployment or proof of the historical staging latency."
+    "This is local evidence, not a staging deployment or proof of the historical staging latency.",
+    "After primary measurement, strict query validation was added for mixed scalar/array or nested query syntax under Express simple parsing. Valid summary requests and SQL/response behavior are unchanged. The final preview includes this guard; the measured application revision remains explicit."
   ],
   "trials": [
     {
@@ -2269,7 +2270,7 @@
   },
   "verification": {
     "focusedUi": 85,
-    "summaryApi": 12,
+    "summaryApi": 14,
     "openapi": 23,
     "typecheck": "passed",
     "build": "passed",

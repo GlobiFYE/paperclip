@@ -25,8 +25,9 @@ Initial checkout: clean at `0ed760ce9a`. Branch:
 [#16849](https://github.com/paperclipai/paperclip/pull/16849) landed during this
 work. The branch was rebased onto `9179d8dcc3`; the primary comparison includes
 that same route splitting on both sides. Tested application source:
-`0833da6927f5563c9a48d179e2b1bf0fd99f711d`. Later evidence-only edits do not
-change the application.
+`0833da6927f5563c9a48d179e2b1bf0fd99f711d`. After measurement, request validation
+was tightened to reject mixed scalar/array or nested query syntax under Express's
+simple parser. Valid summary requests and the SQL/response path are unchanged.
 
 ## Evidence
 
@@ -74,7 +75,7 @@ held responses. No agent run was started.
 
 ## Verification and limits
 
-- Passed after rebase: 85 focused UI/access/layout tests, 12 embedded PostgreSQL
+- Passed after rebase: 85 focused UI/access/layout tests, 14 embedded PostgreSQL
   summary-route tests, 23 OpenAPI tests, full typecheck/build, token gates, maps
   and diff checks.
 - Earlier `pnpm test:run` reported five failures in the existing 1347-case chat
@@ -103,8 +104,9 @@ held responses. No agent run was started.
 
 Running preview: http://127.0.0.1:3214/APP/apps
 
-Production UI and compiled server source: `0833da6927`, with the TS loader for
-workspace dependency exports. Configuration/evidence:
+The final production UI and compiled server use the PR head, with the TS loader
+for workspace dependency exports. The performance comparison used `0833da6927`.
+The final preview also includes the strict query guard. Configuration/evidence:
 `/tmp/paperclip-apps-perf-20261019/`; disposable database port 55489. Fixture:
 one synthetic company, five tasks, a disabled draft connector and a paused agent
 with heartbeat disabled. Only this task's own preview/test processes were stopped.

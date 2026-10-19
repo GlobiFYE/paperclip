@@ -58,6 +58,7 @@ describeEmbeddedPostgres("bounded issue summaries", () => {
   });
 
   it.each(["", "?ids=", "?ids=nope", "?ids=,", "?ids[]=nope", "?ids[x]=nope",
+    `?ids=${randomUUID()}&ids[]=nope`, `?ids=${randomUUID()}&ids[x]=nope`,
     `?ids=${randomUUID()}&ids=${randomUUID()}`, `?ids=${Array(6).fill(randomUUID()).join(",")}`,
   ])("rejects invalid query %s", async (query) => {
     const f = await fixture();
