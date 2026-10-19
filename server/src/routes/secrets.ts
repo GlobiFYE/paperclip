@@ -337,7 +337,8 @@ export function secretRoutes(db: Db, deps: SecretRoutesDeps = {}) {
     const context = agentSecretContext(req);
     const available = await svc.listAgentSecretAccess(context.companyId, context);
     const secret = available.find((entry) => entry.key === req.params.key);
-    if (!secret) throw forbidden("Secret access is not granted for this agent");
+    if (!secret)
+      throw forbidden("Secret access is not granted for this agent. Use the exact `key` from GET /api/agents/me/secrets (name with / replaced by -).");
     const resolution = await svc.resolveSecretValueForAgentAccess(
       context.companyId,
       secret.secretId,
