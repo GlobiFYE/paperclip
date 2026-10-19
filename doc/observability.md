@@ -736,8 +736,9 @@ This enrichment applies to run failures, adapter Stop timeouts, and server error
 with authenticated run context. It resolves the saved company, agent, and task
 instead of copying request URLs, queries, or bodies. Taskless runs receive only a
 run link. Missing or unsafe `PAPERCLIP_PUBLIC_URL` values omit these links.
-The optional indexed metadata lookup has a one-second reporting deadline; a
-failed or slow lookup preserves the original event without navigation links.
+The optional indexed metadata lookup has a one-second reporting deadline and a
+limit of eight unfinished reads. A failed or slow lookup preserves the original
+event without navigation links.
 URLs longer than Sentry's 200-character tag limit remain in context only.
 Links require the viewer's normal Paperclip access and apply to newly captured
 events; existing Sentry events are not rewritten.
