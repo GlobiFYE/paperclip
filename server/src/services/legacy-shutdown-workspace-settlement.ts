@@ -3,10 +3,39 @@ import { environmentLeases, heartbeatRuns, issues, type Db } from "@paperclipai/
 import { adapterExecutionControls } from "./adapter-execution-control.js";
 import { legacyControllerBootId } from "./legacy-controller-lease.js";
 import { LEGACY_WORKSPACE_RECOVERY_SCHEMA } from "./workspace-restore-recovery-state.js";
+import { logger } from "../middleware/logger.js";
 
 const SCHEMA = "paperclip.legacy-shutdown-workspace-settlement.v1";
 type Lease = Pick<typeof environmentLeases.$inferSelect, "id" | "companyId" | "heartbeatRunId" | "metadata">;
 type Run = Pick<typeof heartbeatRuns.$inferSelect, "id" | "companyId">;
+const SETTLEMENT_RENEW_MS = 10_000;
+const SETTLEMENT_LEASE_MS = 30_000;
+
+export function maintainLegacyShutdownWorkspaceSettlement(db: Db, run: Run) {
+  let stopped = false;
+  let pending: Promise<void> | null = null;
+  const renew = () => {
+    if (stopped || pending) return;
+    pending = db.transaction(async tx => {
+      await tx.execute(sql`SET LOCAL lock_timeout = '1s'`);
+      await tx.execute(sql`SET LOCAL statement_timeout = '5s'`);
+      await tx.update(environmentLeases).set({ metadata: sql`jsonb_set(${environmentLeases.metadata},
+        '{legacyShutdownWorkspaceSettlement,deadlineAt}', ${JSON.stringify(new Date(Date.now() + SETTLEMENT_LEASE_MS).toISOString())}::jsonb)` })
+        .where(and(eq(environmentLeases.companyId, run.companyId), eq(environmentLeases.heartbeatRunId, run.id),
+          sql`${environmentLeases.metadata}->'legacyShutdownWorkspaceSettlement'->>'schema' = ${SCHEMA}`,
+          sql`${environmentLeases.metadata}->'legacyShutdownWorkspaceSettlement'->>'runId' = ${run.id}`,
+          sql`${environmentLeases.metadata}->'legacyShutdownWorkspaceSettlement'->>'controllerBootId' = ${legacyControllerBootId}`,
+          sql`${environmentLeases.metadata}->'legacyShutdownWorkspaceSettlement'->>'state' = 'pending'`,
+          sql`${environmentLeases.metadata}->'legacyShutdownWorkspaceSettlement'->>'deadlineAt' > ${new Date().toISOString()}`,
+        ));
+    }).catch(() => {
+        logger.warn({ runId: run.id }, "Shutdown workspace settlement lease renewal failed; source remains protected locally");
+      }).finally(() => { pending = null; });
+  };
+  const timer = setInterval(renew, SETTLEMENT_RENEW_MS);
+  timer.unref?.();
+  return async () => { stopped = true; clearInterval(timer); await pending; };
+}
 
 export function pendingLegacyShutdownWorkspaceSettlement(lease: Lease) {
   const value = lease.metadata?.legacyShutdownWorkspaceSettlement;
@@ -90,6 +119,7 @@ export async function allowLegacyShutdownWorkspaceCleanup(db: Db, lease: Lease, 
     // some adapters to settle. This exception never permits provider destruction.
     if (options.ownerStopOnly && marker.controllerBootId === legacyControllerBootId
       && adapterExecutionControls.get(run.id)?.controller.signal.aborted) return true;
+    if (marker.controllerBootId === legacyControllerBootId && adapterExecutionControls.has(run.id)) return false;
     const deadline = Date.parse(marker.deadlineAt as string);
     if (!Number.isFinite(deadline) || deadline > now.getTime()) return false;
     // A killed container cannot certify export. Preserve source and hold in
