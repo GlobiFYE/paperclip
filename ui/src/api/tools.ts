@@ -307,6 +307,7 @@ export const toolsApi = {
       asCurrentUser?: boolean;
       asAgentId?: string;
       interactionId?: string;
+      workspaceServices?: import("@paperclipai/shared").GoogleWorkspaceServiceSelection;
     } = {},
   ) =>
     api.post<ToolOAuthStartResult>(`/tools/oauth/${connectionId}/start`, input),

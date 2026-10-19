@@ -56,6 +56,8 @@ import {
   GITHUB_CONNECTOR_PROFILES,
   GOOGLE_WORKSPACE_CONNECTOR_PROFILE_IDS,
   GOOGLE_WORKSPACE_CONNECTOR_PROFILES,
+  googleWorkspaceSelectedScopes,
+  GOOGLE_WORKSPACE_DEFAULT_SELECTION,
   getAvailableConnectionMethod,
   getConnectableAppDefinition,
   type GoogleWorkspaceConnectorProfileId,
@@ -2464,6 +2466,27 @@ describeEmbeddedPostgres("tool access service", () => {
     expect(reconnected.connection.agentInstructions).toEqual(settings);
   });
 
+  it("binds selected Workspace service scopes to OAuth state and rejects other providers", async () => {
+    const company = await createCompany(db);
+    const service = createTestToolAccessService(db);
+    const actor = { actorType: "user" as const, actorId: "board" };
+    const connected = await service.connectGalleryApp(company.id, {
+      galleryKey: "google-workspace", connectionMethodKey: "customer-workspace-oauth", grantKind: "user",
+      oauthClient: { clientId: "fixture-client", clientSecret: "fixture-secret" },
+    }, actor);
+    const started = await service.startOAuth(company.id, connected.connectionId, {
+      redirectUri: "https://paperclip.example.test/api/tools/oauth/callback", actor, workspaceServices: { drive: "read" },
+    });
+    const url = new URL(started.authorizationUrl);
+    const expected = ["documents.readonly", "drive.readonly", "presentations.readonly", "spreadsheets.readonly"].map(value => `https://www.googleapis.com/auth/${value}`);
+    expect(url.searchParams.get("scope")?.split(" ")).toEqual(expected);
+    const [state] = await db.select().from(toolOauthStates).where(eq(toolOauthStates.state, url.searchParams.get("state")!));
+    expect(state.requestedScopes).toEqual(expected);
+    await expect(service.startOAuth(company.id, connected.connectionId, {
+      redirectUri: "https://paperclip.example.test/api/tools/oauth/callback", actor, workspaceServices: {},
+    })).rejects.toMatchObject({ status: 400 });
+  });
+
   it.each(["https://www.googleapis.com/auth/documents.readonly", undefined, "", "https://www.googleapis.com/auth/gmail.send"])(
     "requires explicit reviewed partial consent for customer Workspace OAuth (%s)", async (scope) => {
       const company = await createCompany(db);
@@ -2478,7 +2501,7 @@ describeEmbeddedPostgres("tool access service", () => {
       const redirectUri = "https://paperclip.example.test/api/tools/oauth/callback";
       const started = await service.startOAuth(company.id, connected.connectionId, { redirectUri, actor });
       const authorization = new URL(started.authorizationUrl);
-      expect(authorization.searchParams.get("scope")?.split(" ")).toEqual([...GOOGLE_WORKSPACE_CONNECTOR_PROFILES["workspace.all"].scopes]);
+      expect(authorization.searchParams.get("scope")?.split(" ")).toEqual(googleWorkspaceSelectedScopes(GOOGLE_WORKSPACE_DEFAULT_SELECTION));
       expect(authorization.searchParams.get("enable_granular_consent")).toBe("true");
       const provider = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
         if (String(url) === "https://oauth2.googleapis.com/token") return Response.json({
@@ -2497,6 +2520,52 @@ describeEmbeddedPostgres("tool access service", () => {
       } else {
         await expect(completing).rejects.toMatchObject({ details: { code: "oauth_scope_grant_invalid" } });
         expect(provider).toHaveBeenCalledTimes(1);
+      }
+    },
+  );
+
+  it.each(["customer", "managed"] as const)(
+    "preserves an explicit empty agent selection through %s Workspace OAuth and reconnect", async (mode) => {
+      const company = await createCompany(db);
+      const userId = `workspace-no-agents-${randomUUID()}`;
+      await grantBoardUser(db, company.id, userId, [], "owner");
+      const actor = { actorType: "user" as const, actorId: userId };
+      const connector = fakeGoogleWorkspaceConnector(company.id, userId, "workspace.all");
+      const claim = connector.claim;
+      const scope = "https://www.googleapis.com/auth/documents.readonly";
+      connector.claim = vi.fn(async (input) => ({ ...await claim(input), scopes: [scope] }));
+      const service = createTestToolAccessService(db, { paperclipCloudConnector: connector });
+      const input = {
+        galleryKey: "google-workspace", grantKind: "user" as const,
+        connectionMethodKey: mode === "customer" ? "customer-workspace-oauth" : "paperclip-workspace",
+        ...(mode === "customer" ? { oauthClient: { clientId: "workspace-client", clientSecret: "workspace-secret" } } : {}),
+      };
+      vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+        if (String(url) === "https://oauth2.googleapis.com/token") return Response.json({
+          access_token: "fixture-workspace-access", refresh_token: "fixture-workspace-refresh",
+          expires_in: 3600, token_type: "Bearer", scope,
+        });
+        expect(String(url)).toBe("https://docsmcp.googleapis.com/mcp/v1");
+        return mcpHttpResponse({ jsonrpc: "2.0", id: "paperclip-catalog-refresh", result: {
+          tools: [{ name: "read_doc", annotations: { readOnlyHint: true } }],
+        } });
+      });
+      const connected = await service.connectGalleryApp(company.id, input, actor);
+      await service.putConnectionInstalls(connected.connectionId, { installs: [] }, actor);
+      const redirectUri = `https://paperclip.example/api/tools/oauth/${mode === "managed" ? "cloud-connector/" : ""}callback`;
+      for (const reconnect of [false, true]) {
+        if (reconnect) await service.connectGalleryApp(company.id, { ...input, reconnectConnectionId: connected.connectionId }, actor);
+        const started = await service.startOAuth(company.id, connected.connectionId, { redirectUri, actor });
+        const state = new URL(started.authorizationUrl).searchParams.get("state")!;
+        const completed = mode === "managed"
+          ? await service.completePaperclipCloudConnectorCallback({ state, claimId: "workspace-no-agents", actor })
+          : await service.completeOAuthCallback({ state, code: "workspace-no-agents", redirectUri, actor });
+        expect(completed.connection.status).toBe("active");
+        expect(completed.catalog.map((entry) => entry.toolName)).toEqual(["docs__read_doc"]);
+        expect(await service.listConnectionInstalls(connected.connectionId)).toEqual([]);
+        const [profile] = await db.select().from(toolProfiles).where(eq(toolProfiles.profileKey, `app:${connected.connectionId}`));
+        expect(profile).toBeDefined();
+        expect(await db.select().from(toolProfileBindings).where(eq(toolProfileBindings.profileId, profile.id))).toEqual([]);
       }
     },
   );

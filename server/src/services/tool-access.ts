@@ -6,7 +6,7 @@ import type { ComposioAppAccount, ComposioAppAccountInput, ComposioAppSetupInput
 import { composioAppAccounts, composioAppSetupResult } from "./composio-app-setup.js";
 import { honchoManagedArguments } from "./honcho-connection.js";
 import { defaultConnectionAgentInstructions } from "@paperclipai/shared";
-import { GOOGLE_WORKSPACE_SERVICES, googleWorkspaceServiceGranted, googleWorkspaceToolName, googleWorkspaceToolTarget, googleWorkspaceGrantedScopes, isGoogleWorkspaceToolGranted, isGoogleWorkspaceScopeGrant, type GoogleWorkspaceService } from "@paperclipai/shared";
+import { googleWorkspaceEffectiveScopes, GOOGLE_WORKSPACE_DEFAULT_SELECTION, googleWorkspaceSelectedScopes, type GoogleWorkspaceServiceSelection, GOOGLE_WORKSPACE_SERVICES, googleWorkspaceServiceGranted, googleWorkspaceToolName, googleWorkspaceToolTarget, googleWorkspaceGrantedScopes, isGoogleWorkspaceToolGranted, isGoogleWorkspaceScopeGrant, type GoogleWorkspaceService } from "@paperclipai/shared";
 import { isInsufficientConnectionScope, INSUFFICIENT_CONNECTION_SCOPE_MESSAGE } from "./connection-permission-errors.js";
 import { ASANA_CONNECTOR_SCOPES, isAsanaConnectorProfileId, type AsanaConnectorProfileId } from "@paperclipai/shared";
 import { BROWSER_USE_TOOLS } from "@paperclipai/shared";
@@ -11507,6 +11507,10 @@ export function toolAccessService(
                 profile: profile.id,
                 refreshToken: refreshSecret.value,
               });
+              if (profile.id === "workspace.all") {
+                const requested = normalizeOauthScopes(oauthGrantConfig(grant).requestedScopes ?? oauthGrantConfig(grant).scopes);
+                credentials.scopes = googleWorkspaceEffectiveScopes(requested, credentials.scopes);
+              }
               if (profile.id === "workspace.all" && !isGoogleWorkspaceScopeGrant(credentials.scopes)) {
                 throw new PaperclipCloudConnectorError("Google did not return verifiable permissions", "REAUTHORIZATION_REQUIRED");
               }
@@ -11873,6 +11877,9 @@ export function toolAccessService(
             unrequestedScopes: grantOauth.unrequestedScopes,
           },
         });
+        if (connection.config.sourceTemplateKey === "google-workspace") {
+          refreshed.scopes = googleWorkspaceEffectiveScopes(normalizeOauthScopes(grantOauth.requestedScopes ?? grantOauth.scopes), refreshed.scopes);
+        }
         const providerTenant = {
           ...(grant.providerTenant ?? {}),
           oauth: {
@@ -14613,6 +14620,7 @@ export function toolAccessService(
       subjectUserId?: string;
       subjectAgentId?: string;
       scopes?: string[];
+      workspaceServices?: GoogleWorkspaceServiceSelection;
       returnTo?: string;
       issueId?: string;
       interactionId?: string;
@@ -14635,6 +14643,14 @@ export function toolAccessService(
       ? connectionMethodForConnection(galleryEntry, connection)
       : null;
     const requestedScopes = (() => {
+      if (input.workspaceServices && sourceTemplateKey !== "google-workspace") throw badRequest("Service selection requires Google Workspace");
+      if (sourceTemplateKey === "google-workspace") {
+        if (input.workspaceServices && input.scopes) throw badRequest("Choose services or scopes, not both");
+        const scopes = input.scopes ?? googleWorkspaceSelectedScopes(input.workspaceServices ?? GOOGLE_WORKSPACE_DEFAULT_SELECTION);
+        const allowed = normalizeOauthScopes(galleryMethod?.defaults?.scopesHint);
+        if (!isGoogleWorkspaceScopeGrant(scopes) || scopes.some(scope => !allowed.includes(scope))) throw badRequest("Select at least one supported Google service");
+        return scopes;
+      }
       if (!galleryMethod) return input.scopes ?? null;
       const allowed = normalizeOauthScopes(galleryMethod.defaults?.scopesHint);
       if (!input.scopes) return allowed;
@@ -14855,6 +14871,7 @@ export function toolAccessService(
           : subjectUserId!,
         companyId,
         profile: managedProfile.id,
+        ...(managedProfile.id === "workspace.all" ? { scopes: requestedScopes! } : {}),
         returnUri: returnUri.toString(),
         returnState: state,
       });
@@ -14876,7 +14893,7 @@ export function toolAccessService(
         createdBySessionId: binding.sessionId,
         subjectUserId,
         subjectAgentId: authorizationSubjectAgentId,
-        requestedScopes: [...managedProfile.scopes],
+        requestedScopes: managedProfile.id === "workspace.all" ? requestedScopes! : [...managedProfile.scopes],
         returnTo: input.returnTo,
         issueId: intentLink?.issueId ?? input.issueId,
         interactionId: intentLink?.id,
@@ -15376,11 +15393,15 @@ export function toolAccessService(
         : suggestedAgentIds.length > 0
           ? { agentIds: suggestedAgentIds }
           : "all_agents";
-    const remoteMcpAccess = isRemoteMcpConnectorMethod(input.connection.config.sourceTemplateKey, input.connection.config.connectionMethodKey);
+    // Workspace setup saves the operator's install selection before OAuth too.
+    // An empty selection means no agents, not permission to apply all-agent
+    // defaults after the user returns from Google.
+    const preserveEmptyInstalls = input.connection.config.sourceTemplateKey === "google-workspace"
+      || isRemoteMcpConnectorMethod(input.connection.config.sourceTemplateKey, input.connection.config.connectionMethodKey);
     const access: FinishToolApp["access"] = deferTaskAccess
       ? { agentIds: [] }
       : installs.length === 0
-        ? remoteMcpAccess ? { agentIds: [] } : normalizedSuggestedAccess
+        ? preserveEmptyInstalls ? { agentIds: [] } : normalizedSuggestedAccess
         : companyInstall
           ? "all_agents"
           : { agentIds };
@@ -15415,7 +15436,7 @@ export function toolAccessService(
       },
       input.actor,
     );
-    if (!deferTaskAccess && !remoteMcpAccess && installs.length === 0) {
+    if (!deferTaskAccess && !preserveEmptyInstalls && installs.length === 0) {
       const installTargets =
         access === "all_agents"
           ? [
@@ -15538,7 +15559,13 @@ export function toolAccessService(
       profile: profile.id,
       claimId: input.claimId,
       redemptionId: input.state,
+      ...(profile.id === "workspace.all" && stateRow.requestedScopes ? { scopes: stateRow.requestedScopes } : {}),
     });
+    if (profile.id === "workspace.all") {
+      const requested = normalizeOauthScopes(stateRow.requestedScopes);
+      credentials.scopes = googleWorkspaceEffectiveScopes(requested, credentials.scopes);
+      if (!isGoogleWorkspaceScopeGrant(credentials.scopes)) throw unprocessable("Google did not grant any selected service permissions", { code: "oauth_scope_grant_invalid" });
+    }
     const refreshToken = credentials.refreshToken;
     if ((profile.provider === "google" || profile.provider === "asana") && !refreshToken) {
       throw unprocessable(
@@ -15710,6 +15737,7 @@ export function toolAccessService(
             strategy: "paperclip_cloud_connector",
             accessTokenExpiresAt: credentials.accessTokenExpiresAt,
             scopes: credentials.scopes,
+            requestedScopes: stateRow.requestedScopes ?? undefined,
             tokenType: credentials.tokenType,
             ...(credentials.refreshTokenExpiresAt
               ? { refreshTokenExpiresAt: credentials.refreshTokenExpiresAt }
@@ -16238,6 +16266,10 @@ export function toolAccessService(
     });
     if (sourceTemplateKey === "google-workspace" && !isGoogleWorkspaceScopeGrant(normalizeOauthScopes(token.scope))) {
       throw unprocessable("Google did not return a supported permission grant. Reconnect and choose the Google services you want to use.", { code: "oauth_scope_grant_invalid" });
+    }
+    if (sourceTemplateKey === "google-workspace") {
+      token.scope = googleWorkspaceEffectiveScopes(authorizedScopes, normalizeOauthScopes(token.scope)).join(" ");
+      if (!token.scope) throw unprocessable("Google did not grant any selected service permissions", { code: "oauth_scope_grant_invalid" });
     }
     const connectedAt = now();
     const expiresAt = token.expiresIn

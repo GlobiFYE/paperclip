@@ -7,6 +7,47 @@ export const GOOGLE_WORKSPACE_CONNECTOR_PROFILE_IDS = [
 
 export type GoogleWorkspaceConnectorProfileId = (typeof GOOGLE_WORKSPACE_CONNECTOR_PROFILE_IDS)[number];
 
+export type GoogleWorkspaceServiceSelection = Partial<Record<"gmail" | "drive" | "calendar", "read" | "write">>;
+export const GOOGLE_WORKSPACE_DEFAULT_SELECTION: GoogleWorkspaceServiceSelection = { gmail: "write", drive: "write", calendar: "write" };
+export const GOOGLE_WORKSPACE_SERVICE_GROUPS = [
+  { id: "gmail", name: "Gmail", brandKey: "gmail", read: ["gmail.read"], write: ["gmail.draft"] },
+  { id: "drive", name: "Drive", brandKey: "google-drive", description: "Docs, Sheets, and Slides", read: ["drive.read", "docs.read", "sheets.read", "slides.read"], write: ["drive.write", "docs.write", "sheets.write", "slides.write"] },
+  { id: "calendar", name: "Calendar", brandKey: "google-calendar", read: ["calendar.read"], write: ["calendar.write"] },
+] as const;
+
+/** Derive resource permissions from closed service groups, never client-supplied scope strings. */
+export function googleWorkspaceSelectedScopes(selection: GoogleWorkspaceServiceSelection): string[] {
+  return [...new Set(GOOGLE_WORKSPACE_SERVICE_GROUPS.flatMap(group => {
+    const access = selection[group.id];
+    return access ? group[access].flatMap(profile => GOOGLE_WORKSPACE_CONNECTOR_PROFILES[profile].scopes) : [];
+  }))].sort();
+}
+
+/** Keep provider consent inside this request, including a provider's read-only downgrade. */
+export function googleWorkspaceEffectiveScopes(requested: readonly string[], granted: readonly string[]): string[] {
+  const implies: Record<string, string[]> = {
+    documents: ["documents.readonly"], spreadsheets: ["spreadsheets.readonly"],
+    presentations: ["presentations.readonly"],
+    "calendar.events": ["calendar.events.readonly", "calendar.events.freebusy"],
+    "calendar.readonly": ["calendar.calendarlist.readonly", "calendar.events.readonly", "calendar.events.freebusy"],
+  };
+  const expand = (scopes: readonly string[]) => new Set(scopes.flatMap(scope => [scope, ...(implies[scope.replace("https://www.googleapis.com/auth/", "")] ?? []).map(value => `https://www.googleapis.com/auth/${value}`)]));
+  const allowed = expand(requested);
+  const effective = [...expand(granted)].filter(scope => allowed.has(scope));
+  return effective.filter(scope => !effective.some(broader => broader !== scope && (implies[broader.replace("https://www.googleapis.com/auth/", "")] ?? []).some(value => scope === `https://www.googleapis.com/auth/${value}`))).sort();
+}
+
+export function googleWorkspaceSelectionForScopes(scopes: readonly string[]): GoogleWorkspaceServiceSelection {
+  const selection: GoogleWorkspaceServiceSelection = {};
+  for (const group of GOOGLE_WORKSPACE_SERVICE_GROUPS) {
+    const writes = group.write.flatMap(profile => GOOGLE_WORKSPACE_CONNECTOR_PROFILES[profile].scopes);
+    const reads = group.read.flatMap(profile => GOOGLE_WORKSPACE_CONNECTOR_PROFILES[profile].scopes);
+    if (writes.every(scope => scopes.includes(scope))) selection[group.id] = "write";
+    else if (reads.some(scope => scopes.includes(scope))) selection[group.id] = "read";
+  }
+  return selection;
+}
+
 const auth = (scope: string) => `https://www.googleapis.com/auth/${scope}`;
 
 const SERVICE_PROFILES: Readonly<Record<Exclude<GoogleWorkspaceConnectorProfileId, "workspace.all">, {

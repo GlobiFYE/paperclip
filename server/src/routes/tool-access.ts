@@ -930,6 +930,7 @@ function connectorEnrollmentPrincipal(req: Request): string {
           const personalSubjectUserId = req.body.grantKind === "user" ? req.actor.userId ?? null : null;
           const dedicatedSubjectAgentId = req.body.grantKind === "agent" ? req.body.subjectAgentId ?? null : null;
           const start = await svc.startOAuth(companyId, result.connectionId, {
+            workspaceServices: req.body.workspaceServices,
             redirectUri: oauthRedirectUri(req),
             actor: getActorInfo(req),
             ...(personalSubjectUserId ? { subjectUserId: personalSubjectUserId } : {}),
@@ -1016,6 +1017,7 @@ function connectorEnrollmentPrincipal(req: Request): string {
       await assertToolConnectionConfigureAccess(req, existing);
     }
     const result = await svc.startOAuth(existing.companyId, existing.id, {
+      workspaceServices: req.body.workspaceServices,
       redirectUri: oauthRedirectUri(req),
       actor: getActorInfo(req),
       returnTo: oauthBrowserOrigin(req) ?? undefined,

@@ -270,7 +270,7 @@ export function createPaperclipCloudConnector(input: {
 
   async function call(
     operation: PaperclipCloudConnectorOperation,
-    claims: { subject: string; companyId: string; profile?: PaperclipCloudConnectorProfileId; returnUri?: string; returnState?: string; claimId?: string; redemptionId?: string },
+    claims: { subject: string; companyId: string; profile?: PaperclipCloudConnectorProfileId; scopes?: string[]; returnUri?: string; returnState?: string; claimId?: string; redemptionId?: string },
     secret?: { field: "refreshToken" | "token" | "binding" | "acknowledgement"; value: string },
   ): Promise<ConnectorResponse> {
     const endpoint = new URL(ENDPOINTS[operation], `${config.baseUrl}/`).toString();
@@ -294,7 +294,10 @@ export function createPaperclipCloudConnector(input: {
       const definition = connectorProfileDefinition(claims.profile);
       payload.prv = definition.provider;
       payload.prf = claims.profile;
-      payload.scp = [...definition.scopes];
+      if (claims.scopes && (claims.profile !== "workspace.all" || !isGoogleWorkspaceScopeGrant(claims.scopes))) {
+        throw new PaperclipCloudConnectorError("Invalid requested service permissions", "CONNECTOR_CONFIG_INVALID");
+      }
+      payload.scp = [...(claims.scopes ?? definition.scopes)];
     }
     if (secret) payload.sh = await sha256Base64Url(secret.value);
     const body = {
@@ -334,6 +337,7 @@ export function createPaperclipCloudConnector(input: {
     subject: string,
     companyId: string,
     profile: PaperclipCloudConnectorProfileId,
+    requestedScopes?: string[],
   ): SealedConnectorCredentials {
     const definition = connectorProfileDefinition(profile);
     const envelope = parseEnvelope(response.sealed, purpose, definition.provider, profile);
@@ -344,7 +348,7 @@ export function createPaperclipCloudConnector(input: {
       config.environment,
       definition.provider,
       profile,
-      definition.scopes,
+      requestedScopes ?? definition.scopes,
     );
     if (
       credentials.instanceId !== config.instanceId
@@ -396,7 +400,7 @@ export function createPaperclipCloudConnector(input: {
         typeof value === "string" && isPaperclipCloudConnectorProfileId(value) ? [value] : []
       ))];
     },
-    async startAuthorization(values: { subject: string; companyId: string; profile?: PaperclipCloudConnectorProfileId; returnUri: string; returnState: string }) {
+    async startAuthorization(values: { subject: string; companyId: string; profile?: PaperclipCloudConnectorProfileId; scopes?: string[]; returnUri: string; returnState: string }) {
       const profile = values.profile ?? "gmail.draft";
       const response = await call("session", { ...values, profile });
       if (typeof response.confirmationUrl !== "string" || typeof response.expiresAt !== "string") {
@@ -445,9 +449,9 @@ export function createPaperclipCloudConnector(input: {
         ...(handoff ? { handoff } : {}),
       };
     },
-    async claim(values: { subject: string; companyId: string; profile?: PaperclipCloudConnectorProfileId; claimId: string; redemptionId: string }) {
+    async claim(values: { subject: string; companyId: string; profile?: PaperclipCloudConnectorProfileId; scopes?: string[]; claimId: string; redemptionId: string }) {
       const profile = values.profile ?? "gmail.draft";
-      return openCredentials(await call("claim", { ...values, profile }), sealPurpose("initial", profile), values.subject, values.companyId, profile);
+      return openCredentials(await call("claim", { ...values, profile }), sealPurpose("initial", profile), values.subject, values.companyId, profile, values.scopes);
     },
     async refresh(values: { subject: string; companyId: string; profile?: PaperclipCloudConnectorProfileId; refreshToken: string }) {
       const profile = values.profile ?? "gmail.draft";

@@ -4,11 +4,30 @@ import {
   GOOGLE_WORKSPACE_CONNECTOR_PROFILES as profiles, GOOGLE_WORKSPACE_SERVICES,
   googleWorkspaceGrantedScopes, googleWorkspaceToolTarget, isGoogleWorkspaceToolGranted,
   googleWorkspaceServiceGranted, isGoogleWorkspaceScopeGrant,
+  googleWorkspaceSelectedScopes, googleWorkspaceEffectiveScopes, GOOGLE_WORKSPACE_DEFAULT_SELECTION,
 } from "./google-workspace-connectors.js";
 
 const scope = (value: string) => `https://www.googleapis.com/auth/${value}`;
 
 describe("combined Google Workspace consent", () => {
+  it("defaults to Gmail, combined Drive, and Calendar write scopes without Chat or People", () => {
+    const selected = googleWorkspaceSelectedScopes(GOOGLE_WORKSPACE_DEFAULT_SELECTION);
+    expect(selected).toHaveLength(9);
+    expect(selected).toContain(scope("gmail.compose"));
+    expect(selected.some(value => /chat|contacts|directory|userinfo/.test(value))).toBe(false);
+    expect(googleWorkspaceSelectedScopes({})).toEqual([]);
+    expect(googleWorkspaceSelectedScopes({ drive: "read" })).toEqual([
+      scope("documents.readonly"), scope("drive.readonly"), scope("presentations.readonly"), scope("spreadsheets.readonly"),
+    ]);
+  });
+
+  it("caps cumulative Google grants to the selected access on callback and refresh", () => {
+    const effective = googleWorkspaceEffectiveScopes([scope("documents.readonly")], [scope("documents"), scope("gmail.compose")]);
+    expect(effective).toEqual([scope("documents.readonly")]);
+    expect(isGoogleWorkspaceToolGranted("docs__update_doc", effective)).toBe(false);
+    expect(isGoogleWorkspaceToolGranted("docs__read_doc", effective)).toBe(true);
+    expect(googleWorkspaceEffectiveScopes([scope("documents")], [scope("documents.readonly")])).toEqual([scope("documents.readonly")]);
+  });
   it("requests the existing union with one profile and preserves legacy definitions", () => {
     const expected = [...new Set(Object.entries(profiles).filter(([key]) => key !== "workspace.all").flatMap(([, value]) => value.scopes))];
     expect(profiles["workspace.all"].scopes).toEqual(expected);
@@ -16,7 +35,7 @@ describe("combined Google Workspace consent", () => {
     const app = getConnectableAppDefinition("google-workspace")!;
     expect(app.methods).toHaveLength(2);
     expect(app.methods.filter((method) => method.connectorProfile)).toHaveLength(1);
-    for (const method of app.methods) expect(method.defaults?.scopesHint).toEqual(expected);
+    for (const method of app.methods) expect(method.defaults?.scopesHint).toEqual(expected.filter(scope => !/chat|contacts|directory|userinfo|\/calendar.readonly$/.test(scope)));
     for (const profile of Object.values(GOOGLE_WORKSPACE_SERVICES)) expect(getConnectableAppDefinition(profiles[profile].appSlug)).not.toBeNull();
   });
 
