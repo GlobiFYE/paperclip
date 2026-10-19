@@ -1525,3 +1525,88 @@ and pending accounting hold are retained. Cloud image alignment is the next gate
 Subscription follow-up remains unverified; remaining live acceptance uses API
 keys per human steering. No local Docker or Rust build ran. Merge and production
 deployment remain separate.
+
+
+## Refreshed local API acceptance — 2026-10-19
+
+The stack includes origin/master through `016e40d53286a34647fc564411b7a712c46a9594`,
+including the merged cold-start fix #16493. Current delivery remains #15994
+(protocol), #15993 (Apple Silicon behavior), and #15997 (other platforms).
+These three remain open for the requested local test drive.
+
+The fresh isolated preview is `http://127.0.0.1:3104/CLAA/issues/CLAA-1`, with
+retained data in `/private/tmp/claude-default-test-drive-20261019`. No Docker
+image was built locally. A server typecheck command unexpectedly invoked its
+Rust prerequisite; it was stopped and replaced with direct TypeScript checks.
+Subsequent native builds and package qualification ran in GitHub Actions.
+
+Ordinary web creation of `Claude Default QA` with `enableNativeRunner=false`
+saved `paperclip_runner`, `provider: acpx`, `acpxAgent: claude`,
+`model: claude-opus-5-5`, and `modelReasoningEffort: high`, without runner or
+model overrides. The API-key connection initially applied a Legacy CLI version
+check. The fix reuses the existing Anthropic key-validation endpoint for native
+Claude secret references; subscriptions and custom destinations keep their
+existing supplementary probes. Focused setup verification passed 124 tests,
+and a further 81 UI tests and direct server/UI TypeScript checks passed.
+
+Review found a separate controller omission: v9 effort inputs did not pin
+permissions at daemon startup. Both downstream constructors now include v9.
+The isolated/preconfigured transport regression cases passed 2/2. Native input
+v9 preserves master's explicit homeMode and historical v1–v8 readers.
+
+The first task attempt (`075e4543-e04f-4af2-bad3-c0d6c4987947`, original company
+`1de13e1c-5957-4920-9332-f77396c976ec`) failed before provider launch because
+the test-drive CLI intentionally removes inherited PAPERCLIP_* overrides.
+The verified daemon was then staged in the package-owned target location.
+That failed record and its full $2 pending reservation remain intact.
+
+A fresh $2-bounded fixture (`5423fac4-72c4-4f31-a933-db368682b4a8`) uses the
+existing AI-connections API to validate and securely store the authorized key.
+Its API-created `Claude Acceptance` agent also used ordinary runner/model
+defaults, High effort, disabled timer heartbeats, and one concurrent run.
+The fresh company's onboarding did not expose the original company's saved key;
+engineering setup used the existing API rather than putting secrets in the
+browser transcript. This is general product acceptance, not a blind user-only
+journey. Task creation and the follow-up used ordinary browser controls.
+
+| Turn | Run | Outcome | Duration | API estimate |
+| --- | --- | --- | --- | --- |
+| Create checklist | `63fad59f-617b-4a0f-8548-a14582abed63` | succeeded | 53.925s | $0.209689200 |
+| Add Rollback | `5861d089-7774-400d-a7c6-e3b65b70177f` | succeeded | 77.575s | $0.308743600 |
+
+The follow-up records `session.resumed` and reuses provider session
+`d46b728c-1b32-44cb-a406-118baf287ab4` and normalized session
+`a5dabc11-b797-4ce0-a8e4-1896e093ef11`. Both actual browser downloads were
+independently checked. V1 is 451 bytes, three sections and six checkboxes,
+SHA-256 `cab0eac549c9f7c4b7c35374e32cd645713935945377898bb21e2f0c5fcba706`.
+V2 is 612 bytes, preserves the original body and adds two Rollback checks,
+SHA-256 `94f5bb1979046df5e52e182c3fc0ccb8fe3f68f67c4542d99424263157a3d703`.
+The original attachment remained byte-identical after revision.
+
+The two new successful turns total $0.518432800 in estimates, not invoices.
+The original fixture's pending reservation and all earlier unknown-charge holds
+remain separate. The aggregate Claude qualification ceiling stays $50. Full
+remaining-budget reservations bound each manual acceptance turn; no automatic
+paid retry campaign was authorized. Subscription execution remains unverified.
+
+The cloud-built Mac daemon used by this pair has source
+`04e0202ca81387b17cbe7fd094a8338648356fe9` and SHA-256
+`0d7ef273fb9b7df2e73a4a6ef6b284a8b6cb59f949a8b9f78af5f391f8d296ef`.
+Its header, receipt digest, regular-file status, and build metadata were checked.
+[Exact-source four-target package qualification](https://github.com/paperclipai/paperclip/actions/runs/39267321383)
+passed, including the four native builds, package assembly, and installed-host
+consumers. Subsequent changes affect setup, controller admission, credential
+configuration guards, and sandbox proof revocation; the runner/provider source
+and pinned dependency bytes remain unchanged. Preserve these runtime identities
+when carrying the result forward.
+
+Detailed mutable evidence, the chronological browser journal, downloads, and
+run events are retained at `/private/tmp/claude-refresh-evidence-20261019`.
+Latest-head CI, review status, final preview identity, and any remaining failures
+are recorded in the final handoff there and in the PR bodies. The first latest-
+master CI batch experienced simultaneous runner shutdowns; the independent
+short UUID fixture-prefix collision and all failed job logs were preserved
+before retrying. Security review also identified native hire credential routing;
+the existing host-setting guard now covers native runners and retains the saved
+harness for partial credential-reference edits. Local broad verification after
+that fix was stopped under memory pressure; cloud CI is the remaining gate.
