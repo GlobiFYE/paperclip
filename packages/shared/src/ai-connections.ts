@@ -144,7 +144,7 @@ export function isAiConnectionCompatible(
   const modelMatchesProvider = requirement.provider === "openrouter"
     ? typeof model === "string" && model.startsWith("openrouter/")
     : requirement.provider === "opencode"
-      ? typeof model === "string" && model.startsWith("opencode-go/")
+      ? typeof model !== "string" || model.startsWith("opencode-go/")
       : true;
   return candidates.some((method) => method?.adapters.includes(adapterType)) && modelMatchesProvider;
 }

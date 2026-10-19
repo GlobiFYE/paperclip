@@ -41,7 +41,8 @@ export function AiConnectionSelect({
   onReconnect,
   onChange,
   adapterType,
-}: AiConnectionPickerProps & { adapterType: string }) {
+  model,
+}: AiConnectionPickerProps & { adapterType: string; model?: string }) {
   const selectId = useId();
   const personal = personalAiDefault(connections, requirement, currentUserId);
   const selected =
@@ -57,7 +58,7 @@ export function AiConnectionSelect({
         isAiConnectionCompatible(
           c,
           adapterType,
-          c.provider === "openrouter" ? "openrouter/" : undefined,
+          model ?? (c.provider === "openrouter" ? "openrouter/" : undefined),
         ),
     )
     .sort(
@@ -80,7 +81,7 @@ export function AiConnectionSelect({
       mode: "responsible_user",
     },
     adapterType,
-    requirement.provider === "openrouter" ? "openrouter/" : undefined,
+    model ?? (requirement.provider === "openrouter" ? "openrouter/" : undefined),
   );
   const incompatible =
     selected && !compatible.some((c) => c.id === selected.id);
