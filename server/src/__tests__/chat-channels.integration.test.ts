@@ -62685,6 +62685,37 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     },
   );
 
+  it.each([true, false])(
+    "publishes native progress with a typed issue binding present: %s",
+    async (typedBinding) => {
+      const context = await safeNativeProgressFixture("telegram", typedBinding ? "107" : "108");
+      try {
+        const run = await context.createRun("issue binding");
+        if (typedBinding) {
+          await db.update(heartbeatRuns).set({
+            scopeKind: "issue",
+            issueId: context.conversation.issueId,
+            contextSnapshot: sql`${heartbeatRuns.contextSnapshot} - 'issueId'`,
+          }).where(and(
+            eq(heartbeatRuns.companyId, context.fixture.companyId),
+            eq(heartbeatRuns.id, run.runId),
+          ));
+        }
+        await context.addEvent(run, "tool.execution.started", 1);
+        await expect(enqueueChatRunMilestones(db, { since: new Date(0) })).resolves.toBe(1);
+        await expect(db.select({ issueId: chatPublications.issueId }).from(chatPublications).where(and(
+          eq(chatPublications.companyId, context.fixture.companyId),
+          eq(chatPublications.conversationId, context.conversation.id),
+          like(chatPublications.idempotencyKey, `run:${run.runId}:working:${context.endpoint.id}:native:%`),
+        ))).resolves.toEqual([{ issueId: context.conversation.issueId }]);
+        await context.service.processPendingPublications(100);
+        expect(context.providerRuntime.edits).toHaveLength(1);
+      } finally {
+        await context.service.shutdown();
+      }
+    },
+  );
+
   it("enforces the native progress cadence boundary and one publication per phase", async () => {
     const context = await safeNativeProgressFixture("telegram", "8");
     const run = await context.createRun("cadence boundaries");
