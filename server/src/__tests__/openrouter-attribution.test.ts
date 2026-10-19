@@ -14,6 +14,8 @@ describe("Paperclip OpenRouter connection attribution", () => {
     for (const route of [
       { kind: "openrouter", protocol: "chat", auth: "bearer", models: [] },
       { kind: "gateway", protocol: "chat", auth: "bearer", models: [], baseUrl: "https://openrouter.ai/api/v1" },
+      { kind: "gateway", protocol: "chat", auth: "bearer", models: [], baseUrl: "https://eu.openrouter.ai/api/v1" },
+      { kind: "gateway", protocol: "chat", auth: "bearer", models: [], baseUrl: "https://us.openrouter.ai/api/v1" },
     ] satisfies AiProviderRouting[]) {
       const result = managedProviderRouting(route, harness, "fixture-key", "vendor/model");
       const output = JSON.stringify(result);

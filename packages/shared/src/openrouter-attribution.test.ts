@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { isOpenRouterUrl, openRouterAttributionHeaders, openRouterClaudeHeaders } from "./openrouter-attribution.js";
 
 describe("OpenRouter attribution", () => {
-  it.each(["https://openrouter.ai/api", "https://openrouter.ai/api/v1", "https://OPENROUTER.ai/api/alpha/decisions"])("recognizes %s", url => {
+  it.each(["https://openrouter.ai/api", "https://openrouter.ai/api/v1", "https://OPENROUTER.ai/api/alpha/decisions", "https://eu.openrouter.ai/api/v1", "https://us.openrouter.ai/api/v1"])("recognizes %s", url => {
     expect(isOpenRouterUrl(url)).toBe(true);
   });
-  it.each([undefined, "", "openrouter.ai", "http://openrouter.ai/api", "https://openrouter.ai.evil.test", "https://evil.test/openrouter.ai", "https://openrouter.ai@evil.test", "https://user:secret@openrouter.ai/api", "https://api.anthropic.com"])("does not attribute other or malformed destinations: %s", url => {
+  it.each([undefined, "", "openrouter.ai", "http://openrouter.ai/api", "https://openrouter.ai.evil.test", "https://unknown.openrouter.ai/api/v1", "https://evil.test/openrouter.ai", "https://openrouter.ai@evil.test", "https://user:secret@openrouter.ai/api", "https://api.anthropic.com"])("does not attribute other or malformed destinations: %s", url => {
     expect(isOpenRouterUrl(url)).toBe(false);
   });
   it("replaces mixed-case harness identity without changing credentials, routing, or privacy preferences", () => {

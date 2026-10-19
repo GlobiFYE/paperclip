@@ -94,7 +94,9 @@ casing or send two different identities under the legacy and current title names
 See [OpenRouter app attribution](https://openrouter.ai/docs/app-attribution).
 
 Apply this policy to the actual provider endpoint, including a custom connection
-that points to `https://openrouter.ai`. Do not infer OpenRouter from a model name,
+that points to `https://openrouter.ai` or its documented
+[regional endpoints](https://openrouter.ai/docs/guides/features/in-region-routing),
+`https://eu.openrouter.ai` and `https://us.openrouter.ai`. Do not infer OpenRouter from a model name,
 URL substring, or a provider label whose endpoint was changed. A private gateway
 must implement forwarding or attribution itself; Paperclip cannot establish the
 identity of an upstream request it does not control.

@@ -10,7 +10,7 @@ export function isOpenRouterUrl(value: unknown): boolean {
   if (typeof value !== "string") return false;
   try {
     const url = new URL(value);
-    return url.protocol === "https:" && url.hostname === "openrouter.ai" && !url.username && !url.password;
+    return url.protocol === "https:" && ["openrouter.ai", "eu.openrouter.ai", "us.openrouter.ai"].includes(url.hostname) && !url.username && !url.password;
   } catch {
     return false;
   }
