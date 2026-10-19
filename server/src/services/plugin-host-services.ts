@@ -2133,7 +2133,7 @@ export function buildHostServices(
           ...(patch as any),
           actorAgentId,
           actorUserId,
-        })) as Issue;
+        }))!;
         await logPluginActivity({
           companyId,
           action: "issue.updated",
@@ -2150,7 +2150,8 @@ export function buildHostServices(
             },
           },
         });
-        return updated;
+        const { previousBlockedByRelations: _previousBlockedByRelations, ...rest } = updated;
+        return rest as Issue;
       },
       async getRelations(params) {
         const companyId = ensureCompanyId(params.companyId);

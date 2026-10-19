@@ -15,7 +15,7 @@ import { validateIssueMutationBody } from "../middleware/validate.js";
 const EXISTING_BRANCH_PATH = ["executionWorkspaceSettings", "workspaceStrategy", "existingBranch"];
 
 // Mirrors the route-level schema in routes/issues.ts.
-const updateIssueRouteSchema = updateIssueSchema.extend({
+const updateIssueRouteSchema = updateIssueSchema.safeExtend({
   interrupt: z.boolean().optional(),
 });
 

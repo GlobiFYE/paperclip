@@ -52,6 +52,65 @@ describe("public MCP configuration", () => {
     expect(publicMcpConfig({ PAPERCLIP_PUBLIC_MCP_ENABLED: "true" })).toBeNull();
     expect(publicMcpCapabilities.map((c) => c.name)).not.toEqual(expect.arrayContaining(["run_tool", "call_api"]));
   });
+  it("preserves existing task changes at the MCP validation boundaries", () => {
+    const capability = publicMcpCapabilities.find((entry) => entry.name === "paperclip_update_task")!;
+    const changes = {
+      title: "t".repeat(240),
+      description: "d".repeat(524286) + "\\n",
+      assigneeAgentId: randomUUID(),
+      blockedByIssueIds: Array.from({ length: 100 }, () => randomUUID()),
+    };
+    const args = capability.schema.parse({ companyId: randomUUID(), taskId: randomUUID(), requestId: randomUUID(), changes });
+    expect(args.changes).toEqual(changes);
+  });
+  it.each(["addBlockedByIssueIds", "removeBlockedByIssueIds"])("rejects empty replacement with empty %s", (field) => {
+    const capability = publicMcpCapabilities.find((entry) => entry.name === "paperclip_update_task")!;
+    const result = capability.schema.safeParse({
+      companyId: randomUUID(), taskId: randomUUID(), requestId: randomUUID(),
+      changes: { blockedByIssueIds: [], [field]: [] },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues).toEqual([expect.objectContaining({
+      code: "custom", path: ["changes", "blockedByIssueIds"],
+      message: "Blocker replacement and delta operations are mutually exclusive",
+    })]);
+  });
+  it("rejects case-insensitive blocker delta overlap", () => {
+    const capability = publicMcpCapabilities.find((entry) => entry.name === "paperclip_update_task")!;
+    const blockerId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const result = capability.schema.safeParse({
+      companyId: randomUUID(), taskId: randomUUID(), requestId: randomUUID(),
+      changes: { addBlockedByIssueIds: [blockerId], removeBlockedByIssueIds: [blockerId.toUpperCase()] },
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) expect(result.error.issues).toEqual([expect.objectContaining({
+      code: "custom", path: ["changes", "addBlockedByIssueIds"],
+      message: "An issue cannot be both added and removed as a blocker",
+    })]);
+  });
+  it("forwards atomic blocker deltas and rejects conflicting operations", async () => {
+    const capability = publicMcpCapabilities.find((entry) => entry.name === "paperclip_update_task")!;
+    const principal = {} as Parameters<typeof capability.run>[0];
+    const dispatch = vi.fn().mockResolvedValue({ id: randomUUID() });
+    const companyId = randomUUID();
+    const taskId = randomUUID();
+    const blockerId = randomUUID();
+    for (const field of ["addBlockedByIssueIds", "removeBlockedByIssueIds"]) {
+      const changes = { [field]: [blockerId] };
+      const args = capability.schema.parse({ companyId, taskId, requestId: randomUUID(), changes });
+      await capability.run(principal, args, dispatch, config.origin);
+      expect(dispatch).toHaveBeenLastCalledWith(principal, "PATCH", `/issues/${taskId}`, changes);
+    }
+    for (const changes of [
+      { blockedByIssueIds: [], addBlockedByIssueIds: [] },
+      { blockedByIssueIds: [], removeBlockedByIssueIds: [] },
+      { addBlockedByIssueIds: [blockerId], removeBlockedByIssueIds: [blockerId] },
+    ]) {
+      expect(capability.schema.safeParse({ companyId, taskId, requestId: randomUUID(), changes }).success).toBe(false);
+    }
+    expect(dispatch).toHaveBeenCalledTimes(2);
+  });
+
 });
 
 describe.skipIf(!support.supported)("public MCP OAuth and tool boundary", () => {
@@ -714,6 +773,7 @@ describe.skipIf(!support.supported)("public MCP OAuth and tool boundary", () => 
       await expect(f.call("paperclip_get_download_url", { attachmentId: uploaded.body.attachment.id })).rejects.toThrow();
     } finally { await f.cleanup(); }
   });
+
 
   it("edits, blocks and completes tasks through real routes and rejects review overrides", async () => {
     const f = await expandedFixture();

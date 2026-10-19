@@ -4270,10 +4270,10 @@ registry.registerPath({
   tags: ["issues"],
   summary: "Update an issue",
   description:
-    "When posting a comment, attachmentIds selects up to 20 unique uploaded attachments from this exact task and company. The comment, attachment binding, and issue update commit atomically. attachmentIds without a comment is rejected; Markdown links alone do not bind uploads.",
+    "Use addBlockedByIssueIds and removeBlockedByIssueIds to change blockers atomically. These optional UUID arrays cannot be combined with blockedByIssueIds, which replaces the full set. An ID cannot appear in both delta arrays. Repeated additions and removals of absent blockers are no-ops. When posting a comment, attachmentIds selects up to 20 unique uploaded attachments from this exact task and company. The comment, attachment binding, and issue update commit atomically. attachmentIds without a comment is rejected; Markdown links alone do not bind uploads.",
   request: {
     params: z.object({ id: z.string() }),
-    body: jsonBody(updateIssueSchema.partial()),
+    body: jsonBody(updateIssueSchema),
   },
   responses: {
     200: r.ok(),

@@ -378,7 +378,7 @@ import {
 } from "../services/issue-queued-comment-queue.js";
 
 const MAX_ISSUE_COMMENT_LIMIT = 500;
-const updateIssueRouteSchema = updateIssueSchema.extend({
+const updateIssueRouteSchema = updateIssueSchema.safeExtend({
   interrupt: z.boolean().optional(),
 });
 const queuedCommentMutationTargetSchema = z.object({
@@ -13600,9 +13600,11 @@ export function issueRoutes(
       // An authorized agent may restrict a task; widening access remains an owner/admin action.
       if (req.body.visibility !== undefined && !(req.actor.type === "agent" && req.body.visibility === "private")
         && !(await resolveManagedIssueForPrivacy(req, res, existing))) return;
+      const hasBlockerDelta = Array.isArray(req.body.addBlockedByIssueIds) || Array.isArray(req.body.removeBlockedByIssueIds);
+      const blockersEdited = Array.isArray(req.body.blockedByIssueIds) || hasBlockerDelta;
       // MCP task changes cannot stop a run or implicitly decide a pending review.
       const mcpParticipationChange = req.actor.source === "mcp_oauth" &&
-        ["status", "assigneeAgentId", "assigneeUserId", "blockedByIssueIds", "parentId", "projectId"].some(key => req.body[key] !== undefined);
+        ["status", "assigneeAgentId", "assigneeUserId", "blockedByIssueIds", "addBlockedByIssueIds", "removeBlockedByIssueIds", "parentId", "projectId"].some(key => req.body[key] !== undefined);
       if (mcpParticipationChange) await assertMcpTaskParticipation(db, existing);
 
       assertNoAgentHostWorkspaceCommandMutation(
@@ -13655,6 +13657,9 @@ export function issueRoutes(
         req.body.title !== undefined || req.body.description !== undefined;
       const existingRelations = Array.isArray(req.body.blockedByIssueIds)
         ? await svc.getRelationSummaries(existing.id)
+        : null;
+      const requestedBlockedByIssueIds: string[] | null = Array.isArray(req.body.blockedByIssueIds)
+        ? [...new Set(req.body.blockedByIssueIds as string[])]
         : null;
       const {
         comment: commentBody,
@@ -13755,7 +13760,7 @@ export function issueRoutes(
       if (
         (reopenRequested === true ||
           resumeRequested === true ||
-          Array.isArray(req.body.blockedByIssueIds)) &&
+          blockersEdited) &&
         (await assertLowTrustControlPlaneDenied(
           req,
           res,
@@ -13799,7 +13804,7 @@ export function issueRoutes(
         req.body.status !== undefined ||
         normalizedAssigneeAgentId !== undefined ||
         req.body.assigneeUserId !== undefined ||
-        Array.isArray(req.body.blockedByIssueIds) ||
+        blockersEdited ||
         req.body.executionPolicy !== undefined ||
         explicitMoveToTodoRequested;
       const activeRecoveryActionBeforeUpdate =
@@ -13869,9 +13874,12 @@ export function issueRoutes(
               actorRunId: actor.runId,
               checkoutRunId: existing.checkoutRunId,
               executionRunId: existing.executionRunId,
+              // This gates implicit reopening on the request's intent to add blockers.
+              // Removals and concurrent relation changes do not change that intent.
               requestAddsExplicitBlockers:
-                Array.isArray(req.body.blockedByIssueIds) &&
-                req.body.blockedByIssueIds.length > 0,
+                hasBlockerDelta
+                  ? (req.body.addBlockedByIssueIds?.length ?? 0) > 0
+                  : (requestedBlockedByIssueIds?.length ?? 0) > 0,
             })) ||
           shouldResumeInProgressScheduledRetry);
       const updateReferenceSummaryBefore = titleOrDescriptionChanged
@@ -14135,13 +14143,10 @@ export function issueRoutes(
       }
       const enteringBlocked =
         existing.status !== "blocked" && updateFields.status === "blocked";
-      if (enteringBlocked) {
-        const requestedBlockerIds = Array.isArray(req.body.blockedByIssueIds)
-          ? [...new Set(req.body.blockedByIssueIds as string[])]
-          : null;
+      const hasBlockedEntryReason = async (query: Db, requestedBlockerIds: string[] | null) => {
         const hasUnresolvedBlocker = requestedBlockerIds
           ? requestedBlockerIds.length > 0 &&
-            (await db
+            (await query
               .select({ id: issueRows.id })
               .from(issueRows)
               .where(
@@ -14156,7 +14161,7 @@ export function issueRoutes(
           : (await svc.getDependencyReadiness(existing.id))
               .unresolvedBlockerCount > 0;
         const [pendingInteraction, pendingApproval] = await Promise.all([
-          db
+          query
             .select({ id: issueThreadInteractions.id })
             .from(issueThreadInteractions)
             .where(
@@ -14169,7 +14174,7 @@ export function issueRoutes(
             )
             .limit(1)
             .then((rows) => rows[0] ?? null),
-          db
+          query
             .select({ id: approvals.id })
             .from(issueApprovals)
             .innerJoin(approvals, eq(issueApprovals.approvalId, approvals.id))
@@ -14183,18 +14188,13 @@ export function issueRoutes(
             .limit(1)
             .then((rows) => rows[0] ?? null),
         ]);
-        if (
-          !hasUnresolvedBlocker &&
-          !pendingInteraction &&
-          !pendingApproval &&
-          !descriptor
-        ) {
-          res.status(422).json({
-            error:
-              "Entering blocked requires unresolved blockers, a pending interaction/approval, or unblockDescriptor",
-          });
-          return;
-        }
+        return Boolean(hasUnresolvedBlocker || pendingInteraction || pendingApproval || descriptor);
+      };
+      if (enteringBlocked && !hasBlockerDelta && !(await hasBlockedEntryReason(db, requestedBlockedByIssueIds))) {
+        res.status(422).json({
+          error: "Entering blocked requires unresolved blockers, a pending interaction/approval, or unblockDescriptor",
+        });
+        return;
       }
       if (
         reviewRequest !== undefined &&
@@ -14534,6 +14534,9 @@ export function issueRoutes(
         }
       }
       let issue: Awaited<ReturnType<typeof svc.update>>;
+      let updatedRelations: Awaited<
+        ReturnType<typeof svc.getRelationSummaries>
+      > | null = null;
       // Clear the reopen-pending flag if this update leaves the issue terminal, so
       // the rebuilt worktree does not leak. The guard reads `issue` when the
       // response ends, so it also covers a null return and a thrown error. It clears
@@ -14557,6 +14560,7 @@ export function issueRoutes(
         ? await sourceTrustForActorWrite(existing, actor)
         : undefined;
       const shouldUseTransactionalIssueUpdate =
+        hasBlockerDelta ||
         Boolean(commentAttachmentIds?.length) ||
         commentWithAdapterOverrides ||
         Boolean(decision) ||
@@ -14573,6 +14577,13 @@ export function issueRoutes(
               return null;
             const updated = await updateIssue(tx);
             if (!updated) return null;
+            if (enteringBlocked && hasBlockerDelta &&
+                !(await hasBlockedEntryReason(tx as unknown as Db, updated.blockedByIssueIds ?? []))) {
+              throw unprocessable("Entering blocked requires unresolved blockers, a pending interaction/approval, or unblockDescriptor");
+            }
+            if (hasBlockerDelta) {
+              updatedRelations = await issueService(tx as unknown as Db).getRelationSummaries(updated.id);
+            }
             if (commentAttachmentIds?.length || commentWithAdapterOverrides) {
               // Adapter settings, reassignment, comment and upload binding commit together.
               // A failed comment or invalid receipt rolls back the issue update.
@@ -14762,23 +14773,21 @@ export function issueRoutes(
               updateReferenceSummaryAfter,
             )
           : null;
-      let issueResponse: typeof issue & {
+      const { previousBlockedByRelations: deltaPreviousBlockedByRelations, ...responseIssue } = issue;
+      let issueResponse: typeof responseIssue & {
         blockedBy?: unknown;
         blocks?: unknown;
         activeRecoveryAction?: unknown;
       relatedWork?: unknown;
         referencedIssueIdentifiers?: string[];
-      } = issue;
-      let updatedRelations: Awaited<
-        ReturnType<typeof svc.getRelationSummaries>
-      > | null = null;
-      if (issue && Array.isArray(req.body.blockedByIssueIds)) {
-        updatedRelations = await svc.getRelationSummaries(issue.id);
-      const visibleUpdatedRelations = await redactIssueRelationEdges(req, issue.companyId, updatedRelations);
+      } = responseIssue;
+      if (issue && blockersEdited) {
+        if (!hasBlockerDelta) updatedRelations = await svc.getRelationSummaries(issue.id);
+      const visibleUpdatedRelations = await redactIssueRelationEdges(req, issue.companyId, updatedRelations!);
         issueResponse = {
-          ...issue,
+          ...responseIssue,
           blockedByIssueIds:
-          issue.blockedByIssueIds ?? [...new Set(req.body.blockedByIssueIds as string[])].sort(),
+          hasBlockerDelta ? issue.blockedByIssueIds : issue.blockedByIssueIds ?? [...new Set(requestedBlockedByIssueIds ?? [])].sort(),
         blockedBy: visibleUpdatedRelations.blockedBy,
         blocks: visibleUpdatedRelations.blocks,
         };
@@ -14851,7 +14860,7 @@ export function issueRoutes(
           assigneeChanged:
             existing.assigneeAgentId !== issue.assigneeAgentId ||
             existing.assigneeUserId !== issue.assigneeUserId,
-          blockersChanged: Array.isArray(req.body.blockedByIssueIds),
+          blockersChanged: blockersEdited,
           executionPolicyChanged: req.body.executionPolicy !== undefined,
           monitorChanged,
           resumeRequested: resumeRequested === true,
@@ -14961,12 +14970,15 @@ export function issueRoutes(
           });
       }
 
-      if (Array.isArray(req.body.blockedByIssueIds)) {
+      if (blockersEdited) {
+        const previousBlockedByRelations = hasBlockerDelta
+          ? deltaPreviousBlockedByRelations ?? []
+          : existingRelations?.blockedBy ?? [];
         const previousBlockedByIds = new Set(
-          (existingRelations?.blockedBy ?? []).map((relation) => relation.id),
+          previousBlockedByRelations.map((relation) => relation.id),
         );
         const nextBlockedByIds = new Set(
-          req.body.blockedByIssueIds as string[],
+          hasBlockerDelta ? issue.blockedByIssueIds ?? [] : req.body.blockedByIssueIds as string[],
         );
         const addedBlockedByIssueIds = [...nextBlockedByIds].filter(
           (candidate) => !previousBlockedByIds.has(candidate),
@@ -14975,7 +14987,6 @@ export function issueRoutes(
           (candidate) => !nextBlockedByIds.has(candidate),
         );
         const nextBlockedByRelations = updatedRelations?.blockedBy ?? [];
-        const previousBlockedByRelations = existingRelations?.blockedBy ?? [];
         if (
           addedBlockedByIssueIds.length > 0 ||
           removedBlockedByIssueIds.length > 0
@@ -14992,7 +15003,7 @@ export function issueRoutes(
             entityId: issue.id,
             details: {
               identifier: issue.identifier,
-              blockedByIssueIds: req.body.blockedByIssueIds,
+              blockedByIssueIds: hasBlockerDelta ? issue.blockedByIssueIds : req.body.blockedByIssueIds,
               addedBlockedByIssueIds,
               removedBlockedByIssueIds,
               blockedByIssues: nextBlockedByRelations.map(
@@ -15664,7 +15675,7 @@ export function issueRoutes(
           nextStatus: issue.status,
           previousAssigneeAgentId: existing.assigneeAgentId ?? null,
           nextAssigneeAgentId: issue.assigneeAgentId ?? null,
-          blockerSetEdited: Array.isArray(req.body.blockedByIssueIds),
+          blockerSetEdited: blockersEdited,
           actorType: actor.actorType,
           actorAgentId: actor.agentId ?? null,
         });

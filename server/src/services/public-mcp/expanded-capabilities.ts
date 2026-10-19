@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { mcpAgentModelConfig } from "./agent-config.js";
 import {
-  updateIssueSchema, upsertIssueDocumentSchema, updateAgentSchema, upsertAgentInstructionsFileSchema,
+  refineBlockedByDelta, updateIssueSchema, upsertIssueDocumentSchema, updateAgentSchema, upsertAgentInstructionsFileSchema,
   aiRuntimeConnectionBindingSchema, createProjectSchema, updateProjectSchema,
   companySkillCreateSchema, companySkillUpdateSchema, companySkillFileUpdateSchema,
   createIssueWorkProductSchema, updateIssueWorkProductSchema,
@@ -13,10 +13,11 @@ const project = { ...company, projectId: z.uuid() };
 const skill = { ...company, skillId: z.uuid() };
 const key = z.string().regex(/^[a-z0-9][a-z0-9_-]{0,99}$/);
 const filePath = z.string().min(1).max(512).refine(v => !v.startsWith("/") && !v.includes("\\") && v.split("/").every(p => p !== ".." && p !== "." && p !== ""), "Use a relative file path without traversal");
-const taskChanges = updateIssueSchema.pick({ title: true, description: true, assigneeAgentId: true, assigneeUserId: true, projectId: true, parentId: true, blockedByIssueIds: true, unblockDescriptor: true, status: true, priority: true }).extend({
+const taskChanges = z.object(updateIssueSchema.shape).pick({ title: true, description: true, assigneeAgentId: true, assigneeUserId: true, projectId: true, parentId: true, blockedByIssueIds: true, addBlockedByIssueIds: true, removeBlockedByIssueIds: true, unblockDescriptor: true, status: true, priority: true }).extend({
   title: z.string().trim().min(1).max(240).optional(), description: z.string().max(524288).nullable().optional(),
   assigneeAgentId: z.uuid().nullable().optional(), blockedByIssueIds: z.array(z.uuid()).max(100).optional(),
-}).strict();
+  addBlockedByIssueIds: z.array(z.uuid()).max(100).optional(), removeBlockedByIssueIds: z.array(z.uuid()).max(100).optional(),
+}).strict().superRefine(refineBlockedByDelta);
 const agentChanges = updateAgentSchema.pick({ name: true, role: true, title: true, icon: true, reportsTo: true, capabilities: true, desiredSkills: true, budgetMonthlyCents: true }).extend({
   adapterConfig: z.object({ model: z.string().trim().min(1).max(256).optional(), reasoningEffort: z.enum(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]).optional() }).strict().optional(),
   runtimeConfig: z.object({ aiConnection: aiRuntimeConnectionBindingSchema }).strict().optional(),
