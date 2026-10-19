@@ -248,7 +248,10 @@ normal wake coalescing. Supersession rechecks the scheduled status atomically wi
 the cancellation fence; a concurrent promotion must not cancel the active run or
 move its task back to `todo`. Explicit Stop and Interrupt keep their authority.
 Once cancellation wins that fence, due-retry promotion respects its claim until
-the cancellation owner finishes settlement.
+the cancellation owner finishes settlement. Startup and periodic recovery finish
+persisted cancellations of parked retries through the normal guarded cancellation
+path if the original owner stops or its final database write fails. They preserve
+the original cancellation request and never start a provider turn for that work.
 
 Recovery instructions in a wake describe only an active or escalated recovery
 action. Resolving or cancelling that action removes its repair instructions from

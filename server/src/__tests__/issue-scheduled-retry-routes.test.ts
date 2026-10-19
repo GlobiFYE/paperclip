@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import express from "express";
 import request from "supertest";
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   activityLog,
@@ -212,6 +212,42 @@ describeEmbeddedPostgres("issue scheduled retry routes", () => {
 
     return { companyId, agentId, issueId, sourceRunId, retryRunId, scheduledRetryAt };
   }
+
+  it("finishes a parked retry cancellation after its owner loses the final database write", async () => {
+    const f = await seedIssueWithRetry({ agentStatus: "paused" });
+    const unrelated = await seedIssueWithRetry({ agentStatus: "paused" });
+    await db.execute(sql`ALTER TABLE heartbeat_runs ADD CONSTRAINT reject_retry_cancellation CHECK (status <> 'cancelled') NOT VALID`);
+    try {
+      await expect(heartbeatService(db).cancelRun(f.retryRunId, "Superseded by a human comment", {
+        expectedStatus: "scheduled_retry",
+      })).rejects.toThrow();
+      // A failed sweep leaves the same durable intent available for a later one.
+      await heartbeatService(db).reapOrphanedRuns();
+      expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.retryRunId)))
+        .toEqual([expect.objectContaining({ status: "scheduled_retry" })]);
+    } finally {
+      await db.execute(sql`ALTER TABLE heartbeat_runs DROP CONSTRAINT reject_retry_cancellation`);
+    }
+    const [interrupted] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.retryRunId));
+    expect(interrupted).toMatchObject({ status: "scheduled_retry", resultJson: {
+      startupCancellation: expect.any(Object), cancellation: { reason: "Superseded by a human comment" },
+    } });
+
+    // A fresh service has no process-local cancellation owner or settlement promise.
+    await heartbeatService(db).reapOrphanedRuns();
+    const [cancelled] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, f.retryRunId));
+    expect(cancelled).toMatchObject({ status: "cancelled", error: "Superseded by a human comment" });
+    expect(cancelled!.resultJson!.cancellation).toEqual(interrupted!.resultJson!.cancellation);
+    expect(await db.select().from(issues).where(eq(issues.id, f.issueId)))
+      .toEqual([expect.objectContaining({ executionRunId: null, assigneeAgentId: f.agentId })]);
+    expect(await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.runId, f.retryRunId)))
+      .toEqual([expect.objectContaining({ status: "cancelled" })]);
+    const events = await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, f.retryRunId));
+    await heartbeatService(db).reapOrphanedRuns();
+    expect(await db.select().from(heartbeatRunEvents).where(eq(heartbeatRunEvents.runId, f.retryRunId))).toEqual(events);
+    expect(await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, unrelated.retryRunId)))
+      .toEqual([expect.objectContaining({ status: "scheduled_retry", resultJson: null })]);
+  });
 
   it.each(["post", "patch"] as const)("keeps a retry's live process and saved work owner when a %s comment arrives", async method => {
     const f = await seedIssueWithRetry({ retryStatus: "running" });
