@@ -1824,7 +1824,7 @@ Changing the model or signing in again cannot repair a missing runtime package.
 ACPX Claude uses the existing API-key and subscription connection flows,
 including built-in login and credential checks. Connection setup and a successful
 native task are separate checks. Thinking effort (`low`, `medium`, `high`,
-`xhigh`, `max`, where supported by the selected model) travels in native input v7.
+`xhigh`, `max`, where supported by the selected model) travels in native input v9.
 The runner requires the provider to acknowledge it before prompting and on resume.
 An ignored setting or unavailable model fails admission; no runner fallback occurs.
 Chrome integration, custom commands/state paths, warm-process controls,
