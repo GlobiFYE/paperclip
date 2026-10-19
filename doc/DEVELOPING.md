@@ -1770,6 +1770,16 @@ Legacy CLI paths that put prompts in command-line arguments (Gemini, Grok, Kimi,
 Pi, and Hermes) still have argument-size limits. ACP turns, SDK requests, and
 CLI paths that use stdin avoid that separate limit for the wake prompt.
 
+## Adding a native Runner harness
+
+To add a harness/provider to the new native Paperclip Runner, use
+[create-runner-adapter](../.agents/skills/create-runner-adapter/SKILL.md), the
+[Runner integration playbook](RUNNER-INTEGRATION-PLAYBOOK.md) and its
+[working templates](runner-integration-templates.md). They cover requirements,
+protocol research, implementation, packaging, and real end-to-end acceptance.
+Existing direct adapters remain a compatibility boundary; their authoring and
+agent conversion are outside this playbook.
+
 ## Paperclip Runner Adapter Conversion
 
 The experimental Paperclip Runner offers native Codex, OpenCode, and **ACPX
