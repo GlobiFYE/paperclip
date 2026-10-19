@@ -11,7 +11,7 @@ import { RuntimeTestCard } from "./RuntimeTestCard";
 import { useState, useEffect, useRef, useMemo, useCallback, Children, isValidElement, type ReactNode } from "react";
 import type { AdapterConfigSection } from "../adapters/types";
 import { useConfigSchema } from "../adapters/schema-config-fields";
-import { schemaFieldSection } from "../adapters/config-sections";
+import { configFieldSection } from "../adapters/config-sections";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import type {
   Agent,
@@ -1901,7 +1901,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
                 </>
               )}
               {renderAdapterFields("configuration")}
-              {(isLocal || adapterType === "process" || configSchema?.fields.some((field) => schemaFieldSection(field.key) === "advanced")) && (
+              {(isLocal || adapterType === "process" || configSchema?.fields.some((field) => configFieldSection(field) === "advanced")) && (
               <CollapsibleSection
                 title="Advanced"
                 open={configurationAdvancedOpen}
@@ -1987,7 +1987,7 @@ export function AgentConfigForm(props: AgentConfigFormProps) {
         </div>
       )}
 
-      {props.environmentVariablesPlacement !== "secrets" && (isLocal || configSchema?.fields.some((field) => schemaFieldSection(field.key) === "environment")) && (
+      {props.environmentVariablesPlacement !== "secrets" && (isLocal || configSchema?.fields.some((field) => configFieldSection(field) === "environment")) && (
         <div data-config-section="environment-variables" className={cn(!cards && "border-b border-border")}>
           {cards
             ? <h3 className="text-sm font-medium mb-3">Environment variables</h3>
